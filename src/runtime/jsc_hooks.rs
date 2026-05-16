@@ -709,7 +709,6 @@ unsafe fn load_preloads(
         let _protected = JSValue::from_cell(promise).protected();
 
         // ── wait ────────────────────────────────────────────────────────
-        // TODO(port): HMR `pending_internal_promise` swap loop (spec VirtualMachine.zig:2248-2261) — un-gate with `hot_reloader.rs` / ImportWatcher. Until then, fall through to the non-watcher `wait_for_promise` path below.
         {
             // SAFETY: per fn contract.
             if unsafe { &*vm }.is_watcher_enabled() {
@@ -858,9 +857,8 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     }
 
     // ── DateHeaderTimer / imminent-GC ───────────────────────────────────
-    // TODO(port): `timer::All::update_date_header_timer_if_necessary` —
-    // not yet on the `All` surface (only insert/remove/update/get_timeout/
-    // drain_timers are real). No-op until the DateHeaderTimer body un-gates.
+    // TODO(port): call `timer::All::update_date_header_timer_if_necessary`
+    // here (the impl exists on `All`; this call site never wired it up).
     // SAFETY: `el` is the live per-thread event loop.
     unsafe { (*el).run_imminent_gc_timer() };
 
@@ -989,8 +987,8 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
         }
     }
 
-    // TODO(port): `timer::All::update_date_header_timer_if_necessary` —
-    // not yet on the `All` surface (see `auto_tick` above).
+    // TODO(port): call `timer::All::update_date_header_timer_if_necessary`
+    // here (see `auto_tick` above).
 
     let state = runtime_state();
     if state.is_null() {
@@ -2031,10 +2029,6 @@ fn transpile_source_code_inner(
                         // `_reset_arena` guard (`ModuleLoader::reset_arena`,
                         // spec :1083) runs after `process_fetch_log` and
                         // resets/reclaims it then — matching the spec lifetime.
-                        // TODO(port): once AsyncModule un-gates, the
-                        // enqueue site must `ScopeGuard::into_inner` and hand
-                        // the `Box<Arena>` to the queue instead of reaching
-                        // here.
                         *slot = Some(arena);
                         return;
                     }
@@ -2158,9 +2152,6 @@ fn transpile_source_code_inner(
                 {
                     (*jsc_vm).transpiler.resolver.log = args_log_nn;
                 }
-                // TODO(port): `Linker` is a unit stub in `bun_bundler`
-                // — `.log` field un-gates with `linker.rs`.
-
                 {
                     (*jsc_vm).transpiler.linker.log = args.log;
                     if let Some(pm) = (*jsc_vm).transpiler.resolver.package_manager {
@@ -2311,9 +2302,11 @@ fn transpile_source_code_inner(
                 use bun_bundler::transpiler::{AlreadyBundled, ParseOptions, ParseResult};
                 use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
 
-                // TODO(port): `Debugger::set_breakpoint_on_first_line` +
-                // `runtime_transpiler_store::set_break_point_on_first_line` —
-                // gated; spec gates on `vm.debugger != null && debugger.set_...`.
+                // TODO(port): wire up the spec gate `is_main &&
+                // vm.debugger != null && debugger.set_breakpoint_on_first_line`
+                // (both `Debugger::set_breakpoint_on_first_line` and
+                // `runtime_transpiler_store::set_break_point_on_first_line()`
+                // exist; this call site never plumbed them).
                 let set_breakpoint_on_first_line = false;
                 let _ = is_main;
 
@@ -2878,11 +2871,6 @@ fn transpile_source_code_inner(
                 }
 
                 // Spec :553-558 — watcher path uses ref-counted source.
-                // TODO(port): `VirtualMachine::ref_counted_resolved_source`.
-                // Spec RETURNS the ref-counted `ResolvedSource` here (with
-                // `is_commonjs_module`/`module_info` patched on). Gated so the
-                // fall-through to the non-watcher tail below is an explicit,
-                // intentional degradation rather than a silent live divergence.
                 if unsafe { &*jsc_vm }.is_watcher_enabled() {
                     // SAFETY: `extra.source_code_printer` is non-null per
                     // `TranspileExtra` contract; rederive after the print block
@@ -3323,9 +3311,9 @@ fn get_hardcoded_module(
     specifier: &bun_core::String,
     hardcoded: HardcodedModule,
 ) -> Option<OwnedResolvedSource> {
-    // TODO(port): `bun_analytics::Features::builtin_modules.insert(hardcoded)`
-    // — the `EnumSet<HardcodedModule>` static lives in T5 (`bun_resolve_builtins`)
-    // and is not yet wired into `bun_analytics`.
+    // TODO(port): `analytics.Features.builtin_modules.insert(hardcoded)` —
+    // the static is `bun_analytics::features::BUILTIN_MODULES` (a
+    // `Mutex<BTreeSet<&'static str>>`); insert `<&'static str>::from(hardcoded)`.
 
     match hardcoded {
         HardcodedModule::BunMain => {
@@ -3368,9 +3356,6 @@ fn get_hardcoded_module(
         HardcodedModule::BunWrap => {
             // `Runtime.Runtime.sourceCode()` — the bundler's CJS-interop
             // shim, embedded as a static string in `bun_ast::runtime`.
-
-            // TODO(port): `Runtime::source_code()` — `bun_ast::runtime`
-            // is a stub re-export until `runtime.rs` un-gates there.
             {
                 return Some(OwnedResolvedSource::new(ResolvedSource {
                     source_code: bun_core::String::init(bun_ast::runtime::Runtime::source_code()),

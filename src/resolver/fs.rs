@@ -2247,10 +2247,6 @@ impl RealFS {
 
         let had_handle = maybe_handle.is_some();
         // Zig: `defer { if (maybe_handle == null and (!store_fd or fs.needToCloseFiles())) handle.close(); }`
-        // Caller-supplied handles are borrowed (the caller keeps ownership).
-        // Freshly-opened ones are owned and close on drop unless the resolver
-        // is caching the fd (`store_fd && !need_to_close_files()`), in which
-        // case the fd escapes into the directory cache.
         let _opened: Option<bun_sys::Dir>;
         let raw: Fd;
         let handle: &bun_sys::Dir = match maybe_handle {

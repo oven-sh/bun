@@ -86,8 +86,6 @@ impl Dir {
     /// result (matches Zig's `Dir.close()`).
     #[inline]
     pub fn close(self) {
-        // `mem::drop` would also work; spelling out the field access keeps
-        // it obvious that this is the same logic as `impl Drop for Dir`.
         drop(self);
     }
     /// Disarm the drop guard and return the raw [`Fd`]. The caller takes over

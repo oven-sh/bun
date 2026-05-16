@@ -54,7 +54,7 @@ use bun_sys::{File, Fd, O};
 let file = File::openat(Fd::cwd(), b"path/to/file", O::RDONLY, 0)?;
 let mut buf = vec![0u8; 4096];
 let n = file.read_all(&mut buf)?;     // loops until EOF or full
-// `file` closes on Drop. Use `file.into_raw()` to hand the fd off.
+// `file` closes on Drop.
 ```
 
 Key types and functions:

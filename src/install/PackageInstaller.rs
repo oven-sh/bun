@@ -1654,14 +1654,18 @@ impl<'a> PackageInstaller<'a> {
                             }
                         };
 
-                        installer.cache_dir = match self.root_node_modules_folder.open_dir(
+                        // `installer.cache_dir` is a borrowed `Fd`; bind the owning
+                        // `Dir` to a local that outlives the install call so the fd
+                        // closes when this arm is done. Zig leaked it
+                        // (PackageInstaller.zig:1131, no `defer`).
+                        let owned_cache_dir = match self.root_node_modules_folder.open_dir(
                             dir_name,
                             bun_sys::OpenDirOptions {
                                 iterate: true,
                                 ..Default::default()
                             },
                         ) {
-                            Ok(d) => d.into_raw(),
+                            Ok(d) => d,
                             Err(err) => {
                                 break 'result package_install::InstallResult::fail(
                                     err,
@@ -1671,6 +1675,7 @@ impl<'a> PackageInstaller<'a> {
                                 );
                             }
                         };
+                        installer.cache_dir = owned_cache_dir.fd();
 
                         let result = if resolution.tag == resolution::Tag::Root {
                             installer.install_from_link(self.skip_delete, &destination_dir)

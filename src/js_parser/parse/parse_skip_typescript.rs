@@ -1286,7 +1286,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let _ = self.parse_export_clause()?;
                     if self.lexer.is_contextual_keyword(b"from") {
                         self.lexer.next()?;
-                        let _ = self.parse_path()?;
+                        let _ = self.parse_type_only_path()?;
                     }
                     self.lexer.expect_or_insert_semicolon()?;
                     return Ok(());
@@ -1303,7 +1303,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         self.lexer.next()?;
                     }
                     self.lexer.expect_contextual_keyword(b"from")?;
-                    let _ = self.parse_path()?;
+                    let _ = self.parse_type_only_path()?;
                     self.lexer.expect_or_insert_semicolon()?;
                     return Ok(());
                 }

@@ -347,7 +347,14 @@ pub fn ParseStmt(
                     const export_clause = try p.parseExportClause();
                     if (p.lexer.isContextualKeyword("from")) {
                         try p.lexer.expectContextualKeyword("from");
-                        const parsedPath = try p.parsePath();
+                        // `export { type Foo } from "p" with { ... }` erases to nothing
+                        // (checked below at `clauses.len == 0 and had_type_only_exports`),
+                        // so suppress the unsupported-attribute error for that shape.
+                        const is_type_only_export = comptime is_typescript_enabled;
+                        const parsedPath = if (is_type_only_export and export_clause.clauses.len == 0 and export_clause.had_type_only_exports)
+                            try p.parseTypeOnlyPath()
+                        else
+                            try p.parsePath();
 
                         try p.lexer.expectOrInsertSemicolon();
 
@@ -976,7 +983,7 @@ pub fn ParseStmt(
                     if (comptime is_typescript_enabled) {
                         if (importClause.had_type_only_imports and importClause.items.len == 0) {
                             try p.lexer.expectContextualKeyword("from");
-                            _ = try p.parsePath();
+                            _ = try p.parseTypeOnlyPath();
                             try p.lexer.expectOrInsertSemicolon();
                             return p.s(S.TypeScript{}, loc);
                         }
@@ -1023,7 +1030,7 @@ pub fn ParseStmt(
                                         } else {
                                             // "import type foo from 'bar';"
                                             try p.lexer.expectContextualKeyword("from");
-                                            _ = try p.parsePath();
+                                            _ = try p.parseTypeOnlyPath();
                                             try p.lexer.expectOrInsertSemicolon();
                                             return p.s(S.TypeScript{}, loc);
                                         }
@@ -1035,7 +1042,7 @@ pub fn ParseStmt(
                                     try p.lexer.expectContextualKeyword("as");
                                     try p.lexer.expect(.t_identifier);
                                     try p.lexer.expectContextualKeyword("from");
-                                    _ = try p.parsePath();
+                                    _ = try p.parseTypeOnlyPath();
                                     try p.lexer.expectOrInsertSemicolon();
                                     return p.s(S.TypeScript{}, loc);
                                 },
@@ -1044,7 +1051,7 @@ pub fn ParseStmt(
                                     // "import type {foo} from 'bar';"
                                     _ = try p.parseImportClause();
                                     try p.lexer.expectContextualKeyword("from");
-                                    _ = try p.parsePath();
+                                    _ = try p.parseTypeOnlyPath();
                                     try p.lexer.expectOrInsertSemicolon();
                                     return p.s(S.TypeScript{}, loc);
                                 },

@@ -614,10 +614,16 @@ describe("bundler", () => {
   });
 
   // Test 30: falsy "module.exports" named export (e.g. `false`) is still
-  // returned directly — pins the cache check at `entry !== undefined`.
-  // A regression to `if (entry) return entry;` would re-read the live
-  // binding on every require() call, so two calls must still === the
-  // same primitive value.
+  // returned directly — verifies the fast-path accepts values that are
+  // falsy-but-not-nullish (`false`, `0`, `""`, `NaN`), unlike the null
+  // case in Test 28 which falls through to the wrapper.
+  //
+  // Note: this cannot by itself detect a regression from
+  // `if (entry !== undefined) return entry;` back to `if (entry) return
+  // entry;` — with a non-mutating `const value = false`, re-reading the
+  // getter on a cache miss yields the same `false`, so both checks
+  // produce the same output. Test 31 below pins that behavior by
+  // mutating the binding between calls.
   itBundled("cjs/__toCommonJS_module_exports_named_export_falsy", {
     files: {
       "/entry.js": /* js */ `
@@ -632,6 +638,41 @@ describe("bundler", () => {
     },
     run: {
       stdout: "false false true",
+    },
+  });
+
+  // Test 31: pins the `entry !== undefined` cache check. The first
+  // require() populates `__moduleCache` with a falsy primitive (0). The
+  // second require() must return the *cached* value — a regression to
+  // `if (entry) return entry;` would treat `0` as a cache miss and
+  // re-read the live binding, which by then has been mutated to `999`
+  // by the exported `bump()` helper. Correct behavior: both `m1` and
+  // `m2` see `0` from the cache.
+  itBundled("cjs/__toCommonJS_module_exports_named_export_falsy_cache_pin", {
+    files: {
+      "/entry.js": /* js */ `
+        const m1 = require('./m.js');
+        require('./m.js').bump;  // no-op; just imports the ns helper
+        const { bump } = require('./ns.js');
+        bump();
+        const m2 = require('./m.js');
+        console.log(m1, m2);
+      `,
+      // Proxies the live binding so entry.js can mutate it via a CJS
+      // wrapper; the mutation changes what the getter would return on a
+      // fresh read, but must NOT change what the cache returns.
+      "/ns.js": /* js */ `
+        import * as m from './m.js';
+        export function bump() { m.bumpInternal(); }
+      `,
+      "/m.js": /* js */ `
+        let value = 0;
+        export function bumpInternal() { value = 999; }
+        export { value as "module.exports" }
+      `,
+    },
+    run: {
+      stdout: "0 0",
     },
   });
 });

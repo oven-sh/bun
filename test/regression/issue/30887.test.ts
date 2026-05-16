@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { bunEnv, bunExe, tempDir } from "harness";
 
 // Under `--parallel` / `--isolate`, `bun test` reads transpiled preloads from
 // the isolation source provider cache. That path dropped the `has_tla` flag
@@ -69,8 +69,7 @@ preload = ["./preload.ts"]
 test("async preload survives runtime transpiler cache round-trip (--isolate)", async () => {
   // Pad the preload past MINIMUM_CACHE_SIZE (4 KiB). Declared variables are
   // enough — we just need byte-length, not any particular JS behavior.
-  const padding =
-    "\n" + Array.from({ length: 400 }, (_, i) => `const pad_${i} = ${i};`).join("\n");
+  const padding = "\n" + Array.from({ length: 400 }, (_, i) => `const pad_${i} = ${i};`).join("\n");
 
   using dir = tempDir("bun-test-30887-cache-", {
     "preload.ts": `
@@ -118,8 +117,7 @@ preload = ["./preload.ts"]
 // next run overwrites it with the current version rather than silently
 // accepting the stale entry.
 test("stale transpiler cache entries are rejected (version bump)", async () => {
-  const padding =
-    "\n" + Array.from({ length: 400 }, (_, i) => `const pad_${i} = ${i};`).join("\n");
+  const padding = "\n" + Array.from({ length: 400 }, (_, i) => `const pad_${i} = ${i};`).join("\n");
 
   using dir = tempDir("bun-test-30887-stale-", {
     "preload.ts": `

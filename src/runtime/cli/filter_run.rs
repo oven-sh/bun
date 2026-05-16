@@ -283,6 +283,22 @@ struct ElideResult<'b> {
     elided_count: usize,
 }
 
+#[derive(Copy, Clone)]
+enum RedrawMode {
+    /// Live frame during the run. Cap per-handle content to fit the terminal
+    /// so a subsequent redraw can fully clear it (prevents #28800).
+    Live,
+    /// Ctrl+C / signal — dump every buffered line regardless of `elide_count`
+    /// to aid debugging. Still clamps cursor-up to terminal rows so the clear
+    /// loop doesn't over-emit.
+    Abort,
+    /// Last frame on a clean successful exit. Honors the user's
+    /// `--elide-lines` (so `--elide-lines=0` actually shows everything per
+    /// the documented contract), but does not enforce the terminal cap
+    /// because there is no next redraw to corrupt.
+    Final,
+}
+
 impl<'a> State<'a> {
     pub(crate) fn is_done(&self) -> bool {
         self.remaining_scripts == 0
@@ -295,7 +311,7 @@ impl<'a> State<'a> {
     ) -> Result<(), bun_core::Error> {
         if self.pretty_output {
             handle.buffer.extend_from_slice(chunk);
-            let _ = self.redraw(false);
+            let _ = self.redraw(RedrawMode::Live);
         } else {
             let mut content = chunk;
             self.draw_buf.clear();
@@ -353,7 +369,7 @@ impl<'a> State<'a> {
             }
         }
         if self.pretty_output {
-            let _ = self.redraw(false);
+            let _ = self.redraw(RedrawMode::Live);
         } else {
             self.draw_buf.clear();
             // flush any remaining buffer
@@ -502,10 +518,16 @@ impl<'a> State<'a> {
         }
     }
 
-    fn redraw(&mut self, is_abort: bool) -> Result<(), bun_core::Error> {
+    fn redraw(&mut self, mode: RedrawMode) -> Result<(), bun_core::Error> {
         if !self.pretty_output {
             return Ok(());
         }
+        let is_abort = matches!(mode, RedrawMode::Abort);
+        // `Final` is the last frame on clean exit. No subsequent redraw will
+        // clear or overprint it, so the terminal cap isn't needed to prevent
+        // overflow, and we can honor the user's `--elide-lines=0` = "show
+        // everything" without risking #28800 on the next frame.
+        let skip_terminal_cap = !matches!(mode, RedrawMode::Live);
         self.draw_buf.clear();
         self.draw_buf
             .extend_from_slice(Output::SYNCHRONIZED_START.as_bytes());
@@ -531,17 +553,22 @@ impl<'a> State<'a> {
         let terminal_rows = Self::get_terminal_rows();
         let usable_rows: Option<usize> = terminal_rows.map(|r| r.saturating_sub(1));
         // `show_indicator` reserves an extra line per handle for the
-        // "[N lines elided]" marker. When the terminal is too short even for
-        // that, we drop the marker so the frame still fits.
-        let show_indicator = if is_abort {
+        // "[N lines elided]" marker. Threshold is `rows >= 4 * n` so the
+        // indicator only turns on when at least one content line per handle
+        // still fits (content = `(rows - 3*n) / n >= 1` iff `rows >= 4*n`).
+        // Otherwise there's a non-monotonic valley `3n < rows < 4n` where
+        // enlarging the terminal would replace a content line with an
+        // "[N lines elided]" marker. When capping isn't applied at all
+        // (`Abort`/`Final`), we always show the indicator.
+        let show_indicator = if skip_terminal_cap {
             true
         } else {
             match usable_rows {
-                Some(rows) => rows > 3 * self.handles.len(),
+                Some(rows) => rows >= 4 * self.handles.len(),
                 None => true,
             }
         };
-        let terminal_cap: Option<usize> = if is_abort {
+        let terminal_cap: Option<usize> = if skip_terminal_cap {
             None
         } else {
             match usable_rows {
@@ -724,9 +751,14 @@ impl<'a> State<'a> {
     }
 
     pub(crate) fn finalize(&mut self) -> u8 {
-        if self.aborted {
-            let _ = self.redraw(true);
-        }
+        // Render one more frame unconditionally: `Abort` on Ctrl+C (dumps
+        // everything), `Final` on clean exit (honors `--elide-lines` but
+        // skips the terminal cap since no further redraw can corrupt it).
+        let _ = self.redraw(if self.aborted {
+            RedrawMode::Abort
+        } else {
+            RedrawMode::Final
+        });
         for handle in self.handles.iter() {
             if let Some(proc) = &handle.process {
                 match &proc.status {

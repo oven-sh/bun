@@ -2242,27 +2242,16 @@ impl RealFS {
 
         let had_handle = maybe_handle.is_some();
         // Zig: `defer { if (maybe_handle == null and (!store_fd or fs.needToCloseFiles())) handle.close(); }`
-        let _opened: Option<bun_sys::Dir>;
-        let raw: Fd;
+        // Hold ownership of a freshly-opened handle until `readdir` succeeds;
+        // disarm only on the success path where the fd escapes into the entry
+        // cache. Caller-supplied handles stay caller-owned.
+        let mut _opened: Option<bun_sys::Dir> = None;
         let handle: &bun_sys::Dir = match maybe_handle {
-            Some(h) => {
-                _opened = None;
-                raw = Fd::INVALID;
-                let _ = raw;
-                h
-            }
+            Some(h) => h,
             None => match self.open_dir(dir) {
                 Ok(h) => {
-                    if store_fd && !self.need_to_close_files() {
-                        raw = h.into_raw();
-                        _opened = None;
-                        bun_sys::Dir::borrow(&raw)
-                    } else {
-                        raw = Fd::INVALID;
-                        let _ = raw;
-                        _opened = Some(h);
-                        _opened.as_ref().unwrap()
-                    }
+                    _opened = Some(h);
+                    _opened.as_ref().unwrap()
                 }
                 Err(err) => {
                     return Ok(self.read_directory_error(entries_guard.as_ref(), dir, err)?);
@@ -2301,9 +2290,21 @@ impl RealFS {
             }
         };
 
+        // Capture before `handle`'s borrow of `_opened` ends.
+        let handle_fd = handle.fd();
+
+        // `readdir` succeeded. If the resolver caches fds, hand the
+        // freshly-opened one off. (The Zig spec leaked here — its `defer` only
+        // closes when `!store_fd || needToCloseFiles()`, on success or failure.)
+        if !had_handle && store_fd && !self.need_to_close_files() {
+            if let Some(d) = _opened.take() {
+                let _ = d.into_raw();
+            }
+        }
+
         if let Some(map) = entries_guard.as_ref() {
             if store_fd && !entries.fd.is_valid() {
-                entries.fd = handle.fd();
+                entries.fd = handle_fd;
             }
 
             // PORT NOTE: Zig stores `EntriesOption{ .entries: *DirEntry }` (raw pointer), so

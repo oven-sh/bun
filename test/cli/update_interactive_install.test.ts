@@ -196,76 +196,79 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
   // prompt-rendering timing differences that make the `\x1b[?25h` assertion
   // flaky (the SIGINT test below is the one that actually fails pre-fix on
   // Linux, which is what the gate cares about).
-  test.skipIf(process.platform === "win32")("Ctrl+C during multi-select prompt restores the cursor and exits cleanly", async () => {
-    using dir = tempDir("update-interactive-ctrlc", {
-      "package.json": JSON.stringify({
-        name: "test-project",
-        version: "1.0.0",
-        dependencies: {
-          "is-even": "0.1.0",
-        },
-      }),
-    });
+  test.skipIf(process.platform === "win32")(
+    "Ctrl+C during multi-select prompt restores the cursor and exits cleanly",
+    async () => {
+      using dir = tempDir("update-interactive-ctrlc", {
+        "package.json": JSON.stringify({
+          name: "test-project",
+          version: "1.0.0",
+          dependencies: {
+            "is-even": "0.1.0",
+          },
+        }),
+      });
 
-    await using installProc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    expect(await installProc.exited).toBe(0);
+      await using installProc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(await installProc.exited).toBe(0);
 
-    await using updateProc = Bun.spawn({
-      cmd: [bunExe(), "update", "--interactive"],
-      cwd: String(dir),
-      env: { ...bunEnv, FORCE_COLOR: "1" },
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+      await using updateProc = Bun.spawn({
+        cmd: [bunExe(), "update", "--interactive"],
+        cwd: String(dir),
+        env: { ...bunEnv, FORCE_COLOR: "1" },
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
 
-    try {
-      // Byte 0x03 is Ctrl+C. On the interactive prompt's input loop this
-      // takes the `3 | 4` (ctrl+c / ctrl+d) arm, which calls
-      // `cleanup_and_reprint!(false)` and returns `EndOfStream`. The
-      // scopeguard defer then emits `\x1b[?25h` to restore the cursor
-      // before the "Cancelled" line prints and the process exits 0.
-      updateProc.stdin.write("\x03");
-      updateProc.stdin.end();
+      try {
+        // Byte 0x03 is Ctrl+C. On the interactive prompt's input loop this
+        // takes the `3 | 4` (ctrl+c / ctrl+d) arm, which calls
+        // `cleanup_and_reprint!(false)` and returns `EndOfStream`. The
+        // scopeguard defer then emits `\x1b[?25h` to restore the cursor
+        // before the "Cancelled" line prints and the process exits 0.
+        updateProc.stdin.write("\x03");
+        updateProc.stdin.end();
 
-      const [stdout, stderr, exitCode] = await Promise.all([
-        updateProc.stdout.text(),
-        updateProc.stderr.text(),
-        updateProc.exited,
-      ]);
+        const [stdout, stderr, exitCode] = await Promise.all([
+          updateProc.stdout.text(),
+          updateProc.stderr.text(),
+          updateProc.exited,
+        ]);
 
-      if (exitCode !== 0 || !stdout.includes("\x1b[?25h")) {
-        console.log("STDOUT (hex preview):", Buffer.from(stdout).toString("hex").slice(0, 400));
-        console.log("STDERR:", stderr);
+        if (exitCode !== 0 || !stdout.includes("\x1b[?25h")) {
+          console.log("STDOUT (hex preview):", Buffer.from(stdout).toString("hex").slice(0, 400));
+          console.log("STDERR:", stderr);
+        }
+
+        // The defer must have re-shown the cursor before exit.
+        expect(stdout).toContain("\x1b[?25h");
+        // And disabled mouse tracking that the prompt had enabled.
+        expect(stdout).toContain("\x1b[?1000l");
+        expect(stdout).toContain("\x1b[?1006l");
+        // Graceful cancel message.
+        expect(stdout).toContain("Cancelled");
+
+        // package.json must be untouched — Ctrl+C cancels the update.
+        const pkg = JSON.parse(readFileSync(join(String(dir), "package.json"), "utf8"));
+        expect(pkg.dependencies["is-even"]).toBe("0.1.0");
+
+        // Clean exit — asserted last so stdout/stderr diagnostics show up
+        // above a non-zero failure.
+        expect(exitCode).toBe(0);
+      } catch (err) {
+        updateProc.stdin.end();
+        updateProc.kill();
+        throw err;
       }
-
-      // The defer must have re-shown the cursor before exit.
-      expect(stdout).toContain("\x1b[?25h");
-      // And disabled mouse tracking that the prompt had enabled.
-      expect(stdout).toContain("\x1b[?1000l");
-      expect(stdout).toContain("\x1b[?1006l");
-      // Graceful cancel message.
-      expect(stdout).toContain("Cancelled");
-
-      // package.json must be untouched — Ctrl+C cancels the update.
-      const pkg = JSON.parse(readFileSync(join(String(dir), "package.json"), "utf8"));
-      expect(pkg.dependencies["is-even"]).toBe("0.1.0");
-
-      // Clean exit — asserted last so stdout/stderr diagnostics show up
-      // above a non-zero failure.
-      expect(exitCode).toBe(0);
-    } catch (err) {
-      updateProc.stdin.end();
-      updateProc.kill();
-      throw err;
-    }
-  });
+    },
+  );
 
   // PTY variant that exercises the raw-mode TTY byte-3 path end-to-end.
   // NOTE: this does NOT reproduce the original #30890 console-ctrl-handler
@@ -279,100 +282,103 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
   // byte-3 cleanup path (scopeguard defer → cursor restore → "Cancelled"
   // → clean exit) against regressions; skipped on Windows for the same
   // timing-flakiness reason noted on the piped test above.
-  test.skipIf(process.platform === "win32")("Ctrl+C through a real PTY restores the cursor and exits cleanly", async () => {
-    using dir = tempDir("update-interactive-ctrlc-pty", {
-      "package.json": JSON.stringify({
-        name: "test-project",
-        version: "1.0.0",
-        dependencies: {
-          "is-even": "0.1.0",
+  test.skipIf(process.platform === "win32")(
+    "Ctrl+C through a real PTY restores the cursor and exits cleanly",
+    async () => {
+      using dir = tempDir("update-interactive-ctrlc-pty", {
+        "package.json": JSON.stringify({
+          name: "test-project",
+          version: "1.0.0",
+          dependencies: {
+            "is-even": "0.1.0",
+          },
+        }),
+      });
+
+      await using installProc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(await installProc.exited).toBe(0);
+
+      const decoder = new TextDecoder();
+      let output = "";
+      let sawPrompt = false;
+      let sawCancelled = false;
+      const promptReady = Promise.withResolvers<void>();
+      // Resolved inside data() when "Cancelled" arrives. Key on the LAST
+      // thing the child writes (not the earlier `\x1b[?25h`): the Rust code
+      // flushes the cursor-restore, then prints "Cancelled" in a separate
+      // prettyln that hits conhost as a separate write. On Windows ConPTY
+      // those arrive as independent IOCP completions, and proc.exited races
+      // the final data IOCP (see terminal-platform-gaps.test.ts:56-59). The
+      // exit() callback is not an alternative — it does not fire on child
+      // exit for an externally-created Bun.Terminal (same file, L322-335).
+      const cancelledSeen = Promise.withResolvers<void>();
+
+      await using terminal = new Bun.Terminal({
+        cols: 120,
+        rows: 30,
+        data(_t, chunk: Uint8Array) {
+          output += decoder.decode(chunk, { stream: true });
+          if (!sawPrompt && output.includes("\x1b[?25l")) {
+            sawPrompt = true;
+            promptReady.resolve();
+          }
+          if (!sawCancelled && output.includes("Cancelled")) {
+            sawCancelled = true;
+            cancelledSeen.resolve();
+          }
         },
-      }),
-    });
+      });
 
-    await using installProc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    expect(await installProc.exited).toBe(0);
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "update", "--interactive"],
+        cwd: String(dir),
+        env: { ...bunEnv, FORCE_COLOR: "1" },
+        terminal,
+      });
 
-    const decoder = new TextDecoder();
-    let output = "";
-    let sawPrompt = false;
-    let sawCancelled = false;
-    const promptReady = Promise.withResolvers<void>();
-    // Resolved inside data() when "Cancelled" arrives. Key on the LAST
-    // thing the child writes (not the earlier `\x1b[?25h`): the Rust code
-    // flushes the cursor-restore, then prints "Cancelled" in a separate
-    // prettyln that hits conhost as a separate write. On Windows ConPTY
-    // those arrive as independent IOCP completions, and proc.exited races
-    // the final data IOCP (see terminal-platform-gaps.test.ts:56-59). The
-    // exit() callback is not an alternative — it does not fire on child
-    // exit for an externally-created Bun.Terminal (same file, L322-335).
-    const cancelledSeen = Promise.withResolvers<void>();
+      try {
+        // Wait for the prompt to render before writing; race against
+        // proc.exited so a hypothetical pre-prompt crash surfaces as an
+        // assertion failure instead of a timeout.
+        await Promise.race([promptReady.promise, proc.exited]);
+        terminal.write("\x03");
 
-    await using terminal = new Bun.Terminal({
-      cols: 120,
-      rows: 30,
-      data(_t, chunk: Uint8Array) {
-        output += decoder.decode(chunk, { stream: true });
-        if (!sawPrompt && output.includes("\x1b[?25l")) {
-          sawPrompt = true;
-          promptReady.resolve();
+        // Wait for the final "Cancelled" chunk to arrive before asserting —
+        // everything we care about has been flushed by then.
+        await Promise.race([cancelledSeen.promise, proc.exited]);
+        const exitCode = await proc.exited;
+        output += decoder.decode();
+
+        if (exitCode !== 0 || !output.includes("\x1b[?25h")) {
+          console.log("PTY output (hex preview):", Buffer.from(output).toString("hex").slice(0, 800));
         }
-        if (!sawCancelled && output.includes("Cancelled")) {
-          sawCancelled = true;
-          cancelledSeen.resolve();
-        }
-      },
-    });
 
-    const proc = Bun.spawn({
-      cmd: [bunExe(), "update", "--interactive"],
-      cwd: String(dir),
-      env: { ...bunEnv, FORCE_COLOR: "1" },
-      terminal,
-    });
+        // The cursor-restore sequence must be present — this is the whole
+        // point of the issue.
+        expect(output).toContain("\x1b[?25h");
+        // And the mouse-tracking modes the prompt enabled must be disabled.
+        expect(output).toContain("\x1b[?1000l");
+        expect(output).toContain("\x1b[?1006l");
+        expect(output).toContain("Cancelled");
 
-    try {
-      // Wait for the prompt to render before writing; race against
-      // proc.exited so a hypothetical pre-prompt crash surfaces as an
-      // assertion failure instead of a timeout.
-      await Promise.race([promptReady.promise, proc.exited]);
-      terminal.write("\x03");
+        // package.json must be untouched.
+        const pkg = JSON.parse(readFileSync(join(String(dir), "package.json"), "utf8"));
+        expect(pkg.dependencies["is-even"]).toBe("0.1.0");
 
-      // Wait for the final "Cancelled" chunk to arrive before asserting —
-      // everything we care about has been flushed by then.
-      await Promise.race([cancelledSeen.promise, proc.exited]);
-      const exitCode = await proc.exited;
-      output += decoder.decode();
-
-      if (exitCode !== 0 || !output.includes("\x1b[?25h")) {
-        console.log("PTY output (hex preview):", Buffer.from(output).toString("hex").slice(0, 800));
+        // Clean exit — asserted last so PTY output diagnostics show up above
+        // a non-zero failure.
+        expect(exitCode).toBe(0);
+      } finally {
+        proc.kill();
       }
-
-      // The cursor-restore sequence must be present — this is the whole
-      // point of the issue.
-      expect(output).toContain("\x1b[?25h");
-      // And the mouse-tracking modes the prompt enabled must be disabled.
-      expect(output).toContain("\x1b[?1000l");
-      expect(output).toContain("\x1b[?1006l");
-      expect(output).toContain("Cancelled");
-
-      // package.json must be untouched.
-      const pkg = JSON.parse(readFileSync(join(String(dir), "package.json"), "utf8"));
-      expect(pkg.dependencies["is-even"]).toBe("0.1.0");
-
-      // Clean exit — asserted last so PTY output diagnostics show up above
-      // a non-zero failure.
-      expect(exitCode).toBe(0);
-    } finally {
-      proc.kill();
-    }
-  });
+    },
+  );
 
   // External SIGINT (or Windows Ctrl+Break / console-close) must also
   // restore the cursor. The in-prompt byte-3 path handles keyboard Ctrl+C

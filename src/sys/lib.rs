@@ -961,7 +961,7 @@ use core::ffi::{c_char, c_int, c_void};
 pub use bun_core::errno_to_zig_err;
 pub use bun_core::{Fd, FdKind, FdNative, FdOptional, FileKind, Mode, Stdio, kind_from_mode};
 
-/// Mode passed to `mkdirat(2)` when creating install-owned directories.
+/// Mode passed to `mkdirat(2)` when creating directories.
 ///
 /// POSIX applies the process umask on top of this, so the final permission
 /// is `0o777 & ~umask`. With the default umask of `0o022` this yields

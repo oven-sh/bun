@@ -302,11 +302,19 @@ pub fn ParseStmt(
                         alias = G.ExportStarAlias{ .loc = p.lexer.loc(), .original_name = name };
                         try p.lexer.next();
                         try p.lexer.expectContextualKeyword("from");
-                        path = try p.parsePath();
+                        // `declare module "x" { export * as n from "p" with { ... } }`
+                        // gets erased wholesale — suppress the unsupported-attribute error.
+                        path = if (opts.is_typescript_declare)
+                            try p.parseTypeOnlyPath()
+                        else
+                            try p.parsePath();
                     } else {
                         // "export * from 'path'"
                         try p.lexer.expectContextualKeyword("from");
-                        path = try p.parsePath();
+                        path = if (opts.is_typescript_declare)
+                            try p.parseTypeOnlyPath()
+                        else
+                            try p.parsePath();
                         const name = try fs.PathName.init(path.text).nonUniqueNameString(p.allocator);
                         namespace_ref = try p.storeNameInRef(name);
                     }
@@ -350,8 +358,7 @@ pub fn ParseStmt(
                         // `export { type Foo } from "p" with { ... }` erases to nothing
                         // (checked below at `clauses.len == 0 and had_type_only_exports`),
                         // so suppress the unsupported-attribute error for that shape.
-                        const is_type_only_export = comptime is_typescript_enabled;
-                        const parsedPath = if (is_type_only_export and export_clause.clauses.len == 0 and export_clause.had_type_only_exports)
+                        const parsedPath = if ((comptime is_typescript_enabled) and export_clause.clauses.len == 0 and export_clause.had_type_only_exports)
                             try p.parseTypeOnlyPath()
                         else
                             try p.parsePath();
@@ -1100,7 +1107,14 @@ pub fn ParseStmt(
                 },
             }
 
-            const path = try p.parsePath();
+            // `declare module "x" { import X from "p" with { ... } }` gets erased
+            // to `S.TypeScript{}` in `parseTypeScriptNamespaceStmt` — so suppress
+            // the unsupported-attribute error here (matches how erased
+            // `import type ...` is routed through `parseTypeOnlyPath`).
+            const path = if (opts.is_typescript_declare)
+                try p.parseTypeOnlyPath()
+            else
+                try p.parsePath();
             try p.lexer.expectOrInsertSemicolon();
 
             return try p.processImportStatement(stmt, path, loc, was_originally_bare_import);

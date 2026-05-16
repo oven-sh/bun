@@ -1255,11 +1255,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if p.lexer.is_contextual_keyword(b"from") {
                     p.lexer.expect_contextual_keyword(b"from")?;
                     // If this whole `export { type ... } from` gets erased
-                    // (all clauses are type-only), allow arbitrary attribute
-                    // keys for TypeScript's `resolution-mode` support.
-                    let parsed_path = if Self::IS_TYPESCRIPT_ENABLED
+                    // (all clauses are type-only, or we're inside `declare
+                    // module` which erases the entire block), allow arbitrary
+                    // attribute keys for TypeScript's `resolution-mode`
+                    // support.
+                    let parsed_path = if (Self::IS_TYPESCRIPT_ENABLED
                         && export_clause.clauses.is_empty()
-                        && export_clause.had_type_only_exports
+                        && export_clause.had_type_only_exports)
+                        || opts.is_typescript_declare
                     {
                         p.parse_type_only_path()?
                     } else {

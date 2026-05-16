@@ -1671,26 +1671,39 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // scheduleDeinit can be called inside a finalizer.
             // Therefore, we split it into two tasks.
             self.flags.insert(ServerFlags::TERMINATED);
-            // PORT NOTE: Zig `AnyTask.New(App, App.close).init(app)`. Use ManagedTask
-            // (not Box<AnyTask>) so the box is freed after run and drained on VM teardown.
+            // PORT NOTE: Zig `AnyTask.New(App, App.close).init(app)` — Rust
+            // `AnyTask` stores an erased fn-ptr directly (the `New` shim cannot
+            // take a comptime fn value on stable Rust).
             let app = self.app.unwrap();
-            vm.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(app, |app| {
-                // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                bun_opaque::opaque_deref_mut(app).close();
-                Ok(())
+            let task = bun_core::heap::into_raw(Box::new(bun_event_loop::AnyTask::AnyTask {
+                ctx: core::ptr::NonNull::new(app.cast()),
+                callback: |ctx: *mut core::ffi::c_void| {
+                    // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                    bun_opaque::opaque_deref_mut(ctx.cast::<uws_sys::NewApp<SSL>>()).close();
+                    Ok(())
+                },
             }));
+            vm.enqueue_task(bun_event_loop::Task::init(task));
         }
 
-        // ManagedTask: box freed after run, and `EventLoop::deinit` frees stranded
-        // boxes if the VM tears down before the next tick (Zig had the same two-task
-        // split; sync `Self::deinit(self)` would UAF a re-entrant finalizer's `&mut`).
-        vm.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(
-            std::ptr::from_mut::<Self>(self),
-            |this| {
-                Self::deinit(this);
+        // LEAK(LSan): if the process exits before the next tick drains the task
+        // queue, this `Box<AnyTask>` (and the `App.close` task above) strands.
+        // This cannot be a synchronous deinit:
+        //   - `App.close()` runs uWS callbacks that may finalize JS objects, and
+        //     `schedule_deinit` itself can be re-entered from a finalizer — a
+        //     sync `Self::deinit(self)` here would free `self` out from under
+        //     the active finalizer's `&mut`. Zig had the same two-task split.
+        // Proper fix: have `VirtualMachine` drain or free unrun queued tasks on
+        // `destroy()` (BUN_DESTRUCT_VM_ON_EXIT=1). That lives in
+        // `src/event_loop/` / `src/jsc/VirtualMachine.rs`, not here.
+        let task = bun_core::heap::into_raw(Box::new(bun_event_loop::AnyTask::AnyTask {
+            ctx: core::ptr::NonNull::new(std::ptr::from_mut::<Self>(self).cast()),
+            callback: |ctx: *mut core::ffi::c_void| {
+                Self::deinit(ctx.cast::<Self>());
                 Ok(())
             },
-        ));
+        }));
+        vm.enqueue_task(bun_event_loop::Task::init(task));
     }
 
     pub fn on_listen(&mut self, socket: Option<*mut uws_sys::app::ListenSocket<SSL>>) {

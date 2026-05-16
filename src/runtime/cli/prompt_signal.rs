@@ -1,7 +1,7 @@
 //! Signal-handler machinery for interactive-prompt cursor restoration.
 //!
 //! Shared by `bun update --interactive`
-//! (`update_interactive_command.rs::UpdateInteractiveCommand::ask_for_updates`)
+//! (`update_interactive_command.rs::UpdateInteractiveCommand::prompt_for_updates`)
 //! and `bun init`
 //! (`init_command.rs::InitCommand::radio`). Both hide the cursor with
 //! `\x1b[?25l` on entry and register a `scopeguard::defer!` to restore it on
@@ -37,16 +37,24 @@ use core::sync::atomic::{AtomicI32, Ordering};
 #[cfg(unix)]
 const RESTORE_SEQUENCE: &[u8] = b"\x1b[?25h\x1b[?1000l\x1b[?1006l\r\n";
 
+// libuv entry point already linked by `Bun__ttySetMode`'s atexit hook (see
+// src/jsc/bindings/wtf-bindings.cpp). tcsetattr is not strictly
+// async-signal-safe per POSIX, but libuv + the existing `onExitSignal` in
+// c-bindings.cpp use it from a signal handler on every TTY-owning Bun
+// process already, so calling it here is consistent with the rest of the
+// codebase.
+//
+// Signature matches the authoritative `libuv_sys::libuv::uv_tty_reset_mode`
+// and the C definition in `wtf-bindings.cpp:42`. The `napi_body.rs:3610`
+// stub declares this as `fn()` (no return) as a symbol-export placeholder
+// that's never actually called — see the NOTE at `napi_body.rs:3109` —
+// so `clashing_extern_declarations` fires across the two; suppress it the
+// same way napi_body does (#[allow] on the block) since the real ABI is
+// the one here.
 #[cfg(unix)]
+#[allow(clashing_extern_declarations)]
 unsafe extern "C" {
-    // libuv entry point already linked by `Bun__ttySetMode`'s atexit hook
-    // (see src/jsc/bindings/wtf-bindings.cpp). tcsetattr is not strictly
-    // async-signal-safe per POSIX, but libuv + the existing
-    // `onExitSignal` in c-bindings.cpp use it from a signal handler on
-    // every TTY-owning Bun process already, so calling it here is
-    // consistent with the rest of the codebase. Signature matches
-    // `napi_body.rs:3610` (return value ignored).
-    pub fn uv_tty_reset_mode();
+    pub fn uv_tty_reset_mode() -> libc::c_int;
 }
 
 #[cfg(unix)]
@@ -66,7 +74,7 @@ extern "C" fn handler(sig: i32) {
     // saved termios snapshot. Call from signal handler mirrors libuv's own
     // `onExitSignal` in src/jsc/bindings/c-bindings.cpp.
     unsafe {
-        uv_tty_reset_mode();
+        let _ = uv_tty_reset_mode();
     }
     // Conventional `128 + signum` exit status for death-by-signal. _exit is
     // async-signal-safe and does not run atexit (which would try to restore

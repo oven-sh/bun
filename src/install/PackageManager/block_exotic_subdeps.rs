@@ -211,9 +211,9 @@ fn classify(res_tag: ResolutionTag, literal_raw: &[u8]) -> Option<&'static str> 
         ResolutionTag::Workspace => match literal_tag {
             // Parent wrote plain npm semver; `linkWorkspacePackages`
             // redirected it. Not the parent's doing, not exotic.
-            dependency::Tag::Uninitialized
-            | dependency::Tag::Npm
-            | dependency::Tag::DistTag => None,
+            dependency::Tag::Uninitialized | dependency::Tag::Npm | dependency::Tag::DistTag => {
+                None
+            }
             // `.catalog` handled above the switch — unreachable here.
             dependency::Tag::Catalog => None,
             dependency::Tag::Folder => Some("folder"),

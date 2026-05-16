@@ -15,8 +15,8 @@
 // darwin sections carry no `-fuse-ld=lld` rustflag (while linux still does).
 // No native build involved — it's a pure TypeScript unit check against the
 // generator's output.
-import { expect, test } from "bun:test";
 import { cargoConfigDarwinRegressionMarker } from "bun:internal-for-testing";
+import { expect, test } from "bun:test";
 import { tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";

@@ -226,7 +226,8 @@ impl HotReloaderCtx for VirtualMachine {
             ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => &raw mut **w,
             ImportWatcher::None => unreachable!(),
         };
-        // The VM holds `bun_watcher` type-erased as `*mut c_void` (b2-cycle).
+        // The VM holds `bun_watcher` type-erased as `*mut c_void` (jsc/runtime
+        // crate cycle).
         self.bun_watcher = bun_core::heap::into_raw(iw).cast::<core::ffi::c_void>();
 
         // Wire the resolver's directory-watch callback at the same time.

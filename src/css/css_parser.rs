@@ -1278,8 +1278,8 @@ where
 // at-rule arms now call the leaf-module parse fns directly (`LayerName`,
 // `SupportsCondition`, `KeyframesName`, `PageSelector`, `ContainerName`,
 // `ContainerCondition`, `FontPaletteValuesRule`, `PageRule`, `PropertyRule`
-// have un-gated). Only `@font-face`/`@keyframes` block bodies remain
-// inline-``-gated on their `RuleBodyItemParser` trait impls.
+// have un-gated). Only `@font-face`/`@keyframes` block bodies route through
+// dedicated `RuleBodyItemParser` impls in their leaf modules.
 mod rule_parsers {
     use super::*;
     use crate::selectors::parser as selector_parser;

@@ -1,6 +1,6 @@
 // ══════════════════════════════════════════════════════════════════════════
 // `Transpiler` — the legacy single-file transpile path (pre-`bundle_v2`).
-// resolver↔bundler cycle broken in O; `bun_resolver` is now a direct dep so
+// resolver↔bundler cycle is broken; `bun_resolver` is now a direct dep so
 // the struct and all method bodies are un-gated and live at this tier.
 // ══════════════════════════════════════════════════════════════════════════
 

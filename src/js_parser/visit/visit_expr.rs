@@ -550,8 +550,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     // TODO(port): jsxChildrenKeyData in Zig is a mutable `var` of `Expr.Data`
                     // pointing at `Prefill.String.Children`. ExprData::EString wants a
-                    // `StoreRef<EString>` (arena-backed) so a process-static won't compile (see
-                    // P.rs `` ~7552). Allocate via `p.new_expr` from the const
+                    // `StoreRef<EString>` (arena-backed) so a process-static won't compile.
+                    // Allocate via `p.new_expr` from the const
                     // `prefill::string::CHILDREN` instead — small extra alloc.
                     // PERF(port): was process-static — profile if it shows up on a hot path
                     let children_key = p.new_expr(prefill::string::CHILDREN, expr.loc);

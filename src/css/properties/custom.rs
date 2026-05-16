@@ -9,14 +9,10 @@ use bun_collections::VecExt;
 // `EnvironmentVariableName::{parse, to_css}`, `Function::to_css`,
 // `CustomProperty::parse`, `UnparsedProperty::parse` are now real.
 //
-// A few leaf calls (Url::parse/to_css, CustomIdent::to_css) are still
-// ``-gated in *other* files; those bodies are inlined verbatim
-// under `mod ext` below so the hub compiles without touching
+// A few leaf calls (Url::parse/to_css, CustomIdent::to_css) have their bodies
+// inlined verbatim under `mod ext` below so the hub compiles without touching
 // `values/{url,ident}.rs`. `DashedIdentReference::{parse_with_options,to_css}`
-// are now real and forwarded directly. Remaining internal
-// `` gates carry `blocked_on:` notes for the next round
-// (ComponentParser un-gate from `values::color::gated_full_impl`;
-// `properties::animation` un-gate; `get_fallback` chain).
+// are now real and forwarded directly.
 
 use crate as css;
 use crate::PrintResult;
@@ -48,13 +44,11 @@ use crate::generics::{CssEql, CssHash, DeepClone};
 use bun_alloc::Arena;
 
 // ─── External-gate shims ───────────────────────────────────────────────────
-// `TokenList::{parse,to_css}` bottom out on a handful of leaf fns that still
-// carry `` in *other* files (`values/{url,ident}.rs`,
-// `css_modules.rs`). Those gates are stale — every dependency they cite now
-// exists — but this round's edit scope is `custom.rs` + `css_parser.rs` only.
-// To un-gate the TokenList hub without touching those files, the leaf bodies
-// are inlined here verbatim. Once `url.rs`/`ident.rs` un-gate, callers below
-// can swap back to the canonical methods and this module drops.
+// `TokenList::{parse,to_css}` bottom out on a handful of leaf fns whose
+// canonical homes live in *other* files (`values/{url,ident}.rs`,
+// `css_modules.rs`). To un-gate the TokenList hub without touching those
+// files, the leaf bodies were inlined here verbatim. Once callers swap back
+// to the canonical methods in `url.rs`/`ident.rs`, this module drops.
 mod ext {
     use super::*;
     use crate::dependencies;

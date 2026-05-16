@@ -122,7 +122,7 @@ pub fn runtime_state() -> *mut RuntimeState {
 
 /// Recover this thread's `timer::All` heap as a raw pointer.
 ///
-/// PORT NOTE (b2-cycle): `bun_jsc::VirtualMachine.timer` is a `()` placeholder;
+/// PORT NOTE: `bun_jsc::VirtualMachine.timer` is a `()` placeholder;
 /// the real `All` lives in [`RuntimeState::timer`] until that slot widens.
 /// Null only before [`init_runtime_state`] has run (e.g. `bun_jsc` unit tests
 /// with no high tier, or `Bun__Timer__getNextID` racing init).
@@ -304,7 +304,7 @@ unsafe fn init_runtime_state(
     // zeroed bytes are not a valid `Transpiler` to drop).
     //
     // PORT NOTE: `configure_transform_options_for_bun_vm` lives in the
-    // ``-gated `bun_jsc::config` module; its body (3 field overwrites) is
+    // `bun_jsc::config` module; its body (3 field overwrites) is
     // inlined below over the caller-supplied `opts.transform_options`.
     // SAFETY: `vm.log` was set to a fresh leaked `Box<Log>` by
     // `VirtualMachine::init` immediately before this hook fires.
@@ -3556,9 +3556,8 @@ export default db;
 // `options.getLoaderAndVirtualSource` (spec bundler/options.zig:909-1040).
 //
 // The canonical Rust port (`bun_bundler::options::get_loader_and_virtual_source`)
-// is ``-gated behind a `VmLoaderCtx` vtable that nothing
-// constructs yet, and `Fs::Path::loader` returns the lower-tier
-// `bun_ast::Loader` (a *distinct* nominal type from the
+// goes through a `VmLoaderCtx` vtable, and `Fs::Path::loader` returns the
+// lower-tier `bun_ast::Loader` (a *distinct* nominal type from the
 // `bun_ast::Loader` we need for `TranspileExtra`). Porting the
 // body inline here lets us name `VirtualMachine` directly (no vtable) and look
 // the loader up in `transpiler.options.loaders` (which is already

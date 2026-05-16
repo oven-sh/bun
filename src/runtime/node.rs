@@ -93,9 +93,8 @@ pub mod dirent {
 }
 
 // node_fs.rs (~4.7kL): async task machinery (AsyncFSTask/UVFSRequest/cp/
-// readdir-recursive) is JSC-dense and re-gated *inside* the file with
-// ``. Sync `impl NodeFS` (read_file/write_file/stat/mkdir et al.),
-// `args::*`, `ret::*` are live.
+// readdir-recursive) plus sync `impl NodeFS`
+// (read_file/write_file/stat/mkdir et al.), `args::*`, `ret::*`.
 #[path = "node/node_fs.rs"]
 pub mod fs;
 

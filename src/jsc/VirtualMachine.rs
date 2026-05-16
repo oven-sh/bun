@@ -1629,7 +1629,7 @@ pub struct RuntimeHooks {
     pub print_exception:
         fn(vm: &mut VirtualMachine, value: JSValue, exception_list: Option<&mut ExceptionList>),
     /// `vm.timer.insert(&mut event_loop_timer)` — `Timer::All` lives in
-    /// `bun_runtime::RuntimeState` (b2-cycle); low-tier callers
+    /// `bun_runtime::RuntimeState` (jsc/runtime crate cycle); low-tier callers
     /// (`AbortSignal::Timeout`) reach it through this slot.
     pub timer_insert: unsafe fn(
         vm: *mut VirtualMachine,
@@ -1644,12 +1644,12 @@ pub struct RuntimeHooks {
     /// `SSL_CTX*`, shared by every `tls: true` outbound connection that didn't
     /// supply explicit options. The storage slot lives in `RareData`
     /// (low-tier) but population reaches `RuntimeState.ssl_ctx_cache`
-    /// (`bun_runtime`, b2-cycle); spec rare_data.zig:741.
+    /// (`bun_runtime`); spec rare_data.zig:741.
     pub default_client_ssl_ctx: unsafe fn(vm: *mut VirtualMachine) -> *mut uws::SslCtx,
     /// `RareData.sslCtxCache().getOrCreateOpts(opts, &err)` — per-VM
     /// digest-keyed weak `SSL_CTX*` cache. Returns a +1 ref or `None` on
     /// BoringSSL rejection (`err` populated). `SSLContextCache` lives in
-    /// `bun_runtime::RuntimeState` (b2-cycle).
+    /// `bun_runtime::RuntimeState` (jsc/runtime crate cycle).
     pub ssl_ctx_cache_get_or_create: unsafe fn(
         vm: *mut VirtualMachine,
         opts: uws::SocketContext::BunSocketContextOptions,
@@ -1842,7 +1842,7 @@ impl VirtualMachine {
 
 impl VirtualMachine {
     /// `vm.timer.insert(timer)` — dispatches through `RuntimeHooks` because
-    /// `Timer::All` lives in `bun_runtime` (b2-cycle).
+    /// `Timer::All` lives in `bun_runtime` (jsc/runtime crate cycle).
     ///
     /// # Safety
     /// `timer` must point at a live `EventLoopTimer` not currently linked into
@@ -2230,9 +2230,9 @@ impl VirtualMachine {
 
     /// `eventLoop().autoTickActive()` — like [`auto_tick`](Self::auto_tick)
     /// but only sleeps in the uSockets loop while it has active handles
-    /// (spec event_loop.zig:456). The real body lives in `event_loop.rs`
-    /// behind `` until the b2-cycle (`Timer::All`) breaks; until
-    /// then route through the same `auto_tick` hook so drain loops in
+    /// (spec event_loop.zig:456). The real body lives in `event_loop.rs`;
+    /// `Timer::All` lives in `bun_runtime` so route through the same
+    /// `auto_tick` hook so drain loops in
     /// `on_before_exit` / `bun_main` still make forward progress.
     #[inline]
     pub fn auto_tick_active(&mut self) {
@@ -3059,8 +3059,8 @@ impl VirtualMachine {
     pub fn get_verbose_fetch(&mut self) -> bun_http::HTTPVerboseLevel {
         use bun_http::HTTPVerboseLevel as L;
         if let Some(v) = self.default_verbose_fetch {
-            // PORT NOTE: field is `Option<u8>` until the b2-cycle widens it;
-            // map ordinals back.
+            // PORT NOTE: field is `Option<u8>` because `bun_http::HTTPVerboseLevel`
+            // lives in a higher-tier crate; map ordinals back.
             return match v {
                 1 => L::Headers,
                 2 => L::Curl,

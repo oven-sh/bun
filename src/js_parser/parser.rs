@@ -620,7 +620,7 @@ pub type RuntimeNames = Runtime::Names;
 pub use crate::p::{NewParser, P};
 
 pub use bun_collections::StringHashMap as StringHashMapRe; // TODO(port): name collision with `StringHashMap` re-export
-// NOTE(b0): `pub use bun_js_printer as js_printer;` removed — js_printer is same-tier mutual
+// NOTE: `pub use bun_js_printer as js_printer;` removed — js_printer is same-tier mutual
 // (js_printer depends on js_parser). Downstream callers import bun_js_printer directly.
 
 pub use bun_ast as js_ast;

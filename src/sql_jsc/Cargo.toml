@@ -30,9 +30,10 @@ bun_event_loop.workspace = true
 bun_jsc.workspace = true
 bun_ptr.workspace = true
 bun_sha_hmac.workspace = true
-# bun_runtime intentionally not depended on — it would create a cycle through
-# bun_jsc. The only would-be consumer, `postgres::sasl::SASL::compute_salted_password`
-# (PBKDF2), inlines the BoringSSL call instead; see the PORT NOTE in SASL.rs.
+# bun_runtime intentionally not depended on — bun_runtime already depends on
+# this crate, so adding it here would create a direct cycle. The only would-be
+# consumer, `postgres::sasl::SASL::compute_salted_password` (PBKDF2), inlines
+# the BoringSSL call instead; see the PORT NOTE in SASL.rs.
 # bun_runtime.workspace = true
 bun_sql.workspace = true
 bun_uws.workspace = true

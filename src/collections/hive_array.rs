@@ -256,13 +256,17 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
     /// if `index` is out of bounds or the slot is free — a stale index is
     /// `None`, not UB.
     ///
-    /// `set()`/`unset()` are `pub(crate)` and `alloc()` writes before setting
-    /// the bit, so an occupied slot is always initialized. Calling `box_at`
-    /// twice for the same index without dropping the first box aliases the
-    /// slot — same footgun class as `mem::forget(MutexGuard)` deadlocks; the
-    /// runtime check catches stale/OOB indices, not double-recovery.
+    /// # Safety
+    /// The slot at `index`, if occupied, must hold a fully-initialized `T`,
+    /// and no other live access path ([`HiveSlot`], [`HiveBox`], `*mut T`) to
+    /// it may exist. The bitset check cannot prove this: [`claim`](Self::claim)
+    /// and the deprecated [`get`](Self::get) family set the `used` bit *before*
+    /// the slot is written, so safe code holding a claim token can have an
+    /// occupied-but-uninit slot. Pools that only use [`alloc`](Self::alloc)/
+    /// [`get_init`](Self::get_init) (which write before returning) trivially
+    /// satisfy this.
     #[inline]
-    pub fn box_at(&self, index: usize) -> Option<HiveBox<'_, T, CAPACITY>> {
+    pub unsafe fn box_at(&self, index: usize) -> Option<HiveBox<'_, T, CAPACITY>> {
         if index >= CAPACITY || !self.used.is_set(index) {
             return None;
         }
@@ -535,7 +539,7 @@ impl<'a, T, const CAPACITY: usize> HiveBox<'a, T, CAPACITY> {
     /// Slot index in the owning pool, for storage in an opaque callback context.
     #[inline]
     pub fn index(&self) -> usize {
-        // SAFETY: `slot` always points into `owner.buffer`.
+        // `slot` always points into `owner.buffer`, so `index_of` never fails.
         self.owner
             .index_of(self.slot.as_ptr())
             .expect("HiveBox slot in owner") as usize
@@ -1455,16 +1459,17 @@ mod tests {
         // Hand the boxes back without running Drop (the index is the token).
         core::mem::forget(b0);
         core::mem::forget(b1);
-        let v1 = pool.box_at(i1).unwrap().into_inner();
-        let v0 = pool.box_at(i0).unwrap().into_inner();
+        // SAFETY: `i0`/`i1` were alloc'd above; no other access path.
+        let v1 = unsafe { pool.box_at(i1) }.unwrap().into_inner();
+        let v0 = unsafe { pool.box_at(i0) }.unwrap().into_inner();
         assert_eq!(v0.v, 10);
         assert_eq!(v1.v, 20);
         assert!(!pool.used.is_set(i0));
         assert!(!pool.used.is_set(i1));
         // Stale index: bit was unset by `into_inner()`, second recovery is `None`.
-        assert!(pool.box_at(i0).is_none());
-        // OOB index: runtime check, not UB.
-        assert!(pool.box_at(999).is_none());
+        // SAFETY: stale/OOB indices are caught at runtime — `None`, not UB.
+        assert!(unsafe { pool.box_at(i0) }.is_none());
+        assert!(unsafe { pool.box_at(999) }.is_none());
     }
 }
 

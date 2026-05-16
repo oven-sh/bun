@@ -213,7 +213,13 @@ pub struct VirtualMachine {
     pub exit_handler: ExitHandler,
 
     pub default_tls_reject_unauthorized: Option<bool>,
-    // TODO(port): `default_verbose_fetch` is `Option<http::HTTPVerboseLevel>`.
+    // Spec field is `Option<bun_http::HTTPVerboseLevel>`. Kept as `Option<u8>`
+    // (storing the enum's `repr(u8)` ordinal) so the zero-fill in `init` reads
+    // as `None`: `HTTPVerboseLevel` is a 3-variant `#[repr(u8)]` enum, so
+    // `Option<HTTPVerboseLevel>` uses a niche and all-zero bytes decode as
+    // `Some(HTTPVerboseLevel::None)`, silently skipping the env-var lookup.
+    // Converting to the enum type would need an explicit `write(None)` in the
+    // `addr_of_mut!` init block, like `default_tls_reject_unauthorized` above.
     pub default_verbose_fetch: Option<u8>,
 
     /// Do not access this field directly! It exists in the VirtualMachine struct so
@@ -3059,8 +3065,8 @@ impl VirtualMachine {
     pub fn get_verbose_fetch(&mut self) -> bun_http::HTTPVerboseLevel {
         use bun_http::HTTPVerboseLevel as L;
         if let Some(v) = self.default_verbose_fetch {
-            // PORT NOTE: field is `Option<u8>` because `bun_http::HTTPVerboseLevel`
-            // lives in a higher-tier crate; map ordinals back.
+            // Field stores the `repr(u8)` ordinal (see field decl for why);
+            // map it back to the enum.
             return match v {
                 1 => L::Headers,
                 2 => L::Curl,

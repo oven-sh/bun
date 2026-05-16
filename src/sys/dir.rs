@@ -76,6 +76,12 @@ impl Dir {
     pub fn open_file(&self, sub_path: &[u8], flags: i32, mode: Mode) -> Maybe<File> {
         File::openat(self.fd, sub_path, flags, mode)
     }
+    /// Resolve this dir's absolute path via `/proc/self/fd` (Linux),
+    /// `F_GETPATH` (macOS), or `GetFinalPathNameByHandle` (Windows).
+    #[inline]
+    pub fn get_fd_path<'b>(&self, buf: &'b mut bun_paths::PathBuffer) -> Maybe<&'b mut [u8]> {
+        get_fd_path(self.fd, buf)
+    }
     /// Close now. Equivalent to dropping `self` but discards the syscall
     /// result (matches Zig's `Dir.close()`).
     #[inline]

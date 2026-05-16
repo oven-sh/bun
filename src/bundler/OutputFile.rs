@@ -472,7 +472,7 @@ impl OutputFile {
                         // Zig `root_dir.makePath(parent)` (std.fs.Dir).
                         // `root_dir` is a borrowed fd owned by the caller; do not
                         // construct an owning `Dir` (it would close on drop).
-                        bun_sys::make_path(bun_sys::Dir::borrow(&root_dir), parent)?;
+                        bun_sys::Dir::borrow(&root_dir).make_path(parent)?;
                     }
                 }
 

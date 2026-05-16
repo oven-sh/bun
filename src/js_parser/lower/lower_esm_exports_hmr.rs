@@ -842,8 +842,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 },
                 loc,
             );
-            let call_args =
-                ExprNodeList::from_arena_slice(p.arena.alloc_slice_copy(&[thunk]));
+            let call_args = ExprNodeList::from_arena_slice(p.arena.alloc_slice_copy(&[thunk]));
             self.stmts.push(Stmt::alloc(
                 S::SExpr {
                     value: Expr::init(

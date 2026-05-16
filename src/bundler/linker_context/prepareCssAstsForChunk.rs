@@ -412,6 +412,14 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                             // semantics: bitwise overwrite) before installing the
                             // freshly-allocated list.
                             core::mem::forget(core::mem::replace(&mut ast.rules, new_rules));
+                            // Record the fresh slab so `Chunk::Drop` frees it; its
+                            // elements stay bitwise-aliased to the source AST.
+                            let cap = ast.rules.v.capacity();
+                            if cap != 0 {
+                                let ptr = core::ptr::NonNull::new(ast.rules.v.as_mut_ptr())
+                                    .expect("cap > 0 implies non-dangling");
+                                chunk.owned_css_rule_slabs.0.push((ptr, cap));
+                            }
                         }
                     }
 

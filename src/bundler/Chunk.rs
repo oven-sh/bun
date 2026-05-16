@@ -90,10 +90,40 @@ pub struct Chunk {
     /// PORT NOTE: owned `Box<[u8]>` (was arena-owned `[]const u8` in Zig).
     pub metafile_chunk_json: Box<[u8]>,
 
+    /// `Vec<CssRule>` slabs allocated by `prepareCssAstsForChunk`; freed in `Drop`.
+    pub owned_css_rule_slabs: OwnedCssRuleSlabs,
+
     /// Pack boolean flags to reduce padding overhead.
     /// Previously 3 separate bool fields caused ~21 bytes of padding waste.
     pub flags: Flags,
 }
+
+/// Raw `(ptr, cap)` for `Vec<BundlerCssRule>` slabs `prepareCssAstsForChunk` allocated to
+/// replace bitwise-aliased `asts[i].rules.v`. Elements alias the source AST and must not
+/// be dropped, so `Drop` only `dealloc`s the slab.
+#[derive(Default)]
+pub struct OwnedCssRuleSlabs(
+    pub Vec<(core::ptr::NonNull<bun_css::css_parser::BundlerCssRule>, usize)>,
+);
+
+impl Drop for OwnedCssRuleSlabs {
+    fn drop(&mut self) {
+        for (ptr, cap) in self.0.drain(..) {
+            // SAFETY: each entry is a uniquely-owned global-alloc `Vec<BundlerCssRule>`
+            // slab with cap > 0; dealloc raw without running element destructors.
+            unsafe {
+                let layout =
+                    core::alloc::Layout::array::<bun_css::css_parser::BundlerCssRule>(cap)
+                        .expect("recorded from a live Vec");
+                std::alloc::dealloc(ptr.as_ptr().cast(), layout);
+            }
+        }
+    }
+}
+
+// SAFETY: holds uniquely-owned raw heap slabs; mirrors `Chunk`'s `Send`/`Sync`.
+unsafe impl Send for OwnedCssRuleSlabs {}
+unsafe impl Sync for OwnedCssRuleSlabs {}
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, Default)]
@@ -203,6 +233,7 @@ impl Default for Chunk {
             renamer: bun_renamer::ChunkRenamer::default(),
             compile_results_for_chunk: CompileResultSlots::default(),
             metafile_chunk_json: Box::default(),
+            owned_css_rule_slabs: OwnedCssRuleSlabs::default(),
             flags: Flags::default(),
         }
     }

@@ -36,7 +36,7 @@ pub struct BorderImage {
 impl BorderImage {
     // TODO(port): PropertyFieldMap / VendorPrefixMap were comptime anonymous-struct
     // tables consumed via @field reflection by the shorthand codegen. Replace with
-    // a trait impl (e.g. `impl ShorthandProperty for BorderImage`) in Phase B.
+    // a trait impl (e.g. `impl ShorthandProperty for BorderImage`).
     // PropertyFieldMap:
     //   source -> PropertyIdTag::BorderImageSource
     //   slice  -> PropertyIdTag::BorderImageSlice
@@ -702,7 +702,7 @@ impl BorderImageHandler {
 
                 dest.push(Property::BorderImageSource(mut_source.deep_clone(arena)));
                 // TODO(port): Zig pushed `mut_source.*` by value (move). Cloning here to
-                // avoid partial-move out of `source: Option<Image>`. Revisit in Phase B.
+                // avoid partial-move out of `source: Option<Image>`.
                 self.flushed_properties
                     .insert(BorderImageProperty::BORDER_IMAGE_SOURCE);
             }

@@ -2,7 +2,7 @@
 //!
 //! Spec: src/runtime/bake/DevServer/Assets.zig
 //!
-//! DISSOLVED — the Phase-A draft that lived here duplicated `Assets` and
+//! DISSOLVED — the original draft that lived here duplicated `Assets` and
 //! `EntryIndex` against `dev_server/assets.rs`, with no call sites resolving
 //! to this module (`DevServer.assets` is typed as the canonical
 //! `dev_server::assets::Assets`). The duplicate carried two divergences:

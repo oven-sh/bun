@@ -7,12 +7,12 @@
 // `Extend` traits, plus associated types for `Key`/`Value`/`Of`. The functions
 // below preserve the Zig names and intent but delegate to traits that the
 // concrete collection types (HashMap, Vec, MultiArrayList, Vec) must impl.
-// Phase B: audit call sites of `bun.from(...)` / `bun.fromEntries(...)` and
+// TODO(refactor): audit call sites of `bun.from(...)` / `bun.fromEntries(...)` and
 // likely replace them with direct `.collect()` / `Vec::from` at the caller.
 
 use core::hash::Hash;
 
-// TODO(b0): impls for bun_collections::{VecExt, HashMap, MultiArrayList} move to
+// TODO(port): impls for bun_collections::{VecExt, HashMap, MultiArrayList} move to
 // bun_collections (move-in pass) — orphan rule lets the higher-tier crate impl
 // MapLike/ArrayLike for its own types.
 
@@ -63,7 +63,7 @@ where
     map.ensure_unused_capacity(iter.len());
 
     for (k, v) in iter {
-        // PERF(port): was putAssumeCapacity — profile in Phase B
+        // PERF(port): was putAssumeCapacity — profile if hot.
         map.put_assume_capacity(k, v);
     }
 
@@ -126,8 +126,8 @@ pub type Of<A> = <A as ArrayLike>::Elem;
 // reflection on the *shape* of the input type.
 //
 // TODO(port): Rust cannot introspect "is this a slice / does it have .items /
-// does it have .put". Phase B should delete this fn and have each call site
-// call `from_slice` / `from_entries` / `from_map_like` directly (the caller
+// does it have .put". This fn could be deleted, with each call site calling
+// `from_slice` / `from_entries` / `from_map_like` directly (the caller
 // always statically knows which one it wants). Kept as a thin slice-only
 // forwarder so existing `bun.from(Array, alloc, &[...])` call sites compile.
 #[inline]
@@ -301,7 +301,7 @@ impl<T> ArrayLike for Vec<T> {
     }
 }
 
-// TODO(b0): ArrayLike impls for Vec<T> and MultiArrayList<T> arrive via
+// TODO(port): ArrayLike impls for Vec<T> and MultiArrayList<T> arrive via
 // move-in pass in bun_collections.
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2203,7 +2203,11 @@ pub struct Version {
 }
 
 impl Version {
-    pub const ZERO: Self = Self { major: 0, minor: 0, patch: 0 };
+    pub const ZERO: Self = Self {
+        major: 0,
+        minor: 0,
+        patch: 0,
+    };
 
     /// Parse leading `"MAJOR.MINOR.PATCH"` from a byte slice. Per field:
     /// accumulate ASCII digits (wrapping on overflow), stop at the first
@@ -2233,22 +2237,12 @@ impl Version {
                 break;
             }
         }
-        Self { major: nums[0], minor: nums[1], patch: nums[2] }
+        Self {
+            major: nums[0],
+            minor: nums[1],
+            patch: nums[2],
+        }
     }
-}
-
-/// `const`-context decimal `u32` parse of an ASCII byte slice. No sign, no
-/// whitespace, wrapping on overflow; non-digits are accumulated as garbage so
-/// only feed it digit-only build-time literals (e.g. `env!` version components).
-/// `str::parse` isn't `const`, hence this.
-pub const fn const_parse_u32(bytes: &[u8]) -> u32 {
-    let mut i = 0usize;
-    let mut n: u32 = 0;
-    while i < bytes.len() {
-        n = n.wrapping_mul(10).wrapping_add((bytes[i] - b'0') as u32);
-        i += 1;
-    }
-    n
 }
 
 // ─── RacyCell ─────────────────────────────────────────────────────────────
@@ -2594,7 +2588,7 @@ impl StackCheck {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// B-2 Track A — small helpers from src/bun.zig that downstream crates need.
+// Small helpers from src/bun.zig that downstream crates need.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Zig `bun.Generation` (bun.zig:1926) — bumped each rebuild/rescan to
@@ -2868,7 +2862,7 @@ macro_rules! run_once {
 
 // ── Pollable / is_readable / is_writable ──────────────────────────────────
 // Port of `bun.PollFlag` + `bun.isReadable` / `bun.isWritable` (bun.zig:637).
-// Named `Pollable` to match the Phase-A draft callers (io/PipeReader.rs).
+// Named `Pollable` to match the original draft callers (io/PipeReader.rs).
 // D050 dedup: this is the single canonical copy; `bun::`/`bun_sys::` re-export.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Pollable {
@@ -3275,7 +3269,7 @@ pub mod time {
 // can't do that from a plain fn without leaking, so the canonical port is the
 // `runtime_embed_file!` macro below (per-site `OnceLock<String>` — sanctioned
 // by PORTING.md §Forbidden, "true process-lifetime singleton"). The fn form is
-// kept so existing Phase-A drafts type-check; it's only reachable when the
+// kept so existing draft callers type-check; it's only reachable when the
 // `codegen_embed` feature is off (debug fast-iteration), where panicking with a
 // migration hint is the same UX as the Zig `Output.panic` on read failure.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -3285,7 +3279,7 @@ pub enum EmbedKind {
     Src,
     SrcEager,
 }
-/// Phase-A drafts spelled this both ways; alias keeps both compiling.
+/// The original drafts spelled this both ways; alias keeps both compiling.
 pub type EmbedDir = EmbedKind;
 
 pub fn runtime_embed_file(_root: EmbedKind, sub_path: &'static str) -> &'static str {

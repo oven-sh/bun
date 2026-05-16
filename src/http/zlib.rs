@@ -28,7 +28,7 @@ mod buffer_pool {
 
     pub fn get() -> *mut MutableString {
         // TODO(port): Zig returns `*MutableString` borrowed from a pool node; consider an RAII
-        // guard in Phase B so callers don't hand-pair get/put.
+        // guard so callers don't hand-pair get/put.
         // SAFETY: `first()` returns a valid `*mut PooledMutableString` whose data is initialized
         // (INIT is Some); #[repr(transparent)] makes the cast to `*mut MutableString` sound.
         BufferPool::first().cast::<MutableString>()

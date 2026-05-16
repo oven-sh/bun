@@ -231,9 +231,13 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         #[cfg(not(windows))]
         {
             let g = Self::ensure_posix_group(vm);
-            let Some(sock) =
-                Socket::from_fd(g, uws::SocketKind::Dynamic, fd, std::ptr::from_mut(self), true)
-            else {
+            let Some(sock) = Socket::from_fd(
+                g,
+                uws::SocketKind::Dynamic,
+                fd,
+                std::ptr::from_mut(self),
+                true,
+            ) else {
                 // us_socket_from_fd does NOT take ownership on failure; leaving
                 // the inherited IPC endpoint open keeps the peer process alive.
                 fd.close();
@@ -442,8 +446,8 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                     unsafe { uv::Pipe::close_and_destroy(bun_core::heap::into_raw(p)) };
                 } else {
                     // TODO(port): Zig left the field set if already closing;
-                    // with Box we cannot put it back without re-taking. Phase B
-                    // may need raw *mut uv::Pipe here.
+                    // with Box we cannot put it back without re-taking. May
+                    // need raw *mut uv::Pipe here.
                     self.backend.pipe = Some(p);
                 }
             }

@@ -138,7 +138,7 @@ pub fn write_escaped_json<W: Write + ?Sized>(
     chunks: &[Chunk],
     writer: &mut W,
 ) -> Result<(), bun_core::Error> {
-    // PERF(port): was stack-fallback (std.heap.stackFallback(4096)) — profile in Phase B
+    // PERF(port): was stack-fallback (std.heap.stackFallback(4096)).
     let mut bytes: Vec<u8> = Vec::new();
     write(index, graph, linker_graph, chunks, &mut bytes)?;
     bun_js_printer::write_pre_quoted_string::<_, b'"', false, true, { Encoding::Utf8 }>(

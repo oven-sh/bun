@@ -157,7 +157,7 @@ pub mod caching_sha2_password {
     // `write()` call. `RawSlice<u8>` (encapsulated fat raw pointer with safe
     // `Deref` under the outlives-holder invariant) avoids the per-method
     // `unsafe { &*self.field }` deref triple while keeping the struct
-    // lifetime-free per PORTING.md Phase-A rules.
+    // lifetime-free per PORTING.md conventions.
     pub struct EncryptedPassword {
         pub password: bun_ptr::RawSlice<u8>,
         pub public_key: bun_ptr::RawSlice<u8>,
@@ -194,7 +194,7 @@ pub mod caching_sha2_password {
                 return Err(err!("InvalidPublicKey"));
             }
             // 1024 is overkill but lets cover all cases
-            // PERF(port): was stack-fallback (1024-byte stack buf with heap overflow path) — profile in Phase B
+            // PERF(port): was stack-fallback (1024-byte stack buf with heap overflow path) — profile if hot.
             let needed_len = password.len() + 1;
             let mut plain_password = vec![0u8; needed_len];
             plain_password[0..password.len()].copy_from_slice(password);
@@ -265,7 +265,7 @@ pub mod caching_sha2_password {
             // SAFETY: *rsa is a valid RSA*.
             let rsa_size = unsafe { boringssl::c::RSA_size(*rsa) } as usize;
             // should never ne bigger than 4096 but lets cover all cases
-            // PERF(port): was stack-fallback (4096-byte stack buf with heap overflow path) — profile in Phase B
+            // PERF(port): was stack-fallback (4096-byte stack buf with heap overflow path) — profile if hot.
             let mut encrypted_password = vec![0u8; rsa_size];
 
             // SAFETY: plain_password and encrypted_password are valid for the given

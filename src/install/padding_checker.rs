@@ -36,7 +36,7 @@
 // `@compileError`s on any gap between `@offsetOf(T, field) + @sizeOf(field)` and the next
 // field's offset (and between the last field's end and `@sizeOf(T)`).
 //
-// Rust has no `@typeInfo` equivalent. Phase B should provide this as a proc-macro derive
+// Rust has no `@typeInfo` equivalent. TODO(port): provide this as a proc-macro derive
 // (`#[derive(AssertNoUninitializedPadding)]`) that emits the `const _: () = assert!(...)`
 // checks below per-field, plus a marker trait so `assert_no_uninitialized_padding::<T>()`
 // is bounded on it. The free function here is kept as the call-site-compatible entry point.
@@ -74,7 +74,7 @@ pub fn assert_no_uninitialized_padding<T>(_type_witness: T) {
 }
 
 // TODO(port): proc-macro — the derive should expand roughly to the following per type
-// (shown as a declarative helper for Phase-B reference; not invoked anywhere yet):
+// (shown as a declarative helper for reference; not invoked anywhere yet):
 //
 // For each adjacent field pair (prev, field) in declaration order:
 //   const _: () = assert!(

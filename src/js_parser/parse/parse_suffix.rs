@@ -10,7 +10,7 @@ use bun_core::{Error, err};
 
 use crate::lexer::T;
 use crate::p::P;
-use crate::parser::{DeferredErrors};
+use crate::parser::DeferredErrors;
 use crate::scan::scan_side_effects::SideEffects;
 use bun_ast::expr::EFlags;
 use bun_ast::op::Level;

@@ -6,7 +6,7 @@
 //!
 //! Spec: src/runtime/bake/DevServer/SerializedFailure.zig
 //!
-//! DISSOLVED — the Phase-A draft that lived here duplicated `SerializedFailure`,
+//! DISSOLVED — the original draft that lived here duplicated `SerializedFailure`,
 //! `Owner`, `Packed`, `PackedKind`, `ErrorKind`, and the `write_*` helpers
 //! against `dev_server/serialized_failure.rs`, with no call sites resolving to
 //! this module (`dev_server/mod.rs` never mounted it; every `DevServer.rs`

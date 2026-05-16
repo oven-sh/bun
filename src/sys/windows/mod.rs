@@ -236,7 +236,7 @@ pub use bun_windows_sys::HMODULE;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Additional Win32 typedefs / constants surfaced for `bun_watcher`,
-// `bun_crash_handler`, `bun_threading`, `bun_install` (B-2 un-gate batch).
+// `bun_crash_handler`, `bun_threading`, `bun_install`.
 // ──────────────────────────────────────────────────────────────────────────
 
 pub use bun_windows_sys::ULONG_PTR;
@@ -4336,7 +4336,7 @@ const WATCHER_CHILD_ENV_Z: &[u16] = bun_core::w!("_BUN_WATCHER_CHILD\0");
 // this was randomly generated - we need to avoid using a common exit code that might be used by the script itself
 pub const WATCHER_RELOAD_EXIT: DWORD = 3224497970;
 
-// TODO(b0-genuine): re-export of bun_runtime::api::bun::spawn::PosixSpawn removed (T1→T6 upward).
+// TODO(port): re-export of bun_runtime::api::bun::spawn::PosixSpawn removed (T1→T6 upward).
 // Callers should import `bun_runtime::api::bun::spawn::PosixSpawn` directly.
 
 pub fn is_watcher_child() -> bool {
@@ -4971,7 +4971,7 @@ pub fn GetEnvironmentVariableW(
 pub mod env;
 
 // ──────────────────────────────────────────────────────────────────────────
-// B-2 Track A — additional surface unblocked for dependents.
+// Additional surface unblocked for dependents.
 // ──────────────────────────────────────────────────────────────────────────
 
 unsafe extern "system" {

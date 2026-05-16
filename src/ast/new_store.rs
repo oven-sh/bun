@@ -84,7 +84,7 @@ macro_rules! new_store {
             /// Zig: `pub const Block = struct { ... }`
             // PORT NOTE: `buffer` needs `align(LARGEST_ALIGN)` but `#[repr(align(N))]`
             // requires a literal. Over-approximate with align(16) — every AST payload
-            // type is `<= 16` aligned (asserted below). Phase B can switch to a
+            // type is `<= 16` aligned (asserted below). Switch to a
             // `#[repr(C)] union AlignUnion { $($T),+ }` element type if a >16-aligned
             // payload is ever introduced.
             const _: () = assert!(LARGEST_ALIGN <= 16, "NewStore payload type with align>16; bump Block repr(align)");
@@ -381,8 +381,9 @@ macro_rules! thread_local_ast_store {
             /// copy) is upheld by `ASTMemoryAllocatorScope::{enter,exit}`, which
             /// always restores the previous value before its frame returns.
             #[thread_local]
-            pub static MEMORY_ALLOCATOR: Cell<Option<::bun_ptr::BackRef<$crate::ASTMemoryAllocator>>> =
-                Cell::new(None);
+            pub static MEMORY_ALLOCATOR: Cell<
+                Option<::bun_ptr::BackRef<$crate::ASTMemoryAllocator>>,
+            > = Cell::new(None);
             #[thread_local]
             pub static DISABLE_RESET: Cell<bool> = Cell::new(false);
 

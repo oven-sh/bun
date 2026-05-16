@@ -35,10 +35,10 @@ const PAGE_SIZE: usize = 16384;
 // ──────────────────────────────────────────────────────────────────────────
 
 /// All strings point to the original patch file text
-// TODO(port): lifetime — every `&'a [u8]` in this module borrows from the
-// original patch file text. Phase A is told to avoid struct lifetimes, but
+// PORT NOTE: lifetime — every `&'a [u8]` in this module borrows from the
+// original patch file text. The port generally avoids struct lifetimes, but
 // this parser's whole output is borrowed; raw `*const [u8]` everywhere would
-// be worse. Re-evaluate in Phase B.
+// be worse.
 pub enum PatchFilePart<'a> {
     FilePatch(Box<FilePatch<'a>>),
     FileDeletion(Box<FileDeletion<'a>>),
@@ -97,7 +97,7 @@ impl ApplyState {
 impl<'a> PatchFile<'a> {
     pub fn apply(&self, patch_dir: Fd) -> Option<sys::Error> {
         let mut state = ApplyState::new();
-        // PERF(port): was stack-fallback + arena bulk-free per iteration — profile in Phase B
+        // PERF(port): was stack-fallback + arena bulk-free per iteration — profile if hot.
 
         for part in &self.parts {
             match part {
@@ -270,7 +270,7 @@ impl<'a> PatchFile<'a> {
 /// - If file size <= PAGE_SIZE, read the whole file into memory. memcpy/memmove the file contents around will be fast
 /// - If file size > PAGE_SIZE, rather than making a list of lines, make a list of chunks
 fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> sys::Result<()> {
-    // PERF(port): was arena.arena().dupeZ — profile in Phase B
+    // PERF(port): was arena.arena().dupeZ — profile if hot.
     let file_path = ZBox::from_vec_with_nul(patch.path.to_vec());
 
     // Need to get the mode of the original file
@@ -302,7 +302,7 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
     //
     // But if the file size is small, like less than a single page, it's probably ok
     // to use the arena
-    // PERF(port): was arena vs default_allocator selection — profile in Phase B
+    // PERF(port): was arena vs default_allocator selection — profile if hot.
     let _use_arena: bool = stat.st_size as usize <= PAGE_SIZE;
     // TODO(port): Zig used `patch_dir.stdDir().readFileAlloc(...)` (std.fs). Replace with bun_sys::File::read_from.
     let filebuf: Vec<u8> = match read_file_alloc(patch_dir, &file_path, 1024 * 1024 * 1024 * 4) {
@@ -1484,7 +1484,8 @@ fn parse_hunk_header_line_impl(text_: &[u8]) -> Result<HunkHeaderLineImpl<'_>, P
 
     Ok(HunkHeaderLineImpl {
         line_nr: 1.max(bun_core::parse_decimal::<u32>(line_nr).ok_or(ParseErr::bad_header_line)?),
-        line_count: bun_core::parse_decimal::<u32>(line_nr_count).ok_or(ParseErr::bad_header_line)?,
+        line_count: bun_core::parse_decimal::<u32>(line_nr_count)
+            .ok_or(ParseErr::bad_header_line)?,
         rest: text,
     })
 }
@@ -1560,7 +1561,7 @@ fn parse_diff_hashes(line: &[u8]) -> Option<(&[u8], &[u8])> {
     let delimiter_start = strings::index_of(line, b"..")? as usize;
 
     // PERF(port): was comptime IntegerBitSet — ArrayBitSet::set is non-const,
-    // so this builds at runtime. Profile in Phase B.
+    // so this builds at runtime. Profile if it shows up on a hot path.
     let valid_chars: ByteBitSet = {
         let mut bitset = ByteBitSet::init_empty();
         // TODO: the regex uses \w which is [a-zA-Z0-9_]
@@ -1690,7 +1691,7 @@ pub fn spawn_opts(
             b"--no-index",
         ];
         // PERF(port): Zig stored borrowed slices; `Options.argv` is
-        // `Vec<Box<[u8]>>`, so we copy. Profile in Phase B.
+        // `Vec<Box<[u8]>>`, so we copy. Profile if it shows up on a hot path.
         let mut argv_buf: Vec<Box<[u8]>> = Vec::with_capacity(ARGV.len() + 2);
         argv_buf.push(Box::from(git.as_bytes()));
         for i in 1..ARGV.len() {
@@ -1772,9 +1773,9 @@ pub fn diff_post_process(
     Ok(Ok(stdout))
 }
 
-// TODO(port): Zig signature returns `[2]if (sentinel) [:0]const u8 else []const u8` —
+// PORT NOTE: Zig signature returns `[2]if (sentinel) [:0]const u8 else []const u8` —
 // return type depends on a comptime bool. Rust cannot express this without GAT-ish
-// traits. Phase A: return owned `Vec<u8>` pairs (NUL-appended when SENTINEL).
+// traits, so we return owned `Vec<u8>` pairs (NUL-appended when SENTINEL).
 pub fn git_diff_preprocess_paths<const SENTINEL: bool>(
     old_folder_: &[u8],
     new_folder_: &[u8],

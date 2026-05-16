@@ -33,7 +33,7 @@ use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, Wor
 // `Maybe(T)` shim — Zig's `bun.jsc.Maybe(T)` provides associated helpers
 // (`.success`, `.errnoSys*`, `.getErrno`) on top of the bare `Result<T, Error>`
 // alias that `bun_sys::Maybe<T>` is. `crate::node::Maybe` is now the same
-// `Result` alias (Phase F), so this is just the file-local extension trait
+// `Result` alias, so this is just the file-local extension trait
 // surface that lets `Maybe::<T>::errno_sys*` / `.get_errno()` resolve.
 // ──────────────────────────────────────────────────────────────────────────
 pub trait MaybeSysResultExt<R>: Sized {
@@ -204,10 +204,9 @@ const BLOB_SIZE_MAX: u64 = (1u64 << 52) - 1;
 /// from `bun_jsc`): `Clone` → `ref()`, `Drop` → `unref()`, `Deref` → `&AbortSignal`.
 use bun_jsc::AbortSignalRef;
 
-// PORT NOTE: Zig referenced these via `bun.api.node.*`. The Phase-A draft
-// pulled them through `bun_jsc::node` (a re-export shim that no longer exists
-// once `node.rs` owns the module tree). Round 2 wires them to the real
-// sibling modules under `super::` so this file compiles standalone.
+// PORT NOTE: Zig referenced these via `bun.api.node.*`. These are wired to
+// the real sibling modules under `super::` (rather than a `bun_jsc::node`
+// re-export shim) so this file compiles standalone.
 use super::stat::Stats;
 use super::time_like::TimeLike;
 use super::types::{
@@ -1490,7 +1489,7 @@ mod _async_tasks {
         // Rust keeps the field unconditionally and simply skips `ref_()`/`unref()`
         // on the `IS_SHELL` path (`KeepAlive::default()` is inert until ref'd).
         pub r#ref: KeepAlive,
-        // PERF(port): was arena bulk-free — profile in Phase B
+        // PERF(port): was arena bulk-free — profile if hot
         pub tracker: AsyncTaskTracker,
         pub has_result: AtomicBool,
         /// Number of in-flight references to `this`. Starts at 1 for the main
@@ -6440,7 +6439,7 @@ impl NodeFS {
     }
 
     pub fn readdir(&mut self, args: &args::Readdir, flavor: Flavor) -> Maybe<ret::Readdir> {
-        // PERF(port): `flavor` was comptime monomorphization — profile in Phase B
+        // PERF(port): `flavor` was comptime monomorphization — profile if hot
         if flavor != Flavor::Sync {
             if args.recursive {
                 panic!("Assertion failure: this code path should never be reached.");
@@ -7043,7 +7042,7 @@ impl NodeFS {
     }
 
     pub fn read_file(&mut self, args: &args::ReadFile, flavor: Flavor) -> Maybe<ret::ReadFile> {
-        // PERF(port): `flavor` was comptime monomorphization — profile in Phase B
+        // PERF(port): `flavor` was comptime monomorphization — profile if hot
         let result = self.read_file_with_options(args, flavor, ReadFileStringType::Default);
         match result {
             Err(err) => Err(err),
@@ -7778,9 +7777,7 @@ impl NodeFS {
             let resolved = args.path.slice_z(&mut self.sync_error_buf).as_bytes();
             #[cfg(not(windows))]
             let resolved = args.path.slice();
-            if let Err(err) =
-                zig_delete_tree(sys::Dir::cwd(), resolved, sys::FileKind::Directory)
-            {
+            if let Err(err) = zig_delete_tree(sys::Dir::cwd(), resolved, sys::FileKind::Directory) {
                 let mut errno: E = map_anyerror_to_errno(err);
                 if cfg!(windows) && errno == E::ENOTDIR {
                     errno = E::ENOENT;
@@ -7816,9 +7813,7 @@ impl NodeFS {
             let resolved = args.path.slice_z(&mut self.sync_error_buf).as_bytes();
             #[cfg(not(windows))]
             let resolved = args.path.slice();
-            if let Err(err) =
-                zig_delete_tree(sys::Dir::cwd(), resolved, sys::FileKind::File)
-            {
+            if let Err(err) = zig_delete_tree(sys::Dir::cwd(), resolved, sys::FileKind::File) {
                 let errno = if err == bun_core::err!("FileNotFound") {
                     if args.force {
                         return Ok(());
@@ -9605,11 +9600,12 @@ impl ReaddirEntry for Buffer {
     }
 }
 
-// VERIFY-FIX(round1): the Zig source has three distinct error→errno tables for
-// rmdir-recursive (node_fs.zig:5757-5788), rm-recursive (node_fs.zig:5789-5824),
-// and rm non-recursive unlinkZ/rmdirZ (node_fs.zig:5842-5887). Phase-A collapsed
-// them into one, which silently mapped AccessDenied→EPERM for `rm` (Node returns
-// EACCES there) and widened the narrow table. Split back out per call site.
+// The Zig source has three distinct error→errno tables for rmdir-recursive
+// (node_fs.zig:5757-5788), rm-recursive (node_fs.zig:5789-5824), and rm
+// non-recursive unlinkZ/rmdirZ (node_fs.zig:5842-5887). An earlier draft
+// collapsed them into one, which silently mapped AccessDenied→EPERM for `rm`
+// (Node returns EACCES there) and widened the narrow table. Split back out
+// per call site.
 fn map_anyerror_to_errno(err: bun_core::Error) -> E {
     match err.name() {
         "AccessDenied" => E::EPERM,

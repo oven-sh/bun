@@ -31,7 +31,7 @@ pub struct HPACK {
 
 pub struct DecodeResult {
     // TODO(port): lifetime — name/value point into an FFI thread_local shared buffer,
-    // valid only until the next decode/encode call. Phase B: consider `DecodeResult<'a>`.
+    // valid only until the next decode/encode call. Consider `DecodeResult<'a>`.
     pub name: &'static [u8],
     pub value: &'static [u8],
     pub never_index: bool,

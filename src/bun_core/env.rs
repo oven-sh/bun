@@ -1,7 +1,7 @@
 use phf::phf_map;
 
-// TODO(port): `build_options` is Zig's build-system-injected module. In Rust this
-// becomes a generated module (env!()/option_env!()/build.rs consts). Phase B wires it.
+// PORT NOTE: `build_options` was Zig's build-system-injected module. In Rust it
+// is a generated module (build.rs consts).
 // Zig: `pub const build_options = @import("build_options");` — public re-export.
 pub use crate::build_options;
 
@@ -62,7 +62,6 @@ pub const BASELINE: bool = build_options::BASELINE;
 pub const ENABLE_SIMD: bool = !BASELINE;
 pub const GIT_SHA: &str = build_options::SHA;
 pub const GIT_SHA_SHORT: &str = if !build_options::SHA.is_empty() {
-    // TODO(port): const slice indexing on &str — Phase B may need a const fn helper or build.rs precompute.
     const_str_slice(build_options::SHA, 0, 9)
 } else {
     ""
@@ -248,8 +247,7 @@ pub const ARCH: Architecture = if IS_WASM {
     panic!("Please add your architecture to the Architecture enum")
 };
 
-// TODO(port): helper for const &str slicing; replace with build.rs precompute or
-// const_format in Phase B if this doesn't const-eval cleanly.
+// Helper for const &str slicing (Rust stable lacks const range indexing on str).
 const fn const_str_slice(s: &'static str, start: usize, end: usize) -> &'static str {
     // `[u8]::split_at` and `str::from_utf8` are both `const` on stable, so the
     // sub-slice + UTF-8 check happens entirely at compile time without raw

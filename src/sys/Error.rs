@@ -243,7 +243,7 @@ impl Error {
         Error {
             errno: self.errno,
             syscall: self.syscall,
-            // PERF(port): Zig borrowed the slice; we clone into Box — profile in Phase B
+            // PERF(port): Zig borrowed the slice; we clone into Box — profile if hot.
             path: Box::from(path),
             ..Default::default()
         }
@@ -254,7 +254,7 @@ impl Error {
         Error {
             errno: self.errno,
             syscall: syscall_,
-            // PERF(port): Zig borrowed the slice; we clone into Box — profile in Phase B
+            // PERF(port): Zig borrowed the slice; we clone into Box — profile if hot.
             path: Box::from(path),
             ..Default::default()
         }
@@ -283,7 +283,7 @@ impl Error {
         Error {
             errno: self.errno,
             syscall: self.syscall,
-            // PERF(port): Zig borrowed the slices; we clone into Box — profile in Phase B
+            // PERF(port): Zig borrowed the slices; we clone into Box — profile if hot.
             path: Box::from(path),
             dest: Box::from(dest),
             ..Default::default()

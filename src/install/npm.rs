@@ -216,7 +216,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     Ok(username.to_vec())
 }
 
-// TODO(b2): body gated — picohttp::Response field shape drift
+// TODO(port): body gated — picohttp::Response field shape drift
 
 pub fn response_error<const OTP_RESPONSE: bool>(
     req: &AsyncHTTP,
@@ -522,7 +522,7 @@ pub mod registry {
         }
     }
 
-    // TODO(b2): Zig used `IdentityContext(u64)` hasher; std HashMap is fine for now.
+    // TODO(port): Zig used `IdentityContext(u64)` hasher; std HashMap is fine for now.
     pub type Map = HashMap<u64, Scope>;
 
     pub enum PackageVersionResponse {
@@ -547,7 +547,10 @@ pub mod registry {
             429 => return Err(err!("TooManyRequests")),
             404 => return Ok(PackageVersionResponse::NotFound),
             500..=599 => return Err(err!("HTTPInternalServerError")),
-            304 => return Ok(PackageVersionResponse::Cached(loaded_manifest.unwrap())),
+            304 => match loaded_manifest {
+                Some(manifest) => return Ok(PackageVersionResponse::Cached(manifest)),
+                None => return Err(err!("UnexpectedNotModified")),
+            },
             _ => {}
         }
 
@@ -659,6 +662,14 @@ pub struct PackageVersion {
     // Splitting this into it's own array ends up increasing the final size a little bit.
     pub integrity: Integrity,
 
+    // Explicit padding so this struct has no implicit (uninitialized) padding
+    // bytes — `Serializer::write_array` reinterprets the whole slice as `&[u8]`,
+    // and reading uninitialized padding as `u8` is UB. With explicit `[u8; N]`
+    // fields, `Default` zero-fills them and every byte of the struct is
+    // initialized. Layout (size=240, align=8) is unchanged; see the
+    // `offset_of!` asserts below and `padding_checker.rs` for the contract.
+    pub _padding_after_integrity: [u8; 3],
+
     /// "dependencies"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#dependencies)
     pub dependencies: ExternalStringMap,
 
@@ -685,6 +696,7 @@ pub struct PackageVersion {
     /// `"peerDependenciesMeta"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#peerdependenciesmeta)
     /// if `non_optional_peer_dependencies_start` is > 0, then instead of alphabetical, the first N items of `peer_dependencies` are optional
     pub non_optional_peer_dependencies_start: u32,
+    pub _padding_before_man_dir: [u8; 4],
 
     pub man_dir: ExternalString,
 
@@ -705,6 +717,7 @@ pub struct PackageVersion {
 
     /// `hasInstallScript` field in registry API.
     pub has_install_script: bool,
+    pub _padding_tail: [u8; 2],
 
     /// Unix timestamp when this version was published (0 if unknown)
     pub publish_timestamp_ms: f64,
@@ -714,6 +727,7 @@ impl Default for PackageVersion {
     fn default() -> Self {
         Self {
             integrity: Integrity::default(),
+            _padding_after_integrity: [0; 3],
             dependencies: ExternalStringMap::default(),
             optional_dependencies: ExternalStringMap::default(),
             peer_dependencies: ExternalStringMap::default(),
@@ -722,6 +736,7 @@ impl Default for PackageVersion {
             bin: Bin::default(),
             engines: ExternalStringMap::default(),
             non_optional_peer_dependencies_start: 0,
+            _padding_before_man_dir: [0; 4],
             man_dir: ExternalString::default(),
             tarball_url: ExternalString::default(),
             unpacked_size: 0,
@@ -730,6 +745,7 @@ impl Default for PackageVersion {
             cpu: Architecture::ALL,
             libc: Libc::NONE,
             has_install_script: false,
+            _padding_tail: [0; 2],
             publish_timestamp_ms: 0.0,
         }
     }
@@ -764,6 +780,41 @@ const _: () = assert!(
     "Npm.PackageVersion layout drifted from Zig spec (expected 240 bytes); \
      bump PackageManifest::Serializer::VERSION if intentional",
 );
+
+// Compile-time proof that the explicit `_padding_*` fields above leave no
+// implicit padding gaps in `PackageVersion` (so `&[PackageVersion] as &[u8]`
+// in `Serializer::write_array` reads only initialized bytes). Mirrors the
+// `NpmPackage` checks below and `padding_checker.rs`.
+const _: () = {
+    use core::mem::{offset_of, size_of};
+    // gap between `integrity` (size 65, align 1) and `dependencies` (align 4 → 68)
+    assert!(
+        offset_of!(PackageVersion, _padding_after_integrity)
+            == offset_of!(PackageVersion, integrity) + size_of::<Integrity>()
+    );
+    assert!(
+        offset_of!(PackageVersion, dependencies)
+            == offset_of!(PackageVersion, _padding_after_integrity) + 3
+    );
+    // gap between `non_optional_peer_dependencies_start` (u32, ends at 180) and `man_dir` (align 8 → 184)
+    assert!(
+        offset_of!(PackageVersion, _padding_before_man_dir)
+            == offset_of!(PackageVersion, non_optional_peer_dependencies_start) + size_of::<u32>()
+    );
+    assert!(
+        offset_of!(PackageVersion, man_dir)
+            == offset_of!(PackageVersion, _padding_before_man_dir) + 4
+    );
+    // gap between `has_install_script` (bool, ends at 230) and `publish_timestamp_ms` (align 8 → 232)
+    assert!(
+        offset_of!(PackageVersion, _padding_tail)
+            == offset_of!(PackageVersion, has_install_script) + size_of::<bool>()
+    );
+    assert!(
+        offset_of!(PackageVersion, publish_timestamp_ms)
+            == offset_of!(PackageVersion, _padding_tail) + 2
+    );
+};
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -841,7 +892,7 @@ impl PackageManifest {
         self.pkg.name.slice(&self.string_buf)
     }
 
-    // TODO(b2): bun_io::DiscardingWriter — counting writer not exposed yet
+    // TODO(port): bun_io::DiscardingWriter — counting writer not exposed yet
 
     pub fn byte_length(&self, scope: &registry::Scope) -> usize {
         let mut counter = bun_io::DiscardingWriter::new();
@@ -872,7 +923,7 @@ pub mod package_manifest {
 
         // TODO(port): `sizes` was a comptime block iterating PackageManifest's fields by alignment.
         // Rust cannot reflect struct fields. Hardcode the field order produced by the Zig sort
-        // (descending alignment) and verify in Phase B against the Zig output.
+        // (descending alignment); re-verify against the Zig output if the layout changes.
         pub const SIZES_FIELDS: &'static [&'static str] = &[
             "pkg",
             "string_buf",
@@ -956,8 +1007,8 @@ pub mod package_manifest {
 
             pos += 128 / 8;
 
-            // TODO(port): inline-for over SIZES_FIELDS — unrolled by hand. Phase B: verify field
-            // order matches Zig comptime sort (descending alignment).
+            // TODO(port): inline-for over SIZES_FIELDS — unrolled by hand. Verify field
+            // order matches Zig comptime sort (descending alignment) if the layout changes.
             {
                 // "pkg"
                 // SAFETY: NpmPackage is `#[repr(C)]`, `Copy`, and has **no
@@ -997,7 +1048,7 @@ pub mod package_manifest {
             outpath: &bun_core::ZStr,
         ) -> Result<(), Error> {
             // 64 KB sounds like a lot but when you consider that this is only about 6 levels deep in the stack, it's not that much.
-            // PERF(port): was stack-fallback alloc — profile in Phase B
+            // PERF(port): was stack-fallback alloc — profile if hot.
             let mut buffer: Vec<u8> = Vec::with_capacity(this.byte_length(scope) + 64);
             Serializer::write(this, scope, &mut buffer)?;
             // --- Perf Improvement #1 ----
@@ -1250,7 +1301,7 @@ pub mod package_manifest {
             }
 
             // TODO(port): lifetime — `scope` is borrowed across a thread boundary; Zig assumed
-            // the Registry.Scope outlives the threadpool task. Phase B: prove or change to owned.
+            // the Registry.Scope outlives the threadpool task. Prove or change to owned.
             let task = bun_core::heap::into_raw(SaveTask::new(SaveTask {
                 manifest: this.clone(), // TODO(port): Zig copied PackageManifest by value
                 scope,
@@ -1908,7 +1959,7 @@ impl PackageManifest {
     }
 }
 
-// TODO(b2): Zig used `IdentityContext(u64)` hasher; std HashMap is fine for now.
+// TODO(port): Zig used `IdentityContext(u64)` hasher; std HashMap is fine for now.
 type ExternalStringMapDeduper = HashMap<u64, ExternalStringList>;
 
 use bun_install_types::DependencyGroup;
@@ -1941,9 +1992,9 @@ impl PackageManifest {
         // TODO(port): bun.ast.Stmt.Data.Store.memory_allocator.?.pop() — Zig
         // pushed/popped the AST arena around the parse so the JSON AST is
         // bulk-freed on return. `initialize_mini_store` already does the push;
-        // the pop is handled by resetting on the next call. Phase B should wire
-        // an explicit RAII guard once `ASTMemoryAllocator::pop` is exposed.
-        // PERF(port): was arena bulk-free — profile in Phase B
+        // the pop is handled by resetting on the next call. Wire an explicit
+        // RAII guard once `ASTMemoryAllocator::pop` is exposed.
+        // PERF(port): was arena bulk-free — profile if hot.
         let bump = bun_alloc::Arena::new();
         let json = match JSON::parse_utf8(&source, log, &bump) {
             Ok(j) => j,
@@ -2175,7 +2226,7 @@ impl PackageManifest {
                 }
 
                 for pair in &DEPENDENCY_GROUPS {
-                    // PERF(port): was comptime monomorphization — profile in Phase B
+                    // PERF(port): was comptime monomorphization — profile if hot.
                     if let Some(versioned_deps) = prop
                         .value
                         .as_ref()
@@ -2331,7 +2382,7 @@ impl PackageManifest {
             release_versions_len..release_versions_len + pre_versions_len;
         let dist_tag_versions_start = release_versions_len + pre_versions_len;
         // SAFETY: all_semver_versions is heap-allocated; we need disjoint mutable subslices.
-        // TODO(port): use split_at_mut chain instead of raw pointers in Phase B.
+        // TODO(port): use split_at_mut chain instead of raw pointers.
         let all_semver_versions_ptr: *mut Semver::Version = all_semver_versions.as_mut_ptr();
         let mut release_versions_cursor: usize = 0;
         let mut prerelease_versions_cursor: usize = release_versions_len;
@@ -2731,7 +2782,7 @@ impl PackageManifest {
 
                 let mut non_optional_peer_dependency_offset: usize = 0;
 
-                // PERF(port): was comptime monomorphization (`inline for`) — profile in Phase B
+                // PERF(port): was comptime monomorphization (`inline for`) — profile if hot.
                 for (group_idx, pair) in DEPENDENCY_GROUPS.iter().enumerate() {
                     let is_peer = pair.prop == b"peerDependencies";
                     // For peer deps, fall through with an empty `items`
@@ -3079,7 +3130,7 @@ impl PackageManifest {
 
                         // TODO(port): debug-assertions block (Zig lines 2478-2522) elided —
                         // it re-reads `this_names`/`this_versions` via `mut()` after dedupe.
-                        // Phase B can re-add with cursor-based slicing.
+                        // Re-add with cursor-based slicing if needed.
                         let _ = (this_names, this_versions);
                     }
                 }
@@ -3249,7 +3300,7 @@ impl PackageManifest {
         };
 
         // PERF(port): was comptime monomorphization over Int width — using a macro to expand
-        // the 1..=8 byte cases. Phase B may collapse to a single usize path if profiling allows.
+        // the 1..=8 byte cases. Could collapse to a single usize path if profiling allows.
         macro_rules! sort_with_int {
             ($Int:ty) => {{
                 type Int = $Int;
@@ -3382,14 +3433,14 @@ impl PackageManifest {
 
         if let Some(buf) = string_builder.ptr.take() {
             // TODO(port): string_builder owns this allocation; copy out the
-            // written prefix. Phase B can add a `Builder::into_owned()` that
-            // yields `Box<[u8]>` without the truncate copy.
+            // written prefix. Add a `Builder::into_owned()` that yields
+            // `Box<[u8]>` without the truncate copy.
             let mut v = buf.into_vec();
             v.truncate(string_builder.len);
             result.string_buf = v.into_boxed_slice();
         }
 
-        let _ = all_tarball_url_strings; // suppress unused-mut warnings in Phase A
+        let _ = all_tarball_url_strings; // suppress unused-mut warnings
 
         Ok(Some(result))
     }

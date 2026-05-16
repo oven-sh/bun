@@ -19,7 +19,7 @@ pub struct Size2D<T> {
 // `LengthPercentage` must impl the same `Parse`/`ToCss`/`Eql` traits as other CSS value
 // types (the `f32` impls delegate to `CSSNumberFns`). The per-type `switch` arms are
 // therefore collapsed into trait method calls below.
-// TODO(port): confirm trait names match Phase-B crate API once `generics::
+// TODO(port): confirm trait names match the crate API once `generics::
 // parse_tocss_numeric_gated` un-gates; for now bound on `values::protocol`.
 impl<T> Size2D<T>
 where
@@ -77,7 +77,7 @@ where
 
     pub fn deep_clone(&self, _bump: &Arena) -> Self {
         // TODO(port): css::implement_deep_clone is @typeInfo-based reflection in Zig;
-        // replace with #[derive(DeepClone)] or arena-aware deep_clone in Phase B.
+        // replace with #[derive(DeepClone)] or arena-aware deep_clone.
         // For now `T: Clone` covers it (Box payloads deep-clone via their Clone impls).
         Size2D {
             a: self.a.clone(),
@@ -99,8 +99,8 @@ where
     }
 }
 
-// Keep references to the f32/LengthPercentage special-case helpers so Phase B can
-// wire trait impls if they don't already exist.
+// Keep references to the f32/LengthPercentage special-case helpers so trait
+// impls can be wired up later if they don't already exist.
 #[allow(unused_imports)]
 use {CSSNumberFns as _, LengthPercentage as _};
 

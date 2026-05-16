@@ -12,7 +12,7 @@ pub struct EventLoopDelayMonitor {
     /// I don't think having a single event loop delay monitor histogram instance
     /// /will cause any issues? Let's find out.
     // TODO(port): bare JSValue heap field — kept alive by JS-side closure scope per the
-    // comment above; revisit whether this should be a Strong/JsRef in Phase B.
+    // comment above; revisit whether this should be a Strong/JsRef.
     js_histogram: JSValue,
 
     event_loop_timer: EventLoopTimer,
@@ -127,7 +127,7 @@ pub extern "C" fn Timer_enableEventLoopDelayMonitoring(
 ) {
     // SAFETY: vm is a valid non-null pointer passed from C++.
     let vm = unsafe { &mut *vm };
-    // PORT NOTE (b2-cycle): `vm.timer` is `()` — recover `All` via runtime_state().
+    // PORT NOTE (jsc/runtime crate cycle): `vm.timer` is `()` — recover `All` via runtime_state().
     let state = crate::jsc_hooks::runtime_state();
     // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`; single
     // JS thread, raw-ptr-per-field re-entry pattern (jsc_hooks.rs).

@@ -1,11 +1,11 @@
 pub struct SourceMap {
-    // TODO(port): []const u8 struct field in CSS (arena crate) — using raw slice ptr per PORTING.md; revisit ownership in Phase B
+    // TODO(port): []const u8 struct field in CSS (arena crate) — using raw slice ptr per PORTING.md; revisit ownership
     pub project_root: *const [u8],
     pub inner: SourceMapInner,
 }
 
 pub struct SourceMapInner {
-    // PERF(port): ArrayListUnmanaged in CSS arena crate — using Vec<T>; may need bun_alloc::ArenaVec<'bump, T> in Phase B
+    // PERF(port): ArrayListUnmanaged in CSS arena crate — using Vec<T>; may want bun_alloc::ArenaVec<'bump, T> if hot
     pub sources: Vec<*const [u8]>,
     pub sources_content: Vec<*const [u8]>,
     pub names: Vec<*const [u8]>,

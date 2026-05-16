@@ -21,8 +21,8 @@ pub struct S3ListObjectsOptions {
     pub start_after: Option<RawSlice<u8>>,
 
     // TODO(port): Utf8Slice<'_> lifetime — Zig's ZigString.Slice owns or
-    // ref-holds its backing WTFStringImpl; model as 'static here and let
-    // Phase B pick the real lifetime / collapse the dual fields.
+    // ref-holds its backing WTFStringImpl; modeled as 'static here. Pick
+    // the real lifetime / collapse the dual fields.
     pub _continuation_token: Option<Utf8Slice>,
     pub _delimiter: Option<Utf8Slice>,
     pub _encoding_type: Option<Utf8Slice>,
@@ -35,12 +35,10 @@ pub struct S3ListObjectsOptions {
 
 // PORT NOTE: result structs borrow slices out of the input `xml: &[u8]`
 // passed to `parse_s3_list_objects_result`. The Zig code never frees these
-// (they alias the request body buffer). Represented with an explicit `'a`
-// even though PORTING.md prefers avoiding struct lifetimes in Phase A —
+// (they alias the request body buffer). Represented with an explicit `'a` —
 // the borrow is unambiguous and any other encoding (Box / raw ptr) would
-// misrepresent ownership. Phase B: confirm caller keeps `xml` alive for
-// the result's lifetime (it does — result is consumed by toJS before the
-// response body is freed).
+// misrepresent ownership. The caller keeps `xml` alive for the result's
+// lifetime (result is consumed by toJS before the response body is freed).
 
 struct ObjectOwner<'a> {
     id: Option<&'a [u8]>,

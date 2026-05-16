@@ -395,7 +395,7 @@ impl ExtractTarball {
                     };
 
                     // PERF(port): was comptime bool dispatch on verbose_install — folded into
-                    // `ExtractOptions::log` (runtime) — profile in Phase B.
+                    // `ExtractOptions::log` (runtime) — profile if hot.
                     let _ = Archiver::extract_to_dir(
                         &zlib_pool.list,
                         extract_destination.fd(),
@@ -430,7 +430,7 @@ impl ExtractTarball {
                 }
                 _ => {
                     // PERF(port): was comptime bool dispatch on verbose_install — folded into
-                    // `ExtractOptions::log` (runtime) — profile in Phase B.
+                    // `ExtractOptions::log` (runtime) — profile if hot.
                     let _ = Archiver::extract_to_dir(
                         &zlib_pool.list,
                         extract_destination.fd(),

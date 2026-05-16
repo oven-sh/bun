@@ -127,14 +127,18 @@ impl S3HttpDownloadStreamingTask {
 
                             if let Some(start) = strings::index_of(bytes, b"<Code>") {
                                 let value_start = start + b"<Code>".len();
-                                if let Some(end) = strings::index_of(&bytes[value_start..], b"</Code>") {
+                                if let Some(end) =
+                                    strings::index_of(&bytes[value_start..], b"</Code>")
+                                {
                                     code = &bytes[value_start..value_start + end];
                                     _has_body_code = true;
                                 }
                             }
                             if let Some(start) = strings::index_of(bytes, b"<Message>") {
                                 let value_start = start + b"<Message>".len();
-                                if let Some(end) = strings::index_of(&bytes[value_start..], b"</Message>") {
+                                if let Some(end) =
+                                    strings::index_of(&bytes[value_start..], b"</Message>")
+                                {
                                     message = &bytes[value_start..value_start + end];
                                     _has_body_message = true;
                                 }
@@ -244,7 +248,7 @@ impl S3HttpDownloadStreamingTask {
             }
             // store the new state
             self.set_state(*state);
-            // TODO(port): Zig does `this.http = async_http.*;` (struct copy). Phase B: confirm
+            // TODO(port): Zig does `this.http = async_http.*;` (struct copy). Confirm
             // AsyncHTTP copy/move semantics in Rust.
             // SAFETY: `async_http` points to a live AsyncHTTP owned by the HTTP thread; Zig does a
             // plain struct copy (`this.http = async_http.*`) — bitwise read+write matches that.

@@ -282,7 +282,7 @@ impl Drop for SavedSourceMap {
         }
 
         self.map_mut().unlock_pointers();
-        // TODO(port): deinit() on a backref-owned HashMap — ownership lives on VirtualMachine; verify Phase B.
+        // TODO(port): deinit() on a backref-owned HashMap — ownership lives on VirtualMachine; verify.
         self.map_mut().deinit();
     }
 }

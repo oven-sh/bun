@@ -33,9 +33,9 @@ use bun_uws_sys::body_reader_mixin::{BodyReaderHandler, BodyResponse};
 
 use super::source_map_store::{self, GetResult, Key as SourceMapKey};
 use super::{CLIENT_PREFIX, DevServer};
-use bun_core::fmt::parse_hex_to_int;
 use crate::server::StaticRoute;
 use crate::server::static_route::InitFromBytesOptions;
+use bun_core::fmt::parse_hex_to_int;
 
 pub struct ErrorReportRequest {
     // BACKREF: heap-allocated request; DevServer owns the server lifecycle and
@@ -120,9 +120,8 @@ impl ErrorReportRequest {
 
         let mut reader = bun_io::FixedBufferStream::new(body);
 
-        // PERF(port): was stack-fallback (65536) + ArenaAllocator — profile in Phase B
+        // PERF(port): was stack-fallback (65536) + ArenaAllocator — profile if it shows up on a hot path.
         let arena = Arena::new();
-        // PERF(port): was stack-fallback (65536) + ArenaAllocator — profile in Phase B
         // The Zig used a separate per-source-map arena that was reset between
         // parses; the Rust `source_map_store::get_parsed_source_map` (the
         // canonical impl on `DevServer.source_maps`) takes `&self` and

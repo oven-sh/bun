@@ -146,7 +146,7 @@ pub type JsxFieldSet = EnumSet<JsxField>;
 
 pub struct TSConfigJSON {
     // TODO(port): lifetime — Zig never frees these string fields (resolver-lifetime arena);
-    // Phase A models them as owned Box<[u8]>. Revisit if profiling shows churn.
+    // modeled here as owned Box<[u8]>. Revisit if profiling shows churn.
     pub abs_path: Box<[u8]>,
 
     /// The absolute path of "compilerOptions.baseUrl"
@@ -369,7 +369,8 @@ impl TSConfigJSON {
         let mut compiler_opts: Option<bun_ast::Expr> = None;
         if let bun_ast::ExprData::EObject(obj) = &json.data {
             for property in obj.properties.slice() {
-                let (Some(key_expr), Some(value)) = (property.key.as_ref(), property.value.as_ref())
+                let (Some(key_expr), Some(value)) =
+                    (property.key.as_ref(), property.value.as_ref())
                 else {
                     continue;
                 };

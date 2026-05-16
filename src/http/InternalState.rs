@@ -53,7 +53,7 @@ pub struct InternalState<'a> {
 
 // PORT NOTE: was a `packed struct(u8)` in Zig. Kept as a struct-of-bools so the
 // HTTPClient state machine in lib.rs can use field syntax (`flags.allow_keepalive
-// = true`) directly; restore packing in Phase B if size matters.
+// = true`) directly; restore packing if size ever matters.
 #[derive(Clone, Copy)]
 pub struct InternalStateFlags {
     pub allow_keepalive: bool,
@@ -239,7 +239,7 @@ impl<'a> InternalState<'a> {
 
         if bun_core::feature_flags::is_libdeflate_enabled() {
             // Fast-path: use libdeflate
-            // TODO(b2-blocked): bun_http::HTTPThread::deflater — `http_thread()` accessor and the
+            // TODO(port): bun_http::HTTPThread::deflater — `http_thread()` accessor and the
             // `LibdeflateState { decompressor, shared_buffer }` it returns live in the gated
             // HTTPThread cluster. Re-gated until HTTPThread un-gates (which itself blocks on
             // bun_uws::SocketHandler method bodies).
@@ -330,7 +330,7 @@ impl<'a> InternalState<'a> {
                 }
             }
 
-            // TODO(b2-blocked): bun_zlib::ZlibReaderArrayList / bun_brotli::BrotliReaderArrayList /
+            // TODO(port): bun_zlib::ZlibReaderArrayList / bun_brotli::BrotliReaderArrayList /
             // bun_zstd::ZstdReaderArrayList — `Decompressor::update_buffers` is re-gated until
             // those reader types are reshaped to not carry an `'a` borrow of the output Vec.
 

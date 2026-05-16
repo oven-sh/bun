@@ -22,7 +22,6 @@ pub type Debug<Value> = GuardedBy<Value, ThreadLock>;
 
 /// A wrapper around a mutex, and a value protected by the mutex.
 /// `M` should have `lock` and `unlock` methods.
-// TODO(port): `RawMutex` trait (lock/unlock) is assumed to live in bun_threading; verify in Phase B.
 pub struct GuardedBy<Value, M: RawMutex> {
     /// The raw value. Don't use this if there might be concurrent accesses.
     // `UnsafeCell` is load-bearing: `lock(&self)` hands out `&mut Value` while other `&self`

@@ -27,7 +27,7 @@ use crate::hoisted_install::install_hoisted_packages;
 use crate::isolated_install::install_isolated_packages;
 use crate::lockfile_real::bun_lock as TextLockfile;
 use crate::lockfile_real::package::Diff;
-use crate::lockfile_real::package::{PackageColumns as _};
+use crate::lockfile_real::package::PackageColumns as _;
 use crate::lockfile_real::{Printer, printer as LockfilePrinter};
 use crate::package_install::Summary as PackageInstallSummary;
 use crate::package_manager::Options::Enable;
@@ -61,7 +61,7 @@ pub fn install_with_manager(
         // And don't try to resolve DNS if it's an IP address.
         let scope_url = manager.options.scope.url.url();
         if !scope_url.hostname.is_empty() && !scope_url.is_ip_address() {
-            // PERF(port): was stack-fallback alloc — profile in Phase B
+            // PERF(port): was stack-fallback alloc — profile if hot
             bun_dns::internal::prefetch(
                 manager.event_loop.loop_(),
                 scope_url.hostname,
@@ -571,7 +571,12 @@ pub fn install_with_manager(
     }
 
     if needs_new_lockfile {
-        root = create_new_lockfile_and_enqueue(manager, &load_result, root_package_json_path, log_level)?;
+        root = create_new_lockfile_and_enqueue(
+            manager,
+            &load_result,
+            root_package_json_path,
+            log_level,
+        )?;
     } else {
         {
             let keys: Vec<u64> = manager.lockfile.patched_dependencies.keys().to_vec();
@@ -690,7 +695,7 @@ pub fn install_with_manager(
             // assert already guarantees it, so a single guarded loop matches
             // both paths exactly.
             if first_index != -1 {
-                // PERF(port): was `inline for` over comptime entries — profile in Phase B
+                // PERF(port): was `inline for` over comptime entries — profile if hot
                 for (i, maybe_entry) in entries.into_iter().enumerate() {
                     if let Some(entry) = maybe_entry {
                         lockfile_scripts.hook_mut(i).push(entry);
@@ -1831,7 +1836,13 @@ fn run_root_lifecycle_scripts(
         // `spawn_package_lifecycle_scripts` consumes by-value; `.take()`
         // moves it out (Zig only frees `package_name` afterwards, which is
         // owned by the List in Rust and drops with it).
-        manager.spawn_package_lifecycle_scripts(ctx, scripts, optional, output_in_foreground, None)?;
+        manager.spawn_package_lifecycle_scripts(
+            ctx,
+            scripts,
+            optional,
+            output_in_foreground,
+            None,
+        )?;
 
         // .monotonic is okay because at this point, this value is only accessed from this
         // thread.

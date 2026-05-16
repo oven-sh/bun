@@ -179,7 +179,13 @@ fn send_status_to_js(
 ) -> JSValue {
     match status {
         SendStatus::Backpressure => {
-            bun_output::scoped_log!(WebSocketServer, "{}() backpressure ({} {})", op, len, suffix);
+            bun_output::scoped_log!(
+                WebSocketServer,
+                "{}() backpressure ({} {})",
+                op,
+                len,
+                suffix
+            );
             JSValue::js_number(-1.0)
         }
         SendStatus::Success => {
@@ -1216,7 +1222,8 @@ impl ServerWebSocket {
 
         let buffer = array_buffer.slice();
         send_status_to_js(
-            self.websocket().send(buffer, Opcode::Binary, compress, true),
+            self.websocket()
+                .send(buffer, Opcode::Binary, compress, true),
             buffer.len(),
             "sendBinary",
             "bytes",
@@ -1233,7 +1240,7 @@ impl ServerWebSocket {
         self.send_ping(global_this, callframe, "pong", Opcode::Pong)
     }
 
-    // PERF(port): was comptime monomorphization (name + opcode) — profile in Phase B
+    // PERF(port): was comptime monomorphization (name + opcode) — profile if hot.
     #[inline]
     fn send_ping(
         &self,

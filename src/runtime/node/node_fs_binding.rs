@@ -143,8 +143,8 @@ where
 // single mutable field `node_fs` is wrapped in `JsCell` so the
 // `sync_error_buf` scratch buffer and `&mut NodeFS` syscall dispatches are
 // projected through interior mutability instead of `&mut Binding`. The
-// codegen shim still emits `this: &mut NodeJSFS` until Phase 1 lands —
-// `&mut T` auto-coerces to `&T` so the impls below compile against either.
+// codegen shim still emits `this: &mut NodeJSFS` — `&mut T` auto-coerces to
+// `&T` so the impls below compile against either.
 #[bun_jsc::JsClass(name = "NodeJSFS", no_constructor)]
 #[derive(Default)]
 pub struct Binding {

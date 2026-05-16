@@ -582,7 +582,7 @@ fn parse_pattern_arg(
             }
             let pattern: Box<[u8]> = Box::from(str_slice.slice());
             patterns.push(pattern);
-            // PERF(port): was appendAssumeCapacity — profile in Phase B
+            // PERF(port): was appendAssumeCapacity.
             i += 1;
         }
 

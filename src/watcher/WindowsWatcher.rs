@@ -126,7 +126,7 @@ impl DirWatcher {
         {
             let err = w::Win32Error::get();
             bun_core::scoped_log!(watcher, "failed to start watching directory: {}", err.0);
-            // TODO(b2-blocked): bun_sys::Tag::watch — full syscall enum not yet in subset.
+            // TODO(port): bun_sys::Tag::watch — full syscall enum not yet in subset.
             return Err(bun_sys::Error {
                 // Route the raw code through the `u32` `SystemErrnoInit` impl
                 // (same Win32→errno table as `Win32ErrorExt::to_system_errno`).
@@ -332,7 +332,7 @@ impl WindowsWatcher {
                     return Ok(None);
                 } else {
                     bun_core::scoped_log!(watcher, "GetQueuedCompletionStatus failed: {}", err.0);
-                    // TODO(b2-blocked): bun_sys::Tag::watch
+                    // TODO(port): bun_sys::Tag::watch
                     return Err(bun_sys::Error {
                         errno: bun_sys::SystemErrno::init(err.0 as u32)
                             .unwrap_or(bun_sys::SystemErrno::EINVAL)

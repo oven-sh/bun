@@ -42,7 +42,7 @@ pub struct Html {
     /// refcount via `.initRef(html)` when storing; `.deref()` on drop.
     /// Stored as raw ptr because `HTMLBundleRoute` does not yet impl
     /// `bun_ptr::RefCounted` (gated server-side).
-    // TODO(b2-blocked): bun_ptr::RefPtr<HTMLBundleRoute> once RefCounted impl is real.
+    // TODO(port): bun_ptr::RefPtr<HTMLBundleRoute> once RefCounted impl is real.
     pub html_bundle: *mut HTMLBundleRoute,
     pub bundled_file: incremental_graph::ClientFileIndex,
     pub script_injection_offset: Option<ByteOffset>,

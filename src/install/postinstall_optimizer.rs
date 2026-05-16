@@ -20,7 +20,7 @@ pub enum PostinstallOptimizer {
     Ignore,
 }
 
-// TODO(port): was comptime in Zig — verify `string_hash` can be `const fn` in Phase B and
+// TODO(port): was comptime in Zig — verify `string_hash` can be `const fn` and
 // switch to `const` array if so.
 static DEFAULT_NATIVE_BINLINKS_NAME_HASHES: LazyLock<[PackageNameHash; 2]> = LazyLock::new(|| {
     [
@@ -35,7 +35,7 @@ struct DefaultIgnore {
 }
 
 // TODO(port): was comptime in Zig — `Version::parse_utf8` is unlikely to be `const fn`; keep
-// LazyLock unless Phase B finds a const path.
+// LazyLock unless a const path is found.
 static DEFAULT_IGNORE: LazyLock<[DefaultIgnore; 1]> = LazyLock::new(|| {
     [DefaultIgnore {
         name_hash: semver::string::Builder::string_hash(b"sharp"),
@@ -134,8 +134,8 @@ impl PostinstallOptimizer {
 
 // TODO(port): Zig used `std.ArrayHashMapUnmanaged(PackageNameHash, PostinstallOptimizer,
 // install.ArrayIdentityContext.U64, false)` — i.e. an *identity* hash context (key is already
-// a hash). `bun_collections::ArrayHashMap` must be configured for identity hashing on u64 keys
-// in Phase B, or expose a `ArrayHashMap<K, V, IdentityU64>` variant.
+// a hash). `bun_collections::ArrayHashMap` should be configured for identity hashing on u64 keys,
+// or expose a `ArrayHashMap<K, V, IdentityU64>` variant.
 pub type Map = ArrayHashMap<PackageNameHash, PostinstallOptimizer>;
 
 #[derive(Default)]

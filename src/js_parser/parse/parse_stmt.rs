@@ -1274,7 +1274,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let import_record_index =
                         p.add_import_record(ImportKind::Stmt, parsed_path.loc, parsed_path.text);
                     let path_name = fs::PathName::init(parsed_path.text);
-                    // PERF(port): was arena allocPrint — profile in Phase B
+                    // PERF(port): was arena allocPrint — profile if hot.
                     let namespace_ref = {
                         use std::io::Write as _;
                         let mut buf: Vec<u8> = Vec::new();

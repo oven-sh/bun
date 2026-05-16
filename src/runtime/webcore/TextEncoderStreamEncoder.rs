@@ -8,9 +8,7 @@ use bun_simdutf_sys::simdutf;
 bun_output::declare_scope!(TextEncoderStreamEncoder, visible);
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; the single
-// mutable field is `Cell<Option<u16>>` (Copy). The codegen shim still emits
-// `this: &mut TextEncoderStreamEncoder` until Phase 1 lands — `&mut T`
-// auto-derefs to `&T` so the impls below compile against either.
+// mutable field is `Cell<Option<u16>>` (Copy).
 #[derive(Default)]
 #[bun_jsc::JsClass]
 pub struct TextEncoderStreamEncoder {
@@ -88,7 +86,7 @@ impl TextEncoderStreamEncoder {
         // TODO(port): Zig threw a JS OOM exception on alloc failure; Rust Vec aborts on OOM.
         let mut buffer: Vec<u8> = Vec::with_capacity(input.len() + prepend_replacement_len);
         if prepend_replacement_len > 0 {
-            // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
+            // PERF(port): was appendSliceAssumeCapacity
             buffer.extend_from_slice(&[0xef, 0xbf, 0xbd]);
         }
 
@@ -196,7 +194,7 @@ impl TextEncoderStreamEncoder {
         );
 
         if let Some(pre) = &prepend {
-            // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
+            // PERF(port): was appendSliceAssumeCapacity
             buf.extend_from_slice(&pre.bytes[0..pre.len as usize]);
         }
 

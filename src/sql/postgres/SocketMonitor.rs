@@ -18,13 +18,13 @@ macro_rules! debug_socket_monitor {
         // write-once globals.
         static FILE: OnceLock<File> = OnceLock::new();
 
-        pub static ENABLED: AtomicBool = AtomicBool::new(false);
+        pub(crate) static ENABLED: AtomicBool = AtomicBool::new(false);
 
         // Zig: `pub var check = std.once(load);` — callers do `check.call()`.
         // Rust's `Once` does not capture the fn; callers do `CHECK.call_once(load)`.
-        pub static CHECK: Once = Once::new();
+        pub(crate) static CHECK: Once = Once::new();
 
-        pub fn load() {
+        pub(crate) fn load() {
             if let Some(monitor) = $env.get() {
                 ENABLED.store(true, Ordering::Relaxed);
                 // Zig called `std.fs.cwd().createFile(monitor, .{ .truncate = true })`.
@@ -40,7 +40,7 @@ macro_rules! debug_socket_monitor {
             }
         }
 
-        pub fn write(data: &[u8]) {
+        pub(crate) fn write(data: &[u8]) {
             if let Some(file) = FILE.get() {
                 let _ = file.write_all(data);
             }

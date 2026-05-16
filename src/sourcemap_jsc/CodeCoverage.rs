@@ -122,8 +122,8 @@ pub mod text {
     // PORT NOTE: Zig `Output.prettyFmt(fmt, comptime bool)` is a comptime string
     // rewrite. The `pretty_fmt!` macro only accepts literal `true`/`false` today,
     // so call the runtime rewriter for the `ENABLE_COLORS` const-generic sites.
-    // PERF(port): runtime `pretty_fmt` allocates a small Vec per call — profile in
-    // Phase B; if hot, hoist into `const` once the proc-macro lands.
+    // PERF(port): runtime `pretty_fmt` allocates a small Vec per call — if hot,
+    // hoist into `const` once the proc-macro lands.
     use bun_core::output::pretty_fmt;
     use bun_io::Write as _;
 

@@ -161,9 +161,15 @@ pub mod uv_e {
     // Native `SystemErrno::$e as i32`; libuv-synthetic fallback for codes
     // Linux lacks (no kernel ECHARSET / EFTYPE).
     macro_rules! __v {
-        (CHARSET, $e:tt, $uv:tt) => { -::bun_libuv_sys::$uv };
-        (FTYPE,   $e:tt, $uv:tt) => { -::bun_libuv_sys::$uv };
-        ($i:tt,   $e:tt, $uv:tt) => { super::SystemErrno::$e as i32 };
+        (CHARSET, $e:tt, $uv:tt) => {
+            -::bun_libuv_sys::$uv
+        };
+        (FTYPE,   $e:tt, $uv:tt) => {
+            -::bun_libuv_sys::$uv
+        };
+        ($i:tt,   $e:tt, $uv:tt) => {
+            super::SystemErrno::$e as i32
+        };
     }
     crate::__uv_e_rows!(__v);
 }

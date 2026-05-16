@@ -204,8 +204,7 @@ impl BodyMixin for Request {
 // ─── un-gated header accessors & simple getters ─────────────────────────────
 impl Request {
     /// Zig: `pub fn getBodyValue(this: *Request) *Body.Value`.
-    /// Inherent shim until the real `BodyMixin` (body::_jsc_gated) is un-gated
-    /// and `impl BodyMixin for Request` supplies this as a trait method.
+    /// Inherent shim; `impl BodyMixin for Request` supplies the real trait method.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn get_body_value(&self) -> &mut BodyValue {
@@ -347,7 +346,6 @@ impl Request {
     }
 
     /// This should only be called by the JS code. use getFetchHeaders to get the current headers or ensureFetchHeaders to get the headers and create them if they don't exist.
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_headers(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(self.ensure_fetch_headers(global_this)?.to_js(global_this))
     }
@@ -590,7 +588,7 @@ impl Request {
 unsafe extern "C" {
     #[link_name = "Bun__getParamsIfBunRequest"]
     safe fn Bun__getParamsIfBunRequest(this_value: JSValue) -> JSValue;
-    // Zig: `extern "JS"` — JS-side builtin; Phase B wires the actual link section.
+    // Zig: `extern "JS"` — JS-side builtin.
 }
 
 impl Request {
@@ -707,8 +705,6 @@ impl Request {
                     formatter.write_indent(writer)?;
                     let size = self.body_value_mut().size();
                     if size == 0 {
-                        // TODO(port): Blob.initEmpty(undefined) — `undefined` global ptr;
-                        // Phase B should pass a real global or make initEmpty not need one.
                         let mut empty = Blob::init_empty(formatter.global_this());
                         empty.write_format::<F, W, ENABLE_ANSI_COLORS>(&mut formatter, writer)?;
                     } else {
@@ -784,27 +780,22 @@ impl Request {
         }
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_cache(&self, global_this: &JSGlobalObject) -> JSValue {
         fetch_cache_mode_to_js(self.flags.cache, global_this)
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_credentials(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
         global_this.common_strings().include()
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_destination(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
         ZigString::init(b"").to_js(global_this)
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_integrity(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
         ZigString::EMPTY.to_js(global_this)
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_signal(&self, global_this: &JSGlobalObject) -> JSValue {
         // Already have a C++ instance
         if let Some(signal) = self.signal.get() {
@@ -820,12 +811,10 @@ impl Request {
         js_signal
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_method(&self, global_this: &JSGlobalObject) -> JSValue {
         self.method.to_js(global_this)
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_mode(&self, global_this: &JSGlobalObject) -> JSValue {
         fetch_request_mode_to_js(self.flags.mode, global_this)
     }
@@ -873,12 +862,10 @@ impl Request {
         }
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_redirect(&self, global_this: &JSGlobalObject) -> JSValue {
         fetch_redirect_to_js(self.flags.redirect, global_this)
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_referrer(&self, global_object: &JSGlobalObject) -> JSValue {
         if let Some(headers_ref) = self.headers_mut().as_mut() {
             if let Some(referrer) = headers_ref.get(b"referrer", global_object) {
@@ -889,12 +876,10 @@ impl Request {
         ZigString::init(b"").to_js(global_object)
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_referrer_policy(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
         ZigString::init(b"").to_js(global_this)
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_url(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         self.ensure_url()?;
         self.url.get().to_js(global_object)
@@ -1531,7 +1516,6 @@ impl Request {
         Ok(req)
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn]
     pub fn constructor(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -1544,7 +1528,6 @@ impl Request {
         Ok(Request::new(request))
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     pub fn do_clone(
         &self,
         global_this: &JSGlobalObject,

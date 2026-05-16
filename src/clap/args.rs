@@ -322,7 +322,7 @@ impl<'a> ShellIterator<'a> {
         // the rest we have to the list and return that.
         if !list.is_empty() {
             list.extend_from_slice(res);
-            // PERF(port): was arena-backed `toOwnedSlice()` — profile in Phase B
+            // PERF(port): was arena-backed `toOwnedSlice()`.
             return Ok(Some(Cow::Owned(list)));
         }
         Ok(Some(Cow::Borrowed(res)))

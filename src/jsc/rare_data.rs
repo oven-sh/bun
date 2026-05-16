@@ -401,8 +401,8 @@ impl PathBuf {
     const S: usize = MAX_PATH_BYTES;
 
     /// Returns the smallest lazily-allocated tier buffer that fits `min_len`.
-    // PERF(port): was stack-fallback (FixedBufferAllocator + fallback allocator) — Phase B
-    // must revisit caller semantics for inputs exceeding the large tier.
+    // PERF(port): was stack-fallback (FixedBufferAllocator + fallback allocator).
+    // Revisit caller semantics for inputs exceeding the large tier.
     pub fn get(&mut self, min_len: usize) -> &mut [u8] {
         if min_len <= 2 * Self::S {
             &mut **self

@@ -141,7 +141,7 @@ impl InitCommand {
             initial_draw = false;
 
             // Print options vertically
-            // PERF(port): was `inline for` — profile in Phase B
+            // PERF(port): was `inline for`.
             for (i, option) in choices.iter().enumerate() {
                 if i == selected.to_index() {
                     if colors {
@@ -2024,7 +2024,9 @@ pub(crate) fn exists(path: &[u8]) -> bool {
 /// inside the current working directory.
 fn is_safe_entry_point_path(path: &[u8]) -> bool {
     !bun_paths::is_absolute_loose(path)
-        && !path.split(|&c| c == b'/' || c == b'\\').any(|seg| seg == b"..")
+        && !path
+            .split(|&c| c == b'/' || c == b'\\')
+            .any(|seg| seg == b"..")
 }
 
 #[inline]

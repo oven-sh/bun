@@ -30,7 +30,9 @@ pub fn parse_frames(session: &mut ClientSession, buf: &[u8]) -> usize {
             break;
         }
         let mut header = wire::FrameHeader::decode(
-            remaining[0..wire::FrameHeader::BYTE_SIZE].try_into().unwrap(),
+            remaining[0..wire::FrameHeader::BYTE_SIZE]
+                .try_into()
+                .unwrap(),
         );
         let sid = wire::UInt31WithReserved::from(header.stream_identifier).uint31();
         header.stream_identifier = sid;
@@ -710,7 +712,7 @@ pub fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
             unsafe { bun_core::ffi::slice(bytes.add(b[0] as usize), (b[1] - b[0]) as usize) };
         let value =
             unsafe { bun_core::ffi::slice(bytes.add(b[1] as usize), (b[2] - b[1]) as usize) };
-        // PERF(port): was appendAssumeCapacity — profile in Phase B
+        // PERF(port): was appendAssumeCapacity.
         stream
             .decoded_headers
             .push(picohttp::Header::new(name, value));

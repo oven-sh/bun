@@ -24,8 +24,8 @@ pub use crate::ArrayBinding;
 ///         ----------------
 ///         B.Object
 // Zig: `union(Binding.Tag)` — tag enum lives on `Binding::Tag`.
-// PORT NOTE: arena ptrs are raw `*mut` in Phase A (LIFETIMES.tsv: ARENA → raw);
-// 'bump threaded crate-wide (`&'bump mut T`).
+// PORT NOTE: arena values are referenced via `StoreRef<T>` (LIFETIMES.tsv: ARENA)
+// rather than a threaded `&'bump mut T`.
 #[derive(Copy, Clone, bun_core::EnumTag)]
 #[enum_tag(existing = super::binding::Tag)]
 pub enum B {

@@ -799,7 +799,7 @@ pub fn read(fd: Fd, buf: &mut [u8]) -> Result<usize> {
 #[inline]
 pub fn writev(fd: Fd, bufs: &[PlatformIOVec]) -> Result<usize> {
     // TODO(port): Zig signature is `[]bun.PlatformIOVec` (mutable) but pwritev takes
-    // `[]const bun.PlatformIOVecConst`; on Windows both alias uv_buf_t. Reconcile in Phase B.
+    // `[]const bun.PlatformIOVecConst`; on Windows both alias uv_buf_t. Reconcile the two.
     // SAFETY: `PlatformIOVec` (= `uv_buf_t`) and `PlatformIOVecConst` are
     // layout-identical on Windows (size/align asserted in lib.rs); the
     // fat-pointer cast preserves the original slice's (ptr, len) metadata
@@ -880,7 +880,7 @@ pub fn write(fd: Fd, buf: &[u8]) -> Result<usize> {
 
 // PORT NOTE: Zig's `write()` builds a `[1]PlatformIOVecConst` and calls `writev` (which
 // takes `[]PlatformIOVec`). The two types alias on Windows so Zig coerces silently. Rust
-// can't, so route through pwritev directly with position = -1. Phase B should unify the
+// can't, so route through pwritev directly with position = -1. TODO(refactor): unify the
 // iovec types on Windows.
 #[inline]
 fn writev_const(fd: Fd, bufs: &[PlatformIOVecConst]) -> Result<usize> {

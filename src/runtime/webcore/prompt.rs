@@ -16,7 +16,7 @@ fn alert(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
     // 2. If the method was invoked with no arguments, then let message be the empty string; otherwise, let message be the method's first argument.
     if has_message {
-        // PERF(port): was stack-fallback (2048 bytes) — profile in Phase B
+        // PERF(port): was stack-fallback (2048 bytes) — profile if it shows up on a hot path.
         let message = arguments[0].to_slice(global)?;
 
         if !message.slice().is_empty() {
@@ -74,7 +74,7 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let has_message = !arguments.is_empty();
 
     if has_message {
-        // PERF(port): was stack-fallback (1024 bytes) — profile in Phase B
+        // PERF(port): was stack-fallback (1024 bytes) — profile if it shows up on a hot path.
         // 2. Set message to the result of normalizing newlines given message.
         // *  Not pertinent to a server runtime so we will just let the terminal handle this.
 
@@ -240,7 +240,7 @@ pub mod prompt {
     pub fn call(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let arguments = frame.arguments_old::<3>();
         let arguments = arguments.slice();
-        // PERF(port): was stack-fallback (2048 bytes) — profile in Phase B
+        // PERF(port): was stack-fallback (2048 bytes) — profile if it shows up on a hot path.
         let output = Output::writer();
         let has_message = !arguments.is_empty();
         let has_default = arguments.len() >= 2;

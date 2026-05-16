@@ -54,19 +54,21 @@ use bun_jsc::virtual_machine::VirtualMachine;
 /// `AsyncReaddirRecursiveTask` (not an `AsyncFSTask<_,_,F>`); `Cp` and
 /// `AsyncMkdirp` are intentionally absent — they have bespoke dispatch paths.
 macro_rules! for_each_fs_async_op {
-    ($m:ident) => { $m! {
-        Stat Stat; Lstat Lstat; Fstat Fstat; Open Open; ReadFile ReadFile;
-        WriteFile WriteFile; CopyFile CopyFile; Read Read; Write Write;
-        Truncate Truncate; Writev Writev; Readv Readv; Rename Rename;
-        FTruncate Ftruncate; Readdir Readdir; ReaddirRecursive ReaddirRecursive;
-        Close Close; Rm Rm; Rmdir Rmdir; Chown Chown; FChown Fchown;
-        Utimes Utimes; Lutimes Lutimes; Chmod Chmod; Fchmod Fchmod; Link Link;
-        Symlink Symlink; Readlink Readlink; Realpath Realpath;
-        RealpathNonNative RealpathNonNative; Mkdir Mkdir; Fsync Fsync;
-        Fdatasync Fdatasync; Access Access; AppendFile AppendFile;
-        Mkdtemp Mkdtemp; Exists Exists; Futimes Futimes; Lchmod Lchmod;
-        Lchown Lchown; Unlink Unlink; StatFS Statfs;
-    }};
+    ($m:ident) => {
+        $m! {
+            Stat Stat; Lstat Lstat; Fstat Fstat; Open Open; ReadFile ReadFile;
+            WriteFile WriteFile; CopyFile CopyFile; Read Read; Write Write;
+            Truncate Truncate; Writev Writev; Readv Readv; Rename Rename;
+            FTruncate Ftruncate; Readdir Readdir; ReaddirRecursive ReaddirRecursive;
+            Close Close; Rm Rm; Rmdir Rmdir; Chown Chown; FChown Fchown;
+            Utimes Utimes; Lutimes Lutimes; Chmod Chmod; Fchmod Fchmod; Link Link;
+            Symlink Symlink; Readlink Readlink; Realpath Realpath;
+            RealpathNonNative RealpathNonNative; Mkdir Mkdir; Fsync Fsync;
+            Fdatasync Fdatasync; Access Access; AppendFile AppendFile;
+            Mkdtemp Mkdtemp; Exists Exists; Futimes Futimes; Lchmod Lchmod;
+            Lchown Lchown; Unlink Unlink; StatFS Statfs;
+        }
+    };
 }
 /// Expand the fs-op table to an or-pattern over `task_tag::*` (pattern position).
 macro_rules! __fs_pat {
@@ -677,7 +679,9 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
     /// covers most tags.
     macro_rules! poll_arm {
         ($Ty:ty) => {
-            poll_arm!($Ty, |h| unsafe { (*h).on_poll(size_or_offset as isize, hup) })
+            poll_arm!($Ty, |h| unsafe {
+                (*h).on_poll(size_or_offset as isize, hup)
+            })
         };
         ($Ty:ty, |$h:ident| $body:expr) => {{
             // SAFETY: tag was set together with this pointee type at `FilePoll::init`.
@@ -925,7 +929,9 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             let ($now, $vm) = (now, vm);
             // SAFETY: per fn contract; container derived from a live `$Ty`.
             #[allow(unused_unsafe)]
-            unsafe { $body };
+            unsafe {
+                $body
+            };
         }};
     }
     match tag {
@@ -949,10 +955,15 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
         }
         // Spec `inline else` fallthrough: `container.callback(container)`.
         EventLoopTimerTag::TimerCallback => {
-            timer_arm!(TimerCallback, event_loop_timer, |c, _now, _vm| ((*c).callback)(c))
+            timer_arm!(TimerCallback, event_loop_timer, |c, _now, _vm| ((*c)
+                .callback)(
+                c
+            ))
         }
         EventLoopTimerTag::WTFTimer => {
-            timer_arm!(WTFTimer, event_loop_timer, |c, now, vm| WTFTimer::fire(c, &*now, vm))
+            timer_arm!(WTFTimer, event_loop_timer, |c, now, vm| WTFTimer::fire(
+                c, &*now, vm
+            ))
         }
         EventLoopTimerTag::AbortSignalTimeout => {
             timer_arm!(AbortSignalTimeout, event_loop_timer, |c, _now, vm| {
@@ -960,7 +971,8 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             })
         }
         EventLoopTimerTag::DateHeaderTimer => {
-            timer_arm!(DateHeaderTimer, event_loop_timer, |c, _now, vm| (*c).run(&mut *vm))
+            timer_arm!(DateHeaderTimer, event_loop_timer, |c, _now, vm| (*c)
+                .run(&mut *vm))
         }
         EventLoopTimerTag::EventLoopDelayMonitor => {
             timer_arm!(EventLoopDelayMonitor, event_loop_timer, |c, now, vm| {
@@ -968,15 +980,19 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             })
         }
         EventLoopTimerTag::StatWatcherScheduler => {
-            timer_arm!(StatWatcherScheduler, event_loop_timer, |c, _now, _vm| (*c).timer_callback())
+            timer_arm!(StatWatcherScheduler, event_loop_timer, |c, _now, _vm| (*c)
+                .timer_callback())
         }
         EventLoopTimerTag::UpgradedDuplex => {
-            timer_arm!(UpgradedDuplex, event_loop_timer, |c, _now, _vm| (*c).on_timeout())
+            timer_arm!(UpgradedDuplex, event_loop_timer, |c, _now, _vm| (*c)
+                .on_timeout())
         }
         // R-2: shared deref — `check_timeouts` re-enters via `ares_process_fd`.
-        EventLoopTimerTag::DNSResolver => timer_arm!(DNSResolver, event_loop_timer, |c, now, vm| {
-            (&*c.cast_const()).check_timeouts(&*now, &*vm)
-        }),
+        EventLoopTimerTag::DNSResolver => {
+            timer_arm!(DNSResolver, event_loop_timer, |c, now, vm| {
+                (&*c.cast_const()).check_timeouts(&*now, &*vm)
+            })
+        }
         EventLoopTimerTag::WindowsNamedPipe => {
             #[cfg(windows)]
             {
@@ -1021,10 +1037,12 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             timer_arm!(Valkey, timer, |c, _now, _vm| (*c).on_connection_timeout())
         }
         EventLoopTimerTag::ValkeyConnectionReconnect => {
-            timer_arm!(Valkey, reconnect_timer, |c, _now, _vm| (*c).on_reconnect_timer())
+            timer_arm!(Valkey, reconnect_timer, |c, _now, _vm| (*c)
+                .on_reconnect_timer())
         }
         EventLoopTimerTag::SubprocessTimeout => {
-            timer_arm!(Subprocess<'_>, event_loop_timer, |c, _now, _vm| (*c).timeout_callback())
+            timer_arm!(Subprocess<'_>, event_loop_timer, |c, _now, _vm| (*c)
+                .timeout_callback())
         }
         EventLoopTimerTag::DevServerSweepSourceMaps => {
             // Spec: `bun.bake.DevServer.SourceMapStore.sweepWeakRefs(self, now)`
@@ -1058,7 +1076,7 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             };
             // SAFETY: per fn contract. `bun_test_timeout_callback` takes a
             // `&bun_core::Timespec`; the low-tier `EventLoopTimer::Timespec` is
-            // a layout-identical local stub (see EventLoopTimer.rs TODO(b1)).
+            // a layout-identical local stub (see EventLoopTimer.rs TODO(port)).
             let now_core = unsafe {
                 bun_core::Timespec {
                     sec: (*now).sec,

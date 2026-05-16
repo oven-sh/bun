@@ -21,7 +21,8 @@ macro_rules! arena_slice_newtype {
         $(#[$meta])*
         #[derive(Debug, Clone, Copy)]
         pub struct $name {
-            // TODO(port): arena lifetime — CSS parser slices are arena-owned; Phase B threads `'bump`
+            // TODO(port): arena lifetime — CSS parser slices are arena-owned; thread a `'bump`
+            // lifetime through instead of erasing to a raw pointer.
             pub v: *const [u8],
         }
 
@@ -34,10 +35,10 @@ macro_rules! arena_slice_newtype {
             /// value produced from them, so handing out `&[u8]` is sound.
             ///
             /// NOTE: the borrow is tied to `&self`. Call sites that must return
-            /// the slice with the Phase-A `'static` placeholder lifetime (e.g.
+            /// the slice with the `'static` placeholder lifetime (e.g.
             /// `IdentOrRef::{debug_ident,as_str,as_original_string}`,
             /// `Printer::lookup_ident_or_ref`, `SelectorParser::namespace_for_prefix`)
-            /// still go through the raw `v` field directly until Phase B threads `'bump`.
+            /// still go through the raw `v` field directly until `'bump` is threaded.
             #[inline]
             pub fn v(&self) -> &[u8] {
                 // SAFETY: arena-owned, never null, immutable for the parse session
@@ -190,8 +191,8 @@ arena_slice_newtype! {
 // TODO(port): Zig `pub fn HashMap(comptime V: type) type` returned an
 // ArrayHashMapUnmanaged with a custom string-hash context. Inherent assoc
 // type aliases are unstable in Rust; expose as a free type alias instead.
-// bun_collections::ArrayHashMap is wyhash-keyed; Phase B must verify the
-// hasher matches std.array_hash_map.hashString or supply a custom Hash impl.
+// bun_collections::ArrayHashMap is wyhash-keyed; verify the hasher matches
+// std.array_hash_map.hashString or supply a custom Hash impl.
 // blocked_on: bun_collections::ArrayHashMap surface
 pub type DashedIdentHashMap<V> = bun_collections::ArrayHashMap<DashedIdent, V>;
 
@@ -477,7 +478,14 @@ pub use CustomIdent as CustomIdentFns;
 pub fn is_reserved_custom_ident(s: &[u8]) -> bool {
     strings::eql_any_case_insensitive_ascii(
         s,
-        &[b"initial", b"inherit", b"unset", b"default", b"revert", b"revert-layer"],
+        &[
+            b"initial",
+            b"inherit",
+            b"unset",
+            b"default",
+            b"revert",
+            b"revert-layer",
+        ],
     )
 }
 

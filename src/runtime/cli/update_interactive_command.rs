@@ -12,7 +12,7 @@ use bun_collections::StringHashMap;
 use bun_core::{Global, Output};
 use bun_glob as glob;
 use bun_install::dependency::{self, Behavior};
-use bun_install::lockfile::package::{PackageColumns as _};
+use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::package_manager::{
     self, LogLevel, ManifestCacheOptions, ManifestLoad, ROOT_PACKAGE_JSON_PATH, Subcommand,
@@ -119,7 +119,7 @@ struct PackageUpdate {
 }
 
 pub struct CatalogUpdateRequest {
-    // TODO(port): lifetime — these borrow from caller in Zig; using owned for Phase A
+    // TODO(port): lifetime — these borrow from caller in Zig; using owned for now
     package_name: Box<[u8]>,
     new_version: Box<[u8]>,
     catalog_name: Option<Box<[u8]>>,
@@ -2285,7 +2285,7 @@ fn dep_type_priority(dep_type: &[u8]) -> u8 {
 
 /// Dupe a byte buffer into the process-lifetime CLI arena to obtain a
 /// `'static` slice for storage in `E::EString.data` (the AST `Str` alias is
-/// `&'static [u8]` until Phase B threads `'bump`). Mirrors Zig's
+/// `&'static [u8]` until `'bump` is threaded through). Mirrors Zig's
 /// `allocator.dupe(u8, ...)` against the singleton `manager.allocator`.
 #[inline]
 fn leak_dup(bytes: &[u8]) -> &'static [u8] {

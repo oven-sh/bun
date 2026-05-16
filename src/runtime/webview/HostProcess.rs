@@ -132,7 +132,7 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
     }
     #[cfg(target_os = "macos")]
     {
-        // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile in Phase B.
+        // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile if it shows up on a hot path.
 
         // Both ends nonblocking — parent uses usockets; child sets O_NONBLOCK
         // again after dup2 (socketpair flags are per-fd, not per-pair).
@@ -159,9 +159,9 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
         // var, then re-terminate.
         let base_entries = &base_slice[..base_slice.len().saturating_sub(1)];
         let mut env: Vec<*const c_char> = Vec::with_capacity(base_entries.len() + 2);
-        // PERF(port): was appendSliceAssumeCapacity — profile in Phase B.
+        // PERF(port): was appendSliceAssumeCapacity.
         env.extend(base_entries.iter().copied());
-        // PERF(port): was appendAssumeCapacity — profile in Phase B.
+        // PERF(port): was appendAssumeCapacity.
         env.push(c"BUN_INTERNAL_WEBVIEW_HOST=3".as_ptr());
         env.push(ptr::null());
 

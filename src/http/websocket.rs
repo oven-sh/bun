@@ -162,8 +162,8 @@ impl WebsocketHeader {
     }
 
     // PORT NOTE: Zig `writer: anytype` called `writeInt(u16, ..)`. The byte-level
-    // `bun_io::Write` trait is not yet defined (T0/T1 lacks it); use `std::io::Write`
-    // for Phase B-2 — `write_all` over a 2-byte big-endian buffer is identical.
+    // `bun_io::Write` trait is not yet defined; use `std::io::Write` —
+    // `write_all` over a 2-byte big-endian buffer is identical.
     pub fn write_header(self, writer: &mut impl std::io::Write, n: usize) -> std::io::Result<()> {
         // packed structs are sometimes buggy
         // lets check it worked right

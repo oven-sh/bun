@@ -7,7 +7,7 @@ use bun_collections::{StringArrayHashMap, StringHashMap};
 use bun_core::{Global, Output, pretty, prettyln};
 use bun_core::{MutableString, strings};
 use bun_http::{self as http, HeaderBuilder};
-use bun_install::lockfile::package::{PackageColumns as _};
+use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::package_manager_real::command_line_arguments::AuditLevel;
 use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{CommandLineArguments, PackageManager, Subcommand};
@@ -19,7 +19,7 @@ use crate::cli::Command;
 use crate::cli::package_manager_command::PackageManagerCommand;
 
 // TODO(port): in Zig these `[]const u8` fields borrow from the JSON parse arena (and a few are
-// `allocator.dupe`d). Phase A boxes them to avoid a struct lifetime param; revisit in Phase B if
+// `allocator.dupe`d). Boxed here to avoid a struct lifetime param; revisit if
 // the extra clones show up in profiling.
 struct VulnerabilityInfo {
     severity: Box<[u8]>,

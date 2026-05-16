@@ -27,7 +27,7 @@ pub struct Scanner<'a> {
     pub test_files: Vec<PathString>,
     // TODO(port): LIFETIMES.tsv classifies as &'a FileSystem, but several call
     // sites (dirname_store.append, readDirectoryWithIterator) mutate. May need
-    // interior mutability on FileSystem or &'a mut in Phase B.
+    // interior mutability on FileSystem or &'a mut.
     pub fs: &'a FileSystem,
     pub open_dir_buf: PathBuffer,
     pub scan_dir_buf: PathBuffer,

@@ -7,7 +7,7 @@ use bun_core::strings;
 use bun_semver as semver;
 
 use bun_install::dependency::{self, TagExt as _};
-use bun_install::lockfile::package::{PackageColumns as _};
+use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::{Dependency, INVALID_PACKAGE_ID, resolution};
 use bun_install_types::DependencyGroup;
 
@@ -130,7 +130,7 @@ pub fn edit_trusted_dependencies(
     if let Some(query) = package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
         if let bun_ast::ExprData::EArray(arr) = &query.expr.data {
             // SAFETY: `arr` is a `StoreRef` into the AST arena which outlives
-            // this function; lifetime erased per Phase-A `Str` convention.
+            // this function; lifetime erased per the parser's `Str` convention.
             trusted_dependencies = unsafe { bun_ptr::detach_lifetime(arr.items.slice()) };
         }
     }
@@ -1236,7 +1236,7 @@ pub fn edit(
                                     write!(&mut v, "^{}", version_fmt)
                                         .expect("infallible: in-memory write");
                                 }
-                                // PERF(port): was comptime bool dispatch — profile in Phase B
+                                // PERF(port): was comptime bool dispatch — profile if hot
                                 v
                             };
 

@@ -17,8 +17,8 @@ use bun_core::pretty_fmt;
 // its moved-out buffer) alive while the returned slices are in use.
 pub use bun_core::StringBuilder;
 
-// TODO(b1): bun_picohttp_sys crate missing — local FFI stub surface.
-// Real bindings land in B-2 (bindgen over vendor/picohttpparser).
+// TODO(port): bun_picohttp_sys crate missing — local FFI stub surface.
+// Real bindings would come from bindgen over vendor/picohttpparser.
 #[allow(non_camel_case_types)]
 mod c {
     use core::ffi::{c_char, c_int};
@@ -288,7 +288,7 @@ impl<'a> HeaderList<'a> {
 // Request
 // ──────────────────────────────────────────────────────────────────────────
 
-// TODO(b1): thiserror not in workspace deps — manual Display/Error impl.
+// TODO(port): thiserror not in workspace deps — manual Display/Error impl.
 #[derive(Debug, strum::IntoStaticStr)]
 pub enum ParseRequestError {
     BadRequest,

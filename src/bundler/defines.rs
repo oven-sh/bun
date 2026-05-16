@@ -229,9 +229,9 @@ impl DefineExt for Define {
         // PORT NOTE: reshaped for borrowck — getOrPut split into entry-style match.
         if let Some(existing) = self.dots.get_mut(key) {
             let mut list: Vec<DotDefine> = Vec::with_capacity(existing.len() + 1);
-            // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
+            // PERF(port): was appendSliceAssumeCapacity — profile if hot.
             list.extend_from_slice(existing);
-            // PERF(port): was appendAssumeCapacity — profile in Phase B
+            // PERF(port): was appendAssumeCapacity — profile if hot.
             list.push(DotDefine {
                 parts,
                 data: value_define.clone(),
@@ -240,7 +240,7 @@ impl DefineExt for Define {
             *existing = list;
         } else {
             let mut list: Vec<DotDefine> = Vec::with_capacity(1);
-            // PERF(port): was appendAssumeCapacity — profile in Phase B
+            // PERF(port): was appendAssumeCapacity — profile if hot.
             list.push(DotDefine {
                 parts,
                 data: value_define.clone(),
@@ -328,9 +328,13 @@ fn const_default_define_value(value_str: &[u8]) -> Option<ExprData> {
     static PRODUCTION: bun_ast::E::EString = bun_ast::E::EString::from_static(b"production");
     static TEST: bun_ast::E::EString = bun_ast::E::EString::from_static(b"test");
     if value_str == b"\"development\"" {
-        Some(ExprData::EString(bun_ast::StoreRef::from_static(&DEVELOPMENT)))
+        Some(ExprData::EString(bun_ast::StoreRef::from_static(
+            &DEVELOPMENT,
+        )))
     } else if value_str == b"\"production\"" {
-        Some(ExprData::EString(bun_ast::StoreRef::from_static(&PRODUCTION)))
+        Some(ExprData::EString(bun_ast::StoreRef::from_static(
+            &PRODUCTION,
+        )))
     } else if value_str == b"\"test\"" {
         Some(ExprData::EString(bun_ast::StoreRef::from_static(&TEST)))
     } else if value_str == b"true" {
@@ -382,7 +386,7 @@ impl DefineDataExt for DefineData {
         log: &mut bun_ast::Log,
         bump: &bun_alloc::Arena,
     ) -> Result<(), bun_core::Error> {
-        // PERF(port): was putAssumeCapacity — profile in Phase B
+        // PERF(port): was putAssumeCapacity — profile if hot.
         user_defines.put_assume_capacity(
             key,
             <Self as DefineDataExt>::parse(
@@ -518,8 +522,8 @@ impl DefineDataExt for DefineData {
         bun_ast::Stmt::data_store_create();
         let arena_value: &[u8] = bump.alloc_slice_copy(value_str);
         let source = bun_ast::Source {
-            // `Source.contents` is typed `&'static [u8]` as a Phase-A stand-in
-            // (see logger/lib.rs `Str` note). `arena_value` lives in `bump`,
+            // `Source.contents` is typed `&'static [u8]` as a stand-in for an
+            // arena lifetime (see logger/lib.rs `Str` note). `arena_value` lives in `bump`,
             // which the caller (`Define::init`) owns for the lifetime of the
             // `Define` table — i.e. as long as any `ExprData` produced here is
             // reachable. Route through `StoreStr` for the lifetime erasure.

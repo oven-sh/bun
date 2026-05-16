@@ -11,7 +11,7 @@ enum ConstantType {
 }
 
 // TODO(port): Zig used `@hasField(std.posix.E, name)` + `@intFromEnum(@field(...))` for
-// comptime reflection over the platform errno enum. Rust has no equivalent. Phase B must
+// comptime reflection over the platform errno enum. Rust has no equivalent. Should
 // provide `bun_sys::posix::errno::lookup(name) -> Option<i32>` (or per-constant `cfg`-gated
 // consts) so that names absent on the target platform are silently skipped, matching Zig.
 macro_rules! get_errno_constant {
@@ -21,7 +21,7 @@ macro_rules! get_errno_constant {
 }
 
 // TODO(port): Zig used `@hasField(std.posix.E, name)` to gate, then
-// `@intFromEnum(@field(std.os.windows.ws2_32.WinsockError, name))`. Phase B must provide
+// `@intFromEnum(@field(std.os.windows.ws2_32.WinsockError, name))`. Should provide
 // `bun_sys::windows::ws2_32::winsock_error::lookup(name) -> Option<i32>`.
 macro_rules! get_windows_errno_constant {
     ($name:ident) => {
@@ -29,7 +29,7 @@ macro_rules! get_windows_errno_constant {
     };
 }
 
-// TODO(port): Zig used `@hasDecl(std.posix.SIG, name)` + `@field(...)`. Phase B must provide
+// TODO(port): Zig used `@hasDecl(std.posix.SIG, name)` + `@field(...)`. Should provide
 // `bun_sys::posix::sig::lookup(name) -> Option<i32>` with per-platform cfg gating.
 macro_rules! get_signals_constant {
     ($name:ident) => {
@@ -37,7 +37,7 @@ macro_rules! get_signals_constant {
     };
 }
 
-// TODO(port): Zig used `@hasDecl(std.posix.system.RTLD, name)` + `@field(...)`. Phase B must
+// TODO(port): Zig used `@hasDecl(std.posix.system.RTLD, name)` + `@field(...)`. Should
 // provide `bun_sys::posix::rtld::lookup(name) -> Option<i32>` with per-platform cfg gating.
 macro_rules! get_dlopen_constant {
     ($name:ident) => {

@@ -263,13 +263,13 @@ impl<T: Copy> OrderedArraySet<T> {
             }
 
             if order == Ordering::Less {
-                // PERF(port): was insertAssumeCapacity — profile in Phase B
+                // PERF(port): was insertAssumeCapacity — profile if hot
                 self.list.insert(i, new);
                 return;
             }
         }
 
-        // PERF(port): was appendAssumeCapacity — profile in Phase B
+        // PERF(port): was appendAssumeCapacity — profile if hot
         self.list.push(new);
     }
 }

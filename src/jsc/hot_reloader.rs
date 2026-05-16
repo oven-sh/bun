@@ -1161,8 +1161,7 @@ where
                         // of whether the per-file watchlist entry survived. The per-file
                         // watch itself is re-armed on the JS thread by
                         // `VirtualMachine::add_main_to_watcher_if_needed` after the reload.
-                        if !IS_KQUEUE && self.main.hash != 0 && self.main.dir_hash == current_hash
-                        {
+                        if !IS_KQUEUE && self.main.hash != 0 && self.main.dir_hash == current_hash {
                             let main_basename = bun_paths::basename(self.main.file);
                             for changed_name_ in affected_inotify {
                                 let changed_name: &[u8] = match changed_name_ {
@@ -1286,7 +1285,7 @@ where
                                             // index `len` (overlapping the just-written SEP)
                                             // and then slices `len + changed_name.len + 1`
                                             // bytes — this includes one byte past the copy.
-                                            // Porting verbatim; flag for Phase B review.
+                                            // Ported verbatim.
                                             // TODO(port): verify intended off-by-one in Zig source
                                             _on_file_update_path_buf
                                                 [file_path_without_trailing_slash.len()
@@ -1462,15 +1461,16 @@ type BundlerWatcher =
     NewHotReloader<bun_bundler::BundleV2<'static>, bun_event_loop::AnyEventLoop<'static>, true>;
 
 /// CYCLEBREAK extern hook: called from `BundleV2::init` (T5) when
-/// `cli_watch_flag` is set (bundle_v2.zig:993). Erased via `*mut ()` because
-/// the bundler crate can't name `NewHotReloader`.
+/// `cli_watch_flag` is set (bundle_v2.zig:993). Defined here (not in
+/// `bun_bundler`) because the bundler crate can't name `NewHotReloader`.
 #[unsafe(no_mangle)]
-fn __bun_jsc_enable_hot_module_reloading_for_bundler(bv2: *mut ()) {
-    // SAFETY: `bv2` is the `&mut *Box<BundleV2<'static>>` formed in
+fn __bun_jsc_enable_hot_module_reloading_for_bundler(
+    bv2: core::ptr::NonNull<bun_bundler::BundleV2<'static>>,
+) {
+    // SAFETY contract: `bv2` is the `&mut *Box<BundleV2<'static>>` formed in
     // `BundleV2::init`; the lifetime is `'static` for the only caller (build
     // command leaks the CLI arena), and the box is leaked under --watch.
-    let bv2 = bv2.cast::<bun_bundler::BundleV2<'static>>();
-    BundlerWatcher::enable_hot_module_reloading(bv2, None);
+    BundlerWatcher::enable_hot_module_reloading(bv2.as_ptr(), None);
 }
 
 pub use crate::MarkedArrayBuffer as Buffer;

@@ -280,7 +280,7 @@ pub fn generate_files(
     // to comptime-dispatch to the per-template `files` const and stack-size the
     // `filenames`/`created_files` arrays. Rust cannot reflect on decl names, so
     // we route through `Tag::files()` and use heap Vecs sized at runtime.
-    // PERF(port): was comptime monomorphization + stack arrays — profile in Phase B
+    // PERF(port): was comptime monomorphization + stack arrays.
     {
         let files: &'static [TemplateFile] = template.tag().files();
 

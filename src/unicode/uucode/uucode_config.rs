@@ -4,7 +4,7 @@
 
 use super::config;
 // TODO(port): path reaches into vendored third-party `../uucode_lib/src/x/config.x.zig`.
-// Phase B decides whether `uucode_lib` is its own crate or a module under `bun_unicode`;
+// TODO(refactor): decide whether `uucode_lib` is its own crate or a module under `bun_unicode`;
 // the `src` segment is the Zig package root and likely collapses.
 use crate::uucode_lib::src::x::config_x;
 

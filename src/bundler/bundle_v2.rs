@@ -4978,8 +4978,9 @@ pub mod bv2_impl {
                     drop(q.take());
                 }
                 for t in self.linker.graph.files.items_line_offset_table_mut() {
-                    // `LineOffsetTable::List` is itself a `MultiArrayList`; its
-                    // own elements are POD-ish, so `Drop` (slab free) suffices.
+                    // `LineOffsetTable.columns_for_non_ascii: Vec<i32>` is
+                    // global-heap; `MultiArrayList::drop` is slab-only.
+                    t.drop_elements();
                     *t = Default::default();
                 }
 

@@ -599,6 +599,20 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// associated with that namespace or namespace member: "ref_to_ts_namespace_member".
     /// This gives enough info to be able to resolve queries into the namespace.
     pub ref_to_ts_namespace_member: HashMap<Ref, js_ast::ts::Data>,
+    /// Every `TSNamespaceScope` `arena.alloc()`'d by
+    /// `get_or_create_exported_namespace_members`. Each holds a global-heap
+    /// `StringArrayHashMap` (`property_accesses`) and a `StoreRef` to a
+    /// `TSNamespaceMemberMap` (also a global-heap `StringArrayHashMap`). The
+    /// arena bulk-frees their *struct* bytes on reset without running `Drop`,
+    /// stranding the hash maps' `Vec`/`Box<HashTable>` allocations. `to_ast`
+    /// `mem::take`s those fields before the parser arena tears down. (Zig
+    /// passed `p.allocator` — the same arena — to the map's `init`, so it had
+    /// no out-of-arena allocation to lose.)
+    pub ts_namespace_scopes: Vec<js_ast::StoreRef<js_ast::TSNamespaceScope>>,
+    /// Companion list: each newly-allocated `TSNamespaceMemberMap` (sibling
+    /// scopes share one via `exported_members`, so the scope list above
+    /// can't free the map without double-freeing).
+    pub ts_namespace_member_maps: Vec<js_ast::StoreRef<js_ast::TSNamespaceMemberMap>>,
     /// When visiting expressions, namespace metadata is associated with the most
     /// recently visited node. If namespace metadata is present, "tsNamespaceTarget"
     /// will be set to the most recently visited node (as a way to mark that this
@@ -718,6 +732,23 @@ pub type Binding2ExprWrapperNamespace = bun_ast::binding::ToExprWrapper;
 pub type Binding2ExprWrapperHoisted = bun_ast::binding::ToExprWrapper;
 
 // ═══════════════════════════════════════════════════════════════════════════
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> Drop for P<'a, TYPESCRIPT, SCAN_ONLY> {
+    fn drop(&mut self) {
+        // `TSNamespaceScope`/`TSNamespaceMemberMap` are arena-allocated (see
+        // `get_or_create_exported_namespace_members`) but hold global-heap
+        // `StringArrayHashMap`s; the arena bulk-frees the structs without
+        // running `Drop`, stranding the maps' `Vec`/`Box<HashTable>`. They are
+        // parse-internal (never escape into `Ast`), so drop their global-heap
+        // fields here while the `&'a Arena` (which outlives `P`) is still live.
+        for mut scope in self.ts_namespace_scopes.drain(..) {
+            drop(core::mem::take(&mut scope.property_accesses));
+        }
+        for mut map in self.ts_namespace_member_maps.drain(..) {
+            drop(core::mem::take(&mut *map));
+        }
+    }
+}
+
 // Round-C: associated consts kept live (cheap, used by ParserLike + Parser.rs).
 // The full method-body impl block below is gated wholesale — 600+ type errors
 // from method bodies referencing not-yet-real Expr/Symbol/Log surface; round-D
@@ -4669,12 +4700,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
 
         if let Some(existing) = map {
-            return js_ast::StoreRef::from_bump(self.arena.alloc(js_ast::TSNamespaceScope {
+            let scope = js_ast::StoreRef::from_bump(self.arena.alloc(js_ast::TSNamespaceScope {
                 exported_members: existing,
                 is_enum_scope,
                 arg_ref: Ref::NONE,
                 property_accesses: Default::default(),
             }));
+            self.ts_namespace_scopes.push(scope);
+            return scope;
         }
 
         // Otherwise, generate a new namespace object.
@@ -4683,12 +4716,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // can't be null-then-patch; two bump allocs from the same arena is the
         // same locality and avoids the self-referential init.
         let map = js_ast::StoreRef::from_bump(self.arena.alloc(Default::default()));
-        js_ast::StoreRef::from_bump(self.arena.alloc(js_ast::TSNamespaceScope {
+        self.ts_namespace_member_maps.push(map);
+        let scope = js_ast::StoreRef::from_bump(self.arena.alloc(js_ast::TSNamespaceScope {
             exported_members: map,
             is_enum_scope,
             arg_ref: Ref::NONE,
             property_accesses: Default::default(),
-        }))
+        }));
+        self.ts_namespace_scopes.push(scope);
+        scope
     }
 
     // TODO:
@@ -9284,6 +9320,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             binary_expression_stack: BumpVec::new_in(arena),
             binary_expression_simplify_stack: BumpVec::new_in(arena),
             ref_to_ts_namespace_member: Default::default(),
+            ts_namespace_scopes: Vec::new(),
+            ts_namespace_member_maps: Vec::new(),
             ts_namespace: RecentlyVisitedTSNamespace {
                 expr: null_expr_data(),
                 map: None,

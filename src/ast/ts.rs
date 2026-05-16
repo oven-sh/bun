@@ -1,5 +1,7 @@
 use crate::Loc;
+use bun_alloc::AstAlloc;
 use bun_collections::StringArrayHashMap;
+use bun_collections::array_hash_map::StringContext;
 
 use crate::base::Ref;
 use crate::e::String as EString;
@@ -81,8 +83,14 @@ pub struct TSNamespaceScope {
     /// generated proxy symbols that represent the property access "x3.y". This
     /// map is unique per namespace block because "x3" is the argument symbol that
     /// is specific to that particular namespace block.
-    // Zig default: `= .{}` — callers should init with `StringArrayHashMap::default()`.
-    pub property_accesses: StringArrayHashMap<Ref>,
+    // `AstAlloc` (not `Global`): `TSNamespaceScope` is `arena.alloc()`'d and
+    // never has `Drop` run, so any `Global` allocation inside it would strand
+    // when the parser arena resets. `AstAlloc` routes the column `Vec`s and
+    // `Box<[u8]>` keys to the same `mi_heap_t` the struct lives in (no-op
+    // `deallocate`, bulk-freed on arena reset). The `index: Box<HashTable>`
+    // accelerator stays on `Global` (only allocated past 8 entries — see
+    // `MapAllocator` doc) and is freed by `P::Drop`.
+    pub property_accesses: StringArrayHashMap<Ref, StringContext, AstAlloc>,
 
     /// Even though enums are like namespaces and both enums and namespaces allow
     /// implicit references to properties of sibling scopes, they behave like
@@ -112,7 +120,8 @@ pub struct TSNamespaceScope {
     pub is_enum_scope: bool,
 }
 
-pub type TSNamespaceMemberMap = StringArrayHashMap<TSNamespaceMember>;
+// `AstAlloc` for the same reason as `TSNamespaceScope::property_accesses`.
+pub type TSNamespaceMemberMap = StringArrayHashMap<TSNamespaceMember, StringContext, AstAlloc>;
 
 pub struct TSNamespaceMember {
     pub loc: Loc,

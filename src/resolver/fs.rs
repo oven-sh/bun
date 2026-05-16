@@ -1808,14 +1808,11 @@ impl RealFS {
     }
 
     pub fn mod_key(&mut self, path: &[u8]) -> Result<ModKey, bun_core::Error> {
-        // TODO(port): std.fs.cwd().openFile — bun_sys::open_file
+        // Zig (fs.zig:920) leaked the fd when `!needToCloseFiles()`, but
+        // nothing receives it — `mod_key_with_file` only `fstat`s. `Drop`
+        // closing on every path here is a strict improvement.
         let file = bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)?;
-        let result = self.mod_key_with_file(path, &file);
-        if !self.need_to_close_files() {
-            // Hand the descriptor off — this fs caches open fds.
-            let _ = file.into_raw();
-        }
-        result
+        self.mod_key_with_file(path, &file)
     }
 }
 

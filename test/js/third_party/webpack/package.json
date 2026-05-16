@@ -2,6 +2,6 @@
     "name": "webpack-test",
     "version": "2.0.0",
     "dependencies": {
-        "webpack": "5.88.0"
+        "webpack": "5.104.1"
     }
 }

@@ -13,7 +13,10 @@
     "lint:fix": "npm run lint -- --fix"
   },
   "dependencies": {
-    "@azure/identity": "^2.1.0",
+    "@angular/common": "21.2.13",
+    "@angular/compiler": "21.2.13",
+    "@angular/core": "21.2.13",
+    "@azure/identity": "^4.13.1",
     "@azure/keyvault-secrets": "^4.5.1",
     "applicationinsights": "^2.3.4",
     "dotenv": "^16.0.1",

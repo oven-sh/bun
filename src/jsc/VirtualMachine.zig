@@ -862,6 +862,23 @@ pub fn enterUWSLoop(this: *VirtualMachine) void {
     loop.run();
 }
 
+extern fn Bun__findStalledTopLevelAwait(*JSGlobalObject) bun.String;
+
+/// Print a warning naming the module(s) whose body is suspended on its own
+/// top-level await. Falls back to the entry path if the registry walk finds
+/// nothing (e.g. eval mode).
+pub fn reportUnsettledTopLevelAwait(this: *VirtualMachine) void {
+    var stalled = Bun__findStalledTopLevelAwait(this.global);
+    defer stalled.deref();
+    const stalled_utf8 = stalled.toUTF8(bun.default_allocator);
+    defer stalled_utf8.deinit();
+    Output.prettyErrorln(
+        "<r><yellow>warn<r><d>:<r> Detected unsettled top-level await at <b>{s}<r>",
+        .{if (stalled_utf8.len > 0) stalled_utf8.slice() else this.main},
+    );
+    Output.flush();
+}
+
 pub fn onBeforeExit(this: *VirtualMachine) void {
     this.exit_handler.dispatchOnBeforeExit();
     var dispatch = false;
@@ -2477,7 +2494,18 @@ pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInt
         }
 
         this.eventLoop().performGC();
-        this.waitForPromise(.{ .internal = promise });
+        // Can't use `waitForPromise` here: with the spec-aligned module loader
+        // a TLA cycle (or any never-settling top-level await) leaves this
+        // promise pending forever, and `waitForPromise` would busy-spin on
+        // tickWithoutIdle. Tick while there is work that could resolve it; if
+        // the loop drains and the promise is still pending the caller reports
+        // unsettled TLA and exits 13.
+        while (promise.status() == .pending) {
+            this.eventLoop().tick();
+            if (promise.status() != .pending) break;
+            if (!this.isEventLoopAlive()) break;
+            this.eventLoop().autoTick();
+        }
     }
 
     return this.pending_internal_promise.?;

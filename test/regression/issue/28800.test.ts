@@ -84,7 +84,7 @@ function script(prefix: string, count: number): string {
   return `printf '${out}'`;
 }
 
-describe.skipIf(isWindows)("issue 28800", () => {
+describe.skipIf(isWindows).concurrent("issue 28800", () => {
   test("2 packages × 8 lines in a 10-row terminal", async () => {
     using dir = tempDir("issue-28800-2pkg", {
       "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),

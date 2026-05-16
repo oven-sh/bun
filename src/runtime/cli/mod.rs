@@ -373,6 +373,8 @@ pub mod pm_version_command;
 pub mod pm_view_command;
 #[path = "pm_why_command.rs"]
 pub(crate) mod pm_why_command;
+#[path = "prompt_signal.rs"]
+pub(crate) mod prompt_signal;
 #[path = "prune_command.rs"]
 pub(crate) mod prune_command;
 #[path = "publish_command.rs"]
@@ -385,8 +387,6 @@ pub mod scan_command;
 pub mod unlink_command;
 #[path = "update_command.rs"]
 pub(crate) mod update_command;
-#[path = "prompt_signal.rs"]
-pub(crate) mod prompt_signal;
 #[path = "update_interactive_command.rs"]
 pub mod update_interactive_command;
 #[path = "why_command.rs"]

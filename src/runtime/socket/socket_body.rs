@@ -965,8 +965,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         // statement, not end of scope) and run `scope.exit()` before the
         // user's onConnectError callback. Bind to a named `_`-prefixed
         // local so it lives to end of scope like Zig's `defer`.
-        let _scope_guard =
-            scopeguard::guard((this.as_ctx_ptr(), scope, captured_handlers), |(p, mut sc, h)| {
+        let _scope_guard = scopeguard::guard(
+            (this.as_ctx_ptr(), scope, captured_handlers),
+            |(p, mut sc, h)| {
                 if sc.exit() {
                     // Connection never opened (`is_active == false`), so the
                     // scope's decrement is what brings client handlers to zero
@@ -985,7 +986,8 @@ impl<const SSL: bool> NewSocket<SSL> {
                         }
                     }
                 }
-            });
+            },
+        );
 
         if callback.is_empty() {
             // Connection failed before open; allow the wrapper to be GC'd

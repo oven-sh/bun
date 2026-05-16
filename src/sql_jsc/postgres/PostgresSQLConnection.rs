@@ -2736,10 +2736,10 @@ impl PostgresSQLConnection {
                         }
                         let server_salt_decoded_base64 = bun_base64::decode_alloc(server_salt_b64)
                             .map_err(|e| match e {
-                            bun_base64::DecodeAllocError::DecodingFailed => {
-                                AnyPostgresError::SASL_SIGNATURE_INVALID_BASE64
-                            }
-                        })?;
+                                bun_base64::DecodeAllocError::DecodingFailed => {
+                                    AnyPostgresError::SASL_SIGNATURE_INVALID_BASE64
+                                }
+                            })?;
                         if server_salt_decoded_base64.is_empty()
                             || server_salt_decoded_base64.len() > 1024
                         {

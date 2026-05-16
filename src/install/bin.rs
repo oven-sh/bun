@@ -1674,9 +1674,7 @@ impl<'a> Linker<'a> {
                     if normalized_name.is_empty() {
                         return;
                     }
-                    if normalized_name.len()
-                        >= self.abs_dest_buf.len().saturating_sub(dest_off)
-                    {
+                    if normalized_name.len() >= self.abs_dest_buf.len().saturating_sub(dest_off) {
                         self.err = Some(bun_core::err!("NameTooLong"));
                         return;
                     }

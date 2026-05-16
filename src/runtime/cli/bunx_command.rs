@@ -547,9 +547,8 @@ impl BunxCommand {
             let kind = st.st_mode & libc::S_IFMT;
             st.st_uid == uid && (kind == libc::S_IFREG || kind == libc::S_IFLNK)
         };
-        let stat_ok = |st: &bun_sys::Stat| {
-            st.st_uid == uid && (st.st_mode & libc::S_IFMT) == libc::S_IFREG
-        };
+        let stat_ok =
+            |st: &bun_sys::Stat| st.st_uid == uid && (st.st_mode & libc::S_IFMT) == libc::S_IFREG;
         match bun_sys::lstat(destination) {
             Ok(st) if lstat_ok(&st) => {
                 if (st.st_mode & libc::S_IFMT) == libc::S_IFLNK {

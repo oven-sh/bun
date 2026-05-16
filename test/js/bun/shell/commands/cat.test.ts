@@ -82,12 +82,12 @@ describe("cat builtin does not leak the file IOReader or its fd", () => {
     }
   `;
 
-  test("single file arg", { timeout: 30_000 }, async () => {
+  test("single file arg", async () => {
     // On Linux the builtin's read of a regular file currently fails (epoll rejects
     // regular files with EPERM) so cat exits 1; on macOS/Windows it succeeds. Either
     // way the IOReader holding the file fd must be released.
     const { stdout, stderr, exitCode } = await run(
-      { "a.txt": "A".repeat(64 * 1024) },
+      { "a.txt": Buffer.alloc(64 * 1024, "A").toString() },
       /* ts */ `
         ${fdCounter}
         import { $ } from "bun";
@@ -119,9 +119,9 @@ describe("cat builtin does not leak the file IOReader or its fd", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("multiple file args including a nonexistent one", { timeout: 30_000 }, async () => {
+  test("multiple file args including a nonexistent one", async () => {
     const { stdout, stderr, exitCode } = await run(
-      { "a.txt": "A".repeat(32 * 1024) },
+      { "a.txt": Buffer.alloc(32 * 1024, "A").toString() },
       /* ts */ `
         ${fdCounter}
         import { $ } from "bun";
@@ -159,9 +159,9 @@ describe("cat builtin does not leak the file IOReader or its fd", () => {
 
   // Exercises the chunk-write → onIOWriterChunk → exec.deinit() → done() → Cat.deinit
   // path on Windows where the builtin can actually read a regular file.
-  test.skipIf(!isWindows)("reads file and writes to pipe (Windows)", { timeout: 30_000 }, async () => {
+  test.skipIf(!isWindows)("reads file and writes to pipe (Windows)", async () => {
     const { stderr, exitCode } = await run(
-      { "a.txt": "A".repeat(64 * 1024) },
+      { "a.txt": Buffer.alloc(64 * 1024, "A").toString() },
       /* ts */ `
         import { $ } from "bun";
         $.nothrow();

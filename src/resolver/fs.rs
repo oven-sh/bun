@@ -315,8 +315,11 @@ pub(crate) struct FileSystem {
 }
 
 thread_local! {
-    // TODO(port): std.fs.Dir replacement — using bun_sys::Fd-based dir handle
-    static TMPDIR_HANDLE: Cell<Option<bun_sys::Dir>> = const { Cell::new(None) };
+    // PORT NOTE: store a raw `Fd` (Copy) rather than `bun_sys::Dir` — the
+    // cached tmpdir fd is process-lifetime (never closed), and `Dir` is now an
+    // owning RAII handle that won't fit in `Cell`. Ownership is leaked into
+    // this slot via `into_raw()`.
+    static TMPDIR_HANDLE: Cell<Option<Fd>> = const { Cell::new(None) };
 }
 
 #[derive(strum::IntoStaticStr, Debug)]
@@ -356,10 +359,12 @@ impl FileSystem {
         }
     }
 
-    pub(crate) fn tmpdir(&mut self) -> Result<bun_sys::Dir, bun_core::Error> {
+    pub(crate) fn tmpdir(&mut self) -> Result<Fd, bun_core::Error> {
         TMPDIR_HANDLE.with(|h| {
             if h.get().is_none() {
-                h.set(Some(self.fs.open_tmp_dir()?));
+                // Hand the descriptor off to the process-lifetime cache —
+                // `into_raw()` disarms `Dir::Drop` so the cached fd stays open.
+                h.set(Some(self.fs.open_tmp_dir()?.into_raw()));
             }
             Ok(h.get().unwrap())
         })
@@ -1555,8 +1560,9 @@ impl RealFS {
                         );
                     }
                 };
+                // `Dir` is an owning RAII handle — `Drop` closes the fd on
+                // every exit path below (matches Zig `defer handle.close()`).
                 let handle_dir = bun_sys::Dir::from_fd(handle);
-                // PORT NOTE: defer handle.close() → explicit close at exit points below.
                 let new_entry = match self.readdir(
                     false,
                     // SAFETY: `entries_mutex` held; `readdir` does not touch
@@ -1564,14 +1570,13 @@ impl RealFS {
                     Some(unsafe { &mut *prev_map_ptr }),
                     dir_path,
                     generation,
-                    handle_dir,
+                    &handle_dir,
                     (),
                 ) {
                     Ok(e) => e,
                     Err(err) => {
                         // SAFETY: see above.
                         unsafe { (*prev_map_ptr).clear() };
-                        handle_dir.close();
                         return Some(
                             self.read_directory_error(Some(&map), dir_path, err)
                                 .expect("unreachable"),
@@ -1583,7 +1588,6 @@ impl RealFS {
                     (*prev_map_ptr).clear();
                     *entries_ptr = new_entry;
                 }
-                handle_dir.close();
             }
         }
 
@@ -1867,9 +1871,17 @@ impl Default for TmpfilePosix {
 }
 
 impl TmpfilePosix {
+    /// Non-owning view of `self.dir_fd` (typically `Fd::cwd()`).
+    ///
+    /// The returned `Fd` is borrowed from `self` — do **not** wrap it in
+    /// `bun_sys::Dir::from_fd`, which would close it on drop. Use
+    /// `Dir::borrow(&fd)` if you need `Dir` methods.
     #[inline]
-    pub(crate) fn dir(&self) -> bun_sys::Dir {
-        bun_sys::Dir::from_fd(self.dir_fd)
+    pub(crate) fn dir(&self) -> Fd {
+        // PORT NOTE: `dir_fd` belongs to `self` (it's `Fd::cwd()`); don't wrap
+        // it in an owning `Dir` (which now closes on `Drop`). Hand the raw `Fd`
+        // back instead — `Tmpfile.dir()` in Zig returned a non-owning `std.fs.Dir`.
+        self.dir_fd
     }
 
     #[inline]
@@ -1939,11 +1951,19 @@ impl Default for TmpfileWindows {
 }
 
 impl TmpfileWindows {
+    /// Non-owning view of the process-lifetime cached tmpdir fd.
+    ///
+    /// The returned `Fd` is owned by the [`TMPDIR_HANDLE`] cache and stays open
+    /// for the life of the process — do **not** wrap it in
+    /// `bun_sys::Dir::from_fd`, which would close it on drop. Use
+    /// `Dir::borrow(&fd)` if you need `Dir` methods.
     #[inline]
-    pub(crate) fn dir(&self) -> bun_sys::Dir {
+    pub(crate) fn dir(&self) -> Fd {
         // TODO(port): Fs.FileSystem.instance.tmpdir() — needs &mut FileSystem
         // SAFETY: `instance()` is the process-lifetime singleton (Zig `*FileSystem`);
         // `&mut` scoped to this call only (no `&'static mut` escapes).
+        // PORT NOTE: returns the raw `Fd` of the cached process-lifetime tmpdir
+        // — not an owning `Dir` (which would close the cache slot on `Drop`).
         unsafe { (*FileSystem::instance()).tmpdir().expect("tmpdir") }
     }
 
@@ -1961,14 +1981,11 @@ impl TmpfileWindows {
 
     pub(crate) fn create(&mut self, rfs: &mut RealFS, name: &ZStr) -> Result<(), bun_core::Error> {
         // `open_tmp_dir()` opens a *fresh* directory handle every call (it is not the
-        // cached `FileSystem::tmpdir()`), and `bun_sys::Dir` has no `Drop`, so without an
-        // explicit close the kernel HANDLE leaks on both success and the `?` early-returns
-        // below. Zig has the same leak (fs.zig:709-717); fixed here.
+        // cached `FileSystem::tmpdir()`). `Dir` is an owning RAII handle, so `Drop`
+        // closes the kernel HANDLE on both success and the `?` early-returns below.
+        // Zig had a leak here (fs.zig:709-717); the RAII `Dir` fixes it.
         let tmp_dir = rfs.open_tmp_dir()?;
         let tmp_dir_fd = tmp_dir.fd();
-        scopeguard::defer! {
-            let _ = bun_sys::close(tmp_dir_fd);
-        }
 
         let flags = bun_sys::O::CREAT | bun_sys::O::WRONLY | bun_sys::O::CLOEXEC;
 
@@ -2065,7 +2082,7 @@ impl RealFS {
         prev_map: Option<&mut dir_entry::EntryMap>,
         dir_: &'static [u8],
         generation: Generation,
-        handle: bun_sys::Dir,
+        handle: &bun_sys::Dir,
         iterator: I,
     ) -> Result<DirEntry, bun_core::Error> {
         let handle_fd = handle.fd();
@@ -2255,14 +2272,17 @@ impl RealFS {
 
         let should_close_handle = !had_handle && (!store_fd || self.need_to_close_files());
         // PORT NOTE: Zig `defer { if (maybe_handle == null and (!store_fd or fs.needToCloseFiles())) handle.close(); }`
-        // runs on EVERY exit path including the `try`s below — defer the close so we never
-        // leak the directory FD when `DirnameStore::append` / `self.entries.put` early-return via `?`.
-        // `Dir` is `Copy`, so the `move` closure captures a copy of `handle`; uses below remain valid.
-        scopeguard::defer! {
-            if should_close_handle {
-                handle.close();
+        // runs on EVERY exit path including the `try`s below. `Dir` is now an owning
+        // RAII handle: its `Drop` closes unconditionally. Wrap in a scopeguard that
+        // *disarms* `Drop` (via `into_raw()`) when we should NOT close — i.e. when the
+        // caller passed `maybe_handle` (it owns the fd) or when the cache keeps the fd
+        // open (`store_fd && !need_to_close_files()`). Otherwise the guard's drop just
+        // releases the inner `Dir`, whose own `Drop` closes the fd.
+        let handle = scopeguard::guard(handle, move |h| {
+            if !should_close_handle {
+                let _ = h.into_raw();
             }
-        }
+        });
 
         // if we get this far, it's a real directory, so we can just store the dir name.
         let dir: &'static [u8] = if !had_handle {
@@ -2284,7 +2304,7 @@ impl RealFS {
             // SAFETY: BSSMap-owned, no aliasing here
             unsafe { &mut (*p).data }
         });
-        let mut entries = match self.readdir(store_fd, prev, dir, generation, handle, iterator) {
+        let mut entries = match self.readdir(store_fd, prev, dir, generation, &*handle, iterator) {
             Ok(e) => e,
             Err(err) => {
                 if let Some(existing) = in_place {
@@ -2798,8 +2818,10 @@ impl RealFS {
             let file: Fd = if existing_fd.is_valid() {
                 existing_fd
             } else if store_fd {
+                // `into_raw()` (not `handle()`): `File` is now owning — peeking
+                // `handle()` from a temporary would close the fd on drop.
                 bun_sys::open_file_absolute_z(absolute_path, bun_sys::OpenFlags::READ_ONLY)?
-                    .handle()
+                    .into_raw()
             } else {
                 // PORT NOTE: Zig `bun.openFileForPath` (bun.zig:1900-1910) — O_PATH is
                 // Linux-only; macOS/BSD use O_RDONLY. Both add O_NOCTTY|O_CLOEXEC.
@@ -2975,8 +2997,10 @@ impl RealFS {
                 let file: Fd = if let Some(valid) = existing_fd.unwrap_valid() {
                     valid
                 } else if store_fd {
+                    // `into_raw()` (not `handle()`): `File` is now owning — peeking
+                    // `handle()` from a temporary would close the fd on drop.
                     bun_sys::open_file_absolute_z(absolute_path_c, bun_sys::OpenFlags::READ_ONLY)?
-                        .handle()
+                        .into_raw()
                 } else {
                     // PORT NOTE: Zig `bun.openFileForPath` (bun.zig:1900-1910) — O_PATH is
                     // Linux-only; macOS/BSD use O_RDONLY. Both add O_NOCTTY|O_CLOEXEC.

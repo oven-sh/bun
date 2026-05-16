@@ -353,19 +353,20 @@ impl TrustCommand {
             let nm_saved = node_modules_path.len();
             let _ = node_modules_path.append(node_modules.relative_path.as_bytes());
 
-            let node_modules_dir =
-                match bun_sys::open_dir(bun_sys::Dir::cwd(), node_modules.relative_path.as_bytes())
-                {
-                    Ok(d) => d,
-                    Err(e) if e == bun_core::err!(ENOENT) => {
-                        node_modules_path.set_length(nm_saved);
-                        continue;
-                    }
-                    Err(e) => return Err(e),
-                };
-            // PORT NOTE: `defer node_modules_dir.close()` — `Dir` has no `Drop`;
-            // closed explicitly at end of iteration. The Zig only opened it to
-            // detect ENOENT; nothing reads from it.
+            let node_modules_dir = match bun_sys::open_dir(
+                &bun_sys::Dir::cwd(),
+                node_modules.relative_path.as_bytes(),
+            ) {
+                Ok(d) => d,
+                Err(e) if e == bun_core::err!(ENOENT) => {
+                    node_modules_path.set_length(nm_saved);
+                    continue;
+                }
+                Err(e) => return Err(e),
+            };
+            // PORT NOTE: `defer node_modules_dir.close()` — `Dir` now owns the fd
+            // and closes on Drop at the end of each iteration. The Zig only opened
+            // it to detect ENOENT; nothing reads from it.
 
             for &dep_id in node_modules.dependencies {
                 if !untrusted_dep_ids.contains(&dep_id) {
@@ -398,10 +399,7 @@ impl TrustCommand {
                 let maybe_scripts_list = match result {
                     Ok(v) => v,
                     Err(e) if e == bun_core::err!(ENOENT) => continue,
-                    Err(e) => {
-                        node_modules_dir.close();
-                        return Err(e);
-                    }
+                    Err(e) => return Err(e),
                 };
 
                 if let Some(scripts_list) = maybe_scripts_list {
@@ -440,7 +438,6 @@ impl TrustCommand {
                 }
             }
 
-            node_modules_dir.close();
             node_modules_path.set_length(nm_saved);
         }
 

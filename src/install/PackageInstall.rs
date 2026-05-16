@@ -27,8 +27,10 @@ use crate::{
 bun_output::declare_scope!(install, hidden);
 
 pub struct PackageInstall<'a> {
-    /// TODO: Change to bun.FD.Dir
-    pub cache_dir: Dir,
+    /// Borrowed view of the cache directory fd. The owner is either
+    /// `PackageManager`'s cached directory handle, the cwd sentinel, or a
+    /// short-lived `Dir` held by the caller — `PackageInstall` never closes it.
+    pub cache_dir: Fd,
     pub cache_dir_subpath: &'a ZStr,
     // TODO(port): `destination_dir_subpath` aliases into `destination_dir_subpath_buf`;
     // borrowck will reject simultaneous &ZStr + &mut [u8]. Consider storing only the len.
@@ -298,6 +300,8 @@ struct InstallDirState {
 }
 
 impl InstallDirState {
+    #[allow(dead_code)] // PORT NOTE: callers now field-project `state.walker` directly so the
+    // `&Dir` borrow of `state.subdir` stays disjoint; kept for parity with the Zig accessor.
     #[inline]
     fn walker(&mut self) -> &mut Walker {
         // SAFETY: `init_install_dir` always populates `walker` before any backend calls `copy()`.
@@ -327,20 +331,9 @@ impl Default for InstallDirState {
     }
 }
 
-impl Drop for InstallDirState {
-    fn drop(&mut self) {
-        #[cfg(not(windows))]
-        {
-            if self.subdir.fd().is_valid() {
-                self.subdir.close();
-            }
-        }
-        // walker dropped automatically
-        if self.cached_package_dir.fd().is_valid() {
-            self.cached_package_dir.close();
-        }
-    }
-}
+// PORT NOTE: explicit `impl Drop for InstallDirState` removed — `Dir` is now an
+// owning RAII handle that closes on `Drop` (and skips `Fd::INVALID` sentinels),
+// so the field-level drops cover the previous manual closes.
 
 // ───────────────────────────── helpers ─────────────────────────────
 
@@ -456,16 +449,16 @@ fn mkdir_recursive_os_path(fullpath: &bun_core::WStr) -> sys::Maybe<()> {
 
 /// Zig: `bun.openDir(dir, subpath)` — open a directory handle relative to `dir`.
 #[inline]
-fn open_dir(dir: Dir, subpath: &ZStr) -> Result<Dir, bun_core::Error> {
-    sys::open_dir_at(dir.fd(), subpath.as_bytes())
+fn open_dir(dir: Fd, subpath: &ZStr) -> Result<Dir, bun_core::Error> {
+    sys::open_dir_at(dir, subpath.as_bytes())
         .map(Dir::from_fd)
         .map_err(Into::into)
 }
 
 /// Zig: `bun.openDirA(dir, subpath)` — non-Z-terminated variant.
 #[inline]
-fn open_dir_a(dir: Dir, subpath: &[u8]) -> Result<Dir, bun_core::Error> {
-    sys::open_dir_at(dir.fd(), subpath)
+fn open_dir_a(dir: Fd, subpath: &[u8]) -> Result<Dir, bun_core::Error> {
+    sys::open_dir_at(dir, subpath)
         .map(Dir::from_fd)
         .map_err(Into::into)
 }
@@ -752,7 +745,7 @@ impl UninstallTask {
         }
         let basename = bun_paths::basename(&uninstall_task.absolute_path);
 
-        let dir = match open_dir_a(Dir::cwd(), dirname) {
+        let dir = match open_dir_a(Fd::cwd(), dirname) {
             Ok(d) => d,
             Err(err) => {
                 if bun_core::Environment::IS_DEBUG || bun_core::Environment::ENABLE_ASAN {
@@ -765,7 +758,7 @@ impl UninstallTask {
                 return;
             }
         };
-        let _close = sys::CloseOnDrop::dir(dir);
+        // `Dir::Drop` closes `dir` at end of scope; the previous `CloseOnDrop` is redundant.
 
         if let Err(err) = dir.delete_tree(basename) {
             if bun_core::Environment::IS_DEBUG || bun_core::Environment::ENABLE_ASAN {
@@ -795,7 +788,7 @@ impl UninstallTask {
 
 impl<'a> PackageInstall<'a> {
     ///
-    fn verify_patch_hash(&mut self, patch: &Patch, root_node_modules_dir: Dir) -> bool {
+    fn verify_patch_hash(&mut self, patch: &Patch, root_node_modules_dir: &Dir) -> bool {
         // hash from the .patch file, to be checked against bun tag
         let patchfile_contents_hash = patch.contents_hash;
         let mut buf: BuntagHashBuf = BuntagHashBuf::default();
@@ -809,11 +802,8 @@ impl<'a> PackageInstall<'a> {
         let Ok(destination_dir) = self.node_modules.open_dir(root_node_modules_dir) else {
             return false;
         };
-        let _close = scopeguard::guard(destination_dir, |d| {
-            if Dir::cwd().fd() != d.fd() {
-                d.close();
-            }
-        });
+        // `Dir::Drop` closes `destination_dir` (and skips the cwd sentinel), so
+        // the previous conditional scopeguard is redundant.
 
         #[cfg(unix)]
         {
@@ -834,7 +824,7 @@ impl<'a> PackageInstall<'a> {
 
     // 1. verify that .bun-tag exists (was it installed from bun?)
     // 2. check .bun-tag against the resolved version
-    fn verify_git_resolution(&mut self, repo: &Repository, root_node_modules_dir: Dir) -> bool {
+    fn verify_git_resolution(&mut self, repo: &Repository, root_node_modules_dir: &Dir) -> bool {
         let dest_len = self.destination_dir_subpath.len();
         let suffix: &[u8] = &[SEP, b'.', b'b', b'u', b'n', b'-', b't', b'a', b'g'];
         // PORT NOTE: reshaped for borrowck — write into buf via raw indices.
@@ -870,7 +860,7 @@ impl<'a> PackageInstall<'a> {
         )
     }
 
-    pub fn verify(&mut self, resolution: &Resolution, root_node_modules_dir: Dir) -> bool {
+    pub fn verify(&mut self, resolution: &Resolution, root_node_modules_dir: &Dir) -> bool {
         let verified = match resolution.tag {
             resolution::Tag::Git => {
                 self.verify_git_resolution(resolution.git(), root_node_modules_dir)
@@ -909,14 +899,14 @@ impl<'a> PackageInstall<'a> {
 
     // Only check for destination directory in node_modules. We can't use package.json because
     // it might not exist
-    fn verify_transitive_symlinked_folder(&self, root_node_modules_dir: Dir) -> bool {
+    fn verify_transitive_symlinked_folder(&self, root_node_modules_dir: &Dir) -> bool {
         self.node_modules
             .directory_exists_at(root_node_modules_dir, self.destination_dir_subpath)
     }
 
     fn get_installed_package_json_source(
         &mut self,
-        root_node_modules_dir: Dir,
+        root_node_modules_dir: &Dir,
         mutable: &mut MutableString,
         resolution_tag: resolution::Tag,
     ) -> Option<bun_ast::Source> {
@@ -1000,7 +990,7 @@ impl<'a> PackageInstall<'a> {
 
     fn verify_package_json_name_and_version(
         &mut self,
-        root_node_modules_dir: Dir,
+        root_node_modules_dir: &Dir,
         resolution_tag: resolution::Tag,
     ) -> bool {
         // Zig: `var body_pool = BodyPool.get(); var mutable = body_pool.data;
@@ -1097,13 +1087,13 @@ impl<'a> PackageInstall<'a> {
     #[cfg(target_os = "macos")]
     fn install_with_clonefile_each_dir(
         &mut self,
-        destination_dir: Dir,
+        destination_dir: &Dir,
     ) -> Result<InstallResult, bun_core::Error> {
         let cached_package_dir = match open_dir(self.cache_dir, self.cache_dir_subpath) {
             Ok(d) => d,
             Err(err) => return Ok(InstallResult::fail(err, Step::OpeningCacheDir, None)),
         };
-        let _close_cache = sys::CloseOnDrop::dir(cached_package_dir);
+        // `Dir::Drop` closes `cached_package_dir`; the previous `CloseOnDrop` is redundant.
 
         let mut walker_ = match walker_skippable::walk(
             cached_package_dir.fd(),
@@ -1116,7 +1106,7 @@ impl<'a> PackageInstall<'a> {
         walker_.resolve_unknown_entry_types = true;
         // walker_ dropped at scope exit
 
-        fn copy(destination_dir_: Dir, walker: &mut Walker) -> Result<u32, bun_core::Error> {
+        fn copy(destination_dir_: &Dir, walker: &mut Walker) -> Result<u32, bun_core::Error> {
             // TODO(port): narrow error set
             let mut real_file_count: u32 = 0;
             let mut stackpath = [0u8; MAX_PATH_BYTES];
@@ -1170,9 +1160,9 @@ impl<'a> PackageInstall<'a> {
             Ok(d) => d,
             Err(err) => return Ok(InstallResult::fail(err, Step::OpeningDestDir, None)),
         };
-        let _close_subdir = sys::CloseOnDrop::dir(subdir);
+        // `Dir::Drop` closes `subdir`; the previous `CloseOnDrop` is redundant.
 
-        self.file_count = match copy(subdir, &mut walker_) {
+        self.file_count = match copy(&subdir, &mut walker_) {
             Ok(n) => n,
             Err(err) => return Ok(InstallResult::fail(err, Step::CopyingFiles, None)),
         };
@@ -1184,7 +1174,7 @@ impl<'a> PackageInstall<'a> {
     #[cfg(target_os = "macos")]
     fn install_with_clonefile(
         &mut self,
-        destination_dir: Dir,
+        destination_dir: &Dir,
     ) -> Result<InstallResult, bun_core::Error> {
         if self.destination_dir_subpath.as_bytes()[0] == b'@' {
             if let Some(slash) = strings::index_of_char_z(self.destination_dir_subpath, SEP) {
@@ -1198,7 +1188,7 @@ impl<'a> PackageInstall<'a> {
         }
 
         match sys::clonefileat(
-            self.cache_dir.fd(),
+            self.cache_dir,
             self.cache_dir_subpath,
             destination_dir.fd(),
             self.destination_dir_subpath,
@@ -1222,7 +1212,7 @@ impl<'a> PackageInstall<'a> {
     fn init_install_dir(
         &mut self,
         state: &mut InstallDirState,
-        destination_dir: Dir,
+        destination_dir: &Dir,
         method: Method,
     ) -> InstallResult {
         let destbase = destination_dir;
@@ -1233,7 +1223,7 @@ impl<'a> PackageInstall<'a> {
             {
                 if method == Method::Symlink {
                     bun_sys::open_dir_no_renaming_or_deleting_windows(
-                        self.cache_dir.fd(),
+                        self.cache_dir,
                         self.cache_dir_subpath.as_bytes(),
                     )
                     .map(Dir::from_fd)
@@ -1387,7 +1377,7 @@ impl<'a> PackageInstall<'a> {
         }
     }
 
-    fn install_with_copyfile(&mut self, destination_dir: Dir) -> InstallResult {
+    fn install_with_copyfile(&mut self, destination_dir: &Dir) -> InstallResult {
         let mut state = InstallDirState::default();
         let res = self.init_install_dir(&mut state, destination_dir, Method::Copyfile);
         if res.is_fail() {
@@ -1409,7 +1399,7 @@ impl<'a> PackageInstall<'a> {
         // two live `&mut [u16]` that alias is UB in Rust, so pass head buffer + tail
         // offset and reslice inside.
         fn copy(
-            destination_dir_: Dir,
+            destination_dir_: &Dir,
             walker: &mut Walker,
             mut progress_: Option<&mut Progress>,
             #[allow(unused)] to_copy_into1_offset: WinOffset,
@@ -1609,7 +1599,7 @@ impl<'a> PackageInstall<'a> {
 
         #[cfg(windows)]
         let result = copy(
-            state.subdir,
+            &state.subdir,
             state.walker.as_mut().unwrap(),
             self.progress.as_deref_mut(),
             state.to_copy_buf_off,
@@ -1619,8 +1609,10 @@ impl<'a> PackageInstall<'a> {
         );
         #[cfg(not(windows))]
         let result = copy(
-            state.subdir,
-            state.walker(),
+            &state.subdir,
+            // Field-projected `&mut` so the `&state.subdir` borrow above stays disjoint
+            // (`state.walker()` would reborrow `&mut state` and conflict).
+            state.walker.as_mut().unwrap(),
             self.progress.as_deref_mut(),
             (),
             (),
@@ -1636,7 +1628,7 @@ impl<'a> PackageInstall<'a> {
         InstallResult::Success
     }
 
-    fn install_with_hardlink(&mut self, dest_dir: Dir) -> Result<InstallResult, bun_core::Error> {
+    fn install_with_hardlink(&mut self, dest_dir: &Dir) -> Result<InstallResult, bun_core::Error> {
         let mut state = InstallDirState::default();
         let res = self.init_install_dir(&mut state, dest_dir, Method::Hardlink);
         if res.is_fail() {
@@ -1657,7 +1649,7 @@ impl<'a> PackageInstall<'a> {
         // two live `&mut [u16]` that alias is UB in Rust, so pass head buffer + tail
         // offset and reslice inside.
         fn copy(
-            destination_dir: Dir,
+            destination_dir: &Dir,
             walker: &mut Walker,
             #[allow(unused)] to_copy_into1_offset: WinOffset,
             #[allow(unused)] head1: WinSlice<'_>,
@@ -1786,7 +1778,7 @@ impl<'a> PackageInstall<'a> {
 
         #[cfg(windows)]
         let result = copy(
-            state.subdir,
+            &state.subdir,
             state.walker.as_mut().unwrap(),
             state.to_copy_buf_off,
             &mut state.buf[..],
@@ -1794,7 +1786,14 @@ impl<'a> PackageInstall<'a> {
             &mut state.buf2[..],
         );
         #[cfg(not(windows))]
-        let result = copy(state.subdir, state.walker(), (), (), (), ());
+        let result = copy(
+            &state.subdir,
+            state.walker.as_mut().unwrap(),
+            (),
+            (),
+            (),
+            (),
+        );
 
         self.file_count = match result {
             Ok(n) => n,
@@ -1822,7 +1821,7 @@ impl<'a> PackageInstall<'a> {
         Ok(InstallResult::Success)
     }
 
-    fn install_with_symlink(&mut self, dest_dir: Dir) -> Result<InstallResult, bun_core::Error> {
+    fn install_with_symlink(&mut self, dest_dir: &Dir) -> Result<InstallResult, bun_core::Error> {
         let mut state = InstallDirState::default();
         let res = self.init_install_dir(&mut state, dest_dir, Method::Symlink);
         if res.is_fail() {
@@ -1862,7 +1861,7 @@ impl<'a> PackageInstall<'a> {
         // two live `&mut` that alias is UB in Rust, so pass head buffer + tail offset
         // and reslice inside.
         fn copy(
-            destination_dir: Dir,
+            destination_dir: &Dir,
             walker: &mut Walker,
             #[allow(unused)] to_copy_into1_offset: WinOffset,
             #[allow(unused)] head1: WinSlice<'_>,
@@ -1985,7 +1984,7 @@ impl<'a> PackageInstall<'a> {
 
         #[cfg(windows)]
         let result = copy(
-            state.subdir,
+            &state.subdir,
             state.walker.as_mut().unwrap(),
             state.to_copy_buf_off,
             &mut state.buf[..],
@@ -1994,8 +1993,8 @@ impl<'a> PackageInstall<'a> {
         );
         #[cfg(not(windows))]
         let result = copy(
-            state.subdir,
-            state.walker(),
+            &state.subdir,
+            state.walker.as_mut().unwrap(),
             (),
             (),
             to_copy_buf2_offset,
@@ -2025,11 +2024,11 @@ impl<'a> PackageInstall<'a> {
         Ok(InstallResult::Success)
     }
 
-    pub fn uninstall(&self, destination_dir: Dir) {
+    pub fn uninstall(&self, destination_dir: &Dir) {
         let _ = destination_dir.delete_tree(self.destination_dir_subpath.as_bytes());
     }
 
-    pub fn uninstall_before_install(&self, destination_dir: Dir) {
+    pub fn uninstall_before_install(&self, destination_dir: &Dir) {
         let mut rand_path_buf = [0u8; 48];
         let rand_bytes = bun_core::fast_random().to_ne_bytes();
         let temp_path = {
@@ -2172,7 +2171,7 @@ impl<'a> PackageInstall<'a> {
         false
     }
 
-    pub fn install_from_link(&mut self, skip_delete: bool, destination_dir: Dir) -> InstallResult {
+    pub fn install_from_link(&mut self, skip_delete: bool, destination_dir: &Dir) -> InstallResult {
         let dest_path = self.destination_dir_subpath;
         // If this fails, we don't care.
         // we'll catch it the next error
@@ -2222,7 +2221,7 @@ impl<'a> PackageInstall<'a> {
             // (`FILE_LIST_DIRECTORY | SYNCHRONIZE`), matching the spec's directory
             // open, then `get_fd_path` resolves via `GetFinalPathNameByHandleW`.
             let fd = match sys::openat(
-                self.cache_dir.fd(),
+                self.cache_dir,
                 symlinked_path,
                 sys::O::RDONLY | sys::O::DIRECTORY,
                 0,
@@ -2330,23 +2329,24 @@ impl<'a> PackageInstall<'a> {
         }
         #[cfg(not(windows))]
         {
-            let dest_dir = if let Some(dir) = subdir {
-                match bun_sys::MakePath::make_open_path(
-                    destination_dir,
-                    dir,
-                    OpenDirOptions::default(),
-                ) {
-                    Ok(d) => d,
-                    Err(err) => return InstallResult::fail(err, Step::LinkingDependency, None),
-                }
+            // Lazily-opened subdirectory we own (closed by `Dir::Drop` at the
+            // end of this block); `None` means we just use the caller's
+            // `destination_dir` borrow without taking ownership.
+            let owned_dest_dir: Option<Dir> = if let Some(dir) = subdir {
+                Some(
+                    match bun_sys::MakePath::make_open_path(
+                        destination_dir,
+                        dir,
+                        OpenDirOptions::default(),
+                    ) {
+                        Ok(d) => d,
+                        Err(err) => return InstallResult::fail(err, Step::LinkingDependency, None),
+                    },
+                )
             } else {
-                destination_dir
+                None
             };
-            let _close = scopeguard::guard(dest_dir, |d| {
-                if subdir.is_some() {
-                    d.close();
-                }
-            });
+            let dest_dir: &Dir = owned_dest_dir.as_ref().unwrap_or(destination_dir);
 
             let dest_dir_path = match sys::get_fd_path(dest_dir.fd(), &mut dest_buf) {
                 Ok(p) => p,
@@ -2434,11 +2434,11 @@ impl<'a> PackageInstall<'a> {
                             let subpath =
                                 ZStr::from_buf(&buf[..], subpath_len + 1 + b"package.json".len());
                             break 'package_json_exists sys::exists_at(
-                                self.cache_dir.fd(),
+                                self.cache_dir,
                                 subpath,
                             );
                         }
-                        _ => sys::directory_exists_at(self.cache_dir.fd(), self.cache_dir_subpath)
+                        _ => sys::directory_exists_at(self.cache_dir, self.cache_dir_subpath)
                             .unwrap_or(false),
                     };
                     if exists {
@@ -2462,7 +2462,7 @@ impl<'a> PackageInstall<'a> {
                 let subpath =
                     ZStr::from_buf(&join_buf[..], cache_dir_subpath_without_patch_hash.len());
                 let exists =
-                    sys::directory_exists_at(self.cache_dir.fd(), subpath).unwrap_or(false);
+                    sys::directory_exists_at(self.cache_dir, subpath).unwrap_or(false);
                 if exists {
                     manager.set_preinstall_state(package_id, crate::PreinstallState::Done);
                 }
@@ -2477,7 +2477,7 @@ impl<'a> PackageInstall<'a> {
         package_id: PackageID,
     ) -> bool {
         let exists =
-            sys::directory_exists_at(self.cache_dir.fd(), self.cache_dir_subpath).unwrap_or(false);
+            sys::directory_exists_at(self.cache_dir, self.cache_dir_subpath).unwrap_or(false);
         if exists {
             manager.set_preinstall_state(package_id, crate::PreinstallState::Done);
         }
@@ -2487,7 +2487,7 @@ impl<'a> PackageInstall<'a> {
     pub fn install(
         &mut self,
         skip_delete: bool,
-        destination_dir: Dir,
+        destination_dir: &Dir,
         method_: Method,
         resolution_tag: resolution::Tag,
     ) -> InstallResult {

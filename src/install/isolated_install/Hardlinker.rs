@@ -120,7 +120,7 @@ impl Hardlinker {
                     match entry.kind {
                         EntryKind::Directory => {
                             let _ = sys::make_path::make_path::<u16>(
-                                sys::Dir::from_fd(Fd::cwd()),
+                                &sys::Dir::cwd(),
                                 self.dest.slice(),
                             );
                         }
@@ -214,7 +214,7 @@ impl Hardlinker {
                                         };
 
                                         let _ = sys::make_path::make_path::<u16>(
-                                            sys::Dir::from_fd(Fd::cwd()),
+                                            &sys::Dir::cwd(),
                                             dest_parent,
                                         );
 

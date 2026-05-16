@@ -1467,11 +1467,13 @@ pub mod fs {
                     let file: Fd = if let Some(valid) = existing_fd.unwrap_valid() {
                         valid
                     } else if store_fd {
+                        // `into_raw()` (not `handle()`): `File` is now owning — peeking
+                        // `handle()` from a temporary would close the fd on drop.
                         bun_sys::open_file_absolute_z(
                             absolute_path_c,
                             bun_sys::OpenFlags::READ_ONLY,
                         )?
-                        .handle()
+                        .into_raw()
                     } else {
                         // PORT NOTE: Zig `bun.openFileForPath` (bun.zig:1900-1910) — O_PATH is
                         // Linux-only; macOS/BSD use O_RDONLY. Both add O_NOCTTY|O_CLOEXEC.
@@ -2372,6 +2374,8 @@ pub mod cache {
         ) -> Result<Entry, bun_core::Error> {
             let rfs = &_fs.fs;
 
+            let will_close = rfs.need_to_close_files() && cached_file_descriptor.is_none();
+
             let file_handle: bun_sys::File = if let Some(fd) = cached_file_descriptor {
                 // `try handle.seekTo(0)` — rewind a cached fd before re-reading.
                 bun_sys::lseek(fd, 0, libc::SEEK_SET).map_err(bun_core::Error::from)?;
@@ -2380,14 +2384,17 @@ pub mod cache {
                 bun_sys::open_file_absolute_z(path, bun_sys::OpenFlags::READ_ONLY)
                     .map_err(bun_core::Error::from)?
             };
-
-            let will_close = rfs.need_to_close_files() && cached_file_descriptor.is_none();
-            let fd = file_handle.handle();
+            // `File` is now owning — its `Drop` closes unconditionally. Install the
+            // disarm guard immediately so an unwind between construction and use
+            // can't close a borrowed fd: when we should *not* close (cached fd
+            // belongs to the caller, or STORE_FILE_DESCRIPTORS keeps it alive),
+            // `into_raw()` disarms; otherwise let `Drop` close.
             let file_handle = scopeguard::guard(file_handle, move |fh| {
-                if will_close {
-                    let _ = fh.close();
+                if !will_close {
+                    let _ = fh.into_raw();
                 }
             });
+            let fd = file_handle.handle();
 
             let contents = match fs_mod::read_file_contents(
                 &file_handle,
@@ -2469,6 +2476,8 @@ pub mod cache {
         ) -> Result<Entry, bun_core::Error> {
             let rfs = &_fs.fs;
 
+            let will_close = rfs.need_to_close_files() && _file_handle.is_none();
+
             // PORT NOTE: reshaped — Zig declared `file_handle = undefined` then assigned on each
             // branch; restructured into a single let-expression to avoid `mem::zeroed()` on a
             // type that may have niche (NonZero) fields.
@@ -2500,6 +2509,20 @@ pub mod cache {
                     .map_err(bun_core::Error::from)?
             };
 
+            // `File` is now owning — its `Drop` closes unconditionally. Install the
+            // disarm guard immediately so an unwind between construction and use
+            // (e.g. in the `scoped_log!` formatting below) can't close a borrowed
+            // fd: when we should *not* close (caller-supplied fd, or
+            // STORE_FILE_DESCRIPTORS keeps it alive), `into_raw()` disarms;
+            // otherwise let `Drop` close.
+            let file_handle = scopeguard::guard(file_handle, move |fh| {
+                if will_close {
+                    bun_core::scoped_log!(CacheFs, "readFileWithAllocator close({})", fh.handle());
+                } else {
+                    let _ = fh.into_raw();
+                }
+            });
+
             let fd = file_handle.handle();
 
             #[cfg(not(windows))] // skip on Windows because NTCreateFile will do it.
@@ -2510,14 +2533,6 @@ pub mod cache {
                 bstr::BStr::new(path),
                 fd
             );
-
-            let will_close = rfs.need_to_close_files() && _file_handle.is_none();
-            let file_handle = scopeguard::guard(file_handle, move |fh| {
-                if will_close {
-                    bun_core::scoped_log!(CacheFs, "readFileWithAllocator close({})", fh.handle());
-                    let _ = fh.close();
-                }
-            });
 
             // PORT NOTE: reshaped for borrowck — capture `stream` scalar before borrowing
             // the shared buffer.

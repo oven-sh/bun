@@ -1065,12 +1065,11 @@ impl WriteContext {
             Ok(f) => f,
         };
 
-        let res = match file.write_all(data_to_write) {
+        // `defer file.close()` — `File`'s `Drop` covers it.
+        match file.write_all(data_to_write) {
             Err(err) => WriteResult::SysErr(err),
             Ok(_) => WriteResult::Success,
-        };
-        let _ = file.close();
-        res
+        }
     }
 }
 

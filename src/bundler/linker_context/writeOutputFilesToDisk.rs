@@ -70,8 +70,10 @@ pub fn write_output_files_to_disk(
             return Err(e);
         }
     };
-    let _root_dir_guard = scopeguard::guard(root_dir, |d| d.close());
-    let root_dir = *_root_dir_guard;
+    // `bun_sys::Dir` now closes its fd on `Drop`; no explicit `scopeguard`
+    // close needed. `root_dir` is dropped (and the fd closed) when this
+    // function returns. (Replaces the old `scopeguard::guard(root_dir, |d|
+    // d.close())` + `Copy`-based deref — `Dir` is no longer `Copy`.)
 
     // Optimization: when writing to disk, we can re-use the memory
     // PERF(port): MaxHeapAllocator reuses the largest allocation between

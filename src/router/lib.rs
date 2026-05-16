@@ -1174,11 +1174,14 @@ impl Route {
                 // PORT NOTE: reshaped for borrowck — `defer if (needs_close) file.close()`
                 // becomes a scopeguard owning the Option<File>; `needs_close` is a
                 // Cell so the drop closure can read it while the body still mutates.
+                // With owning `bun_sys::File`, Drop closes the fd. The guard is
+                // inverted: when the fd belongs to the cache (`needs_close == false`),
+                // disarm via `into_raw()` so Drop does not close someone else's fd.
                 let needs_close = core::cell::Cell::new(true);
                 let mut file = scopeguard::guard(None::<bun_sys::File>, |f| {
-                    if needs_close.get() {
+                    if !needs_close.get() {
                         if let Some(f) = f {
-                            let _ = f.close();
+                            let _ = f.into_raw();
                         }
                     }
                 });

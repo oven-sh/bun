@@ -152,6 +152,7 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
 
             match manager
                 .global_dir
+                .as_ref()
                 .unwrap()
                 .make_open_path(b"node_modules", Default::default())
             {

@@ -377,7 +377,7 @@ impl InitCommand {
 
         if let Some(ifdir) = initialize_in_folder {
             // TODO(port): std.fs.cwd().makePath → bun_sys::make_path / bun.makePath
-            if let Err(err) = bun_sys::make_path(bun_sys::Dir::cwd(), ifdir) {
+            if let Err(err) = bun_sys::make_path(&bun_sys::Dir::cwd(), ifdir) {
                 Output::pretty_errorln(format_args!(
                     "Failed to create directory {}: {}",
                     bstr::BStr::new(ifdir),
@@ -809,14 +809,21 @@ impl InitCommand {
         }
 
         'write_package_json: {
-            // TODO(port): bun.FD.fromStdFile(package_json_file orelse try std.fs.cwd().createFileZ(...))
-            let fd: Fd = match package_json_file.as_ref() {
-                Some(f) => f.handle(),
-                None => bun_sys::File::create(Fd::cwd(), b"package.json", true)?.handle(),
-            };
-            let _close = scopeguard::guard(fd, |fd: Fd| {
-                let _ = bun_sys::close(fd);
-            });
+            // Zig: `var fd = bun.FD.fromStdFile(package_json_file orelse
+            // try std.fs.cwd().createFileZ(...)); defer fd.close();`
+            //
+            // When `package_json_file` is `Some`, it already owns the fd and
+            // closes it on Drop — only the freshly-created `None` branch needs a
+            // close-on-drop guard for the new fd.
+            let (fd, created_close): (Fd, Option<bun_sys::CloseOnDrop>) =
+                match package_json_file.as_ref() {
+                    Some(f) => (f.handle(), None),
+                    None => {
+                        let fd = bun_sys::File::create(Fd::cwd(), b"package.json", true)?.into_raw();
+                        (fd, Some(bun_sys::CloseOnDrop::new(fd)))
+                    }
+                };
+            let _close = created_close;
             let mut buffer_writer = js_printer::BufferWriter::init();
             buffer_writer.append_newline = true;
             let mut package_json_writer = js_printer::BufferPrinter::init(buffer_writer);
@@ -843,7 +850,7 @@ impl InitCommand {
                 break 'write_package_json;
             }
             let written = package_json_writer.ctx.get_written();
-            if let Err(err) = bun_sys::File::from_fd(fd).write_all(written) {
+            if let Err(err) = bun_sys::File::borrow(&fd).write_all(written) {
                 Output::pretty_errorln(format_args!(
                     "package.json failed to write due to error {}",
                     bstr::BStr::new(err.name()),
@@ -885,7 +892,7 @@ impl InitCommand {
                 {
                     if let Some(dirname) = bun_core::dirname(&fields.entry_point) {
                         if dirname != b"." {
-                            let _ = bun_sys::make_path(bun_sys::Dir::cwd(), dirname);
+                            let _ = bun_sys::make_path(&bun_sys::Dir::cwd(), dirname);
                         }
                     }
 
@@ -1034,7 +1041,7 @@ impl Assets {
         // Zig: bun.sys.File.makeOpen — creates parent dirs then opens.
         if let Some(dir) = bun_core::dirname(filename.as_bytes()) {
             if !dir.is_empty() && dir != b"." {
-                let _ = bun_sys::make_path(bun_sys::Dir::cwd(), dir);
+                let _ = bun_sys::make_path(&bun_sys::Dir::cwd(), dir);
             }
         }
         let file = bun_sys::File::openat(
@@ -1594,7 +1601,7 @@ impl Template {
                 if did_create_agent_rule && create_claude_md {
                     'symlink_cursor_rule: {
                         create_claude_md = false;
-                        let _ = bun_sys::make_path(bun_sys::Dir::cwd(), b".cursor/rules");
+                        let _ = bun_sys::make_path(&bun_sys::Dir::cwd(), b".cursor/rules");
                         // bun_sys::symlinkat takes &ZStr; build NUL-terminated copies.
                         let mut target_z = Self::CURSOR_RULE_PATH_TO_CLAUDE_MD.to_vec();
                         target_z.push(0);

@@ -470,7 +470,9 @@ impl OutputFile {
                     let parent = resolve_path::dirname::<platform::Auto>(rel_path);
                     if !parent.is_empty() && parent.len() > root_dir_path.len() {
                         // Zig `root_dir.makePath(parent)` (std.fs.Dir).
-                        bun_sys::make_path(bun_sys::Dir::from_fd(root_dir), parent)?;
+                        // `root_dir` is a borrowed fd owned by the caller; do not
+                        // construct an owning `Dir` (it would close on drop).
+                        bun_sys::make_path(bun_sys::Dir::borrow(&root_dir), parent)?;
                     }
                 }
 

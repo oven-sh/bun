@@ -574,7 +574,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             // freshly-inserted entry immutably alongside the
                             // scope (both `&manager`, no conflict).
                             let tmp_fd = directories::get_temporary_directory(manager).handle.fd;
-                            let cache_fd = directories::get_cache_directory(manager).fd;
+                            let cache_fd = directories::get_cache_directory(manager);
                             npm::package_manifest::Serializer::save_async(
                                 manager
                                     .manifests
@@ -1397,7 +1397,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let resolved = crate::repository_real::Repository::find_commit(
                         manager.env_mut(),
                         manager.log_mut(),
-                        bun_sys::Dir { fd: repo_fd },
+                        repo_fd,
                         dep_name,
                         committish,
                         task.id,
@@ -1814,8 +1814,12 @@ pub fn generate_network_task_for_tarball<'a>(
     } else {
         None
     };
+    // Borrowed views: `cache_dir` and `temp_dir` are owned by the `PackageManager`
+    // singleton and the `TemporaryDirectory` once-cell, respectively. They flow
+    // into `ExtractTarball::{cache_dir,temp_dir}`, which must be `Fd` (not `Dir`)
+    // so the task's drop never closes them.
     let cache_dir = directories::get_cache_directory(this);
-    let temp_dir = directories::get_temporary_directory(this).handle;
+    let temp_dir = directories::get_temporary_directory(this).handle.fd();
     // Backref address only — stored, not dereffed in this function. The tag is
     // immediately popped by the next `this` use; that's fine for a stored
     // back-pointer (TODO(port): lifetime — BACKREF).

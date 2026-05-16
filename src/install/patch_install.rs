@@ -42,8 +42,11 @@ pub const MAX_HEX_HASH_LEN: usize = const_format::formatcp!("{:x}", u64::MAX).le
 pub const MAX_BUNTAG_HASH_BUF_LEN: usize = MAX_HEX_HASH_LEN + bun_hash_tag.len() + 1;
 pub type BuntagHashBuf = [u8; MAX_BUNTAG_HASH_BUF_LEN];
 
-// `std.fs.Dir` → `bun_sys::Dir` (thin `Fd` wrapper, see sys/lib.rs).
-type StdFsDir = sys::Dir;
+// `std.fs.Dir` aliases on `PatchTask`/`ApplyPatch` are *borrowed views* of the
+// `PackageManager`-owned cache/temp directory descriptors. Now that
+// `bun_sys::Dir` is an owning RAII handle, store the raw `Fd` instead so the
+// task's drop never closes a descriptor it doesn't own. Use `Dir::borrow(&fd)`
+// where a `&Dir` is needed.
 
 pub struct PatchTask {
     /// BACKREF (Zig: `*PackageManager`). Stored as `BackRef` because the task
@@ -54,7 +57,8 @@ pub struct PatchTask {
     /// write provenance for `PackageManager::wake_raw(*mut Self)`, which
     /// writes the event-loop wake flag.
     pub manager: bun_ptr::BackRef<PackageManager>,
-    pub tempdir: StdFsDir,
+    /// Borrowed view of the manager's temp directory fd (see comment at top of file).
+    pub tempdir: Fd,
     pub project_dir: &'static [u8],
     pub callback: Callback,
     pub task: ThreadPoolTask,
@@ -130,7 +134,8 @@ pub struct ApplyPatch {
     pub patchfilepath: Box<[u8]>,
     pub pkgname: SemverString,
 
-    pub cache_dir: StdFsDir,
+    /// Borrowed view of the manager's cache directory fd (see comment at top of file).
+    pub cache_dir: Fd,
     pub cache_dir_subpath: ZBox,
     pub cache_dir_subpath_without_patch_hash: ZBox,
 
@@ -531,7 +536,12 @@ impl PatchTask {
             lockfile,
         };
 
-        match pkg_install.install(true, system_tmpdir, InstallMethod::Copyfile, resolution_tag) {
+        match pkg_install.install(
+            true,
+            sys::Dir::borrow(&system_tmpdir),
+            InstallMethod::Copyfile,
+            resolution_tag,
+        ) {
             InstallResult::Success => {}
             InstallResult::Failure(reason) => {
                 log.add_error_fmt_opts(
@@ -548,7 +558,7 @@ impl PatchTask {
 
         {
             let patch_pkg_dir = match sys::openat(
-                system_tmpdir.fd,
+                system_tmpdir,
                 tempdir_name,
                 sys::O::RDONLY | sys::O::DIRECTORY,
                 0,
@@ -613,9 +623,9 @@ impl PatchTask {
 
         let cache_dir_subpath_z: &ZStr = patch.cache_dir_subpath.as_zstr();
         if let Err(e) = sys::renameat_concurrently(
-            system_tmpdir.fd,
+            system_tmpdir,
             path_in_tmpdir,
-            patch.cache_dir.fd,
+            patch.cache_dir,
             cache_dir_subpath_z,
             sys::RenameOptions {
                 move_fallback: true,
@@ -777,7 +787,7 @@ impl PatchTask {
         // TODO(port): Zig used `dupeZ` (NUL-terminated). The field is typed `[]const u8` and only
         // used as a byte slice, so `Box<[u8]>` without trailing NUL should be equivalent. Verify.
 
-        let tempdir = manager.get_temporary_directory().handle;
+        let tempdir = manager.get_temporary_directory().handle.fd();
         let pt = Box::new(PatchTask {
             tempdir,
             callback: Callback::CalcHash(CalcPatchHash {
@@ -849,7 +859,7 @@ impl PatchTask {
             ZBox::from_bytes(&cache_dir_subpath_bytes[..patch_hash_idx]);
         let cache_dir = stuff.cache_dir;
 
-        let tempdir = pkg_manager.get_temporary_directory().handle;
+        let tempdir = pkg_manager.get_temporary_directory().handle.fd();
         let pt = Box::new(PatchTask {
             tempdir,
             callback: Callback::Apply(ApplyPatch {

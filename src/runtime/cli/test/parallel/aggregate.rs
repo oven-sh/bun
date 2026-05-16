@@ -118,7 +118,7 @@ pub fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], summary: &
             (BStr::new(outfile), e),
         ),
         bun_sys::Result::Ok(fd) => {
-            let fd = fd; // moved into scope; closed on drop
+            // `File` owns the fd and closes on Drop (Zig: `defer fd.close()`).
             match File::write_all(&fd, &contents) {
                 bun_sys::Result::Err(e) => Output::err(
                     err!("JUnitReportFailed"),
@@ -127,7 +127,6 @@ pub fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], summary: &
                 ),
                 bun_sys::Result::Ok(()) => {}
             }
-            let _ = fd.close();
         }
     }
 }
@@ -286,8 +285,8 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                         fc.lh()
                     );
                 }
+                // `File` owns the fd and closes on Drop (Zig: `defer f.close()`).
                 let _ = File::write_all(&f, &w);
-                let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
             }
         }
     }

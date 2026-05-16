@@ -586,8 +586,10 @@ pub struct NamesIterator<'a> {
     // TODO(port): std.fs.Dir.Iterator → bun_sys directory iterator type
     pub dir_iterator: Option<sys::dir_iterator::WrappedIterator>,
     pub package_name: String,
-    // TODO(port): std.fs.Dir → bun_sys::Dir; default was bun.invalid_fd.stdDir()
-    pub destination_node_modules: sys::Dir,
+    /// Borrowed view of the destination `node_modules` directory fd; the
+    /// caller owns the underlying `Dir`. Default is `Fd::INVALID` (Zig:
+    /// `bun.invalid_fd.stdDir()`), which `next_in_dir()` never reaches.
+    pub destination_node_modules: Fd,
     pub buf: PathBuffer,
     pub string_buffer: &'a [u8],
     pub extern_string_buf: &'a [ExternalString],
@@ -612,9 +614,10 @@ impl<'a> NamesIterator<'a> {
             let joined_len = joined.len();
             self.buf[joined_len] = 0;
             let joined_ = ZStr::from_buf_mut(&mut self.buf, joined_len);
-            // TODO(port): bun.openDir(dir, path) → bun_sys equivalent
-            let child_dir = sys::open_dir(dir, joined_)?;
-            self.dir_iterator = Some(sys::iterate_dir(child_dir.fd));
+            // `into_raw()` hands the fresh directory fd off to the iterator,
+            // which owns it until `dir.close()` below (or the caller drops it).
+            let child_dir = sys::open_dir(sys::Dir::borrow(&dir), joined_)?.into_raw();
+            self.dir_iterator = Some(sys::iterate_dir(child_dir));
         }
 
         let iter = self.dir_iterator.as_mut().unwrap();
@@ -895,9 +898,8 @@ impl<'a> Linker<'a> {
             else {
                 return;
             };
-            let bin_for_reading = scopeguard::guard(bin_for_reading, |f| {
-                let _ = f.close();
-            });
+            // `File::Drop` closes `bin_for_reading` at end of this block; the
+            // previous explicit scopeguard close is redundant.
 
             let Ok(read) = bin_for_reading.read_all(&mut shebang_buf) else {
                 return;
@@ -996,9 +998,8 @@ impl<'a> Linker<'a> {
             ) else {
                 return;
             };
-            let tmpfile = scopeguard::guard(tmpfile, |f| {
-                let _ = f.close();
-            });
+            // `File::Drop` closes `tmpfile` at end of this block; the previous
+            // explicit scopeguard close is redundant.
 
             // Write the corrected shebang (without \r)
             if tmpfile
@@ -1097,8 +1098,7 @@ impl<'a> Linker<'a> {
                     let node_modules_path_save = self.node_modules_path.len();
                     let _ = self.node_modules_path.append(b".bin");
                     // TODO(port): bun.makePath(std.fs.cwd(), ...)
-                    let _ =
-                        sys::make_path(sys::Dir { fd: Fd::cwd() }, self.node_modules_path.slice());
+                    let _ = sys::make_path(&sys::Dir::cwd(), self.node_modules_path.slice());
                     self.node_modules_path.set_length(node_modules_path_save);
 
                     match sys::File::openat_os_path(
@@ -1232,8 +1232,7 @@ impl<'a> Linker<'a> {
                     // can be re-borrowed for `append`/`slice` in between.
                     let node_modules_path_save = self.node_modules_path.len();
                     let _ = self.node_modules_path.append(b".bin");
-                    let _ =
-                        sys::make_path(sys::Dir { fd: Fd::cwd() }, self.node_modules_path.slice());
+                    let _ = sys::make_path(&sys::Dir::cwd(), self.node_modules_path.slice());
                     self.node_modules_path.set_length(node_modules_path_save);
 
                     match sys::symlink_running_executable(rel_target, abs_dest) {

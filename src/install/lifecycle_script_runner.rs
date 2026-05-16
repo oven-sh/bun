@@ -1145,12 +1145,13 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             let Ok(dir) = bun_sys::open_dir_absolute(dirname) else {
                 break 'try_delete_dir;
             };
-            let _ = dir.delete_tree(basename);
             // PORT NOTE: Zig (lifecycle_script_runner.zig:533-534) leaks this fd
             // too — fixed here since this path returns to the install loop without
             // exiting, so the HANDLE/fd would otherwise persist for the rest of
             // the install on every failed optional-dependency lifecycle script.
-            dir.close();
+            // `Dir::Drop` closes the handle at end of this block.
+            let dir = bun_sys::Dir::from_fd(dir);
+            let _ = dir.delete_tree(basename);
         }
 
         // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.

@@ -511,7 +511,7 @@ fn iterate_included_project_tree(
     bins: &[BinInfo],
     includes: &[Pattern],
     excludes: &[Pattern],
-    root_dir: Dir,
+    root_dir: &Dir,
     log_level: LogLevel,
 ) -> Result<(), AllocError> {
     if cfg!(debug_assertions) {
@@ -528,7 +528,9 @@ fn iterate_included_project_tree(
     let _ = &mut ignores; // unused in this fn body in Zig too (declared but not read)
 
     let mut dirs: Vec<DirInfo> = Vec::new();
-    dirs.push(DirInfo(root_dir, Box::from(&b""[..]), 1));
+    // Depth-1 entry borrows the caller's `root_dir`; the consuming loop below
+    // disarms `Dir::Drop` for depth==1 so the caller's handle isn't closed.
+    dirs.push(DirInfo(Dir::from_fd(root_dir.fd), Box::from(&b""[..]), 1));
 
     let mut included_dirs: Vec<DirInfo> = Vec::new();
 
@@ -537,8 +539,14 @@ fn iterate_included_project_tree(
     // first find included dirs and files
     while let Some(dir_info) = dirs.pop() {
         let DirInfo(dir, dir_subpath, dir_depth) = dir_info;
-        // Root (depth 1) is borrowed `Fd::cwd()`-ish; only close subdirs we opened.
-        let close_guard = (dir_depth != 1).then(|| CloseOnDrop::dir(dir));
+        // Root (depth 1) is borrowed from the caller's `root_dir`; only close
+        // subdirs we opened. `Dir::Drop` covers the close — disarm it for the
+        // root entry so the caller's handle isn't double-closed.
+        let dir = scopeguard::guard(dir, move |d| {
+            if dir_depth == 1 {
+                let _ = d.into_raw();
+            }
+        });
 
         let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(&dir));
         'next_entry: while let Some(entry) = dir_iter.next().ok().flatten() {
@@ -690,7 +698,7 @@ fn iterate_included_project_tree(
             }
         }
 
-        drop(close_guard);
+        drop(dir);
     }
 
     // for each included dir, traverse its entries, exclude any with `negate_no_match`.
@@ -744,8 +752,8 @@ fn add_entire_tree(
     }
 
     while let Some(dir_info) = dirs.pop() {
+        // `dir` owns its fd; `Dir::Drop` closes it at end of this iteration.
         let DirInfo(dir, dir_subpath, dir_depth) = dir_info;
-        let _close = CloseOnDrop::dir(dir);
 
         while let Some(last) = ignores.last() {
             if last.depth < dir_depth {
@@ -925,7 +933,7 @@ fn iterate_bundled_deps(
             Global::crash();
         }
     };
-    let _close = CloseOnDrop::dir(dir);
+    // `dir` owns its fd; `Dir::Drop` closes it on function exit.
 
     // A set of bundled dependency locations
     // - node_modules/is-even
@@ -958,7 +966,7 @@ fn iterate_bundled_deps(
                 Ok(d) => d,
                 Err(_) => continue,
             };
-            let _close_scoped = CloseOnDrop::dir(scoped_dir);
+            // `scoped_dir` owns its fd; `Dir::Drop` closes it at end of this block.
 
             let mut scoped_iter = DirIterator::iterate(Fd::from_std_dir(&scoped_dir));
             while let Some(sub_entry) = scoped_iter.next().ok().flatten() {
@@ -1073,8 +1081,8 @@ fn add_bundled_dep(
     dirs.push(bundled_dir_info);
 
     while let Some(dir_info) = dirs.pop() {
+        // `dir` owns its fd; `Dir::Drop` closes it at end of this iteration.
         let DirInfo(dir, dir_subpath, dir_depth) = dir_info;
-        let _close = CloseOnDrop::dir(dir);
 
         let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
         while let Some(entry) = iter.next().ok().flatten() {
@@ -1317,7 +1325,13 @@ fn iterate_project_tree(
     while let Some(dir_info) = dirs.pop() {
         let DirInfo(dir, dir_subpath, dir_depth) = dir_info;
         // Root (depth 1) is caller-owned; only close subdirs we opened.
-        let _close = (dir_depth != 1).then(|| CloseOnDrop::dir(dir));
+        // `Dir::Drop` covers the close — disarm it for the root entry so the
+        // caller's handle isn't double-closed.
+        let dir = scopeguard::guard(dir, move |d| {
+            if dir_depth == 1 {
+                let _ = d.into_raw();
+            }
+        });
 
         while let Some(last) = ignores.last() {
             if last.depth < dir_depth {
@@ -1889,9 +1903,14 @@ fn new_boxed_buffered_file_reader(file: bun_sys::File) -> Box<BufferedFileReader
 /// Re-seat the underlying file and reset the buffer cursor in place — avoids
 /// the 512 KiB stack temporary that `*file_reader = BufferedFileReader { ... }`
 /// would create. Zig: `file_reader.* = .{ .unbuffered_reader = ..., .buf = undefined }`.
+///
+/// `unbuffered_reader` is a *view* of a fd that the call site owns (e.g. via
+/// a `CloseOnDrop` or a `File` whose Drop fires after the read loop). The
+/// previous fd may already be closed; disarm its `File::Drop` before
+/// overwriting so we never close a stale (potentially-recycled) fd.
 #[inline]
 fn reset_buffered_file_reader(r: &mut BufferedFileReader, file: bun_sys::File) {
-    r.unbuffered_reader = file;
+    let _ = core::mem::replace(&mut r.unbuffered_reader, file).into_raw();
     r.start = 0;
     r.end = 0;
 }
@@ -2294,7 +2313,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
     // Create the edited package.json content after lifecycle scripts have run
     let edited_package_json = edit_root_package_json(ctx.lockfile, &mut json)?;
 
-    let mut root_dir: Dir = 'root_dir: {
+    let root_dir: Dir = 'root_dir: {
         let mut path_buf = PathBuffer::uninit();
         path_buf[..abs_workspace_path.len()].copy_from_slice(abs_workspace_path);
         path_buf[abs_workspace_path.len()] = 0;
@@ -2319,7 +2338,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
             }
         }
     };
-    let _close_root = CloseOnDrop::dir(root_dir);
+    // `root_dir` owns its fd; `Dir::Drop` closes it on function exit.
 
     // Scan for a README file so the registry receives the same
     // `readme` / `readmeFilename` metadata that `npm publish` sends.
@@ -2417,7 +2436,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
                         &bins,
                         &includes,
                         &excludes,
-                        root_dir, // TODO(port): borrowck — root_dir reused after this; could pass &Dir
+                        &root_dir,
                         log_level,
                     )?;
                     break 'iterate_project_tree;
@@ -2434,8 +2453,9 @@ pub fn pack<const FOR_PUBLISH: bool>(
             iterate_project_tree(
                 &mut pack_queue,
                 &bins,
-                DirInfo(root_dir, Box::from(&b""[..]), 1),
-                // TODO(port): borrowck — root_dir reused after this; could pass &Dir or dup fd
+                // Depth-1 entry borrows `root_dir`; the consuming loop disarms
+                // `Dir::Drop` for depth==1 so the caller's handle stays open.
+                DirInfo(Dir::from_fd(root_dir.fd), Box::from(&b""[..]), 1),
                 log_level,
             )?;
         }
@@ -2614,7 +2634,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
         dest_buf[abs_tarball_dest_dir_end] = 0;
         // SAFETY: NUL written above
         let abs_tarball_dest_dir = ZStr::from_buf(&dest_buf[..], abs_tarball_dest_dir_end);
-        let _ = bun_sys::make_path(Dir::cwd(), abs_tarball_dest_dir.as_bytes());
+        let _ = bun_sys::make_path(&Dir::cwd(), abs_tarball_dest_dir.as_bytes());
         dest_buf[abs_tarball_dest_dir_end] = most_likely_a_slash;
     }
 
@@ -3345,6 +3365,12 @@ fn add_archive_entry(
             }
         };
     }
+
+    // `file` is the caller's fd (closed by its `_close_fd` / `File` after this
+    // returns). Reset the reader's view to a sentinel so neither the next
+    // `reset_buffered_file_reader` nor `file_reader`'s eventual Drop tries to
+    // close a fd we don't own.
+    reset_buffered_file_reader(file_reader, File::from_fd(Fd::invalid()));
 
     Ok(entry.clear())
 }

@@ -392,10 +392,9 @@ impl File {
     /// `path: anytype`); `&ZStr` callers deref-coerce.
     pub fn read_from(dir: Fd, path: &[u8]) -> Maybe<Vec<u8>> {
         let f = Self::openat(dir, path, O::RDONLY, 0)?;
-        // File.zig: closes the fd on the error path too (no leak on read failure).
-        let v = f.read_to_end();
-        let _ = close(f.handle);
-        v
+        // File.zig: closes the fd on the error path too (no leak on read
+        // failure). `Drop` covers all paths.
+        f.read_to_end()
     }
     /// `bun.sys.File.readFileFrom` (File.zig:381) — open + read; returns BOTH
     /// the open `File` handle and the bytes. Caller owns the fd and must
@@ -407,10 +406,8 @@ impl File {
         let f = Self::openat(dir, path, O::RDONLY, 0).map_err(Into::<bun_core::Error>::into)?;
         match f.read_to_end() {
             Ok(bytes) => Ok((f, bytes)),
-            Err(e) => {
-                let _ = close(f.handle);
-                Err(e.into())
-            }
+            // The fd escapes only on success; `Drop` closes it here.
+            Err(e) => Err(e.into()),
         }
     }
     /// `bun.sys.File.readFromUserInput` (File.zig:367) — normalize a
@@ -436,20 +433,17 @@ impl File {
     }
     /// `bun.sys.File.writeFile` — open + write + close.
     pub fn write_file(dir: Fd, path: &ZStr, data: &[u8]) -> Maybe<()> {
-        // File.zig:141 — mode 0o664; `defer file.close()` (close on all paths).
+        // File.zig:141 — mode 0o664; `defer file.close()`. `Drop` covers all
+        // paths.
         let f = Self::openat(dir, path, O::WRONLY | O::CREAT | O::TRUNC, 0o664)?;
-        let r = f.write_all(data);
-        let _ = close(f.handle);
-        r
+        f.write_all(data)
     }
     /// Port of `bun.sys.File.writeFileWithPathBuffer` (File.zig) Windows arm —
     /// like [`write_file`] but takes the platform-native path type so Windows
     /// callers can pass a `&WStr` without round-tripping through UTF-8.
     pub fn write_file_os_path(dir: Fd, path: &bun_paths::OSPathSliceZ, data: &[u8]) -> Maybe<()> {
         let file = File::openat_os_path(dir, path, O::WRONLY | O::CREAT | O::TRUNC, 0o664)?;
-        let result = file.write_all(data);
-        let _ = close(file.handle);
-        result
+        file.write_all(data)
     }
 
     // ── std::io adapters ─────────────────────────────────────────────────

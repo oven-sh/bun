@@ -438,13 +438,10 @@ impl<'a> Snapshots<'a> {
                     continue;
                 }
             };
-            // Zig: `errdefer file.file.close()` — fires on `?` error returns only.
-            // PORT NOTE: Zig never closes on the success path (or `continue`); preserve that by
-            // disarming via `into_inner` on every non-`?` exit below.
-            let mut file = scopeguard::guard(
-                File { id: file_id, file: bun_sys::File::from_fd(fd) },
-                |f| { let _ = bun_sys::close(f.file.handle); },
-            );
+            // Zig: `errdefer file.file.close()` — `bun_sys::File` is now an owning
+            // RAII handle, so its Drop covers every exit path (error `?`, `continue`,
+            // and the success fall-through). No scopeguard needed.
+            let mut file = File { id: file_id, file: bun_sys::File::from_fd(fd) };
 
             let file_text: Vec<u8> = file
                 .file
@@ -818,7 +815,6 @@ impl<'a> Snapshots<'a> {
 
             if log.errors > 0 {
                 // skip writing the file if there were errors — `log` guard prints on drop.
-                let _ = scopeguard::ScopeGuard::into_inner(file);
                 continue;
             }
 
@@ -832,7 +828,6 @@ impl<'a> Snapshots<'a> {
                         bstr::BStr::new(e.name()),
                     ),
                 );
-                let _ = scopeguard::ScopeGuard::into_inner(file);
                 continue;
             }
 
@@ -845,7 +840,6 @@ impl<'a> Snapshots<'a> {
                         bstr::BStr::new(e.name()),
                     ),
                 );
-                let _ = scopeguard::ScopeGuard::into_inner(file);
                 continue;
             }
             if result_text.len() < file_text.len() {
@@ -856,8 +850,7 @@ impl<'a> Snapshots<'a> {
                 }
             }
 
-            // disarm errdefer (success path) — Zig never closes on success.
-            let _ = scopeguard::ScopeGuard::into_inner(file);
+            // `file` drops at end of iteration — `bun_sys::File::Drop` closes the fd.
         }
         Ok(success.get())
     }
@@ -931,11 +924,10 @@ impl<'a> Snapshots<'a> {
                 id: file_id,
                 file: bun_sys::File::from_fd(fd),
             };
-            // PORT NOTE: `errdefer file.file.close()` — close fd on `?` early-return.
-            // Guard the `Fd` (Copy) directly so we don't need to move out of `bun_sys::File`.
-            let guard = scopeguard::guard(fd, |fd| {
-                let _ = bun_sys::close(fd);
-            });
+            // PORT NOTE: `errdefer file.file.close()` — `bun_sys::File` is now an
+            // owning RAII handle; its Drop closes the fd on any `?` early-return.
+            // On the success path `file` is moved into `self._current_file`, so no
+            // close happens here.
 
             if self.update_snapshots {
                 self.file_buf.extend_from_slice(Self::FILE_HEADER);
@@ -955,9 +947,8 @@ impl<'a> Snapshots<'a> {
                 }
             }
 
-            // errdefer stays armed across parse_file — if it errors, guard closes the fd.
+            // errdefer is implicit: if `parse_file` errors, `file` drops and closes the fd.
             self.parse_file(&file)?;
-            scopeguard::ScopeGuard::into_inner(guard);
             self._current_file = Some(file);
         }
 

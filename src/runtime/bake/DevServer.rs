@@ -521,8 +521,9 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
 
     #[cfg(feature = "bake_debugging_features")]
     let dump_dir = if let Some(dir) = options.dump_sources {
-        // TODO(port): std.fs.cwd().makeOpenPath - use bun_sys
-        match sys::Dir::cwd().make_open_path(dir) {
+        // Zig: `std.fs.cwd().makeOpenPath(dir, .{})` — `Dir` now owns and
+        // closes on Drop (covers Zig's `errdefer dump_dir.close()` below).
+        match sys::Dir::cwd().make_open_path(dir, Default::default()) {
             Ok(d) => Some(d),
             Err(err) => {
                 Output::warn(format_args!(
@@ -537,7 +538,11 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     };
     #[cfg(not(feature = "bake_debugging_features"))]
     let dump_dir = ();
-    // TODO(port): errdefer dump_dir.close() — handled by Drop on sys::Dir
+    // Zig: `errdefer dump_dir.close()` — handled by `Drop` on `sys::Dir`, but
+    // ONLY while `dump_dir` is still a live local. `Box<MaybeUninit<DevServer>>`
+    // never runs field destructors, so the move into `(*p).dump_dir` must be the
+    // *last* field write before `assume_init()`; otherwise any `?` between the
+    // move and `assume_init()` would leak the fd.
 
     let separate_ssr_graph = options
         .framework
@@ -585,7 +590,10 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         );
         w!(generation, 0);
         w!(graph_safety_lock, ThreadLock::init_unlocked());
-        w!(dump_dir, dump_dir);
+        // `dump_dir` is written LAST (just before `assume_init()` below), not
+        // here — see the comment at its declaration. Moving it into the
+        // `MaybeUninit` early would leak the fd on any error return between
+        // here and `assume_init()`, since `MaybeUninit` never drops fields.
         w!(framework, options.framework);
         w!(bundler_options, options.bundler_options);
         w!(emit_incremental_visualizer_events, 0);
@@ -790,6 +798,15 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
 
         w!(bundler_framework_views, bundler_framework_views);
     }
+
+    // `dump_dir` is moved into the struct as the *last* field write so that
+    // its `Drop` (which closes the fd) still runs if any earlier `?` above
+    // returned early. `MaybeUninit` never runs field destructors, so writing
+    // it any sooner would leak the fd on those error paths. This mirrors
+    // Zig's `errdefer dump_dir.close()`, which stayed armed until `init()`
+    // returned successfully.
+    // SAFETY: per-field write into uninit struct; see `w!` SAFETY above.
+    unsafe { w!(dump_dir, dump_dir) };
 
     // ── every field is now written ───────────────────────────────────────────
     // SAFETY: all fields of `*p` were written exactly once above via
@@ -5547,7 +5564,8 @@ pub fn dump_bundle(
     }
 
     bufw.flush()?;
-    _ = file.close();
+    // Zig: `defer file.close()` / `defer inner_dir.close()` — both handled by
+    // Drop now that `File`/`Dir` are owning RAII handles.
     Ok(())
 }
 

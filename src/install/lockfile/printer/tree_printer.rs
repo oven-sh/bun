@@ -13,7 +13,7 @@ use bun_install::{
 // accessors on `MultiArrayList<Package>` / its `Slice`.
 use crate::lockfile_real::package::PackageColumns as _;
 use crate::package_manager_real::TrackInstalledBin;
-use bun_sys::{Dir as SysDir, Fd};
+use bun_sys::Fd;
 
 type Bitset = DynamicBitSet;
 
@@ -563,7 +563,7 @@ where
                     package_name: name,
                     // PORT NOTE: Zig default `bun.invalid_fd.stdDir()` — never read on
                     // the .map/.file/.named_file paths this arm covers.
-                    destination_node_modules: SysDir::from_fd(Fd::INVALID),
+                    destination_node_modules: Fd::INVALID,
                     buf: bun_paths::PathBuffer::uninit(),
                     string_buffer: string_buf,
                     extern_string_buf: this.lockfile.buffers.extern_strings.as_slice(),

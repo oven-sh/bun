@@ -149,7 +149,7 @@ impl PackageManager {
         let mut list: Vec<semver::Version> = Vec::new();
         // Zig: `getCacheDirectory().openDir(package_name, .{ .iterate = true })`.
         let cache_dir = super::get_cache_directory(self);
-        let dir = match bun_sys::open_dir(cache_dir, package_name) {
+        let dir = match bun_sys::open_dir(bun_sys::Dir::borrow(&cache_dir), package_name) {
             Ok(d) => d,
             Err(e)
                 if e == bun_core::err!("FileNotFound")
@@ -161,7 +161,7 @@ impl PackageManager {
             }
             Err(e) => return Err(e),
         };
-        // `defer dir.close()` → explicit close after iteration (Dir has no Drop).
+        // Zig `defer dir.close()` — `Dir`'s `Drop` covers it on every exit.
         let mut iter = bun_sys::iterate_dir(dir.fd);
 
         loop {
@@ -169,7 +169,6 @@ impl PackageManager {
                 Ok(Some(e)) => e,
                 Ok(None) => break,
                 Err(e) => {
-                    dir.close();
                     return Err(e.into());
                 }
             };
@@ -205,7 +204,6 @@ impl PackageManager {
             // PERF(port): was `catch unreachable` on append — Vec::push aborts on OOM
         }
 
-        dir.close();
         Ok(list)
     }
 

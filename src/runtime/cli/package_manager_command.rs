@@ -388,7 +388,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
         } else if strings::eql_comptime(subcommand, b"cache") {
             let mut dir = PathBuffer::uninit();
             let fd = get_cache_directory(pm);
-            let outpath = match bun_sys::get_fd_path(fd.fd(), &mut dir) {
+            let outpath = match bun_sys::get_fd_path(fd, &mut dir) {
                 Ok(p) => &p[..],
                 Err(err) => {
                     Output::pretty_errorln(format_args!(

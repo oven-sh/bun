@@ -12,7 +12,7 @@ use bun_dotenv::Loader as DotEnv;
 use bun_http::{self as http, AsyncHTTP, HTTPClient, HeaderBuilder};
 use bun_picohttp as picohttp;
 use bun_semver::{self as Semver, ExternalString, SlicedString, String as SemverString};
-use bun_sys::{self, CloseOnDrop, Fd, File};
+use bun_sys::{self, Fd, File};
 use bun_threading::ThreadPool;
 use bun_url::{OwnedURL, URL};
 use bun_wyhash::Wyhash11;
@@ -579,7 +579,7 @@ pub mod registry {
                     &package,
                     scope,
                     package_manager.get_temporary_directory().handle.fd,
-                    package_manager.get_cache_directory().fd,
+                    package_manager.get_cache_directory(),
                 );
             }
 

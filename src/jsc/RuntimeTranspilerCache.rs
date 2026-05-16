@@ -818,15 +818,15 @@ impl RuntimeTranspilerCache {
     ) -> Result<Entry, bun_core::Error> {
         let mut metadata_bytes_buf = [0u8; Metadata::SIZE * 2];
         let cache_fd = sys::open(cache_file_path.slice_assume_z(), sys::O::RDONLY, 0)?;
-        // Zig: `defer cache_fd.close()` — close on all exit paths.
-        let _close_guard = sys::CloseOnDrop::new(cache_fd);
+        // Zig: `defer cache_fd.close()` — `File`'s `Drop` closes on all exit
+        // paths. Declared before `unlink_guard` so the unlink (errdefer) runs
+        // before the close (defer), matching Zig's LIFO defer order.
+        let file = sys::File::from_fd(cache_fd);
         // Zig: `errdefer { _ = bun.sys.unlink(...) }` — on any error, delete the
         // cache file. Disarmed via `into_inner` on the success path below.
         let unlink_guard = scopeguard::guard(cache_file_path, |p| {
             let _ = sys::unlink(p.slice_assume_z());
         });
-
-        let file = sys::File::from_fd(cache_fd);
         let metadata_bytes = file.pread_all(&mut metadata_bytes_buf, 0)?;
         #[cfg(windows)]
         {
@@ -909,10 +909,11 @@ impl RuntimeTranspilerCache {
                 // Zig: `std.fs.cwd().makeOpenPath(dirname, .{ .access_sub_paths = true })`
                 let dir =
                     sys::Dir::cwd().make_open_path(dirname, sys::OpenDirOptions::default())?;
-                // Zig: `errdefer dir.close()` (brk-scoped). `sys::Dir` has no
-                // `Drop`, so close explicitly on the `make_lib_uv_owned` error
-                // edge (Windows-only failure path) before propagating.
-                let dfd = dir.fd;
+                // The raw fd escapes the block (handed to `_dir_guard` below),
+                // so disarm `Dir::Drop` with `into_raw()`. Zig: `errdefer
+                // dir.close()` (brk-scoped) — close explicitly on the
+                // `make_lib_uv_owned` error edge (Windows-only failure path).
+                let dfd = dir.into_raw();
                 break 'brk match dfd.make_lib_uv_owned() {
                     Ok(f) => f,
                     Err(e) => {

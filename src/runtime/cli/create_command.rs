@@ -675,7 +675,7 @@ impl CreateCommand {
                 )?;
 
                 file_copier_copy(
-                    destination_dir,
+                    &destination_dir,
                     &mut walker_,
                     node,
                     &mut progress,
@@ -806,7 +806,7 @@ impl CreateCommand {
 
             let _ = bun_sys::unlinkat(parent_dir.fd(), bun_core::zstr!("gitignore"));
             let _ = bun_sys::unlinkat(parent_dir.fd(), bun_core::zstr!(".npmignore"));
-            parent_dir.close();
+            // `parent_dir` drops here, closing the fd.
         }
 
         let mut start_command: &[u8] = b"bun dev";
@@ -1470,7 +1470,9 @@ impl CreateCommand {
                     break 'process_package_json;
                 }
                 let written = package_json_writer.ctx.get_written();
-                if let Err(err) = (bun_sys::File { handle: file }).write_all(written) {
+                // `file` is the fd still owned by `package_json_file`; borrow it
+                // (constructing an owning `File` here would double-close on drop).
+                if let Err(err) = bun_sys::File::borrow(&file).write_all(written) {
                     Output::pretty_errorln(format_args!(
                         "package.json failed to write due to error {}",
                         bstr::BStr::new(err.name()),
@@ -1909,7 +1911,7 @@ pub struct ExtractedInfo {
 // CreateCommand.exec, because Rust does not allow capturing-closure-style nested fns and the
 // fn body is large.
 fn file_copier_copy(
-    destination_dir_: bun_sys::Dir,
+    destination_dir_: &bun_sys::Dir,
     walker: &mut bun_sys::walker_skippable::Walker,
     node_: &mut ProgressNode,
     progress_: &mut Progress,

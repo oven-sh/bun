@@ -160,10 +160,8 @@ impl InstallCompletionsCommand {
             // TODO: fix this zig bug, it is one line change to a few functions.
             // const file = try std.fs.createFileAbsoluteW(bunx_cmd, .{});
             let file = File::create_w(bun_sys::Fd::cwd(), bunx_cmd.as_slice())?;
-            // bun_sys::File has no Drop impl; must close explicitly (zig: defer file.close())
-            let res = file.write_all(SCRIPT);
-            let _ = file.close();
-            res?;
+            // zig: `defer file.close()` — `File` now owns the fd and closes on Drop.
+            file.write_all(SCRIPT)?;
         }
         Ok(())
     }
@@ -212,10 +210,8 @@ impl InstallCompletionsCommand {
         )?;
 
         let file = File::create_w(bun_sys::Fd::cwd(), uninstaller_path)?;
-        // bun_sys::File has no Drop impl; must close explicitly (zig: defer file.close())
-        let res = file.write_all(CONTENT);
-        let _ = file.close();
-        res?;
+        // zig: `defer file.close()` — `File` now owns the fd and closes on Drop.
+        file.write_all(CONTENT)?;
         Ok(())
     }
 
@@ -563,7 +559,8 @@ impl InstallCompletionsCommand {
             Global::exit(fail_exit_code);
         }
 
-        // defer output_dir.close()
+        // Zig: `output_dir.close()` (eager, not defer). `output_dir` is a raw
+        // `Fd`, not an owning `Dir`, so close it explicitly.
         let _ = bun_sys::close(output_dir);
 
         // Check if they need to load the zsh completions file into their .zshrc

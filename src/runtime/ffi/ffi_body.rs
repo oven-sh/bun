@@ -2668,8 +2668,8 @@ impl CompilerRT {
         else {
             return;
         };
-        // `defer bunCC.close()`.
-        let bun_cc = scopeguard::guard(bun_cc, |d| d.close());
+        // `defer bunCC.close()` — `bun_sys::Dir` is now an owning RAII handle;
+        // its Drop closes the descriptor at end of scope.
 
         // Spec ffi.zig:2344-2350 — `inline for (decls) |d| bunCC.writeFile(d) catch {}`.
         for (name, source) in CompilerRtSources::SOURCES {

@@ -332,8 +332,10 @@ impl PosixBufferedReader {
         if self.flags.contains(PosixFlags::MEMFD) {
             if let PollOrFd::Fd(fd) = self.handle {
                 // PORT NOTE: Zig `defer this.handle.close(null, {})` — close after
-                // the read regardless of result.
-                let result = sys::File { handle: fd }
+                // the read regardless of result. `self.handle` owns the fd;
+                // borrow a non-owning `File` view so the temporary doesn't
+                // close it on drop (handle.close() below does).
+                let result = sys::File::borrow(&fd)
                     .read_to_end_with_array_list(&mut self._buffer, sys::SizeHint::UnknownSize);
                 self.handle.close(None, None::<fn(*mut c_void)>);
                 if let Err(err) = result {

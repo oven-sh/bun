@@ -262,22 +262,38 @@ impl Fs {
     ) -> Result<Entry, bun_core::Error> {
         let rfs = &_fs.fs;
 
-        let file_handle: bun_sys::File = if let Some(fd) = cached_file_descriptor {
+        // `bun_sys::File` now owns its fd (closes on `Drop`). The original code
+        // only closed when `need_to_close_files()` AND the fd was freshly opened
+        // (`cached_file_descriptor.is_none()`); otherwise the fd is either owned
+        // by the caller (cached) or escapes via `Entry.fd`. Borrow the cached
+        // fd, own the freshly-opened one, and disarm the drop guard when the fd
+        // must outlive this scope.
+        let _owned: Option<bun_sys::File>;
+        let fd: Fd = if let Some(fd) = cached_file_descriptor {
             // `try handle.seekTo(0)` — rewind a cached fd before re-reading.
-            let f = bun_sys::File::from_fd(fd);
-            f.seek_to(0).map_err(bun_core::Error::from)?;
-            f
+            bun_sys::File::borrow(&fd)
+                .seek_to(0)
+                .map_err(bun_core::Error::from)?;
+            _owned = None;
+            fd
         } else {
-            bun_sys::open_file_absolute_z(path, bun_sys::OpenFlags::READ_ONLY)
-                .map_err(bun_core::Error::from)?
+            let f = bun_sys::open_file_absolute_z(path, bun_sys::OpenFlags::READ_ONLY)
+                .map_err(bun_core::Error::from)?;
+            let raw = f.handle();
+            if rfs.need_to_close_files() {
+                // Closed by `Drop` at end of scope (replaces `CloseOnDrop`).
+                _owned = Some(f);
+            } else {
+                // The fd escapes via `Entry.fd`; disarm the drop guard.
+                let _ = f.into_raw();
+                _owned = None;
+            }
+            raw
         };
-
-        let will_close = rfs.need_to_close_files() && cached_file_descriptor.is_none();
-        let fd = file_handle.handle();
-        let _close = will_close.then(|| bun_sys::CloseOnDrop::new(fd));
+        let file_handle = bun_sys::File::borrow(&fd);
 
         let contents = match fs_mod::read_file_contents(
-            &file_handle,
+            file_handle,
             path.as_bytes(),
             true,
             shared,
@@ -352,36 +368,60 @@ impl Fs {
         // PORT NOTE: reshaped — Zig declared `file_handle = undefined` then assigned on each
         // branch; restructured into a single let-expression to avoid `mem::zeroed()` on a
         // type that may have niche (NonZero) fields.
-        let file_handle: bun_sys::File = if let Some(f) = _file_handle {
-            let f = bun_sys::File::from_fd(f);
-            f.seek_to(0).map_err(bun_core::Error::from)?;
+        //
+        // `bun_sys::File` now owns its fd (closes on `Drop`). The original code
+        // only closed when `need_to_close_files()` AND the fd was freshly opened
+        // (`_file_handle.is_none()`); otherwise the fd is either owned by the
+        // caller (cached `_file_handle`) or escapes via `Entry.fd`. Borrow the
+        // cached fd, own the freshly-opened one, and disarm the drop guard when
+        // the fd must outlive this scope.
+        let _owned: Option<bun_sys::File>;
+        let will_close: bool;
+        let fd: Fd = if let Some(f) = _file_handle {
+            bun_sys::File::borrow(&f)
+                .seek_to(0)
+                .map_err(bun_core::Error::from)?;
+            _owned = None;
+            will_close = false;
             f
-        } else if feature_flags::STORE_FILE_DESCRIPTORS && dirname_fd.is_valid() {
-            match bun_sys::File::openat(
-                dirname_fd,
-                bun_paths::basename(path),
-                bun_sys::O::RDONLY,
-                0,
-            ) {
-                Ok(f) => f,
-                Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
-                    let handle = bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)
-                        .map_err(bun_core::Error::from)?;
-                    Output::pretty_errorln(format_args!(
-                        "<r><d>Internal error: directory mismatch for directory \"{}\", fd {}<r>. You don't need to do anything, but this indicates a bug.",
-                        bstr::BStr::new(path),
-                        dirname_fd,
-                    ));
-                    handle
-                }
-                Err(err) => return Err(err.into()),
-            }
         } else {
-            bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)
-                .map_err(bun_core::Error::from)?
+            let opened = if feature_flags::STORE_FILE_DESCRIPTORS && dirname_fd.is_valid() {
+                match bun_sys::File::openat(
+                    dirname_fd,
+                    bun_paths::basename(path),
+                    bun_sys::O::RDONLY,
+                    0,
+                ) {
+                    Ok(f) => f,
+                    Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
+                        let handle = bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)
+                            .map_err(bun_core::Error::from)?;
+                        Output::pretty_errorln(format_args!(
+                            "<r><d>Internal error: directory mismatch for directory \"{}\", fd {}<r>. You don't need to do anything, but this indicates a bug.",
+                            bstr::BStr::new(path),
+                            dirname_fd,
+                        ));
+                        handle
+                    }
+                    Err(err) => return Err(err.into()),
+                }
+            } else {
+                bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)
+                    .map_err(bun_core::Error::from)?
+            };
+            let raw = opened.handle();
+            will_close = rfs.need_to_close_files();
+            if will_close {
+                // Closed by `Drop` at end of scope (replaces `CloseOnDrop`).
+                _owned = Some(opened);
+            } else {
+                // The fd escapes via `Entry.fd`; disarm the drop guard.
+                let _ = opened.into_raw();
+                _owned = None;
+            }
+            raw
         };
-
-        let fd = file_handle.handle();
+        let file_handle = bun_sys::File::borrow(&fd);
 
         #[cfg(not(windows))] // skip on Windows because NTCreateFile will do it.
         bun_core::scoped_log!(
@@ -391,9 +431,6 @@ impl Fs {
             bstr::BStr::new(path),
             fd
         );
-
-        let will_close = rfs.need_to_close_files() && _file_handle.is_none();
-        let _close = will_close.then(|| bun_sys::CloseOnDrop::new(fd));
 
         // PORT NOTE: reshaped for borrowck — capture `stream` scalar before borrowing
         // the shared buffer.
@@ -407,7 +444,7 @@ impl Fs {
             // per transpiled module → one bump allocation in a wholesale-reset
             // heap).
             (false, Some(arena)) => {
-                match fs_mod::read_file_contents_in_arena(&file_handle, path, arena) {
+                match fs_mod::read_file_contents_in_arena(file_handle, path, arena) {
                     Ok((_, 0)) => Contents::Empty,
                     Ok((ptr, len)) => Contents::Arena { ptr, len },
                     Err(err) => {
@@ -424,14 +461,8 @@ impl Fs {
             }
             _ => {
                 let shared = self.shared_buffer();
-                match fs_mod::read_file_contents(
-                    &file_handle,
-                    path,
-                    use_shared_buffer,
-                    shared,
-                    stream,
-                )
-                .map(Contents::from)
+                match fs_mod::read_file_contents(file_handle, path, use_shared_buffer, shared, stream)
+                    .map(Contents::from)
                 {
                     Ok(c) => c,
                     Err(err) => {

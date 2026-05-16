@@ -3334,11 +3334,12 @@ mod spawn_process_body {
             {
                 for (idx, &memfd) in process.memfds[1..].iter().enumerate() {
                     if memfd {
-                        out[idx] = (bun_sys::File {
-                            handle: out_fds[idx],
-                        })
-                        .read_to_end()
-                        .unwrap_or_default();
+                        // `out_fds[idx]` is closed by `cleanup_spawn_posix` below;
+                        // borrow a non-owning `File` view so the temporary doesn't
+                        // close it on drop (which would double-close).
+                        out[idx] = bun_sys::File::borrow(&out_fds[idx])
+                            .read_to_end()
+                            .unwrap_or_default();
                     }
                 }
             }

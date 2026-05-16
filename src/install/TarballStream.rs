@@ -656,11 +656,18 @@ impl TarballStream {
         // allocator.dupeZ → owned NUL-terminated copy.
         self.tmpname = ZBox::from_bytes(tmpname.as_bytes());
 
-        self.dest = Some(Fd::from_std_dir(&bun_sys::make_path::make_open_path(
-            tarball.temp_dir,
-            self.tmpname.as_bytes(),
-            Default::default(),
-        )?));
+        // `make_open_path` returns an owning `Dir`; `dest` stores a raw `Fd`
+        // closed manually in `Drop`/`close_output_file`, so disarm the `Dir`
+        // drop guard with `into_raw()` instead of letting it close the fd
+        // immediately (it used to be a non-owning view via `Fd::from_std_dir`).
+        self.dest = Some(
+            bun_sys::make_path::make_open_path(
+                Dir::borrow(&tarball.temp_dir),
+                self.tmpname.as_bytes(),
+                Default::default(),
+            )?
+            .into_raw(),
+        );
         Ok(())
     }
 
@@ -842,7 +849,10 @@ impl TarballStream {
     /// `close_output_file` can perform the same trailing `ftruncate` the
     /// buffered path does after its block loop.
     fn write_data_block(&mut self, fd: Fd, block: lib::Block) -> Result<(), bun_core::Error> {
-        let file = bun_sys::File::from_fd(fd);
+        // `fd` is `self.out_fd` (closed by `close_output_file`/`Drop`); borrow
+        // a non-owning `File` view rather than constructing an owning one that
+        // would close `out_fd` when this stack frame returns.
+        let file = bun_sys::File::borrow(&fd);
         let data = block.bytes;
         if data.is_empty() {
             return Ok(());
@@ -883,7 +893,7 @@ impl TarballStream {
             if block.offset > self.entry_actual_offset {
                 let zero_count: usize =
                     usize::try_from(block.offset - self.entry_actual_offset).expect("int cast");
-                match lib::Archive::write_zeros_to_file(&file, zero_count) {
+                match lib::Archive::write_zeros_to_file(file, zero_count) {
                     lib::Result::Ok => {
                         self.entry_actual_offset = block.offset;
                     }
@@ -956,9 +966,7 @@ impl TarballStream {
                 // union; `extract` is the active variant. Explicit `&` (no
                 // implicit autoref through the raw-ptr deref) for the
                 // `ManuallyDrop` → `ExtractRequest` deref.
-                let _ = (&(*task).request.extract)
-                    .tarball
-                    .temp_dir
+                let _ = Dir::borrow(&(&(*task).request.extract).tarball.temp_dir)
                     .delete_tree((*this).tmpname.as_bytes());
             }
 
@@ -1262,7 +1270,7 @@ fn open_output_file(
                     let Some(dir) = bun_paths::Dirname::dirname::<u16>(path_slice) else {
                         return Err(e.to_zig_err());
                     };
-                    let _ = bun_sys::make_path::make_path::<u16>(Dir::from_fd(dest_fd), dir);
+                    let _ = bun_sys::make_path::make_path::<u16>(Dir::borrow(&dest_fd), dir);
                     break 'brk bun_sys::openat_windows(dest_fd, path, flags, 0)
                         .map_err(|e| e.to_zig_err());
                 }
@@ -1304,7 +1312,7 @@ fn make_directory(entry: &mut lib::Entry, dest_fd: Fd, path: OSPathZ, path_slice
     }
     #[cfg(windows)]
     {
-        let _ = bun_sys::make_path::make_path::<u16>(Dir::from_fd(dest_fd), &path[..]);
+        let _ = bun_sys::make_path::make_path::<u16>(Dir::borrow(&dest_fd), &path[..]);
         let _ = (path_slice, mode);
     }
     #[cfg(not(windows))]

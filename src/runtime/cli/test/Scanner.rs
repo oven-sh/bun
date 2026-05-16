@@ -254,15 +254,17 @@ impl<'a> Scanner<'a> {
         // `RealFS.entries_mutex` inside the callee.
         let real_fs = core::ptr::from_ref(&self.fs.fs).cast_mut();
         let iter = ScannerDirIter(std::ptr::from_mut::<Scanner<'a>>(self));
+        // Hand the descriptor off by raw `Fd`: `read_directory_with_iterator`
+        // never closes a caller-supplied handle (`should_close_handle =
+        // !had_handle`), but with `store_fd = true` it caches the fd on the
+        // resolver `DirEntry` for re-use. The Zig spec (`Scanner.zig:103-106`,
+        // no `defer child_dir.close()`) intentionally leaks the fd into the
+        // resolver cache. `into_raw()` mirrors that: disarm the `Dir` drop so
+        // the cached fd outlives this scope.
+        let raw = handle.map(bun_sys::Dir::into_raw);
         // SAFETY: see PORT NOTE above — `real_fs` aliases the singleton.
         #[allow(invalid_reference_casting)]
-        unsafe { &mut *real_fs }.read_directory_with_iterator(
-            name,
-            handle.map(|d| d.fd),
-            0,
-            true,
-            iter,
-        )
+        unsafe { &mut *real_fs }.read_directory_with_iterator(name, raw, 0, true, iter)
     }
 
     pub fn could_be_test_file<const NEEDS_TEST_SUFFIX: bool>(&self, name: &[u8]) -> bool {

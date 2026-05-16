@@ -4023,7 +4023,7 @@ pub enum Subsystem {
 }
 
 pub fn edit_win32_binary_subsystem(
-    fd: bun_sys::File,
+    fd: &bun_sys::File,
     subsystem: Subsystem,
 ) -> Result<(), bun_core::Error> {
     const _: () = assert!(cfg!(windows));

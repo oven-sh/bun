@@ -223,12 +223,6 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         // Process-lifetime per-thread path scratch buffers (`Box::leak`'d into
         // a `thread_local!` `Cell`). LSAN doesn't scan worker-thread TLS.
         "leak:bun_paths::resolve_path::lazy_path_buf\n",
-        // `Box<BuildArtifact>` / `Box<TimeoutObject>` etc. are owned by JSC GC
-        // objects; the JSC heap is mmap'd outside LSAN's root set. Freed by the
-        // class finalizer when the JS object is collected, but the GC may not
-        // have run by process exit.
-        "leak:bun_runtime::api::output_file_jsc::OutputFileJsc>::to_js\n",
-        "leak:bun_runtime::timer::timeout_object::TimeoutObject\n",
         // CLI `Transpiler` is `arena.alloc()`'d (process-lifetime; see
         // `build_command.rs` PORT NOTE) — its `BundleOptions::bundler_feature_flags`
         // `Box<StringSet>` strands when the arena bulk-frees.

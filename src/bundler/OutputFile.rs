@@ -18,14 +18,20 @@ use crate::bun_fs::RealFS;
 // 2. (Optional) move the file to the destination
 // This saves us from allocating a buffer
 
-#[derive(Clone)]
 pub struct OutputFile {
     pub loader: Loader,
     pub input_loader: Loader,
-    // TODO(port): `src_path.text` ownership — Zig `deinit` freed it via
-    // `default_allocator` even though it's a field of `Fs.Path`. Ensure
-    // `bun_fs::Path` owns `text` so dropping `OutputFile` frees it implicitly.
+    /// Display-only `Path` whose `text` borrows [`Self::owned_src_path_text`]
+    /// (or a static `b""` when empty). `fs::Path<'static>` carries borrowed
+    /// slices, so the heap allocation is held in the side field below — see
+    /// the `OutputFile::init` doc for why.
     pub src_path: fs::Path<'static>,
+    /// Backing storage for `src_path.text`. Zig's `OutputFile::deinit` freed
+    /// `src_path.text` via the default allocator even though `Fs.Path` doesn't
+    /// own it; the Rust port previously `Box::leak`'d the bytes (stranded one
+    /// allocation per output file). Owned here so the field's `Drop` reclaims
+    /// it. Empty when `src_path.text` is the static `b""`.
+    pub owned_src_path_text: Box<[u8]>,
     pub value: Value,
     pub size: usize,
     pub size_without_sourcemap: usize,
@@ -55,6 +61,7 @@ impl OutputFile {
             loader: Loader::File,
             input_loader: Loader::Js,
             src_path: fs::Path::init(b""),
+            owned_src_path_text: Box::default(),
             value: Value::Noop,
             size: 0,
             size_without_sourcemap: 0,
@@ -70,6 +77,53 @@ impl OutputFile {
             referenced_css_chunks: Box::default(),
             source_index: IndexOptional::NONE,
             bake_extra: BakeExtra::default(),
+        }
+    }
+}
+
+impl Clone for OutputFile {
+    fn clone(&self) -> Self {
+        // `src_path.text`/`pretty`/`name.*` borrow `owned_src_path_text`; a
+        // derived clone would copy the `&'static [u8]` slices verbatim and
+        // leave them pointing at the *original*'s buffer (UAF once the
+        // original drops). Re-borrow the cloned buffer instead.
+        let owned_src_path_text = self.owned_src_path_text.clone();
+        // SAFETY: `owned_src_path_text` is a sibling field of `src_path`
+        // (lives exactly as long); `Box<[u8]>`'s heap buffer never moves.
+        let text: &'static [u8] =
+            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(&owned_src_path_text) };
+        // Re-derive from `text` only when it's actually backed by
+        // `owned_src_path_text`; some paths assign a static/process-lifetime
+        // `src_path` after `init()` (`transpiler.rs:2946`) — preserve those.
+        let src_path = if !self.owned_src_path_text.is_empty() {
+            fs::Path {
+                is_disabled: self.src_path.is_disabled,
+                is_symlink: self.src_path.is_symlink,
+                ..fs::Path::init(text)
+            }
+        } else {
+            self.src_path.clone()
+        };
+        OutputFile {
+            loader: self.loader,
+            input_loader: self.input_loader,
+            src_path,
+            owned_src_path_text,
+            value: self.value.clone(),
+            size: self.size,
+            size_without_sourcemap: self.size_without_sourcemap,
+            hash: self.hash,
+            is_executable: self.is_executable,
+            source_map_index: self.source_map_index,
+            bytecode_index: self.bytecode_index,
+            module_info_index: self.module_info_index,
+            output_kind: self.output_kind,
+            dest_path: self.dest_path.clone(),
+            side: self.side,
+            entry_point_index: self.entry_point_index,
+            referenced_css_chunks: self.referenced_css_chunks.clone(),
+            source_index: self.source_index,
+            bake_extra: self.bake_extra,
         }
     }
 }
@@ -384,23 +438,25 @@ impl OutputFile {
         });
         // PORT NOTE: Zig `Fs.Path.init(options.input_path)` stored the borrowed
         // slice and `OutputFile.deinit` freed it via `default_allocator` — i.e.
-        // `OutputFile` *owns* `src_path.text`. `bun_paths::fs::Path<'static>` currently
-        // borrows `&'static [u8]`, so ownership of this `Box<[u8]>` is parked
-        // (logically held by `OutputFile`, but with no Drop hook to reclaim it
-        // yet — see TODO). Do NOT route through `linker::relative_paths_list` —
-        // that is an extra memcpy plus a forged `&mut` on a shared global per
-        // output file, and still never frees.
-        // TODO(port): give `fs::Path` an owning `text: Cow<'static,[u8]>` so
-        // this becomes a plain move and Drop frees it (matches Zig deinit).
-        let input_path: &'static [u8] = if options.input_path.is_empty() {
-            b""
-        } else {
-            bun_core::heap::release(options.input_path)
-        };
+        // `OutputFile` *owns* `src_path.text`. `bun_paths::fs::Path<'static>` is a
+        // borrowed-slice struct, so the `Box<[u8]>` is held in the side field
+        // `owned_src_path_text` and `src_path.text` borrows it. The `Box`'s heap
+        // buffer has a stable address, so the borrow stays valid across
+        // `OutputFile` moves; a future `fs::Path` with an owning
+        // `Cow<'static, [u8]>` would let this be a plain move.
+        let owned_src_path_text: Box<[u8]> = options.input_path;
+        // SAFETY: `owned_src_path_text` is a sibling field that outlives
+        // `src_path` (same struct lifetime, dropped together; declaration order
+        // doesn't matter — `Path` has no `Drop`). The `Box`'s heap buffer never
+        // moves, so the `&'static` lifetime erasure is sound for `OutputFile`'s
+        // lifetime.
+        let input_path: &'static [u8] =
+            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(&owned_src_path_text) };
         OutputFile {
             loader: options.loader,
             input_loader: options.input_loader,
             src_path: fs::Path::init(input_path),
+            owned_src_path_text,
             dest_path: options.output_path.clone(),
             source_index: options.source_index,
             size,

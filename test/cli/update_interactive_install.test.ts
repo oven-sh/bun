@@ -248,12 +248,14 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
       expect(stdout).toContain("\x1b[?1006l");
       // Graceful cancel message.
       expect(stdout).toContain("Cancelled");
-      // Clean exit — not killed by signal, not a non-zero code.
-      expect(exitCode).toBe(0);
 
       // package.json must be untouched — Ctrl+C cancels the update.
       const pkg = JSON.parse(readFileSync(join(String(dir), "package.json"), "utf8"));
       expect(pkg.dependencies["is-even"]).toBe("0.1.0");
+
+      // Clean exit — asserted last so stdout/stderr diagnostics show up
+      // above a non-zero failure.
+      expect(exitCode).toBe(0);
     } catch (err) {
       updateProc.stdin.end();
       updateProc.kill();
@@ -337,11 +339,14 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
       // point of the issue.
       expect(output).toContain("\x1b[?25h");
       expect(output).toContain("Cancelled");
-      expect(exitCode).toBe(0);
 
       // package.json must be untouched.
       const pkg = JSON.parse(readFileSync(join(String(dir), "package.json"), "utf8"));
       expect(pkg.dependencies["is-even"]).toBe("0.1.0");
+
+      // Clean exit — asserted last so PTY output diagnostics show up above
+      // a non-zero failure.
+      expect(exitCode).toBe(0);
     } finally {
       proc.kill();
     }

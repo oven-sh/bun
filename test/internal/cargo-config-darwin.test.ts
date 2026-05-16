@@ -15,7 +15,6 @@
 // darwin sections carry no `-fuse-ld=lld` rustflag (while linux still does).
 // No native build involved — it's a pure TypeScript unit check against the
 // generator's output.
-import { cargoConfigDarwinRegressionMarker } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
 import { tempDir } from "harness";
 import { readFileSync } from "node:fs";
@@ -72,6 +71,11 @@ test("no -fuse-ld=lld in .cargo/config.toml on darwin targets", () => {
   // only `src/ packages/`. The sentinel re-exported from
   // `bun:internal-for-testing` goes away when src/ is stashed, so this
   // assert turns that stash into a visible fail signal the gate can see.
+  // Loaded lazily via `require` rather than at module scope so a missing
+  // export surfaces as an explicit test failure (the JUnit reporter
+  // otherwise counts a top-level `SyntaxError` as 0 failures — same
+  // pattern as test/internal/sigaction-layout.test.ts).
+  const { cargoConfigDarwinRegressionMarker } = require("bun:internal-for-testing") as typeof import("bun:internal-for-testing");
   expect(cargoConfigDarwinRegressionMarker).toBe(true);
 
   // `generateCargoConfig` writes one file that contains sections for every

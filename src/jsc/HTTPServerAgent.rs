@@ -42,14 +42,13 @@ impl HTTPServerAgent {
 
     // #region Events
     //
-    // PORT NOTE (phase-d): `notify_server_started` / `notify_server_stopped` /
-    // `notify_server_routes_updated` reach into `bun_jsc::api::AnyServer` and
-    // `ServerConfig::RouteDeclaration`, which live in `bun_runtime` (forward
-    // dep). The C++ side only needs `Bun__HTTPServerAgent__setEnabled` for
-    // linkage; the per-event notifiers are called from Rust → C++ (FFI decls
-    // below) and are wired from `bun_runtime` once that tier un-gates. The
-    // event-body Zig ports are preserved in HTTPServerAgent.zig and will land
-    // when `AnyServer` is reachable.
+    // PORT NOTE: `notify_server_started` / `notify_server_stopped` /
+    // `notify_server_routes_updated` build their payloads from `AnyServer` and
+    // `ServerConfig::RouteDeclaration`, which live in `bun_runtime` (a crate
+    // that depends on `bun_jsc`). The C++ side only needs
+    // `Bun__HTTPServerAgent__setEnabled` for linkage; the per-event notifiers
+    // call through the FFI decls below from `src/runtime/server/mod.rs::
+    // http_server_agent` rather than inverting the crate DAG here.
 
     // #endregion
 }

@@ -569,12 +569,10 @@ fn is_selector_unused(
     for component in selector.components.iter() {
         match component {
             Component::Class(ident) | Component::Id(ident) => {
-                // PORT NOTE: `IdentOrRef::as_original_string` is
-                // ``-gated (blocked_on bun_ast::symbol::List::at
-                // + Symbol.original_name). Inline the ident arm; the ref arm
-                // (CSS-modules symbol-table lookup) is unreachable until
-                // `Parser::add_symbol_for_name` un-gates (see
-                // `SelectorParser::new_local_identifier`).
+                // PORT NOTE: inline of `IdentOrRef::as_original_string`'s
+                // ident arm. The ref arm (CSS-modules symbol-table lookup via
+                // `bun_ast::symbol::List::at` + `Symbol.original_name`) is
+                // still skipped — see the `blocked_on` note below.
                 let actual_ident: &[u8] = match (*ident).as_ident() {
                     // SAFETY: arena-owned slice (`'static` placeholder for the arena lifetime).
                     Some(i) => unsafe { crate::arena_str(i.v) },

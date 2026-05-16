@@ -1,4 +1,4 @@
-//! phase-d: handwritten Zig `@export` / `export fn` C-ABI symbols whose bodies
+//! Handwritten Zig `@export` / `export fn` C-ABI symbols whose bodies
 //! live in `bun_jsc::VirtualMachine` but whose link names must be emitted from
 //! a crate that *depends on* `bun_jsc` (so the bodies can call back into the
 //! real `VirtualMachine` struct without inverting the crate DAG). Each fn here

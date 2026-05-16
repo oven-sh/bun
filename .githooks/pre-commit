@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Pre-commit: run `cargo fmt` on staged Rust files. Only fires when
+# `CLAUDECODE=1` so contributors who don't want it aren't surprised. Enable
+# with `git config core.hooksPath .githooks` (relative — applies in every
+# worktree).
+set -euo pipefail
+
+[[ "${CLAUDECODE:-}" = "1" ]] || exit 0
+
+# Only the staged .rs files. `cargo fmt --all` reformats the entire workspace
+# (slow, touches unstaged files); format only what's about to be committed.
+mapfile -t rs_files < <(git diff --cached --name-only --diff-filter=ACMR -- '*.rs')
+[[ ${#rs_files[@]} -eq 0 ]] && exit 0
+
+# `cargo fmt -- <files>` runs rustfmt with the workspace's `rustfmt.toml` and
+# the toolchain pinned in `rust-toolchain.toml`.
+cargo fmt -- "${rs_files[@]}"
+
+# Re-stage anything rustfmt touched so the commit gets the formatted version.
+git add -- "${rs_files[@]}"

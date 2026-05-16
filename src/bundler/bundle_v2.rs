@@ -2288,11 +2288,13 @@ pub mod bv2_impl {
             let mut had_busted_dir_cache = false;
             let resolve_result: _resolver::Result = loop {
                 // SAFETY: see `transpiler` note above.
-                match unsafe { &mut *transpiler }.resolver.resolve_with_global_cache(
-                    source_dir,
-                    &import_record.specifier,
-                    import_record.kind,
-                ) {
+                match unsafe { &mut *transpiler }
+                    .resolver
+                    .resolve_with_global_cache(
+                        source_dir,
+                        &import_record.specifier,
+                        import_record.kind,
+                    ) {
                     Ok(r) => break r,
                     Err(err) => {
                         // Only perform directory busting when hot-reloading is enabled

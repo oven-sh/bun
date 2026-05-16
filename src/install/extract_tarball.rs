@@ -852,17 +852,9 @@ impl ExtractTarball {
 
             let ret_json_path = FileSystem::instance().dirname_store().append(json_path)?;
 
-            // LEAK(LSan): the `Box<[u8]>` and `Vec<u8>` fields below leak.
-            // `ExtractData` ends up in `Task.data.{extract,git_checkout}` —
-            // both `ManuallyDrop<ExtractData>` arms of an untagged `union`
-            // that is intentionally never `ManuallyDrop::drop`'d (see the
-            // PORT NOTE above `union Data` in
-            // `src/install/PackageManagerTask.rs`: Zig's `HiveArray.put`
-            // re-pooled the slot as `value.* = undefined`).
-            // Proper fix: track which `Data` arm is live per-`Task::tag` and
-            // explicitly drop the `ManuallyDrop` payload when the task is
-            // re-pooled or freed. That belongs in `PackageManagerTask.rs`,
-            // not here.
+            // LEAK(LSan): lands in `Task.data.*` (untagged `ManuallyDrop` union).
+            // `Task::deinit_payload()` exists; the re-pool site in `runTasks.rs`
+            // still needs to call it before `preallocated_resolve_tasks.put()`.
             Ok(ExtractData {
                 url: url.into(),
                 resolved: resolved.into(),

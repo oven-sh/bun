@@ -4346,6 +4346,11 @@ impl VirtualMachine {
     /// `VirtualMachine.deinit` — worker-thread teardown. Spec
     /// VirtualMachine.zig:2109.
     pub fn destroy(&mut self) {
+        // Drain queued tasks (drop, don't run) so heap-owned `ManagedTask`
+        // payloads don't leak under `BUN_DESTRUCT_VM_ON_EXIT=1`.
+        self.regular_event_loop.deinit();
+        self.macro_event_loop.deinit();
+
         // PORT NOTE: Zig `auto_killer.deinit()` — `ProcessAutoKiller`'s `Drop`
         // is the deinit body; take()+drop runs it without dropping `self`.
         drop(core::mem::take(&mut self.auto_killer));

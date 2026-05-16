@@ -209,6 +209,43 @@ impl<'a> Task<'a> {
         // SAFETY: tag-guarded; `Fd` is `Copy`.
         unsafe { *self.data.git_clone }
     }
+
+    /// Drop the active `request`/`data` union arms (by `tag`) so a re-pooled slot
+    /// doesn't leak its owned heap. Caller must only invoke on a task whose `data`
+    /// was actually written (dequeued from `resolve_tasks` after `Task::callback` —
+    /// NOT the zeroed `..Task::uninit()` task in `discard_unused_streaming_state`),
+    /// must re-pool/overwrite immediately and not call twice, and must restore a
+    /// `Default` placeholder for any arm it moved out of a live task.
+    pub fn deinit_payload(&mut self) {
+        // SAFETY: `tag` discriminates both unions, set once at enqueue; caller
+        // upholds the doc-comment preconditions.
+        unsafe {
+            match self.tag {
+                Tag::PackageManifest => {
+                    ManuallyDrop::drop(&mut self.request.package_manifest);
+                    ManuallyDrop::drop(&mut self.data.package_manifest);
+                }
+                Tag::Extract => {
+                    ManuallyDrop::drop(&mut self.request.extract);
+                    ManuallyDrop::drop(&mut self.data.extract);
+                }
+                Tag::GitClone => {
+                    ManuallyDrop::drop(&mut self.request.git_clone);
+                    // `data.git_clone` is `Fd` (`Copy`); nothing to drop.
+                }
+                Tag::GitCheckout => {
+                    ManuallyDrop::drop(&mut self.request.git_checkout);
+                    ManuallyDrop::drop(&mut self.data.git_checkout);
+                }
+                Tag::LocalTarball => {
+                    ManuallyDrop::drop(&mut self.request.local_tarball);
+                    // LocalTarball stores its result in `data.extract` (see
+                    // `data_extract` above).
+                    ManuallyDrop::drop(&mut self.data.extract);
+                }
+            }
+        }
+    }
 }
 
 impl<'a> Task<'a> {
@@ -613,13 +650,9 @@ pub enum Status {
     Fail,
 }
 
-// PORT NOTE: matches Zig — `Task` has no `deinit`; the active `Data`/`Request`
-// payload (`PackageManifest` blob, `ExtractData` paths, `ExtractTarball`
-// name/url) is intentionally leaked per `preallocated_resolve_tasks` put/get
-// cycle (Zig `HiveArray.Fallback.put` is `value.* = undefined` / raw
-// `allocator.destroy`). A Rust `impl Drop for Task` cannot recover this without
-// breaking the `..Task::uninit()` struct-update callers and risking drop of the
-// zeroed-`uninit()` union storage.
+// PORT NOTE: `Task` cannot `impl Drop` (`..Task::uninit()` FRU callers would hit
+// E0509), so the active `Data`/`Request` arm leaks per pool put/get cycle unless
+// the re-pool site calls `Task::deinit_payload()` first.
 
 /// Bare Zig `union` (untagged). Discriminated externally by `Task.tag`.
 /// // TODO(port): Phase B — consider folding `Tag` + `Request` + `Data` into a

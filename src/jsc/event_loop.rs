@@ -745,6 +745,15 @@ impl EventLoop {
     }
 
     pub fn deinit(&mut self) {
+        // Free (don't run — running could re-enter the dying VM) queued ManagedTask
+        // boxes so `BUN_DESTRUCT_VM_ON_EXIT=1` doesn't strand them. Other tags'
+        // pointers may be interior/borrowed and can't be safely freed by tag.
+        while let Some(task) = self.tasks.read_item() {
+            if task.tag == bun_event_loop::task_tag::ManagedTask {
+                // SAFETY: every ManagedTask is heap_owned (ManagedTask::new -> heap::into_raw).
+                drop(unsafe { bun_core::heap::take(task.ptr.cast::<ManagedTask::ManagedTask>()) });
+            }
+        }
         // PORT NOTE: Zig's `tasks.deinit()` / `clearAndFree()` map to dropping
         // the owned buffers; reassigning a fresh value drops the old in place.
         self.tasks = Queue::init();

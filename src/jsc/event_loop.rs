@@ -457,7 +457,7 @@ impl EventLoop {
         this_value: JSValue,
         arguments: &[JSValue],
     ) {
-        // R-2 noalias mitigation (see PORT_NOTES_PLAN R-2; precedent
+        // noalias mitigation (see bun_ptr::LaunderedSelf; precedent
         // `b818e70e1c57` NodeHTTPResponse::cork): `&mut self` carries LLVM
         // `noalias`, and `callback.call()` receives nothing derived from
         // `self`, so LLVM is licensed to forward `self.entered_event_loop_count`
@@ -769,7 +769,7 @@ impl EventLoop {
     /// observe the post-swap `immediate_tasks` (next-tick immediates), not the
     /// un-drained current batch (busy-spin hazard, spec Timer.zig:251-256).
     pub fn tick_immediate_tasks(&mut self, virtual_machine: *mut VirtualMachine) {
-        // R-2 noalias mitigation (PORT_NOTES_PLAN R-2; precedent
+        // noalias mitigation (see bun_ptr::LaunderedSelf; precedent
         // `b818e70e1c57` NodeHTTPResponse::cork): `&mut self` is `noalias`, and
         // the only thing reaching the `__bun_run_immediate_task` extern call is
         // `virtual_machine` — a *separate* pointer parameter that LLVM is told

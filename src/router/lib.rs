@@ -365,7 +365,7 @@ struct RouteIndex {
     hash: u32,
 }
 
-// TODO(b2-blocked): bun_collections::MultiArrayElement derive — proc-macro not
+// TODO(port): bun_collections::MultiArrayElement derive — proc-macro not
 // yet landed, so MultiArrayList<RouteIndex> can't expose per-field column
 // accessors. Hand-rolled SoA struct (semantically identical to Zig's
 // MultiArrayList(RouteIndex)) until the derive exists.
@@ -1024,7 +1024,7 @@ pub struct Route {
     pub has_uppercase: bool,
 }
 
-// TODO(b1): inherent assoc types unstable; module-level alias instead.
+// TODO(port): inherent assoc types unstable; module-level alias instead.
 pub type RoutePtr = TinyPtr;
 
 impl Route {
@@ -1582,7 +1582,7 @@ pub mod pattern {
                         let segment =
                             &path_[0..path_.iter().position(|&b| b == b'/').unwrap_or(path_.len())];
                         if !str_.eql_bytes(segment) {
-                            params.truncate(0); // TODO(b1): was shrink_retaining_capacity (MultiArrayList API)
+                            params.truncate(0); // TODO(port): was shrink_retaining_capacity (MultiArrayList API)
                             return false;
                         }
 
@@ -1605,7 +1605,7 @@ pub mod pattern {
                             path_ = &path_[i + 1..];
 
                             if pattern.is_end(name) {
-                                params.truncate(0); // TODO(b1): was shrink_retaining_capacity (MultiArrayList API)
+                                params.truncate(0); // TODO(port): was shrink_retaining_capacity (MultiArrayList API)
                                 return false;
                             }
 
@@ -1931,7 +1931,7 @@ pub mod pattern {
         pub kind: Tag,
     }
 
-    // TODO(b1): thiserror not in deps; manual Display/Error impl.
+    // TODO(port): thiserror not in deps; manual Display/Error impl.
     #[derive(strum::IntoStaticStr, Debug, Clone, Copy)]
     pub enum PatternParseError {
         CatchAllMustBeAtTheEnd,

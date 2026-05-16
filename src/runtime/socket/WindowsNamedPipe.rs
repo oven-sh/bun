@@ -1165,7 +1165,7 @@ impl WindowsNamedPipe {
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__close")]
     pub fn close(&mut self) {
-        // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
+        // noalias re-entry (see bun_ptr::LaunderedSelf): `&mut self` carries LLVM `noalias`, but
         // `SSLWrapper::shutdown` re-enters via the handler vtable
         // (`trigger_close_callback` → `ssl_on_close` → fresh
         // `&mut WindowsNamedPipe` from `m_ctx`) and writes `self.flags` /
@@ -1209,7 +1209,7 @@ impl WindowsNamedPipe {
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__shutdown")]
     pub fn shutdown(&mut self) {
-        // PORT_NOTES_PLAN R-2: see `close` above — same `noalias`-cached-`flags`
+        // See `close` above (bun_ptr::LaunderedSelf) — same `noalias`-cached-`flags`
         // miscompile across `(*w).shutdown(false)`'s re-entry (ASM-verified
         // PROVEN_CACHED). Launder so post-call reads of `flags`/`wrapper` are
         // fresh.

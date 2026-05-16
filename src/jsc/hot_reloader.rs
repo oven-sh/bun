@@ -154,7 +154,7 @@ impl HotReloaderCtx for VirtualMachine {
     fn bun_watcher_mut(&mut self) -> &mut Watcher {
         // PORT NOTE: Zig's three-way `@TypeOf(this.ctx.bun_watcher)` reflection
         // collapses here — `VirtualMachine.bun_watcher` is the type-erased
-        // `*mut ImportWatcher` (TODO(b2-cycle) field comment in
+        // `*mut ImportWatcher` (TODO(port) field comment in
         // VirtualMachine.rs), and `getContext` only runs after
         // `enable_hot_module_reloading` has populated it, so the `.None` arm
         // is unreachable.

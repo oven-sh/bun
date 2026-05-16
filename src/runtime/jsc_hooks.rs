@@ -68,7 +68,7 @@ use crate::webcore::blob::BlobExt as _;
 /// PORT NOTE: in Zig these are value fields of `VirtualMachine`
 /// (`vm.timer: api.Timer.All`, `vm.entry_point: ServerEntryPoint`,
 /// `vm.body_value_pool`). The low-tier `VirtualMachine` carries `()`
-/// placeholders for them (see `// TODO(b2-cycle)` markers in
+/// placeholders for them (see `// TODO(port)` markers in
 /// `VirtualMachine.rs`); until those slots widen to `*mut c_void`, the
 /// thread-local is the recovery path.
 pub struct RuntimeState {
@@ -397,7 +397,7 @@ unsafe fn init_runtime_state(
                 // `VirtualMachine.init`. The hook signature has no error
                 // channel, so log + leave the field zeroed (validity-UB on
                 // first read — same failure mode as before this hook existed).
-                // TODO(b2): widen `init_runtime_state` return to `Result<_, Error>`.
+                // TODO(port): widen `init_runtime_state` return to `Result<_, Error>`.
                 bun_core::Output::err("Transpiler", "{}", format_args!("init failed: {e:?}"));
             }
         }
@@ -590,7 +590,7 @@ unsafe fn load_preloads(
     let global: *mut JSGlobalObject = unsafe { &*vm }.global;
     // ── guard: zeroed transpiler ────────────────────────────────────────
     // `init_runtime_state` swallows `Transpiler::init`'s `Err` (logs + leaves
-    // `vm.transpiler` as zeroed bytes — see its `TODO(b2): widen return`).
+    // `vm.transpiler` as zeroed bytes — see its `TODO(port): widen return`).
     // Spec VirtualMachine.zig:1240 uses `try Transpiler.init(...)`, so
     // `loadPreloads` is unreachable with an invalid transpiler; in Rust we
     // must check `fs.is_null()` to avoid null-deref UB on `--preload` until
@@ -709,7 +709,7 @@ unsafe fn load_preloads(
         let _protected = JSValue::from_cell(promise).protected();
 
         // ── wait ────────────────────────────────────────────────────────
-        // TODO(b2-cycle): HMR `pending_internal_promise` swap loop (spec VirtualMachine.zig:2248-2261) — un-gate with `hot_reloader.rs` / ImportWatcher. Until then, fall through to the non-watcher `wait_for_promise` path below.
+        // TODO(port): HMR `pending_internal_promise` swap loop (spec VirtualMachine.zig:2248-2261) — un-gate with `hot_reloader.rs` / ImportWatcher. Until then, fall through to the non-watcher `wait_for_promise` path below.
         {
             // SAFETY: per fn contract.
             if unsafe { &*vm }.is_watcher_enabled() {
@@ -858,8 +858,8 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     }
 
     // ── DateHeaderTimer / imminent-GC ───────────────────────────────────
-    // TODO(b2-cycle): `timer::All::update_date_header_timer_if_necessary` —
-    // not yet on the B-2 `All` surface (only insert/remove/update/get_timeout/
+    // TODO(port): `timer::All::update_date_header_timer_if_necessary` —
+    // not yet on the `All` surface (only insert/remove/update/get_timeout/
     // drain_timers are real). No-op until the DateHeaderTimer body un-gates.
     // SAFETY: `el` is the live per-thread event loop.
     unsafe { (*el).run_imminent_gc_timer() };
@@ -989,8 +989,8 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
         }
     }
 
-    // TODO(b2-cycle): `timer::All::update_date_header_timer_if_necessary` —
-    // not yet on the B-2 `All` surface (see `auto_tick` above).
+    // TODO(port): `timer::All::update_date_header_timer_if_necessary` —
+    // not yet on the `All` surface (see `auto_tick` above).
 
     let state = runtime_state();
     if state.is_null() {
@@ -1961,7 +1961,7 @@ fn transpile_source_code_inner(
         | L::Json5
         | L::Text
         | L::Md => {
-            // TODO(b2-blocked): `bun_ast::ASTMemoryAllocator::Scope` — gated in
+            // TODO(port): `bun_ast::ASTMemoryAllocator::Scope` — gated in
             // `bun_js_parser`. Spec :117-119.
 
             let mut _ast_scope = bun_ast::ast_memory_allocator::Scope::default();
@@ -2033,7 +2033,7 @@ fn transpile_source_code_inner(
                         // `_reset_arena` guard (`ModuleLoader::reset_arena`,
                         // spec :1083) runs after `process_fetch_log` and
                         // resets/reclaims it then — matching the spec lifetime.
-                        // TODO(b2-cycle): once AsyncModule un-gates, the
+                        // TODO(port): once AsyncModule un-gates, the
                         // enqueue site must `ScopeGuard::into_inner` and hand
                         // the `Box<Arena>` to the queue instead of reaching
                         // here.
@@ -2160,7 +2160,7 @@ fn transpile_source_code_inner(
                 {
                     (*jsc_vm).transpiler.resolver.log = args_log_nn;
                 }
-                // TODO(b2-blocked): `Linker` is a unit stub in `bun_bundler`
+                // TODO(port): `Linker` is a unit stub in `bun_bundler`
                 // — `.log` field un-gates with `linker.rs`.
 
                 {
@@ -2313,7 +2313,7 @@ fn transpile_source_code_inner(
                 use bun_bundler::transpiler::{AlreadyBundled, ParseOptions, ParseResult};
                 use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
 
-                // TODO(b2-cycle): `Debugger::set_breakpoint_on_first_line` +
+                // TODO(port): `Debugger::set_breakpoint_on_first_line` +
                 // `runtime_transpiler_store::set_break_point_on_first_line` —
                 // gated; spec gates on `vm.debugger != null && debugger.set_...`.
                 let set_breakpoint_on_first_line = false;
@@ -2672,7 +2672,7 @@ fn transpile_source_code_inner(
                             list: core::mem::take(&mut entry.sourcemap).into_vec(),
                         },
                     );
-                    // TODO(b2-blocked): `ModuleInfoDeserialized::create_from_cached_record`.
+                    // TODO(port): `ModuleInfoDeserialized::create_from_cached_record`.
                     let source_code = match &mut entry.output_code {
                         OutputCode::String(s) => *s,
                         OutputCode::Utf8(utf8) => {
@@ -2738,7 +2738,7 @@ fn transpile_source_code_inner(
                         specifier: input_specifier.dupe_ref(),
                         source_url: create_if_different(input_specifier, path.text),
                         is_commonjs_module,
-                        // TODO(b2-blocked): `module_info` (:423-428).
+                        // TODO(port): `module_info` (:423-428).
                         tag,
                         ..Default::default()
                     }));
@@ -2818,7 +2818,7 @@ fn transpile_source_code_inner(
                 // Spec :516-523.
                 let is_commonjs_module = parse_result.ast.has_commonjs_export_names
                     || parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
-                // TODO(b2-blocked): `analyze_transpiled_module::ModuleInfo::create`.
+                // TODO(port): `analyze_transpiled_module::ModuleInfo::create`.
 
                 // ── js_printer::print ───────────────────────────────────────
                 // Spec :525-539.
@@ -2867,7 +2867,7 @@ fn transpile_source_code_inner(
                             &mut *(*extra).source_code_printer,
                             bun_js_printer::Format::EsmAscii,
                             mapper.get(),
-                            // TODO(b2-blocked): `analyze_transpiled_module::
+                            // TODO(port): `analyze_transpiled_module::
                             // ModuleInfo::create` (spec :516-523) — pass it
                             // through once the create-side above is un-gated.
                             None,
@@ -2880,7 +2880,7 @@ fn transpile_source_code_inner(
                 }
 
                 // Spec :553-558 — watcher path uses ref-counted source.
-                // TODO(b2-blocked): `VirtualMachine::ref_counted_resolved_source`.
+                // TODO(port): `VirtualMachine::ref_counted_resolved_source`.
                 // Spec RETURNS the ref-counted `ResolvedSource` here (with
                 // `is_commonjs_module`/`module_info` patched on). Gated so the
                 // fall-through to the non-watcher tail below is an explicit,
@@ -2900,7 +2900,7 @@ fn transpile_source_code_inner(
                         )
                     };
                     resolved_source.is_commonjs_module = is_commonjs_module;
-                    // TODO(b2-blocked): `analyze_transpiled_module::ModuleInfo::create`.
+                    // TODO(port): `analyze_transpiled_module::ModuleInfo::create`.
                     resolved_source.module_info = core::ptr::null_mut();
                     return Ok(OwnedResolvedSource::new(resolved_source));
                 }
@@ -2986,7 +2986,7 @@ fn transpile_source_code_inner(
                     specifier: input_specifier.dupe_ref(),
                     source_url: create_if_different(input_specifier, path.text),
                     is_commonjs_module,
-                    // TODO(b2-blocked): `analyze_transpiled_module::ModuleInfo::create`.
+                    // TODO(port): `analyze_transpiled_module::ModuleInfo::create`.
                     module_info: core::ptr::null_mut(),
                     tag,
                     ..Default::default()
@@ -3009,7 +3009,7 @@ fn transpile_source_code_inner(
             // SAFETY: per fn contract.
             let main = unsafe { &*jsc_vm }.main();
             if referrer == b"undefined" && main == path.text {
-                // TODO(b2-blocked): `globalThis.wasmSourceBytes` put +
+                // TODO(port): `globalThis.wasmSourceBytes` put +
                 // `@embedFile("../js/wasi-runner.js")` — needs `ArrayBuffer::create`
                 // and a Rust `include_bytes!` of the wasi runner. Spec :638-658.
 
@@ -3049,7 +3049,7 @@ fn transpile_source_code_inner(
             // Spec :680 — `jsc_vm.hot_reload == .hot`. `HotReload` is
             // `{ none=0, hot=1, watch=2 }` (src/options_types/Context.zig:118);
             // `!= 0` would also match `.watch`, which is wrong.
-            // TODO(b2-cycle): `hot_reload` is `cli::Command::HotReload` enum
+            // TODO(port): `hot_reload` is `cli::Command::HotReload` enum
             // (gated as `u8`); compare to the `.hot` discriminant explicitly.
             const HOT_RELOAD_HOT: u8 = 1;
             let hot = unsafe { &*jsc_vm }.hot_reload == HOT_RELOAD_HOT;
@@ -3325,7 +3325,7 @@ fn get_hardcoded_module(
     specifier: &bun_core::String,
     hardcoded: HardcodedModule,
 ) -> Option<OwnedResolvedSource> {
-    // TODO(b2-cycle): `bun_analytics::Features::builtin_modules.insert(hardcoded)`
+    // TODO(port): `bun_analytics::Features::builtin_modules.insert(hardcoded)`
     // — the `EnumSet<HardcodedModule>` static lives in T5 (`bun_resolve_builtins`)
     // and is not yet wired into `bun_analytics`.
 
@@ -3371,7 +3371,7 @@ fn get_hardcoded_module(
             // `Runtime.Runtime.sourceCode()` — the bundler's CJS-interop
             // shim, embedded as a static string in `bun_ast::runtime`.
 
-            // TODO(b2-cycle): `Runtime::source_code()` — `bun_ast::runtime`
+            // TODO(port): `Runtime::source_code()` — `bun_ast::runtime`
             // is a stub re-export until `runtime.rs` un-gates there.
             {
                 return Some(OwnedResolvedSource::new(ResolvedSource {
@@ -4943,7 +4943,7 @@ unsafe fn resolve_hook(
         (*vm).log = Some(log_nn);
         (*vm).transpiler.resolver.log = log_nn;
         (*vm).transpiler.linker.log = log_nn.as_ptr();
-        // TODO(b2-cycle): `transpiler.resolver.package_manager` log swap —
+        // TODO(port): `transpiler.resolver.package_manager` log swap —
         // gated alongside the PM field (see transpile_source_code §log-swap).
     }
     scopeguard::defer! {

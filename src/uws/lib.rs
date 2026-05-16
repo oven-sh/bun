@@ -576,7 +576,7 @@ pub mod ssl_wrapper {
         /// fast_shutdown = true, this will also fully close both read and
         /// write directions.
         pub fn shutdown(&mut self, fast_shutdown: bool) -> bool {
-            // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
+            // noalias re-entry (see bun_ptr::LaunderedSelf): `&mut self` carries LLVM `noalias`, but
             // `trigger_handshake_callback` / `trigger_close_callback` invoke
             // the user-supplied handler vtable (`handlers.on_close` /
             // `on_handshake`) which can re-enter via a fresh `&mut SSLWrapper`
@@ -847,7 +847,7 @@ pub mod ssl_wrapper {
 
         /// Update the handshake state. Returns true if we can call handle_reading.
         fn update_handshake_state(&mut self) -> bool {
-            // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
+            // noalias re-entry (see bun_ptr::LaunderedSelf): `&mut self` carries LLVM `noalias`, but
             // `shutdown()` / `trigger_close_callback()` /
             // `trigger_handshake_callback()` invoke the user-supplied handler
             // vtable which can re-enter via a fresh `&mut SSLWrapper` from the
@@ -1067,7 +1067,7 @@ pub mod ssl_wrapper {
         }
 
         fn handle_writing(&mut self, buffer: &mut [u8; BUFFER_SIZE]) {
-            // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
+            // noalias re-entry (see bun_ptr::LaunderedSelf): `&mut self` carries LLVM `noalias`, but
             // `trigger_wanna_write_callback` invokes the user-supplied
             // `handlers.write` which can re-enter via a fresh
             // `&mut SSLWrapper` from the owning socket and `deinit()` (sets

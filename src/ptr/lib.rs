@@ -276,8 +276,8 @@ pub unsafe fn detach_lifetime_mut<'a, T: ?Sized>(r: &mut T) -> &'a mut T {
 }
 
 /// Marker trait for types whose `&mut self` methods launder `self` through
-/// `core::hint::black_box` (PORT_NOTES_PLAN **R-2**) before dispatching a
-/// re-entrant parent/user callback, then reborrow via [`LaunderedSelf::r`].
+/// `core::hint::black_box` before dispatching a re-entrant parent/user
+/// callback, then reborrow via [`LaunderedSelf::r`].
 ///
 /// Zig has no `noalias` on `*Self`, so the original `.zig` just writes
 /// `this.*` directly; this trait is the Rust-port-only artifact that makes the
@@ -294,7 +294,7 @@ pub unsafe fn detach_lifetime_mut<'a, T: ?Sized>(r: &mut T) -> &'a mut T {
 ///   sole live borrow at the point of use — never held across the next
 ///   parent/user dispatch.
 pub unsafe trait LaunderedSelf: Sized {
-    /// Reborrow a PORT_NOTES_PLAN R-2 laundered self-pointer.
+    /// Reborrow a `black_box`-laundered self-pointer.
     ///
     /// `this` is the `black_box`-laundered address of an outer `&mut self`;
     /// the laundered raw pointer carries no `noalias`, so the compiler may not

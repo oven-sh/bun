@@ -124,7 +124,7 @@ fn expand_host_fn(args: HostFnArgs, func: ItemFn) -> syn::Result<TokenStream2> {
         .first()
         .is_some_and(|a| matches!(a, FnArg::Receiver(_)));
 
-    // R-2 (PORT_NOTES_PLAN): for `&self` receivers, materialise `&*__this`
+    // noalias re-entry (see bun_ptr::LaunderedSelf): for `&self` receivers, materialise `&*__this`
     // (NOT `&mut *__this`). A method that calls back into JS can be re-entered
     // on the same `m_ctx`; holding a `noalias` `&mut Self` across that re-entry
     // is Stacked-Borrows UB. Such methods take `&self` and route mutation

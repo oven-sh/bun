@@ -24,7 +24,7 @@ bun_output::declare_scope!(WebSocketServer, visible);
 // lives in `ServerConfig.websocket` for the server's lifetime. Raw `*const` +
 // SAFETY notes is the runtime shape.
 //
-// R-2 (PORT_NOTES_PLAN): every uws/JS callback into this socket can re-enter
+// noalias re-entry (see bun_ptr::LaunderedSelf): every uws/JS callback into this socket can re-enter
 // — `on_open` → `ws.cork(JS)` → `ws.close()` → `on_close` mutates `flags` /
 // `this_value` on the SAME `m_ctx`. A `&mut Self` receiver would alias under
 // Stacked Borrows. Receivers therefore take `&self`; per-field interior

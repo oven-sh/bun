@@ -862,7 +862,7 @@ impl RareData {
         }
     }
     pub fn close_all_watchers_for_isolation(&mut self) {
-        // R-2 noalias mitigation (PORT_NOTES_PLAN R-2; precedent
+        // noalias mitigation (see bun_ptr::LaunderedSelf; precedent
         // `b818e70e1c57` NodeHTTPResponse::cork): `(w.close)(w.ptr)` is an
         // opaque fn-pointer call that receives nothing derived from `self`. It
         // re-enters JS (FSWatcher.close → "close" event), which can call

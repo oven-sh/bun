@@ -148,7 +148,7 @@ pub struct VirtualMachine {
     // self-referential and cannot carry `<'a>`, so we erase to `'static` and the
     // owner guarantees the borrowed `log` outlives the VM (see `init`).
     pub transpiler: Transpiler<'static>,
-    // TODO(b2-cycle): `bun_watcher` is `ImportWatcher` from hot_reloader.rs (gated sibling).
+    // TODO(port): `bun_watcher` is `ImportWatcher` from hot_reloader.rs (gated sibling).
     pub bun_watcher: *mut c_void,
     pub console: *mut crate::console_object::ConsoleObject,
     // TODO(port): lifetime — LIFETIMES.tsv says BORROW_PARAM (`&'a mut bun_ast::Log`);
@@ -168,7 +168,7 @@ pub struct VirtualMachine {
     pub overridden_main: crate::strong::Optional,
     pub entry_point: bun_bundler::entry_points::ServerEntryPoint,
     pub origin: bun_url::URL<'static>,
-    // TODO(b2-cycle): `node_fs` is `Option<Box<bun_runtime::node::fs::NodeFS>>`.
+    // TODO(port): `node_fs` is `Option<Box<bun_runtime::node::fs::NodeFS>>`.
     pub node_fs: Option<*mut c_void>,
     /// Opaque per-VM `bun_runtime` state (boxed `timer::All` +
     /// `Body::Value::HiveAllocator` + …). Set by
@@ -193,13 +193,13 @@ pub struct VirtualMachine {
     // `transpiler.resolver.standalone_module_graph` without a downcast.
     pub standalone_module_graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
     pub smol: bool,
-    // TODO(b2-cycle): `dns_result_order` is `bun_runtime::api::dns::Resolver::Order`.
+    // TODO(port): `dns_result_order` is `bun_runtime::api::dns::Resolver::Order`.
     pub dns_result_order: u8,
     pub cpu_profiler_config: Option<crate::bun_cpu_profiler::CPUProfilerConfig>,
     pub heap_profiler_config: Option<crate::bun_heap_profiler::HeapProfilerConfig>,
     pub counters: Counters,
 
-    // TODO(b2-cycle): `hot_reload` is `bun_runtime::cli::Command::HotReload`.
+    // TODO(port): `hot_reload` is `bun_runtime::cli::Command::HotReload`.
     pub hot_reload: u8,
     pub jsc_vm: *mut VM,
 
@@ -213,7 +213,7 @@ pub struct VirtualMachine {
     pub exit_handler: ExitHandler,
 
     pub default_tls_reject_unauthorized: Option<bool>,
-    // TODO(b2-cycle): `default_verbose_fetch` is `Option<http::HTTPVerboseLevel>`.
+    // TODO(port): `default_verbose_fetch` is `Option<http::HTTPVerboseLevel>`.
     pub default_verbose_fetch: Option<u8>,
 
     /// Do not access this field directly! It exists in the VirtualMachine struct so
@@ -231,7 +231,7 @@ pub struct VirtualMachine {
     pub had_errors: bool,
 
     pub macros: MacroMap,
-    // TODO(b2-cycle): `MacroEntryPoint` from `bun_bundler::entry_points` (gated).
+    // TODO(port): `MacroEntryPoint` from `bun_bundler::entry_points` (gated).
     pub macro_entry_points: bun_collections::ArrayHashMap<i32, *mut c_void>,
     pub macro_mode: bool,
     pub no_macros: bool,
@@ -285,7 +285,7 @@ pub struct VirtualMachine {
     pub is_handling_uncaught_exception: bool,
     pub exit_on_uncaught_exception: bool,
 
-    // TODO(b2): `modules` is `ModuleLoader::AsyncModule::Queue` (AsyncModule.rs gated).
+    // TODO(port): `modules` is `ModuleLoader::AsyncModule::Queue` (AsyncModule.rs gated).
     pub modules: crate::async_module::Queue,
     pub aggressive_garbage_collection: GCLevel,
 
@@ -361,7 +361,7 @@ unsafe extern "C" {
     safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
 }
 
-/// `hot_reload` is stored as `u8` (TODO(b2-cycle): widen to
+/// `hot_reload` is stored as `u8` (TODO(port): widen to
 /// `bun_options_types::context::HotReload`). Mirror the Zig enum ordinals so
 /// the un-gated accessors below can compare without naming the type.
 pub const HOT_RELOAD_NONE: u8 = 0;
@@ -1433,7 +1433,7 @@ impl VirtualMachine {
         if self.hot_reload != HOT_RELOAD_HOT {
             return None;
         }
-        // TODO(b2-cycle): spec lazy-inits via `RareData::hotMap(allocator)`;
+        // TODO(port): spec lazy-inits via `RareData::hotMap(allocator)`;
         // that accessor is gated in `rare_data.rs::_accessor_body`. Until it
         // un-gates, return whatever the field already holds (callers that need
         // the lazy-init path are themselves gated on `bun_runtime`).
@@ -2722,7 +2722,7 @@ pub struct Options {
     pub env_loader: Option<NonNull<bun_dotenv::Loader<'static>>>,
     pub store_fd: bool,
     pub smol: bool,
-    // TODO(b2-cycle): real type is `bun_runtime::api::dns::Resolver::Order`.
+    // TODO(port): real type is `bun_runtime::api::dns::Resolver::Order`.
     pub dns_result_order: u8,
     /// `--print` needs the result from evaluating the main module.
     pub eval: bool,
@@ -3479,7 +3479,7 @@ impl VirtualMachine {
     /// attributes and forces a real reload on every `.get()` — no raw-pointer
     /// laundering needed for the condition.
     pub fn wait_for(&mut self, cond: &core::cell::Cell<bool>) {
-        // R-2 noalias mitigation (PORT_NOTES_PLAN R-2; precedent
+        // noalias mitigation (see bun_ptr::LaunderedSelf; precedent
         // `b818e70e1c57` NodeHTTPResponse::cork): `&mut self` is
         // LLVM-`noalias`, but `tick()/auto_tick()` re-enter JS which reaches
         // `self` again via `VirtualMachine::get()`. Launder `self` so each
@@ -4204,7 +4204,7 @@ impl VirtualMachine {
         let mut log = bun_ast::Log::default();
         jsc_vm.log = NonNull::new(&raw mut log);
         jsc_vm.transpiler.resolver.log = NonNull::from(&mut log);
-        // TODO(b2-cycle): `transpiler.linker.log` / `resolver.package_manager.log`
+        // TODO(port): `transpiler.linker.log` / `resolver.package_manager.log`
         // — gated bundler fields.
         // PORT NOTE: Zig `defer { restore old_log }` — fires on every exit
         // (including `?` from `ResolveMessage::create` below), so the VM's

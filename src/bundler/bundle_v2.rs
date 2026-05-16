@@ -367,7 +367,7 @@ pub mod bv2_impl {
     use bun_resolver::fs::PathResolverExt as _;
     use bun_resolver::{self as _resolver, Resolver, is_package_path};
     use bun_threading::ThreadPool as ThreadPoolLib;
-    // TODO(b0): bake_types arrives from move-in (TYPE_ONLY Side/Graph/BuiltInModule/Framework → bundler)
+    // TODO(port): bake_types arrives from move-in (TYPE_ONLY Side/Graph/BuiltInModule/Framework → bundler)
     use self::bake_types as bake;
 
     /// CYCLEBREAK(b0) TYPE_ONLY: pure value types from bake that bundler needs without
@@ -492,7 +492,7 @@ pub mod bv2_impl {
             /// In Zig this lives on the legacy package_json `Framework`; the duck-typed
             /// `comptime TranspilerType` callers reach it through `options.framework.?`.
             pub client_css_in_js: crate::options::ClientCssInJs,
-            // TODO(b0-genuine): remaining Framework field `file_system_router_types`
+            // TODO(port): remaining Framework field `file_system_router_types`
             // stays in T6; only bake::FrameworkRouter reads it.
             _opaque_tail: (),
         }
@@ -739,7 +739,7 @@ pub mod bv2_impl {
             }
         }
     }
-    // TODO(b0): jsc::api arrives from move-in (TYPE_ONLY → bundler)
+    // TODO(port): jsc::api arrives from move-in (TYPE_ONLY → bundler)
     use self::api as jsc_api;
 
     /// CYCLEBREAK(b0) TYPE_ONLY: data-only halves of `jsc::api::JSBundler` and
@@ -5229,7 +5229,7 @@ pub mod bv2_impl {
             Ok(ctx)
         }
 
-        // TODO(b0-genuine): body has deep DevServer field access (current_bundle.start_data,
+        // TODO(port): body has deep DevServer field access (current_bundle.start_data,
         // css_entry_points, etc.). After tier-6 collapse this fn should be HOISTED into
         // bun_runtime::bake (which can name DevServer concretely) and call back into BundleV2
         // helpers. Until then the entry-point fields are reached through the vtable.

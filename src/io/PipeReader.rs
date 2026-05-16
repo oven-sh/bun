@@ -619,7 +619,7 @@ impl PosixBufferedReader {
         _size_hint: isize,
         received_hup_initially: bool,
     ) {
-        // PORT_NOTES_PLAN R-2: `&mut parent` carries LLVM `noalias`, but
+        // noalias re-entry (see bun_ptr::LaunderedSelf): `&mut parent` carries LLVM `noalias`, but
         // `vtable.on_read_chunk` below re-enters JS (e.g.
         // `FileReader::on_read_chunk` resolves a promise → drains microtasks)
         // and user code can reach this reader via a fresh
@@ -811,7 +811,7 @@ impl PosixBufferedReader {
         received_hup: bool,
         sys_fn: impl Fn(Fd, &mut [u8], usize) -> sys::Result<usize>,
     ) {
-        // PORT_NOTES_PLAN R-2: `&mut parent` carries LLVM `noalias`, but
+        // noalias re-entry (see bun_ptr::LaunderedSelf): `&mut parent` carries LLVM `noalias`, but
         // `vtable.on_read_chunk` below re-enters JS (resolves the pending
         // read, drains microtasks, fires `'data'`) and user code can reach
         // this reader via a fresh `&mut PosixBufferedReader` from the parent's
@@ -1273,7 +1273,7 @@ impl WindowsBufferedReader {
             self.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
             return true;
         }
-        // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
+        // noalias re-entry (see bun_ptr::LaunderedSelf): `&mut self` carries LLVM `noalias`, but
         // `vtable.on_read_chunk` re-enters JS and user code can reach this
         // reader via a fresh `&mut WindowsBufferedReader` from the parent's
         // intrusive `reader` field, writing `self.flags` (e.g. via `pause` /

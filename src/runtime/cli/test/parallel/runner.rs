@@ -512,6 +512,7 @@ fn jsx_runtime_tag_name(r: bun_options_types::schema::api::JsxRuntime) -> &'stat
         J::Automatic => "automatic",
         J::Classic => "classic",
         J::Solid => "solid",
+        J::Preserve => "preserve",
         J::_none => "_none",
     }
 }

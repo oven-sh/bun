@@ -3124,7 +3124,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.options.jsx.development = dev;
                 }
             } else {
-                // make this a warning instead of an error because we don't support "preserve" right now
+                // Keep unsupported JSX runtime pragmas as warnings for compatibility.
                 self.log().add_range_warning_fmt(
                     Some(self.source),
                     runtime.range,
@@ -3254,7 +3254,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     });
                 }
             }
-        } // end 
+        } // end
 
         if self.options.features.hot_module_reloading {
             self.hmr_api_ref =

@@ -2,11 +2,11 @@
 #![warn(unused_must_use)]
 use crate::lexer::{self as js_lexer, T};
 use crate::p::P;
-use crate::parser::{JSXTag, JSXTagData, options};
+use crate::parser::{options, JSXTag, JSXTagData};
 use bun_ast::expr::Data as ExprData;
 use bun_ast::flags;
 use bun_ast::op::Level;
-use bun_ast::{self as js_ast, E, Expr, ExprNodeIndex, ExprNodeList, G};
+use bun_ast::{self as js_ast, Expr, ExprNodeIndex, ExprNodeList, E, G};
 use bun_collections::VecExt;
 use bun_core::err;
 use bun_core::strings;
@@ -365,7 +365,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     return Ok(p.new_expr(
                         E::JSXElement {
-                            tag: end_tag.data.as_expr(),
+                            tag: start_tag,
                             children: ExprNodeList::move_from_list(children),
                             properties,
                             key_prop_index: key_prop_i,

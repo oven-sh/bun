@@ -467,6 +467,7 @@ pub mod api {
         Automatic = 1,
         Classic = 2,
         Solid = 3,
+        Preserve = 4,
     }
 
     /// schema.zig:789

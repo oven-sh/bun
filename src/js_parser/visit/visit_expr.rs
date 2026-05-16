@@ -16,8 +16,8 @@ use bun_core::strings;
 use crate::lexer as js_lexer;
 use crate::p::P;
 use crate::parser::{
-    ExprIn, FnOrArrowDataVisit, IdentifierOpts, PrependTempRefsOpts, ReactRefresh, Ref,
-    StrictModeFeature, ThenCatchChain, TransposeState, VisitArgsOpts, float_to_int32, prefill,
+    float_to_int32, prefill, ExprIn, FnOrArrowDataVisit, IdentifierOpts, PrependTempRefsOpts,
+    ReactRefresh, Ref, StrictModeFeature, ThenCatchChain, TransposeState, VisitArgsOpts,
 };
 use crate::scan::scan_side_effects::SideEffects;
 use bun_alloc::ArenaVecExt as _;
@@ -26,9 +26,9 @@ use bun_alloc::ArenaVecExt as _;
 use bun_alloc::ArenaVecExt as _;
 use bun_alloc::ArenaVecExt as _;
 use bun_ast as js_ast;
-use bun_ast::G::Property;
 use bun_ast::flags as Flags;
-use bun_ast::{B, E, Expr, ExprNodeIndex, ExprNodeList, G, Scope, Stmt, Symbol};
+use bun_ast::G::Property;
+use bun_ast::{Expr, ExprNodeIndex, ExprNodeList, Scope, Stmt, Symbol, B, E, G};
 
 // Local short-hands so the visitor bodies read close to the Zig
 // (`expr.data.e_dot`, `Expr.Data.e_binary`, `Op.Code.un_typeof`) without a
@@ -359,7 +359,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline(never)]
     fn e_jsx_element(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;
-        use crate::parser::{JSXImport, JSXTransformType, options};
+        use crate::parser::{options, JSXImport, JSXTransformType};
         let _ = in_;
         let mut e_ = expr
             .data
@@ -373,6 +373,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if let Some(mut _tag) = e_.tag {
                         p.visit_expr(&mut _tag);
                         break 'tagger _tag;
+                    }
+                    if p.options.jsx.runtime == options::JSX::Runtime::Preserve
+                        || p.options.jsx.runtime == options::JSX::Runtime::Solid
+                    {
+                        break 'tagger p.new_expr(E::Missing {}, expr.loc);
                     }
                     if p.options.jsx.runtime == options::JSX::Runtime::Classic {
                         // PORT NOTE: `jsx_strings_to_member_expression` wants `&[&'a [u8]]`.
@@ -414,17 +419,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                let runtime = if p.options.jsx.runtime == options::JSX::Runtime::Automatic {
-                    options::JSX::Runtime::Automatic
-                } else {
-                    options::JSX::Runtime::Classic
-                };
+                let runtime = p.options.jsx.runtime;
                 let is_key_after_spread = e_.flags.contains(Flags::JSXElement::IsKeyAfterSpread);
                 let children_count = e_.children.len_u32();
 
                 // TODO: maybe we should split these into two different AST Nodes
                 // That would reduce the amount of allocations a little
-                if runtime == options::JSX::Runtime::Classic || is_key_after_spread {
+                if runtime == options::JSX::Runtime::Classic
+                    || (runtime == options::JSX::Runtime::Automatic && is_key_after_spread)
+                {
                     // Arguments to createElement()
                     let mut args = ExprNodeList::init_capacity(2 + children_count as usize);
                     // PERF(port): was assume_capacity
@@ -702,6 +705,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         },
                         expr.loc,
                     );
+                    return;
+                } else if runtime == options::JSX::Runtime::Preserve
+                    || runtime == options::JSX::Runtime::Solid
+                {
+                    // Preserve the JSX AST but still visit nested expressions so symbol
+                    // binding, minification, DCE, and source maps see the same tree.
+                    if e_.tag.is_some() {
+                        e_.tag = Some(tag);
+                    }
+
+                    let mut last_child: u32 = 0;
+                    for i in 0..children_count {
+                        let mut visited = e_.children.slice()[i as usize];
+                        p.visit_expr(&mut visited);
+                        if !matches!(visited.data, Data::EMissing(..)) {
+                            e_.children.slice_mut()[last_child as usize] = visited;
+                            last_child += 1;
+                        }
+                    }
+                    e_.children.truncate(last_child as usize);
+
+                    *e = expr;
                     return;
                 } else {
                     unreachable!();

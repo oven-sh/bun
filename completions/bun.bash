@@ -117,7 +117,7 @@ _bun_completions() {
             COMPREPLY=( $(compgen -d -- "${cur_word}" ));
             return;;
         --jsx-runtime)
-            COMPREPLY=( $(compgen -W "automatic classic" -- "${cur_word}") );
+            COMPREPLY=( $(compgen -W "automatic classic solid preserve react react-jsx react-jsxdev" -- "${cur_word}") );
             return;;
         --target)
             COMPREPLY=( $(compgen -W "browser node bun" -- "${cur_word}") );

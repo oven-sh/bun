@@ -207,7 +207,6 @@ pub const TSConfigJSON = struct {
                     const str_lower = allocator.alloc(u8, str.len) catch unreachable;
                     defer allocator.free(str_lower);
                     _ = strings.copyLowercase(str, str_lower);
-                    // - We don't support "preserve" yet
                     if (options.JSX.RuntimeMap.get(str_lower)) |runtime| {
                         result.jsx.runtime = runtime.runtime;
                         result.jsx_flags.insert(.runtime);

@@ -12,18 +12,18 @@ use bun_collections::VecExt;
 use core::sync::atomic::Ordering;
 
 use bun_alloc::Arena as Bump;
-use bun_ast::{E, Expr, ExprTag, expr::Data as ExprData};
+use bun_ast::{expr::Data as ExprData, Expr, ExprTag, E};
 use bun_core::err;
 use bun_parsers::json as json_parser;
 use bun_parsers::toml::TOML;
 
 use bun_install_types::NodeLinker::FromExprError;
-use bun_options_types::LoaderExt as _;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
 use bun_options_types::context::{MacroImportReplacementMap, MacroMap, MacroOptions};
 use bun_options_types::global_cache::GlobalCache;
 use bun_options_types::offline_mode::PREFER as OFFLINE_PREFER;
 use bun_options_types::schema::api;
+use bun_options_types::LoaderExt as _;
 
 use bun_options_types::command_tag::Tag as CommandTag;
 use bun_options_types::context::ContextData;
@@ -38,6 +38,16 @@ pub struct Bunfig;
 #[inline]
 fn estring_to_owned(s: &E::EString, bump: &Bump) -> Box<[u8]> {
     Box::<[u8]>::from(s.string(bump).expect("OOM"))
+}
+
+fn jsx_runtime_to_api(runtime: bun_options_types::jsx::Runtime) -> api::JsxRuntime {
+    match runtime {
+        bun_options_types::jsx::Runtime::_None => api::JsxRuntime::_none,
+        bun_options_types::jsx::Runtime::Automatic => api::JsxRuntime::Automatic,
+        bun_options_types::jsx::Runtime::Classic => api::JsxRuntime::Classic,
+        bun_options_types::jsx::Runtime::Solid => api::JsxRuntime::Solid,
+        bun_options_types::jsx::Runtime::Preserve => api::JsxRuntime::Preserve,
+    }
 }
 
 /// Port of `resolver/package_json.zig` `PackageJSON.parseMacrosJSON`.
@@ -962,20 +972,25 @@ impl<'a> Parser<'a> {
 
         if let Some(expr) = json.get(b"jsx") {
             if let Some(value) = expr.as_string(self.bump) {
-                if value == b"react" {
+                let mut lower_buf = [0u8; 128];
+                let len = value.len().min(lower_buf.len());
+                let _ = bun_core::copy_lowercase(&value[..len], &mut lower_buf[..len]);
+                let value = &lower_buf[..len];
+
+                if value == b"fallback" {
                     jsx_runtime = api::JsxRuntime::Classic;
-                } else if value == b"solid" {
-                    jsx_runtime = api::JsxRuntime::Solid;
-                } else if value == b"react-jsx" {
-                    jsx_runtime = api::JsxRuntime::Automatic;
-                    jsx_dev = false;
-                } else if value == b"react-jsxDEV" {
-                    jsx_runtime = api::JsxRuntime::Automatic;
-                    jsx_dev = true;
+                } else if let Some(runtime) = bun_options_types::jsx::RUNTIME_MAP.get(value) {
+                    jsx_runtime = jsx_runtime_to_api(runtime.runtime);
+                    if let Some(dev) = runtime.development {
+                        jsx_dev = dev;
+                    }
                 } else {
-                    self.add_error(
+                    self.add_error_format(
                         expr.loc,
-                        b"Invalid jsx runtime, only 'react', 'solid', 'react-jsx', and 'react-jsxDEV' are supported",
+                        format_args!(
+                            "Invalid jsx runtime, expected one of: {}",
+                            bun_options_types::jsx::RUNTIME_LIST_FOR_DISPLAY
+                        ),
                     )?;
                 }
             }

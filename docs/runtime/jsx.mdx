@@ -3,7 +3,7 @@ title: "JSX"
 description: "Built-in JSX and TSX support in Bun with configurable transpilation options"
 ---
 
-Bun supports `.jsx` and `.tsx` files out of the box. Bun's internal transpiler converts JSX syntax into vanilla JavaScript before execution.
+Bun supports `.jsx` and `.tsx` files out of the box. Bun's internal transpiler can convert JSX syntax into vanilla JavaScript before execution, or preserve JSX syntax for another tool to transform later.
 
 ```ts react.tsx icon="/icons/typescript.svg"
 function Component(props: {message: string}) {
@@ -36,7 +36,7 @@ How JSX constructs are transformed into vanilla JavaScript internally. The table
 | `json<br/>{<br/>  "jsx": "react"<br/>}<br/>`        | `tsx<br/>import { createElement } from "react";<br/>createElement("Box", { width: 5 }, "Hello");<br/>`                                                                                                                                                                                                                                                                                                                                                                    |
 | `json<br/>{<br/>  "jsx": "react-jsx"<br/>}<br/>`    | `tsx<br/>import { jsx } from "react/jsx-runtime";<br/>jsx("Box", { width: 5 }, "Hello");<br/>`                                                                                                                                                                                                                                                                                                                                                                            |
 | `json<br/>{<br/>  "jsx": "react-jsxdev"<br/>}<br/>` | `tsx<br/>import { jsxDEV } from "react/jsx-dev-runtime";<br/>jsxDEV(<br/>  "Box",<br/>  { width: 5, children: "Hello" },<br/>  undefined,<br/>  false,<br/>  undefined,<br/>  this,<br/>);<br/>`<br/><br/>The `jsxDEV` variable name is a convention used by React. The `DEV` suffix is a visible way to indicate that the code is intended for use in development. The development version of React is slower and includes additional validity checks & debugging tools. |
-| `json<br/>{<br/>  "jsx": "preserve"<br/>}<br/>`     | `tsx<br/>// JSX is not transpiled<br/>// "preserve" is not supported by Bun currently<br/><Box width={5}>Hello</Box><br/>`                                                                                                                                                                                                                                                                                                                                                |
+| `json<br/>{<br/>  "jsx": "preserve"<br/>}<br/>`     | `tsx<br/>// JSX is not transpiled<br/><Box width={5}>Hello</Box><br/>`                                                                                                                                                                                                                                                                                                                                                                                                    |
 
 ### [`jsxFactory`](https://www.typescriptlang.org/tsconfig#jsxFactory)
 
@@ -60,7 +60,7 @@ The function name used to represent [JSX fragments](https://react.dev/reference/
 
 ### [`jsxImportSource`](https://www.typescriptlang.org/tsconfig#jsxImportSource)
 
-<Note>**Note** — Only applicable when `jsx` is `react-jsx` or `react-jsxdev`.</Note>
+<Note>**Note** — Only applicable when `jsx` is `react-jsx` or `react-jsxdev`; `jsx: "preserve"` leaves imports up to a later transform.</Note>
 
 The module from which the component factory function (`createElement`, `jsx`, `jsxDEV`, etc) will be imported. Default value is `"react"`. This will typically be necessary when using a component library like Preact.
 

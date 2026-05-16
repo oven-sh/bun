@@ -85,6 +85,9 @@ pub fn enforceBlockExoticSubdeps(manager: *PackageManager) bun.OOM!usize {
             if (dep_pkg_id == invalid_package_id) continue;
             if (dep_pkg_id >= pkgs.len) continue;
 
+            const dep = dependencies[dep_id];
+            const dep_res_tag = pkg_resolutions[dep_pkg_id].tag;
+
             // If the root user has an `overrides` / `resolutions` entry for
             // this name, the effective specifier is whatever the root chose,
             // not whatever the transitive parent wrote. Overrides are the
@@ -92,6 +95,17 @@ pub fn enforceBlockExoticSubdeps(manager: *PackageManager) bun.OOM!usize {
             // instead of the now-stale transitive literal. Same rationale as
             // `.catalog` — root-user-defined indirection isn't
             // attacker-controlled.
+            //
+            // We only trust the override's literal when the resolver's own
+            // lookup would have hit: `enqueueDependencyWithMainAndSuccessFn`
+            // keys overrides off `hash(realname())`, and for a freshly-parsed
+            // `.git`/`.github`/`.tarball` dep `realname()` is empty until
+            // `runTasks` backfills `package_name` after the fetch. If the
+            // backfill+re-enqueue ran, the final resolution has `tag = .npm`
+            // (or similar non-exotic). If we reach this function and
+            // `dep_res_tag` is still `.git`/`.github`/`.{local,remote}_tarball`,
+            // the override never took effect — show the parent's actual
+            // literal (the git URL, say) instead of the unapplied override.
             //
             // `OverrideMap.get()` returns `?Dependency.Version` **by value**,
             // and for inline Semver.String payloads (≤8 bytes) `.slice()`
@@ -101,14 +115,16 @@ pub fn enforceBlockExoticSubdeps(manager: *PackageManager) bun.OOM!usize {
             // pointer via `|*ovr|` so the slice points into the named
             // `overridden` local and stays valid through `classify` and the
             // error-print below.
-            const dep = dependencies[dep_id];
-            const overridden = manager.lockfile.overrides.get(dep.name_hash);
+            const override_applied = switch (dep_res_tag) {
+                .git, .github, .local_tarball, .remote_tarball => false,
+                else => true,
+            };
+            const overridden = if (override_applied) manager.lockfile.overrides.get(dep.name_hash) else null;
             const literal_raw = if (overridden) |*ovr|
                 ovr.literal.slice(string_buf)
             else
                 dep.version.literal.slice(string_buf);
 
-            const dep_res_tag = pkg_resolutions[dep_pkg_id].tag;
             const verdict = classify(dep_res_tag, literal_raw) orelse continue;
 
             const key = (@as(u64, parent_id) << 32) | @as(u64, dep_pkg_id);
@@ -125,8 +141,13 @@ pub fn enforceBlockExoticSubdeps(manager: *PackageManager) bun.OOM!usize {
 
             const parent_name = pkg_names[parent_id].slice(string_buf);
             const dep_name = dep.name.slice(string_buf);
-            // Show the raw (untrimmed) literal so the user can see exactly
-            // what was published, including any sneaky leading whitespace.
+            // Show the stored (untrimmed) literal so the user can identify
+            // which spec was published. Note: for a `.folder` tag with a
+            // leading-whitespace attack, `cleanWithLogger`'s clone pass
+            // wipes `dep.version.literal` because `parseWithTag(.folder,
+            // " file:...")` returns null — so this prints as an empty
+            // `@` for that one case. The block still fires on `dep_res_tag`,
+            // which is what matters; the display is purely informational.
             Output.prettyErrorln(
                 "  <b>{s}<r><d>@{f}<r> depends on <b>{s}<r><d>@{s}<r> via <yellow>{s}<r> source",
                 .{

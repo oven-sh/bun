@@ -102,19 +102,42 @@ pub fn enforce_block_exotic_subdeps(manager: &PackageManager) -> usize {
                 continue;
             }
 
+            let dep = &dependencies[dep_id as usize];
+            let dep_res_tag = pkg_resolutions[dep_pkg_id as usize].tag;
+
             // If the root user has an `overrides` / `resolutions` entry for
             // this name, the effective specifier is whatever the root chose,
             // not whatever the transitive parent wrote. Same rationale as
             // `.catalog` — root-user-defined indirection isn't
             // attacker-controlled.
-            let dep = &dependencies[dep_id as usize];
-            let overridden = manager.lockfile.overrides.get(dep.name_hash);
+            //
+            // We only trust the override's literal when the resolver's own
+            // lookup would have hit: `PackageManagerEnqueue::enqueue_dep*`
+            // keys overrides off `hash(realname())`, and for a freshly-parsed
+            // `.git`/`.github`/`.tarball` dep `realname()` is empty until
+            // `runTasks` backfills `package_name` after the fetch. If the
+            // backfill+re-enqueue ran, the final resolution has `tag = .npm`
+            // (or similar non-exotic). If we reach this function and
+            // `dep_res_tag` is still `.git`/`.github`/`.{local,remote}_tarball`,
+            // the override never took effect — show the parent's actual
+            // literal (the git URL, say) instead of the unapplied override.
+            let override_applied = !matches!(
+                dep_res_tag,
+                ResolutionTag::Git
+                    | ResolutionTag::Github
+                    | ResolutionTag::LocalTarball
+                    | ResolutionTag::RemoteTarball,
+            );
+            let overridden = if override_applied {
+                manager.lockfile.overrides.get(dep.name_hash)
+            } else {
+                None
+            };
             let literal_raw: &[u8] = match overridden.as_ref() {
                 Some(ovr) => ovr.literal.slice(string_buf),
                 None => dep.version.literal.slice(string_buf),
             };
 
-            let dep_res_tag = pkg_resolutions[dep_pkg_id as usize].tag;
             let Some(verdict) = classify(dep_res_tag, literal_raw) else {
                 continue;
             };
@@ -135,8 +158,13 @@ pub fn enforce_block_exotic_subdeps(manager: &PackageManager) -> usize {
 
             let parent_name = pkg_names[parent_id as usize].slice(string_buf);
             let dep_name = dep.name.slice(string_buf);
-            // Show the raw (untrimmed) literal so the user can see exactly
-            // what was published, including any sneaky leading whitespace.
+            // Show the stored (untrimmed) literal so the user can identify
+            // which spec was published. Note: for a `.folder` tag with a
+            // leading-whitespace attack, `cleanWithLogger`'s clone pass
+            // wipes `dep.version.literal` because `parseWithTag(.folder,
+            // " file:...")` returns null — so this prints as an empty
+            // `@` for that one case. The block still fires on `dep_res_tag`,
+            // which is what matters; the display is purely informational.
             Output::pretty_errorln(format_args!(
                 "  <b>{}<r><d>@{}<r> depends on <b>{}<r><d>@{}<r> via <yellow>{}<r> source",
                 BStr::new(parent_name),

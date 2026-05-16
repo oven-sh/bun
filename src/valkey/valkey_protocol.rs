@@ -576,7 +576,7 @@ pub enum SubscriptionPushMessage {
 
 impl SubscriptionPushMessage {
     // PERF(port): Zig's `bun.ComptimeStringMap` lowers this 3-entry table to a
-    // length-then-bytes switch at compile time. The Phase-A port used
+    // length-then-bytes switch at compile time. An earlier port used
     // `phf::Map`, which pays a SipHash + indirect probe per lookup — overkill
     // for three keys whose lengths are all distinct (7/9/11). A length-gated
     // match rejects the miss case on a single `usize` compare and confirms the

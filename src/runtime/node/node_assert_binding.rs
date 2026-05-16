@@ -15,7 +15,7 @@ use super::node_assert;
 /// ```
 #[bun_jsc::host_fn]
 pub fn myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    // PERF(port): was stack-fallback (2KB) + ArenaAllocator bulk-free — profile in Phase B
+    // PERF(port): was stack-fallback (2KB) + ArenaAllocator bulk-free.
 
     let nargs = frame.arguments_count();
     if nargs < 2 {

@@ -285,7 +285,7 @@ impl TrustCommand {
         for arg in &args[2..] {
             if !arg.is_empty() && arg[0] != b'-' {
                 packages_to_trust.push(arg);
-                // PERF(port): was appendAssumeCapacity — profile in Phase B
+                // PERF(port): was appendAssumeCapacity.
             }
         }
         let trust_all =

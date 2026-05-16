@@ -163,7 +163,7 @@ pub fn r#match(glob: &[u8], path: &[u8]) -> MatchResult {
 
 // `glob_start` is the index where the glob pattern starts
 #[inline(always)]
-// PERF(port): Zig `inline fn` on a fn that recurses through match_brace_branch — profile in Phase B
+// PERF(port): Zig `inline fn` on a fn that recurses through match_brace_branch — profile if hot.
 fn glob_match_impl(
     state: &mut State,
     glob: &[u8],

@@ -61,7 +61,7 @@ pub fn install_with_manager(
         // And don't try to resolve DNS if it's an IP address.
         let scope_url = manager.options.scope.url.url();
         if !scope_url.hostname.is_empty() && !scope_url.is_ip_address() {
-            // PERF(port): was stack-fallback alloc — profile in Phase B
+            // PERF(port): was stack-fallback alloc — profile if hot
             bun_dns::internal::prefetch(
                 manager.event_loop.loop_(),
                 scope_url.hostname,
@@ -695,7 +695,7 @@ pub fn install_with_manager(
             // assert already guarantees it, so a single guarded loop matches
             // both paths exactly.
             if first_index != -1 {
-                // PERF(port): was `inline for` over comptime entries — profile in Phase B
+                // PERF(port): was `inline for` over comptime entries — profile if hot
                 for (i, maybe_entry) in entries.into_iter().enumerate() {
                     if let Some(entry) = maybe_entry {
                         lockfile_scripts.hook_mut(i).push(entry);

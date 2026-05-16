@@ -939,7 +939,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let bytes_read = usize::try_from(response.bytes_read).expect("int cast");
         // PORT NOTE: reshaped for borrowck — copy remain_buf out before mutating self.
         let remain_buf: Vec<u8> = body[bytes_read..].to_vec();
-        // PERF(port): was zero-copy slice into self.body — profile in Phase B.
+        // PERF(port): was zero-copy slice into self.body.
         // SAFETY: `me`'s last use is the `body` slice above (now copied out);
         // no `&mut Self` spans this call.
         unsafe { Self::process_response(this.as_ptr(), response, &remain_buf) };
@@ -1007,7 +1007,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let bytes_read = usize::try_from(response.bytes_read).expect("int cast");
         // PORT NOTE: reshaped for borrowck — copy remain_buf before clearing self.body.
         let remain_buf: Vec<u8> = body[bytes_read..].to_vec();
-        // PERF(port): was zero-copy slice — profile in Phase B.
+        // PERF(port): was zero-copy slice.
 
         // SAFETY: re-derive a fresh `&mut` after the `body` borrow above.
         let me = unsafe { &mut *this };
@@ -1229,7 +1229,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let bytes_read = usize::try_from(response.bytes_read).expect("int cast");
         // PORT NOTE: reshaped for borrowck — copy remain_buf out before mutating self.
         let remain_buf: Vec<u8> = body[bytes_read..].to_vec();
-        // PERF(port): was zero-copy slice — profile in Phase B.
+        // PERF(port): was zero-copy slice.
         // SAFETY: `me`'s last use is the `body` slice above (now copied out);
         // no `&mut Self` spans this call.
         unsafe { Self::process_response(this, response, &remain_buf) };
@@ -2137,7 +2137,7 @@ fn compute_accept_value(key: &[u8]) -> [u8; 28] {
 // Rust cannot `#[no_mangle]` a generic, so monomorphize both here.
 // TODO(port): full C-ABI parameter mapping for `connect` (Option<&T> niche,
 // Option<Box<T>> niche, raw `*const BunString` arrays). Verify against the
-// C++ caller in JSWebSocket.cpp / WebSocket.cpp before Phase B.
+// C++ caller in JSWebSocket.cpp / WebSocket.cpp.
 // ──────────────────────────────────────────────────────────────────────────
 
 macro_rules! export_http_client {

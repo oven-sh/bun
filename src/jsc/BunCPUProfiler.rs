@@ -19,7 +19,7 @@ bun_core::named_error_set!(ProfilerError);
 
 pub struct CPUProfilerConfig {
     // TODO(port): lifetime — these are borrowed slices in Zig (never freed here);
-    // using &'static for Phase A per PORTING.md (no struct lifetime params).
+    // using &'static per PORTING.md (no struct lifetime params).
     pub name: &'static [u8],
     pub dir: &'static [u8],
     pub md_format: bool,

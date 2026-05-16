@@ -1080,7 +1080,7 @@ pub(super) fn to_utf16_alloc<const FAIL_IF_INVALID: bool, const SENTINEL: bool>(
 ) -> Result<Option<Vec<u16>>, ToUTF16Error> {
     // PORT NOTE: Zig's return type was `[:0]u16` vs `[]u16` based on SENTINEL. In Rust both are
     // `Vec<u16>`; when SENTINEL the trailing 0 is included and the logical length is `len()-1`.
-    // TODO(port): consider returning `Box<WStr>` for the SENTINEL case in Phase B.
+    // TODO(port): consider returning `Box<WStr>` for the SENTINEL case.
     let Some(i) = first_non_ascii(bytes) else {
         return Ok(None);
     };
@@ -1503,6 +1503,10 @@ pub(super) fn decode_check(state: u8, byte: u8) -> u8 {
 
 pub(super) use crate::strings::{push_codepoint_utf16, u16_lead, u16_trail};
 
+// `unreachable_pub`: these are re-exported externally via the parent's
+// `pub use unicode_draft::{… u16_is_lead, u16_is_trail …}`; the lint does not
+// trace that multi-hop re-export, so the `pub` is required here.
+#[allow(unreachable_pub)]
 pub use crate::strings::{
     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
     u16_get_supplementary, u16_is_lead, u16_is_surrogate, u16_is_trail,

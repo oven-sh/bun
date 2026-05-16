@@ -9,17 +9,15 @@
 //! JSC bridge surface for `bun_install`. Keeps `src/install/` free of
 //! `JSValue`/`JSGlobalObject`/`CallFrame` references.
 //!
-//! B-2: all six modules are un-gated. The host-fn bodies for hosted_git_info /
-//! dependency / update_request / npm / install_binding now compile against the
-//! real `bun_jsc` + `bun_install` stub surface. `npm_jsc::js_parse_manifest`
-//! body is fully un-gated (`PackageManifest::{name, versions, string_buf}` now
-//! live in `bun_install::npm`). Remaining `` gates are narrowed to
-//! the exact missing lower-tier symbols (`JSFunction::create` ↔
+//! Host-fn bodies for hosted_git_info / dependency / update_request / npm /
+//! install_binding compile against the `bun_jsc` + `bun_install` surface.
+//! `npm_jsc::js_parse_manifest` body uses `PackageManifest::{name, versions,
+//! string_buf}` from `bun_install::npm`. Remaining gaps are the exact missing
+//! lower-tier symbols (`JSFunction::create` ↔
 //! `#[bun_jsc::host_fn]` shim-name bridge for associated fns,
 //! `bun_bundler::Transpiler` mutable field access via `bun_vm()`,
 //! `bun_resolver::Resolver::get_package_manager`, `bun_ini::load_npmrc` real
-//! signature) and tagged `// TODO(b2-blocked): bun_X::Y` — see Track-A
-//! blocked_on report.
+//! signature) and tagged `// TODO(port): bun_X::Y`.
 //!
 //! NOTE: `cargo check -p bun_install_jsc` is currently hard-blocked on
 //! transitive lower-tier compile failures in `bun_css` / `bun_http` /

@@ -33,7 +33,7 @@ pub type ErrorFunc<Ctx> = unsafe extern "C" fn(ctx: *mut Ctx, msg: *const c_char
 macro_rules! tcc_externs {
     ($($(#[$attr:meta])* fn $name:ident($($arg:ident: $ty:ty),* $(,)?) $(-> $ret:ty)?;)*) => {
         #[cfg(not(any(target_os = "android", target_os = "freebsd", all(windows, target_arch = "aarch64"))))]
-        // TODO(port): move to tcc_sys (already in *_sys crate — verify crate layout in Phase B)
+        // TODO(port): move to tcc_sys (already in *_sys crate — verify crate layout)
         unsafe extern "C" {
             $($(#[$attr])* fn $name($($arg: $ty),*) $(-> $ret)?;)*
         }
@@ -113,7 +113,7 @@ pub enum Error {
     RelocationError,
     // TODO(port): `OutputError` is returned by `output_file` in the Zig source but is NOT a
     // member of the Zig `Error` set — latent bug only unobserved because Zig analysis is lazy
-    // and `outputFile` has no callers. Kept here so `output_file` type-checks; revisit in Phase B.
+    // and `outputFile` has no callers. Kept here so `output_file` type-checks.
     #[error("OutputError")]
     OutputError,
 }
@@ -163,7 +163,7 @@ pub struct ConfigErr<ErrCtx> {
 /// Zig: `fn Config(ErrCtx: type) type { return struct { ... } }`
 pub struct Config<ErrCtx> {
     // TODO(port): lifetime — call sites pass both literals (default_tcc_options) and runtime
-    // strings (CompileC.flags / BUN_TCC_OPTIONS); raw ptr in Phase A, revisit borrow in Phase B.
+    // strings (CompileC.flags / BUN_TCC_OPTIONS); kept as a raw ptr, revisit as a borrow.
     pub options: Option<NonNull<ZStr>>,
     pub output_type: OutputFormat,
     pub err: ConfigErr<ErrCtx>,
@@ -337,7 +337,7 @@ impl State {
         for &(name, value) in symbols {
             // Zig field names are `[:0]const u8` (comptime NUL-terminated); copy into the stack
             // buffer to recover that invariant for the C ABI.
-            // PERF(port): was comptime monomorphization (zero-copy name) — profile in Phase B.
+            // PERF(port): was comptime monomorphization (zero-copy name) — profile if hot.
             let name_len = name.len();
             debug_assert!(name_len < buf.len());
             buf[..name_len].copy_from_slice(name.as_bytes());
@@ -455,7 +455,7 @@ impl State {
     pub fn add_symbols(&mut self, symbols: &[(&str, *const c_void)]) -> Result<(), Error> {
         // Zig field names are `[:0]const u8` (comptime NUL-terminated); copy into a stack buffer
         // to recover that invariant for the C ABI.
-        // PERF(port): was comptime monomorphization (zero-copy name) — profile in Phase B.
+        // PERF(port): was comptime monomorphization (zero-copy name) — profile if hot.
         let mut buf = [0u8; 256];
         for &(name, val) in symbols {
             let len = name.len();

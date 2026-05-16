@@ -4,11 +4,11 @@
 //! Most I/O happens on the main thread.
 
 // ════════════════════════════════════════════════════════════════════════════
-// B-2 UN-GATED. Loop / Poll / Waker / Closer / FilePoll-vtable / heap / pipes /
-// MaxBuf / openForWriting / PipeReader / PipeWriter compile on POSIX. `source`
-// and the Windows*Reader/Writer impls are `#[cfg(windows)]`-gated (libuv-only;
-// not B-2-verifiable on this host). See TODO(b2-blocked) notes for remaining
-// T0/T1 shims (`bun_sys::syslog`, `bun_sys::Error::oom`, `bun_core::debug_warn`).
+// Loop / Poll / Waker / Closer / FilePoll-vtable / heap / pipes / MaxBuf /
+// openForWriting / PipeReader / PipeWriter compile on POSIX. `source` and the
+// Windows*Reader/Writer impls are `#[cfg(windows)]`-gated (libuv-only). See
+// TODO(port) notes for remaining shims (`bun_sys::syslog`, `bun_sys::Error::oom`,
+// `bun_core::debug_warn`).
 // ════════════════════════════════════════════════════════════════════════════
 
 #![allow(dead_code, unused_variables, unused_imports, unused_mut, clippy::all)]
@@ -293,7 +293,7 @@ pub mod file_poll {
 pub mod heap;
 // `source.rs` is Windows-only (libuv pipe/tty/file wrappers). On POSIX the
 // `Source` type is never constructed; callers are themselves `#[cfg(windows)]`.
-// TODO(b2-blocked): bun_sys::windows::libuv — verify compiles on Windows in CI.
+// TODO(port): bun_sys::windows::libuv — verify compiles on Windows in CI.
 #[path = "MaxBuf.rs"]
 pub mod max_buf;
 #[path = "openForWriting.rs"]
@@ -498,7 +498,7 @@ pub use pipe_writer::{BufferedWriter, StreamBuffer, StreamingWriter, WriteResult
 #[cfg(windows)]
 pub use source::Source;
 
-// B-2: stub for never-constructed-on-POSIX `Source` so cross-platform sigs
+// Stub for never-constructed-on-POSIX `Source` so cross-platform sigs
 // (`Option<Source>`) typecheck.
 #[cfg(not(windows))]
 pub enum Source {}
@@ -569,7 +569,7 @@ mod safe_c {
 // ─── platform type aliases ────────────────────────────────────────────────────
 
 /// `bun_sys::linux` doesn't exist yet; use `libc` constants directly.
-/// TODO(b2-blocked): bun_sys::linux — replace with that module once available.
+/// TODO(port): bun_sys::linux — replace with that module once available.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 mod linux {
     pub(crate) use libc::epoll_event;
@@ -993,7 +993,7 @@ impl IoRequestLoop {
         self.update_now();
 
         loop {
-            // PERF(port): was StackFallbackAllocator(256*sizeof(EventType)) — profile in Phase B.
+            // PERF(port): was StackFallbackAllocator(256*sizeof(EventType)) — profile if it shows up on a hot path.
             let mut events_list: Vec<EventType> = Vec::with_capacity(256);
 
             // Process pending requests
@@ -1687,7 +1687,7 @@ impl Poll {
             log!("error() = {:?}", errno);
             // SAFETY: poll is the `io_poll` field of a live owner; link-time
             // extern body matches on `tag`.
-            // TODO(b2-blocked): bun_sys::Tag::epoll_ctl
+            // TODO(port): bun_sys::Tag::epoll_ctl
             unsafe {
                 __bun_io_pollable_on_io_error(
                     tag,
@@ -1763,7 +1763,7 @@ impl Poll {
 
         let errno = sys::get_errno(ctl);
         if errno != E::SUCCESS {
-            // TODO(b2-blocked): bun_sys::Tag::epoll_ctl
+            // TODO(port): bun_sys::Tag::epoll_ctl
             return Err(sys::Error::from_code(errno, sys::Tag::TODO));
         }
         // Only mark if it successfully registered.
@@ -2026,8 +2026,8 @@ pub mod waker {
         }
 
         pub fn init() -> Result<Self, bun_core::Error> {
-            // TODO(port): std.posix.eventfd(0, 0) → bun_sys::eventfd. Phase B
-            // should confirm bun_sys exposes the wrapper; falls back to libc.
+            // TODO(port): migrate to bun_sys::eventfd (the wrapper exists);
+            // currently falls back to crate::safe_c::eventfd.
             let raw = crate::safe_c::eventfd(0, 0);
             if raw < 0 {
                 return Err(bun_core::Error::from_errno(bun_sys::last_errno()));

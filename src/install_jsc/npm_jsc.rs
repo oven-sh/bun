@@ -35,7 +35,7 @@ pub fn libc_is_match(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
     let args = frame.arguments_old::<1>();
     let mut libc = npm::Libc::NONE.negatable();
     // PORT NOTE: Zig source omits `try` on arrayIterator/next/toSlice here (unlike the
-    // sibling fns above/below). Added `?` for type consistency; verify in Phase B.
+    // sibling fns above/below). Added `?` for type consistency.
     // TODO(port): confirm Zig source intent for missing `try` in libcIsMatch
     let mut iter = args.ptr[0].array_iterator(global)?;
     while let Some(item) = iter.next()? {

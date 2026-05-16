@@ -1240,7 +1240,7 @@ impl ServerWebSocket {
         self.send_ping(global_this, callframe, "pong", Opcode::Pong)
     }
 
-    // PERF(port): was comptime monomorphization (name + opcode) — profile in Phase B
+    // PERF(port): was comptime monomorphization (name + opcode) — profile if hot.
     #[inline]
     fn send_ping(
         &self,

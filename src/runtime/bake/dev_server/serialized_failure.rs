@@ -123,7 +123,7 @@ const _: () = assert!(Packed::new(PackedKind::None, 1).bits() == 1);
 /// PERF(port): Zig's `SerializedFailure` is a slice header (`data: []u8`) and
 /// gets shallow-copied between `bundling_failures` and the `failures_added`/
 /// `failures_removed` lists. The Rust port owns `data` as `Box<[u8]>`, so
-/// `Clone` deep-copies — profile in Phase B if this shows up.
+/// `Clone` deep-copies — profile if this shows up on a hot path.
 #[derive(Clone, Default)]
 pub struct SerializedFailure {
     /// Wire-format bytes (length-prefixed; first 4 bytes encode `Owner.Packed`).
@@ -160,7 +160,7 @@ impl SerializedFailure {
         debug_assert!(!messages.is_empty());
 
         // Avoid small re-allocations without requesting so much from the heap
-        // PERF(port): was stack-fallback (std.heap.stackFallback(65536, dev.arena())) — profile in Phase B
+        // PERF(port): was stack-fallback (std.heap.stackFallback(65536, dev.arena())) — profile if it shows up on a hot path.
         let mut payload: Vec<u8> = Vec::with_capacity(65536);
         let w = &mut payload;
 

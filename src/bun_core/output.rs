@@ -51,7 +51,7 @@ pub fn output_sink() -> OutputSink {
 
 /// Opaque handle to a `bun_sys::file::QuietWriter`. bun_core treats it as a
 /// POD blob; bun_sys casts back to the concrete type.
-/// TODO(b0-genuine): bun_sys::file::QuietWriter — size/align must match.
+/// TODO(port): bun_sys::file::QuietWriter — size/align must match.
 #[derive(Clone, Copy)]
 #[repr(C)]
 pub struct QuietWriter {
@@ -92,7 +92,7 @@ impl core::fmt::Write for QuietWriter {
 // `qw.write_fmt(args)` resolves through `fmt::Write`.
 
 /// Opaque adapter wrapping a QuietWriter and exposing `crate::io::Writer`.
-/// TODO(b0-genuine): bun_sys::QuietWrite::Adapter — size/align must match.
+/// TODO(port): bun_sys::QuietWrite::Adapter — size/align must match.
 #[repr(C, align(8))]
 pub struct QuietWriterAdapter {
     _opaque: [u8; 64],
@@ -319,7 +319,7 @@ pub static TERMINAL_SIZE: crate::AtomicCell<crate::Winsize> =
 #[cfg(not(target_arch = "wasm32"))]
 pub type StreamType = File;
 #[cfg(target_arch = "wasm32")]
-pub type StreamType = io::FixedBufferStream; // TODO(b0): FixedBufferStream arrives via bun_io→core move-in.
+pub type StreamType = io::FixedBufferStream; // TODO(port): FixedBufferStream arrives via bun_io→core move-in.
 
 pub struct Source {
     pub stdout_buffer: [u8; 4096],
@@ -377,7 +377,7 @@ impl Source {
     // TODO(port): in-place init — `out` is the pre-allocated thread_local slot; PORTING.md
     // says keep `&mut MaybeUninit<Self>` (or reshape to `-> Self`) for out-param ctors.
     pub fn init(out: &mut Source, stream: StreamType, err_stream: StreamType) {
-        // TODO(b2-blocked): bun_alloc::USE_MIMALLOC + mimalloc::Option::ShowErrors
+        // TODO(port): bun_alloc::USE_MIMALLOC + mimalloc::Option::ShowErrors
         // are gated in bun_alloc; re-enable once bun_alloc/basic.rs is un-gated.
 
         if cfg!(debug_assertions) && bun_alloc::USE_MIMALLOC && !SOURCE_SET.get() {
@@ -1209,7 +1209,7 @@ impl fmt::Display for ElapsedFormatter {
         const FAST: u64 = NS_PER_MS * 10;
         const SLOW: u64 = NS_PER_MS * 8_000;
         let ms = self.duration_ns as f64 / NS_PER_MS as f64;
-        // PERF(port): was comptime bool dispatch on `colors` — profile in Phase B
+        // PERF(port): was comptime bool dispatch on `colors` — profile if hot.
         match self.duration_ns {
             0..=FAST => {
                 if self.colors {
@@ -1523,7 +1523,7 @@ pub struct ScopedLogger {
     lock: Mutex<()>,
     out_set: AtomicBool,
     // TODO(port): per-scope buffered writer (`buffer: [4096]u8` + adapter). For now route
-    // through `scoped_writer()` directly; Phase B can reintroduce per-scope buffering.
+    // through `scoped_writer()` directly; could reintroduce per-scope buffering.
 }
 
 impl ScopedLogger {
@@ -1618,7 +1618,7 @@ impl ScopedLogger {
         let _lock = self.lock.lock();
 
         let mut out = scoped_writer();
-        // PERF(port): was comptime bool dispatch on use_ansi — profile in Phase B.
+        // PERF(port): was comptime bool dispatch on use_ansi — profile if hot.
         // The colored/plain selection now happens at the `scoped_log!` call site
         // (single arg evaluation) via `_scoped_use_ansi()`.
         let result = out.write_fmt(args);
@@ -1643,7 +1643,9 @@ impl ScopedLogger {
 #[macro_export]
 macro_rules! declare_scope {
     ($name:ident, hidden) => {
-        #[allow(non_upper_case_globals)]
+        // `unreachable_pub`: the generated static must stay `pub` for callers
+        // in downstream crates; allow it at every expansion site.
+        #[allow(non_upper_case_globals, unreachable_pub)]
         pub static $name: $crate::output::ScopedLogger = $crate::output::ScopedLogger::new(
             // TODO(port): lowercase tagname at compile time (Zig did std.ascii.toLower)
             stringify!($name),
@@ -1651,7 +1653,7 @@ macro_rules! declare_scope {
         );
     };
     ($name:ident, visible) => {
-        #[allow(non_upper_case_globals)]
+        #[allow(non_upper_case_globals, unreachable_pub)]
         pub static $name: $crate::output::ScopedLogger = $crate::output::ScopedLogger::new(
             stringify!($name),
             $crate::output::Visibility::Visible,
@@ -2560,8 +2562,8 @@ macro_rules! debug_warn {
 /// The Zig original switched on `@typeInfo` of `error_name`. The Rust port accepts anything
 /// implementing `ErrName` (impl'd for `&[u8]`, `&str`, `bun_core::Error`, `bun_sys::Error`,
 /// and any `#[derive(strum::IntoStaticStr)]` enum).
-// TODO(port): the comptime-literal fast path (is_comptime_name) is dropped — Phase B can
-// recover it with a proc-macro overload that detects string literals.
+// TODO(port): the comptime-literal fast path (is_comptime_name) is dropped —
+// could be recovered with a proc-macro overload that detects string literals.
 pub fn err(error_name: impl ErrName, fmt: &str, args: impl FmtTuple) {
     // Zig concatenates `fmt` into the prettyErrorln template, whose trailing-\n
     // check then sees the caller's newline. Here `fmt` is rendered into a `{}`
@@ -2648,7 +2650,7 @@ impl ErrName for crate::Error {
         (*self).name().as_bytes()
     }
 }
-// TODO(b0): `impl ErrName for bun_sys::Error` and `bun_sys::SystemErrno` arrive
+// TODO(port): `impl ErrName for bun_sys::Error` and `bun_sys::SystemErrno` arrive
 // via move-in pass in bun_sys (orphan rule allows higher tier to impl this trait).
 // TODO(port): blanket impl for `T: Into<&'static str>` (strum enums) once coherence allows.
 
@@ -2724,7 +2726,7 @@ pub fn init_scoped_debug_writer_at_startup() {
                     bstr::BStr::new(path),
                 )),
             };
-            // TODO(b2-blocked): bun_sys::Fd::truncate (Windows-only); add to OutputSinkVTable.
+            // TODO(port): bun_sys::Fd::truncate (Windows-only); add to OutputSinkVTable.
             // `create_file` above already opens for writing with truncate, so the explicit
             // `fd.truncate(0)` from Zig is a no-op here until the vtable entry lands.
             let _ = &fd; // windows

@@ -19,7 +19,7 @@ use crate::cli::Command;
 use crate::cli::package_manager_command::PackageManagerCommand;
 
 // TODO(port): in Zig these `[]const u8` fields borrow from the JSON parse arena (and a few are
-// `allocator.dupe`d). Phase A boxes them to avoid a struct lifetime param; revisit in Phase B if
+// `allocator.dupe`d). Boxed here to avoid a struct lifetime param; revisit if
 // the extra clones show up in profiling.
 struct VulnerabilityInfo {
     severity: Box<[u8]>,

@@ -11,7 +11,6 @@
 // are individually `#[allow]`ed at the extern block with a justification.
 #![deny(improper_ctypes, improper_ctypes_definitions)]
 #![feature(adt_const_params, allocator_api)]
-// AUTOGEN: mod declarations only — real exports added in B-1.
 
 // PORTING.md crate map says `bun.String`/`bun.strings` → `bun_str`, but the
 // workspace crate is named `bun_string`. Alias once here so draft modules that
@@ -25,7 +24,7 @@ pub mod jsc {
     pub use bun_jsc::*;
 }
 
-// ─── un-gated in B-2 (heavy submodules re-gated inside each file) ────────
+// ─── runtime submodules ──────────────────────────────────────────────────
 pub mod allocators; // moved from bun_alloc (tier-0 → bun_core/sys/runtime back-edge)
 pub mod crypto;
 pub mod ffi;
@@ -42,7 +41,7 @@ pub mod shell;
 // Port of src/bun.js.zig — `Run::boot` / `Run::boot_standalone`. Mounted here
 // (not as a separate crate) because every dependency it has is already a dep of
 // `bun_runtime`, and the CLI dispatch in `cli/` needs to call it directly. The
-// Phase-A "higher-tier crate" split was speculative; folding it in breaks the
+// original "higher-tier crate" split was speculative; folding it in breaks the
 // cycle the `bun_bun_js` shims were papering over.
 #[path = "api.rs"]
 pub mod api;
@@ -66,22 +65,16 @@ pub mod generated_host_exports; // include!()s ${BUN_CODEGEN_DIR}/generated_host
 pub mod generated_js2native; // include!()s ${BUN_CODEGEN_DIR}/generated_js2native.rs
 pub mod generated_jssink; // include!()s ${BUN_CODEGEN_DIR}/generated_jssink.rs
 
-// ─── un-gated in B-2 round 3 (each subdir owns a real `mod.rs`; heavy bodies
-//     re-gated *inside* those files) ────────────────────────────────────────
-// `image` was previously an inline stub re-declaring thumbhash/quantize/exif
-// here; that's now the job of `src/runtime/image/mod.rs` (which also carries
-// the gated codec_*/backend_* drafts). Dropping the inline stub means a single
-// flip point per subtree.
 pub mod dns_jsc;
 pub mod image;
 pub mod test_runner;
 pub mod valkey_jsc;
 
 // ─── crate-root re-exports for `cli/` submodules ────────────────────────────
-// Phase-A drafts under `src/runtime/cli/**` were ported with crate-root paths
+// Modules under `src/runtime/cli/**` were ported with crate-root paths
 // (`crate::Command`, `crate::test_command`, `crate::run_command`, …) because
 // the Zig source treats `cli.zig` as the binary root. Surface those names here
-// so the un-gated `*_command.rs` and `test/parallel/*.rs` files resolve their
+// so `*_command.rs` and `test/parallel/*.rs` files resolve their
 // `use crate::…` lines without per-file edits.
 pub use cli::{
     Cli, Command, add_completions, build_command, bunx_command, command, create_command,

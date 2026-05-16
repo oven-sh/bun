@@ -564,9 +564,9 @@ pub mod ntdll {
 }
 pub use ntdll::NtClose;
 
-/// `std.os.windows.user32` (subset placeholder; Phase B fills as needed).
+/// `std.os.windows.user32` (subset placeholder; fill in as needed).
 pub mod user32 {}
-/// `std.os.windows.advapi32` (subset placeholder; Phase B fills as needed).
+/// `std.os.windows.advapi32` (subset placeholder; fill in as needed).
 pub mod advapi32 {}
 
 // `bun.windows.libuv` is exposed from the higher-tier `bun_sys::windows`

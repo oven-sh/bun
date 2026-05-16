@@ -39,9 +39,9 @@ pub struct Animation {
 
 impl Animation {
     // TODO(port): PropertyFieldMap / VendorPrefixMap were comptime anonymous-struct
-    // metadata consumed by reflection in the shorthand codegen. Phase B should
-    // replace these with a derive macro (e.g. #[derive(Shorthand)]) that emits
-    // the field→PropertyIdTag and field→has-vendor-prefix tables.
+    // metadata consumed by reflection in the shorthand codegen. Replace these with
+    // a derive macro (e.g. #[derive(Shorthand)]) that emits the field→PropertyIdTag
+    // and field→has-vendor-prefix tables.
     // PORT NOTE: PropertyFieldMap dropped — `PropertyIdTag::Animation*` variants
     // are not yet generated (animation longhands are unparsed-only for now), and
     // the table was unread comptime metadata. Re-add when the variants land.
@@ -353,7 +353,7 @@ impl AnimationName {
 
 /// A value for the [animation-iteration-count](https://drafts.csswg.org/css-animations/#animation-iteration-count) property.
 // TODO(port): css.DeriveParse / css.DeriveToCss were comptime mixins generating
-// parse()/to_css() from variant shape. Phase B: implement as #[derive(Parse, ToCss)].
+// parse()/to_css() from variant shape. Implement as #[derive(Parse, ToCss)].
 #[derive(PartialEq)]
 pub enum AnimationIterationCount {
     /// The animation will repeat the specified number of times.
@@ -387,9 +387,6 @@ impl AnimationIterationCount {
 }
 
 /// A value for the [animation-direction](https://drafts.csswg.org/css-animations/#animation-direction) property.
-// TODO(port): css.DefineEnumProperty(@This()) provided eql/hash/parse/toCss/deepClone
-// by reflecting on @tagName. Phase B: #[derive(EnumProperty)] that emits Parse/ToCss
-// using kebab-case variant names.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
 pub enum AnimationDirection {
     /// The animation is played as specified

@@ -194,7 +194,7 @@ impl SocketAddress {
         };
 
         const PREFIX: &str = "http://";
-        // PERF(port): was comptime bool dispatch (`switch (input.is8Bit()) { inline else => |is_8_bit| ... }`) — profile in Phase B
+        // PERF(port): was comptime bool dispatch (`switch (input.is8Bit()) { inline else => |is_8_bit| ... }`) — profile if it shows up on a hot path.
         // `defer url_str.deref()` → OwnedString releases the +1 from create_uninitialized_*
         let url_str: OwnedString = if input.is_8bit() {
             let from_chars = input.latin1();
@@ -387,8 +387,7 @@ impl SocketAddress {
 
         // We need a zero-terminated cstring for `ares_inet_pton`, which forces us to
         // copy the string.
-        // PERF(port): was stack-fallback — profile in Phase B
-        // (Zig used std.heap.stackFallback(64, bun.default_allocator))
+        // PERF(port): was stack-fallback — Zig used std.heap.stackFallback(64, bun.default_allocator).
 
         // NOTE: `zig translate-c` creates semantically invalid code for `C.ntohs`.
         // Switch back to `htons(options.port)` when this issue gets resolved:
@@ -734,7 +733,7 @@ impl SocketAddress {
     }
 }
 
-// PERF(port): was comptime monomorphization (`comptime af: c_int`) — profile in Phase B
+// PERF(port): was comptime monomorphization (`comptime af: c_int`) — profile if it shows up on a hot path.
 fn pton(global: &JSGlobalObject, af: c_int, addr: &ZStr, dst: *mut c_void) -> JsResult<()> {
     // SAFETY: addr is NUL-terminated, dst points to a valid in_addr/in6_addr
     match unsafe { ares::ares_inet_pton(af, addr.as_ptr(), dst) } {

@@ -160,8 +160,8 @@ impl Size {
     }
 }
 
-// PORT NOTE: split out of the gated `impl Size` above (B-2 round 15) — these
-// don't depend on `parse`/`to_css` surface and are needed by `SizeHandler`.
+// PORT NOTE: split out of `impl Size` above — these don't depend on
+// `parse`/`to_css` surface and are needed by `SizeHandler`.
 impl Size {
     pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
         use css::compat::Feature as F;
@@ -298,8 +298,8 @@ impl MaxSize {
     }
 }
 
-// PORT NOTE: split out of the gated `impl MaxSize` above (B-2 round 15) — these
-// don't depend on `parse`/`to_css` surface and are needed by `SizeHandler`.
+// PORT NOTE: split out of `impl MaxSize` above — these don't depend on
+// `parse`/`to_css` surface and are needed by `SizeHandler`.
 impl MaxSize {
     pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
         use css::compat::Feature as F;
@@ -456,9 +456,8 @@ pub struct SizeHandler {
     pub category: PropertyCategory,
 }
 
-// PORT NOTE: un-gated B-2 round 15 — Property variants + prefixes::Feature +
-// UnparsedProperty surface are real now. `context.arena` was dropped from
-// PropertyHandlerContext; the arena is recovered via `dest.bump()`.
+// PORT NOTE: `context.arena` was dropped from PropertyHandlerContext; the
+// arena is recovered via `dest.bump()`.
 use css::compat::Feature;
 
 // ─── helper macros (Zig used `inline fn` + `comptime []const u8` field names + @field/@unionInit) ───
@@ -467,7 +466,7 @@ use css::compat::Feature;
 // `flushPrefixHelper`, `flushPropertyHelper`, `flushLogicalHelper`. The Zig code passes field
 // names as comptime strings and uses @field/@unionInit/@tagName to splice them into struct/enum
 // accesses. Rust has no equivalent reflection — macro_rules! is the closest 1:1 mapping.
-// PERF(port): was comptime monomorphization — profile in Phase B.
+// PERF(port): was comptime monomorphization.
 
 macro_rules! property_helper {
     ($this:expr, $field:ident, $ty:ty, $value:expr, $category:expr, $dest:expr, $context:expr) => {{

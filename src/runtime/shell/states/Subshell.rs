@@ -83,7 +83,7 @@ impl Subshell {
                 };
                 let script_node: *const ast::Script = &node.get().script;
                 interp.as_subshell_mut(this).state = SubshellState::Exec;
-                // TODO(b2-blocked): apply `(*node).redirect` / `redirect_flags`
+                // TODO(port): apply `(*node).redirect` / `redirect_flags`
                 // to `io` once IOWriter redirect open is wired.
                 let script = Script::init(interp, shell, script_node, this, io);
                 Script::start(interp, script)

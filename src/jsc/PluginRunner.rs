@@ -154,7 +154,7 @@ impl PluginResolver for PluginRunner {
         // `FsPath<'static>` borrows, so the formatted buffer is leaked to
         // model the same caller-owns-forever contract (the Zig path also
         // never frees these — the linker arena owns them for the build).
-        // PERF(port): was `std.fmt.allocPrint(this.allocator, …)` — profile in Phase B.
+        // PERF(port): was `std.fmt.allocPrint(this.allocator, …)` — profile if hot.
         let mut path_buf: Vec<u8> = Vec::new();
         write!(&mut path_buf, "{}", file_path).expect("unreachable");
         let path_static: &'static [u8] = path_buf.leak();

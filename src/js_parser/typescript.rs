@@ -1,9 +1,9 @@
 use crate::js_lexer::T;
 use crate::p::P;
 
-// Zig: `p: anytype` for the generic parser instance. Round-C lowered NewParser_ →
-// `P<'a, const TS, const SCAN>`. The Phase-A draft used unbounded `<P>` which
-// can't access fields; convert to `impl P` methods. The `Metadata::*` methods that need
+// Zig: `p: anytype` for the generic parser instance. Lowered NewParser_ →
+// `P<'a, const TS, const SCAN>` and converted to `impl P` methods (an unbounded
+// `<P>` cannot access fields). The `Metadata::*` methods that need
 // `p.load_name_from_ref` take a closure to avoid the impl-on-foreign-type problem.
 
 // This function is taken from the official TypeScript compiler source code:

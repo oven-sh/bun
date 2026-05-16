@@ -20,7 +20,7 @@ unsafe extern "C" {
     fn Bun__SecretsJobOptions__deinit(ctx: *mut SecretsJobOptions);
 }
 
-struct SecretsCtx {
+pub struct SecretsCtx {
     ctx: *mut SecretsJobOptions,
     promise: Strong,
 }

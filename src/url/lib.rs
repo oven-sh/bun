@@ -30,7 +30,7 @@ pub mod route_param {
         pub name: &'a [u8],
         pub value: &'a [u8],
     }
-    // TODO(b2-blocked): bun_collections::MultiArrayList — derive(MultiArrayElement)
+    // TODO(port): bun_collections::MultiArrayList — derive(MultiArrayElement)
     // proc-macro not yet available. Using Vec; SoA layout is a perf concern only.
     pub type List<'a> = Vec<Param<'a>>;
 }
@@ -257,8 +257,8 @@ impl OwnedURL {
     // PERF(port): re-parses on each call. Zig parsed once into a borrowing
     // struct the caller held alongside the buffer; Rust cannot express that
     // self-reference without unsafe lifetime extension (PORTING.md §Forbidden).
-    // Callers in practice call this once and hold the borrow — profile in
-    // Phase B; if hot, store component `(u32, u32)` offsets here instead.
+    // Callers in practice call this once and hold the borrow — if this shows
+    // up on a hot path, store component `(u32, u32)` offsets here instead.
     #[inline]
     pub fn url(&self) -> URL<'_> {
         URL::parse(&self.href)
@@ -910,7 +910,7 @@ pub struct Param {
 // scans. bun_collections::MultiArrayList exists but requires `MultiArrayElement`
 // (no derive macro yet). Using Vec<Param> (AoS) for now — semantically identical;
 // revisit once `` lands.
-// TODO(b2-blocked): bun_collections::MultiArrayList derive
+// TODO(port): bun_collections::MultiArrayList derive
 pub type ParamList = Vec<Param>;
 
 /// QueryString array-backed hash table that does few allocations and preserves the original order
@@ -995,7 +995,7 @@ impl QueryStringMap {
 
     pub fn get_all<'s>(&'s self, input: &[u8], target: &mut [&'s [u8]]) -> usize {
         let hash = wyhash(input);
-        // PERF(port): was @call(bun.callmod_inline, ...) — profile in Phase B
+        // PERF(port): was @call(bun.callmod_inline, ...) — profile if hot.
         self.get_all_with_hash_from_offset(target, hash, 0)
     }
 
@@ -1200,7 +1200,7 @@ impl QueryStringMap {
             return Ok(Some(QueryStringMap {
                 list,
                 buffer: Vec::new(),
-                // TODO(port): borrows external query_string; lifetime not tracked in Phase A
+                // TODO(port): borrows external query_string; lifetime not tracked here
                 slice: std::ptr::from_ref::<[u8]>(query_string),
                 name_count: None,
             }));
@@ -1387,7 +1387,7 @@ impl From<DecodeError> for bun_core::Error {
 
 impl PercentEncoding {
     pub fn decode(writer: &mut impl bun_core::io::Write, input: &[u8]) -> Result<u32, DecodeError> {
-        // PERF(port): was @call(bun.callmod_inline, ...) — profile in Phase B
+        // PERF(port): was @call(bun.callmod_inline, ...) — profile if hot.
         Self::decode_fault_tolerant::<_, false>(writer, input, None)
     }
 
@@ -1483,7 +1483,7 @@ impl PercentEncoding {
     }
 }
 
-// TODO(b0): FormData re-export removed — bun_runtime (T6) is upward.
+// TODO(port): FormData re-export removed — bun_runtime (T6) is upward.
 // Callers should import from bun_runtime::webcore::form_data
 // directly (or move-in pass relocates FormData here if it belongs at T2).
 // pub use bun_runtime::webcore::form_data::FormData;

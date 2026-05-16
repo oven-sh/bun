@@ -2,7 +2,7 @@ use core::ffi::c_void;
 use core::fmt;
 use core::sync::atomic::AtomicU32;
 
-use crate::Ordinal; // TODO(b2-blocked): bun_core::Ordinal — local shim
+use crate::Ordinal; // TODO(port): bun_core::Ordinal — local shim
 
 use crate::mapping;
 use crate::vlq::VLQ;

@@ -294,12 +294,12 @@ impl Accessor for SyscallAccessor {
 //
 // `ignore_filter_fn` is lowered to a runtime fn-pointer field because Rust
 // const-generic fn pointers are unstable.
-// PERF(port): was comptime monomorphization (ignore_filter_fn) — profile in Phase B
+// PERF(port): was comptime monomorphization (ignore_filter_fn) — profile if hot.
 //
 // `MatchedPath` was `[]const u8` or `[:0]const u8` depending on `sentinel`.
 // Without the arena, matched paths are heap-owned; we use `Box<[u8]>` and
 // include a trailing NUL byte when `SENTINEL == true`.
-// TODO(port): MatchedPath sentinel typing — Phase B may want a dedicated owned ZStr type.
+// TODO(port): MatchedPath sentinel typing — consider a dedicated owned ZStr type.
 pub type MatchedPath = Box<[u8]>;
 
 pub type IgnoreFilterFn = fn(&[u8]) -> bool;
@@ -315,8 +315,8 @@ pub type ComponentSet = AutoBitSet;
 
 pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
     // PERF(port): was arena bulk-free — Zig used std.heap.ArenaAllocator for all
-    // per-walk allocations (paths, workbuf, matchedPaths). Phase A uses the
-    // global allocator; profile in Phase B.
+    // per-walk allocations (paths, workbuf, matchedPaths). The Rust port uses
+    // the global allocator; profile if hot.
     /// not owned by this struct
     pub pattern: Box<[u8]>,
 
@@ -371,20 +371,20 @@ pub type Result_ = Maybe<()>;
 // fast path moves up-tier anyway and there's no win keeping `BunString` keys
 // here. Use `StringArrayHashMap<()>` (boxed `[u8]` keys); the JSC consumer
 // rebuilds `BunString`s from `.keys()`.
-// TODO(port): Phase B — wire `MatchedMapContext` as a `StringArrayHashMap`
+// TODO(refactor): wire `MatchedMapContext` as a `StringArrayHashMap`
 // custom context once SENTINEL-aware hashing matters (currently the trailing
 // NUL is part of the key so dedupe is still exact).
 pub type MatchedMap = bun_collections::StringArrayHashMap<()>;
 
 pub struct MatchedMapContext;
-// TODO(port): ArrayHashMap context trait shape — Phase B wires the actual trait.
+// TODO(port): ArrayHashMap context trait shape — wire the actual trait.
 impl MatchedMapContext {
     pub fn hash(&self, this: &BunString) -> u32 {
         debug_assert!(this.tag() == bun_core::Tag::ZigString);
         let slice = this.byte_slice();
         // For SENTINEL the slice includes trailing NUL; hash excludes it.
         // TODO(port): const-generic SENTINEL not reachable here; Zig branched at comptime.
-        // Phase B: thread `SENTINEL` through `MatchedMapContext` (or strip the NUL at
+        // Thread `SENTINEL` through `MatchedMapContext` (or strip the NUL at
         // insert time so the key never carries it).
         bun_collections::array_hash_map::hash_string(slice)
     }
@@ -424,7 +424,7 @@ pub struct Directory<A: Accessor> {
     pub path: Box<PathBuffer>,
     // Zig: `dir_path: [:0]const u8` is a slice into `path` (self-referential).
     // Store the length and reconstruct on demand.
-    // TODO(port): self-referential dir_path; Phase B may need Pin or raw-ptr slice.
+    // TODO(port): self-referential dir_path; may need Pin or raw-ptr slice.
     pub dir_path_len: usize,
 
     /// Active component indices. Multiple indices mean one readdir
@@ -1958,7 +1958,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         &mut self,
         symlink_full_path: &[u8],
     ) -> Result<Option<MatchedPath>, AllocError> {
-        // PERF(port): was getOrPut single-probe — two lookups here; profile in Phase B
+        // PERF(port): was getOrPut single-probe — two lookups here; profile if hot.
         if self.matched_paths.contains_key(symlink_full_path) {
             log!(
                 "(dupe) prepared match: {}",
@@ -1983,7 +1983,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     ) -> Result<Option<MatchedPath>, AllocError> {
         let subdir_parts: &[&[u8]] = &[&dir_name[0..dir_name.len()], entry_name];
         let name_matched_path = self.join(subdir_parts)?;
-        // PERF(port): was getOrPutValue single-probe — two lookups here; profile in Phase B
+        // PERF(port): was getOrPutValue single-probe — two lookups here; profile if hot.
         if self.matched_paths.contains_key(&name_matched_path) {
             log!(
                 "(dupe) prepared match: {}",
@@ -2004,7 +2004,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     ) -> Result<(), AllocError> {
         let subdir_parts: &[&[u8]] = &[dir_name.as_bytes(), entry_name];
         let name_matched_path = self.join(subdir_parts)?;
-        // PERF(port): was getOrPut single-probe — two lookups here; profile in Phase B
+        // PERF(port): was getOrPut single-probe — two lookups here; profile if hot.
         if self.matched_paths.contains_key(&name_matched_path) {
             log!(
                 "(dupe) prepared match: {}",

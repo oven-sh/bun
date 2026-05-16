@@ -27,9 +27,7 @@ impl Buffered {
 }
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-// interior mutability via `Cell` (all written fields are `Copy`). The codegen
-// shim still emits `this: &mut TextDecoder` until Phase 1 `sharedThis` lands —
-// `&mut T` auto-derefs to `&T` so the impls below compile against either.
+// interior mutability via `Cell` (all written fields are `Copy`).
 #[bun_jsc::JsClass]
 pub struct TextDecoder {
     // used for utf8 decoding
@@ -364,7 +362,7 @@ impl TextDecoder {
                         }
                     }
                     let len = decoded.len();
-                    // PERF(port): Vec::leak may retain excess capacity vs Zig's items.ptr — profile in Phase B
+                    // PERF(port): Vec::leak may retain excess capacity vs Zig's items.ptr — profile if it shows up on a hot path.
                     let ptr = decoded.leak().as_mut_ptr();
                     return Ok(jsc::zig_string::to_external_u16(ptr, len, global_this));
                 }
@@ -418,7 +416,7 @@ impl TextDecoder {
                 // Transfer ownership of the backing allocation to JSC; freed via
                 // free_global_string -> mi_free when the string is collected.
                 let len = decoded.len();
-                // PERF(port): Vec::leak may retain excess capacity vs Zig's items.ptr — profile in Phase B
+                // PERF(port): Vec::leak may retain excess capacity vs Zig's items.ptr — profile if it shows up on a hot path.
                 let ptr = decoded.leak().as_mut_ptr();
                 Ok(jsc::zig_string::to_external_u16(ptr, len, global_this))
             }

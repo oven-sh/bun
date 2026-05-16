@@ -5,7 +5,7 @@ pub struct ErrorCodeAndMessage {
     pub message: &'static [u8],
 }
 
-// PERF(port): was `comptime err: anyerror` — demoted to runtime; profile in Phase B
+// PERF(port): was `comptime err: anyerror` — demoted to runtime; profile if hot.
 // PORT NOTE: Zig return type was `[:0]const u8` (sentinel-terminated literal); only
 // caller stores into `[]const u8`, so the sentinel is dropped here.
 pub fn get_sign_error_message(e: Error) -> &'static [u8] {

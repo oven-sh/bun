@@ -226,11 +226,11 @@ pub fn filter<'a>(
         }
         // All scanned entry points are absolute, and the resolver emits
         // absolute file paths as well.
-        // PERF(port): was putAssumeCapacity — profile in Phase B
+        // PERF(port): was putAssumeCapacity — profile if it shows up on a hot path.
         path_to_index.put_assume_capacity(path_text, u32::try_from(idx).unwrap());
         // Copy out of the bundler's arena so the caller can use these paths
         // after the BundleV2 heap is gone.
-        // PERF(port): was appendAssumeCapacity — profile in Phase B
+        // PERF(port): was appendAssumeCapacity — profile if it shows up on a hot path.
         graph_files.push(Box::<[u8]>::from(path_text));
     }
 
@@ -613,7 +613,7 @@ impl Default for GitResult {
 
 fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
     let mut argv: Vec<&[u8]> = Vec::with_capacity(args.len() + 3);
-    // PERF(port): was appendAssumeCapacity — profile in Phase B
+    // PERF(port): was appendAssumeCapacity — profile if it shows up on a hot path.
     argv.push(git_path);
     // `core.quotePath` (on by default) wraps non-ASCII filenames in quotes
     // and emits octal escapes. We want raw UTF-8 paths so they match the

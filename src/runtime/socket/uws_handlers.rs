@@ -61,8 +61,8 @@ impl<E> Swallow for Result<(), E> {
 ///
 /// All methods default to `Ok(())`; `swallow` collapses both `()` and
 /// `Result<(), _>` so consumer impls may return either — but to avoid
-/// associated-type contortions in Phase A every default returns
-/// `bun_jsc::JsResult<()>` and plain-`void` consumers just `Ok(())`.
+/// associated-type contortions every default returns `bun_jsc::JsResult<()>`
+/// and plain-`void` consumers just `Ok(())`.
 // TODO(port): if a consumer's `on_*` is infallible, the trait default forces a
 // `Result` wrap; revisit once consumer crates are ported.
 pub trait SocketEvents<const SSL: bool> {

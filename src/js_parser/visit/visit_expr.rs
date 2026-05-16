@@ -435,7 +435,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // PORT NOTE: Zig duped the property slice into a fresh arena allocation
                         // before wrapping in E.Object. PropertyList = Vec<Property> here is
                         // already arena-backed and the JSX node is consumed; reuse in place.
-                        // PERF(port): was arena alloc + bun.copy — profile in Phase B
+                        // PERF(port): was arena alloc + bun.copy — profile if it shows up on a hot path
                         VecExt::append(
                             &mut args,
                             p.new_expr(
@@ -553,7 +553,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // `StoreRef<EString>` (arena-backed) so a process-static won't compile (see
                     // P.rs `` ~7552). Allocate via `p.new_expr` from the const
                     // `prefill::string::CHILDREN` instead — small extra alloc.
-                    // PERF(port): was process-static — profile in Phase B
+                    // PERF(port): was process-static — profile if it shows up on a hot path
                     let children_key = p.new_expr(prefill::string::CHILDREN, expr.loc);
 
                     // Optimization: if the only non-child prop is a spread object
@@ -2282,7 +2282,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // When we see a hook call, we need to hash it, and then mark a flag so that if
         // it is assigned to a variable, that variable also get's hashed.
         //
-        // PORT NOTE: round-C `Runtime::Features.server_components` is a `bool` stub; the
+        // PORT NOTE: `Runtime::Features.server_components` is a `bool` stub; the
         // full Zig type is `enum { off, client, server }` with `.isServerSide()`. Treat
         // `true` as server-side until the enum lands.
         if p.options.features.react_fast_refresh
@@ -2510,7 +2510,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.push_scope_for_visit_pass(js_ast::scope::Kind::FunctionArgs, expr.loc)
             .expect("unreachable");
-        // PERF(port): was arena dupe — profile in Phase B
+        // PERF(port): was arena dupe — profile if it shows up on a hot path
         let dupe: &'a mut [Stmt] = p.arena.alloc_slice_copy(e_.body.stmts.slice());
 
         let args_mut: &mut [G::Arg] = e_.args.slice_mut();
@@ -2533,9 +2533,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.react_refresh.hook_ctx_storage = Some(core::ptr::NonNull::from(&mut react_hook_data));
 
         // TODO(port): Zig `ListManaged(Stmt).fromOwnedSlice(p.arena, dupe)` takes ownership of
-        // the arena slice without copying. bumpalo Vec cannot adopt an existing slice; Phase B may
-        // want a custom arena Vec that can. Left as a copy with PERF note.
-        // PERF(port): was fromOwnedSlice (no copy) — profile in Phase B
+        // the arena slice without copying. bumpalo Vec cannot adopt an existing slice; a custom
+        // arena Vec that can would avoid this copy. Left as a copy with PERF note.
+        // PERF(port): was fromOwnedSlice (no copy) — profile if it shows up on a hot path
         let mut stmts_list = bun_alloc::vec_from_iter_in(dupe.iter().copied(), p.arena);
         let mut temp_opts = PrependTempRefsOpts {
             kind: crate::parser::StmtsKind::FnBody,

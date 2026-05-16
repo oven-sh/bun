@@ -122,8 +122,8 @@ impl<'a> Line for &'a [u16] {
 }
 // TODO(port): Zig also accepted `[:0]const u8`, `[:0]u8`, `[]u8`, `[:0]const u16`,
 // `[:0]u16`, `[]u16` — in Rust these all coerce to `&[u8]`/`&[u16]`, so the two
-// slice impls above cover them. Add `&bun_core::ZStr` / `&bun_core::WStr` impls in
-// Phase B if callers pass those directly.
+// slice impls above cover them. Add `&bun_core::ZStr` / `&bun_core::WStr` impls
+// if callers pass those directly.
 
 /// diffs two sets of lines, returning the minimal number of edits needed to
 /// make them equal.
@@ -182,9 +182,9 @@ impl<L: Line, const CHECK_COMMA_DISPARITY: bool> Differ<L, CHECK_COMMA_DISPARITY
     /// - [An O(ND) Difference Algorithm and Its Variations](http://www.xmailserver.org/diff2.pdf)
     pub fn diff(actual: &[L], expected: &[L]) -> Result<DiffList<L>, Error> {
         // Edit graph's allocator
-        // PERF(port): was stack-fallback (graph_initial_size bytes) — profile in Phase B
+        // PERF(port): was stack-fallback (graph_initial_size bytes) — profile if it shows up on a hot path
         // Match point trace's allocator
-        // PERF(port): was stack-fallback (opts.initial_trace_capacity bytes) — profile in Phase B
+        // PERF(port): was stack-fallback (opts.initial_trace_capacity bytes) — profile if it shows up on a hot path
 
         // const MAX \in [0, M+N]
         // let V: int array = [-MAX..MAX]. V is a flattened representation of the edit graph.
@@ -229,7 +229,7 @@ impl<L: Line, const CHECK_COMMA_DISPARITY: bool> Differ<L, CHECK_COMMA_DISPARITY
             let diff_level: int = i64::try_from(_diff_level).expect("int cast"); // why is this always usize?
             // const new_trace = try TraceFrame.initCapacity(trace_alloc, graph.len);
             let new_trace: Box<[uint]> = graph.clone().into_boxed_slice();
-            // PERF(port): was appendAssumeCapacity — profile in Phase B
+            // PERF(port): was appendAssumeCapacity — profile if it shows up on a hot path
             trace.push(new_trace);
 
             let diag_start: int = -diff_level;
@@ -334,7 +334,7 @@ impl<L: Line, const CHECK_COMMA_DISPARITY: bool> Differ<L, CHECK_COMMA_DISPARITY
                     }
                 };
 
-                // PERF(port): was appendAssumeCapacity — profile in Phase B
+                // PERF(port): was appendAssumeCapacity — profile if it shows up on a hot path
                 result.push(Diff {
                     kind: DiffKind::Equal,
                     value: line,
@@ -388,7 +388,7 @@ where
 
 // TODO(port): `printDiff` wrote directly to stdout/stderr via `std.fs.File`.
 // Banned by §Ground rules (no `std::fs`). This is a debug-only helper used by
-// `zig test`; Phase B can route through `bun_core::Output` or drop it.
+// `zig test`; route through `bun_core::Output` or drop it.
 pub fn print_diff<T: Line + fmt::Display>(diffs: &Vec<Diff<T>>) {
     for idx in 0..diffs.len() {
         let d = &diffs[diffs.len() - (idx + 1)];

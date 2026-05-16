@@ -803,7 +803,7 @@ pub struct Decimal {
 
 impl Decimal {
     pub fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
-        // PERF(port): was stack-fallback (std.heap.stackFallback(64, ...)) — profile in Phase B
+        // PERF(port): was stack-fallback (std.heap.stackFallback(64, ...)) — profile if it shows up on a hot path.
         let mut str: Vec<u8> = Vec::new();
 
         if self.negative {
@@ -823,9 +823,9 @@ impl Decimal {
 
     pub fn to_binary(&self, _field_type: FieldType) -> Result<Data, bun_core::Error> {
         // Zig: `bun.todoPanic(@src(), "Decimal.toBinary not implemented", .{});`
-        // Intentional shipped runtime "feature not yet implemented" — distinct
-        // from a Phase-A porting placeholder. The `Decimal` arm of `Value` is
-        // commented out, so this is unreachable today.
+        // Intentional shipped runtime "feature not yet implemented" — not a
+        // porting placeholder. The `Decimal` arm of `Value` is commented out,
+        // so this is unreachable today.
         bun_core::todo_panic!("Decimal.toBinary not implemented")
     }
 

@@ -118,13 +118,13 @@ pub fn is_enabled() -> bool {
 // the type system — the @hasField/@compileError block is dropped.
 pub fn trace(event: PerfEvent) -> Ctx {
     if !is_enabled() {
-        // PERF(port): @branchHint(.likely) — profile in Phase B
+        // PERF(port): @branchHint(.likely) — profile if it shows up on a hot path.
         return Ctx::Disabled(Disabled);
     }
 
     #[cfg(target_os = "macos")]
     {
-        // PERF(port): was comptime monomorphization (event id was comptime i32) — profile in Phase B
+        // PERF(port): was comptime monomorphization (event id was comptime i32) — profile if it shows up on a hot path.
         return Ctx::Enabled(Darwin::init(event as i32));
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -156,7 +156,7 @@ mod darwin_impl {
     }
 
     impl Darwin {
-        // PERF(port): was `comptime name: i32` — profile in Phase B
+        // PERF(port): was `comptime name: i32` — profile if it shows up on a hot path.
         pub fn init(name: i32) -> Self {
             Self {
                 // SAFETY: `is_enabled()` returned true, which implies `Darwin::get()` is Some

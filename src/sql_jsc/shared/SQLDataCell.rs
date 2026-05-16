@@ -14,7 +14,7 @@ use bun_core::wtf::{WTFStringImpl, WTFStringImplStruct};
 // (fat slice ptrs) or add Drop semantics that a `#[repr(C)] union` cannot host
 // without `ManuallyDrop`. Raw thin pointers are kept for FFI fidelity; ownership
 // semantics from LIFETIMES.tsv are noted per-field below and enforced in
-// `deinit`. Phase B: revisit once the C++ side is ported.
+// `deinit`. TODO(refactor): revisit once the C++ side is ported.
 
 #[repr(C)]
 #[derive(Copy, Clone)]

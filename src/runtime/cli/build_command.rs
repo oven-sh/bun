@@ -697,23 +697,31 @@ impl BuildCommand {
                     || (output_files.len() == 1
                         && matches!(output_files[0].value, options::OutputFileValue::Buffer { .. }));
 
-            if output_dir.is_empty() && !outfile.is_empty() && will_be_one_file {
+            if output_dir.is_empty() && !outfile.is_empty() {
+                // --outfile with a directory component — use its dirname as
+                // the output directory regardless of how many files get
+                // emitted. Emitting a sourcemap adds a second output file,
+                // which previously dropped this fallback (via will_be_one_file)
+                // and left the files in cwd.
+                // https://github.com/oven-sh/bun/issues/30883
                 output_dir = bun_core::dirname(outfile).unwrap_or(b".");
-                if ctx.bundler_options.compile {
-                    // If the first output file happens to be a client-side chunk imported server-side
-                    // then don't rename it to something else, since an HTML
-                    // import manifest might depend on the file path being the
-                    // one we think it should be.
-                    for f in output_files.iter_mut() {
-                        if f.output_kind == options::OutputKind::EntryPoint
-                            && f.side.unwrap_or(options::Side::Server) == options::Side::Server
-                        {
-                            f.dest_path = bun_paths::basename(outfile).into();
-                            break;
+                if will_be_one_file {
+                    if ctx.bundler_options.compile {
+                        // If the first output file happens to be a client-side chunk imported server-side
+                        // then don't rename it to something else, since an HTML
+                        // import manifest might depend on the file path being the
+                        // one we think it should be.
+                        for f in output_files.iter_mut() {
+                            if f.output_kind == options::OutputKind::EntryPoint
+                                && f.side.unwrap_or(options::Side::Server) == options::Side::Server
+                            {
+                                f.dest_path = bun_paths::basename(outfile).into();
+                                break;
+                            }
                         }
+                    } else {
+                        output_files[0].dest_path = bun_paths::basename(outfile).into();
                     }
-                } else {
-                    output_files[0].dest_path = bun_paths::basename(outfile).into();
                 }
             }
 

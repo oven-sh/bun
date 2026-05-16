@@ -236,11 +236,11 @@ mod prompt_signal {
                 let h = windows::GetStdHandle(windows::STD_OUTPUT_HANDLE);
                 if h != windows::INVALID_HANDLE_VALUE {
                     // SAFETY: `h` is a kernel handle returned by
-                    // `GetStdHandle`; `RESTORE` is a 'static 37-byte
+                    // `GetStdHandle`; `RESTORE` is a 'static 24-byte
                     // buffer; `written` is a valid stack out-pointer; the
                     // overlapped pointer is nullable for sync I/O.
                     unsafe {
-                        windows::WriteFile(
+                        windows::kernel32::WriteFile(
                             h,
                             RESTORE.as_ptr(),
                             RESTORE.len() as windows::DWORD,
@@ -251,7 +251,7 @@ mod prompt_signal {
                 }
                 // STATUS_CONTROL_C_EXIT = 0xC000013A — matches what the
                 // default console ctrl handler would have done.
-                windows::ExitProcess(0xC000013A);
+                windows::kernel32::ExitProcess(0xC000013A);
             }
             _ => windows::FALSE,
         }

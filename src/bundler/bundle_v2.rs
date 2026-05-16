@@ -4573,6 +4573,30 @@ pub mod bv2_impl {
             // Zig: `defer this.decrementScanCounter()`. RAII guard captures `this`
             // as a raw pointer so it does not hold a unique borrow across the body.
             let _dec_guard = this.decrement_scan_counter_on_drop();
+            // Mirror Zig's `defer resolve.deinit()`. `Resolve` is arena-allocated
+            // (`arena_create` in `enqueue_*_on_resolve_plugin_if_needed`), so its
+            // `Drop` never runs when the arena resets. The owned `Box<[u8]>` fields
+            // of `import_record` (`source_file` / `namespace` / `specifier`) and any
+            // unconsumed `value` would strand. Take them on every exit path
+            // (including the early `return`s in the `NoMatch` arm) via a raw-pointer
+            // guard, following the `ScanCounterGuard` pattern.
+            struct ResolveDeinitGuard(*mut jsc_api::JSBundler::Resolve);
+            impl Drop for ResolveDeinitGuard {
+                fn drop(&mut self) {
+                    // SAFETY: `self.0` is constructed from the live `&mut Resolve`
+                    // borrowed by `on_resolve`; the guard is a local that drops
+                    // before that borrow ends, so the pointee is valid and unique.
+                    unsafe {
+                        let r = &mut *self.0;
+                        drop(core::mem::take(&mut r.import_record));
+                        drop(core::mem::replace(
+                            &mut r.value,
+                            jsc_api::JSBundler::ResolveValue::Consumed,
+                        ));
+                    }
+                }
+            }
+            let _resolve_deinit = ResolveDeinitGuard(std::ptr::from_mut(resolve));
             bun_core::scoped_log!(
                 Bundle,
                 "onResolve: ({}:{}, {:?})",
@@ -4890,6 +4914,28 @@ pub mod bv2_impl {
                     // slices, FileMap entries) are no-ops; only `Owned(Vec<u8>)`
                     // from `read_file_with_allocator` actually frees here.
                     s.contents = std::borrow::Cow::Borrowed(&b""[..]);
+                }
+                // The remaining heap-owning `InputFile` columns. `MultiArrayList::drop`
+                // is slab-only (matches Zig), so these `Box`/`Vec` payloads strand
+                // unless taken explicitly:
+                //  - `secondary_path: Box<[u8]>` (set in `enqueue_item` for HTML
+                //    secondary outputs)
+                //  - `additional_files: Vec<AdditionalFile>` (pushed throughout
+                //    `process_resolve_queue` / `on_parse_task_complete`)
+                //  - `unique_key_for_additional_file: Box<[u8]>` (cloned from the
+                //    parse result in `on_parse_task_complete`)
+                for v in self.graph.input_files.items_secondary_path_mut() {
+                    drop(core::mem::take(v));
+                }
+                for v in self.graph.input_files.items_additional_files_mut() {
+                    drop(core::mem::take(v));
+                }
+                for v in self
+                    .graph
+                    .input_files
+                    .items_unique_key_for_additional_file_mut()
+                {
+                    drop(core::mem::take(v));
                 }
                 for q in self.linker.graph.files.items_quoted_source_contents_mut() {
                     drop(q.take());

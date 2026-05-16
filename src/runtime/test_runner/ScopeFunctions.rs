@@ -211,7 +211,7 @@ pub fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
 
             // PORT NOTE: Zig keeps a parallel `ArrayList(Strong)` to root each element across
             // the format_label/bind allocations below. `bun_jsc::MarkedArgumentBuffer` only
-            // exposes a scoped-closure constructor (no `as_slice`/`len`), so for Phase D we
+            // exposes a scoped-closure constructor (no `as_slice`/`len`), so we
             // use a plain `Vec<JSValue>` mirroring Zig's `args_list_raw`. The outer `iter`
             // keeps `this.each` alive; per-element rooting is a TODO once Strong<JSValue>
             // lands in bun_jsc.

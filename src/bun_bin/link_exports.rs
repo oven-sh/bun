@@ -1,4 +1,5 @@
-//! PHASE-C link bridge — **transient**, not a permanent grab-bag.
+//! Link-time `#[no_mangle]` export bridge — **transient**, not a permanent
+//! grab-bag.
 //!
 //! Every symbol that used to be stubbed here now has a real home (the `.rs`
 //! sibling of the Zig `export fn`) inside `bun_jsc` / `bun_runtime` /
@@ -18,7 +19,7 @@
 //!
 //! Calling convention: `jsc.conv` is plain `"C"` on every non-Windows-x64
 //! target, so `extern "C"` is correct on Linux/macOS. The Windows path is not
-//! exercised in Phase C.
+//! currently exercised here.
 
 #![allow(
     non_snake_case,
@@ -62,7 +63,7 @@ type VirtualMachine = c_void;
 // Real-body exports (no gated-crate dependency)
 // ════════════════════════════════════════════════════════════════════════════
 
-// PHASE-C: C++ callback — Zig: `pub export fn Bun__panic(msg, len) noreturn`
+// C++ callback — Zig: `pub export fn Bun__panic(msg, len) noreturn`
 // REAL: src/main.rs (binary-level export; defined here directly)
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__panic(msg: *const u8, len: usize) -> ! {
@@ -85,7 +86,7 @@ pub extern "C" fn Bun__panic(msg: *const u8, len: usize) -> ! {
 // Bun__NODE_NO_WARNINGS
 
 // REAL: `Bun__getTLSRejectUnauthorizedValue` / `Bun__isNoProxy` now exported
-// directly from `bun_jsc::virtual_machine_exports` (un-gated in phase-d).
+// directly from `bun_jsc::virtual_machine_exports`.
 
 // REAL: now provided by bun_runtime (src/runtime/napi/napi_body.rs).
 // napi_internal_suppress_crash_on_abort_if_desired

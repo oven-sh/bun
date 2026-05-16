@@ -3863,11 +3863,21 @@ extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObjec
         // just now. Perhaps later in this case we can defer destruction to run later.
         return;
     }
+    // Hold a Ref so the RunLoop is guaranteed to outlive the VM teardown below.
+    Ref<WTF::RunLoop> runLoop = vm.runLoop();
     gcUnprotect(globalObject);
     globalObject = nullptr;
     vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
     vm.derefSuppressingSaferCPPChecking();
     vm.derefSuppressingSaferCPPChecking();
+    // ~VM -> JSRunLoopTimer::Manager::unregisterVM -> ~PerVMData enqueues the
+    // RunLoop::Timer (which owns a Bun WTFTimer) onto the RunLoop's dispatch
+    // queue so it can be freed on the timer's home thread. Bun's RunLoop never
+    // drains that queue (RunLoop::wakeUp is a no-op for Kind::Bun), so without
+    // this the Timer — and the Box<WTFTimer> behind it — would leak. We're on
+    // the RunLoop's home thread and the process is exiting, so clearing pending
+    // dispatches here is the same as running them.
+    runLoop->threadWillExit();
 }
 
 #include "ZigGeneratedClasses+lazyStructureImpl.h"

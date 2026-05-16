@@ -278,6 +278,11 @@ pub struct VirtualMachine {
 
     pub rare_data: Option<Box<RareData>>,
     pub proxy_env_storage: crate::rare_data::ProxyEnvStorage,
+    /// Owned backing storage for the `_resolve` fast-path duplicates handed
+    /// out as `&'static [u8]` via [`Self::dupe_resolved_path`]. Each entry is
+    /// a heap `Box<[u8]>` whose address is stable across `Vec` growth, so the
+    /// borrow stays valid for the VM's lifetime; freed in [`Self::destroy`].
+    pub resolved_path_dups: Vec<Box<[u8]>>,
     pub is_us_loop_entered: bool,
     pub pending_internal_promise: Option<*mut JSInternalPromise>,
     pub pending_internal_promise_is_protected: bool,
@@ -2069,6 +2074,7 @@ impl VirtualMachine {
             // canonical empty value via `ptr::write` (no Drop of zeroed bytes).
             addr_of_mut!((*vm).preload).write(Vec::new());
             addr_of_mut!((*vm).argv).write(Vec::new());
+            addr_of_mut!((*vm).resolved_path_dups).write(Vec::new());
             addr_of_mut!((*vm).macros).write(Default::default());
             addr_of_mut!((*vm).macro_entry_points).write(Default::default());
             addr_of_mut!((*vm).auto_killer).write(Default::default());
@@ -3926,14 +3932,21 @@ impl VirtualMachine {
     }
 
     /// Zig `bun.default_allocator.dupe(u8, s)` for the `_resolve`
-    /// fast-paths. The spec intentionally never frees these — they back
-    /// `ResolveFunctionResult.path` for the VM lifetime (see the field's
-    /// `TODO(port): lifetime` note). Returning a `'static` borrow of the
-    /// boxed bytes mirrors that contract.
-    fn dupe_resolved_path(s: &[u8]) -> &'static [u8] {
-        // SAFETY: allocation is VM-lifetime by spec (VirtualMachine.zig:1740,
-        // :1744, :1755, :1761) — never freed in `deinit`.
-        unsafe { &*bun_core::heap::into_raw(s.to_vec().into_boxed_slice()) }
+    /// fast-paths. These back `ResolveFunctionResult.path` for the VM
+    /// lifetime (see the field's `TODO(port): lifetime` note). The bytes are
+    /// owned by [`Self::resolved_path_dups`] so they're reclaimed when the
+    /// VM is destroyed (e.g. `BUN_DESTRUCT_VM_ON_EXIT=1`), instead of leaking.
+    fn dupe_resolved_path(&mut self, s: &[u8]) -> &'static [u8] {
+        let boxed: Box<[u8]> = s.to_vec().into_boxed_slice();
+        // SAFETY: `boxed`'s heap allocation has a stable address for as long
+        // as the owning `Box` lives in `resolved_path_dups`; that `Vec` is
+        // only drained in `destroy()`, after which no `ResolveFunctionResult`
+        // borrowing it is reachable. Erasing to `'static` mirrors the Zig
+        // spec's VM-lifetime contract (VirtualMachine.zig:1740/:1744/:1755/
+        // :1761) without leaking under `BUN_DESTRUCT_VM_ON_EXIT=1`.
+        let slice: &'static [u8] = unsafe { core::mem::transmute::<&[u8], &'static [u8]>(&*boxed) };
+        self.resolved_path_dups.push(boxed);
+        slice
     }
 
     /// Spec VirtualMachine.zig:1724 `_resolve`.
@@ -3970,12 +3983,12 @@ impl VirtualMachine {
         }
         if specifier.starts_with(Macro::NAMESPACE_WITH_COLON) {
             ret.result = None;
-            ret.path = Self::dupe_resolved_path(specifier);
+            ret.path = self.dupe_resolved_path(specifier);
             return Ok(());
         }
         if specifier.starts_with(node_fallbacks::IMPORT_PATH) {
             ret.result = None;
-            ret.path = Self::dupe_resolved_path(specifier);
+            ret.path = self.dupe_resolved_path(specifier);
             return Ok(());
         }
         if let Some(result) = ModuleLoader::HardcodedModule::Alias::get(
@@ -3992,7 +4005,7 @@ impl VirtualMachine {
                 || specifier.ends_with(bun_paths::path_literal!("/[stdin]").as_bytes()))
         {
             ret.result = None;
-            ret.path = Self::dupe_resolved_path(specifier);
+            ret.path = self.dupe_resolved_path(specifier);
             return Ok(());
         }
         if let Some(blob_id) = specifier.strip_prefix(b"blob:".as_slice()) {
@@ -4003,7 +4016,7 @@ impl VirtualMachine {
                 .map(|h| (h.has_blob_url)(blob_id))
                 .unwrap_or(false);
             if has {
-                ret.path = Self::dupe_resolved_path(specifier);
+                ret.path = self.dupe_resolved_path(specifier);
                 return Ok(());
             }
             return Err(bun_core::err!("ModuleNotFound"));
@@ -4368,6 +4381,15 @@ impl VirtualMachine {
         // PORT NOTE: Zig `proxy_env_storage.deinit()` — drops all `Arc`-held
         // proxy strings; `ProxyEnvStorage: Default` so take()+drop suffices.
         drop(core::mem::take(&mut self.proxy_env_storage));
+
+        // Free the `_resolve` fast-path duplicates handed out as `'static`
+        // borrows by `dupe_resolved_path`. The Zig spec relied on
+        // `bun.default_allocator` teardown to reclaim these; under the system
+        // allocator (ASAN) and `BUN_DESTRUCT_VM_ON_EXIT=1` they'd otherwise be
+        // reported as leaks. Safe to drop here: nothing past `destroy()`
+        // dereferences a `ResolveFunctionResult.path`.
+        drop(core::mem::take(&mut self.resolved_path_dups));
+
         self.overridden_main.deinit();
 
         // PORT NOTE: Zig frees `timer`/`entry_point` as value fields of `self`;

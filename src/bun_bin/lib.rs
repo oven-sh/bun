@@ -227,17 +227,9 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         // `build_command.rs` PORT NOTE) — its `BundleOptions::bundler_feature_flags`
         // `Box<StringSet>` strands when the arena bulk-frees.
         "leak:bun_js_parser::parser::Runtime::Features::init_bundler_feature_flags\n",
-        // TODO(leak): `bun install` `package.json` editing `Box::leak`s string
-        // dups for the `EString` AST nodes (`leak_dup`/`leak_str`). Zig duped
-        // into a process-lifetime arena; the Rust port's local `bump` arena
-        // doesn't outlive the AST, so it falls back to `Box::leak`. Fix by
-        // threading a process-lifetime arena through `PackageJSONEditor::edit`.
-        "leak:bun_install::package_manager_real::package_json_editor\n",
-        // TODO(leak): `Tree::process_subtree` / `UpdateRequest::parse_with_error`
-        // `MultiArrayList<BuilderEntry>` / `Vec` allocations strand when the
-        // `PackageManager` is `mem::forget`'d at process exit (see
-        // `install/PackageManager/mod.rs`). Bounded; OS reclaims at exit.
-        "leak:bun_install::lockfile_real::tree::Tree>::process_subtree\n",
+        // TODO(leak): `UpdateRequest::parse_with_error` `Vec` allocations
+        // strand when the `PackageManager` is `mem::forget`'d at process exit
+        // (see `install/PackageManager/mod.rs`). Bounded; OS reclaims at exit.
         "leak:bun_install::package_manager_real::update_request::UpdateRequest\n",
         "\0",
     )

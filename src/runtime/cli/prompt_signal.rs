@@ -78,6 +78,20 @@ extern "C" fn handler(sig: i32) {
 }
 
 #[cfg(windows)]
+unsafe extern "C" {
+    // Restore the console-mode snapshot `output::stdio::init()` captured at
+    // startup (stdin/stdout/stderr). Without this, the
+    // ENABLE_LINE_INPUT/ECHO_INPUT/PROCESSED_INPUT bits we cleared on
+    // prompt entry would leak to the next process reading the same
+    // console. This is the Windows analogue of `uv_tty_reset_mode` on
+    // Unix and is what the process-wide `Ctrlhandler` in c-bindings.cpp
+    // would normally do for CTRL_C_EVENT — but our handler runs first in
+    // the SetConsoleCtrlHandler LIFO chain and ExitProcess's directly, so
+    // we have to invoke it ourselves.
+    safe fn Bun__restoreWindowsStdio();
+}
+
+#[cfg(windows)]
 unsafe extern "system" fn handler(ctrl: bun_sys::windows::DWORD) -> bun_sys::windows::BOOL {
     use bun_sys::windows;
     match ctrl {
@@ -105,6 +119,11 @@ unsafe extern "system" fn handler(ctrl: bun_sys::windows::DWORD) -> bun_sys::win
                     );
                 }
             }
+            // Windows analogue of the Unix `uv_tty_reset_mode` call — restores
+            // the ENABLE_LINE_INPUT / ECHO_INPUT / PROCESSED_INPUT flags the
+            // prompt cleared. Keeps both arms symmetric: ANSI restore →
+            // console/termios restore → exit.
+            Bun__restoreWindowsStdio();
             // STATUS_CONTROL_C_EXIT = 0xC000013A — matches what the default
             // console ctrl handler would have done.
             windows::kernel32::ExitProcess(0xC000013A);

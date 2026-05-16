@@ -4239,7 +4239,7 @@ impl Resolver {
         let cache = R::pending_cache(self, cache_field);
         // SAFETY: `used` bit is set ⇒ slot was initialized by
         // `get_or_put_into_resolve_pending_cache` + `*Request::init`. POD; no aliases.
-        let entry = unsafe { cache.take_at(index as usize) };
+        let entry = unsafe { cache.box_at(index as usize) }.into_inner();
         entry
     }
 
@@ -4252,20 +4252,20 @@ impl Resolver {
         let cache = self.pending_host_cache(field);
         // SAFETY: `used` bit is set ⇒ slot was initialized by
         // `get_or_put_into_resolve_pending_cache` + `*Request::init`. POD; no aliases.
-        let entry = unsafe { cache.take_at(index as usize) };
+        let entry = unsafe { cache.box_at(index as usize) }.into_inner();
         entry
     }
     fn get_key_addr(&self, index: u8) -> get_host_by_addr_info_request::PendingCacheKey {
         self.pending_addr_cache_cares.with_mut(|cache| {
             // SAFETY: `used` bit is set ⇒ slot was initialized; POD; no aliases.
-            let entry = unsafe { cache.take_at(index as usize) };
+            let entry = unsafe { cache.box_at(index as usize) }.into_inner();
             entry
         })
     }
     fn get_key_nameinfo(&self, index: u8) -> get_name_info_request::PendingCacheKey {
         self.pending_nameinfo_cache_cares.with_mut(|cache| {
             // SAFETY: `used` bit is set ⇒ slot was initialized; POD; no aliases.
-            let entry = unsafe { cache.take_at(index as usize) };
+            let entry = unsafe { cache.box_at(index as usize) }.into_inner();
             entry
         })
     }
@@ -4285,7 +4285,7 @@ impl Resolver {
         let key = {
             let cache = self.pending_cache_for::<T>(T::CACHE_FIELD);
             // SAFETY: `used` bit is set ⇒ slot was initialized; POD; no aliases.
-            let key = unsafe { cache.take_at(index as usize) };
+            let key = unsafe { cache.box_at(index as usize) }.into_inner();
             key
         };
 

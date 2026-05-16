@@ -233,20 +233,39 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
         }
     }
 
-    /// Extract the value at `index` and free the slot. For pools that track
-    /// occupancy by index instead of pointer (Zig `cache[idx] = undefined`).
+    /// Allocate a slot as a single-owner [`HiveBox`]. `None` if the inline
+    /// hive is full.
+    #[inline]
+    pub fn alloc(&self, value: T) -> Option<HiveBox<'_, T, CAPACITY>> {
+        let index = self.used.find_first_unset()?;
+        self.used.set(index);
+        let p = self.ptr_at(index);
+        asan::unpoison(p.cast(), size_of::<T>());
+        // SAFETY: `index` was just claimed; the slot is in-bounds and unaliased.
+        unsafe { p.write(value) };
+        Some(HiveBox {
+            // SAFETY: `ptr_at` never returns null (in-bounds offset into `buffer`).
+            slot: unsafe { NonNull::new_unchecked(p) },
+            owner: self,
+        })
+    }
+
+    /// Recover a [`HiveBox`] for a slot previously allocated via [`alloc`](Self::alloc)
+    /// whose [`index()`](HiveBox::index) was stored externally (e.g. in a callback
+    /// context). For pools that track occupancy by index instead of pointer.
     ///
     /// # Safety
     /// `index` must be occupied (`used` bit set) with a fully-initialized `T`,
-    /// and no other live access path (`HiveSlot`, `*mut T` from [`ptr_at`](Self::ptr_at))
-    /// to the same slot may exist.
+    /// and no other live access path ([`HiveSlot`], [`HiveBox`], `*mut T` from
+    /// [`ptr_at`](Self::ptr_at)) to the same slot may exist.
     #[inline]
-    pub unsafe fn take_at(&self, index: usize) -> T {
+    pub unsafe fn box_at(&self, index: usize) -> HiveBox<'_, T, CAPACITY> {
         debug_assert!(self.used.is_set(index));
-        // SAFETY: caller contract — slot is occupied with an initialized `T`.
-        let value = unsafe { core::ptr::read(self.ptr_at(index)) };
-        self.used.unset(index);
-        value
+        HiveBox {
+            // SAFETY: `ptr_at` asserts `index < CAPACITY` and never returns null.
+            slot: unsafe { NonNull::new_unchecked(self.ptr_at(index)) },
+            owner: self,
+        }
     }
 
     /// Claim a slot and return a raw pointer to its **uninitialized** storage.
@@ -492,6 +511,67 @@ impl<T, const CAPACITY: usize> Drop for HiveSlot<'_, T, CAPACITY> {
             // in `Fallback::claim` and has not been freed.
             drop(unsafe { Box::from_raw(self.slot.as_ptr()) });
         }
+    }
+}
+
+/// Single-owner handle to an initialized [`HiveArray`] slot. `Box<T>`-shaped:
+/// `Drop` returns the slot to the pool, [`into_inner`](Self::into_inner)
+/// extracts the value. Single-owner (no `Clone`), so [`DerefMut`] is sound.
+///
+/// For pools whose tokens cross an opaque round-trip as a slot *index* (e.g.
+/// the c-ares callback context in `dns_jsc`), store [`index()`](Self::index)
+/// and recover via [`HiveArray::box_at`].
+pub struct HiveBox<'a, T, const CAPACITY: usize> {
+    slot: NonNull<T>,
+    owner: &'a HiveArray<T, CAPACITY>,
+}
+
+impl<'a, T, const CAPACITY: usize> HiveBox<'a, T, CAPACITY> {
+    /// Slot index in the owning pool, for storage in an opaque callback context.
+    #[inline]
+    pub fn index(&self) -> usize {
+        // SAFETY: `slot` always points into `owner.buffer`.
+        self.owner
+            .index_of(self.slot.as_ptr())
+            .expect("HiveBox slot in owner") as usize
+    }
+
+    /// Extract the value, freeing the slot. Inverse of [`HiveArray::alloc`].
+    #[inline]
+    pub fn into_inner(self) -> T {
+        let this = ManuallyDrop::new(self);
+        // SAFETY: `slot` is a fully-initialized `T` exclusively owned by this box.
+        let value = unsafe { core::ptr::read(this.slot.as_ptr()) };
+        // Free the slot WITHOUT running `T::drop` — ownership just moved out.
+        this.owner.put_raw(this.slot.as_ptr());
+        value
+    }
+}
+
+impl<T, const CAPACITY: usize> Deref for HiveBox<'_, T, CAPACITY> {
+    type Target = T;
+    #[inline]
+    fn deref(&self) -> &T {
+        // SAFETY: `slot` is a fully-initialized, exclusively-owned `T`.
+        unsafe { self.slot.as_ref() }
+    }
+}
+
+impl<T, const CAPACITY: usize> core::ops::DerefMut for HiveBox<'_, T, CAPACITY> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut T {
+        // SAFETY: `slot` is a fully-initialized, exclusively-owned `T`; no
+        // `Clone` impl, so this is the only `&mut` access path.
+        unsafe { self.slot.as_mut() }
+    }
+}
+
+impl<T, const CAPACITY: usize> Drop for HiveBox<'_, T, CAPACITY> {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: `slot` is a fully-initialized `T` owned by this box; `put`
+        // drops it in place and frees the slot.
+        unsafe { self.owner.put(self.slot.as_ptr()) };
     }
 }
 
@@ -1334,6 +1414,49 @@ mod tests {
             assert_eq!(*p.as_ptr(), 7);
             assert!(a.put_raw(p.as_ptr()));
         }
+    }
+
+    #[test]
+    fn hive_box_lifecycle() {
+        let drops = core::cell::Cell::new(0u32);
+        let mk = |v| Tracked { v, drops: &drops };
+
+        let pool = HiveArray::<Tracked, 4>::init();
+
+        // alloc → Deref/DerefMut → Drop returns the slot, drops T.
+        {
+            let mut b = pool.alloc(mk(1)).unwrap();
+            assert_eq!(b.v, 1);
+            b.v = 11;
+            assert_eq!(b.v, 11);
+        }
+        assert_eq!(drops.get(), 1);
+        assert!(!pool.used.is_set(0));
+
+        // alloc → into_inner extracts T without running its Drop.
+        let b = pool.alloc(mk(2)).unwrap();
+        let i = b.index();
+        let val = b.into_inner();
+        assert_eq!(val.v, 2);
+        assert_eq!(drops.get(), 1);
+        assert!(!pool.used.is_set(i));
+        drop(val);
+        assert_eq!(drops.get(), 2);
+
+        // alloc → store index → recover via box_at — the dns.rs pattern.
+        let b0 = pool.alloc(mk(10)).unwrap();
+        let b1 = pool.alloc(mk(20)).unwrap();
+        let (i0, i1) = (b0.index(), b1.index());
+        // Hand the boxes back without running Drop (the index is the token).
+        core::mem::forget(b0);
+        core::mem::forget(b1);
+        // SAFETY: slots `i0`/`i1` were just alloc'd, no other access path exists.
+        let v1 = unsafe { pool.box_at(i1) }.into_inner();
+        let v0 = unsafe { pool.box_at(i0) }.into_inner();
+        assert_eq!(v0.v, 10);
+        assert_eq!(v1.v, 20);
+        assert!(!pool.used.is_set(i0));
+        assert!(!pool.used.is_set(i1));
     }
 }
 

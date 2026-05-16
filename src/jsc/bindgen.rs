@@ -343,9 +343,10 @@ impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
             // SAFETY: `storage_ptr` is aligned to ≥ `MI_MAX_ALIGN_SIZE` ≥
             // `align_of::<ZigType>()`; the first `length` slots were just written
             // with valid `ZigType` values; the block is mimalloc-owned and the
-            // global allocator is mimalloc (see static assert at top of file), so
-            // `Vec`'s eventual dealloc — even with `ZigType`'s layout — routes to
-            // `mi_free`, which ignores layout.
+            // global allocator is mimalloc (the `if !bun_alloc::USE_MIMALLOC`
+            // guard above gates entry to this path), so `Vec`'s eventual dealloc
+            // — even with `ZigType`'s layout — routes to `mi_free`, which
+            // ignores layout.
             let items_ptr = storage_ptr.cast::<Child::ZigType>();
             let new_unmanaged: Vec<Child::ZigType> =
                 unsafe { Vec::from_raw_parts(items_ptr, length, new_capacity) };

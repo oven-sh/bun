@@ -216,8 +216,10 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
     /// the slot to be claimed and initialized.
     #[inline]
     pub fn ptr_at(&self, index: usize) -> *mut T {
-        debug_assert!(index < CAPACITY);
-        // SAFETY: `index < CAPACITY`; in-bounds offset within the same allocation.
+        // `assert!`, not `debug_assert!` — `ptr.add()` past the end is UB, not
+        // a panic, in release builds. Keep this a safe `pub fn`.
+        assert!(index < CAPACITY);
+        // SAFETY: `index < CAPACITY` (asserted above); in-bounds offset.
         unsafe {
             self.buffer
                 .get()
@@ -406,13 +408,17 @@ impl<'h, T, const CAPACITY: usize> HiveSlot<'h, T, CAPACITY> {
     }
 
     /// `&mut MaybeUninit<T>` for piecewise init via `addr_of_mut!`. Prefer
-    /// [`write`](Self::write); this exists for `repr(C)` placement-new
-    /// (`create_in`-style constructors that take `&mut MaybeUninit<Self>`).
+    /// [`write`](Self::write).
+    ///
+    /// # Safety
+    /// No other live access path to this slot may exist. With `&self` pool
+    /// receivers, `HiveSlot` no longer holds an exclusive borrow of the hive,
+    /// so the borrowck cannot prove uniqueness — the caller must (e.g. don't
+    /// `unset()` the slot's `used` bit and re-`claim()` it while this token is
+    /// alive).
     #[inline]
-    pub fn as_uninit(&mut self) -> &mut MaybeUninit<T> {
-        // SAFETY: `slot` is a unique live pointer into the hive buffer (or a
-        // freshly leaked `Box<MaybeUninit<T>>`); the `&mut self` receiver
-        // guarantees no other borrow of the same `MaybeUninit<T>` exists.
+    pub unsafe fn as_uninit(&mut self) -> &mut MaybeUninit<T> {
+        // SAFETY: caller contract (above).
         unsafe { self.slot.as_mut() }
     }
 
@@ -953,7 +959,8 @@ mod tests {
         // addr() is stable and matches the post-write pointer.
         let mut slot = a.claim().unwrap();
         let pre = slot.addr().as_ptr();
-        slot.as_uninit().write([10, 20]);
+        // SAFETY: `slot` is the only token for this slot.
+        unsafe { slot.as_uninit() }.write([10, 20]);
         // SAFETY: as_uninit().write() fully initialized the slot.
         let p = unsafe { slot.assume_init() };
         assert_eq!(pre, p.as_ptr());

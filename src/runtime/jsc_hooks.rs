@@ -1152,32 +1152,6 @@ unsafe fn create_node_fs(vm: *mut VirtualMachine) -> *mut c_void {
     .cast::<c_void>()
 }
 
-/// `Body.Value.HiveRef.init(body, &vm.body_value_pool)` — Spec
-/// VirtualMachine.zig:255. `body` is moved by value into the pooled slot.
-///
-/// # Safety
-/// `body` is a `*mut webcore::body::Value` the caller is donating (read-once,
-/// not dropped by the caller). Returns a `*mut webcore::body::HiveRef` erased
-/// to `*mut c_void`.
-unsafe fn init_request_body_value(_vm: *mut VirtualMachine, body: *mut c_void) -> *mut c_void {
-    use crate::webcore::body::{HiveRef, Value};
-    let state = runtime_state();
-    debug_assert!(
-        !state.is_null(),
-        "init_request_body_value before init_runtime_state"
-    );
-    // SAFETY: per fn contract — `body` points at an initialised `Body::Value`
-    // the caller hands over by move; `state` is the live per-thread box and
-    // its `body_value_pool` `Box` payload is heap-stable for the
-    // VM's lifetime (BACKREF contract on `HiveRef::allocator`).
-    let value = unsafe { core::ptr::read(body.cast::<Value>()) };
-    let pool: *mut crate::webcore::body::HiveAllocator =
-        unsafe { &raw mut *(*state).body_value_pool };
-    // Spec returns `!*HiveRef` with the only `try` site being the pool
-    // allocation; `bun.handleOom`-style crash matches Zig.
-    unsafe { HiveRef::init(value, pool) }.cast::<c_void>()
-}
-
 /// `WebCore.ObjectURLRegistry.singleton().has(specifier["blob:".len..])` —
 /// Spec VirtualMachine.zig:1760.
 fn has_blob_url(blob_id: &[u8]) -> bool {
@@ -1436,7 +1410,6 @@ pub static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     default_client_ssl_ctx,
     ssl_ctx_cache_get_or_create,
     create_node_fs,
-    init_request_body_value,
     has_blob_url,
     body_mixin_get_blob,
     process_exit,

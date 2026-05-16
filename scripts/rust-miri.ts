@@ -67,6 +67,18 @@ if (!existsSync(buildOptionsRs) || !existsSync(lolhtmlCargo)) {
   if (!existsSync(lolhtmlCargo) && run("ninja", ["-C", "build/debug", "clone-lolhtml"]).status !== 0) {
     process.exit(1);
   }
+  // Re-check: configure can succeed without producing these (e.g. partial
+  // checkout, ninja target rename) — fail fast instead of letting cargo
+  // produce a confusing workspace-resolution error.
+  for (const [path, hint] of [
+    [buildOptionsRs, "bun run build --configure-only"],
+    [lolhtmlCargo, "ninja -C build/debug clone-lolhtml"],
+  ] as const) {
+    if (!existsSync(path)) {
+      console.error(`\x1b[31m[error]\x1b[0m ${path} still missing after setup — try: ${hint}`);
+      process.exit(1);
+    }
+  }
 }
 
 const extraArgs = process.argv.slice(2);

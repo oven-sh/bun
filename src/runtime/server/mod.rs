@@ -729,19 +729,20 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 core::mem::size_of::<ServerRequestContext<SSL, DEBUG>>(),
             );
 
-        // Allocate the pooled body slot. `hive_alloc` is the typed front-end
-        // for the type-erased `init_request_body_value` hook (the hook lives
-        // in `bun_jsc` which cannot name `bun_runtime` types).
+        // Allocate the pooled body slot (ref_count = 1).
         // SAFETY: vm backref live for the JS thread's lifetime.
         let body_hive = crate::webcore::body::hive_alloc(
-            unsafe { &mut *vm_ptr },
+            unsafe { &*vm_ptr },
             crate::webcore::body::Value::Null,
         );
-        // SAFETY: hive_alloc returns a freshly-initialized hive slot
-        // (`ref_count = 1`); live until refcount drops to zero.
+        // Raw payload pointer for the deferred Locked write below.
+        // SAFETY: slot stays live — both `ctx.request_body` and `Request.body` hold a +1.
         let body_value: *mut crate::webcore::body::Value =
             unsafe { core::ptr::addr_of_mut!((*body_hive.as_ptr()).value) };
-        ctx_mut.request_body = core::ptr::NonNull::new(body_value);
+        // Zig: `.body = body.ref()` — bump once so the ctx and JS Request each
+        // own a +1 on the same slot (streamed bytes buffered into the ctx
+        // surface on `request.body`/`request.json()`).
+        ctx_mut.request_body = Some(body_hive.clone());
 
         let global = server.global_this();
         let signal = jsc::AbortSignal::new(global);
@@ -752,24 +753,19 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // SAFETY: `signal.ref_()` bumps the intrusive count and returns +1.
         let signal_ref =
             unsafe { jsc::AbortSignalRef::adopt(bun_opaque::opaque_deref_mut(signal).ref_()) };
-        // Zig: `.body = body.ref()` — bump once so the JS Request shares the
-        // same hive slot as `ctx.request_body` (streamed bytes buffered into
-        // the ctx surface on `request.body`/`request.json()`). Paired with
-        // `HiveRef::unref` in `Request::finalize`.
-        // SAFETY: `body_hive` is live (ref_count >= 1).
-        let body_for_req: core::ptr::NonNull<crate::webcore::body::HiveRef> =
-            unsafe { core::ptr::NonNull::from((*body_hive.as_ptr()).ref_()) };
         // PORT NOTE (ownership): `Request::new` is `bun.TrivialNew` — the heap
         // allocation is handed to the JS GC via `to_js`/`to_js_for_bake` (C++
         // wrapper finalizer frees it), or, for `CreateJsRequest::No`, retained
         // by `ctx.request_weakref` until `RequestContext::deinit` releases it.
+        // `body_hive` (the original +1) moves into the Request — paired drop in
+        // `Request::finalize`.
         let request_object: *mut crate::webcore::Request =
             bun_core::heap::into_raw(crate::webcore::Request::new(crate::webcore::Request::init(
                 ctx_mut.method,
                 AnyRequestContext::init(ctx),
                 SSL,
                 Some(signal_ref),
-                body_for_req,
+                body_hive,
             )));
         // SAFETY: freshly allocated; uniquely owned here.
         ctx_mut.request_weakref = bun_ptr::WeakPtr::init_ref(unsafe { &mut *request_object });

@@ -555,21 +555,19 @@ const POOL_SIZE: usize = if bun_alloc::heap_breakdown::ENABLED {
 };
 pub type HiveRef = bun_collections::HiveRef<Value, POOL_SIZE>;
 pub type HiveAllocator = bun_collections::hive_array::Fallback<HiveRef, POOL_SIZE>;
+pub type BodyHiveHandle = bun_collections::HiveRefHandle<Value, POOL_SIZE>;
 
-/// Typed front-end for `VirtualMachine::init_request_body_value` (the hook is
-/// type-erased to break the `bun_jsc` → `bun_runtime` dep edge). Spec
-/// `VirtualMachine.zig:255 initRequestBodyValue` — moves `value` into a
-/// pooled `HiveRef` slot (ref_count = 1) and returns it.
-pub fn hive_alloc(vm: &mut VirtualMachine, value: Value) -> core::ptr::NonNull<HiveRef> {
-    // The hook impl (`runtime/jsc_hooks.rs`) `ptr::read`s its `*mut Value`
-    // argument; suppress the local drop so the move is one-way.
-    let mut value = core::mem::ManuallyDrop::new(value);
-    let ptr = vm
-        .init_request_body_value((&raw mut *value).cast::<core::ffi::c_void>())
-        .cast::<HiveRef>();
-    // `HiveRef::init` only fails on allocator OOM, which `handle_oom` upstream
-    // would have already aborted on; treat null as unreachable.
-    core::ptr::NonNull::new(ptr).expect("body HiveAllocator returned null")
+/// Spec `VirtualMachine.zig:255 initRequestBodyValue` — moves `value` into a
+/// pooled `HiveRef` slot and returns an owning handle (ref_count = 1).
+pub fn hive_alloc(vm: &VirtualMachine, value: Value) -> BodyHiveHandle {
+    let _ = vm;
+    let state = crate::jsc_hooks::runtime_state();
+    debug_assert!(!state.is_null(), "hive_alloc before init_runtime_state");
+    // SAFETY: `state` is the live boxed RuntimeState; `body_value_pool` is a
+    // heap-stable `Box<HiveAllocator>` for the VM lifetime.
+    let pool = unsafe { &raw const *(*state).body_value_pool };
+    // SAFETY: `pool` outlives every handle (process lifetime).
+    unsafe { BodyHiveHandle::new(value, pool) }
 }
 
 pub const HEAP_BREAKDOWN_LABEL: &str = "BodyValue";
@@ -686,37 +684,6 @@ impl ValueError {
 }
 
 impl Value {
-    /// Decrement the refcount of the enclosing pooled `HiveRef<Value>` slot.
-    ///
-    /// `RequestContext.request_body` stores `NonNull<Value>` (the pooled
-    /// payload), but the Zig field type is `?*Body.Value.HiveRef` — the slot
-    /// header carries the refcount + pool back-pointer. Recover the parent via
-    /// `offset_of!``) and forward.
-    ///
-    /// # Safety
-    /// `self` must be the `value` field of a live `HiveRef<Value, POOL_SIZE>`
-    /// produced by `HiveRef::init`.
-    pub unsafe fn unref(&mut self) -> Option<&mut Self> {
-        let parent: *mut HiveRef =
-            bun_core::from_field_ptr!(HiveRef, value, std::ptr::from_mut::<Self>(self));
-        // SAFETY: caller contract — `self` is the `.value` field of a HiveRef slot.
-        unsafe { HiveRef::unref(parent) }.map(|p| {
-            // SAFETY: `Some` ⇒ ref_count > 0 ⇒ slot still live.
-            unsafe { &mut (*p).value }
-        })
-    }
-
-    /// See [`Value::unref`] for the safety contract.
-    pub unsafe fn ref_(&mut self) -> &mut Self {
-        let parent: *mut HiveRef =
-            bun_core::from_field_ptr!(HiveRef, value, std::ptr::from_mut::<Self>(self));
-        // SAFETY: caller contract — `self` is the `.value` field of a HiveRef slot.
-        unsafe {
-            (*parent).ref_();
-            &mut (*parent).value
-        }
-    }
-
     /// Downcast a `JSValue` to the `Body.Value` it owns, if any.
     ///
     /// Port of the `Body.Value` special-case in `JSValue.as()` (JSValue.zig:449):

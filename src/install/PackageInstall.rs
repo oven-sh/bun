@@ -1095,7 +1095,7 @@ impl<'a> PackageInstall<'a> {
             while let Some(entry) = walker.next()? {
                 match entry.kind {
                     EntryKind::Directory => {
-                        let _ = sys::mkdirat(&destination_dir_, entry.path, 0o755);
+                        let _ = sys::mkdirat(destination_dir_, entry.path, 0o755);
                     }
                     EntryKind::File => {
                         let path_len = entry.path.len();
@@ -1162,7 +1162,7 @@ impl<'a> PackageInstall<'a> {
                 self.destination_dir_subpath_buf[slash] = 0;
                 // SAFETY: NUL written above.
                 let subdir = ZStr::from_buf(&self.destination_dir_subpath_buf, slash);
-                let _ = sys::mkdirat(&destination_dir, subdir, 0o755);
+                let _ = sys::mkdirat(destination_dir, subdir, 0o755);
                 self.destination_dir_subpath_buf[slash] = SEP;
             }
         }
@@ -1680,7 +1680,7 @@ impl<'a> PackageInstall<'a> {
                                 // (and the copyfile fallback in `install()`) actually fire.
                                 match err.get_errno() {
                                     sys::E::EEXIST => {
-                                        let _ = sys::unlinkat(&destination_dir, entry.path);
+                                        let _ = sys::unlinkat(destination_dir, entry.path);
                                         sys::linkat(
                                             entry.dir,
                                             entry.basename,
@@ -1874,7 +1874,7 @@ impl<'a> PackageInstall<'a> {
                                     return Err(err.into());
                                 }
 
-                                let _ = sys::unlinkat(&destination_dir, entry.path);
+                                let _ = sys::unlinkat(destination_dir, entry.path);
                                 sys::symlinkat(entry.basename, destination_dir.fd(), entry.path)?;
                             }
 

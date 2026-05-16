@@ -963,9 +963,13 @@ pub use bun_core::errno_to_zig_err;
 pub use bun_core::{Fd, FdKind, FdNative, FdOptional, FileKind, Mode, Stdio, kind_from_mode};
 
 /// Anything that can hand out an [`Fd`] without giving up ownership: a raw
-/// `Fd`, an owning [`File`] / [`Dir`], or a reference to either. Mirrors
-/// `std::os::fd::AsFd`. The `*at()` syscall wrappers take `impl AsFd` so
-/// callers don't write `dir.fd()` boilerplate.
+/// `Fd` (which is `Copy` and non-owning), or a reference to an owning
+/// [`File`] / [`Dir`]. Mirrors `std::os::fd::AsFd`. The `*at()` syscall
+/// wrappers take `impl AsFd` so callers don't write `dir.fd()` boilerplate.
+///
+/// Deliberately not implemented for `File` / `Dir` *by value* — that would let
+/// `openat(some_dir, ..)` consume and drop-close an owned handle, defeating
+/// the point of the `&Dir` migration. Pass `&dir` instead.
 pub trait AsFd {
     fn as_fd(&self) -> Fd;
 }
@@ -975,28 +979,34 @@ impl AsFd for Fd {
         *self
     }
 }
-impl AsFd for File {
+impl AsFd for &Fd {
+    #[inline]
+    fn as_fd(&self) -> Fd {
+        **self
+    }
+}
+impl AsFd for &File {
     #[inline]
     fn as_fd(&self) -> Fd {
         self.handle
     }
 }
-impl AsFd for Dir {
+impl AsFd for &mut File {
+    #[inline]
+    fn as_fd(&self) -> Fd {
+        self.handle
+    }
+}
+impl AsFd for &Dir {
     #[inline]
     fn as_fd(&self) -> Fd {
         self.fd
     }
 }
-impl<T: AsFd + ?Sized> AsFd for &T {
+impl AsFd for &mut Dir {
     #[inline]
     fn as_fd(&self) -> Fd {
-        (**self).as_fd()
-    }
-}
-impl<T: AsFd + ?Sized> AsFd for &mut T {
-    #[inline]
-    fn as_fd(&self) -> Fd {
-        (**self).as_fd()
+        self.fd
     }
 }
 
@@ -8985,7 +8995,8 @@ pub fn renameat_concurrently_without_fallback(
 
         //  sad path: let's try to delete the folder and then rename it
         if to_dir_fd.is_valid() {
-            let _ = Dir::from_fd(to_dir_fd).delete_tree(to.as_bytes());
+            // `to_dir_fd` is borrowed from the caller; don't take ownership.
+            let _ = Dir::borrow(&to_dir_fd).delete_tree(to.as_bytes());
         } else {
             let _ = delete_tree_absolute(to.as_bytes());
         }

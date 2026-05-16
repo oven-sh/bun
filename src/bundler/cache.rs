@@ -274,11 +274,13 @@ impl Fs {
             let f = bun_sys::open_file_absolute_z(path, bun_sys::OpenFlags::READ_ONLY)
                 .map_err(bun_core::Error::from)?;
             let raw = f.handle();
-            if rfs.need_to_close_files() {
-                _owned = Some(f);
-            } else {
+            // Disarm the drop guard only when the fd actually escapes via
+            // `Entry.fd` — same condition as the `Ok(Entry { fd, .. })` below.
+            if !rfs.need_to_close_files() && feature_flags::STORE_FILE_DESCRIPTORS {
                 let _ = f.into_raw();
                 _owned = None;
+            } else {
+                _owned = Some(f);
             }
             raw
         };
@@ -396,11 +398,13 @@ impl Fs {
             };
             let raw = opened.handle();
             will_close = rfs.need_to_close_files();
-            if will_close {
-                _owned = Some(opened);
-            } else {
+            // Disarm the drop guard only when the fd actually escapes via
+            // `Entry.fd` — same condition as the `Ok(Entry { fd, .. })` below.
+            if !will_close && feature_flags::STORE_FILE_DESCRIPTORS {
                 let _ = opened.into_raw();
                 _owned = None;
+            } else {
+                _owned = Some(opened);
             }
             raw
         };

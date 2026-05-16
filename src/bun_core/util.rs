@@ -1342,9 +1342,17 @@ impl Fd {
         matches!(self.0, 0 | 1 | 2)
     }
     #[cfg(windows)]
-    #[inline]
     pub fn is_stdio(self) -> bool {
-        self == Self::stdin() || self == Self::stdout() || self == Self::stderr()
+        // Cache check first (matches `to_uv_index`): the cache reflects what the
+        // process saw at startup, even after `SetStdHandle`/`AllocConsole`.
+        if self == Self::stdin() || self == Self::stdout() || self == Self::stderr() {
+            return true;
+        }
+        // Cache may not be populated yet; fall back to a live `GetStdHandle`.
+        let handle = self.native();
+        fd::is_stdio_handle(fd::STD_INPUT_HANDLE, handle)
+            || fd::is_stdio_handle(fd::STD_OUTPUT_HANDLE, handle)
+            || fd::is_stdio_handle(fd::STD_ERROR_HANDLE, handle)
     }
 
     // ── Kind tag (Windows: bit 63 = uv/system) ───────────────────────────

@@ -42,15 +42,14 @@ use bun_sys::{
 // local shims for upstream-stub gaps
 // ───────────────────────────────────────────────────────────────────────────
 
-/// `std.fs.Dir.openDirZ(path, .{ .iterate = true })` — thin shim over
-/// `Dir::open_at`; the opts are ignored to match the original behavior.
+/// `std.fs.Dir.openDirZ(path, .{ .iterate = true })`.
 #[inline]
 fn dir_open_dir_z(
     dir: &Dir,
     path: &ZStr,
-    _opts: bun_sys::OpenDirOptions,
+    opts: bun_sys::OpenDirOptions,
 ) -> Result<Dir, bun_core::Error> {
-    dir.open_at(path.as_bytes()).map_err(Into::into)
+    dir.open_dir(path.as_bytes(), opts)
 }
 
 /// Process-lifetime bump arena for `Expr::as_string*` / `E::EString` data

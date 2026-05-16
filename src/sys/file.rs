@@ -342,9 +342,13 @@ impl File {
         }
     }
     /// Close now. Equivalent to dropping `self` but the syscall result is
-    /// observable.
+    /// observable. Skips the same sentinels as `Drop`.
     pub fn close(self) -> Maybe<()> {
-        close(self.into_raw())
+        let fd = self.into_raw();
+        if fd == Fd::INVALID || fd.is_stdio() {
+            return Ok(());
+        }
+        close(fd)
     }
     /// `File.closeAndMoveTo` — atomically rename `src` → `dest` (cwd-relative),
     /// closing the handle after the rename so `move_file_z_with_handle`'s

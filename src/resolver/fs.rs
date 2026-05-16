@@ -2168,7 +2168,7 @@ impl RealFS {
     pub fn read_directory(
         &mut self,
         dir_: &[u8],
-        handle_: Option<bun_sys::Dir>,
+        handle_: Option<&bun_sys::Dir>,
         generation: Generation,
         store_fd: bool,
     ) -> Result<*mut EntriesOption, bun_core::Error> {
@@ -2194,7 +2194,7 @@ impl RealFS {
     pub fn read_directory_with_iterator<I: DirEntryIterator>(
         &mut self,
         dir_maybe_trail_slash: &[u8],
-        maybe_handle: Option<bun_sys::Dir>,
+        maybe_handle: Option<&bun_sys::Dir>,
         generation: Generation,
         store_fd: bool,
         iterator: I,
@@ -2246,26 +2246,38 @@ impl RealFS {
         }
 
         let had_handle = maybe_handle.is_some();
-        let handle = match maybe_handle {
-            Some(h) => h,
+        // Zig: `defer { if (maybe_handle == null and (!store_fd or fs.needToCloseFiles())) handle.close(); }`
+        // Caller-supplied handles are borrowed (the caller keeps ownership).
+        // Freshly-opened ones are owned and close on drop unless the resolver
+        // is caching the fd (`store_fd && !need_to_close_files()`), in which
+        // case the fd escapes into the directory cache.
+        let _opened: Option<bun_sys::Dir>;
+        let raw: Fd;
+        let handle: &bun_sys::Dir = match maybe_handle {
+            Some(h) => {
+                _opened = None;
+                raw = Fd::INVALID;
+                let _ = raw;
+                h
+            }
             None => match self.open_dir(dir) {
-                Ok(h) => h,
+                Ok(h) => {
+                    if store_fd && !self.need_to_close_files() {
+                        raw = h.into_raw();
+                        _opened = None;
+                        bun_sys::Dir::borrow(&raw)
+                    } else {
+                        raw = Fd::INVALID;
+                        let _ = raw;
+                        _opened = Some(h);
+                        _opened.as_ref().unwrap()
+                    }
+                }
                 Err(err) => {
                     return Ok(self.read_directory_error(entries_guard.as_ref(), dir, err)?);
                 }
             },
         };
-
-        let should_close_handle = !had_handle && (!store_fd || self.need_to_close_files());
-        // PORT NOTE: Zig `defer { if (maybe_handle == null and (!store_fd or fs.needToCloseFiles())) handle.close(); }`
-        // runs on EVERY exit path including the `try`s below. We must NOT close
-        // when the caller passed `maybe_handle` (it owns the fd) or when the cache
-        // keeps the fd open (`store_fd && !need_to_close_files()`).
-        let handle = scopeguard::guard(handle, move |h| {
-            if !should_close_handle {
-                let _ = h.into_raw();
-            }
-        });
 
         // if we get this far, it's a real directory, so we can just store the dir name.
         let dir: &'static [u8] = if !had_handle {
@@ -2287,7 +2299,7 @@ impl RealFS {
             // SAFETY: BSSMap-owned, no aliasing here
             unsafe { &mut (*p).data }
         });
-        let mut entries = match self.readdir(store_fd, prev, dir, generation, &*handle, iterator) {
+        let mut entries = match self.readdir(store_fd, prev, dir, generation, handle, iterator) {
             Ok(e) => e,
             Err(err) => {
                 if let Some(existing) = in_place {

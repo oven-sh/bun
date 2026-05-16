@@ -159,6 +159,7 @@ test.concurrent(
         import X from "pkg-a" with { "resolution-mode": "require" };
         export * from "pkg-b" with { arbitrary: "val" };
         export * as ns from "pkg-c" with { another: "val" };
+        export { Foo } from "pkg-d" with { resolutionMode: "import" };
       }
       console.log("ok");
     `,

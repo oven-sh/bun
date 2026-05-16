@@ -446,8 +446,14 @@ impl Fs {
             }
             _ => {
                 let shared = self.shared_buffer();
-                match fs_mod::read_file_contents(file_handle, path, use_shared_buffer, shared, stream)
-                    .map(Contents::from)
+                match fs_mod::read_file_contents(
+                    file_handle,
+                    path,
+                    use_shared_buffer,
+                    shared,
+                    stream,
+                )
+                .map(Contents::from)
                 {
                     Ok(c) => c,
                     Err(err) => {

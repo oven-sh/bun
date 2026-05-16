@@ -345,11 +345,10 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
         let elapsed = timer.as_mut().unwrap().read();
         if elapsed > bun_core::time::NS_PER_MS * 100 {
             let mut path_buf = PathBuffer::uninit();
-            let cache_dir_path: &[u8] =
-                match sys::get_fd_path(cache_directory_fd, &mut path_buf) {
-                    Ok(p) => &p[..],
-                    Err(_) => b"it",
-                };
+            let cache_dir_path: &[u8] = match sys::get_fd_path(cache_directory_fd, &mut path_buf) {
+                Ok(p) => &p[..],
+                Err(_) => b"it",
+            };
             Output::pretty_errorln(format_args!(
                 "<r><yellow>warn<r>: Slow filesystem detected. If {} is a network drive, consider setting $BUN_INSTALL_CACHE_DIR to a local folder.",
                 bun_fmt::s(cache_dir_path)

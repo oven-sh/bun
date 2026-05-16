@@ -805,18 +805,16 @@ impl JunitReporter {
                     (bstr::BStr::new(path), err),
                 );
             }
-            bun_sys::Result::Ok(fd) => {
-                match File::write_all(&fd, &self.contents) {
-                    bun_sys::Result::Ok(()) => {}
-                    bun_sys::Result::Err(err) => {
-                        Output::err(
-                            bun_core::err!("JUnitReportFailed"),
-                            "Failed to write JUnit report to {}\n{}",
-                            (bstr::BStr::new(path), err),
-                        );
-                    }
+            bun_sys::Result::Ok(fd) => match File::write_all(&fd, &self.contents) {
+                bun_sys::Result::Ok(()) => {}
+                bun_sys::Result::Err(err) => {
+                    Output::err(
+                        bun_core::err!("JUnitReportFailed"),
+                        "Failed to write JUnit report to {}\n{}",
+                        (bstr::BStr::new(path), err),
+                    );
                 }
-            }
+            },
         }
         Ok(())
     }

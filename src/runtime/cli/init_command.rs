@@ -815,14 +815,15 @@ impl InitCommand {
             // When `package_json_file` is `Some`, it already owns the fd and
             // closes it on Drop — only the freshly-created `None` branch needs a
             // close-on-drop guard for the new fd.
-            let (fd, created_close): (Fd, Option<bun_sys::CloseOnDrop>) =
-                match package_json_file.as_ref() {
-                    Some(f) => (f.handle(), None),
-                    None => {
-                        let fd = bun_sys::File::create(Fd::cwd(), b"package.json", true)?.into_raw();
-                        (fd, Some(bun_sys::CloseOnDrop::new(fd)))
-                    }
-                };
+            let (fd, created_close): (Fd, Option<bun_sys::CloseOnDrop>) = match package_json_file
+                .as_ref()
+            {
+                Some(f) => (f.handle(), None),
+                None => {
+                    let fd = bun_sys::File::create(Fd::cwd(), b"package.json", true)?.into_raw();
+                    (fd, Some(bun_sys::CloseOnDrop::new(fd)))
+                }
+            };
             let _close = created_close;
             let mut buffer_writer = js_printer::BufferWriter::init();
             buffer_writer.append_newline = true;

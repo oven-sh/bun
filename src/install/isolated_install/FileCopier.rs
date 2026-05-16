@@ -233,8 +233,7 @@ impl FileCopier {
                     continue;
                 }
 
-                let src = match bun_sys::openat(entry.dir, entry.basename, bun_sys::O::RDONLY, 0)
-                {
+                let src = match bun_sys::openat(entry.dir, entry.basename, bun_sys::O::RDONLY, 0) {
                     sys::Result::Ok(fd) => bun_sys::File::from_fd(fd),
                     sys::Result::Err(err) => {
                         return sys::Result::Err(err);

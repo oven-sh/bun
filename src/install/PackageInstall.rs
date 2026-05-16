@@ -300,7 +300,8 @@ struct InstallDirState {
 }
 
 impl InstallDirState {
-    #[allow(dead_code)] // PORT NOTE: callers now field-project `state.walker` directly so the
+    #[allow(dead_code)]
+    // PORT NOTE: callers now field-project `state.walker` directly so the
     // `&Dir` borrow of `state.subdir` stays disjoint; kept for parity with the Zig accessor.
     #[inline]
     fn walker(&mut self) -> &mut Walker {
@@ -2433,10 +2434,7 @@ impl<'a> PackageInstall<'a> {
                             // SAFETY: NUL written above.
                             let subpath =
                                 ZStr::from_buf(&buf[..], subpath_len + 1 + b"package.json".len());
-                            break 'package_json_exists sys::exists_at(
-                                self.cache_dir,
-                                subpath,
-                            );
+                            break 'package_json_exists sys::exists_at(self.cache_dir, subpath);
                         }
                         _ => sys::directory_exists_at(self.cache_dir, self.cache_dir_subpath)
                             .unwrap_or(false),
@@ -2461,8 +2459,7 @@ impl<'a> PackageInstall<'a> {
                 // SAFETY: NUL written above.
                 let subpath =
                     ZStr::from_buf(&join_buf[..], cache_dir_subpath_without_patch_hash.len());
-                let exists =
-                    sys::directory_exists_at(self.cache_dir, subpath).unwrap_or(false);
+                let exists = sys::directory_exists_at(self.cache_dir, subpath).unwrap_or(false);
                 if exists {
                     manager.set_preinstall_state(package_id, crate::PreinstallState::Done);
                 }

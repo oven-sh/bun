@@ -1045,12 +1045,15 @@ impl Request {
         let cleanup = |req: &mut Request,
                        body_seed_ptr: *mut crate::webcore::body::HiveRef,
                        success: bool| {
+            // Snapshot before the `!success` drop — reading a `ManuallyDrop`
+            // after `ManuallyDrop::drop()` is documented use-after-drop.
+            let req_body_ptr = req.body.as_ptr();
             if !success {
                 req.finalize_without_deinit();
                 // SAFETY: `req.body` is live; this is the sole release on this path.
                 unsafe { ManuallyDrop::drop(&mut req.body) };
             }
-            if req.body.as_ptr() != body_seed_ptr {
+            if req_body_ptr != body_seed_ptr {
                 // `clone_into` `ptr::write`-overwrote `req.body`, orphaning the
                 // seed slot's +1. Recover and drop it.
                 // SAFETY: `body_seed_ptr` is a live +1 leaked by the ptr::write.
@@ -1595,10 +1598,9 @@ impl Request {
 
     pub fn clone(&self, global_this: &JSGlobalObject) -> JsResult<Box<Request>> {
         // allocator param dropped (global mimalloc)
-        // Zig does `Request.new(undefined)` then clone_into bit-overwrites the whole
-        // struct. clone_into uses `ptr::write` (no drop glue) but does `ptr::read`
-        // `req.body` first to release the seed allocation, so seed with a valid
-        // sentinel rather than `MaybeUninit`.
+        // Zig does `Request.new(undefined)` then clone_into bit-overwrites the
+        // whole struct. clone_into `ptr::write`s the new fields over the seed
+        // without reading or dropping it.
         let mut req = Box::new(Request {
             url: OwnedStringCell::new(BunString::empty()),
             headers: JsCell::new(None),

@@ -2,7 +2,7 @@
 //!
 //! Ported from `src/css/properties/font.zig`.
 //
-// Data types: FontWeight / AbsoluteFontWeight / FontSize /
+// The data types (FontWeight / AbsoluteFontWeight / FontSize /
 // AbsoluteFontSize / RelativeFontSize /
 // FontStretch / FontStretchKeyword / FontFamily / GenericFontFamily /
 // FontStyle / FontVariantCaps / LineHeight / Font / VerticalAlign /

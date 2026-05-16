@@ -123,12 +123,9 @@ test("Invalid escaped z in identifier shows helpful error message", async () => 
 });
 
 // https://github.com/oven-sh/bun/issues/30893
-// Fuzzer discovered that an invalid escape sequence where the first character
-// after `\x`, `\u`, or `\u{` is a multi-byte codepoint caused a subtract-with-
-// overflow panic in debug builds (silent wrap in release). The lexer's error
-// path computed `start + iter.i - width` without saturation; when the offending
-// character is the very first thing in the string, iter.i can be smaller than
-// the codepoint's byte width.
+// Invalid escape sequence where the first char after `\x`, `\u`, or `\u{` is a
+// multi-byte codepoint underflowed `start + iter.i - width` in the lexer's error
+// path — panic in debug, silent wrap in release.
 test("invalid \\x followed by multi-byte codepoint does not panic (#30893)", async () => {
   // Input bytes: 0x27 0x5C 0x78 0xF0 0xB9 0x91 0x9C 0x27 0xFF
   //              '    \    x    <── U+3945C ──>  '    (trailing junk)
@@ -141,6 +138,7 @@ test("invalid \\x followed by multi-byte codepoint does not panic (#30893)", asy
     env: bunEnv,
     stderr: "pipe",
     stdout: "pipe",
+    cwd: String(dir),
   });
 
   const err = stderr.toString();
@@ -160,6 +158,7 @@ test("invalid \\x with second hex digit being multi-byte codepoint does not pani
     env: bunEnv,
     stderr: "pipe",
     stdout: "pipe",
+    cwd: String(dir),
   });
 
   expect(stderr.toString()).toContain("Syntax Error");
@@ -177,6 +176,7 @@ test("invalid \\u followed by multi-byte codepoint does not panic (#30893)", asy
     env: bunEnv,
     stderr: "pipe",
     stdout: "pipe",
+    cwd: String(dir),
   });
 
   expect(stderr.toString()).toContain("Syntax Error");
@@ -194,6 +194,7 @@ test("invalid \\u{ followed by multi-byte codepoint does not panic (#30893)", as
     env: bunEnv,
     stderr: "pipe",
     stdout: "pipe",
+    cwd: String(dir),
   });
 
   expect(stderr.toString()).toContain("Syntax Error");

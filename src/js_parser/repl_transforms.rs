@@ -15,7 +15,7 @@ use bun_ast::stmt::Data as StmtData;
 use bun_ast::{B, Binding, E, Expr, ExprNodeList, G, S, Stmt};
 
 // Zig: `pub fn ReplTransforms(comptime P: type) type { return struct { ... } }`
-// — file-split mixin pattern. Round-D lowered to direct `impl P` block.
+// — file-split mixin pattern, lowered to a direct `impl P` block.
 
 use crate::p::P;
 

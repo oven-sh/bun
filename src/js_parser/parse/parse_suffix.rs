@@ -17,9 +17,9 @@ use bun_ast::op::Level;
 use bun_ast::{self as js_ast, E, Expr, ExprData, Op, OpCode, OptionalChain};
 
 // Zig: `fn ParseSuffix(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
+// — file-split mixin pattern. `const JSX: JSXTransformType` was lowered to `J: JsxT`, so this is
 // a direct `impl P` block. The 50+ per-token `t_*` helpers are private; only `parse_suffix` is
-// surfaced. Round-G un-gates the per-token bodies (same JsxT pattern as parseStmt.rs).
+// surfaced.
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Continuation {

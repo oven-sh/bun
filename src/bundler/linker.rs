@@ -12,7 +12,7 @@ use bun_paths::{self, SEP};
 // PORT NOTE: two `fs` shapes are in play here. `bun_resolver::fs` (`Fs`) holds
 // the singleton `FileSystem` / `DirnameStore`; `bun_paths::fs` (`PFs`) defines
 // the `Path`/`PathName` value types that `ImportRecord.path` is typed against.
-// Both port `src/resolver/fs.zig`; B-3 collapses them. Until then, construct
+// Both port `src/resolver/fs.zig`; until they are unified, construct
 // `import_record.path` via `PFs::Path` so the field assignment unifies.
 use bun_core::strings;
 use bun_paths::fs as PFs;

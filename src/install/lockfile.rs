@@ -635,7 +635,7 @@ impl Lockfile {
         // to `manager` (already moved into the call above for `Option<&mut PackageManager>`)
         // and the `&mut Lockfile` inside `result`. Restoring it requires the
         // `manager.as_deref_mut()` reborrow which today's `Option<&mut PackageManager>`
-        // surface forbids. Until reconciler-6, the debug round-trip is omitted.
+        // surface forbids. The debug round-trip is omitted until that reshape lands.
         // TODO(port): re-enable BUN_DEBUG_TEST_TEXT_LOCKFILE round-trip once borrowck reshape lands.
         self.load_from_bytes(manager, buf, log)
     }

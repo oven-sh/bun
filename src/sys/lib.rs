@@ -1428,9 +1428,10 @@ impl Tag {
     pub const getrlimit: Tag = Tag(105);
     pub const setrlimit: Tag = Tag(106);
     // PORT NOTE: sys.zig folds `inotify_init1`/`inotify_add_watch` under the
-    // generic `.watch` tag; `INotifyWatcher.rs` was ported against the
-    // draft-b1 enum that had a distinct `.inotify` variant. Alias to `.watch`
-    // so the JS-facing `err.syscall == "watch"` string stays node-compatible.
+    // generic `.watch` tag; `INotifyWatcher.rs` was written against an earlier
+    // version of this enum that had a distinct `.inotify` variant. Alias to
+    // `.watch` so the JS-facing `err.syscall == "watch"` string stays
+    // node-compatible.
     pub const inotify: Tag = Tag::watch;
 
     /// `@tagName(self)` — must match sys.zig spelling exactly (JS-facing

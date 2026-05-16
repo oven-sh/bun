@@ -29,7 +29,7 @@ bun_ast.workspace = true
 bun_options_types.workspace = true
 bun_paths.workspace = true
 # bun_runtime — only used in BakeSourceProvider::get_external_data, which is
-# re-gated on bun_runtime::bake::production::PerThread. Dep dropped to keep
-# this crate's transitive surface minimal during B-2.
+# gated on bun_runtime::bake::production::PerThread. Dep dropped to keep this
+# crate's transitive surface minimal.
 bun_sourcemap.workspace = true
 bun_wyhash.workspace = true

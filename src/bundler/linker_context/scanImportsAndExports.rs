@@ -799,8 +799,8 @@ pub fn scan_imports_and_exports(
                         dependencies.push(Dependency {
                             // PORT NOTE: `crate::Index` ↔ `bun_ast::Index` are both
                             // `#[repr(transparent)] u32` newtypes ported from the
-                            // same Zig `ast.Index`; bridge by `.value` until B-3
-                            // collapses them to a single re-export.
+                            // same Zig `ast.Index`; bridge through the inner u32
+                            // until they are collapsed to a single re-export.
                             source_index: bun_ast::Index(target_source_index.get()),
                             part_index: *part_index,
                         });

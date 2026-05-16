@@ -192,10 +192,9 @@ pub mod bundle_options {
     }
 }
 
-// B-3 UNIFIED: FORWARD_DECL dropped — canonical type moved down to
-// `bun_options_types::bundle_enums::ForceNodeEnv`. Re-exported so the
-// `options::ForceNodeEnv` / `bundle_options::ForceNodeEnv` paths and the
-// field on the local `BundleOptions` subset stay source-compatible.
+// Canonical type lives in `bun_options_types::bundle_enums::ForceNodeEnv`.
+// Re-exported so the `options::ForceNodeEnv` / `bundle_options::ForceNodeEnv`
+// paths and the field on the local `BundleOptions` subset stay source-compatible.
 pub use ::bun_options_types::ForceNodeEnv;
 
 /// Port of `bundler/options.zig` `Framework` (Bake) — only the

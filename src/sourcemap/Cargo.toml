@@ -30,8 +30,8 @@ bun_alloc.workspace = true
 bun_base64.workspace = true
 bun_core.workspace = true
 bun_collections.workspace = true
-# TODO(b2-blocked): bun_parsers — json::parse signature is live; wire in
-# once parse_json un-gates (currently blocked on bun_ast::Source lifetime,
+# TODO(port): bun_parsers — json::parse signature is live; wire in once
+# parse_json is enabled (currently blocked on bun_ast::Source lifetime,
 # not on bun_parsers).
 # bun_parsers.workspace = true
 bun_io.workspace = true

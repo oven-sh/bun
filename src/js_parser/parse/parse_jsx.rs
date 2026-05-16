@@ -12,7 +12,7 @@ use bun_core::err;
 use bun_core::strings;
 
 // Zig: `pub fn ParseJSXElement(comptime ...) type { return struct { ... } }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`
+// — file-split mixin pattern. `const JSX: JSXTransformType` was lowered to `J: JsxT`
 // (sealed trait + ZST), so this becomes a direct `impl` on `P` instead of a wrapper struct.
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {

@@ -1557,6 +1557,8 @@ impl RealFS {
                 };
                 let new_entry = match self.readdir(
                     false,
+                    // `handle_dir` drops at end of this block; never publish.
+                    false,
                     // SAFETY: `entries_mutex` held; `readdir` does not touch
                     // `self.entries`, so this `&mut EntryMap` is unaliased.
                     Some(unsafe { &mut *prev_map_ptr }),
@@ -2060,6 +2062,9 @@ impl RealFS {
     fn readdir<I: DirEntryIterator>(
         &mut self,
         store_fd: bool,
+        // Whether `handle`'s fd will outlive this call — false when the caller
+        // is about to close it (so a dead fd never escapes via `DirEntry.fd`).
+        publish_fd: bool,
         prev_map: Option<&mut dir_entry::EntryMap>,
         dir_: &'static [u8],
         generation: Generation,
@@ -2074,6 +2079,8 @@ impl RealFS {
 
         if store_fd {
             FileSystem::set_max_fd(handle_fd.native());
+        }
+        if publish_fd {
             dir.fd = handle_fd;
         }
 
@@ -2279,7 +2286,10 @@ impl RealFS {
             // SAFETY: BSSMap-owned, no aliasing here
             unsafe { &mut (*p).data }
         });
-        let mut entries = match self.readdir(store_fd, prev, dir, generation, handle, iterator) {
+        let publish_fd = store_fd && (had_handle || !self.need_to_close_files());
+        let mut entries = match self.readdir(
+            store_fd, publish_fd, prev, dir, generation, handle, iterator,
+        ) {
             Ok(e) => e,
             Err(err) => {
                 if let Some(existing) = in_place {
@@ -2303,7 +2313,7 @@ impl RealFS {
         }
 
         if let Some(map) = entries_guard.as_ref() {
-            if store_fd && !entries.fd.is_valid() {
+            if publish_fd && !entries.fd.is_valid() {
                 entries.fd = handle_fd;
             }
 

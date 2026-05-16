@@ -183,13 +183,6 @@ impl<'a> Transpiler<'a> {
         // resolver/lib.rs `// arena: dropped`), so nothing left to thread.
     }
 
-    /// VM-teardown: the owning `VirtualMachine` is raw-allocated and never `Drop`'d,
-    /// so free `BundleOptions` here. `resolver`/`log`/`fs`/`env` are aliased/singletons; left alone.
-    pub fn deinit(&mut self) {
-        // SAFETY: `options` is init'd and never read past `destroy()`.
-        unsafe { core::ptr::drop_in_place(&mut self.options) };
-    }
-
     /// Shared borrow of the process-lifetime `Fs::FileSystem` singleton.
     #[inline]
     pub fn fs(&self) -> &Fs::FileSystem {

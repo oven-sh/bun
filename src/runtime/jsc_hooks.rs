@@ -709,39 +709,37 @@ unsafe fn load_preloads(
         let _protected = JSValue::from_cell(promise).protected();
 
         // ── wait ────────────────────────────────────────────────────────
-        {
-            // SAFETY: per fn contract.
-            if unsafe { &*vm }.is_watcher_enabled() {
-                // pending_internal_promise can change if hot module reloading is
-                // enabled (spec VirtualMachine.zig:2248-2261).
-                // SAFETY: `el` is the live per-thread event loop.
-                let el = unsafe { &*vm }.event_loop();
-                unsafe { (*el).perform_gc() };
-                loop {
-                    // SAFETY: `pending_internal_promise` was set just above (or
-                    // swapped by HMR to another live cell); `status()` is a
-                    // read-only FFI call on a live JSC heap cell.
-                    let pip = unsafe { &*vm }.pending_internal_promise.unwrap_or(promise);
-                    if unsafe { &*pip }.status() != PromiseStatus::Pending {
-                        break;
-                    }
-                    // SAFETY: `el` is the live per-thread event loop.
-                    unsafe { (*el).tick() };
-                    let pip = unsafe { &*vm }.pending_internal_promise.unwrap_or(promise);
-                    if unsafe { &*pip }.status() == PromiseStatus::Pending {
-                        // SAFETY: per fn contract — short-lived `&mut *vm` for the
-                        // dispatched `auto_tick` hook (same shape as
-                        // `wait_for_promise` below).
-                        unsafe { (*vm).auto_tick() };
-                    }
+        // SAFETY: per fn contract.
+        if unsafe { &*vm }.is_watcher_enabled() {
+            // pending_internal_promise can change if hot module reloading is
+            // enabled (spec VirtualMachine.zig:2248-2261).
+            // SAFETY: `el` is the live per-thread event loop.
+            let el = unsafe { &*vm }.event_loop();
+            unsafe { (*el).perform_gc() };
+            loop {
+                // SAFETY: `pending_internal_promise` was set just above (or
+                // swapped by HMR to another live cell); `status()` is a
+                // read-only FFI call on a live JSC heap cell.
+                let pip = unsafe { &*vm }.pending_internal_promise.unwrap_or(promise);
+                if unsafe { &*pip }.status() != PromiseStatus::Pending {
+                    break;
                 }
-            } else {
                 // SAFETY: `el` is the live per-thread event loop.
-                unsafe { (*(*vm).event_loop()).perform_gc() };
-                // SAFETY: per fn contract — short-lived `&mut *vm`; `promise` is a
-                // live protected JSC heap cell.
-                unsafe { (*vm).wait_for_promise(AnyPromise::Internal(promise)) };
+                unsafe { (*el).tick() };
+                let pip = unsafe { &*vm }.pending_internal_promise.unwrap_or(promise);
+                if unsafe { &*pip }.status() == PromiseStatus::Pending {
+                    // SAFETY: per fn contract — short-lived `&mut *vm` for the
+                    // dispatched `auto_tick` hook (same shape as
+                    // `wait_for_promise` below).
+                    unsafe { (*vm).auto_tick() };
+                }
             }
+        } else {
+            // SAFETY: `el` is the live per-thread event loop.
+            unsafe { (*(*vm).event_loop()).perform_gc() };
+            // SAFETY: per fn contract — short-lived `&mut *vm`; `promise` is a
+            // live protected JSC heap cell.
+            unsafe { (*vm).wait_for_promise(AnyPromise::Internal(promise)) };
         }
 
         // SAFETY: `promise` is a live (still-protected) JSC heap cell.
@@ -2141,28 +2139,21 @@ fn transpile_source_code_inner(
             let args_log_nn = core::ptr::NonNull::new(args.log).expect("args.log is non-null");
             unsafe {
                 (*jsc_vm).transpiler.log = args.log;
-                {
-                    (*jsc_vm).transpiler.resolver.log = args_log_nn;
-                }
-                {
-                    (*jsc_vm).transpiler.linker.log = args.log;
-                    if let Some(pm) = (*jsc_vm).transpiler.resolver.package_manager {
-                        // TODO(blocked_on): bun_resolver::package_json::PackageManager::log
-                        // — the resolver-side stub only exposes `lockfile`/`on_wake`.
-                        let _ = pm;
-                    }
+                (*jsc_vm).transpiler.resolver.log = args_log_nn;
+                (*jsc_vm).transpiler.linker.log = args.log;
+                if let Some(pm) = (*jsc_vm).transpiler.resolver.package_manager {
+                    // TODO(blocked_on): bun_resolver::package_json::PackageManager::log
+                    // — the resolver-side stub only exposes `lockfile`/`on_wake`.
+                    let _ = pm;
                 }
             }
             let _log_guard = scopeguard::guard(jsc_vm, move |jsc_vm| unsafe {
                 (*jsc_vm).transpiler.log = old_log;
-
-                {
-                    (*jsc_vm).transpiler.resolver.log = old_log_nn;
-                    (*jsc_vm).transpiler.linker.log = old_log;
-                    if let Some(pm) = (*jsc_vm).transpiler.resolver.package_manager {
-                        // TODO(blocked_on): bun_resolver::package_json::PackageManager::log
-                        let _ = pm;
-                    }
+                (*jsc_vm).transpiler.resolver.log = old_log_nn;
+                (*jsc_vm).transpiler.linker.log = old_log;
+                if let Some(pm) = (*jsc_vm).transpiler.resolver.package_manager {
+                    // TODO(blocked_on): bun_resolver::package_json::PackageManager::log
+                    let _ = pm;
                 }
             });
 

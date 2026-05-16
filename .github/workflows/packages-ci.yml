@@ -25,6 +25,9 @@ on:
 env:
   BUN_VERSION: "canary"
 
+permissions:
+  contents: read
+
 jobs:
   bun-plugin-svelte:
     runs-on: ubuntu-latest

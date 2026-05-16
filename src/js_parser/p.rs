@@ -260,6 +260,11 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub has_import_meta: bool,
     pub has_es_module_syntax: bool,
     pub top_level_await_keyword: bun_ast::Range,
+    /// Set during the visit pass when an `await` is actually reached in
+    /// live module-scope control flow. This is distinct from
+    /// `top_level_await_keyword`, which is populated during parsing and
+    /// therefore includes awaits inside branches that DCE will eliminate.
+    pub has_live_top_level_await: bool,
     pub fn_or_arrow_data_parse: FnOrArrowDataParse,
     pub fn_or_arrow_data_visit: FnOrArrowDataVisit,
     pub fn_only_data_visit: FnOnlyDataVisit<'a>,
@@ -1370,6 +1375,37 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline]
     pub fn deoptimize_commonjs_named_exports(&mut self) {
         self.deoptimize_common_js_named_exports();
+    }
+
+    /// True iff the parser is currently parsing a statement or
+    /// expression that is itself at module top level — i.e. walking up
+    /// the scope stack reaches the real module `entry` scope without
+    /// ever crossing a function body, function args, arrow, class body,
+    /// class name, class static init, or a TypeScript namespace / enum
+    /// body. Block and with scopes don't count as crossings because
+    /// statements like `if (false) { await import(x); }` are still
+    /// logically module-scope code.
+    ///
+    /// `.entry` is overloaded: it marks both the true module scope and
+    /// TypeScript namespace / enum bodies. Namespace/enum scopes set
+    /// `ts_namespace != null` — those are function-like nested contexts
+    /// at runtime and must be treated as not-at-module-scope so the
+    /// `await` identifier upgrade doesn't misfire inside them.
+    pub fn is_at_module_scope(&self) -> bool {
+        let mut scope: Option<js_ast::StoreRef<js_ast::Scope>> = Some(self.current_scope);
+        while let Some(curr) = scope {
+            match curr.kind {
+                js_ast::scope::Kind::Entry => return curr.ts_namespace.is_none(),
+                js_ast::scope::Kind::FunctionArgs
+                | js_ast::scope::Kind::FunctionBody
+                | js_ast::scope::Kind::ClassBody
+                | js_ast::scope::Kind::ClassName
+                | js_ast::scope::Kind::ClassStaticInit => return false,
+                _ => {}
+            }
+            scope = curr.parent;
+        }
+        false
     }
 
     fn is_binding_used(&mut self, binding: Binding, default_export_ref: Ref) -> bool {
@@ -3074,7 +3110,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.scope_order_to_visit = buf.into_bump_slice();
         }
 
-        self.is_file_considered_to_have_esm_exports = !self.top_level_await_keyword.is_empty()
+        // `top_level_await_keyword` may be populated from a parse-time
+        // discovery that lives inside a branch DCE will drop. Only let
+        // it imply ESM when the output format actually allows
+        // top-level await; otherwise we'd mis-classify the file until
+        // the visit pass finishes and we can clear the keyword.
+        let tla_implies_esm =
+            !self.top_level_await_keyword.is_empty() && self.options.features.top_level_await;
+
+        self.is_file_considered_to_have_esm_exports = tla_implies_esm
             || !self.esm_export_keyword.is_empty()
             || self.options.module_type == options::ModuleType::Esm;
 
@@ -3084,7 +3128,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.has_es_module_syntax = self.has_es_module_syntax
             || self.esm_import_keyword.len > 0
             || self.esm_export_keyword.len > 0
-            || self.top_level_await_keyword.len > 0;
+            || tla_implies_esm;
 
         if let Some(factory) = self.lexer.jsx_pragma.jsx() {
             // `Span.text` is a `StoreStr` into lexer-owned source; valid for 'a.
@@ -3142,7 +3186,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else if self.esm_export_keyword.len > 0 {
             self.module_scope_mut()
                 .recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeExport);
-        } else if self.top_level_await_keyword.len > 0 {
+        } else if self.top_level_await_keyword.len > 0 && self.options.features.top_level_await {
+            // Only opt into strict mode from top-level `await` when the
+            // target output actually supports top-level await.
+            // Otherwise we could mark a module strict on the basis of
+            // an `await` that DCE will end up eliminating.
             self.module_scope_mut()
                 .recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeTopLevelAwait);
         }
@@ -9201,6 +9249,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_import_meta: false,
             has_es_module_syntax: false,
             top_level_await_keyword: bun_ast::Range::NONE,
+            has_live_top_level_await: false,
             fn_or_arrow_data_parse,
             fn_or_arrow_data_visit: FnOrArrowDataVisit::default(),
             fn_only_data_visit: FnOnlyDataVisit::default(),

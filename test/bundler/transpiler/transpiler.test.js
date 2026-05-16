@@ -3778,3 +3778,21 @@ const Layout = () => {
     expect(result).not.toContain("fn(");
   });
 });
+
+describe("malformed JSX followed by template literal (issue #30892)", () => {
+  // The JSX parser's `expected(>)` call logs a diagnostic but does not abort.
+  // When the recovery path then re-lexes the trailing backticks as a template
+  // literal, the span is too short and `raw_template_contents` used to
+  // underflow its slice and panic with
+  // "slice index starts at 5 but ends at 4".
+  it.each([
+    ["<y/``", "jsx"],
+    ["<y/`x`", "jsx"],
+    ["<y/```", "jsx"],
+    ["<y/`${1}`", "jsx"],
+    ["<y/``", "tsx"],
+  ])("reports a parse error for %j (%s loader) instead of panicking", (code, loader) => {
+    const transpiler = new Bun.Transpiler({ loader });
+    expect(() => transpiler.transformSync(code)).toThrow(/Expected|error/i);
+  });
+});

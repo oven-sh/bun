@@ -1117,7 +1117,15 @@ mod tests {
 
         // Inline allocation: ref to 2, unref to 1, unref to 0 → returned.
         // SAFETY: `pool` outlives every HiveRef created from `pool_ptr`.
-        let r = unsafe { HiveRef::init(Tracked { v: 1, drops: &drops }, pool_ptr) };
+        let r = unsafe {
+            HiveRef::init(
+                Tracked {
+                    v: 1,
+                    drops: &drops,
+                },
+                pool_ptr,
+            )
+        };
         // SAFETY: `r` is live (ref_count == 1) until the final unref returns None.
         unsafe {
             assert_eq!((*r).ref_count.get(), 1);
@@ -1131,9 +1139,33 @@ mod tests {
 
         // Heap allocation: fill the hive first, then init another.
         // SAFETY: same pool contract.
-        let inline0 = unsafe { HiveRef::init(Tracked { v: 2, drops: &drops }, pool_ptr) };
-        let inline1 = unsafe { HiveRef::init(Tracked { v: 3, drops: &drops }, pool_ptr) };
-        let heap = unsafe { HiveRef::init(Tracked { v: 4, drops: &drops }, pool_ptr) };
+        let inline0 = unsafe {
+            HiveRef::init(
+                Tracked {
+                    v: 2,
+                    drops: &drops,
+                },
+                pool_ptr,
+            )
+        };
+        let inline1 = unsafe {
+            HiveRef::init(
+                Tracked {
+                    v: 3,
+                    drops: &drops,
+                },
+                pool_ptr,
+            )
+        };
+        let heap = unsafe {
+            HiveRef::init(
+                Tracked {
+                    v: 4,
+                    drops: &drops,
+                },
+                pool_ptr,
+            )
+        };
         assert!(pool.r#in(inline0));
         assert!(pool.r#in(inline1));
         assert!(!pool.r#in(heap));
@@ -1157,7 +1189,15 @@ mod tests {
 
         // Drop releases the slot when the count hits zero.
         // SAFETY: `pool` outlives every handle.
-        let mut h = unsafe { HiveRefHandle::new(Tracked { v: 1, drops: &drops }, pool_ptr) };
+        let mut h = unsafe {
+            HiveRefHandle::new(
+                Tracked {
+                    v: 1,
+                    drops: &drops,
+                },
+                pool_ptr,
+            )
+        };
         assert_eq!(h.v, 1);
         h.v = 11;
         assert_eq!(h.v, 11);
@@ -1170,7 +1210,15 @@ mod tests {
 
         // into_raw / from_raw round-trip preserves the count.
         // SAFETY: `pool` outlives every handle.
-        let h = unsafe { HiveRefHandle::new(Tracked { v: 2, drops: &drops }, pool_ptr) };
+        let h = unsafe {
+            HiveRefHandle::new(
+                Tracked {
+                    v: 2,
+                    drops: &drops,
+                },
+                pool_ptr,
+            )
+        };
         let raw = h.into_raw();
         assert_eq!(drops.get(), 1);
         // SAFETY: `raw` carries a +1 from `into_raw`.
@@ -1180,8 +1228,24 @@ mod tests {
 
         // Heap fallback path (CAP=1, second handle spills).
         // SAFETY: `pool` outlives every handle.
-        let inline = unsafe { HiveRefHandle::new(Tracked { v: 3, drops: &drops }, pool_ptr) };
-        let heap = unsafe { HiveRefHandle::new(Tracked { v: 4, drops: &drops }, pool_ptr) };
+        let inline = unsafe {
+            HiveRefHandle::new(
+                Tracked {
+                    v: 3,
+                    drops: &drops,
+                },
+                pool_ptr,
+            )
+        };
+        let heap = unsafe {
+            HiveRefHandle::new(
+                Tracked {
+                    v: 4,
+                    drops: &drops,
+                },
+                pool_ptr,
+            )
+        };
         assert!(pool.r#in(inline.as_ptr()));
         assert!(!pool.r#in(heap.as_ptr()));
         drop(heap);

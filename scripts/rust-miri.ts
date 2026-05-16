@@ -20,8 +20,8 @@
  *   bun run rust:miri -p bun_foo   # extra args go straight to cargo miri test
  */
 
-import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 
 const repo = resolve(import.meta.dirname, "..");

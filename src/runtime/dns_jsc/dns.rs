@@ -285,7 +285,8 @@ pub mod lib_info {
                     let pos = (*request).cache.pos_in_pending();
                     this.pending_host_cache_native.with_mut(|c| {
                         let slot = c.ptr_at(pos as usize);
-                        c.put_raw(slot);
+                        // SAFETY: `pos` was alloc'd; no other token outstanding.
+                        unsafe { c.put_raw(slot) };
                     });
                 }
                 // Drop the KeepAlive + resolver ref that `GetAddrInfoRequest.init` took.

@@ -334,12 +334,17 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
         })
     }
 
-    /// Recycle a slot **without** running `T::drop`. Safe: if `value` does not
-    /// point into this hive, returns `false` and is a no-op. Use when the
-    /// caller has already moved the contents out / destructured them, or when
-    /// `T` is POD and the slot is being released on an error path before it
-    /// was fully initialized (Zig `value.* = undefined`).
-    pub fn put_raw(&self, value: *mut T) -> bool {
+    /// Recycle a slot **without** running `T::drop`. If `value` does not point
+    /// into this hive, returns `false` and is a no-op. Use when the caller has
+    /// already moved the contents out / destructured them, or when `T` is POD
+    /// and the slot is being released on an error path before it was fully
+    /// initialized (Zig `value.* = undefined`).
+    ///
+    /// # Safety
+    /// No live token ([`HiveSlot`], [`HiveBox`]) may exist for this slot — once
+    /// the `used` bit is cleared, [`alloc`](Self::alloc)/[`claim`](Self::claim)
+    /// can hand it out again, aliasing the stale token's `DerefMut`/`Drop`.
+    pub unsafe fn put_raw(&self, value: *mut T) -> bool {
         let Some(index) = self.index_of(value) else {
             return false;
         };
@@ -551,8 +556,8 @@ impl<'a, T, const CAPACITY: usize> HiveBox<'a, T, CAPACITY> {
         let this = ManuallyDrop::new(self);
         // SAFETY: `slot` is a fully-initialized `T` exclusively owned by this box.
         let value = unsafe { core::ptr::read(this.slot.as_ptr()) };
-        // Free the slot WITHOUT running `T::drop` — ownership just moved out.
-        this.owner.put_raw(this.slot.as_ptr());
+        // SAFETY: `this` is being consumed — no other token for this slot exists.
+        unsafe { this.owner.put_raw(this.slot.as_ptr()) };
         value
     }
 }
@@ -715,7 +720,8 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
     /// be POD.
     pub unsafe fn put_raw(&self, value: *mut T) {
         if CAPACITY > 0 {
-            if self.hive.put_raw(value) {
+            // SAFETY: caller contract (this fn is `unsafe`).
+            if unsafe { self.hive.put_raw(value) } {
                 return;
             }
         }
@@ -1013,7 +1019,8 @@ mod tests {
 
         // put_raw() does not drop.
         let p = a.get_init(mk(8)).unwrap();
-        assert!(a.put_raw(p.as_ptr()));
+        // SAFETY: `p` is the only token for its slot.
+        assert!(unsafe { a.put_raw(p.as_ptr()) });
         assert_eq!(drops.get(), 1);
 
         // Fallback heap path: dropped token deallocates without Drop.
@@ -1045,7 +1052,8 @@ mod tests {
             assert_eq!((*p.as_ptr()).me, p.as_ptr().cast_const());
             assert_eq!((*p.as_ptr()).tag, 1);
         }
-        assert!(a.put_raw(p.as_ptr()));
+        // SAFETY: `p` is the only token for its slot.
+        assert!(unsafe { a.put_raw(p.as_ptr()) });
 
         // Same on Fallback's heap path.
         let f = Fallback::<SelfAddr, 0>::init();
@@ -1057,6 +1065,7 @@ mod tests {
         unsafe {
             assert_eq!((*p.as_ptr()).me, p.as_ptr().cast_const());
             assert_eq!((*p.as_ptr()).tag, 2);
+            // SAFETY: `p` is the only token for its slot.
             f.put_raw(p.as_ptr());
         }
     }
@@ -1077,14 +1086,16 @@ mod tests {
         unsafe {
             assert_eq!(*p.as_ptr(), [10, 20]);
         }
-        assert!(a.put_raw(p.as_ptr()));
+        // SAFETY: `p` is the only token for its slot.
+        assert!(unsafe { a.put_raw(p.as_ptr()) });
 
         // write() returns the same address as addr().
         let slot = a.claim().unwrap();
         let pre = slot.addr().as_ptr();
         let p = slot.write([30, 40]);
         assert_eq!(pre, p.as_ptr());
-        assert!(a.put_raw(p.as_ptr()));
+        // SAFETY: `p` is the only token for its slot.
+        assert!(unsafe { a.put_raw(p.as_ptr()) });
     }
 
     #[test]
@@ -1101,8 +1112,10 @@ mod tests {
             assert_eq!(*a.at(0), 100);
             assert_eq!(*a.at(1), 200);
         }
-        assert!(a.put_raw(p0.as_ptr()));
-        assert!(a.put_raw(p1.as_ptr()));
+        // SAFETY: only token for its slot.
+        assert!(unsafe { a.put_raw(p0.as_ptr()) });
+        // SAFETY: only token for its slot.
+        assert!(unsafe { a.put_raw(p1.as_ptr()) });
     }
 
     #[test]
@@ -1393,8 +1406,10 @@ mod tests {
         let _s1 = a.get_init(1).unwrap();
         let s2 = a.get_init(2).unwrap();
         let _s3 = a.get_init(3).unwrap();
-        assert!(a.put_raw(s0.as_ptr()));
-        assert!(a.put_raw(s2.as_ptr()));
+        // SAFETY: only token for its slot.
+        assert!(unsafe { a.put_raw(s0.as_ptr()) });
+        // SAFETY: only token for its slot.
+        assert!(unsafe { a.put_raw(s2.as_ptr()) });
 
         assert_eq!(a.used.find_first_set(), Some(1));
         assert_eq!(a.used.find_first_unset(), Some(0));
@@ -1421,7 +1436,8 @@ mod tests {
             assert_eq!(a.used.find_first_set(), None);
             let p = a.get_init(7).unwrap();
             assert_eq!(*p.as_ptr(), 7);
-            assert!(a.put_raw(p.as_ptr()));
+            // SAFETY: `p` is the only token for its slot.
+            assert!(unsafe { a.put_raw(p.as_ptr()) });
         }
     }
 

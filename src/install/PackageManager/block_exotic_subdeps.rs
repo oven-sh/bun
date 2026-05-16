@@ -112,28 +112,42 @@ pub fn enforce_block_exotic_subdeps(manager: &PackageManager) -> usize {
             // attacker-controlled.
             //
             // We only trust the override's literal when the resolver's own
-            // lookup would have hit. `PackageManagerEnqueue` keys overrides
-            // off `hash(realname())` via a `match dep.version.tag` (the
-            // **specifier** tag, not the resolution tag) — for `.Git` /
-            // `.Github` / `.Tarball` specifiers, `realname()` is the
-            // `package_name` which `parse_with_tag` leaves empty until
-            // `runTasks` backfills it after the fetch, so
-            // `overrides.get(hash(""))` misses. For every other specifier
-            // tag the lookup hits (either via `dep.name_hash` directly or
-            // via a `hash(realname())` whose `realname()` equals the name),
-            // so the override **is** applied. Keying on the specifier tag
-            // here matters for overrides whose *target* is exotic: e.g. a
-            // parent that wrote `"foo": "file:../bad"` with a root override
-            // of `{foo: "git+https://..."}` has `dep.version.tag == .folder`
-            // but `dep_res_tag == .git`; gating on `dep_res_tag` would
-            // incorrectly suppress the applied override literal. It also
-            // matters for an override-to-`catalog:` target — `classify`'s
-            // catalog short-circuit only fires when `literal_raw` is
-            // `"catalog:"`, which requires propagating the override.
-            let override_applied = !matches!(
-                dep.version.tag,
-                dependency::Tag::Git | dependency::Tag::Github | dependency::Tag::Tarball,
-            );
+            // lookup would have hit. `PackageManagerEnqueue` only consults
+            // the override map when ALL of the following hold (see the
+            // `if !dependency.behavior.is_workspace() && (tag != Npm ||
+            // !npm.is_alias) { overrides.get(hash(realname())) }` block):
+            //   * the dep isn't a workspace declaration (we already skip
+            //     root/workspace parents above, so parent-side deps ARE
+            //     transitive, but `behavior.is_workspace()` can still flag
+            //     a declared workspace member reached via a folder parent —
+            //     rare but we mirror the resolver's skip),
+            //   * it isn't an npm alias (`"foo": "npm:bar@^1.0.0"` keys on
+            //     the alias target `"bar"` — `hash(realname())` — not the
+            //     alias name `"foo"`, and the resolver skips the lookup
+            //     entirely for aliases per its comment), and
+            //   * for `.Git` / `.Github` / `.Tarball` specifiers `realname()`
+            //     is the `package_name` which `parse_with_tag` leaves empty
+            //     until `runTasks` backfills it after the fetch, so
+            //     `overrides.get(hash(""))` misses.
+            // For every other specifier tag the lookup hits (either via
+            // `dep.name_hash` directly or via a `hash(realname())` whose
+            // `realname()` equals the name), so the override IS applied.
+            //
+            // Keying on the specifier tag here matters for overrides whose
+            // *target* is exotic: a parent that wrote `"foo": "file:../bad"`
+            // with a root override of `{foo: "git+https://..."}` has
+            // `dep.version.tag == .Folder` but `dep_res_tag == .Git`; gating
+            // on `dep_res_tag` would incorrectly suppress the applied
+            // override literal. It also matters for an
+            // override-to-`catalog:` target — `classify`'s catalog
+            // short-circuit only fires when `literal_raw == "catalog:"`,
+            // which requires propagating the override.
+            let override_applied = !dep.behavior.is_workspace()
+                && !matches!(
+                    dep.version.tag,
+                    dependency::Tag::Git | dependency::Tag::Github | dependency::Tag::Tarball,
+                )
+                && !dep.version.try_npm().is_some_and(|n| n.is_alias);
             let overridden = if override_applied {
                 manager.lockfile.overrides.get(dep.name_hash)
             } else {

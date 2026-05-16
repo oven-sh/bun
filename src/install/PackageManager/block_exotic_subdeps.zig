@@ -98,18 +98,26 @@ pub fn enforceBlockExoticSubdeps(manager: *PackageManager) bun.OOM!usize {
             //
             // We only trust the override's literal when the resolver's own
             // lookup would have hit. `enqueueDependencyWithMainAndSuccessFn`
-            // keys overrides off `hash(realname())` via a `switch
-            // (dep.version.tag)` (the **specifier** tag, not the resolution
-            // tag) — for `.git` / `.github` / `.tarball` specifiers,
-            // `realname()` is the `package_name` which `parseWithTag`
-            // leaves empty until `runTasks` backfills it after the fetch,
-            // so `overrides.get(hash(""))` misses. For every other
-            // specifier tag the lookup hits (either via `dep.name_hash`
-            // directly or via a `hash(realname())` whose `realname()`
-            // equals the name), so the override **is** applied. Keying on
-            // the specifier tag here matters for overrides whose *target*
-            // is exotic: a parent that wrote `"foo": "file:../bad"` with
-            // a root override of `{foo: "git+https://..."}` has
+            // only consults the override map when ALL of the following hold
+            // (see the
+            // `if !dependency.behavior.isWorkspace() and (tag != .npm or
+            // !npm.is_alias) { overrides.get(hash(realname())) }` block):
+            //   * the dep isn't a workspace declaration,
+            //   * it isn't an npm alias (`"foo": "npm:bar@^1.0.0"` keys on
+            //     the alias target `"bar"` — `hash(realname())` — not the
+            //     alias name `"foo"`, and the resolver skips the lookup
+            //     entirely for aliases), and
+            //   * for `.git` / `.github` / `.tarball` specifiers `realname()`
+            //     is the `package_name` which `parseWithTag` leaves empty
+            //     until `runTasks` backfills it after the fetch, so
+            //     `overrides.get(hash(""))` misses.
+            // For every other specifier tag the lookup hits (either via
+            // `dep.name_hash` directly or via a `hash(realname())` whose
+            // `realname()` equals the name), so the override IS applied.
+            //
+            // Keying on the specifier tag here matters for overrides whose
+            // *target* is exotic: a parent that wrote `"foo": "file:../bad"`
+            // with a root override of `{foo: "git+https://..."}` has
             // `dep.version.tag == .folder` but `dep_res_tag == .git`;
             // gating on `dep_res_tag` would incorrectly suppress the
             // applied override literal. It also matters for an
@@ -125,9 +133,14 @@ pub fn enforceBlockExoticSubdeps(manager: *PackageManager) bun.OOM!usize {
             // pointer via `|*ovr|` so the slice points into the named
             // `overridden` local and stays valid through `classify` and the
             // error-print below.
-            const override_applied = switch (dep.version.tag) {
-                .git, .github, .tarball => false,
-                else => true,
+            const override_applied = blk: {
+                if (dep.behavior.isWorkspace()) break :blk false;
+                switch (dep.version.tag) {
+                    .git, .github, .tarball => break :blk false,
+                    .npm => if (dep.version.value.npm.is_alias) break :blk false,
+                    else => {},
+                }
+                break :blk true;
             };
             const overridden = if (override_applied) manager.lockfile.overrides.get(dep.name_hash) else null;
             const literal_raw = if (overridden) |*ovr|

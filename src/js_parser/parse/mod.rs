@@ -1373,9 +1373,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             while p.lexer.token != T::TCloseBrace {
                 let key_range = p.lexer.range();
-                // SAFETY: `unsupported_key` is filled from either `p.lexer.identifier`
-                // (arena-owned for 'a) or an E::String slice8() (also arena-owned for 'a).
-                let mut unsupported_key: Option<&'a [u8]> = None;
+                // Track whether the key was unsupported without holding a slice
+                // across a `p.lexer.next()`; `key_range` + `p.source` give us
+                // the identifier/literal text without tripping over lexer
+                // buffer reuse.
+                let mut has_unsupported_key = false;
                 let supported_attribute: Option<SupportedAttribute> = 'brk: {
                     // Parse the key
                     if p.lexer.is_identifier_or_keyword() {
@@ -1388,7 +1390,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if p.lexer.identifier == b"bunBakeGraph" {
                             break 'brk Some(SupportedAttribute::BunBakeGraph);
                         }
-                        unsupported_key = Some(p.lexer.identifier);
+                        has_unsupported_key = true;
                     } else if p.lexer.token == T::TStringLiteral {
                         let estr = p.lexer.to_utf8_e_string()?;
                         let string_literal_text = estr.slice8();
@@ -1401,8 +1403,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if string_literal_text == b"bunBakeGraph" {
                             break 'brk Some(SupportedAttribute::BunBakeGraph);
                         }
-                        unsupported_key =
-                            Some(unsafe { bun_collections::detach_lifetime(string_literal_text) });
+                        has_unsupported_key = true;
                     } else {
                         p.lexer.expect(T::TIdentifier)?;
                     }
@@ -1422,18 +1423,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // "resolution-mode": "require" }`) — the whole import gets
                 // erased, and TS 5.3+ uses attributes like `resolution-mode`
                 // that are meaningful to the type checker only.
-                if let Some(key) = unsupported_key {
-                    if !is_type_only {
-                        p.log().add_range_error_fmt(
-                            Some(p.source),
-                            key_range,
-                            format_args!(
-                                "Import attribute \"{}\" with value \"{}\" is not supported",
-                                bstr::BStr::new(key),
-                                bstr::BStr::new(string_literal_text),
-                            ),
-                        );
-                    }
+                if has_unsupported_key && !is_type_only {
+                    // Grab the key text from the source — strips quotes for
+                    // string-literal keys, matching Node's error message
+                    // ("resolution-mode" not `"resolution-mode"` with quotes).
+                    let key_bytes: &[u8] = p.source.text_for_range(key_range);
+                    let key_stripped: &[u8] = if key_bytes.len() >= 2
+                        && (key_bytes[0] == b'"' || key_bytes[0] == b'\'')
+                        && key_bytes[0] == key_bytes[key_bytes.len() - 1]
+                    {
+                        &key_bytes[1..key_bytes.len() - 1]
+                    } else {
+                        key_bytes
+                    };
+                    p.log().add_range_error_fmt(
+                        Some(p.source),
+                        key_range,
+                        format_args!(
+                            "Import attribute \"{}\" with value \"{}\" is not supported",
+                            bstr::BStr::new(key_stripped),
+                            bstr::BStr::new(string_literal_text),
+                        ),
+                    );
                 }
 
                 if let Some(attr) = supported_attribute {

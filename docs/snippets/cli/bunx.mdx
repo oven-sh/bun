@@ -31,9 +31,8 @@ Execute an npm package executable (CLI), automatically installing into a global 
 
 <ParamField path="--minimum-release-age" type="number">
   Only install packages published at least N seconds ago. Supply-chain defense: skips versions that are newer than the
-  threshold. A warm `bunx` cache is treated as stale whenever this flag is set to a positive value, so a previous
-  cached install can never bypass the gate. The value `0` is the documented disable spelling and leaves the cache
-  untouched.
+  threshold. A warm `bunx` cache is treated as stale whenever this flag is set to a positive value, so a previous cached
+  install can never bypass the gate. The value `0` is the documented disable spelling and leaves the cache untouched.
 </ParamField>
 
 ### Examples

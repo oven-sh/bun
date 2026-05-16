@@ -421,7 +421,7 @@ const native = {
   },
 };
 
-const ccFn = $newZigFunction("ffi.zig", "Bun__FFI__cc", 1);
+const ccFn = $newRustFunction("ffi_body.rs", "Bun__FFI__cc", 1);
 
 function normalizePath(path) {
   if (typeof path === "string" && path?.startsWith?.("file:")) {

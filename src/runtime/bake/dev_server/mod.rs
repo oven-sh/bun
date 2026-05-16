@@ -114,19 +114,116 @@ pub enum ConsoleLogKind {
 }
 
 /// `DevServer.MessageId` — first byte of every server→client HMR frame.
-/// Discriminants MUST match `DevServer.zig` exactly (HMR wire protocol).
+/// Discriminants are part of the HMR wire protocol and must not change.
+///
+/// `src/codegen/bake-codegen.ts` reads this enum (and `IncomingMessageId`
+/// below) and emits `src/runtime/bake/generated.ts` consumed by the HMR
+/// runtimes; the per-variant doc comments are carried verbatim into that
+/// file. Keep them in sync.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum MessageId {
+    /// Version payload. Sent on connection startup. The client should issue a
+    /// hard-reload when it mismatches with its `config.version`.
     Version = b'V',
+    /// Sent on a successful bundle, containing client code, updates routes, and
+    /// changed CSS files. Emitted on the `.hot_update` topic.
+    ///
+    /// - For each server-side updated route:
+    ///   - `i32`: Route Bundle ID
+    /// - `i32`: -1 to indicate end of list
+    /// - For each route stylesheet lists affected:
+    ///   - `i32`: Route Bundle ID
+    ///   - `u32`: Length of route pattern
+    ///   - `[n]u8` UTF-8: Route pattern
+    ///   - `u32`: Number of CSS attachments: For Each
+    ///     - `[16]u8` ASCII: CSS identifier
+    /// - `i32`: -1 to indicate end of list
+    /// - `u32`: Number of CSS mutations. For Each:
+    ///   - `[16]u8` ASCII: CSS identifier
+    ///   - `u32`: Length of CSS code
+    ///   - `[n]u8` UTF-8: CSS payload
+    /// - `[n]u8` UTF-8: JS Payload. No length, rest of buffer is text.
+    ///           Can be empty if no client-side code changed.
+    ///
+    /// The first list contains route changes that require a page reload, but
+    /// frameworks can perform via `onServerSideReload`. Fallback behavior
+    /// is to call `location.reload();`
+    ///
+    /// The second list is sent to inform the current list of CSS files
+    /// reachable by a route, recalculated whenever an import is added or
+    /// removed as that can inadvertently affect the CSS list.
+    ///
+    /// The third list contains CSS mutations, which are when the underlying
+    /// CSS file itself changes.
+    ///
+    /// The JS payload is the remaining data. If defined, it can be passed to
+    /// `eval`, resulting in an object of new module callables.
     HotUpdate = b'u',
+    /// Sent when the list of errors changes.
+    ///
+    /// - `u32`: Removed errors. For Each:
+    ///   - `u32`: Error owner
+    /// - Remainder are added errors. For Each:
+    ///   - `SerializedFailure`: Error Data
     Errors = b'e',
+    /// A message from the browser. This is used to communicate.
+    /// - `u32`: Unique ID for the browser tab. Each tab gets a different ID
+    /// - `[n]u8`: Opaque bytes, untouched from `IncomingMessageId.browser_error`
     BrowserMessage = b'b',
+    /// Sent to clear the messages from `browser_error`
+    /// - For each removed ID:
+    ///   - `u32`: Unique ID for the browser tab.
     BrowserMessageClear = b'B',
+    /// Sent when a request handler error is emitted. Each route will own at
+    /// most 1 error, where sending a new request clears the original one.
+    ///
+    /// - `u32`: Removed errors. For Each:
+    ///   - `u32`: Error owner
+    /// - `u32`: Length of route pattern
+    /// - `[n]u8`: UTF-8 Route pattern
+    /// - `SerializedFailure`: The one error list for the request
     RequestHandlerError = b'h',
+    /// Payload for `incremental_visualizer.html`. Contains both graphs.
+    /// This can be accessed via `/_bun/incremental_visualizer`.
+    ///
+    /// - `u32`: Number of files in `client_graph`. For Each:
+    ///   - `u32`: Length of name. If zero then no other fields are provided.
+    ///   - `[n]u8`: File path in UTF-8 encoded text
+    ///   - `u8`: If file is stale, set 1
+    ///   - `u8`: If file is in server graph, set 1
+    ///   - `u8`: If file is in ssr graph, set 1
+    ///   - `u8`: If file is a server-side route root, set 1
+    ///   - `u8`: If file is a server-side component boundary file, set 1
+    /// - `u32`: Number of files in the server graph. For Each:
+    ///   - Repeat the same parser for the client graph
+    /// - `u32`: Number of client edges. For Each:
+    ///   - `u32`: File index of the dependency file
+    ///   - `u32`: File index of the imported file
+    /// - `u32`: Number of server edges. For Each:
+    ///   - `u32`: File index of the dependency file
+    ///   - `u32`: File index of the imported file
     Visualizer = b'v',
+    /// Payload for `memory_visualizer.html`.
+    /// This can be accessed via `/_bun/memory_visualizer`.
+    ///
+    /// - u32: incremental_graph_client
+    /// - u32: incremental_graph_server
+    /// - u32: js_code
+    /// - u32: source_maps
+    /// - u32: assets
+    /// - u32: other
+    /// - u32: devserver_tracked
+    /// - u32: process_used
+    /// - u32: system_used
+    /// - u32: system_total
     MemoryVisualizer = b'M',
+    /// Sent in response to `set_url`.
+    /// - `u32`: Route index
     SetUrlResponse = b'n',
+    /// Used for synchronization in DevServer tests, to identify when a update was
+    /// acknowledged by the watcher but intentionally took no action.
+    /// - `u8`: See bake-harness.ts WatchSynchronization enum.
     TestingWatchSynchronization = b'r',
 }
 impl MessageId {
@@ -137,15 +234,37 @@ impl MessageId {
 }
 
 /// `DevServer.IncomingMessageId` — first byte of every client→server HMR frame.
-/// Discriminants MUST match `DevServer.zig` exactly (HMR wire protocol).
+/// Discriminants are part of the HMR wire protocol and must not change.
+///
+/// Avoid changing message ID values, as some of these are hard-coded in tests.
+/// Read by `src/codegen/bake-codegen.ts`; see the note on [`MessageId`].
+///
+/// Marked `#[non_exhaustive]` because the wire can carry an unknown byte
+/// (invalid data); `bake-codegen.ts` mirrors this as a trailing `_` member in
+/// the generated TS const enum.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[non_exhaustive]
 pub enum IncomingMessageId {
+    /// Initialization packet.
+    /// - [8]u8: Source Map ID, from the client config. Encoded in HEX
+    ///
+    /// Responsibilities:
+    /// - Clear SourceMapStore's weak reference, move as a strong ref on HmrSocket.
     Init = b'i',
+    /// Subscribe to an event channel. Payload is a sequence of chars available
+    /// in HmrTopic.
     Subscribe = b's',
+    /// Emitted on client-side navigations.
+    /// Rest of payload is a UTF-8 string.
     SetUrl = b'n',
+    /// Tells the DevServer to batch events together.
     TestingBatchEvents = b'H',
+
+    /// Console log from the client
     ConsoleLog = b'l',
+    /// Tells the DevServer to unref a source map.
+    /// - `u64`: SourceMapStore key
     UnrefSourceMap = b'u',
 }
 

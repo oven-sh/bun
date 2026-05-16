@@ -19,11 +19,12 @@ use bun_core::{pretty, pretty_error, pretty_errorln};
 // ─── compiling submodules ────────────────────────────────────────────────────
 #[path = "ci_info.rs"]
 pub mod ci_info;
-/// Port of the build.zig-registered `@import("ci_info")` module (output of
-/// `src/codegen/ci_info.ts`). The Zig build emits `build/*/codegen/ci_info.zig`
-/// from a static vendor table copied from watson/ci-info@4.0.0; since the Rust
-/// build has no codegen hook for this yet, the table is hand-ported here from
-/// that generated file. Keep in sync with `src/codegen/ci_info.ts`.
+/// Hand-ported CI vendor table, copied from `watson/ci-info@4.0.0`.
+///
+/// The Zig build used to emit `build/*/codegen/ci_info.zig` from
+/// `src/codegen/ci_info.ts`; that codegen step has been removed, but
+/// `ci_info.ts` is kept as a JSON-formatted reference for the upstream vendor
+/// list. Keep this module in sync with it when bumping `watson/ci-info`.
 pub(crate) mod ci_info_generated {
     use bun_core::{getenv_z, zstr};
 

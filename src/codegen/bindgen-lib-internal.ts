@@ -805,7 +805,7 @@ export function registerFunction(opts: FuncOptions) {
   const snapshot = snapshotCallerLocation();
   const filename = stackTraceFileName(snapshot);
   expect(filename).toEndWith(".bind.ts");
-  const zigFile = path.relative(src, filename.replace(/\.bind\.ts$/, ".zig"));
+  const zigFile = path.relative(src, filename.replace(/\.bind\.ts$/, ".rs"));
   let file = files.get(zigFile);
   if (!file) {
     file = { functions: [], typedefs: [] };

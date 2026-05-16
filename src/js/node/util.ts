@@ -7,8 +7,8 @@ const { validateString, validateOneOf } = require("internal/validators");
 const { MIMEType, MIMEParams } = require("internal/util/mime");
 const { deprecate } = require("internal/util/deprecate");
 
-const internalErrorName = $newZigFunction("node_util_binding.zig", "internalErrorName", 1);
-const parseEnv = $newZigFunction("node_util_binding.zig", "parseEnv", 1);
+const internalErrorName = $newRustFunction("node_util_binding.rs", "internalErrorName", 1);
+const parseEnv = $newRustFunction("node_util_binding.rs", "parseEnv", 1);
 
 const NumberIsSafeInteger = Number.isSafeInteger;
 const ObjectKeys = Object.keys;
@@ -25,7 +25,7 @@ function isFunction(value) {
 const deepEquals = Bun.deepEquals;
 const isDeepStrictEqual = (a, b) => deepEquals(a, b, true);
 
-const parseArgs = $newZigFunction("parse_args.zig", "parseArgs", 1);
+const parseArgs = $newRustFunction("parse_args.rs", "parseArgs", 1);
 
 const inspect = utl.inspect;
 const formatWithOptions = utl.formatWithOptions;

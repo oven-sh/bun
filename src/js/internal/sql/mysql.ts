@@ -13,7 +13,7 @@ const {
   createConnection: createMySQLConnection,
   createQuery: createMySQLQuery,
   init: initMySQL,
-} = $zig("mysql.zig", "createBinding") as MySQLDotZig;
+} = $rust("mysql.rs", "createBinding") as MySQLDotZig;
 
 function wrapError(error: Error | MySQLErrorOptions) {
   if (Error.isError(error)) {

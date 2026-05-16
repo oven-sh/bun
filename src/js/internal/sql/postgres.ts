@@ -25,7 +25,7 @@ const {
   createConnection: createPostgresConnection,
   createQuery: createPostgresQuery,
   init: initPostgres,
-} = $zig("postgres.zig", "createBinding") as PostgresDotZig;
+} = $rust("postgres.rs", "createBinding") as PostgresDotZig;
 
 const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETCH", "COPY"];
 

@@ -1,7 +1,7 @@
 //! JSC host fns extracted from `src/install/npm.zig` so that `install/` has
 //! no `JSValue`/`JSGlobalObject`/`CallFrame` references. Each enum keeps a
 //! `pub const jsFunction… = @import(...)` alias so call sites and the
-//! `$newZigFunction("npm.zig", "…")` codegen path are unchanged.
+//! `$newRustFunction("npm.rs", "…")` codegen path are unchanged.
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 

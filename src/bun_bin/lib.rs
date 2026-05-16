@@ -220,9 +220,6 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         // arena is bulk-freed without running `Drop`, so the `MiniEventLoop`
         // task queue's `Box<[…]>` slab strands. Bounded (one slab per build).
         "leak:bun_event_loop::MiniEventLoop\n",
-        // Process-lifetime per-thread path scratch buffers (`Box::leak`'d into
-        // a `thread_local!` `Cell`). LSAN doesn't scan worker-thread TLS.
-        "leak:bun_paths::resolve_path::lazy_path_buf\n",
         // CLI `Transpiler` is `arena.alloc()`'d (process-lifetime; see
         // `build_command.rs` PORT NOTE) — its `BundleOptions::bundler_feature_flags`
         // `Box<StringSet>` strands when the arena bulk-frees.

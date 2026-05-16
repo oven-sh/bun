@@ -1885,42 +1885,8 @@ pub struct Range {
 
 // ───────────────────────────── Tests ─────────────────────────────
 
-// TODO(port): the Zig source defines test helper fns (`testEql`, `testBitSet`,
-// `testPureBitSet`, `testStaticBitSet`, ...) but no `test "..." {}` blocks
-// actually invoke them — dead code carried from the std fork. Ported as
-// `#[cfg(test)]` helpers; Phase B should add `#[test]` entry points or delete.
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // TODO(port): these helpers used `anytype` to accept Integer/Array/Dynamic
-    // bit sets uniformly. Rust would need a common trait. Stubbed pending
-    // Phase B trait extraction.
-
-    #[allow(dead_code)]
-    fn fill_even<const SIZE: usize, const M: usize>(set: &mut ArrayBitSet<SIZE, M>, len: usize)
-    where
-        [(); num_masks_for(SIZE)]:,
-    {
-        for i in 0..len {
-            set.set_value(i, i & 1 == 0);
-        }
-    }
-
-    #[allow(dead_code)]
-    fn fill_odd<const SIZE: usize, const M: usize>(set: &mut ArrayBitSet<SIZE, M>, len: usize)
-    where
-        [(); num_masks_for(SIZE)]:,
-    {
-        for i in 0..len {
-            set.set_value(i, i & 1 == 1);
-        }
-    }
-
-    // TODO(port): `testEql`, `testSubsetOf`, `testSupersetOf`, `testBitSet`,
-    // `testPureBitSet`, `testStaticBitSet` omitted — they rely on Zig
-    // `anytype` duck-typing across all bitset variants and `@hasField`
-    // reflection (`needs_ptr`). Re-author in Phase B against a `BitSet` trait.
-}
+// TODO(port): the Zig source's test helpers (`testEql`, `testBitSet`, …) are
+// dead code carried from the std fork — no `test` block invokes them. They
+// rely on `anytype` duck-typing; re-author against a trait when adding tests.
 
 // ported from: src/collections/bit_set.zig

@@ -880,7 +880,7 @@ mod tests {
     // TODO(port): macro-generate the full T×buffer_type matrix in Phase B.
     #[test]
     fn linear_fifo_generic_u8_static() {
-        let mut fifo: LinearFifo<u8, StaticBuffer<u8, 32>> = LinearFifo::init();
+        let mut fifo = LinearFifo::<u8, StaticBuffer<u8, 32>>::init();
 
         fifo.write(&[0, 1, 1, 0, 1]).unwrap();
         assert_eq!(5usize, fifo.readable_length());

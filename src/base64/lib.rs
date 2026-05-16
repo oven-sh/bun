@@ -420,8 +420,10 @@ pub mod zig_base64 {
     pub const URL_SAFE_ALPHABET_CHARS: [u8; 64] =
         *b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
+    // `None` pad char matches upstream `std.base64.urlSafeBase64DecoderWithIgnore`
+    // (the vendored `base64.zig` predates that fix and still passes `'='`).
     pub const fn url_safe_base64_decoder_with_ignore(ignore: &[u8]) -> Base64DecoderWithIgnore {
-        Base64DecoderWithIgnore::init(URL_SAFE_ALPHABET_CHARS, Some(b'='), ignore)
+        Base64DecoderWithIgnore::init(URL_SAFE_ALPHABET_CHARS, None, ignore)
     }
 
     /// URL-safe Base64 codecs, with padding

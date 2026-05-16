@@ -403,7 +403,17 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
     const decoder = new TextDecoder();
     let output = "";
     let sawPrompt = false;
+    let sawRestore = false;
     const promptReady = Promise.withResolvers<void>();
+    // Same race avoidance as the PTY Ctrl+C test above: proc.exited
+    // resolves when the child's exit notification arrives, independent of
+    // the PTY-master-readable event. Key the resolver on the LAST byte of
+    // the restore sequence (`\x1b[?1006l`) so all three mouse / cursor
+    // assertions are guaranteed to find their bytes in `output`. The Unix
+    // handler writes the whole 24-byte sequence in a single `write(2)`
+    // syscall so waiting on the last marker guarantees the earlier ones
+    // are present.
+    const restoreSeen = Promise.withResolvers<void>();
 
     await using terminal = new Bun.Terminal({
       cols: 120,
@@ -413,6 +423,10 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
         if (!sawPrompt && output.includes("\x1b[?25l")) {
           sawPrompt = true;
           promptReady.resolve();
+        }
+        if (!sawRestore && output.includes("\x1b[?1006l")) {
+          sawRestore = true;
+          restoreSeen.resolve();
         }
       },
     });
@@ -431,6 +445,11 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
       await Promise.race([promptReady.promise, proc.exited]);
 
       proc.kill("SIGINT");
+
+      // Wait for the full restore sequence to arrive on the PTY master
+      // (or for the subprocess to exit, so a regression fails with an
+      // assertion instead of a timeout).
+      await Promise.race([restoreSeen.promise, proc.exited]);
       const exitCode = await proc.exited;
       output += decoder.decode();
 

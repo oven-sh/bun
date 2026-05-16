@@ -112,3 +112,77 @@ it("Bun.TOML.parse throws on deeply nested inline tables instead of crashing", (
     "a = " + Buffer.alloc(depth * 6, "{ b = ").toString() + "1" + Buffer.alloc(depth * 2, " }").toString();
   expect(() => Bun.TOML.parse(deepToml)).toThrow(RangeError);
 });
+
+// #28680 — TOML multi-line strings must trim the first newline after the
+// opening delimiter and line-continuation backslashes must consume all
+// subsequent whitespace.
+it("TOML multi-line basic strings trim leading newline and handle line ending backslash", () => {
+  const toml = `
+str1 = "The quick brown fox jumps over the lazy dog."
+
+str2 = """
+The quick brown \\
+
+
+  fox jumps over \\
+    the lazy dog."""
+
+str3 = """\\
+       The quick brown \\
+       fox jumps over \\
+       the lazy dog.\\
+       """
+`;
+
+  const result = Bun.TOML.parse(toml);
+  expect(result.str1).toBe("The quick brown fox jumps over the lazy dog.");
+  expect(result.str2).toBe("The quick brown fox jumps over the lazy dog.");
+  expect(result.str3).toBe("The quick brown fox jumps over the lazy dog.");
+});
+
+it("TOML multi-line literal strings trim leading newline", () => {
+  const toml = `
+str1 = 'The quick brown fox jumps over the lazy dog.'
+
+str2 = '''
+The quick brown fox jumps over the lazy dog.'''
+`;
+
+  const result = Bun.TOML.parse(toml);
+  expect(result.str1).toBe("The quick brown fox jumps over the lazy dog.");
+  expect(result.str2).toBe("The quick brown fox jumps over the lazy dog.");
+});
+
+it("TOML multi-line basic string with only backslash continuation", () => {
+  const toml = `
+str = """\\
+  hello\\
+  world\\
+  """
+`;
+
+  const result = Bun.TOML.parse(toml);
+  expect(result.str).toBe("helloworld");
+});
+
+it("TOML multi-line strings without leading newline are unchanged", () => {
+  const toml = `
+str1 = """no leading newline"""
+str2 = '''no leading newline'''
+`;
+
+  const result = Bun.TOML.parse(toml);
+  expect(result.str1).toBe("no leading newline");
+  expect(result.str2).toBe("no leading newline");
+});
+
+it("TOML escape sequences produce correct character codes", () => {
+  const toml = `
+tab = "hello\\tworld"
+ff = "hello\\fworld"
+`;
+
+  const result = Bun.TOML.parse(toml);
+  expect(result.tab).toBe("hello\tworld");
+  expect(result.ff).toBe("hello\fworld");
+});

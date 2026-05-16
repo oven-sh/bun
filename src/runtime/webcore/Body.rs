@@ -697,20 +697,24 @@ impl Value {
     /// `self` must be the `value` field of a live `HiveRef<Value, POOL_SIZE>`
     /// produced by `HiveRef::init`.
     pub unsafe fn unref(&mut self) -> Option<&mut Self> {
+        let parent: *mut HiveRef =
+            bun_core::from_field_ptr!(HiveRef, value, std::ptr::from_mut::<Self>(self));
         // SAFETY: caller contract — `self` is the `.value` field of a HiveRef slot.
-        let parent = unsafe {
-            &mut *bun_core::from_field_ptr!(HiveRef, value, std::ptr::from_mut::<Self>(self))
-        };
-        parent.unref().map(|h| &mut h.value)
+        unsafe { HiveRef::unref(parent) }.map(|p| {
+            // SAFETY: `Some` ⇒ ref_count > 0 ⇒ slot still live.
+            unsafe { &mut (*p).value }
+        })
     }
 
     /// See [`Value::unref`] for the safety contract.
     pub unsafe fn ref_(&mut self) -> &mut Self {
+        let parent: *mut HiveRef =
+            bun_core::from_field_ptr!(HiveRef, value, std::ptr::from_mut::<Self>(self));
         // SAFETY: caller contract — `self` is the `.value` field of a HiveRef slot.
-        let parent = unsafe {
-            &mut *bun_core::from_field_ptr!(HiveRef, value, std::ptr::from_mut::<Self>(self))
-        };
-        &mut parent.ref_().value
+        unsafe {
+            (*parent).ref_();
+            &mut (*parent).value
+        }
     }
 
     /// Downcast a `JSValue` to the `Body.Value` it owns, if any.

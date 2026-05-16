@@ -842,7 +842,8 @@ impl Request {
         // zero (drops the payload in place). `body: NonNull<_>` has no Drop,
         // so this is the only release point. Deref is centralised in
         // `body_hive()`.
-        this.body_hive().unref();
+        // SAFETY: `body` is a live +1 slot (this is its only release point).
+        unsafe { BodyHiveRef::unref(std::ptr::from_mut(this.body_hive())) };
         if this.weak_ptr_data.on_finalize() {
             // Hot path: no outstanding weak refs. Reclaim and drop the whole
             // allocation in one shot — `Box::from_raw`'s drop runs
@@ -1064,13 +1065,14 @@ impl Request {
                 req.finalize_without_deinit();
                 // `req.body` is the +1 ref this fn allocated above; deref is
                 // centralised in `body_hive()`.
-                req.body_hive().unref();
+                // SAFETY: live +1 slot.
+                unsafe { BodyHiveRef::unref(std::ptr::from_mut(req.body_hive())) };
             }
             if req.body != body {
                 // SAFETY: `body` was allocated with ref_count=1 at fn entry; if
                 // `req.body` was repointed (not currently done by any path here),
                 // release the original.
-                unsafe { (*body.as_ptr()).unref() };
+                unsafe { BodyHiveRef::unref(body.as_ptr()) };
             }
         };
 
@@ -1568,7 +1570,7 @@ impl Request {
                 // Zig: `errdefer body.unref()` — `NonNull` is `Copy`, so no
                 // RAII covers this; release the +1 we just allocated.
                 // SAFETY: `body` is a fresh +1 hive slot from `hive_alloc`.
-                unsafe { (*body.as_ptr()).unref() };
+                unsafe { BodyHiveRef::unref(body.as_ptr()) };
                 return Err(e);
             }
         };

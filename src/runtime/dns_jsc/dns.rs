@@ -284,7 +284,7 @@ pub mod lib_info {
                     // POD-ness.
                     let pos = (*request).cache.pos_in_pending();
                     this.pending_host_cache_native.with_mut(|c| {
-                        let slot = c.buffer[pos as usize].as_mut_ptr();
+                        let slot = c.ptr_at(pos as usize);
                         c.put_raw(slot);
                     });
                 }
@@ -4241,7 +4241,7 @@ impl Resolver {
         // SAFETY: `used` bit is set ⇒ slot was initialized by `get_or_put_into_resolve_pending_cache`
         // + `*Request::init`. `PendingCacheKey` is POD; reading by value then unsetting the bit
         // hands ownership of the slot back to the HiveArray (Zig's `= undefined`).
-        let entry = unsafe { core::ptr::read(cache.buffer[index as usize].as_ptr()) };
+        let entry = unsafe { core::ptr::read(cache.ptr_at(index as usize)) };
         cache.used.unset(index as usize);
         entry
     }
@@ -4254,14 +4254,14 @@ impl Resolver {
     ) -> get_addr_info_request::PendingCacheKey {
         let cache = self.pending_host_cache(field);
         debug_assert!(cache.used.is_set(index as usize));
-        let entry = unsafe { core::ptr::read(cache.buffer[index as usize].as_ptr()) };
+        let entry = unsafe { core::ptr::read(cache.ptr_at(index as usize)) };
         cache.used.unset(index as usize);
         entry
     }
     fn get_key_addr(&self, index: u8) -> get_host_by_addr_info_request::PendingCacheKey {
         self.pending_addr_cache_cares.with_mut(|cache| {
             debug_assert!(cache.used.is_set(index as usize));
-            let entry = unsafe { core::ptr::read(cache.buffer[index as usize].as_ptr()) };
+            let entry = unsafe { core::ptr::read(cache.ptr_at(index as usize)) };
             cache.used.unset(index as usize);
             entry
         })
@@ -4269,7 +4269,7 @@ impl Resolver {
     fn get_key_nameinfo(&self, index: u8) -> get_name_info_request::PendingCacheKey {
         self.pending_nameinfo_cache_cares.with_mut(|cache| {
             debug_assert!(cache.used.is_set(index as usize));
-            let entry = unsafe { core::ptr::read(cache.buffer[index as usize].as_ptr()) };
+            let entry = unsafe { core::ptr::read(cache.ptr_at(index as usize)) };
             cache.used.unset(index as usize);
             entry
         })
@@ -4294,7 +4294,7 @@ impl Resolver {
             // `get_or_put_into_resolve_pending_cache` + `*Request::init`.
             // `PendingCacheKey` is POD; reading by value then unsetting the bit hands
             // ownership of the slot back to the HiveArray (Zig's `= undefined`).
-            let key = unsafe { core::ptr::read(cache.buffer[index as usize].as_ptr()) };
+            let key = unsafe { core::ptr::read(cache.ptr_at(index as usize)) };
             cache.used.unset(index as usize);
             key
         };
@@ -4612,7 +4612,7 @@ impl Resolver {
 
         while let Some(index) = inflight_iter.next() {
             // SAFETY: `used` bit is set ⇒ slot was initialized.
-            let entry = unsafe { &mut *cache.buffer[index].as_mut_ptr() };
+            let entry = unsafe { &mut *cache.ptr_at(index) };
             if R::key_hash(entry) == R::key_hash(key) && R::key_len(entry) == R::key_len(key) {
                 return LookupCacheHit::Inflight(std::ptr::from_mut(entry));
             }
@@ -4635,7 +4635,7 @@ impl Resolver {
 
         while let Some(index) = inflight_iter.next() {
             // SAFETY: `used` bit is set ⇒ slot was initialized.
-            let entry = unsafe { &mut *cache.buffer[index].as_mut_ptr() };
+            let entry = unsafe { &mut *cache.ptr_at(index) };
             if entry.hash == key.hash && entry.len == key.len {
                 return CacheHit::Inflight(std::ptr::from_mut(entry));
             }

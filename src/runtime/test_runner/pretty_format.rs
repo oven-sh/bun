@@ -1907,16 +1907,20 @@ impl<'a> Formatter<'a> {
                     );
                 }
                 Tag::Map => {
-                    let length_value = value
-                        .get(self.global_this, "size")?
-                        .unwrap_or_else(|| JSValue::js_number_from_int32(0));
-                    let length = length_value.to_int32();
+                    let is_weak = value.js_type() == JSType::WeakMap;
+                    let length = if is_weak {
+                        0
+                    } else {
+                        value
+                            .get(self.global_this, "size")?
+                            .unwrap_or_else(|| JSValue::js_number_from_int32(0))
+                            .to_int32()
+                    };
 
                     let prev_quote_strings = self.quote_strings;
                     self.quote_strings = true;
 
-                    let map_name: &str =
-                        if value.js_type() == JSType::WeakMap { "WeakMap" } else { "Map" };
+                    let map_name: &str = if is_weak { "WeakMap" } else { "Map" };
 
                     if length == 0 {
                         self.quote_strings = prev_quote_strings;
@@ -1951,18 +1955,22 @@ impl<'a> Formatter<'a> {
                     writer.write_all(b"\n");
                 }
                 Tag::Set => {
-                    let length_value = value
-                        .get(self.global_this, "size")?
-                        .unwrap_or_else(|| JSValue::js_number_from_int32(0));
-                    let length = length_value.to_int32();
+                    let is_weak = value.js_type() == JSType::WeakSet;
+                    let length = if is_weak {
+                        0
+                    } else {
+                        value
+                            .get(self.global_this, "size")?
+                            .unwrap_or_else(|| JSValue::js_number_from_int32(0))
+                            .to_int32()
+                    };
 
                     let prev_quote_strings = self.quote_strings;
                     self.quote_strings = true;
 
                     let _ = self.write_indent(writer.ctx);
 
-                    let set_name: &str =
-                        if value.js_type() == JSType::WeakSet { "WeakSet" } else { "Set" };
+                    let set_name: &str = if is_weak { "WeakSet" } else { "Set" };
 
                     if length == 0 {
                         self.quote_strings = prev_quote_strings;

@@ -1,5 +1,3 @@
-#![allow(unexpected_cfgs)] // `bun_codegen_embed` is set via RUSTFLAGS in scripts/build/rust.ts.
-
 use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_long, c_void};
 use core::fmt::{self, Write as _};

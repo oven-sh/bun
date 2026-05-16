@@ -28,8 +28,7 @@ pub fn create_binding(global_object: &JSGlobalObject) -> JSValue {
 
 // ──────────────────────────────────────────────────────────────────────────
 // Submodule tree (files use PascalCase basenames, mirroring the Zig sources;
-// wired via `#[path]`). Heavy modules remain ``-gated until their lower-
-// tier deps land — see per-module `TODO(port)` markers.
+// wired via `#[path]`).
 // ──────────────────────────────────────────────────────────────────────────
 
 #[path = "mysql/MySQLContext.rs"]

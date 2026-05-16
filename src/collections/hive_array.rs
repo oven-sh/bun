@@ -65,15 +65,19 @@ impl<const CAPACITY: usize> HiveBitSet<CAPACITY> {
         (self.masks[index / WORD_BITS].get() >> (index % WORD_BITS)) & 1 != 0
     }
 
+    /// `pub(crate)` — toggling occupancy from outside `HiveArray` while a
+    /// `HiveSlot` for the same index is alive would let a re-`claim()` alias
+    /// it. Use [`HiveArray::claim`]/[`put`](HiveArray::put)/[`take_at`](HiveArray::take_at).
     #[inline]
-    pub fn set(&self, index: usize) {
+    pub(crate) fn set(&self, index: usize) {
         debug_assert!(index < CAPACITY);
         let w = index / WORD_BITS;
         self.masks[w].set(self.masks[w].get() | (1usize << (index % WORD_BITS)));
     }
 
+    /// `pub(crate)` — see [`set`](Self::set).
     #[inline]
-    pub fn unset(&self, index: usize) {
+    pub(crate) fn unset(&self, index: usize) {
         debug_assert!(index < CAPACITY);
         let w = index / WORD_BITS;
         self.masks[w].set(self.masks[w].get() & !(1usize << (index % WORD_BITS)));
@@ -227,6 +231,22 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
                 .add(index)
                 .cast::<T>()
         }
+    }
+
+    /// Extract the value at `index` and free the slot. For pools that track
+    /// occupancy by index instead of pointer (Zig `cache[idx] = undefined`).
+    ///
+    /// # Safety
+    /// `index` must be occupied (`used` bit set) with a fully-initialized `T`,
+    /// and no other live access path (`HiveSlot`, `*mut T` from [`ptr_at`](Self::ptr_at))
+    /// to the same slot may exist.
+    #[inline]
+    pub unsafe fn take_at(&self, index: usize) -> T {
+        debug_assert!(self.used.is_set(index));
+        // SAFETY: caller contract — slot is occupied with an initialized `T`.
+        let value = unsafe { core::ptr::read(self.ptr_at(index)) };
+        self.used.unset(index);
+        value
     }
 
     /// Claim a slot and return a raw pointer to its **uninitialized** storage.

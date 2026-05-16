@@ -1436,10 +1436,8 @@ impl PackageJSON {
                                 // Exact-match keys must be normalized to match runtime paths
                                 // (callers feed `hasSideEffects` a path that is also run through
                                 // `normalize_path_for_glob` on lookup).
-                                let _ = map.insert(
-                                    StringHashMapUnownedKey::init(&normalized_pattern),
-                                    (),
-                                );
+                                let _ = map
+                                    .insert(StringHashMapUnownedKey::init(&normalized_pattern), ());
                             }
                         }
                     }
@@ -1477,10 +1475,8 @@ impl PackageJSON {
                             let pattern = r_fs.abs(&joined);
                             let normalized_pattern = Self::normalize_path_for_glob(pattern)
                                 .unwrap_or_else(|_| pattern.to_vec());
-                            let _ = map.insert(
-                                StringHashMapUnownedKey::init(&normalized_pattern),
-                                (),
-                            );
+                            let _ =
+                                map.insert(StringHashMapUnownedKey::init(&normalized_pattern), ());
                         }
                     }
                     package_json.side_effects = SideEffects::Map(map);

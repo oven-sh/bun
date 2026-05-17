@@ -2325,18 +2325,16 @@ it("should add local tarball dependency", async () => {
 
 it("should not add duplicate package.json entries when installing the same local folder twice (#30933)", async () => {
   setHandler(dummyRegistry([]));
-  // A local dependency to install — uses a sibling dir so the path survives `bun add`.
-  const dep_dir = join(package_dir, "..", "myproject");
-  await mkdir(dep_dir, { recursive: true });
+  // `add_dir` is a fresh tmpdir created in beforeEach; use it as the local dep source.
   await writeFile(
-    join(dep_dir, "package.json"),
+    join(add_dir, "package.json"),
     JSON.stringify({
       name: "myproject",
       version: "1.0.0",
       bin: { myproject: "./index.js" },
     }),
   );
-  await writeFile(join(dep_dir, "index.js"), 'console.log("hi")');
+  await writeFile(join(add_dir, "index.js"), 'console.log("hi")');
 
   await writeFile(
     join(package_dir, "package.json"),
@@ -2349,7 +2347,7 @@ it("should not add duplicate package.json entries when installing the same local
   // The positional is the absolute path; parse_with_optional_tag will tag this as `.folder`.
   // `bun add` normalises backslashes to forward slashes before writing package.json,
   // so the stored literal uses `/` on Windows too.
-  const local_path = resolve(dep_dir);
+  const local_path = resolve(add_dir);
   const stored_path = local_path.replace(/\\/g, "/");
 
   // 1st run — clean, adds one entry keyed by the resolved package name.
@@ -2382,6 +2380,8 @@ it("should not add duplicate package.json entries when installing the same local
     });
     const err = await stderr.text();
     expect(err).not.toContain("error:");
+    // The meta-hash didn't change, but `bun add` re-saves every time.
+    expect(err).toContain("Saved lockfile");
     const out = await stdout.text();
     expect(out).toContain("installed myproject@");
     expect(await exited).toBe(0);
@@ -2452,6 +2452,8 @@ it("should not add duplicate package.json entries when installing the same tarba
     });
     const err = await stderr.text();
     expect(err).not.toContain("error:");
+    // The meta-hash didn't change, but `bun add` re-saves every time.
+    expect(err).toContain("Saved lockfile");
     const out = await stdout.text();
     expect(out).toContain("installed baz@");
     expect(await exited).toBe(0);

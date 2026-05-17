@@ -722,7 +722,7 @@ pub fn edit(
                             } else {
                                 // For non-aliased positionals where `get_name()` returns the
                                 // version literal (path/URL) rather than the resolved package
-                                // name — github/git/tarball URLs and local folder/tarball
+                                // name — github/git/tarball URLs and local folder/tarball/link
                                 // paths — fall back to matching by the stored value so a
                                 // re-run doesn't append a duplicate `"<name>": "<literal>"`
                                 // key. Skipped when the user wrote `alias@url`: that form is
@@ -735,7 +735,8 @@ pub fn edit(
                                     && (request.version.tag == dependency::Tag::Github
                                         || request.version.tag == dependency::Tag::Git
                                         || request.version.tag == dependency::Tag::Tarball
-                                        || request.version.tag == dependency::Tag::Folder)
+                                        || request.version.tag == dependency::Tag::Folder
+                                        || request.version.tag == dependency::Tag::Symlink)
                                 {
                                     for item in query
                                         .expr

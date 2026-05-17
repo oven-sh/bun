@@ -1460,11 +1460,15 @@ impl Init {
             return Err(JsError::Thrown);
         }
 
-        if let Some(status_text) = response_init.fast_get_truthy(global_this, BuiltinName::statusText)? {
+        if let Some(status_text) =
+            response_init.fast_get_truthy(global_this, BuiltinName::statusText)?
+        {
             result.status_text = OwnedString::new(status_text.to_bun_string(global_this)?);
         }
 
-        if let Some(method_value) = response_init.fast_get_truthy(global_this, BuiltinName::method)? {
+        if let Some(method_value) =
+            response_init.fast_get_truthy(global_this, BuiltinName::method)?
+        {
             if let Some(method) = bun_http_jsc::method_jsc::from_js(global_this, method_value)? {
                 result.method = method;
             }

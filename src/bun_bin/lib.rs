@@ -273,23 +273,6 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         "leak:BuildMessage>::create\n",
         "leak:ResolveMessage>::create\n",
         "leak:TextDecoder>::decode_slice\n",
-        // Same category, but the GC sweep is *skipped entirely*: when JS calls
-        // `process.exit()`, `Zig__GlobalObject__destructOnExit` early-returns
-        // on `vm.entryScope != nullptr`, so JS-rooted Rust allocations are
-        // never finalized. Pre-existing in Zig; visible since the ASAN
-        // system-allocator change. Reachable from live JS objects at exit.
-        //
-        // `Bun.build()` output `BuildArtifact` (and its `Blob` `Store`) boxed
-        // in `OutputFileJsc::to_js`; freed by `JsFinalize::finalize`.
-        "leak:OutputFileJsc>::to_js\n",
-        // `Bun.Transpiler` default `BundleOptions` (e.g. `output_dir` `Box`)
-        // owned by `JSTranspiler`; freed by `JsCell::Drop`.
-        "leak:bun_bundler::options_impl::BundleOptions>::from_api\n",
-        // `Transpiler::init_in_place` clones `output_dir` into `result.outbase`
-        // (default `b"out"`, ~3 b). Freed by `Transpiler::deinit()` via the
-        // `JSTranspiler` finalizer — never reached when `process.exit()` skips
-        // the final sweep. Distinct frame from the `from_api` allocation above.
-        "leak:Transpiler>::init_in_place\n",
         // Process-lifetime: `RuntimeState.entry_point.contents` lives behind a
         // TLS `Cell<*mut>` LSan doesn't scan as a root (`Run::start` is `-> !`).
         "leak:VirtualMachine>::reload_entry_point\n",

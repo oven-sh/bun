@@ -3859,9 +3859,10 @@ extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObjec
 {
     auto& vm = JSC::getVM(globalObject);
     if (vm.entryScope) {
-        // Exiting while running JavaScript code (e.g. `process.exit()`), so we can't destroy it
-        // just now. Perhaps later in this case we can defer destruction to run later.
-        return;
+        // Exiting from inside a JS frame (process.exit()). global_exit() is noreturn so
+        // ~VMEntryScope never runs; clear it so heap.lastChanceToFinalize() (via ~VM())
+        // can run JS finalizers instead of stranding every JS-managed Rust allocation.
+        vm.entryScope = nullptr;
     }
     // Hold a Ref so the RunLoop is guaranteed to outlive the VM teardown below.
     Ref<WTF::RunLoop> runLoop = vm.runLoop();

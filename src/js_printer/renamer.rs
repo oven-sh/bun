@@ -1031,9 +1031,17 @@ impl NumberScope {
         // "name" is called "name2"
         if !collided && !normalized {
             debug_assert!(strings::eql_long(name, input_name, true));
-            self.name_counts
-                .put_no_clobber(input_name, 1)
-                .expect("unreachable");
+            debug_assert!(self.name_counts.get(input_name).is_none());
+            // SAFETY: `input_name` is `symbol.original_name.slice()` — an
+            // AST-arena slice. The AST arena (and the `ManuallyDrop<symbol::Map>`
+            // view the renamer holds over it) strictly outlives every
+            // `NumberScope` allocated from `NumberRenamer::number_scope_pool`,
+            // so the borrowed key remains valid for the map's lifetime. Zig
+            // stored the slice by value (`putNoClobber(allocator, input_name,
+            // 1)`); the Rust port previously heap-boxed a copy, which showed
+            // up as one `mi_malloc` + `mi_free` per assigned symbol in
+            // non-minify builds.
+            unsafe { self.name_counts.put_borrowed(input_name, 1) }.expect("unreachable");
             return UnusedName::NoCollision;
         }
         debug_assert!(!strings::eql_long(name, input_name, true));
@@ -1042,9 +1050,12 @@ impl NumberScope {
         let duped: &[u8] = arena.alloc_slice_copy(name);
         let name: NameStr = bun_ast::StoreStr::new(duped);
 
-        self.name_counts
-            .put_no_clobber(duped, 1)
-            .expect("unreachable");
+        debug_assert!(self.name_counts.get(duped).is_none());
+        // SAFETY: `duped` was just bump-allocated from the renamer's `arena:
+        // Bump`, which lives as long as `NumberRenamer` and is only reset on
+        // `Drop` — strictly after every `NumberScope` (and its `name_counts`)
+        // has been returned to the pool and dropped.
+        unsafe { self.name_counts.put_borrowed(duped, 1) }.expect("unreachable");
         UnusedName::Renamed(name)
     }
 }

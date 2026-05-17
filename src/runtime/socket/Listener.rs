@@ -212,11 +212,26 @@ impl Listener {
         // and return the existing JS wrapper instead of re-binding (which
         // would fail EADDRINUSE). Matches what `Bun.serve` does via
         // `ServerConfig::compute_id`/`on_reload_from_zig`. `id: null`/`""`
-        // opts out (same as `Bun.serve`).
+        // opts out (same as `Bun.serve`). User-supplied ids are namespaced
+        // with `[listen]-` so they can't collide with `Bun.serve`'s entries
+        // in the shared `HotMap` — a listen and a serve can never reuse
+        // each other (different tags), so sharing a key only causes
+        // whichever registers second to go untracked.
         let hot_id: Box<[u8]> = match opts.get(global, "id")? {
             None => compute_hot_id(socket_config.hostname_or_unix.slice(), port, ssl_enabled),
             Some(id) if id.is_null() => Box::default(),
-            Some(id) => Box::from(id.to_slice(global)?.slice()),
+            Some(id) => {
+                let slice = id.to_slice(global)?;
+                let user = slice.slice();
+                if user.is_empty() {
+                    Box::default()
+                } else {
+                    let mut buf = Vec::with_capacity(user.len() + 9);
+                    buf.extend_from_slice(b"[listen]-");
+                    buf.extend_from_slice(user);
+                    buf.into_boxed_slice()
+                }
+            }
         };
         if !hot_id.is_empty() {
             if let Some(hot) = global.bun_vm().as_mut().hot_map() {
@@ -922,11 +937,10 @@ impl Listener {
         let Some(hot) = vm.hot_map() else { return };
         // `insert_raw` panics on a duplicate key. The lookup in `listen()`
         // either returns early (reusable same-tag entry) or `do_stop`s the
-        // stale one (unref'd listener), so a same-tag collision can't reach
-        // here. A *different* tag (e.g. a `Bun.serve` with the same
-        // user-supplied `id`) falls through the tag check and still holds
-        // the key — leave that entry alone and skip registration rather
-        // than panicking.
+        // stale one (unref'd listener), and listener keys are namespaced
+        // (`[tcp]-`/`[tls]-`/`[listen]-`) so `Bun.serve` can't hold one.
+        // This check is belt-and-suspenders in case a caller somehow
+        // constructs a colliding key — skip registration rather than panic.
         if hot.get_entry(&hot_id).is_some() {
             return;
         }

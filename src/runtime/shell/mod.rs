@@ -117,6 +117,14 @@ pub mod builtins {
     pub mod which;
     #[path = "yes.rs"]
     pub mod yes;
+    #[path = "head.rs"]
+    pub mod head;
+    #[path = "tail.rs"]
+    pub mod tail;
+    #[path = "printenv.rs"]
+    pub mod printenv;
+    #[path = "realpath.rs"]
+    pub mod realpath;
 }
 
 // ─── re-exports ──────────────────────────────────────────────────────────────

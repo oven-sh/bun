@@ -3822,10 +3822,8 @@ JSC::JSPromise* JSC__JSPromise__resolvedPromise(JSC::JSGlobalObject* globalObjec
     // doesn't end up in the promise rejection tracker
     switch (promise->status()) {
     case JSC::JSPromise::Status::Rejected: {
-        uint16_t flags = promise->flags();
-        if (!(flags & JSC::JSPromise::isFirstResolvingFunctionCalledFlag)) {
-            promise->setFlags(static_cast<uint16_t>(flags | JSC::JSPromise::isHandledFlag));
-        }
+        if (!(promise->flags() & JSC::JSPromise::isFirstResolvingFunctionCalledFlag))
+            promise->markAsHandled();
     }
     // fallthrough intended
     case JSC::JSPromise::Status::Fulfilled: {
@@ -3936,8 +3934,7 @@ bool JSC__JSInternalPromise__isHandled(const JSC::JSPromise* arg0)
 void JSC__JSInternalPromise__setHandled(JSC::JSPromise* promise, JSC::VM* arg1)
 {
     UNUSED_PARAM(arg1);
-    uint16_t flags = promise->flags();
-    promise->setFlags(static_cast<uint16_t>(flags | JSC::JSPromise::isHandledFlag));
+    promise->markAsHandled();
 }
 
 #pragma mark - JSC::JSGlobalObject

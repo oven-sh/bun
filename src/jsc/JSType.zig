@@ -203,10 +203,10 @@ pub const JSType = enum(u8) {
     /// Global context for Promise.all() (new in recent WebKit).
     PromiseAllGlobalContext = 26,
 
-    /// Microtask dispatcher for promise/microtask queue management.
     /// Streaming WebAssembly compile/instantiate context (new in WebKit).
     WebAssemblyStreamingContext = 27,
 
+    /// Microtask dispatcher for promise/microtask queue management.
     JSMicrotaskDispatcher = 28,
 
     /// Module loader registry entry (new C++ module loader).

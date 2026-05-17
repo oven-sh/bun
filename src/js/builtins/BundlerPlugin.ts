@@ -256,6 +256,11 @@ export function runSetupFunction(
     const ret = callback();
     if ($isPromise(ret)) {
       if ($peekPromiseStatus(ret) != 1) {
+        // Stash the deferred promise; the aggregate handler is attached later
+        // (in loadAndResolvePluginsForServe via Promise.all). Mark it as
+        // handled now so a rejection that lands while it's only sitting in
+        // the array doesn't fire the unhandled-rejection tracker.
+        $pokePromiseAsHandled(ret);
         self.promises ??= [];
         self.promises.push(ret);
       }

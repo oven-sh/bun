@@ -137,7 +137,7 @@ declare function $peekPromiseStatus(promise: Promise<any>): number;
  * Returns the settlement value of a settled Promise (the fulfillment value
  * or the rejection reason). Returns `undefined` for a pending promise.
  */
-declare function $peekPromiseSettledValue<V>(promise: Promise<V>): V;
+declare function $peekPromiseSettledValue<V>(promise: Promise<V>): V | undefined;
 /**
  * Marks a promise as handled so it doesn't fire the unhandled-rejection
  * tracker. Equivalent to JSC's `JSPromise::markAsHandled()`.

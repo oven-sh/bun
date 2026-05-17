@@ -3899,7 +3899,13 @@ impl RunCommand {
         strings::sort_asc(&mut all_keys);
         // Park the owning maps in the runner arena (process-lifetime) so the
         // `'static` slices above remain valid without leaking/forgetting.
-        let _ = runner_arena().alloc(results);
+        let parked = runner_arena().alloc(results);
+        // Mimalloc arena pages are LSan-opaque — register the parked slot as a
+        // root so its global-heap Vec/key boxes aren't false-positive leaks.
+        bun_core::asan::register_root_region(
+            std::ptr::from_ref::<ResultList>(parked).cast(),
+            ::core::mem::size_of::<ResultList>(),
+        );
         shell_out.commands = std::borrow::Cow::Borrowed(runner_arena().alloc_slice_copy(&all_keys));
         shell_out.descriptions = std::borrow::Cow::Borrowed(runner_arena().alloc_slice_copy(
             // SAFETY: descriptions borrow into the package.json source buffer

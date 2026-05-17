@@ -165,8 +165,8 @@ pub mod group {
 
     pub fn begin_msg(args: fmt::Arguments<'_>) -> GroupGuard {
         if get_log_enabled() {
-            // TODO(port): Zig used std.fs.File.stdout().writerStreaming with a 64-byte buffer;
-            // route through bun_core::Output stdout writer in Phase B.
+            // TODO(refactor): Zig used std.fs.File.stdout().writerStreaming with a 64-byte buffer;
+            // route through bun_core::Output stdout writer.
             let mut buf: Vec<u8> = Vec::new();
             print_indent(&mut buf);
             let _ = write!(&mut buf, "\x1b[32m++ \x1b[0m");

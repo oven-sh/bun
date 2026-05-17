@@ -96,7 +96,7 @@ impl BuildCommand {
                     Vec::with_capacity(compile_define_keys.len() + define.keys.len());
                 keys.extend(compile_define_keys.iter().map(|s| Box::<[u8]>::from(*s)));
                 keys.extend(define.keys.drain(..));
-                // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
+                // PERF(port): was appendSliceAssumeCapacity — profile if it shows up on a hot path.
                 let mut values: Vec<Box<[u8]>> =
                     Vec::with_capacity(compile_define_values.len() + define.values.len());
                 values.extend(compile_define_values.iter().map(|s| Box::<[u8]>::from(*s)));
@@ -384,7 +384,7 @@ impl BuildCommand {
                     Global::exit(1);
                 }
             };
-            // TODO(port): defer dir.close() — using explicit close after use; consider RAII guard in Phase B
+            // TODO(port): defer dir.close() — using explicit close after use; consider an RAII guard.
 
             let result = match bun_sys::get_fd_path(dir, &mut src_root_dir_buf) {
                 Ok(p) => p,

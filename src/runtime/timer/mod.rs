@@ -1,13 +1,13 @@
 //! Timer subsystem: setTimeout/setInterval/setImmediate scheduling and the
 //! event-loop timer heap.
 //!
-//! B-2 un-gate (this round): structs + state machines are real. JS-facing
-//! method bodies (`set_timeout`/`clear_timer`/`warn_invalid_countdown`/etc.)
-//! remain ``-gated on `bun_jsc` (commented out in Cargo.toml).
+//! Structs + state machines are real. JS-facing method bodies
+//! (`set_timeout`/`clear_timer`/`warn_invalid_countdown`/etc.) remain
+//! ``-gated on `bun_jsc` (commented out in Cargo.toml).
 //! `All::insert`/`remove`/`update`/`get_timeout`/`drain_timers` — the surface
-//! `EventLoop::auto_tick` blocks on per keystone C — are real.
+//! `EventLoop::auto_tick` blocks on — are real.
 //!
-//! Full Phase-A drafts are preserved gated under ` mod *_draft`
+//! Full earlier drafts are preserved gated under ` mod *_draft`
 //! so this file can be diffed against `Timer.rs` once `bun_jsc` is green.
 
 use core::mem::offset_of;
@@ -25,7 +25,7 @@ use bun_threading::Mutex;
 pub use bun_event_loop::EventLoopTimer::{
     EventLoopTimer, InHeap, IntrusiveField, State as EventLoopTimerState, Tag as EventLoopTimerTag,
 };
-// TODO(b2-blocked): bun_event_loop carries a local `Timespec` stub instead of
+// TODO(port): bun_event_loop carries a local `Timespec` stub instead of
 // `bun_core::Timespec`. Same `{sec: i64, nsec: i64}` shape; alias it here so
 // `fire()`/`next` accesses type-check without a transmute. Remove once the
 // lower tier switches to `bun_core::Timespec`.
@@ -731,7 +731,7 @@ impl All {
     /// On Windows there is no epoll/kqueue fallback; this `uv_timer_t` is the
     /// ONLY thing that wakes `uv_run` for JS timers.
     ///
-    /// PORT NOTE (b2-cycle): Zig recovers `*VirtualMachine` via
+    /// PORT NOTE (jsc/runtime crate cycle): Zig recovers `*VirtualMachine` via
     /// `@fieldParentPtr("timer", this)` (the VM that *owns* this `All`) and
     /// reads `vm.uvLoop()` == `vm.event_loop_handle`. In Rust `All` is a field
     /// of `RuntimeState` (not `VirtualMachine`) and `RuntimeState` carries no
@@ -744,7 +744,7 @@ impl All {
     /// (`uv_handle_get_loop`), so the hot path is TLS-free and always targets
     /// the loop the timer was actually registered on.
     ///
-    /// TODO(b2-cycle): thread `vm: *mut VirtualMachine` through
+    /// TODO(port): thread `vm: *mut VirtualMachine` through
     /// `insert`/`insert_lock_held`/`update` (matching the Zig signature) once
     /// the `RuntimeHooks::timer_insert` slot widens — see jsc_hooks.rs.
     #[cfg(windows)]
@@ -922,7 +922,7 @@ impl All {
         // call. Spec Timer.zig:247 takes `*All` (raw pointer) for the same
         // reason.
         //
-        // TODO(b2): same caveat as `drain_timers` — the call-site auto-ref
+        // TODO(port): same caveat as `drain_timers` — the call-site auto-ref
         // still creates a `&mut All` for the call frame; switch the signature
         // to `this: *mut Self` (see jsc_hooks.rs:525).
         let this: *mut Self = self;
@@ -1043,7 +1043,7 @@ impl All {
         // re-entrant call (mirroring the raw-ptr pattern in
         // `TimerObjectInternals::run_immediate_task`).
         //
-        // TODO(b2): the call-site auto-ref at jsc_hooks.rs (`(*state).timer
+        // TODO(port): the call-site auto-ref at jsc_hooks.rs (`(*state).timer
         // .drain_timers(...)`) still creates a `&mut All` for the call frame
         // itself; switch it to `All::drain_timers(core::ptr::addr_of_mut!(
         // (*state).timer), vm)` and change this signature to `this: *mut Self`.

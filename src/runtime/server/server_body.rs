@@ -3533,7 +3533,7 @@ where
                 }
                 // IPv6 loopback addresses
                 if address.ip.starts_with(b"::ffff:127.")
-                    || address.ip.starts_with(b"::1")
+                    || address.ip == b"::1"
                     || address.ip == b"0:0:0:0:0:0:0:1"
                 {
                     break 'brk true;

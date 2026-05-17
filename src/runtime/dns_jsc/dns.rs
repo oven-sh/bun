@@ -245,7 +245,7 @@ pub mod lib_info {
             return unsafe { (*dns_lookup).promise.value() };
         }
 
-        // PERF(port): was StackFallbackAllocator(1024) — profile in Phase B
+        // PERF(port): was StackFallbackAllocator(1024) — profile if it shows up on a hot path.
         let name_z = bun::ZBox::from_bytes(query.name.as_ref());
 
         let request = GetAddrInfoRequest::init(
@@ -649,7 +649,7 @@ pub trait CAresRecordType: Sized {
 }
 
 pub struct ResolveInfoRequest<T: CAresRecordType> {
-    // TODO(port): lifetime — TSV says BORROW_PARAM → Option<&'a Resolver> (struct gets <'a>); raw ptr until Phase B reconciles with intrusive RC
+    // TODO(port): lifetime — TSV says BORROW_PARAM → Option<&'a Resolver> (struct gets <'a>); raw ptr until reconciled with intrusive RC
     pub resolver_for_caching: Option<*mut Resolver>,
     pub hash: u64,
     pub cache: CacheConfig,
@@ -798,7 +798,7 @@ impl<T: CAresRecordType> c_ares::ResolveHandler for ResolveInfoRequest<T> {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct GetHostByAddrInfoRequest {
-    // TODO(port): lifetime — TSV says BORROW_PARAM → Option<&'a Resolver>; raw ptr until Phase B
+    // TODO(port): lifetime — TSV says BORROW_PARAM → Option<&'a Resolver>; raw ptr for now
     pub resolver_for_caching: Option<*mut Resolver>,
     pub hash: u64,
     pub cache: CacheConfig,
@@ -1058,7 +1058,7 @@ impl Drop for CAresNameInfo {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct GetNameInfoRequest {
-    // TODO(port): lifetime — TSV says BORROW_PARAM → Option<&'a Resolver>; raw ptr until Phase B
+    // TODO(port): lifetime — TSV says BORROW_PARAM → Option<&'a Resolver>; raw ptr for now
     pub resolver_for_caching: Option<*mut Resolver>,
     pub hash: u64,
     pub cache: CacheConfig,
@@ -1204,7 +1204,7 @@ impl c_ares::NameinfoHandler for GetNameInfoRequest {
 
 pub struct GetAddrInfoRequest {
     pub backend: get_addr_info_request::Backend,
-    // TODO(port): lifetime — TSV says BORROW_PARAM → Option<&'a Resolver>; raw ptr until Phase B
+    // TODO(port): lifetime — TSV says BORROW_PARAM → Option<&'a Resolver>; raw ptr for now
     pub resolver_for_caching: Option<*mut Resolver>,
     pub hash: u64,
     pub cache: CacheConfig,
@@ -2202,7 +2202,7 @@ pub mod internal {
     // PORT NOTE: Zig stored a borrowed `[:0]const u8` here and only allocated in
     // `toOwned()`. We keep a raw borrow on the stack key (constructed in `init`) and
     // allocate in `to_owned()` before storing on the heap `Request`.
-    // TODO(port): lifetime — model the borrow with `<'a>` once Phase B settles ZStr ownership.
+    // TODO(port): lifetime — model the borrow with `<'a>` once ZStr ownership is settled.
     pub struct RequestKey {
         pub host: Option<*const ZStr>, // BORROW until to_owned(); never freed via this field
         /// Used for getaddrinfo() to avoid glibc UDP port 0 bug, but NOT included in hash
@@ -4056,7 +4056,7 @@ impl Resolver {
         // `&Resolver` from their stored ctx without aliasing UB.
         let deref_this = self.as_ctx_ptr();
         scopeguard::defer! {
-            // PORT NOTE (b2-cycle): low-tier `VirtualMachine.timer` is `()`;
+            // PORT NOTE (jsc/runtime crate cycle): low-tier `VirtualMachine.timer` is `()`;
             // resolve via the high-tier `RuntimeState` hook.
             let state = crate::jsc_hooks::runtime_state();
             // SAFETY: `state` is the boxed per-thread `RuntimeState`; single-threaded JS heap.
@@ -5976,7 +5976,7 @@ impl Resolver {
     ) -> JsResult<JSValue> {
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         // PORT NOTE: VirtualMachine.dns_result_order is `u8` upstream (see
-        // jsc/VirtualMachine.rs TODO(b2-cycle)); cast through Order's repr(u8).
+        // jsc/VirtualMachine.rs TODO(port)); cast through Order's repr(u8).
         let raw = global_this.bun_vm().as_mut().dns_result_order;
         let order = match raw {
             4 => Order::Ipv4first,

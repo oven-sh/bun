@@ -2521,7 +2521,7 @@ pub mod printer {
 
     /// Port of `js_printer.writePreQuotedString`.
     /// PERF(port): was comptime-monomorphized over (quote_char, ascii_only, json,
-    /// encoding); demoted to runtime params — profile in Phase B.
+    /// encoding); demoted to runtime params — profile if it shows up on a hot path.
     pub fn write_pre_quoted_string<W: PrinterWriter + ?Sized>(
         text_in: &[u8],
         writer: &mut W,
@@ -2672,7 +2672,7 @@ pub mod printer {
         bytes: &mut MutableString,
         ascii_only: bool,
     ) -> Result<(), crate::Error> {
-        // PERF(port): Zig pre-grew via estimateLengthForUTF8 — profile in Phase B.
+        // PERF(port): Zig pre-grew via estimateLengthForUTF8 — profile if it shows up on a hot path.
         bytes.append_char(b'"')?;
         write_pre_quoted_string(text, bytes, b'"', ascii_only, true, StrEncoding::Utf8)?;
         bytes.append_char(b'"').expect("unreachable");

@@ -421,7 +421,7 @@ pub enum BuilderMethod {
 
 // TODO(port): Zig conditionally typed `manager`/`workspace_filters`/`install_root_dependencies`/
 // `packages_to_install` as `void` when method != .filter. Rust const generics cannot vary field
-// types; using Option<_>/empty defaults instead. Phase B may split into two structs or use a
+// types; using Option<_>/empty defaults instead. TODO(refactor): split into two structs or use a
 // trait-associated type if the size matters.
 pub struct Builder<'a, const METHOD: BuilderMethod> {
     // PORT NOTE: Zig `std.mem.Allocator` param field dropped. Sole construction site is
@@ -515,7 +515,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         // TODO(port): Zig captured `list.bytes` raw pointer to reuse the MultiArrayList backing
         // allocation for the output `trees` slice. That optimization depends on MultiArrayList
         // internal layout. Porting the straightforward path (fresh Vec<Tree>) instead.
-        // PERF(port): was MultiArrayList buffer reuse — profile in Phase B.
+        // PERF(port): was MultiArrayList buffer reuse — profile if hot.
         let mut slice = self.list.to_owned_slice();
         let mut trees: Vec<Tree> = slice.items_tree().to_vec();
         let dependencies: &mut [DependencyIDList] = slice.items_dependencies_mut();

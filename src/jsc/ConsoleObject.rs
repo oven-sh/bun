@@ -141,7 +141,7 @@ impl ConsoleObject {
     // callers leak via `heap::alloc(Pin::into_inner_unchecked(..))` — the
     // VM owns it for the process lifetime.
     //
-    // TODO(port): Phase B — make `QuietWriterAdapter` own its 4 KiB buffer so
+    // TODO(port): make `QuietWriterAdapter` own its 4 KiB buffer so
     // the self-reference disappears and this can become `-> Self`.
     pub fn init(
         error_writer: Output::StreamType,
@@ -709,7 +709,7 @@ impl<'a> TablePrinter<'a> {
         let mut width: usize = 0;
         // PERF(port): Zig used a 512-byte discard buffer between the generic
         // writer adapter and the counter to amortize vtable calls; here we
-        // write straight into the counter. Profile in Phase B.
+        // write straight into the counter. Profile if hot.
         let mut counter = VisibleCharacterCounter { width: &mut width };
         let mut value_formatter = self.value_formatter.shallow_clone();
 
@@ -941,7 +941,7 @@ impl<'a> TablePrinter<'a> {
     ) -> JsResult<()> {
         let global_object = self.global_object;
 
-        // PERF(port): was stack-fallback alloc (16 columns) — profile in Phase B.
+        // PERF(port): was stack-fallback alloc (16 columns) — profile if hot.
         let mut columns: Vec<Column> = Vec::with_capacity(16);
         let mut _deref_names = scopeguard::guard(&mut columns, |cols| {
             for col in cols.iter_mut() {
@@ -1922,8 +1922,8 @@ pub mod formatter {
     impl core::fmt::Display for ZigFormatter<'_, '_> {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
             // TODO(port): Zig writes through `*std.Io.Writer`; here we go
-            // through `core::fmt::Write`. Phase B may need a `bun_io::Write`
-            // adapter for `core::fmt::Formatter` to keep the byte path.
+            // through `core::fmt::Write`. A `bun_io::Write` adapter for
+            // `core::fmt::Formatter` would keep the byte path.
             //
             // Move the unique `&mut Formatter` out of the cell for the body;
             // re-seat it (and clear `remaining_values`) on the way out so the
@@ -2537,7 +2537,7 @@ pub mod formatter {
 
     impl<'a> Formatter<'a> {
         // TODO(port): Zig parameterizes over `Slice` (`[]const u8` or `[]const u16`)
-        // via `comptime Slice: type`. Phase A handles only the `&[u8]` path; the
+        // via `comptime Slice: type`. Only the `&[u8]` path is handled here; the
         // UTF-16 path was unused at the call site (`slice` always comes from
         // `toSlice` → UTF-8).
         fn write_with_formatting<const ENABLE_ANSI_COLORS: bool>(
@@ -2824,7 +2824,7 @@ pub mod formatter {
 
     /// Zig: `fn WrappedWriter(comptime Writer: type) type`. We collapse the
     /// generic over `*std.Io.Writer` into `&mut dyn bun_io::Write`.
-    // PERF(port): was comptime monomorphization (`fn WrappedWriter(comptime Writer: type) type`) — profile in Phase B
+    // PERF(port): was comptime monomorphization (`fn WrappedWriter(comptime Writer: type) type`) — profile if hot.
     pub struct WrappedWriter<'w> {
         pub ctx: &'w mut dyn bun_io::Write,
         pub failed: bool,
@@ -2904,8 +2904,8 @@ pub mod formatter {
         }
 
         // TODO(port): Zig computed `length_ignoring_formatted_values` at
-        // comptime by walking the format string. We need a `const fn` /
-        // proc-macro to recover that; Phase A takes the count as a runtime
+        // comptime by walking the format string. We'd need a `const fn` /
+        // proc-macro to recover that; for now the count is a runtime
         // argument computed by the `pretty!` macro.
         pub fn pretty<const ENABLE_ANSI_COLOR: bool>(
             &mut self,
@@ -4879,7 +4879,7 @@ pub mod formatter {
                 self.depth = self.depth.saturating_add(1);
                 let _i = defer_decrement!(self.indent);
                 let _d = defer_decrement!(self.depth);
-                // PERF(port): was comptime bool dispatch on single_line — profile in Phase B
+                // PERF(port): was comptime bool dispatch on single_line — profile if hot.
                 let global_this = self.global_this;
                 if self.single_line {
                     let mut iter = MapIteratorCtx::<C, false, true> {
@@ -5247,7 +5247,7 @@ pub mod formatter {
         // TODO(port): JSX printing is large (≈230 LOC) and entirely
         // self-contained string formatting over `value.get("type"/"key"/"props"
         // /"children")`. The logic is reproduced here at the same control-flow
-        // shape; Phase B must verify against existing JSX snapshot tests
+        // shape; verify against existing JSX snapshot tests
         // (`test/js/bun/util/inspect.test.js`) before trusting the borrow-reseat
         // points.
         #[inline(never)]
@@ -5818,7 +5818,6 @@ pub mod formatter {
                 T::Uint16Array => Self::write_typed_array::<u16, C>(&mut writer, cast_slice(slice)),
                 T::Int32Array => Self::write_typed_array::<i32, C>(&mut writer, cast_slice(slice)),
                 T::Uint32Array => Self::write_typed_array::<u32, C>(&mut writer, cast_slice(slice)),
-                // TODO(port): Rust has no native f16; use `half::f16` in Phase B.
                 T::Float16Array => {
                     Self::write_typed_array::<bun_core::f16, C>(&mut writer, cast_slice(slice))
                 }

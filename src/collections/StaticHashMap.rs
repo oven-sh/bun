@@ -146,7 +146,7 @@ impl<K: Copy + Default, V: Copy + Default, Ctx, const CAPACITY: usize, const SLO
         };
         Self {
             // TODO(port): `[Entry::empty(); N]` needs `Entry<K,V>: Copy` const-init;
-            // may need `MaybeUninit` + loop in Phase B if K/V aren't const-zeroable.
+            // may need `MaybeUninit` + loop if K/V aren't const-zeroable.
             entries: [Entry::empty(); SLOTS],
             len: 0,
             shift: compute_shift(CAPACITY as u64),
@@ -817,7 +817,7 @@ fn cmp(a: [u8; 32], b: [u8; 32]) -> Ordering {
         };
     } else if a == b {
         // PERF(port): Zig uses @reduce(.And, @Vector(32,u8) ==) — `[u8;32] == [u8;32]`
-        // should vectorize identically; profile in Phase B.
+        // should vectorize identically; profile if it shows up on a hot path.
         return Ordering::Equal;
     } else {
         match u64::from_be_bytes(a[8..16].try_into().expect("infallible: size matches")).cmp(

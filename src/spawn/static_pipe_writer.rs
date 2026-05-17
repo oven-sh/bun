@@ -5,7 +5,7 @@ use bun_io::Loop as AsyncLoop;
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{BufferedWriter, WriteStatus};
-use bun_ptr::{IntrusiveRc, RawSlice, RefCount, RefCounted};
+use bun_ptr::{IntrusiveRc, RawSlice, RefCount};
 use bun_sys;
 
 use crate::process::StdioKind;
@@ -50,8 +50,8 @@ pub struct StaticPipeWriter<P: StaticPipeWriterProcess> {
     /// to know whether the start ref is still outstanding.
     pub started: bool,
     /// Slice into `self.source`'s storage, advanced as bytes are written.
-    // TODO(port): lifetime — self-borrow into `self.source`; Phase B may store an
-    // offset+len pair and re-slice from `self.source` instead of a raw self-pointer.
+    // TODO(refactor): self-borrow into `self.source`; consider storing an
+    // offset+len pair and re-slicing from `self.source` instead of a raw self-pointer.
     // `RawSlice` (typed `*const [u8]` with safe `.slice()`) replaces the raw fat
     // pointer so the per-access unsafe derefs are gone; the backing storage
     // (`self.source`) outlives `self` by construction.

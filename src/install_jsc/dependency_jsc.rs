@@ -7,7 +7,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
 
 /// Local helper: `bun_semver::String` → JS string. Mirrors
 /// `bun_semver_jsc::SemverStringJsc::to_js`, but that crate stubs its own JSC
-/// types (concurrent B-2), so its `JSGlobalObject`/`JSValue` are not the
+/// types, so its `JSGlobalObject`/`JSValue` are not the
 /// `bun_jsc` ones. Inline the body here against the real `bun_jsc` types.
 #[inline]
 fn semver_string_to_js(
@@ -153,8 +153,8 @@ pub fn dependency_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     if arguments.len() == 1 {
         return crate::update_request_jsc::from_js(global, arguments[0]);
     }
-    // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile in Phase B
-    // PERF(port): was stack-fallback (std.heap.stackFallback(1024, ...)) — profile in Phase B
+    // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile if hot
+    // PERF(port): was stack-fallback (std.heap.stackFallback(1024, ...)) — profile if hot
 
     let alias_value: JSValue = if !arguments.is_empty() {
         arguments[0]

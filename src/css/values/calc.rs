@@ -16,7 +16,7 @@ use core::cmp::Ordering;
 
 // TODO(port): `needsDeinit` / `needsDeepclone` were comptime type predicates used to gate
 // per-variant cleanup/clone in Zig. In Rust, `Drop` on `Box<V>` and `V: Clone` subsume
-// these. Kept as stubs for parity; Phase B may delete.
+// these. Kept as unused stubs for parity; safe to delete.
 pub const fn needs_deinit<V>() -> bool {
     // TODO(port): comptime type switch — not expressible in Rust; subsumed by Drop.
     true
@@ -73,7 +73,7 @@ impl CalcUnit {
     // TODO(port): phf custom hasher — case-insensitive lookup over &[u8].
     pub fn get_any_case(f: &[u8]) -> Option<Self> {
         // PERF(port): Zig used a comptime perfect hash; this is a linear match on a
-        // stack-lowercased byte slice. Phase B: phf_map! over &[u8].
+        // stack-lowercased byte slice. TODO(perf): use a phf_map! over &[u8].
         // §Strings: source bytes are &[u8], never &str/String — no from_utf8/to_ascii_lowercase().
         let (buf, len) = bun_core::strings::ascii_lowercase_buf::<5>(f)?;
         match &buf[..len] {
@@ -353,7 +353,7 @@ impl<V: CalcValue> Calc<V> {
         let location = input.current_source_location();
         // PORT NOTE: clone the token before reborrowing `input` so the function
         // name slice is owned by the cloned `Token` (whose payload already
-        // carries the Phase-A arena lifetime) instead of being laundered to
+        // carries the parser's arena lifetime) instead of being laundered to
         // `'static` here.
         let tok = input.next()?.clone();
         let unit = match tok {
@@ -574,7 +574,7 @@ impl<V: CalcValue> Calc<V> {
         ctx: C,
         parse_ident: impl Fn(C, &[u8]) -> Option<Self> + Copy,
     ) -> CssResult<Self> {
-        // PERF(port): was comptime monomorphization on `op` — profile in Phase B.
+        // PERF(port): was comptime monomorphization on `op` — profile if hot.
         input.parse_nested_block(|i| {
             let v = Self::parse_numeric(i, ctx, parse_ident)?;
             Ok(Calc::Number(match op {
@@ -744,7 +744,7 @@ impl<V: CalcValue> Calc<V> {
         ctx: C,
         parse_ident: impl Fn(C, &[u8]) -> Option<Self> + Copy,
     ) -> CssResult<Self> {
-        // PERF(port): was comptime monomorphization on `trig_fn_kind` — profile in Phase B.
+        // PERF(port): was comptime monomorphization on `trig_fn_kind` — profile if hot.
         let trig_fn = move |x: f32| -> f32 {
             match trig_fn_kind {
                 TrigFnKind::Sin => x.sin(),
@@ -886,7 +886,7 @@ impl<V: CalcValue> Calc<V> {
         Ok(val)
     }
 
-    // PERF(port): `args` was arena bulk-free (ArrayList fed input.arena()) — profile in Phase B
+    // PERF(port): `args` was arena bulk-free (ArrayList fed input.arena()) — profile if hot
     pub fn parse_hypot(args: &mut Vec<Self>) -> CssResult<Option<Self>> {
         if args.len() == 1 {
             let v = core::mem::replace(&mut args[0], Calc::Number(0.0));
@@ -1056,7 +1056,7 @@ impl<V: CalcValue> Calc<V> {
     /// I don't like how this function requires allocating a second ArrayList
     /// I am pretty sure we could do this reduction in place, or do it as the
     /// arguments are being parsed.
-    // PERF(port): `args`/`reduced` were arena bulk-free (ArrayList fed input.arena()) — profile in Phase B
+    // PERF(port): `args`/`reduced` were arena bulk-free (ArrayList fed input.arena()) — profile if hot
     fn reduce_args(args: &mut Vec<Self>, order: Ordering) {
         // Reduces the arguments of a min() or max() expression, combining compatible values.
         // e.g. min(1px, 1em, 2px, 3in) => min(1px, 1em)
@@ -1146,10 +1146,10 @@ pub enum MathFunction<V> {
     /// The `calc()` function.
     Calc(Calc<V>),
     /// The `min()` function.
-    // PERF(port): was arena bulk-free (ArrayList fed input.arena()) — profile in Phase B
+    // PERF(port): was arena bulk-free (ArrayList fed input.arena()) — profile if hot
     Min(Vec<Calc<V>>),
     /// The `max()` function.
-    // PERF(port): was arena bulk-free (ArrayList fed input.arena()) — profile in Phase B
+    // PERF(port): was arena bulk-free (ArrayList fed input.arena()) — profile if hot
     Max(Vec<Calc<V>>),
     /// The `clamp()` function.
     Clamp {
@@ -1172,7 +1172,7 @@ pub enum MathFunction<V> {
     /// The `sign()` function.
     Sign(Calc<V>),
     /// The `hypot()` function.
-    // PERF(port): was arena bulk-free (ArrayList fed input.arena()) — profile in Phase B
+    // PERF(port): was arena bulk-free (ArrayList fed input.arena()) — profile if hot
     Hypot(Vec<Calc<V>>),
 }
 
@@ -1492,7 +1492,7 @@ pub enum RoundingStrategy {
 }
 
 fn arr2<T>(a: T, b: T) -> Vec<T> {
-    // PERF(port): was arena bulk-free (ArrayList fed input.arena()) — profile in Phase B
+    // PERF(port): was arena bulk-free (ArrayList fed input.arena()) — profile if hot
     vec![a, b]
 }
 

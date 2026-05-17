@@ -4,7 +4,7 @@ use core::ffi::{c_int, c_void};
 
 // TODO(port): confirm cfg name — Zig's `bun.Environment.enable_asan` is a build-time bool;
 // mapped here to `bun_asan`. Nightly Rust has `cfg(sanitize = "address")` (unstable,
-// tracking #39699) which would be the direct equivalent; Phase B may switch to that or a
+// tracking #39699) which would be the direct equivalent; consider switching to that or a
 // custom `--cfg enable_asan` set by the build script.
 
 #[cfg(bun_asan)]

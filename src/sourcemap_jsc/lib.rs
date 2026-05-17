@@ -6,12 +6,8 @@
     clippy::all
 )]
 #![warn(unused_must_use)]
-//! B-2 un-gate: all four Phase-A draft modules are now compiled. Function bodies
-//! that depend on `bun_jsc`'s real (still-gated) method surface are individually
-//! re-gated with `` and a `// TODO(b2-blocked): bun_X::Y` marker so
-//! the rest of the module type-checks against the real lower-tier crates.
 
-// Phase-A drafts wrote `bun_core::…`; the workspace crate is `bun_string`.
+// Alias so call sites can write `bun_str::…` (string types live in `bun_core`).
 extern crate bun_core as bun_str;
 
 #[path = "CodeCoverage.rs"]

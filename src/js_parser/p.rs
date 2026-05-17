@@ -53,7 +53,7 @@ type Map<K, V> = HashMap<K, V>;
 
 /// Erases `P<'a, TS, SCAN>`'s const-generics so helpers like `JSXTag::parse`
 /// (which Zig wrote as `comptime P: type`) can take any instantiation. Only the
-/// surface those helpers actually touch is exposed; round-D widens this as the
+/// surface those helpers actually touch is exposed; widen this as the
 /// parse_* / visit_* sibling files un-gate.
 pub trait ParserLike<'a> {
     fn lexer(&mut self) -> &mut js_lexer::Lexer<'a>;
@@ -63,10 +63,10 @@ pub trait ParserLike<'a> {
     fn new_expr<T: js_ast::expr::IntoExprData>(&mut self, t: T, loc: bun_ast::Loc) -> Expr;
     fn store_name_in_ref(&mut self, name: &'a [u8]) -> Result<Ref, bun_core::Error>;
 }
-// Round-C: trait + impl defined so round-B Expr methods can bound on it. Method
-// bodies forward to the (currently-gated) inherent impls; until those un-gate
-// in round-D, calling through ParserLike panics — which is fine since no live
-// code does so yet (callers are in parse_*/visit_* which are also gated).
+// Trait + impl defined so Expr methods can bound on it. Method bodies forward
+// to the (currently-gated) inherent impls; until those un-gate, calling through
+// ParserLike panics — which is fine since no live code does so yet (callers are
+// in parse_*/visit_* which are also gated).
 impl<'a, const TS: bool, const SCAN: bool> ParserLike<'a> for P<'a, TS, SCAN> {
     #[inline]
     fn lexer(&mut self) -> &mut js_lexer::Lexer<'a> {
@@ -111,7 +111,7 @@ pub type NewParser<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> =
 // ─── Conditional field types (Zig: `if (only_scan_imports_and_do_not_visit) *T else T`) ───
 // Zig switched the field type at comptime. Rust const generics cannot select a type, so we
 // store both variants behind an enum and gate access in methods.
-// TODO(port): revisit with associated types / GATs in Phase B.
+// TODO(port): revisit with associated types / GATs.
 pub enum ImportRecordList<'a> {
     Owned(BumpVec<'a, ImportRecord>),
     Borrowed(&'a mut Vec<ImportRecord>),
@@ -585,9 +585,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub const_values: bun_ast::ast_result::ConstValuesMap,
 
     // These are backed by stack fallback allocators in _parse, and are uninitialized until then.
-    // PERF(port): was stack-fallback alloc — profile in Phase B
+    // PERF(port): was stack-fallback alloc — profile if hot.
     pub binary_expression_stack: ListManaged<'a, BinaryExpressionVisitor>,
-    // TODO(b2-blocked): SideEffects::BinaryExpressionSimplifyVisitor — round-D (SideEffects.rs)
+    // TODO(port): SideEffects::BinaryExpressionSimplifyVisitor (SideEffects.rs)
     pub binary_expression_simplify_stack: ListManaged<'a, ()>,
 
     /// We build up enough information about the TypeScript namespace hierarchy to
@@ -751,8 +751,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> Drop for P<'a, TYPESCRIP
 
 // Round-C: associated consts kept live (cheap, used by ParserLike + Parser.rs).
 // The full method-body impl block below is gated wholesale — 600+ type errors
-// from method bodies referencing not-yet-real Expr/Symbol/Log surface; round-D
-// un-gates method-groups (scope mgmt → allocate → error reporting → predicates).
+// from method bodies referencing not-yet-real Expr/Symbol/Log surface; un-gate
+// method-groups (scope mgmt → allocate → error reporting → predicates) as
+// that surface lands.
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub const IS_TYPESCRIPT_ENABLED: bool = TYPESCRIPT;
     pub const ONLY_SCAN_IMPORTS_AND_DO_NOT_VISIT: bool = SCAN_ONLY;
@@ -923,7 +924,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 // stay individually ` // blocked_on:` below.
 // ═══════════════════════════════════════════════════════════════════════════
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    pub const ALLOW_MACROS: bool = true /* TODO(b2-blocked): feature_flag::IS_MACRO_ENABLED */;
+    pub const ALLOW_MACROS: bool = true /* TODO(port): feature_flag::IS_MACRO_ENABLED */;
 
     /// use this instead of checking p.source.index
     /// because when not bundling, p.source.index is `0`
@@ -1388,7 +1389,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // ─── Parser.rs `_parse` calls these names (commonjs as one word); other ───
     // ─── visit modules call the `_common_js_` two-word forms above. Keep    ───
-    // ─── both spellings until round-E reconciles call sites.               ───
+    // ─── both spellings until call sites are reconciled.                   ───
     #[inline]
     pub fn should_unwrap_commonjs_to_esm(&self) -> bool {
         self.should_unwrap_common_js_to_esm()
@@ -1633,7 +1634,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    // s() lives in the round-C live block above (deduped).
+    // s() lives in the impl block above (deduped).
 
     fn compute_character_frequency(&mut self) -> Option<js_ast::CharFreq> {
         if !self.options.features.minify_identifiers || self.is_source_runtime() {
@@ -1693,7 +1694,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Some(freq)
     }
 
-    // new_expr() lives in the round-C live block above (deduped). The
+    // new_expr() lives in the impl block above (deduped). The
     // SCAN_ONLY require("...") sniff branch is restored there once
     // IntoExprData::as_e_call() lands.
 
@@ -2141,7 +2142,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Sym: GenerateImportSymbols,
     {
         // TODO(port): `imports: anytype` + `symbols: anytype` — modeled via a helper trait;
-        // Phase B should verify shapes match the two call sites (RuntimeImports vs map).
+        // verify shapes match the two call sites (RuntimeImports vs map).
         let arena = self.arena;
         let imports = imports.as_ref();
         let import_record_i =
@@ -3247,12 +3248,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.declare_generated_symbol(js_ast::symbol::Kind::Other, b"$RefreshReg$")?;
         }
 
-        // blocked_on: `options::ServerComponents` is a Phase-A stub struct
-        // (parser.rs:195) — Zig has a 5-variant enum (None / ClientSide /
-        // WrapExportsForClientReference / WrapAnonServerFunctions /
-        // WrapExportsForServerReference). The two switches below un-gate once
-        // that enum is ported into options::JSX or bundler::options.
-
         {
             match self.options.features.server_components {
                 options::ServerComponents::None | options::ServerComponents::ClientSide => {}
@@ -3285,7 +3280,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     });
                 }
             }
-        } // end 
+        }
 
         if self.options.features.hot_module_reloading {
             self.hmr_api_ref =
@@ -3742,7 +3737,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // from expression to binding should be written to "invalidLog" instead. That
     // way we can potentially keep this as an expression if it turns out it's not
     // needed as a binding after all.
-    // round-D: needs ArrayBinding (B.rs gated trait), Flags::PropertyInit
+    // TODO(port): needs ArrayBinding (B.rs gated trait), Flags::PropertyInit
     fn convert_expr_to_binding(
         &mut self,
         expr: ExprNodeIndex,
@@ -3890,7 +3885,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         None
     }
 
-    // round-D: heavy body, depends on parse_*/visit_*/ImportScanner/full E surface
+    // TODO(port): heavy body, depends on parse_*/visit_*/ImportScanner/full E surface
     pub fn convert_expr_to_binding_and_initializer(
         &mut self,
         _expr: &mut ExprNodeIndex,
@@ -3943,7 +3938,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline]
     pub fn mark_type_script_only(&self) {
         // TODO(port): Zig used @compileError; const-generic specialization can't express
-        // a compile error in Rust. Phase B may move TS-only methods behind a trait.
+        // a compile error in Rust. Could move TS-only methods behind a trait.
         if !TYPESCRIPT {
             unreachable!();
         }
@@ -4006,7 +4001,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
         was_originally_bare_import: bool,
     ) -> Result<Stmt, bun_core::Error> {
-        let is_macro = true /* TODO(b2-blocked): feature_flag::IS_MACRO_ENABLED */ && (path.is_macro || crate::Macro::is_macro_path(path.text));
+        let is_macro = true /* TODO(port): feature_flag::IS_MACRO_ENABLED */ && (path.is_macro || crate::Macro::is_macro_path(path.text));
         let mut stmt = stmt_;
         if is_macro {
             let id = self.add_import_record(ImportKind::Stmt, path.loc, path.text);
@@ -5109,7 +5104,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    // load_name_from_ref() lives in the round-C live block above (deduped).
+    // load_name_from_ref() lives in the impl block above (deduped).
 
     #[inline]
     pub fn add_import_record(
@@ -5137,11 +5132,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         path: fs::Path<'a>,
     ) -> u32 {
         let index = self.import_records.len();
-        // Phase-A: `ImportRecord.path` is `fs::Path<'static>` (PORTING.md: no struct
+        // `ImportRecord.path` is `fs::Path<'static>` (PORTING.md: no struct
         // lifetime params yet). The parser-supplied path borrows arena-owned 'a bytes
         // which outlive the import_records list (both dropped with the parser arena),
-        // so the lifetime extension is sound here. Round-E threads `'a` through
-        // `bun_ast::ImportRecord` and removes this erasure.
+        // so the lifetime extension is sound here. TODO(refactor): thread `'a` through
+        // `bun_ast::ImportRecord` and remove this erasure.
         // SAFETY: see above — arena 'a outlives every ImportRecord stored in self.import_records.
         let path: fs::Path<'static> = unsafe { path.into_static() };
         // No `impl Default for ImportRecord` (range/path/kind have no Zig defaults) —
@@ -5368,7 +5363,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Insert any relocated variable statements now
         if !self.relocated_top_level_vars.is_empty() {
             let mut already_declared = RefMap::default();
-            // PERF(port): was stack-fallback alloc — profile in Phase B
+            // PERF(port): was stack-fallback alloc — profile if hot.
 
             for i in 0..self.relocated_top_level_vars.len() {
                 // Follow links because "var" declarations may be merged due to hoisting
@@ -6653,7 +6648,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    // ─── round-G: helpers extracted from the gated round-D/E impl block ───
+    // ─── helpers extracted from the gated impl block below ───
     // These are leaf utilities (no parse_*/visit_* deps) that block
     // handle_identifier / jsx_import / record_usage_of_runtime_require.
 
@@ -6765,7 +6760,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Expr { data: value, loc }
     }
 
-    // `parts` is `&[Box<[u8]>]` to match the active round-C `DotDefine.parts:
+    // `parts` is `&[Box<[u8]>]` to match the active `DotDefine.parts:
     // Vec<Box<[u8]>>` shape (auto-derefs at call sites). The full draft uses
     // `StoreSlice<StoreStr>`; both index to a `[u8]` so the body is unchanged.
     pub fn is_dot_define_match(&mut self, expr: Expr, parts: &[Box<[u8]>]) -> bool {
@@ -6891,7 +6886,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Standard decorator lowering path (for both JS and TS files)
                 if s_class.class.should_lower_standard_decorators {
                     // PORT NOTE: Zig `lowerStandardDecoratorsStmt` returns `[]Stmt`; the
-                    // round-E Rust stub takes an out-param Vec instead. Wrap to keep
+                    // Rust stub takes an out-param Vec instead. Wrap to keep
                     // this function's `[]Stmt` contract.
                     let mut out = BumpVec::<Stmt>::new_in(self.arena);
                     self.lower_standard_decorators_stmt(stmt, &mut out);
@@ -7319,7 +7314,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // Helper extracted from lower_class to keep that fn readable.
     // TODO(port): this condenses the Zig per-kind metadata switch (lines 5024-5105).
-    // Phase B should diff against Zig to verify exact arg ordering for get/set.
+    // Diff against Zig to verify exact arg ordering for get/set.
     #[cold]
     #[inline(never)]
     fn emit_decorator_metadata_for_prop(
@@ -8361,12 +8356,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Round-G un-gate: P::to_ast — final assembly P→Ast.
-// Split out of the round-D/E gated block above so the parser entry point
+// P::to_ast — final assembly P→Ast.
+// Split out of the gated block above so the parser entry point
 // (`Parser::parse` → `to_ast`) typechecks. Heavy sub-calls that are still
-// round-E (`ImportScanner::scan`, `ConvertESMExportsForHmr`,
-// `apply_repl_transforms`) are wired to their real signatures and un-gated in
-// their own rounds. `compute_character_frequency` is fully un-gated
+// gated (`ImportScanner::scan`, `ConvertESMExportsForHmr`,
+// `apply_repl_transforms`) are wired to their real signatures and un-gated
+// independently. `compute_character_frequency` is fully un-gated
 // (lexer.all_comments + CharFreq.scan live).
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub fn to_ast(
@@ -9111,11 +9106,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 }
 
-// `P::init` — UN-GATED. Body compiles standalone (verified `cargo check`):
-// the Binding2ExprWrapper / ExpressionTransposer self-referential helpers were
-// the only blockers and are now seeded with arena-unit placeholders inside the
-// struct literal (Phase B wires the real `*P` back-pointer). `Parser::_parse`
-// is blocked on this being callable — DO NOT re-gate.
+// The Binding2ExprWrapper / ExpressionTransposer self-referential helpers are
+// seeded with arena-unit placeholders inside the struct literal.
+// TODO(refactor): wire the real `*P` back-pointer.
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     /// Construct a `P` in place at `out` (matching Zig's `init(..., this: *P) !void`).
     ///
@@ -9194,7 +9187,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // `bun_paths::fs::Path` view over the same `text`. `pretty`
                 // is irrelevant once `node_modules/` is found in `text`; when
                 // it isn't, the result won't match any `unwrap_commonjs_packages`
-                // entry anyway. // TODO(b2-blocked): unify bun_paths::fs::Path<'static> → bun_paths::fs::Path
+                // entry anyway. // TODO(port): unify bun_paths::fs::Path<'static> → bun_paths::fs::Path
                 let path_view = fs::Path {
                     text: source.path.text,
                     pretty: source.path.text,
@@ -9813,8 +9806,8 @@ impl LowerUsingDeclarationsContext {
 }
 
 // ─── Helper trait for generate_import_stmt's `symbols: anytype` param ───
-// TODO(port): two call shapes exist (RuntimeImports and a string→Ref map). Phase B
-// should impl this for both and verify the alias_name() RuntimeImports special case.
+// TODO(port): two call shapes exist (RuntimeImports and a string→Ref map). Impl
+// this for both and verify the alias_name() RuntimeImports special case.
 pub trait GenerateImportSymbols {
     type Key;
     fn get(&self, key: &Self::Key) -> Option<Ref>;

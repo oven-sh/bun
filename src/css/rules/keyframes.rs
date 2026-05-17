@@ -13,9 +13,10 @@ use super::ArrayList;
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `<keyframes-name> = <custom-ident> | <string>`
-// PORT NOTE: Zig threaded the parser-input lifetime; Phase A keeps
+// PORT NOTE: Zig threaded the parser-input lifetime; this stores
 // `&'static [u8]` per PORTING.md §AST crates and the rules/mod.rs
-// `CssRule<R>` lifetime-erasure note. Phase B re-threads `'bump`.
+// `CssRule<R>` lifetime-erasure note.
+// TODO(refactor): re-thread `'bump` here.
 pub enum KeyframesName {
     /// `<custom-ident>` of a `@keyframes` name.
     Ident(CustomIdent),
@@ -324,8 +325,9 @@ impl KeyframesRule {
         // `CssRule` fallbacks here, so there is no rule-level fallback list to return.
         // The faithful port of "compile-time-dead, returns []CssRule(T)" is the empty
         // slice — matches the Zig program's observable behavior (no fallbacks appended)
-        // without a runtime trap. Phase B wires the declaration-level path in
-        // `CssRuleList::minify` directly and may delete this stub.
+        // without a runtime trap.
+        // TODO(refactor): wire the declaration-level path in `CssRuleList::minify`
+        // directly, then delete this stub.
         let _ = self;
         &[]
     }

@@ -56,7 +56,7 @@ pub fn to_satisfy(this: &Expect, global: &JSGlobalObject, frame: &CallFrame) -> 
     let mut formatter = super::make_formatter(global);
 
     if not {
-        // PERF(port): was `comptime getSignature(...)` — profile in Phase B (const-eval signature)
+        // PERF(port): was `comptime getSignature(...)` — could const-eval the signature.
         let signature = get_signature("toSatisfy", "<green>expected<r>", true);
         return this.throw(
             global,
@@ -65,7 +65,7 @@ pub fn to_satisfy(this: &Expect, global: &JSGlobalObject, frame: &CallFrame) -> 
         );
     }
 
-    // PERF(port): was `comptime getSignature(...)` — profile in Phase B (const-eval signature)
+    // PERF(port): was `comptime getSignature(...)` — could const-eval the signature.
     let signature = get_signature("toSatisfy", "<green>expected<r>", false);
 
     // PORT NOTE: reshaped for borrowck — Zig held two `*Formatter` aliases via `toFmt`;

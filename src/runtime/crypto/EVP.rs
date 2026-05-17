@@ -358,7 +358,7 @@ pub type Digest = [u8; boringssl::EVP_MAX_MD_SIZE as usize];
 // through this module. The `pbkdf2` submodule is gated (blocked on bun_jsc
 // arg-parsing surface), so re-export the standalone helper from the parent
 // stub for now.
-// TODO(b2-blocked): bun_jsc — un-gate `super::pbkdf2` and swap to `pub use super::pbkdf2 as PBKDF2;`.
+// TODO(port): bun_jsc — un-gate `super::pbkdf2` and swap to `pub use super::pbkdf2 as PBKDF2;`.
 pub use super::pbkdf2;
 
 // ported from: src/runtime/crypto/EVP.zig

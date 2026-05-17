@@ -14,11 +14,6 @@ use crate::stmt;
 // stack-fallback would still avoid the heap entirely for small modules — left
 // for a follow-up.)
 
-// TODO(port): `Expr.Data.Store.memory_allocator` / `Stmt.Data.Store.memory_allocator` are
-// `threadlocal var ?*ASTMemoryAllocator` in Zig, read/written directly. Phase B must expose
-// `memory_allocator() -> *mut ASTMemoryAllocator`, `set_memory_allocator(*mut ASTMemoryAllocator)`,
-// and `begin()` on the Rust `expr::data::Store` / `stmt::data::Store` (thread_local! + Cell).
-
 // ── Thread-local arena pool ──────────────────────────────────────────────
 //
 // Zig's `ASTMemoryAllocator` was a `StackFallbackAllocator(8192, fallback)`:
@@ -114,7 +109,7 @@ impl ASTMemoryAllocator {
     /// `a.enter(arena)` (passing the fallback `std.mem.Allocator`). In the
     /// Rust port the SFA + fallback collapse to a single internal `Arena`, so
     /// the passed arena is currently unused — kept for call-site shape compat.
-    // TODO(port): if Phase B routes the parser bump arena through here instead
+    // TODO(port): if the parser bump arena is ever routed through here instead
     // of allocating a fresh one, thread `_fallback` into `self.arena`.
     pub fn new(_fallback: &Arena) -> Self {
         // PERF(port): was stack-fallback — profile
@@ -221,7 +216,7 @@ impl ASTMemoryAllocator {
     }
 
     /// Zig: `this.stack_allocator.get()` — the `std.mem.Allocator` vtable into
-    /// the stack-fallback buffer. In Phase A both `stack_allocator` and
+    /// the stack-fallback buffer. In the Rust port both `stack_allocator` and
     /// `bump_allocator` collapse to the single `Arena`, so this returns it.
     #[inline]
     pub fn stack_allocator(&self) -> &Arena {

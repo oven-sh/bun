@@ -251,7 +251,7 @@ impl FdExt for Fd {
 
     fn make_lib_uv_owned_for_syscall(
         self,
-        // PERF(port): was comptime monomorphization — profile in Phase B
+        // PERF(port): was comptime monomorphization — profile if it shows up on a hot path
         syscall_tag: sys::Tag,
         error_case: ErrorCase,
     ) -> sys::Result<Fd> {

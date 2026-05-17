@@ -1449,7 +1449,7 @@ impl Lockfile {
     /// Sets `buffers.trees` and `buffers.hoisted_dependencies`
     // TODO(port): Zig uses `comptime method` to make several params conditionally `void`.
     // Rust const-generic enums need #[derive(ConstParamTy)] on Tree::BuilderMethod and the
-    // value-level branching can't change param types. Phase B may want two monomorphized fns.
+    // value-level branching can't change param types. Consider two monomorphized fns.
     pub fn hoist<const METHOD: tree::BuilderMethod>(
         &mut self,
         log: &mut bun_ast::Log,
@@ -1485,7 +1485,7 @@ impl Lockfile {
             list: Default::default(),
             sort_buf: Default::default(),
         };
-        // TODO(port): Tree::Builder field set may differ; verify in Phase B.
+        // TODO(port): Tree::Builder field set may differ; verify against the Zig.
 
         Tree::default().process_subtree(tree::ROOT_DEP_ID, tree::INVALID_ID, &mut builder)?;
 
@@ -3088,7 +3088,7 @@ impl Lockfile {
 
             while i + 16 < packages_len {
                 // PORT NOTE: Zig used `inline while` to unroll 16 iterations. Plain loop here.
-                // PERF(port): was comptime-unrolled inner loop — profile in Phase B.
+                // PERF(port): was comptime-unrolled inner loop — profile if it shows up on a hot path.
                 for j in 0..16usize {
                     alphabetized_names[(i + j) - 1] = (i + j) as PackageID; // @truncate
                     // posix path separators because we only use posix in the lockfile

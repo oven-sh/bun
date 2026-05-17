@@ -1,7 +1,7 @@
 //! `WTFTimer` — a timer created by WTF (WebKit) code and invoked by Bun's
 //! event loop. Backs `WTF::RunLoop::TimerBase` on the Bun runloop.
 //!
-//! PORT NOTE (b2-cycle): Zig stores `vm: *VirtualMachine` and reaches the
+//! PORT NOTE (jsc/runtime crate cycle): Zig stores `vm: *VirtualMachine` and reaches the
 //! timer heap via `vm.timer.{remove,update}`. The low-tier
 //! `bun_jsc::VirtualMachine.timer` is a `()` placeholder, so this port
 //! resolves the heap through [`crate::jsc_hooks::runtime_state`] instead —

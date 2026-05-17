@@ -15,8 +15,8 @@
 //! a slice of field values.
 //!
 //! Implementation note: this port uses nightly `core::mem::type_info`
-//! reflection to discover `T`'s fields at compile time, replacing the
-//! Phase-A `MultiArrayElement` trait + derive macro. Field metadata (name,
+//! reflection to discover `T`'s fields at compile time, replacing an earlier
+//! `MultiArrayElement` trait + derive macro. Field metadata (name,
 //! size, alignment, in-struct offset) is computed in `const` context; column
 //! accessors take a `const NAME: &'static str` generic and verify both the
 //! name and the requested column type against the reflected field's `TypeId`

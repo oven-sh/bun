@@ -769,7 +769,7 @@ impl Yield {
 
 impl Task {
     /// Called from task thread
-    // PERF(port): was comptime enum monomorphization — profile in Phase B
+    // PERF(port): was comptime enum monomorphization — profile if hot.
     fn next_step(&self, current_step: Step) -> Step {
         let next_step: Step = match current_step {
             Step::LinkPackage => Step::SymlinkDependencies,

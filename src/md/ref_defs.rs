@@ -421,7 +421,7 @@ impl Parser<'_> {
                         dest: dest_dupe,
                         title: title_dupe,
                     });
-                    // PERF(port): was assume_capacity / arena alloc — profile in Phase B
+                    // PERF(port): was assume_capacity / arena alloc — profile if hot.
                 }
 
                 // Count how many newlines were consumed to track lines

@@ -61,9 +61,8 @@ fn is_bun_file_blob(input: &BlobOrStringOrBuffer) -> bool {
 /// R-2 (`sharedThis`): every JS-facing host-fn takes `&CryptoHasher` (not
 /// `&mut`). The discriminant is fixed at construction; only the payload mutates,
 /// so each variant payload is wrapped in [`JsCell`] (UnsafeCell projector,
-/// single-JS-thread). The codegen shim still emits `this: &mut CryptoHasher`
-/// until Phase 1 lands — `&mut T` auto-derefs to `&T` so the impls below
-/// compile against either.
+/// single-JS-thread). The codegen shim still emits `this: &mut CryptoHasher` —
+/// `&mut T` auto-derefs to `&T` so the impls below compile against either.
 #[bun_jsc::JsClass]
 #[repr(C)]
 pub enum CryptoHasher {

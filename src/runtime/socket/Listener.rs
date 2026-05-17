@@ -65,8 +65,8 @@ use crate::generated_classes::js_Listener;
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
-// shim still emits `this: &mut Listener` until Phase 1 lands — `&mut T`
-// auto-derefs to `&T` so the impls below compile against either.
+// shim still emits `this: &mut Listener` — `&mut T` auto-derefs to `&T`
+// so the impls below compile against either.
 #[bun_jsc::JsClass(no_constructor)]
 pub struct Listener {
     pub handlers: JsCell<Handlers>,
@@ -1088,8 +1088,12 @@ impl Listener {
                         // SAFETY: caller passes a live TLSSocket
                         let prev = unsafe { &*prev_ptr };
                         if let Some(prev_handlers) = prev.handlers.get() {
-                            // SAFETY: prev_handlers was heap-allocated
-                            unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
+                            // SAFETY: prev_handlers was heap-allocated; shared
+                            // reborrow is scoped to this expression.
+                            if unsafe { (*prev_handlers.as_ptr()).active_connections.get() } == 0 {
+                                // SAFETY: prev_handlers was heap-allocated and unreferenced.
+                                unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
+                            }
                         }
                         debug_assert!(!prev.this_value.get().is_empty());
                         prev.handlers.set(NonNull::new(handlers_ptr));
@@ -1177,8 +1181,12 @@ impl Listener {
                         let prev = unsafe { &*prev_ptr };
                         debug_assert!(!prev.this_value.get().is_empty());
                         if let Some(prev_handlers) = prev.handlers.get() {
-                            // SAFETY: prev_handlers was heap-allocated
-                            unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
+                            // SAFETY: prev_handlers was heap-allocated; shared
+                            // reborrow is scoped to this expression.
+                            if unsafe { (*prev_handlers.as_ptr()).active_connections.get() } == 0 {
+                                // SAFETY: prev_handlers was heap-allocated and unreferenced.
+                                unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
+                            }
                         }
                         prev.handlers.set(NonNull::new(handlers_ptr));
                         debug_assert!(matches!(
@@ -1421,11 +1429,19 @@ fn connect_finish<const IS_SSL: bool>(
         let prev = unsafe { &*prev_ptr };
         // TODO(port): `JsRef::is_not_empty` — assert non-empty wrapper.
         if let Some(prev_handlers) = prev.handlers.get() {
-            // SAFETY: prev_handlers was heap-allocated
-            unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
+            // Only free the previous Handlers when no callback scope is still
+            // holding it. If a `data`/`close` handler synchronously re-entered
+            // `connect`, `Scope::exit` (via `Handlers::mark_inactive`) frees it
+            // once the in-flight callback unwinds; freeing here would be a UAF.
+            // SAFETY: prev_handlers was heap-allocated; shared reborrow is
+            // scoped to this expression.
+            if unsafe { (*prev_handlers.as_ptr()).active_connections.get() } == 0 {
+                // SAFETY: prev_handlers was heap-allocated and unreferenced.
+                unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
+            }
         }
         prev.handlers.set(NonNull::new(handlers_ptr));
-        // TODO(port): debug_assert!(matches!(prev.socket.get().socket, InternalSocket::Detached))
+        debug_assert!(prev.socket.get().is_detached());
         // Free old resources before reassignment to prevent memory leaks
         // when sockets are reused for reconnection (common with MongoDB driver)
         prev.connection.set(Some(connection));
@@ -1559,8 +1575,7 @@ fn is_valid_pipe_name(pipe_name: &[u8]) -> bool {
 fn normalize_pipe_name<'a>(pipe_name: &[u8], buffer: &'a mut [u8]) -> Option<&'a [u8]> {
     #[cfg(windows)]
     {
-        debug_assert!(pipe_name.len() < buffer.len());
-        if !is_valid_pipe_name(pipe_name) {
+        if pipe_name.len() > buffer.len() || !is_valid_pipe_name(pipe_name) {
             return None;
         }
         // normalize pipe name with can have mixed slashes

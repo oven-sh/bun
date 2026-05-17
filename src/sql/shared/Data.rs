@@ -10,7 +10,7 @@ pub enum Data {
     // TODO(port): lifetime — `Temporary` borrows external bytes (see `substring`, which
     // returns a `Data` aliasing `self`). Stored as a `RawSlice` (encapsulated fat
     // pointer; safe `.slice()` projection under the borrowed-backing-outlives-holder
-    // invariant). Revisit whether a `<'a>` on `Data` is acceptable in Phase B.
+    // invariant). TODO(refactor): revisit whether a `<'a>` lifetime on `Data` is acceptable.
     Temporary(RawSlice<u8>),
     InlineStorage(InlineStorage),
     Empty,

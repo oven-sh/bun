@@ -935,7 +935,7 @@ impl<'a> Loader<'a> {
         // `&'static [u8]` and §Forbidden bans `Box::leak`. The stored `Source`
         // is only ever checked for `.is_some()` / its path printed, so dropping
         // the bytes is observationally identical. Revisit once `bun_logger`
-        // grows an owning `contents` (Phase-B `Str` rework).
+        // grows an owning `contents`.
         *self.default_file_slot(base) = Some(bun_ast::Source::init_path_string(base, b""));
         Ok(())
     }
@@ -1362,7 +1362,7 @@ pub type Value = HashTableValue;
 #[derive(Default, Clone)]
 pub struct HashTableValue {
     // TODO(port): Zig stored borrowed `[]const u8`; values are sometimes allocator.dupe'd, sometimes
-    // borrowed from environ. Using Box<[u8]> here for owned-by-default; Phase B may need Cow.
+    // borrowed from environ. Using Box<[u8]> here for owned-by-default; may want Cow if the copies matter.
     pub value: Box<[u8]>,
     pub conditional: bool,
 }
@@ -1422,8 +1422,8 @@ impl Map {
 
     /// Returns a wrapper around the std.process.EnvMap that does not duplicate the memory of
     /// the keys and values, but instead points into the memory of the bun env map.
-    // TODO(port): `bun_sys::EnvMap` is `HashMap<String, String>`, which copies and is
-    // UTF-8-lossy. Zig's `std.process.EnvMap` stored `[]const u8` borrows. Phase C: replace
+    // TODO(refactor): `bun_sys::EnvMap` is `HashMap<String, String>`, which copies and is
+    // UTF-8-lossy. Zig's `std.process.EnvMap` stored `[]const u8` borrows. Replace
     // `bun_sys::EnvMap` with a `&[u8]`-keyed map and drop the lossy round-trip here.
     pub fn std_env_map(&mut self) -> Result<StdEnvMapWrapper, AllocError> {
         let mut env_map = bun_sys::EnvMap::default();
@@ -1448,12 +1448,18 @@ impl Map {
         let mut i: usize = 0;
         let mut it = self.map.iterator();
         while let Some(pair) = it.next() {
+            if i + pair.key_ptr.len() + 7 >= result.len() {
+                return Err(bun_core::Error::from_name("TooManyEnvironmentVariables"));
+            }
             i += strings::convert_utf8_to_utf16_in_buffer(&mut result[i..], pair.key_ptr).len();
             if i + 7 >= result.len() {
                 return Err(bun_core::Error::from_name("TooManyEnvironmentVariables"));
             }
             result[i] = b'=' as u16;
             i += 1;
+            if i + pair.value_ptr.value.len() + 5 >= result.len() {
+                return Err(bun_core::Error::from_name("TooManyEnvironmentVariables"));
+            }
             i += strings::convert_utf8_to_utf16_in_buffer(&mut result[i..], &pair.value_ptr.value)
                 .len();
             if i + 5 >= result.len() {

@@ -149,7 +149,7 @@ impl Writer {
 }
 
 /// Spec: IOWriter.zig `Writers = SmolList(Writer, 2)`.
-// PERF(port): was inline-2 small-vec — profile in Phase B; smallvec crate.
+// PERF(port): was inline-2 small-vec — profile if hot; smallvec crate.
 type Writers = Vec<Writer>;
 
 /// ~128kb. We shrink `buf` when we reach the last writer, but if that never

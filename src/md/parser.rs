@@ -34,9 +34,9 @@ pub use super::inlines::{EmphDelim, MAX_EMPH_MATCHES};
 pub use super::ref_defs::RefDef;
 
 /// Parser context holding all state during parsing.
-// TODO(port): lifetime — `text` is a caller-owned borrow for the parser's
-// lifetime. PORTING.md says "no struct lifetimes in Phase A", but raw-ptr here
-// would obscure every `ch()` call; one obvious `'a` is the honest mapping.
+// PORT NOTE: `text` is a caller-owned borrow for the parser's lifetime.
+// PORTING.md's mechanical-port guidance was "no struct lifetimes", but raw-ptr
+// here would obscure every `ch()` call; one obvious `'a` is the honest mapping.
 pub struct Parser<'a> {
     // Zig field `std.mem.Allocator` param — dropped; global mimalloc.
     pub text: &'a [u8],
@@ -60,7 +60,7 @@ pub struct Parser<'a> {
     pub containers: Vec<Container>,
     // TODO(port): Zig uses `ArrayListAlignedUnmanaged(u8, .@"4")` — 4-byte
     // alignment is load-bearing for `BlockHeader` reinterpretation via
-    // `getBlockHeaderAt`. Phase B: wrap in an aligned-vec newtype or store
+    // `getBlockHeaderAt`. Wrap in an aligned-vec newtype or store
     // `Vec<u32>` and byte-view it.
     pub block_bytes: Vec<u8>,
     pub buffer: Vec<u8>,
@@ -128,8 +128,8 @@ impl Default for BlockHeader {
 /// `Parser.Error` in Zig is `bun.JSError || bun.StackOverflow`, i.e. the union
 /// of `{ OutOfMemory, JSError, JSTerminated }` with `{ StackOverflow }`.
 // TODO(port): narrow error set — `bun_jsc::JsError` already covers the first
-// three; Phase B may want `enum { Js(JsError), StackOverflow }` instead.
-// TODO(b1): thiserror/strum not in workspace deps — derive dropped, hand-roll if needed.
+// three; could be `enum { Js(JsError), StackOverflow }` instead.
+// TODO(port): thiserror/strum not in workspace deps — derive dropped, hand-roll if needed.
 pub type Error = ParserError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -144,7 +144,7 @@ bun_core::oom_from_alloc!(ParserError);
 
 impl From<ParserError> for bun_core::Error {
     fn from(_e: ParserError) -> Self {
-        // TODO(b1): wire IntoStaticStr → interned tag; bun_core::err! only accepts ident
+        // TODO(port): wire IntoStaticStr → interned tag; bun_core::err! only accepts ident
         bun_core::err!(ParserError)
     }
 }
@@ -154,7 +154,7 @@ impl<'a> Parser<'a> {
         // SAFETY: off is an aligned offset into block_bytes produced by start_new_block /
         // push_container_bytes; the buffer holds a valid BlockHeader at that offset.
         // TODO(port): borrowck — this returns &mut into self.block_bytes while other
-        // &mut self borrows may be live at call sites; Phase B may need raw *mut.
+        // &mut self borrows may be live at call sites; may need raw *mut.
         unsafe { &mut *(self.block_bytes.as_mut_ptr().add(off).cast::<BlockHeader>()) }
     }
 
@@ -306,7 +306,7 @@ impl<'a> Parser<'a> {
 }
 
 // Silence unused-import warnings for the sibling modules referenced only in
-// the doc-comment above; Phase B removes once `impl Parser` blocks land.
+// the doc-comment above.
 #[allow(unused_imports)]
 use {
     blocks_mod as _, containers_mod as _, inlines_mod as _, line_analysis_mod as _, links_mod as _,

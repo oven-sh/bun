@@ -728,7 +728,7 @@ pub fn from_js_host_call_generic<R>(
     // about whether an exception was thrown.
     //
     // TODO(port): static-assert `R != JSValue` (Zig used @compileError; Rust needs a
-    // negative trait bound or specialization — neither stable). Phase B: sealed trait trick.
+    // negative trait bound or specialization — neither stable). A sealed-trait trick could enforce this.
     crate::call_check_slow(global_this, f)
 }
 

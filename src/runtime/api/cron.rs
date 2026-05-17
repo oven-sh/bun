@@ -1973,7 +1973,7 @@ pub fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
 // ============================================================================
 
 /// Trait abstracting over CronRegisterJob/CronRemoveJob for `spawn_cmd_generic`.
-// TODO(port): merge with CronJobBase in Phase B.
+// TODO(refactor): merge with CronJobBase.
 trait SpawnCmdTarget: CronJobBase + BufferedReaderParent {
     const EXIT_KIND: bun_spawn::ProcessExitKind;
     fn set_err(&mut self, args: core::fmt::Arguments<'_>);

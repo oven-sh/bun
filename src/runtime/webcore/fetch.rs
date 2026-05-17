@@ -487,7 +487,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let mut unix_socket_path: ZigStringSlice = ZigStringSlice::empty();
 
     // TODO(port): lifetime — `url` and `proxy` borrow into this buffer. Kept as
-    // Vec<u8> (owned) here; ZigURL fields are raw slices in Phase A.
+    // Vec<u8> (owned) here; ZigURL fields are raw slices.
     let mut url_proxy_buffer: Vec<u8> = Vec::new();
     // PORT NOTE: Zig freely reassigns `url_proxy_buffer` while `url`/`proxy`
     // still point into it (or into the buffer about to replace it). Detach the
@@ -684,7 +684,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             request_init_object.unwrap_or(JSValue::ZERO),
         ];
 
-        // PERF(port): was `inline for` — plain loop, profile in Phase B
+        // PERF(port): was `inline for` — plain loop, profile if hot
         for obj in objects_to_try {
             if !obj.is_empty() {
                 if let Some(decompression_value) = obj.get(global_this, "decompress")? {
@@ -717,7 +717,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             request_init_object.unwrap_or(JSValue::ZERO),
         ];
 
-        // PERF(port): was `inline for` — plain loop, profile in Phase B
+        // PERF(port): was `inline for` — plain loop, profile if hot
         for obj in objects_to_try {
             if !obj.is_empty() {
                 if let Some(tls) = obj.get(global_this, "tls")? {
@@ -779,7 +779,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             request_init_object.unwrap_or(JSValue::ZERO),
         ];
 
-        // PERF(port): was `inline for` — plain loop, profile in Phase B
+        // PERF(port): was `inline for` — plain loop, profile if hot
         for obj in objects_to_try {
             if !obj.is_empty() {
                 if let Some(socket_path) = obj.get(global_this, "unix")? {
@@ -809,7 +809,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             options_object.unwrap_or(JSValue::ZERO),
             request_init_object.unwrap_or(JSValue::ZERO),
         ];
-        // PERF(port): was `inline for` — plain loop, profile in Phase B
+        // PERF(port): was `inline for` — plain loop, profile if hot
         for obj in objects_to_try {
             if !obj.is_empty() {
                 if let Some(protocol_val) = obj.get(global_this, "protocol")? {
@@ -842,7 +842,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             request_init_object.unwrap_or(JSValue::ZERO),
         ];
 
-        // PERF(port): was `inline for` — plain loop, profile in Phase B
+        // PERF(port): was `inline for` — plain loop, profile if hot
         for obj in objects_to_try {
             if !obj.is_empty() {
                 if let Some(timeout_value) = obj.get(global_this, "timeout")? {
@@ -881,7 +881,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             request_init_object.unwrap_or(JSValue::ZERO),
         ];
 
-        // PERF(port): was `inline for` — plain loop, profile in Phase B
+        // PERF(port): was `inline for` — plain loop, profile if hot
         for obj in objects_to_try {
             if !obj.is_empty() {
                 match obj.get_optional_enum::<FetchRedirect>(global_this, "redirect") {
@@ -912,7 +912,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             request_init_object.unwrap_or(JSValue::ZERO),
         ];
 
-        // PERF(port): was `inline for` — plain loop, profile in Phase B
+        // PERF(port): was `inline for` — plain loop, profile if hot
         for obj in objects_to_try {
             if !obj.is_empty() {
                 if let Some(keepalive_value) = obj.get(global_this, "keepalive")? {
@@ -945,7 +945,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             request_init_object.unwrap_or(JSValue::ZERO),
         ];
 
-        // PERF(port): was `inline for` — plain loop, profile in Phase B
+        // PERF(port): was `inline for` — plain loop, profile if hot
         for obj in objects_to_try {
             if !obj.is_empty() {
                 if let Some(verb) = obj.get(global_this, "verbose")? {
@@ -979,7 +979,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             options_object.unwrap_or(JSValue::ZERO),
             request_init_object.unwrap_or(JSValue::ZERO),
         ];
-        // PERF(port): was `inline for` — plain loop, profile in Phase B
+        // PERF(port): was `inline for` — plain loop, profile if hot
         for obj in objects_to_try {
             if !obj.is_empty() {
                 if let Some(proxy_arg) = obj.get(global_this, "proxy")? {
@@ -1643,16 +1643,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // `vm.node_fs()` accessor is gated behind a jsc↔runtime cycle and
             // the buffer is just NUL-termination scratch).
             let mut open_path_buf = PathBuffer::uninit();
-            let pathlike_is_path: bool;
             let opened_fd_res: bun_sys::Result<bun_sys::Fd> = {
                 let store = body.store().expect("needs_to_read_file implies store");
                 match &store.data.as_file().pathlike {
-                    PathOrFileDescriptor::Fd(fd) => {
-                        pathlike_is_path = false;
-                        bun_sys::dup(*fd)
-                    }
+                    PathOrFileDescriptor::Fd(fd) => bun_sys::dup(*fd),
                     PathOrFileDescriptor::Path(path) => {
-                        pathlike_is_path = true;
                         let zpath = path.slice_z(&mut open_path_buf);
                         let flags = if cfg!(windows) {
                             bun_sys::O::RDONLY
@@ -1733,6 +1728,14 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 }
             }
 
+            // The sendfile path above moves `opened_fd` into `SendFile` (which
+            // owns its lifecycle and breaks out of `'prepare_body`). On this
+            // read-file path we are the sole owner of the fresh fd: `read_file`
+            // is handed it as an `Fd` and never takes ownership. Wrap it in an
+            // RAII guard so any future early return between here and the read
+            // can't leak it.
+            let opened_fd = scopeguard::guard(opened_fd, |fd| fd.close());
+
             // TODO: make this async + lazy
             let blob_offset = body.any_blob().blob().offset.get();
             let blob_size = body.any_blob().blob().size.get();
@@ -1744,14 +1747,14 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // `ReadFile` has `Drop`; can't use FRU `..Default::default()`.
             let mut rf_args = node::fs::args::ReadFile::default();
             rf_args.encoding = Encoding::Buffer;
-            rf_args.path = PathOrFileDescriptor::Fd(opened_fd);
+            rf_args.path = PathOrFileDescriptor::Fd(*opened_fd);
             rf_args.offset = blob_offset;
             rf_args.max_size = Some(blob_size);
             let res = node_fs.read_file(&rf_args, node::fs::Flavor::Sync);
 
-            if pathlike_is_path {
-                opened_fd.close();
-            }
+            // Eagerly close before constructing the (potentially large) JS
+            // result. Dropping the guard runs the close exactly once.
+            drop(opened_fd);
 
             match res {
                 Err(err) => {

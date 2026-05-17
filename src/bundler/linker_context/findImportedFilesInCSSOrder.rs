@@ -446,8 +446,8 @@ pub fn find_imported_files_in_css_order<'a>(
         struct DuplicateEntry {
             // PORT NOTE: lifetime-erased slice header — borrows either
             // `css_asts[..].layer_names` (real `::bun_css::LayerName`) or
-            // `Layers::inner()` (shadow `LayerName`). Both nominal types must
-            // be reconciled in Phase B; until then we compare via
+            // `Layers::inner()` (shadow `LayerName`). Both nominal types should
+            // be reconciled; until then we compare via
             // `LayerName::eql` on the shadow type and cast at the boundary.
             // `RawSlice` (vs raw `*const [_]`) so reads go through safe
             // `.slice()` under the back-reference invariant: the borrowed

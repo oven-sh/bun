@@ -25,7 +25,7 @@ impl CSSNumberFns {
         let number: f32 = *this;
         if number != 0.0 && number.abs() < 1.0 {
             let mut dtoa_buf: [u8; 129] = [0; 129];
-            // PERF(port): Zig left dtoa_buf uninitialized — profile in Phase B
+            // PERF(port): Zig left dtoa_buf uninitialized — profile if hot.
             let (str, _) = css::dtoa_short(&mut dtoa_buf, number, 6);
             if number < 0.0 {
                 dest.write_char(b'-')?;

@@ -39,7 +39,7 @@ fn glob_ignore_fn(val: &[u8]) -> bool {
 type GlobWalker = glob::GlobWalker<bun_resolver::DirEntryAccessor, false>;
 // TODO(port): self-referential — Iterator borrows the GlobWalker stored alongside it in
 // `PackageFilterIterator`. Forced to `'static` here; see `init_walker` for the unsafe
-// lifetime erasure. Phase B: Pin<Box<Self>> or fold walker+iter into one type.
+// lifetime erasure. TODO(refactor): Pin<Box<Self>> or fold walker+iter into one type.
 type GlobWalkerIterator = glob::walk::Iterator<'static, bun_resolver::DirEntryAccessor, false>;
 
 pub fn get_candidate_package_patterns<'a>(
@@ -265,7 +265,7 @@ impl FilterSet {
 pub struct PackageFilterIterator {
     // `patterns` and `root_dir` borrow from the caller (Zig: `[]const u8`).
     // Callers keep them alive for the iterator's lifetime — `RawSlice`
-    // invariant. Revisit in Phase B (likely `<'a>` on the struct).
+    // invariant. TODO(refactor): thread a `<'a>` lifetime on the struct instead.
     patterns: bun_ptr::RawSlice<Box<[u8]>>,
     pattern_idx: usize,
     root_dir: bun_ptr::RawSlice<u8>,
@@ -330,8 +330,8 @@ impl PackageFilterIterator {
         )??;
         self.walker.write(walker);
         // TODO(port): self-referential — `iter.walker` borrows `self.walker`. This is unsound
-        // if `PackageFilterIterator` moves after `init_walker`. Phase B: Pin<Box<Self>> or fold
-        // walker+iter into a single bun_glob type. Erase the lifetime to `'static` for now.
+        // if `PackageFilterIterator` moves after `init_walker`. TODO(refactor): Pin<Box<Self>> or
+        // fold walker+iter into a single bun_glob type. Erase the lifetime to `'static` for now.
         // SAFETY: `init_with_cwd` just initialized `self.walker` above; lifetime erased per TODO.
         let walker_ref =
             unsafe { &mut *std::ptr::from_mut::<GlobWalker>(self.walker.assume_init_mut()) };
@@ -365,7 +365,7 @@ impl PackageFilterIterator {
             }
             // PORT NOTE: reshaped for borrowck — Zig captured `path` from `walkerNext` then
             // returned it; here we must end the `&mut self` borrow before re-borrowing on the
-            // else branch. We rely on NLL to make this work; if it doesn't, restructure in Phase B.
+            // else branch. We rely on NLL to make this work; if it doesn't, restructure.
             if let Some(path) = self.walker_next()? {
                 return Ok(Some(path));
             } else {

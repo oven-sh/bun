@@ -19,9 +19,9 @@ pub fn find_all_imported_parts_in_js_order(
 
     let mut part_ranges_shared: Vec<PartRange> = Vec::new();
     let mut parts_prefix_shared: Vec<PartRange> = Vec::new();
-    // PERF(port): temp_arena dropped — bundler is an AST crate, so per PORTING.md these arena-fed
-    // scratch lists should become `bun_alloc::ArenaVec<'bump, PartRange>` with a threaded
-    // `&'bump Bump`; deferred to Phase B (introduces lifetimes on this fn + visitor). Profile in Phase B.
+    // PERF(port): temp_arena dropped — these arena-fed scratch lists could become
+    // `bun_alloc::ArenaVec<'bump, PartRange>` with a threaded `&'bump Bump`
+    // (introduces lifetimes on this fn + visitor). Profile if hot.
     for (index, chunk) in chunks.iter_mut().enumerate() {
         match &chunk.content {
             chunk::Content::Javascript(_) => {
@@ -49,7 +49,7 @@ pub fn find_imported_parts_in_js_order(
 ) -> Result<(), bun_core::Error> {
     let mut chunk_order_array: Vec<Order> =
         Vec::with_capacity(chunk.files_with_parts_in_chunk.count());
-    // PERF(port): this.arena() dropped — was per-LinkerContext arena; profile in Phase B
+    // PERF(port): this.arena() dropped — was per-LinkerContext arena; profile if hot.
     {
         let distances = this.graph.files.items_distance_from_entry_point();
         let stable_source_indices = this.graph.stable_source_indices.slice();
@@ -84,7 +84,7 @@ pub fn find_imported_parts_in_js_order(
 
     let (files_in_chunk_order, parts_in_chunk_order) = {
         let mut visitor = FindImportedPartsVisitor {
-            // PERF(port): files/visited were this.arena() arena — profile in Phase B
+            // PERF(port): files/visited were this.arena() arena — profile if hot.
             files: Vec::new(),
             part_ranges: core::mem::take(part_ranges_shared),
             parts_prefix: core::mem::take(parts_prefix_shared),
@@ -99,7 +99,7 @@ pub fn find_imported_parts_in_js_order(
             entry_point_chunk_indices,
         };
 
-        // PERF(port): was comptime bool dispatch (nested `inline else`) — profile in Phase B
+        // PERF(port): was comptime bool dispatch (nested `inline else`) — profile if hot.
         match (with_code_splitting, with_scb) {
             (true, true) => run_visits::<true, true>(&mut visitor, &chunk_order_array),
             (true, false) => run_visits::<true, false>(&mut visitor, &chunk_order_array),
@@ -107,7 +107,7 @@ pub fn find_imported_parts_in_js_order(
             (false, false) => run_visits::<false, false>(&mut visitor, &chunk_order_array),
         }
 
-        // PERF(port): was this.arena() arena — profile in Phase B
+        // PERF(port): was this.arena() arena — profile if hot.
         let mut parts_in_chunk_order: Vec<PartRange> =
             Vec::with_capacity(visitor.part_ranges.len() + visitor.parts_prefix.len());
         // bun.concat: parts_prefix first, then part_ranges

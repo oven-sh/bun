@@ -34,7 +34,7 @@ impl ZigStackFramePosition {
             line: Ordinal::from_zero_based(reader.read_value::<i32>()?),
             column: Ordinal::from_zero_based(reader.read_value::<i32>()?),
             // TODO(port): Zig's `decode` omits `line_start_byte` in the struct literal
-            // (extern-struct field left at zero/default). Confirm intended value in Phase B.
+            // (extern-struct field left at zero/default). Confirm intended value.
             line_start_byte: 0,
         })
     }

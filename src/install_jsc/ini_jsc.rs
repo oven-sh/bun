@@ -37,7 +37,7 @@ impl IniTestingAPIs {
 
         let mut log = Log::init();
 
-        // PERF(port): was ArenaAllocator bulk-free — profile in Phase B
+        // PERF(port): was ArenaAllocator bulk-free — profile if hot.
         // (all `allocator.create`/`toOwnedSlice` below now use the global mimalloc)
 
         let envjs = frame.argument(1);

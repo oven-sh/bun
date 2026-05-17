@@ -70,7 +70,7 @@ pub struct SecurityScanResults {
     pub packages_scanned: usize,
     pub duration_ms: i64,
     // TODO(port): Zig borrows this from manager.options.security_scanner; using Box<[u8]> to avoid
-    // a struct lifetime in Phase A. Revisit if the copy matters.
+    // a struct lifetime. Revisit if the copy matters.
     pub security_scanner: Box<[u8]>,
 }
 

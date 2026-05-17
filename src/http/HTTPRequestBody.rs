@@ -2,8 +2,8 @@ use crate::SendFile;
 use crate::ThreadSafeStreamBuffer;
 
 /// Request body payload. Parameterized over `'a` so callers can hand in
-/// stack-/arena-borrowed bytes without the `&'static` lifetime erasure the
-/// Phase-A port used at every `AsyncHTTP::init` call site.
+/// stack-/arena-borrowed bytes without erasing the lifetime to `&'static`
+/// at every `AsyncHTTP::init` call site.
 // PORT NOTE: no `Owned(Vec<u8>)` variant — the body is bitwise-copied across
 // threads via `core::ptr::read` in `start_queued_task`, so every arm must be
 // trivially-droppable. Zig has only `bytes` / `sendfile` / `stream`.

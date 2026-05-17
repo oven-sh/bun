@@ -34,7 +34,7 @@ impl Signature {
         // PERF(port): Zig fed two slices into a streaming Wyhash; bun_wyhash
         // currently lacks the std-compatible streaming `Wyhash` type. Concatenate
         // into a temp Vec until `bun_wyhash::Wyhash` (streaming, seed-0) lands.
-        // TODO(b2-blocked): bun_wyhash::Wyhash (streaming std-compatible API)
+        // TODO(port): bun_wyhash::Wyhash (streaming std-compatible API)
         let mut buf: Vec<u8> = Vec::with_capacity(self.name.len() + fields_bytes.len());
         buf.extend_from_slice(&self.name);
         buf.extend_from_slice(fields_bytes);
@@ -60,7 +60,7 @@ impl Signature {
         let mut name: Vec<u8> = Vec::with_capacity(query.len());
 
         name.extend_from_slice(query);
-        // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
+        // PERF(port): was appendSliceAssumeCapacity — profile if it shows up on a hot path.
 
         // (errdefer { fields.deinit(); name.deinit(); } — handled by Drop on `?`)
 

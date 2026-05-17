@@ -133,7 +133,7 @@ fn build_proxy_authorization(proxy: &URL<'_>) -> Option<Vec<u8>> {
         return None;
     }
 
-    // PERF(port): was stack-fallback (4096) — profile in Phase B
+    // PERF(port): was stack-fallback (4096) — profile if hot
     let username = match PercentEncoding::decode_alloc(proxy.username) {
         Ok(u) => u,
         Err(err) => {
@@ -143,7 +143,7 @@ fn build_proxy_authorization(proxy: &URL<'_>) -> Option<Vec<u8>> {
     };
 
     let auth: Vec<u8> = if !proxy.password.is_empty() {
-        // PERF(port): was stack-fallback (4096) — profile in Phase B
+        // PERF(port): was stack-fallback (4096) — profile if hot
         let password = match PercentEncoding::decode_alloc(proxy.password) {
             Ok(p) => p,
             Err(err) => {

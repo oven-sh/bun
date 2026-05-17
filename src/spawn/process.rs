@@ -1908,7 +1908,7 @@ mod spawn_process_body {
         let mut dup_tgt: Option<u32> = None;
 
         // PORT NOTE: Zig uses `inline for (0..3)` for comptime fd_i; we use a runtime loop.
-        // PERF(port): was comptime monomorphization — profile in Phase B
+        // PERF(port): was comptime monomorphization — profile if it shows up on a hot path.
         for fd_i in 0..3usize {
             let pipe_flags = uv::UV_CREATE_PIPE | uv::UV_READABLE_PIPE | uv::UV_WRITABLE_PIPE;
             let stdio: &mut uv::uv_stdio_container_t = &mut stdio_containers[fd_i];
@@ -3186,9 +3186,9 @@ mod spawn_process_body {
                     }
                 }
             });
-            // TODO(port): errdefer — the above scopeguards capture `jc`/`no_orphans_kq`/
-            // `siblings` by reference while still mutated below. Phase B: restructure
-            // into a single RAII state struct (or run cleanup inline at each return).
+            // TODO(refactor): errdefer — the above scopeguards capture `jc`/`no_orphans_kq`/
+            // `siblings` by reference while still mutated below. Restructure into a single
+            // RAII state struct (or run cleanup inline at each return).
 
             Bun__sendPendingSignalIfNecessary();
 
@@ -3657,8 +3657,8 @@ mod spawn_process_body {
                     libc::sigprocmask(libc::SIG_SETMASK, &raw const old, core::ptr::null_mut());
                 });
                 // TODO(port): kernel sigset_t vs libc sigset_t — Zig uses
-                // std.os.linux.sigemptyset/sigaddset for the signalfd mask. Phase B:
-                // use the raw syscall with a u64 mask.
+                // std.os.linux.sigemptyset/sigaddset for the signalfd mask. Could
+                // use the raw syscall with a u64 mask instead.
                 let fd = {
                     // SAFETY: POD, zero-valid — sigemptyset overwrites it immediately.
                     let mut kmask: libc::sigset_t = bun_core::ffi::zeroed();

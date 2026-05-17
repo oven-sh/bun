@@ -3,22 +3,17 @@
 //! server, server components, and other integrations. Instead of taking the
 //! role as a framework, Bake is tool for frameworks to build on top of.
 //!
-//! B-2 keystone L: DevServer struct + lifecycle un-gated. Heavy method bodies
-//! (request handling, finalize_bundle, hot-update tracing) remain in the gated
-//! Phase-A draft `DevServer.rs` and submodule drafts; they are blocked on
-//! `bun_jsc` method surface and `bun_bundler::BundleV2` field access (both
-//! currently opaque). Type identity is real here so downstream `server/` and
-//! the `bun_bundler::dispatch::DevServerVTable` can be wired.
+//! This file holds the keystone DevServer struct + lifecycle so downstream
+//! `server/` and the `bun_bundler::dispatch::DevServerVTable` can be wired.
+//! The heavy method bodies (request handling, finalize_bundle, hot-update
+//! tracing) live in `DevServer.rs` and the other `#[path]` submodules below.
 
 use core::ptr::NonNull;
 use std::borrow::Cow;
 
-// ─── Phase-A drafts ──────────────────────────────────────────────────────────
-// `bake_body.rs` (Framework/UserOptions/BuildConfigSubset `from_js` + the
-// `init_server_runtime`/`get_hmr_runtime` host fns) is un-gated here so the
-// keystone types above stop being opaque `(())` shells. DevServer/
-// FrameworkRouter/production drafts stay gated — they need BundleV2 field
-// access and the full IncrementalGraph surface.
+// ─── Submodule bodies ────────────────────────────────────────────────────────
+// `bake_body.rs` carries the Framework/UserOptions/BuildConfigSubset `from_js`
+// impls plus the `init_server_runtime`/`get_hmr_runtime` host fns.
 #[path = "bake_body.rs"]
 pub(crate) mod bake_body;
 
@@ -32,7 +27,7 @@ pub(crate) mod framework_router_body;
 #[path = "production.rs"]
 mod production_body;
 
-// Re-exports from the full Phase-A drafts so `production.rs` can name them
+// Re-exports from the submodule bodies so `production.rs` can name them
 // without going through the keystone stubs below.
 pub use bake_body::{PatternBuffer, UserOptions, print_warning};
 
@@ -519,8 +514,8 @@ impl Default for SplitBundlerOptions {
 }
 
 // ─── bake_body → keystone bridges ────────────────────────────────────────────
-// LAYERING: `UserOptions` (bake_body.rs) carries the `&'static [u8]`-backed
-// Phase-A duplicates of `Framework`/`SplitBundlerOptions`; `DevServer::Options`
+// LAYERING: `UserOptions` (bake_body.rs) carries `&'static [u8]`-backed
+// duplicates of `Framework`/`SplitBundlerOptions`; `DevServer::Options`
 // (DevServer.rs) wants the keystone Cow-backed types defined above. Both
 // mirror the single Zig `bake.Framework`/`bake.SplitBundlerOptions`. Until the
 // two struct families unify (tracked by the `convert_file_system_router_type`

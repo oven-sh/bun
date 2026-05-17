@@ -13,7 +13,7 @@ pub struct Order {
     // TODO(port): Zig stored `arena: std.mem.Allocator` here. test_runner is not an
     // AST/arena crate per PORTING.md, so the field is dropped and `bun.create(arena, ...)`
     // calls below become `heap::alloc(Box::new(...))`. In Zig these ExecutionEntry
-    // clones were bulk-freed by the arena; revisit ownership in Phase B.
+    // clones were bulk-freed by the arena; revisit ownership.
     pub previous_group_was_concurrent: bool,
     pub cfg: Config,
 }

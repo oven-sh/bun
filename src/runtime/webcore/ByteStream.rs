@@ -369,7 +369,7 @@ impl ByteStream {
                 streams::Result::TemporaryAndDone(temp) | streams::Result::Temporary(temp) => {
                     let chunk = &temp.slice()[offset..];
                     let mut buf = Vec::with_capacity(chunk.len());
-                    // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
+                    // PERF(port): was appendSliceAssumeCapacity.
                     buf.extend_from_slice(chunk);
                     self.buffer.set(buf);
                 }
@@ -469,7 +469,7 @@ impl ByteStream {
         // returned `streams::Result::Pending` raw-backref needs.
         streams::Result::Pending(self.pending.as_ptr())
         // TODO(port): `streams::Result::Pending` carries `*streams.Result.Pending` in Zig (raw
-        // backref). Phase B: decide on `NonNull<streams::Pending>` vs index.
+        // backref). TODO(refactor): decide on `NonNull<streams::Pending>` vs index.
     }
 
     pub fn on_cancel(&self) {

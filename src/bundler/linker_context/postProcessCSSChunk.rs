@@ -17,7 +17,7 @@ pub fn post_process_css_chunk(
 ) -> Result<(), bun_core::Error> {
     // TODO(port): narrow error set
     let c = ctx.c();
-    // TODO(port): worker.arena is a per-worker arena — thread `&'bump Bump` in Phase B
+    // TODO(port): worker.arena is a per-worker arena — thread `&'bump Bump`.
     // PORT NOTE: avoid FRU `..Default::default()` — StringJoiner impls Drop (E0509).
     let mut j = StringJoiner::default();
     j.watcher = Watcher {

@@ -49,6 +49,10 @@ pub struct ClientSession {
     pub port: u16,
     pub ssl_config: Option<ssl_config::SharedPtr>,
     pub did_have_handshaking_error: bool,
+    /// True if the TLS handshake ran with `rejectUnauthorized=true`. Carried
+    /// into the keepalive pool so a strict caller never reuses a session whose
+    /// hostname was never validated.
+    pub established_with_reject_unauthorized: bool,
 
     /// Queued bytes for the socket; whole frames are written here and
     /// `flush()` drains as much as the socket accepts.
@@ -234,6 +238,7 @@ impl ClientSession {
             port: client.connected_url.get_port_auto(),
             ssl_config: client.tls_props.clone(),
             did_have_handshaking_error: client.flags.did_have_handshaking_error,
+            established_with_reject_unauthorized: client.flags.reject_unauthorized,
             write_buffer: bun_io::StreamBuffer::default(),
             read_buffer: Vec::new(),
             streams: ArrayHashMap::default(),
@@ -895,6 +900,7 @@ impl ClientSession {
             HTTPClient::ssl_ctx_mut(self.ctx).release_socket(
                 self.socket,
                 self.did_have_handshaking_error,
+                self.established_with_reject_unauthorized,
                 &self.hostname,
                 self.port,
                 self.ssl_config.as_ref(),

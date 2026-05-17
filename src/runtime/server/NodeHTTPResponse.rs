@@ -31,9 +31,7 @@ bun_core::declare_scope!(NodeHTTPResponse, visible);
 /// inherent `to_js_ptr(*mut Self, &JSGlobalObject)`; `noConstructor: true`
 /// in `server.classes.ts` means no `${T}__getConstructor` is exported.
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
-// shim still emits `this: &mut NodeHTTPResponse` until Phase 1 lands —
-// `&mut T` auto-derefs to `&T` so the impls below compile against either.
+// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
 #[bun_jsc::JsClass(no_constructor)]
 pub struct NodeHTTPResponse {
     pub ref_count: Cell<u32>,
@@ -388,8 +386,8 @@ impl NodeHTTPResponse {
             return false;
         }
         // `AnyServer` is a `Copy` type-erased pointer; copy it so the
-        // `&mut self`-taking accessor can be called from this `&self` body
-        // (R-2 Phase 2). The pointee is the long-lived server, not `*self`.
+        // `&mut self`-taking accessor can be called from this `&self` body.
+        // The pointee is the long-lived server, not `*self`.
         let mut server = self.server;
         let Some(ws_handler) = server.web_socket_handler() else {
             return false;
@@ -1911,11 +1909,8 @@ impl NodeHTTPResponse {
 
         self.promise.with_mut(|p| p.deinit());
         // SAFETY: self was allocated via `heap::into_raw` in `createForJS`;
-        // refcount is zero so no other references remain. R-2 interim: the
-        // codegen shim still hands us `&mut T` (auto-deref'd to `&self`), so
-        // the `*const → *mut` cast retains the original Box provenance. Once
-        // Phase 1 lands the shim will pass the raw m_ctx as `&T` directly and
-        // this remains the unique owner at count==0.
+        // refcount is zero so no other references remain — `self` is the unique
+        // owner at count==0, so the `*const → *mut` cast is sound.
         unsafe { drop(bun_core::heap::take(self.as_ctx_ptr())) };
     }
 

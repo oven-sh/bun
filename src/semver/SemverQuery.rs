@@ -362,14 +362,14 @@ impl Group {
             let _ = write!(&mut v, "{}", self.fmt(input));
             v
         };
-        // Placeholder: write raw; Phase B must JSON-escape.
+        // TODO(port): writes raw bytes; should JSON-escape.
         writer.write_str("\"")?;
         write!(writer, "{}", bstr::BStr::new(&temp))?;
         writer.write_str("\"")
     }
 
     // PORT NOTE: `deinit` deleted — `next: Option<Box<..>>` chains are freed by Drop.
-    // PERF(port): recursive Box drop could overflow stack on very long chains — profile in Phase B.
+    // PERF(port): recursive Box drop could overflow stack on very long chains.
 
     pub fn get_exact_version(&self) -> Option<Version> {
         let range = &self.head.head.range;

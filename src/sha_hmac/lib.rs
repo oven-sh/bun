@@ -10,7 +10,7 @@
 pub mod hmac;
 pub mod sha;
 
-// Convenience re-export matching Phase-A intent (`crate::evp::Algorithm`).
+// Convenience re-export so dependents can write `crate::evp::Algorithm`.
 pub use sha::evp;
 
 // Crate-root re-exports mirroring Zig's flat `bun.sha.*` / `bun.hmac.*` surface

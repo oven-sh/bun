@@ -37,8 +37,8 @@ impl ContainerName {
             Err(e) => return Err(e),
         };
 
-        // SAFETY: CustomIdent.v points into the parser source/arena (Phase A
-        // lifetime erasure — see PORTING.md §AST crates).
+        // SAFETY: CustomIdent.v points into the parser source/arena (lifetime
+        // erasure — see PORTING.md §AST crates).
         let v: &'static [u8] = unsafe { crate::arena_str(ident.v) };
         // todo_stuff.match_ignore_ascii_case;
         if strings::eql_any_case_insensitive_ascii(v, &[b"none", b"and", b"not", b"or"]) {
@@ -120,7 +120,7 @@ pub enum StyleQuery {
         operator: Operator,
         /// The conditions for the operator.
         // PERF(port): was ArrayListUnmanaged fed input.arena() (parser arena);
-        // Phase B decides bun_alloc::ArenaVec<'bump, _> vs global Vec crate-wide.
+        // could use bun_alloc::ArenaVec<'bump, _> instead of global Vec — profile if hot.
         conditions: Vec<StyleQuery>,
     },
 }
@@ -167,8 +167,8 @@ impl QueryCondition for StyleQuery {
         let property_id = crate::properties::PropertyId::parse(input)?;
         input.expect_colon()?;
         input.skip_whitespace();
-        // PORT NOTE: Zig threaded `(input.arena(), null)` here; Phase B
-        // re-threads `&Bump` once `ParserOptions` carries the arena.
+        // PORT NOTE: Zig threaded `(input.arena(), null)` here; re-thread
+        // `&Bump` once `ParserOptions` carries the arena.
         let opts = css::ParserOptions::default(None);
         let feature = StyleQuery::Feature(Property::parse(property_id, input, &opts)?);
         let _ = input.try_parse(css::css_parser::parse_important);
@@ -226,7 +226,7 @@ pub enum ContainerCondition {
         operator: Operator,
         /// The conditions for the operator.
         // PERF(port): was ArrayListUnmanaged fed input.arena() (parser arena);
-        // Phase B decides bun_alloc::ArenaVec<'bump, _> vs global Vec crate-wide.
+        // could use bun_alloc::ArenaVec<'bump, _> instead of global Vec — profile if hot.
         conditions: Vec<ContainerCondition>,
     },
     /// A style query.

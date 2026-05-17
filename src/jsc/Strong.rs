@@ -211,7 +211,7 @@ impl Impl {
         // SAFETY: HandleSlot storage is a live, aligned JSC::JSValue (encoded i64) for the
         // lifetime of the Impl handle. JSValue stub is `#[repr(transparent)] usize` (same
         // size); reading it directly is the encode() operation.
-        // TODO(b2): once DecodedJSValue.rs un-gates, switch back to `(*js_value).encode()`.
+        // TODO(port): once DecodedJSValue.rs un-gates, switch back to `(*js_value).encode()`.
         unsafe { *this.as_ptr().cast::<JSValue>() }
     }
 

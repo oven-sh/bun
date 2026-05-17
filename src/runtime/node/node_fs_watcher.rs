@@ -52,7 +52,7 @@ pub struct FSWatcher {
     path_watcher: Cell<Option<*mut path_watcher::PathWatcher>>,
     poll_ref: JsCell<KeepAlive>,
     global_this: GlobalRef,
-    // TODO(port): bare JSValue heap field — self-wrapper; consider JsRef in Phase B
+    // TODO(port): bare JSValue heap field — self-wrapper; consider JsRef.
     pub(super) js_this: Cell<JSValue>,
     // pub(super): read directly by `win_watcher::PathWatcher::emit` (matches Zig `ctx.encoding`).
     pub(super) encoding: Encoding,
@@ -278,7 +278,7 @@ pub type EventPathString = StringOrBytesToDecode;
 #[cfg(not(windows))]
 pub type EventPathString = Box<[u8]>;
 // TODO(port): on posix, `EventPathString` is borrowed `&[u8]` at callback time
-// but owned `Box<[u8]>` after `dupe()`. Phase B may want `Cow<'_, [u8]>`.
+// but owned `Box<[u8]>` after `dupe()`. Consider `Cow<'_, [u8]>`.
 
 pub enum Event {
     Rename(EventPathString),
@@ -985,7 +985,7 @@ impl FSWatcher {
         } else {
             self.mutex.unlock();
         }
-        // TODO(port): bun.Mutex lock/unlock — verify RAII guard vs manual unlock semantics in Phase B
+        // TODO(port): bun.Mutex lock/unlock — verify RAII guard vs manual unlock semantics.
     }
 
     // this can be called multiple times

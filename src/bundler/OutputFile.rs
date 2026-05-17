@@ -2,7 +2,7 @@ use core::ffi::c_void;
 
 use crate::options::Loader;
 // `bake::Side` / `jsc.api.BuildArtifact.OutputKind` are TYPE_ONLY move-ins;
-// the B-1 stub `options` module already defines them locally.
+// the `options` module already defines them locally.
 use crate::options::{OutputKind, Side};
 use bun_core::Error;
 use bun_core::{PathString, String as BunString};
@@ -294,7 +294,7 @@ impl Value {
             Value::Pending(_) => unreachable!(),
             // Zig: `else => |tag| bun.todoPanic(@src(), "handle .{s}", .{@tagName(tag)})`
             // — an intentional shipped runtime panic for `.move`/`.copy`/`.saved`,
-            // not a Phase-A placeholder.
+            // not a port placeholder.
             other => bun_core::todo_panic!("handle .{}", <&'static str>::from(other.kind())),
         }
     }

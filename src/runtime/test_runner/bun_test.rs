@@ -25,7 +25,7 @@ macro_rules! group_begin {
 }
 pub(crate) use group_begin;
 
-/// Recover this thread's `timer::All` heap (b2-cycle: `vm.timer` is `()` in
+/// Recover this thread's `timer::All` heap (jsc/runtime crate cycle: `vm.timer` is `()` in
 /// the low-tier `VirtualMachine`; the real value lives in `RuntimeState`).
 #[inline]
 pub(super) fn vm_timer<'a>() -> &'a mut crate::timer::All {
@@ -1423,7 +1423,7 @@ pub enum RefDataValue {
     Start,
     Collection {
         // LIFETIMES.tsv: BORROW_PARAM &'a DescribeScope — but stored across async
-        // boundaries (promise .then); falling back to UNKNOWN-class NonNull until Phase B.
+        // boundaries (promise .then); falling back to UNKNOWN-class NonNull.
         // TODO(port): lifetime
         active_scope: core::ptr::NonNull<DescribeScope>,
     },

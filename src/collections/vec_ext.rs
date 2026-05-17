@@ -51,8 +51,8 @@ pub trait VecExt<T>: Sized {
     /// (read-only) since nothing is logically moved out.
     ///
     /// Covers the dominant js_parser pattern
-    /// `arena.alloc_slice_copy(&[a, b]) → unsafe { from_bump_slice(..) }` (B-1
-    /// invariant: bump arena outlives the AST). Callers may pass the bump
+    /// `arena.alloc_slice_copy(&[a, b]) → unsafe { from_bump_slice(..) }`
+    /// (invariant: bump arena outlives the AST). Callers may pass the bump
     /// slice directly, or skip the intermediate bump alloc entirely and pass
     /// the stack array — both compile to one memcpy into the global heap.
     fn from_arena_slice(items: &[T]) -> Self

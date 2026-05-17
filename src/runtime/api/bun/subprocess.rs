@@ -108,8 +108,8 @@ pub use bun_spawn::process::StdioKind;
 // bare ident in extern signatures). The `JsClass` impl + finalize/construct C-ABI
 // hooks are hand-expanded below for `Subprocess<'_>`.
 //
-// R-2 Phase 2: every JS-exposed method takes `&self`; per-field interior
-// mutability via `Cell` (Copy) / `JsCell` (non-Copy). Host-fn bodies re-enter
+// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). Host-fn bodies re-enter
 // JS (`run_callback`, promise resolve, getters that materialise streams) and a
 // live `&mut Self` across those calls would alias the fresh `&mut Self` the
 // codegen shim hands to whichever method JS calls next. `UnsafeCell`-backed
@@ -169,11 +169,9 @@ pub struct Subprocess<'a> {
 
 bun_event_loop::impl_timer_owner!(Subprocess<'_>; from_timer_ptr => event_loop_timer);
 
-// PORT NOTE: a `Default` impl for `Subprocess` was scaffolded here in Phase A
-// to support `..Default::default()` struct-update syntax in
-// `js_bun_spawn_bindings::spawn_maybe_sync`. That call site now fills every
-// field explicitly (see PORT NOTE there), so the impl is dead and has been
-// removed — `*mut Process` has no sound placeholder anyway.
+// PORT NOTE: no `Default` impl for `Subprocess`. `js_bun_spawn_bindings::
+// spawn_maybe_sync` fills every field explicitly (see PORT NOTE there), and
+// `*mut Process` has no sound placeholder anyway.
 
 pub type SubprocessRc<'a> = RefPtr<Subprocess<'a>>;
 

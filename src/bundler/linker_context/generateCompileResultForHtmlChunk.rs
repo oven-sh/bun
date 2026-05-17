@@ -416,7 +416,7 @@ fn generate_compile_result_for_html_chunk_impl<'a>(
     // HTML bundles for dev server must be allocated to it, as it must outlive
     // the bundle task. See `DevServer.RouteBundle.HTML.bundled_html_text`
     // TODO(port): Zig used `dev.arena()` vs `worker.arena` to control output ownership.
-    // In Rust with global mimalloc this distinction collapses; verify DevServer ownership in Phase B.
+    // In Rust with global mimalloc this distinction collapses; verify DevServer ownership.
 
     // `c.log` is now `*mut Log` (raw backref); copy directly. The HTMLLoader.log
     // field is currently dead_code, so no write actually occurs through this

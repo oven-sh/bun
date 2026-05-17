@@ -120,7 +120,7 @@ pub fn create_hash_table() -> Result<Map, bun_alloc::AllocError> {
     let mut map = Map::default();
     map.reserve(Table::ALL.len() as u32 as usize);
     // PERF(port): was put_assume_capacity_no_clobber + borrowed-key map — Rust
-    // `StringHashMap` boxes the key. Profile in Phase B.
+    // `StringHashMap` boxes the key.
     for entry in Table::ALL {
         #[cfg(feature = "ci_assert")]
         {
@@ -508,8 +508,8 @@ impl MimeType {
             Cow::Owned(s.to_vec())
         } else {
             // TODO(port): Zig borrows the input slice here (zero-copy). A non-'static
-            // borrow needs a struct lifetime param, forbidden in Phase A — copying for now.
-            // PERF(port): was zero-copy borrow — profile in Phase B
+            // borrow would need a struct lifetime param — copying for now.
+            // PERF(port): was zero-copy borrow
             Cow::Owned(s.to_vec())
         }
     }
@@ -1758,7 +1758,7 @@ pub fn sniff(bytes: &[u8]) -> Option<MimeType> {
         return None;
     }
 
-    // PERF(port): was `inline for` over heterogeneous-length tuples — profile in Phase B
+    // PERF(port): was `inline for` over heterogeneous-length tuples
     for (header, table) in IMAGES_HEADERS {
         if bytes.len() >= header.len() && &bytes[0..header.len()] == *header {
             return Some(Compact::from(*table).to_mime_type());

@@ -1170,6 +1170,9 @@ impl JSValkeyClient {
         // Increment ref to ensure 'self' stays alive throughout the function
         self.ref_();
         let _d = deref_guard(self);
+        // Timer is now unlinked from the heap; release the keep-alive ref taken
+        // in `add_timer()` (remove_timer/stop_timers skip FIRED timers).
+        unsafe { JSValkeyClient::deref(std::ptr::from_ref(self).cast_mut()) };
         if self.client.get().flags.failed {
             return;
         }
@@ -1224,6 +1227,9 @@ impl JSValkeyClient {
         // Increment ref to ensure 'self' stays alive throughout the function
         self.ref_();
         let _d = deref_guard(self);
+        // Timer is now unlinked from the heap; release the keep-alive ref taken
+        // in `add_timer()` (remove_timer/stop_timers skip FIRED timers).
+        unsafe { JSValkeyClient::deref(std::ptr::from_ref(self).cast_mut()) };
 
         // Execute reconnection logic
         self.reconnect();

@@ -219,11 +219,11 @@ pub enum Architecture {
 
 impl Architecture {
     /// npm package name, `@oven-sh/bun-{os}-{arch}`
-    pub fn npm_name(self) -> &'static [u8] {
+    pub const fn npm_name(self) -> &'static str {
         match self {
-            Self::X64 => b"x64",
-            Self::Arm64 => b"aarch64",
-            Self::Wasm => b"wasm",
+            Self::X64 => "x64",
+            Self::Arm64 => "aarch64",
+            Self::Wasm => "wasm",
         }
     }
 

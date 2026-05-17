@@ -1617,8 +1617,7 @@ fn patch_windows_environ_snapshot(cwd: &[u8]) {
     entry.extend_from_slice(b"PWD=");
     entry.extend_from_slice(cwd);
     entry.push(0);
-    let entry_ptr: *mut core::ffi::c_char =
-        Box::leak(entry.into_boxed_slice()).as_mut_ptr().cast();
+    let entry_ptr: *mut core::ffi::c_char = Box::leak(entry.into_boxed_slice()).as_mut_ptr().cast();
 
     // SAFETY: single-threaded argv parse; no other thread reads `environ` yet.
     let env = unsafe { bun_core::os::environ() };

@@ -336,6 +336,8 @@ export interface PartialConfig {
   ohosCrossLibs?: string;
   /** OHOS cross-compiled ICU directory. Auto-detected if not provided. */
   ohosIcuDir?: string;
+  /** Override cross-compilation target triple (e.g. "aarch64-linux-ohos"). */
+  crossTarget?: string;
   // Version pins (defaults in versions.ts).
   nodejsVersion?: string;
   nodejsAbiVersion?: string;
@@ -839,18 +841,18 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   let ohosCrossLibs: string | undefined;
   let ohosIcuDir: string | undefined;
   if (ohos) {
-    ohosSdkRoot = partial.ohosSdkRoot ?? findOhosSdkRoot();
+    ohosSdkRoot = partial.ohosSdkRoot ? resolve(cwd, partial.ohosSdkRoot) : findOhosSdkRoot();
     if (!ohosSdkRoot) {
       throw new BuildError("OHOS build requires --ohos-sdk-root=<path> or setup-ohos-sdk in home", {
         hint: "Install OHOS SDK from https://gitee.com/openharmony and point --ohos-sdk-root to the SDK root.",
       });
     }
-    ohosSysroot = partial.ohosSysroot ?? resolve(ohosSdkRoot, "ohos/native/sysroot");
+    ohosSysroot = partial.ohosSysroot ? resolve(cwd, partial.ohosSysroot) : resolve(ohosSdkRoot, "ohos/native/sysroot");
     if (!existsSync(ohosSysroot)) {
       throw new BuildError(`OHOS sysroot not found at ${ohosSysroot}`);
     }
-    ohosCrossLibs = partial.ohosCrossLibs ?? resolve(cwd, "build", "ohos-cross-libs");
-    ohosIcuDir = partial.ohosIcuDir ?? resolve(cwd, "build", "ohos-icu", "target");
+    ohosCrossLibs = partial.ohosCrossLibs ? resolve(cwd, partial.ohosCrossLibs) : resolve(cwd, "build", "ohos-cross-libs");
+    ohosIcuDir = partial.ohosIcuDir ? resolve(cwd, partial.ohosIcuDir) : resolve(cwd, "build", "ohos-icu", "target");
     // Populate generic cross-compile fields so downstream plumbing sees OHOS settings
     sysroot = ohosSysroot;
     crossTarget = partial.crossTarget ?? "aarch64-linux-ohos";

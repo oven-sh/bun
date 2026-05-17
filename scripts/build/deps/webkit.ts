@@ -410,11 +410,14 @@ export const webkit: Dependency = {
         args.CMAKE_SHARED_LINKER_FLAGS = `-L${ohosCrossLibs}/libcxx/lib -L${ohosCrossLibs}/libcxxabi/lib -L${ohosCrossLibs}/libunwind/lib -lc++ -lc++abi -lunwind`;
       }
       if (ohosIcuDir) {
-        const hostBin = resolve(ohosIcuDir, "..", "..", "ohos-icu", "host", "bin");
-        args.ICU_GENDATA_EXECUTABLE = resolve(hostBin, "genrb");
-        args.ICU_GENCCODE_EXECUTABLE = resolve(hostBin, "genccode");
-        args.ICU_GENCMN_EXECUTABLE = resolve(hostBin, "gencmn");
-        args.ICU_PKGDATA_EXECUTABLE = resolve(hostBin, "pkgdata");
+        // hostBin is sibling of ohosIcuDir's parent: ohosIcuDir="<prefix>/target" → hostBin="<prefix>/host/bin"
+        const hostBin = resolve(ohosIcuDir, "..", "host", "bin");
+        for (const [key, exe] of [["ICU_GENDATA_EXECUTABLE", "genrb"], ["ICU_GENCCODE_EXECUTABLE", "genccode"], ["ICU_GENCMN_EXECUTABLE", "gencmn"], ["ICU_PKGDATA_EXECUTABLE", "pkgdata"]] as const) {
+          const exePath = resolve(hostBin, exe);
+          if (existsSync(exePath)) {
+            args[key] = exePath;
+          }
+        }
       }
     }
 

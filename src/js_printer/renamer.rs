@@ -749,7 +749,8 @@ impl NumberRenamer {
         // TODO(port): defer cleanup of `s` if s != initial_scope — handled at end
 
         loop {
-            if scope.members.count() > 0 || scope.generated.len_u32() > 0 {
+            let symbol_count = scope.members.count() + scope.generated.len_u32() as usize;
+            if symbol_count > 0 {
                 let new_child_scope: *mut NumberScope = self.number_scope_pool.get();
                 // SAFETY: `new_child_scope` is a valid pool slot.
                 unsafe {
@@ -760,7 +761,14 @@ impl NumberRenamer {
                         parent: Some(bun_ptr::ParentRef::from(
                             core::ptr::NonNull::new(s).expect("number_scope non-null"),
                         )),
-                        name_counts: StringHashMap::default(),
+                        // Pre-size to the AST scope's symbol count so the
+                        // per-name `put_no_clobber` path doesn't realloc the
+                        // table 0→4→8→… as names are assigned. Most scopes
+                        // assign every member exactly once, so this is the
+                        // exact final size; symbols skipped by `assign_name`
+                        // (already renamed, non-default namespace) just leave
+                        // a little slack.
+                        name_counts: StringHashMap::with_capacity(symbol_count),
                     });
                 }
                 s = new_child_scope;

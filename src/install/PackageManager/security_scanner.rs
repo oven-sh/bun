@@ -1388,11 +1388,14 @@ impl<'a> SecurityScanSubprocess<'a> {
         // in place (raw intrusive object — no Rust aliasing across the RefPtr).
         let writer_ptr = writer_local.as_ptr();
         let start_result = unsafe { (*writer_ptr).start() };
-        // `start()` always self-refs but neither POSIX (`PosixBufferedWriter::close()`)
-        // nor Windows (`BaseWindowsPipeWriter::close()`) ever derefs it, so the box
-        // strands at exit (LSan). The field ref keeps the writer alive; balance here.
+        // Balance `start()`'s +1 here (the field ref keeps the writer alive);
+        // see `static_pipe_writer.rs::start()` for why exactly one site derefs.
         // SAFETY: `writer_local` keeps `*writer_ptr` live; we own the `start()` ref.
         unsafe { RefCount::<StaticPipeWriter>::deref(writer_ptr) };
+        // Disarm `on_write`'s `started`-gated balancing deref — the start ref
+        // was just released; without this the Drained-empty path double-derefs.
+        // SAFETY: `writer_local` keeps `*writer_ptr` live.
+        unsafe { (*writer_ptr).started = false };
         match start_result {
             Err(e) => {
                 writer_local.deref();

@@ -542,6 +542,20 @@ impl FileReader {
         self.reader().update_ref(false);
     }
 
+    /// GC-finalizer detach: must not run JS. Drops the `waiting_for_on_reader_done`
+    /// self-ref so the JS-wrapper deref in `Source::finalize` can reach zero.
+    fn finalize_detach(&self) -> bool {
+        // `done` ⇒ `on_cancel` ran; its sync close completion already released the ref.
+        // Both true would strand the ref again — catch that regression in debug.
+        debug_assert!(!(self.done.get() && self.waiting_for_on_reader_done.get()));
+        if self.done.get() || !self.waiting_for_on_reader_done.get() {
+            return false;
+        }
+        self.waiting_for_on_reader_done.set(false);
+        self.done.set(true);
+        true
+    }
+
     #[inline]
     fn reader_is_pollable(&self) -> bool {
         #[cfg(unix)]
@@ -1113,6 +1127,9 @@ impl readable_stream::SourceContext for FileReader {
     }
     fn deinit_fn(&mut self) {
         Self::deinit(self)
+    }
+    fn finalize_detach(&mut self) -> bool {
+        Self::finalize_detach(self)
     }
     fn set_ref_unref(&mut self, e: bool) {
         Self::set_ref_or_unref(self, e)

@@ -242,13 +242,9 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         // `build_command.rs` PORT NOTE) — its `BundleOptions::bundler_feature_flags`
         // `Box<StringSet>` strands when the arena bulk-frees.
         "leak:bun_js_parser::parser::Runtime::Features::init_bundler_feature_flags\n",
-        // TODO(leak): `UpdateRequest::parse_with_error` `Vec` allocations
-        // strand when the `PackageManager` is `mem::forget`'d at process exit
-        // (see `install/PackageManager/mod.rs`). Bounded; OS reclaims at exit.
+        // TODO(leak): `UpdateRequest.name: &'static [u8]` is a CLI positional
+        // leaked separately from the `PackageManager` singleton. Bounded.
         "leak:bun_install::package_manager_real::update_request::UpdateRequest\n",
-        // Same `mem::forget`'d `PackageManager`: the workspace `package.json`
-        // cache holds the `Source` (file bytes) for each workspace.
-        "leak:WorkspacePackageJSONCache>::get_with_path\n",
         // ── CSS AST arena: heap-backed members in arena-allocated nodes ─────
         // The CSS parser bump-allocates AST nodes in `bun_alloc::Arena`; the
         // arena bulk-frees without `Drop`. Members that own a global-heap
@@ -294,25 +290,17 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         // `JSTranspiler` finalizer — never reached when `process.exit()` skips
         // the final sweep. Distinct frame from the `from_api` allocation above.
         "leak:Transpiler>::init_in_place\n",
-        // `Bun.file().stream()` — `FileReader::buffered` `Vec` strands when a
-        // reader is in flight at exit: `Source::finalize()` releases the JS
-        // wrapper's ref, but the reader's `waiting_for_on_reader_done` `+1` is
-        // never released because the event loop has stopped.
-        "leak:file_reader::FileReader>::on_read_chunk\n",
-        // Entry-point load is process-lifetime (`Run::start` is `-> !`). Scoped to
-        // `reload_entry_point` (boot/hot-reload/worker/test-runner) not `Run::start`.
+        // Process-lifetime: `RuntimeState.entry_point.contents` lives behind a
+        // TLS `Cell<*mut>` LSan doesn't scan as a root (`Run::start` is `-> !`).
         "leak:VirtualMachine>::reload_entry_point\n",
-        // `Subprocess` stdin `StaticPipeWriter` `Box`: GC finalizer skipped at
-        // `process.exit()` while a write is pending; `Writable::Buffer` ref strands.
+        // `start()`'s +1 still strands on write-error / EOF / GC-skipped exit;
+        // releasing there needs a deref after FilePoll dispatch unwinds.
         "leak:StaticPipeWriter<*>::create\n",
-        // `Bun.spawnSync` memfd drain: `_buffer` strands if teardown happens
-        // while the parent `PipeReader` is still ref'd.
+        // `final_buffer()` (install lifecycle scripts / cron): `_buffer` strands
+        // because the embedding parent is itself leaked with the `PackageManager`.
         "leak:PosixBufferedReader>::final_buffer\n",
-        // `Bun.serve` / bake dev-server `Request` Box: handed to the JS GC
-        // wrapper or to `ctx.request_weakref` for deferred dev-server requests.
-        // LSan fires before the final GC sweep / before the deferred-request
-        // pool drains at exit. `Request::new` symbolizes as bare `new` when
-        // inlined, so anchor on the outlined callers.
+        // `Bun.serve` / bake dev-server `Request` Box: owned by the JS GC
+        // wrapper; LSan fires before the final sweep / deferred-pool drain.
         "leak:AnyServer>::prepare_and_save_js_request_context\n",
         "leak:NewServer<*>::prepare_js_request_context\n",
         "\0",

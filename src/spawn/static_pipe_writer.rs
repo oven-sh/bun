@@ -179,9 +179,9 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             "StaticPipeWriter(0x{:x}) start()",
             std::ptr::from_ref(self) as usize
         );
-        // Zig `this.ref()` — intrusive-refcount increment. NOTE: this ref is never
-        // balanced by `BufferedWriter::close()`; `security_scanner::finish_spawn`
-        // derefs it itself — coordinate any fix here with that call site.
+        // Zig `this.ref()`. Released by exactly ONE site, gated on `started`:
+        // `on_write` (Drained-empty), subprocess.rs `take_pending_start_writer`,
+        // or `security_scanner::finish_spawn` (derefs + clears `started`).
         // SAFETY: `self` is a live `Self` (created via `create()`/`heap::alloc`).
         unsafe { RefCount::<Self>::ref_(std::ptr::from_mut::<Self>(self)) };
         // TODO(port): self-borrow — see `buffer` field note.
@@ -232,7 +232,21 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         let len = self.buffer.len();
         self.buffer = RawSlice::new(&self.buffer.slice()[amount.min(len)..]);
         if status == WriteStatus::EndOfFile || self.buffer.is_empty() {
+            // POSIX Drained path: `_on_write` won't touch `self.writer` after
+            // we return, so balance start()'s +1 here once close() runs.
+            #[cfg(not(windows))]
+            let release_start_ref = self.started && status != WriteStatus::EndOfFile;
+            #[cfg(not(windows))]
+            if release_start_ref {
+                self.started = false;
+            }
             self.writer.close();
+            #[cfg(not(windows))]
+            if release_start_ref {
+                // SAFETY: `started` ⇒ start +1 was still outstanding entering;
+                // we cleared `started` above so no other site re-derefs it.
+                unsafe { RefCount::<Self>::deref(std::ptr::from_mut::<Self>(self)) };
+            }
         }
     }
 
@@ -244,6 +258,8 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             err
         );
         self.source.detach();
+        // NOTE: can't release start()'s +1 here — `drain_buffered_data` calls
+        // on_error() then Parent::on_write() (drained > 0); that would UAF.
     }
 
     pub fn on_close(&mut self) {

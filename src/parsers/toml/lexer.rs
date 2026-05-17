@@ -912,7 +912,7 @@ impl<'a> Lexer<'a> {
                             continue;
                         }
                         c if c == 'f' as CodePoint => {
-                            buf.push(9);
+                            buf.push(0x0C);
                             continue;
                         }
                         c if c == 'n' as CodePoint => {
@@ -930,7 +930,7 @@ impl<'a> Lexer<'a> {
                             continue;
                         }
                         c if c == 't' as CodePoint => {
-                            buf.push(12);
+                            buf.push(0x09);
                             continue;
                         }
                         c if c == 'r' as CodePoint => {

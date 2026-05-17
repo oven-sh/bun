@@ -482,9 +482,22 @@ impl ArrayBuffer {
             return Ok(self.value);
         }
 
-        // If it's not a mimalloc heap buffer, we're not going to call a deallocator
+        // If it's not a mimalloc heap buffer, we're not going to call a deallocator.
+        //
+        // This check only makes sense when mimalloc is the global allocator: it
+        // distinguishes Rust-owned heap buffers (which `MarkedArrayBuffer_deallocator`
+        // can free via `mi_free`) from foreign/static memory we must not free. Under
+        // ASAN the global allocator is `std::alloc::System`, so *every* `Vec<u8>` lives
+        // outside the mimalloc heap and this branch would silently drop the deallocator
+        // for buffers we do own — leaking them. `MarkedArrayBuffer_deallocator` already
+        // routes through `bun_alloc::raw::free`, which dispatches to `libc::free` under
+        // ASAN, so it is safe to install for system-allocated buffers.
+        //
         // SAFETY: `mi_is_in_heap_region` accepts any pointer value (incl. null/non-mimalloc).
-        if self.len > 0 && !unsafe { mimalloc::mi_is_in_heap_region(self.ptr.cast()) } {
+        if self.len > 0
+            && bun_alloc::USE_MIMALLOC
+            && !unsafe { mimalloc::mi_is_in_heap_region(self.ptr.cast()) }
+        {
             bun_core::scoped_log!(ArrayBuffer, "toJS but will never free: {} bytes", self.len);
 
             if self.typed_array_type == JSType::ArrayBuffer {

@@ -19,6 +19,12 @@ use smallvec::SmallVec;
 #[derive(Default)]
 pub struct LineOffsetTable {
     pub columns_for_non_ascii: Vec<i32>,
+    /// Byte offset of the first non-ASCII byte on this line, or `i32::MAX as u32`
+    /// when the line is entirely ASCII (so no `columns_for_non_ascii` table exists).
+    /// The sentinel can't be `0` because a line can legitimately start with a
+    /// non-ASCII byte at offset 0. `i32::MAX` lets `add_source_mapping` skip the
+    /// `columns_for_non_ascii` SoA load on the (overwhelmingly common) ASCII path
+    /// with a single column comparison.
     pub byte_offset_to_first_non_ascii: u32,
     pub byte_offset_to_start_of_line: u32,
 }
@@ -150,7 +156,7 @@ impl LineOffsetTable {
         // Preallocate the top-level table using the approximate line count from the lexer
         list.ensure_unused_capacity(approximate_line_count.max(1) as usize)?;
         let mut column: i32 = 0;
-        let mut byte_offset_to_first_non_ascii: u32 = 0;
+        let mut byte_offset_to_first_non_ascii: u32 = i32::MAX as u32;
         let mut column_byte_offset: u32 = 0;
         let mut line_byte_offset: u32 = 0;
 
@@ -262,7 +268,7 @@ impl LineOffsetTable {
                     })?;
 
                     column = 0;
-                    byte_offset_to_first_non_ascii = 0;
+                    byte_offset_to_first_non_ascii = i32::MAX as u32;
                     column_byte_offset = 0;
                     line_byte_offset = 0;
                 }

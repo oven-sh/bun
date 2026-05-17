@@ -706,10 +706,15 @@ impl NewBuilder<VLQSourceMap> {
         // `items::<>` is a single `base + CONST*cap` pointer add.
         let mut original_column = loc.start - byte_offsets[idx] as i32;
         {
+            // `first_non_ascii` is `i32::MAX as u32` for ASCII-only lines, so the
+            // comparison below is false and the `columns_for_non_ascii` SoA column
+            // (the largest, ~24 B/line) is never touched on the hot ASCII path.
             let first_non_ascii = list.items::<"byte_offset_to_first_non_ascii", u32>()[idx];
-            let cols = &list.items::<"columns_for_non_ascii", Vec<i32>>()[idx];
-            if !cols.is_empty() && original_column >= first_non_ascii as i32 {
-                original_column = cols[(original_column as u32 - first_non_ascii) as usize];
+            if original_column >= first_non_ascii as i32 {
+                let cols = &list.items::<"columns_for_non_ascii", Vec<i32>>()[idx];
+                if !cols.is_empty() {
+                    original_column = cols[(original_column as u32 - first_non_ascii) as usize];
+                }
             }
         }
 

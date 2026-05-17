@@ -17,6 +17,7 @@ pub mod result;
 pub mod thread_id;
 pub mod tty;
 pub mod util;
+pub mod vibe;
 pub use atomic_cell::{Atom, AtomicCell, ThreadCell};
 
 /// Shared state-machine tag for the streaming (de)compressors in

@@ -3,7 +3,7 @@ const types = require("node:util/types");
 /** @type {import('node-inspect-extracted')} */
 const utl = require("internal/util/inspect");
 const { promisify } = require("internal/promisify");
-const { validateString, validateOneOf } = require("internal/validators");
+const { validateString, validateOneOf, validateBoolean } = require("internal/validators");
 const { MIMEType, MIMEParams } = require("internal/util/mime");
 const { deprecate } = require("internal/util/deprecate");
 
@@ -195,30 +195,79 @@ var toUSVString = input => {
   return (input + "").toWellFormed();
 };
 
-function styleText(format, text) {
+function styleText(format, text, options?) {
   validateString(text, "text");
 
-  if ($isJSArray(format)) {
-    let left = "";
-    let right = "";
-    for (const key of format) {
-      const formatCodes = inspect.colors[key];
-      if (formatCodes == null) {
-        validateOneOf(key, "format", ObjectKeys(inspect.colors));
-      }
-      left += `\u001b[${formatCodes[0]}m`;
-      right = `\u001b[${formatCodes[1]}m${right}`;
+  const { validateStream: vs = true, stream = process.stdout } = options || {};
+  validateBoolean(vs, "options.validateStream");
+
+  let skipColorize;
+  if (vs) {
+    // Check if stream is a valid Node.js stream or Web stream
+    const isStream =
+      (stream &&
+        (typeof stream.pipe === "function" || typeof stream.write === "function") &&
+        typeof stream.on === "function") ||
+      stream instanceof ReadableStream ||
+      stream instanceof WritableStream;
+    if (!isStream) {
+      throw $ERR_INVALID_ARG_TYPE("stream", ["ReadableStream", "WritableStream", "Stream"], stream);
     }
-
-    return `${left}${text}${right}`;
+    skipColorize = !require("internal/util/colors").shouldColorize(stream);
   }
 
-  let formatCodes = inspect.colors[format];
+  const formatArray = $isJSArray(format) ? format : [format];
 
-  if (formatCodes == null) {
-    validateOneOf(format, "format", ObjectKeys(inspect.colors));
+  const codes: number[][] = [];
+  for (const key of formatArray) {
+    if (key === "none") continue;
+    const formatCodes = inspect.colors[key];
+    if (formatCodes == null) {
+      validateOneOf(key, "format", ObjectKeys(inspect.colors));
+    }
+    if (skipColorize) continue;
+    codes.push(formatCodes);
   }
-  return `\u001b[${formatCodes[0]}m${text}\u001b[${formatCodes[1]}m`;
+
+  if (skipColorize) {
+    return text;
+  }
+
+  // Build opening codes
+  let openCodes = "";
+  for (let i = 0; i < codes.length; i++) {
+    openCodes += `\u001b[${codes[i][0]}m`;
+  }
+
+  // Process text to handle nested styles
+  let processedText;
+  if (codes.length > 0) {
+    processedText = codes.reduce(
+      (txt, code) =>
+        txt.replace(new RegExp(`\\u001b\\[${code[1]}m`, "g"), (match, offset) => {
+          // Check if there's more content after this reset
+          if (offset + match.length < txt.length) {
+            if (code[0] === inspect.colors.dim[0] || code[0] === inspect.colors.bold[0]) {
+              // Dim and bold are not mutually exclusive, so we need to reapply
+              return `${match}\u001b[${code[0]}m`;
+            }
+            return `\u001b[${code[0]}m`;
+          }
+          return match;
+        }),
+      text,
+    );
+  } else {
+    processedText = text;
+  }
+
+  // Build closing codes in reverse order
+  let closeCodes = "";
+  for (let i = codes.length - 1; i >= 0; i--) {
+    closeCodes += `\u001b[${codes[i][1]}m`;
+  }
+
+  return `${openCodes}${processedText}${closeCodes}`;
 }
 
 function getSystemErrorName(err: any) {

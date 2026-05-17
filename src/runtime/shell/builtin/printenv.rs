@@ -15,7 +15,7 @@ enum State {
     #[default]
     Idle,
     WaitingIo,
-    Err,
+    WaitingErr,
     Done,
 }
 
@@ -36,6 +36,13 @@ impl Printenv {
                 break;
             } else if arg.starts_with(b"-") && arg.len() > 1 {
                 let msg = b"printenv: invalid option\n";
+                if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
+                    Self::state_mut(interp, cmd).state = State::WaitingErr;
+                    let child = ChildPtr::new(cmd, WriterTag::Builtin);
+                    return Builtin::of_mut(interp, cmd)
+                        .stderr
+                        .enqueue(child, msg, safeguard);
+                }
                 let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, msg);
                 return Builtin::done(interp, cmd, 1);
             } else {
@@ -84,6 +91,9 @@ impl Printenv {
             return Builtin::done(interp, cmd, exit_code);
         }
 
+        // Stash exit_code so on_io_writer_chunk can recover it.
+        Builtin::of_mut(interp, cmd).exit_code = Some(exit_code);
+
         Self::state_mut(interp, cmd).buf = buf;
         if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
             Self::state_mut(interp, cmd).state = State::WaitingIo;
@@ -106,10 +116,15 @@ impl Printenv {
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
         if err.is_some() {
-            Self::state_mut(interp, cmd).state = State::Err;
             return Builtin::done(interp, cmd, 1);
         }
-        Self::state_mut(interp, cmd).state = State::Done;
-        Builtin::done(interp, cmd, 0)
+        match &Self::state_mut(interp, cmd).state {
+            State::WaitingErr => Builtin::done(interp, cmd, 1),
+            _ => {
+                Self::state_mut(interp, cmd).state = State::Done;
+                let exit_code = Builtin::of(interp, cmd).exit_code.unwrap_or(0);
+                Builtin::done(interp, cmd, exit_code)
+            }
+        }
     }
 }

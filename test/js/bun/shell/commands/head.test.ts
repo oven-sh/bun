@@ -40,7 +40,7 @@ describe("head", async () => {
     .runAsTest("-nN combined");
 });
 
-describe("head without stdout", async () => {
+describe("head in command substitution", async () => {
   TestBuilder.command`echo $(echo -e "line1\nline2\nline3" | head -n 1)`
     .exitCode(0)
     .stdout("line1\n")

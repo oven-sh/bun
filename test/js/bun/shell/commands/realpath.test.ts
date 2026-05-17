@@ -22,15 +22,21 @@ describe("realpath", async () => {
   TestBuilder.command`realpath`
     .exitCode(1)
     .stdout("")
+    .stderr((stderr) => {
+      if (!stderr.includes("usage:")) throw new Error("Expected usage message on stderr");
+    })
     .runAsTest("shows usage with no args");
 
   TestBuilder.command`realpath /nonexistent_path_12345`
     .exitCode(1)
     .stdout("")
+    .stderr((stderr) => {
+      if (!stderr.includes("realpath:")) throw new Error("Expected error message on stderr");
+    })
     .runAsTest("errors on nonexistent path");
 });
 
-describe("realpath without stdout", async () => {
+describe("realpath in command substitution", async () => {
   TestBuilder.command`echo $(realpath .)`
     .exitCode(0)
     .stdout((stdout) => {

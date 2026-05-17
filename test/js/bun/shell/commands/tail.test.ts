@@ -40,7 +40,7 @@ describe("tail", async () => {
     .runAsTest("-nN combined");
 });
 
-describe("tail without stdout", async () => {
+describe("tail in command substitution", async () => {
   TestBuilder.command`echo $(echo -e "line1\nline2\nline3" | tail -n 1)`
     .exitCode(0)
     .stdout("line3\n")

@@ -51,7 +51,6 @@ impl Realpath {
                 };
                 let rel_len = path_bytes.len();
                 path_buf[len + sep_len..len + sep_len + rel_len].copy_from_slice(path_bytes);
-                path_buf[len + sep_len + rel_len] = 0;
                 &path_buf[..len + sep_len + rel_len]
             };
 
@@ -88,12 +87,12 @@ impl Realpath {
 
         Self::state_mut(interp, cmd).state = State::Done;
         if let Some(safeguard) = stdout_needs_io {
-            Self::state_mut(interp, cmd).buf = out;
-            let owned = Self::state_mut(interp, cmd).buf.clone();
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
+            Self::state_mut(interp, cmd).buf = out;
+            let buf_ref = Self::state_mut(interp, cmd).buf.clone();
             return Builtin::of_mut(interp, cmd)
                 .stdout
-                .enqueue(child, &owned, safeguard);
+                .enqueue(child, &buf_ref, safeguard);
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &out);
         Builtin::done(interp, cmd, exit_code)

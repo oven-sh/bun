@@ -255,7 +255,28 @@ impl Head {
                 .enqueue(child, &output, safeguard);
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &output);
-        Builtin::done(interp, cmd, 0)
+        // For multi-file mode, advance to the next file.
+        Self::advance_or_done(interp, cmd)
+    }
+
+    /// If processing file arguments, advance to the next file. Otherwise done.
+    fn advance_or_done(interp: &Interpreter, cmd: NodeId) -> Yield {
+        let is_file_args = matches!(
+            &Self::state_mut(interp, cmd).state,
+            HeadState::ExecFilepathArgs { .. } | HeadState::WaitingWriteOut
+        );
+        if is_file_args {
+            // Reset state for next file iteration.
+            if let HeadState::ExecFilepathArgs { collected, in_done, .. } =
+                &mut Self::state_mut(interp, cmd).state
+            {
+                collected.clear();
+                *in_done = false;
+            }
+            Self::next(interp, cmd)
+        } else {
+            Builtin::done(interp, cmd, 0)
+        }
     }
 
     pub fn on_io_writer_chunk(
@@ -269,10 +290,7 @@ impl Head {
         }
         match &Self::state_mut(interp, cmd).state {
             HeadState::WaitingWriteErr => Builtin::done(interp, cmd, 1),
-            HeadState::WaitingWriteOut => {
-                Self::state_mut(interp, cmd).state = HeadState::Done;
-                Builtin::done(interp, cmd, 0)
-            }
+            HeadState::WaitingWriteOut => Self::advance_or_done(interp, cmd),
             _ => Builtin::done(interp, cmd, 0),
         }
     }

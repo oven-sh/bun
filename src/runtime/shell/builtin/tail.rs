@@ -252,7 +252,25 @@ impl Tail {
                 .enqueue(child, &output, safeguard);
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &output);
-        Builtin::done(interp, cmd, 0)
+        Self::advance_or_done(interp, cmd)
+    }
+
+    fn advance_or_done(interp: &Interpreter, cmd: NodeId) -> Yield {
+        let is_file_args = matches!(
+            &Self::state_mut(interp, cmd).state,
+            TailState::ExecFilepathArgs { .. } | TailState::WaitingWriteOut
+        );
+        if is_file_args {
+            if let TailState::ExecFilepathArgs { collected, in_done, .. } =
+                &mut Self::state_mut(interp, cmd).state
+            {
+                collected.clear();
+                *in_done = false;
+            }
+            Self::next(interp, cmd)
+        } else {
+            Builtin::done(interp, cmd, 0)
+        }
     }
 
     pub fn on_io_writer_chunk(
@@ -266,10 +284,7 @@ impl Tail {
         }
         match &Self::state_mut(interp, cmd).state {
             TailState::WaitingWriteErr => Builtin::done(interp, cmd, 1),
-            TailState::WaitingWriteOut => {
-                Self::state_mut(interp, cmd).state = TailState::Done;
-                Builtin::done(interp, cmd, 0)
-            }
+            TailState::WaitingWriteOut => Self::advance_or_done(interp, cmd),
             _ => Builtin::done(interp, cmd, 0),
         }
     }

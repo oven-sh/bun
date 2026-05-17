@@ -5,6 +5,7 @@ use crate::cli::test::changed_files_filter as ChangedFilesFilter;
 use crate::cli::test::parallel_runner as ParallelRunner;
 use crate::cli::test::scanner::{self, Scanner};
 use bun_collections::{ArrayHashMap, BoundedArray, StringHashMap};
+use core::sync::atomic::Ordering;
 use bun_core::{self as bun, Global, Output, env_var, fmt as bun_fmt};
 use bun_core::{err_generic, pretty_error, pretty_errorln};
 use bun_dotenv as DotEnv;
@@ -2398,7 +2399,7 @@ impl TestCommand {
                                 );
                             }
                             vm.exit_handler.exit_code = 1;
-                            vm.is_shutting_down = true;
+                            vm.is_shutting_down.store(true, Ordering::Release);
                             let vm_ptr: *mut VirtualMachine = vm;
                             vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
                         }
@@ -2493,7 +2494,7 @@ impl TestCommand {
                         );
                     }
                     vm.exit_handler.exit_code = 1;
-                    vm.is_shutting_down = true;
+                    vm.is_shutting_down.store(true, Ordering::Release);
                     let vm_ptr: *mut VirtualMachine = vm;
                     vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
                 }
@@ -3025,7 +3026,7 @@ impl TestCommand {
         } else if reporter.jest.unhandled_errors_between_tests > 0 {
             vm.exit_handler.exit_code = 1;
         }
-        vm.is_shutting_down = true;
+        vm.is_shutting_down.store(true, Ordering::Release);
         {
             let vm_ptr: *mut VirtualMachine = vm;
             vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
@@ -3256,7 +3257,7 @@ impl TestCommand {
                         reporter.write_junit_report_if_needed();
 
                         vm.exit_handler.exit_code = 1;
-                        vm.is_shutting_down = true;
+                        vm.is_shutting_down.store(true, Ordering::Release);
                         // SAFETY: global_exit diverges; raw-ptr reborrow mirrors Zig
                         // runWithAPILock(*VM, vm, globalExit).
                         let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm);

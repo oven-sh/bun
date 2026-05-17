@@ -1574,8 +1574,8 @@ impl VirtualMachine {
             // loop, which is live for the process lifetime.
             unsafe { (*uws::Loop::get()).drain_closed_sockets() };
 
-            // TODO(port): `self.transpiler.deinit()` — `Transpiler<'_>` has no
-            // `deinit()` yet (resolver BSSMap teardown not ported).
+            // `transpiler.deinit()` runs inside `destroy()` (frees `BundleOptions`;
+            // resolver BSSMap teardown still unported — see `Transpiler::deinit`).
             self.gc_controller.deinit();
             self.destroy();
         }
@@ -4386,6 +4386,10 @@ impl VirtualMachine {
         // PORT NOTE: Zig `proxy_env_storage.deinit()` — drops all `Arc`-held
         // proxy strings; `ProxyEnvStorage: Default` so take()+drop suffices.
         drop(core::mem::take(&mut self.proxy_env_storage));
+
+        // Free `BundleOptions` heap fields — the VM is `alloc_zeroed`'d and never
+        // `Drop`'d, so `transpiler`'s fieldwise drop never runs.
+        self.transpiler.deinit();
 
         // Free the `_resolve` fast-path duplicates handed out as `'static`
         // borrows by `dupe_resolved_path`. The Zig spec relied on

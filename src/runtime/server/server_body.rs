@@ -3171,12 +3171,8 @@ where
         // SAFETY: ctx_slot was just initialized by create_in.
         let ctx = unsafe { &mut *ctx_slot };
 
-        // Note: the context lives in a pre-allocated `HiveArray::Fallback`
-        // slot that is recycled per request, not freshly heap-allocated, so
-        // we deliberately do NOT report it as extra GC memory here. Doing so
-        // per request hits `Heap::deprecatedReportExtraMemorySlowCase` (and
-        // `collectIfNecessaryOrDefer`) on every request and inflates the
-        // GC heuristic for memory that isn't actually growing.
+        // Don't report extra GC memory here: ctx is a recycled pool slot,
+        // not a fresh heap allocation (see NewServer::on_request).
 
         // `vm.initRequestBodyValue(.{ .Null = {} })` — typed wrapper over the
         // type-erased RuntimeHooks vtable. Returns `NonNull<HiveRef>` with

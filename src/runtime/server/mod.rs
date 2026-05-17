@@ -720,12 +720,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let ctx: *mut ServerRequestContext<SSL, DEBUG> = ctx_slot;
         let ctx_mut = unsafe { &mut *ctx };
 
-        // Note: the context lives in a pre-allocated `HiveArray::Fallback`
-        // slot that is recycled per request, not freshly heap-allocated, so
-        // we deliberately do NOT report it as extra GC memory here. Doing so
-        // per request hits `Heap::deprecatedReportExtraMemorySlowCase` (and
-        // `collectIfNecessaryOrDefer`) on every request and inflates the
-        // GC heuristic for memory that isn't actually growing.
+        // Don't report extra GC memory here: ctx lives in a recycled pool
+        // slot, not a fresh heap allocation, and reporting it per request
+        // hits the slow GC heuristic path on every request.
 
         // Allocate the pooled body slot. `hive_alloc` is the typed front-end
         // for the type-erased `init_request_body_value` hook (the hook lives

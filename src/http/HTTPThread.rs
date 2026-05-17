@@ -65,9 +65,9 @@ const SSL_CONTEXT_CACHE_TTL_NS: u64 = 30 * (60 * 1_000_000_000); // 30 * std.tim
 
 // PORTING.md §Global mutable state: only ever accessed from the single HTTP
 // client thread after `on_start`. RacyCell — thread affinity is the contract.
-static CUSTOM_SSL_CONTEXT_MAP: bun_core::RacyCell<
+static CUSTOM_SSL_CONTEXT_MAP: bun_core::SyncVibeCell<
     Option<ArrayHashMap<*const SSLConfig, SslContextCacheEntry>>,
-> = bun_core::RacyCell::new(None);
+> = bun_core::SyncVibeCell::new(None);
 /// Borrow the (lazily-initialized) SSL-context cache. PORTING.md §Global
 /// mutable state: only ever accessed from the single HTTP client thread after
 /// `on_start`, so the `&'static mut` is the unique live borrow at every call

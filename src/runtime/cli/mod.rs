@@ -838,8 +838,8 @@ pub mod command {
     // storage, written exactly once in `create_context_data` during
     // single-threaded startup. The pointer to it is published via
     // `bun_options_types::context::set_global` (single source of truth).
-    static CONTEXT_DATA: bun_core::RacyCell<core::mem::MaybeUninit<ContextData>> =
-        bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
+    static CONTEXT_DATA: bun_core::SyncVibeCell<core::mem::MaybeUninit<ContextData>> =
+        bun_core::SyncVibeCell::new(core::mem::MaybeUninit::uninit());
 
     /// Process-global CLI context. Only valid after `create_context_data` has run.
     ///

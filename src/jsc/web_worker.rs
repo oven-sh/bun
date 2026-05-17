@@ -230,6 +230,8 @@ unsafe extern "C" {
     );
 }
 
+//NOTE: This code is garbage, it should just use a Mutex<Workers> but that is out of the scope of this PR
+
 /// Process-global registry of worker threads that have been spawned and
 /// have not yet reached the point in `shutdown()` where they are past all
 /// process-global resolver access (BSSMap singletons like `dir_cache`).
@@ -238,6 +240,8 @@ unsafe extern "C" {
 ///
 /// Lock ordering: `LiveWorkers.mutex` → `worker.vm_lock` (never the reverse).
 mod live_workers {
+    use std::sync::atomic::AtomicPtr;
+
     use super::*;
 
     // PORT NOTE: `Mutex::new()` is the prevailing const-init spelling across
@@ -249,15 +253,14 @@ mod live_workers {
     // `MUTEX` above. `AtomicCell` so the slot itself is `Sync` with safe
     // load/store (the mutex still provides the actual happens-before for the
     // intrusive list walk; Zig: plain `var head: ?*WebWorker`).
-    pub(super) static HEAD: bun_core::AtomicCell<*mut WebWorker> =
-        bun_core::AtomicCell::new(core::ptr::null_mut());
+    pub(super) static HEAD: AtomicPtr<WebWorker> = AtomicPtr::new(core::ptr::null_mut());
     /// Number of workers registered in `list`. Separate atomic so
     /// `terminateAllAndWait` can futex-wait on it without the mutex.
     pub(super) static OUTSTANDING: AtomicU32 = AtomicU32::new(0);
 
     pub(super) fn register(worker: *mut WebWorker) {
         MUTEX.lock();
-        let head = HEAD.load();
+        let head = HEAD.load(Ordering::Acquire);
         // SAFETY: MUTEX held; `worker` is a valid heap allocation owned by C++.
         unsafe {
             (*worker).live_prev.set(core::ptr::null_mut());
@@ -266,7 +269,7 @@ mod live_workers {
                 (*head).live_prev.set(worker);
             }
         }
-        HEAD.store(worker);
+        HEAD.store(worker, Ordering::Release);
         // fetch_add and wake MUST happen under MUTEX (matching the Zig
         // `defer mutex.unlock()` ordering) so that `terminate_all_and_wait`
         // can never observe the worker in the list while OUTSTANDING is still
@@ -294,7 +297,7 @@ mod live_workers {
             if !prev.is_null() {
                 (*prev).live_next.set(next);
             } else {
-                HEAD.store(next);
+                HEAD.store(next, Ordering::Release);
             }
             if !next.is_null() {
                 (*next).live_prev.set(prev);
@@ -345,7 +348,7 @@ pub fn terminate_all_and_wait(timeout_ms: u64) {
     loop {
         live_workers::MUTEX.lock();
         // MUTEX held while walking the intrusive list; HEAD load is safe.
-        let mut it = live_workers::HEAD.load();
+        let mut it = live_workers::HEAD.load(Ordering::Acquire);
         while let Some(nn) = NonNull::new(it) {
             // Worker valid while registered (removed only in shutdown());
             // MUTEX held — `ParentRef` invariant (pointee outlives borrow) holds.

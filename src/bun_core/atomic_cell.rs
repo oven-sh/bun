@@ -31,8 +31,7 @@ use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicU16, AtomicU32, AtomicU64, O
 /// This is the cross-thread counterpart to [`RacyCell`](crate::RacyCell):
 /// where `RacyCell` documents "single-threaded by construction", `AtomicCell`
 /// documents "actually shared; every load/store is an atomic op with
-/// Acquire/Release ordering". Use this for flags, counters, small enums,
-/// handles, and `Option<NonNull<_>>` that more than one thread touches.
+/// Acquire/Release ordering". Use this for small enums and handles that more than one thread touches.
 ///
 /// `T` must implement [`Atom`] (no padding, `size_of::<T>() ∈ {1,2,4,8}`).
 /// Larger or padded `T` is a compile error — use `bun_threading::RwLock<T>` or
@@ -47,6 +46,9 @@ use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicU16, AtomicU32, AtomicU64, O
 /// [`store_relaxed`](Self::store_relaxed), named so grep finds every site
 /// that opted out of ordering.
 #[repr(C)]
+#[deprecated(
+    note = "AtomicCell generally should not be used (it was a result of LLMs making up shit instead of just using std)"
+)]
 pub struct AtomicCell<T: Copy> {
     // ZST that forces 8-byte alignment so `inner`'s address is valid for
     // `AtomicU64` (the widest backing we cast to). Smaller widths need ≤8, so
@@ -62,8 +64,8 @@ pub struct AtomicCell<T: Copy> {
 // exist to carry across threads (matching `AtomicPtr<U>: Send + Sync`
 // unconditionally). What the receiving thread *does* with a loaded pointer is
 // on the caller, same as `AtomicPtr`.
-unsafe impl<T: Copy> Sync for AtomicCell<T> {}
-unsafe impl<T: Copy> Send for AtomicCell<T> {}
+unsafe impl<T: Copy + Sync> Sync for AtomicCell<T> {}
+unsafe impl<T: Copy + Send> Send for AtomicCell<T> {}
 
 impl<T: Copy> AtomicCell<T> {
     /// `const` constructor — required because most call sites are `static`
@@ -616,15 +618,6 @@ mod tests {
         assert!(!c.load());
         c.store(true);
         assert!(c.swap(false));
-    }
-
-    #[test]
-    fn atomic_cell_ptr() {
-        let mut x = 5_u32;
-        let c: AtomicCell<Option<NonNull<u32>>> = AtomicCell::new(None);
-        assert!(c.load().is_none());
-        c.store(NonNull::new(&mut x));
-        assert_eq!(unsafe { *c.load().unwrap().as_ptr() }, 5);
     }
 
     #[test]

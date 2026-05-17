@@ -2175,7 +2175,7 @@ impl ExampleTag {
 // PORTING.md §Global mutable state: single-threaded CLI scratch state →
 // RacyCell. `URL_` borrows into the `*_BUF` statics so they must remain
 // process-lifetime, not stack locals.
-static URL_: bun_core::RacyCell<Option<URL<'static>>> = bun_core::RacyCell::new(None);
+static URL_: bun_core::SyncVibeCell<Option<URL<'static>>> = bun_core::SyncVibeCell::new(None);
 static APP_NAME_BUF: bun_core::RacyCell<[u8; 512]> = bun_core::RacyCell::new([0u8; 512]);
 static GITHUB_REPOSITORY_URL_BUF: bun_core::RacyCell<[u8; 1024]> =
     bun_core::RacyCell::new([0u8; 1024]);

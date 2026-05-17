@@ -224,11 +224,9 @@ export const globalFlags: Flag[] = [
     desc: "DWARF 4 debug info (dsymutil-compatible)",
   },
   {
-    // Nix LLVM doesn't support zstd — but we target standard distros.
-    // Nix users can override via profile if needed.
-    flag: ["-g3", "-gz=zstd"],
+    flag: ["-g3", "-gz=zlib"],
     when: c => c.unix && c.debug,
-    desc: "Full debug info, zstd-compressed",
+    desc: "Full debug info, zlib-compressed",
   },
   {
     flag: "-g1",

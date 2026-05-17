@@ -14,9 +14,13 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs = { nixpkgs, flake-utils, rust-overlay, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs {
@@ -24,7 +28,13 @@
           config = {
             allowUnfree = true;
           };
+          overlays = [
+            (import rust-overlay)
+          ];
         };
+
+
+        rust-toolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
 
         # LLVM 21 - matching the bootstrap script (targets 21.1.8, actual version from nixpkgs-unstable)
         llvm = pkgs.llvm_21;
@@ -47,8 +57,6 @@
           llvm
           lld
           pkgs.gcc
-          pkgs.rustc
-          pkgs.cargo
           pkgs.go
 
           # Bun itself (for running build scripts via `bun bd`)
@@ -70,6 +78,7 @@
           pkgs.zlib
           pkgs.libxml2
           pkgs.libiconv
+          pkgs.zstd
 
           # Development tools
           pkgs.git
@@ -77,6 +86,9 @@
           pkgs.wget
           pkgs.unzip
           pkgs.xz
+
+          #Rust
+          rust-toolchain
 
           # Additional dependencies for Linux
         ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
@@ -129,20 +141,22 @@
       {
         devShells.default = (pkgs.mkShell.override {
           stdenv = pkgs.clangStdenv;
-        }) {
+        }) rec{
           inherit packages;
           hardeningDisable = [ "fortify" ];
 
+          #build env
+          CC = "${pkgs.lib.getExe clang}";
+          CXX = "${pkgs.lib.getExe' clang "clang++"}";
+          AR = "${llvm}/bin/llvm-ar";
+          RANLIB = "${llvm}/bin/llvm-ranlib";
+          CMAKE_C_COMPILER = CC;
+          CMAKE_CXX_COMPILER = CXX;
+          CMAKE_AR = AR;
+          CMAKE_RANLIB = RANLIB;
+
           shellHook = ''
             # Set up build environment
-            export CC="${pkgs.lib.getExe clang}"
-            export CXX="${pkgs.lib.getExe' clang "clang++"}"
-            export AR="${llvm}/bin/llvm-ar"
-            export RANLIB="${llvm}/bin/llvm-ranlib"
-            export CMAKE_C_COMPILER="$CC"
-            export CMAKE_CXX_COMPILER="$CXX"
-            export CMAKE_AR="$AR"
-            export CMAKE_RANLIB="$RANLIB"
             export CMAKE_SYSTEM_PROCESSOR="$(uname -m)"
             export TMPDIR="''${TMPDIR:-/tmp}"
           '' + pkgs.lib.optionalString pkgs.stdenv.isLinux ''
@@ -166,6 +180,7 @@
             echo "  bun bd test <test-file>   # Run tests"
             echo "====================================="
           '';
+
 
           # Additional environment variables
           CMAKE_BUILD_TYPE = "Debug";

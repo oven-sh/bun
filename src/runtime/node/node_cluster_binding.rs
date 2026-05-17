@@ -32,8 +32,8 @@ unsafe extern "C" {
 // access via `child_singleton()`.
 // PORTING.md §Global mutable state: JS-thread-only singleton with `!Sync`
 // fields (`Strong`). RacyCell — single-thread access is the contract.
-pub static CHILD_SINGLETON: bun_core::RacyCell<Option<InternalMsgHolder>> =
-    bun_core::RacyCell::new(None);
+pub static CHILD_SINGLETON: bun_core::SyncVibeCell<Option<InternalMsgHolder>> =
+    bun_core::SyncVibeCell::new(None);
 
 /// `&mut` to the (lazily-initialized) JS-thread singleton.
 ///

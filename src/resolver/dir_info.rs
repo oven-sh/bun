@@ -1,5 +1,10 @@
 use core::ptr::NonNull;
+use std::ptr::drop_in_place;
+use std::ptr::null_mut;
+use std::sync::atomic::AtomicPtr;
+use std::sync::atomic::Ordering;
 
+use bun_core::warn;
 use enumset::{EnumSet, EnumSetType};
 
 use bun_alloc as allocators;
@@ -317,24 +322,39 @@ impl DirInfo {
 // `Option<NonNull<_>>` because resolver-pool threads race on first access;
 // the load/CAS below makes the publish itself data-race-free. (The map's
 // *contents* are still guarded by the resolver mutex.)
-static DIR_INFO_MAP: bun_core::AtomicCell<Option<NonNull<HashMap>>> =
-    bun_core::AtomicCell::new(None);
+static DIR_INFO_MAP: AtomicPtr<HashMap> = AtomicPtr::new(null_mut());
 
 /// Raw pointer to the lazy DirInfo BSSMap singleton. Callers reborrow
 /// per-access under the resolver mutex — PORTING.md §Global mutable state.
 #[inline]
-pub fn hash_map_instance() -> *mut HashMap {
-    if let Some(p) = DIR_INFO_MAP.load() {
-        return p.as_ptr();
+pub fn hash_map_instance() -> NonNull<HashMap> {
+    let current_ptr = DIR_INFO_MAP.load(Ordering::Acquire);
+
+    if let Some(non_null) = NonNull::new(current_ptr) {
+        return non_null;
     }
+
     // First access: initialize and publish. Resolver init is single-threaded
     // in practice, but use CAS so a race (if it ever happens) doesn't tear
     // the pointer; the loser's `init()` result is leaked, which is fine for
     // a process-lifetime BSS-backed singleton.
     let new = HashMap::init();
-    match DIR_INFO_MAP.compare_exchange(None, Some(new)) {
-        Ok(_) => new.as_ptr(),
-        Err(existing) => existing.unwrap().as_ptr(),
+
+    let rez = DIR_INFO_MAP.compare_exchange(
+        null_mut(),
+        new.as_ptr(),
+        Ordering::Release,
+        Ordering::Acquire,
+    );
+
+    match rez {
+        Ok(_) => new,
+        Err(current) => unsafe {
+            //SAFETY: We are the only holders of hash map so we can drop it in place
+            drop_in_place(new.as_ptr());
+            //SAFETY: The pointer is non null giver the compare exchange result
+            NonNull::new_unchecked(current)
+        },
     }
 }
 
@@ -347,7 +367,7 @@ fn ref_at_index(index: Index) -> Option<DirInfoRef> {
     // SAFETY: ARENA — `hash_map_instance()` is the never-null BSSMap singleton
     // (process-lifetime; never freed). Resolver mutex held by caller serializes
     // mutation. `at_index` yields a slot satisfying `DirInfoRef`'s invariant.
-    unsafe { (*hash_map_instance()).at_index(index) }.map(DirInfoRef::from_slot)
+    unsafe { (*hash_map_instance().as_ptr()).at_index(index) }.map(DirInfoRef::from_slot)
 }
 
 bitflags::bitflags! {

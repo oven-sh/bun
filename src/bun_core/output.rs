@@ -2659,8 +2659,8 @@ impl ErrName for crate::Error {
 pub mod scoped_debug_writer {
     use super::*;
 
-    pub static SCOPED_FILE_WRITER: crate::RacyCell<QuietWriter> =
-        crate::RacyCell::new(QuietWriter::ZEROED);
+    pub static SCOPED_FILE_WRITER: crate::SyncVibeCell<QuietWriter> =
+        crate::SyncVibeCell::new(QuietWriter::ZEROED);
 
     thread_local! {
         pub static DISABLE_INSIDE_LOG: Cell<isize> = const { Cell::new(0) };

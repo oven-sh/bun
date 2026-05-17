@@ -1012,7 +1012,7 @@ impl<'a> Resolver<'a> {
             // Route through the per-monomorphization singleton so this field and
             // `DirInfo::get_parent()` / `get_enclosing_browser_scope()` share storage
             // (Zig `BSSMap.init()` is a per-type singleton, not a fresh alloc).
-            dir_cache: DirInfo::hash_map_instance(),
+            dir_cache: DirInfo::hash_map_instance().as_ptr(),
             mutex: &*RESOLVER_MUTEX,
             caches: CacheSet::init(),
             opts,

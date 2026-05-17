@@ -1293,7 +1293,7 @@ pub struct Run {
 // PORTING.md §Global mutable state: `Run` is `!Sync` (raw ptrs); RacyCell so
 // `boot`/`boot_standalone` can `ptr::write` it on the single CLI thread and
 // the `holdAPILock` trampoline can re-derive `&mut Run` from the static.
-static RUN: bun_core::RacyCell<Run> = bun_core::RacyCell::new(Run {
+static RUN: bun_core::SyncVibeCell<Run> = bun_core::SyncVibeCell::new(Run {
     ctx: ::core::ptr::null_mut(),
     vm: ::core::ptr::null_mut(),
     entry_path: ::core::ptr::slice_from_raw_parts(::core::ptr::null(), 0),

@@ -738,8 +738,7 @@ impl<'a> XML<'a> {
 
         if self.source[self.pos] == b'#' {
             self.pos += 1;
-            let hex =
-                self.pos < self.source.len() && matches!(self.source[self.pos], b'x' | b'X');
+            let hex = self.pos < self.source.len() && matches!(self.source[self.pos], b'x' | b'X');
             if hex {
                 self.pos += 1;
             }

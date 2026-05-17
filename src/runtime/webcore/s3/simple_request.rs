@@ -491,7 +491,12 @@ impl Drop for S3HttpSimpleTask {
         // `execute_simple_s3_request`); `Drop` only runs via `on_response` after that point.
         // Zig's `deinit` calls only `http.clearData()` and never runs a full AsyncHTTP destructor,
         // so we intentionally do NOT `assume_init_drop` here.
-        unsafe { self.http.assume_init_mut() }.clear_data();
+        let http = unsafe { self.http.assume_init_mut() };
+        http.clear_data();
+        // Zig shared one EntryList allocation between task.headers / request_headers /
+        // client.header_entries; Rust `init` clones, so free the two copies clear_data() skips.
+        http.request_headers = Default::default();
+        http.client.header_entries = Default::default();
     }
 }
 

@@ -449,6 +449,12 @@ impl ExtractTarball {
                 }
             }
 
+            // Explicitly close the temp extraction dir before the rename. On
+            // Windows a still-open handle to the source directory can fail
+            // `NtSetInformationFile` with EBUSY; spelling out the close keeps
+            // the timing visible instead of relying on block-end Drop.
+            drop(extract_destination);
+
             if PackageManager::verbose_install() {
                 let elapsed = bun_core::Timespec::now_allow_mocked_time().ns()
                     - time_started_for_verbose_logs;

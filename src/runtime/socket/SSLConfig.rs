@@ -61,16 +61,13 @@ impl From<JsError> for ReadFromBlobError {
 // via `CString::into_raw`).
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Transfer ownership of a `ZBox` (NUL-terminated `Box<[u8]>`) to a raw
-/// `*const c_char`. No reallocation. Freed by `bun_core::free_sensitive`
-/// (mimalloc) in `SSLConfig::deinit`.
+/// Re-allocate a `ZBox` into a fresh `dupe_z` (mimalloc) buffer so it can be
+/// freed by `bun_core::free_sensitive` (= `mi_free`) in `SSLConfig::deinit`.
+/// `ZBox` is a `Box<[u8]>` from the *global* allocator — under ASAN that's
+/// `libc::malloc`, and `mi_free` on a libc pointer SEGVs in the page-map walk.
 #[inline]
 fn zbox_into_raw(z: bun_core::ZBox) -> *const c_char {
-    let mut b = z.into_vec_with_nul().into_boxed_slice();
-    debug_assert_eq!(b.last(), Some(&0));
-    let p = b.as_mut_ptr() as *const c_char;
-    core::mem::forget(b);
-    p
+    bun_core::dupe_z(z.as_bytes())
 }
 
 /// `dupeZ` a byte slice into a fresh mimalloc allocation.

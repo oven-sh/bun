@@ -40,9 +40,8 @@ impl<'a> CssModule<'a> {
                         // Zig: `bun.path.Platform.auto.isAbsolute(root)`
                         if bun_paths::is_absolute(root) {
                             alloced = true;
-                            break 'source bump.alloc_slice_copy(
-                                bun_paths::resolve_path::relative(root, path),
-                            );
+                            break 'source bump
+                                .alloc_slice_copy(bun_paths::resolve_path::relative(root, path));
                         }
                     }
                     break 'source path;

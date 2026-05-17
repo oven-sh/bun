@@ -2522,10 +2522,10 @@ pub fn fill_property_bit_set(
 pub struct StyleSheet<AtRule> {
     /// A list of top-level rules within the style sheet.
     pub rules: CssRuleList<AtRule>,
-    // PERF(port): was arena bulk-free (sources / source_map_urls /
-    // license_comments were ArrayList fed input.arena()) — profile if hot.
-    pub sources: Vec<Box<[u8]>>,
-    pub source_map_urls: Vec<Option<Box<[u8]>>>,
+    // Arena-resident slices — bulk-free with the AST node holding this
+    // StyleSheet (no Drop on arena reset → global Vec/Box would strand).
+    pub sources: &'static [&'static [u8]],
+    pub source_map_urls: &'static [Option<&'static [u8]>],
     pub license_comments: Vec<&'static [u8]>, // TODO(port): lifetime — arena
     pub options: ParserOptions<'static>,      // TODO(port): lifetime
     // Zig: `tailwind: if (AtRule == BundlerAtRule) ?*BundlerTailwindState else u0`
@@ -2546,8 +2546,8 @@ impl<AtRule> StyleSheet<AtRule> {
     pub fn empty() -> Self {
         Self {
             rules: CssRuleList::default(),
-            sources: Vec::new(),
-            source_map_urls: Vec::new(),
+            sources: &[],
+            source_map_urls: &[],
             license_comments: Vec::new(),
             options: ParserOptions::default(None),
             tailwind: None,
@@ -2685,7 +2685,7 @@ mod stylesheet_impl {
                 printer.css_module = Some(CssModule::new(
                     printer.arena,
                     config,
-                    &self.sources,
+                    self.sources,
                     project_root,
                     references_mut,
                 ));
@@ -2859,10 +2859,14 @@ mod stylesheet_impl {
                 }
             }
 
-            let mut sources: Vec<Box<[u8]>> = Vec::with_capacity(1);
-            sources.push(Box::<[u8]>::from(options.filename));
-            let mut source_map_urls: Vec<Option<Box<[u8]>>> = Vec::with_capacity(1);
-            source_map_urls.push(parser.current_source_map_url().map(Box::<[u8]>::from));
+            // Arena-resident slices (no Drop on bulk-free) — nothing strands on
+            // reset. `filename` is already `'static`; copy the URL bytes into the
+            // arena so they outlive the source text.
+            let sources: &'static [&'static [u8]] = arena.alloc_slice_copy(&[options.filename]);
+            let source_map_urls: &'static [Option<&'static [u8]>] =
+                arena.alloc_slice_copy(&[parser
+                    .current_source_map_url()
+                    .map(|s| &*arena.alloc_slice_copy(s))]);
 
             // Spec: `.layer_names = if (comptime P == BundlerAtRuleParser)
             // at_rule_parser.layer_names else .{}` (css_parser.zig:3324). Rust
@@ -2929,8 +2933,8 @@ mod stylesheet_impl {
         ) -> Self {
             Self {
                 rules: imports_from_tailwind,
-                sources: Vec::new(),
-                source_map_urls: Vec::new(),
+                sources: &[],
+                source_map_urls: &[],
                 license_comments: Vec::new(),
                 options,
                 tailwind: None,
@@ -3060,9 +3064,9 @@ mod stylesheet_impl {
                 },
                 Some(&mut parser_extra),
             );
-            let mut sources: Vec<Box<[u8]>> = Vec::with_capacity(1);
-            // PERF(port): was appendAssumeCapacity
-            sources.push(options.filename.into());
+            // Arena-resident slice (matches `StyleSheet.sources`); avoids a
+            // global Vec/Box that the caller's arena teardown wouldn't Drop.
+            let sources: &'static [&'static [u8]] = arena.alloc_slice_copy(&[options.filename]);
             Ok(StyleAttribute {
                 declarations: match DeclarationBlock::parse(&mut parser, &options) {
                     Ok(v) => v,
@@ -3097,7 +3101,7 @@ mod stylesheet_impl {
                 None,
                 &symbols,
             );
-            printer.sources = Some(&self.sources);
+            printer.sources = Some(self.sources);
 
             self.declarations.to_css(&mut printer)?;
 
@@ -3166,7 +3170,8 @@ pub struct StyleAttribute {
     // erased to `'static` until 'bump threads through the rule tree (matches
     // `StyleRule.declarations` in rules/style.rs).
     pub declarations: DeclarationBlock<'static>,
-    pub sources: Vec<Box<[u8]>>,
+    /// Arena-resident slice (same allocator as `declarations`); see `StyleSheet.sources`.
+    pub sources: &'static [&'static [u8]],
 }
 
 impl StyleAttribute {

@@ -15,7 +15,7 @@ pub use crate::Error;
 // ─────────────────────────────────────────────────────────────────────────
 pub struct CssModule<'a> {
     pub config: &'a Config,
-    pub sources: &'a Vec<Box<[u8]>>,
+    pub sources: &'a [&'a [u8]],
     pub hashes: BumpVec<'a, &'a [u8]>,
     pub exports_by_source_index: BumpVec<'a, CssModuleExports<'a>>,
     pub references: &'a mut CssModuleReferences<'a>,
@@ -25,14 +25,14 @@ impl<'a> CssModule<'a> {
     pub fn new(
         bump: &'a Bump,
         config: &'a Config,
-        sources: &'a Vec<Box<[u8]>>,
+        sources: &'a [&'a [u8]],
         project_root: Option<&[u8]>,
         references: &'a mut CssModuleReferences<'a>,
     ) -> CssModule<'a> {
         // TODO: this is BAAAAAAAAAAD we are going to remove it
         let hashes = 'hashes: {
             let mut hashes = BumpVec::with_capacity_in(sources.len(), bump);
-            for path in sources.iter() {
+            for &path in sources.iter() {
                 let mut alloced = false;
                 let source: &[u8] = 'source: {
                     // Make paths relative to project root so hashes are stable
@@ -41,11 +41,11 @@ impl<'a> CssModule<'a> {
                         if bun_paths::is_absolute(root) {
                             alloced = true;
                             break 'source bump.alloc_slice_copy(
-                                bun_paths::resolve_path::relative(root, path.as_ref()),
+                                bun_paths::resolve_path::relative(root, path),
                             );
                         }
                     }
-                    break 'source path.as_ref();
+                    break 'source path;
                 };
                 // PORT NOTE: Zig `defer if (alloced) arena.free(source);` — arena-allocated, bulk-freed on bump.reset()
                 let _ = alloced;
@@ -93,7 +93,7 @@ impl<'a> CssModule<'a> {
                         bump,
                         BumpVec::new_in(bump),
                         self.hashes[source_index as usize],
-                        self.sources[source_index as usize].as_ref(),
+                        self.sources[source_index as usize],
                         name,
                     ),
                     composes: BumpVec::new_in(bump),
@@ -151,7 +151,7 @@ impl<'a> CssModule<'a> {
                                 bump,
                                 res,
                                 self.hashes[source_index as usize],
-                                self.sources[source_index as usize].as_ref(),
+                                self.sources[source_index as usize],
                                 &name[2..],
                             ),
                             composes: BumpVec::new_in(bump),
@@ -220,7 +220,7 @@ impl<'a> CssModule<'a> {
                     bump,
                     b"--",
                     self.hashes[source_index as usize],
-                    self.sources[source_index as usize].as_ref(),
+                    self.sources[source_index as usize],
                     &local[2..],
                 ),
                 composes: BumpVec::new_in(bump),
@@ -246,7 +246,7 @@ impl<'a> CssModule<'a> {
                     bump,
                     BumpVec::new_in(bump),
                     self.hashes[source_index as usize],
-                    self.sources[source_index as usize].as_ref(),
+                    self.sources[source_index as usize],
                     local,
                 ),
                 composes: BumpVec::new_in(bump),

@@ -98,6 +98,19 @@ impl SystemError {
         self.hostname.ref_();
         self.dest.ref_();
     }
+    /// Bitwise-copy + bump every `bun_core::String` ref. Mirrors Zig
+    /// `var v = this.*; v.ref();`. `bun_core::String` has no `Clone` impl
+    /// (intrusive WTF refcount), so `#[derive(Clone)]` is unavailable; this
+    /// is the manual equivalent. Matches `bun_jsc::SystemError::dupe`.
+    pub fn dupe(&self) -> SystemError {
+        // SAFETY: `SystemError` is `#[repr(C)]` and every field is either
+        // `c_int` (trivially copyable) or `bun_core::String` — a `#[repr(C)]`
+        // smart-ptr whose bitwise copy is sound provided we immediately bump
+        // each ref (preventing a double-free on drop).
+        let v: SystemError = unsafe { core::ptr::read(self) };
+        v.ref_();
+        v
+    }
 }
 impl core::fmt::Display for SystemError {
     /// Port of `SystemError.format` (SystemError.zig:85). Zig forks on

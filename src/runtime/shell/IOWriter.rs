@@ -862,25 +862,33 @@ impl IOWriter {
             s.flags.broken_pipe = true;
         }
         s.err = Some(err.to_shell_system_error());
+        // Move the pending writers out and reset state before iterating: the
+        // on_io_writer_chunk callbacks below drive the Yield trampoline, which
+        // can re-enter enqueue(). Re-entrant enqueues are short-circuited by
+        // handle_broken_pipe via the stored s.err, but taking ownership of the
+        // list here guarantees we never iterate a Vec that could grow, and
+        // avoids dropping a re-entrant writer via a trailing clear().
+        //
         // Writers before writer_idx have already had their callback fired and
         // may have been freed; only notify the still-pending ones, dedup'd.
-        let mut seen: Vec<ChildPtr> = Vec::with_capacity(64);
         let start = s.writer_idx;
-        // PORT NOTE: reshaped for borrowck — copy out the child ptrs first.
         let pending: Vec<ChildPtr> = s.writers[start..]
             .iter()
             .filter(|w| !w.is_dead())
             .map(|w| w.ptr)
             .collect();
+        s.total_bytes_written = 0;
+        s.writer_idx = 0;
+        s.buf.clear();
+        s.writers.clear();
+        let mut seen: Vec<ChildPtr> = Vec::with_capacity(64);
         for ptr in pending {
             if seen.contains(&ptr) {
                 continue;
             }
             seen.push(ptr);
-            // Spec: `if (this.err) |*e| e.ref();` — `SystemError` in the Rust
-            // port owns `bun_core::String`s by value (no shared refcount yet),
-            // so re-derive a fresh one per callee instead of cloning the stored
-            // error.
+            // Spec: `if (this.err) |*e| e.ref();` — re-derive a fresh
+            // SystemError per callee (each callee consumes its copy).
             let ee = err.to_shell_system_error();
             self.run_yield(Yield::OnIoWriterChunk {
                 child: ptr,
@@ -888,11 +896,6 @@ impl IOWriter {
                 err: Some(ee),
             });
         }
-        let s = self.state();
-        s.total_bytes_written = 0;
-        s.writer_idx = 0;
-        s.buf.clear();
-        s.writers.clear();
     }
 
     fn on_close(&self) {
@@ -920,7 +923,21 @@ impl IOWriter {
 
     /// Spec: IOWriter.zig `handleBrokenPipe`.
     fn handle_broken_pipe(&self, ptr: ChildPtr) -> Option<Yield> {
-        if self.state().flags.broken_pipe {
+        let s = self.state();
+        // Once on_error has fired, PosixBufferedWriter._onError will close()
+        // the poll handle immediately after on_error returns. A re-entrant
+        // enqueue during on_error's callback loop would append to s.writers
+        // and register a poll that is about to be torn down, stranding the
+        // new writer. Short-circuit with the stored error so the caller gets
+        // its on_io_writer_chunk callback without touching the doomed handle.
+        if let Some(e) = &s.err {
+            return Some(Yield::OnIoWriterChunk {
+                child: ptr,
+                written: 0,
+                err: Some(e.dupe()),
+            });
+        }
+        if s.flags.broken_pipe {
             let err = sys::Error::from_code(E::EPIPE, sys::Tag::write).to_system_error();
             return Some(Yield::OnIoWriterChunk {
                 child: ptr,
@@ -997,26 +1014,15 @@ impl IOWriter {
         args: core::fmt::Arguments<'_>,
     ) -> Yield {
         use std::io::Write as _;
+        if let Some(y) = self.handle_broken_pipe(child) {
+            return y;
+        }
         let s = self.state();
         let start = s.buf.len();
         if let Some(k) = kind {
             let _ = write!(&mut s.buf, "{}: ", k.as_str());
         }
         let _ = s.buf.write_fmt(args);
-        // Spec: Zig writes into `buf` *before* checking broken_pipe in
-        // `enqueueFmt`; mirror that ordering (the bytes are dead but the
-        // buffer will be cleared on the error path anyway).
-        // PORT NOTE: inline `handle_broken_pipe` instead of calling the helper —
-        // the helper re-derives `state()` while `s` is still live, which is two
-        // simultaneous `&mut State` (UB under Stacked Borrows).
-        if s.flags.broken_pipe {
-            let err = sys::Error::from_code(E::EPIPE, sys::Tag::write).to_system_error();
-            return Yield::OnIoWriterChunk {
-                child,
-                written: 0,
-                err: Some(err),
-            };
-        }
         let end = s.buf.len();
         s.writers.push(Writer {
             ptr: child,

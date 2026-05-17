@@ -22,7 +22,13 @@ test("shell parsing error does not leak emmory", async () => {
   // In Bun v1.3.1 on macOS arm64:
   //   Expected: < 100
   //   Received: 0.25
-  expect(after - before).toBeLessThan(100);
+  //
+  // Under ASAN the freed parser buffers land in the allocator quarantine
+  // (default `quarantine_size_mb=256`) instead of being returned, so the RSS
+  // delta over-reports by up to the quarantine size (~180 MiB observed) even
+  // when nothing leaks. 400 MiB still catches the original 1.3.0 regression
+  // (524 MiB) while leaving headroom for quarantine churn.
+  expect(after - before).toBeLessThan(400);
 });
 
 test("shell execution doesn't leak argv", async () => {

@@ -320,14 +320,23 @@ pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState
 
     if (buf.len > 0) {
         if (this.max_size) |max_size| {
-            if (this.total_readed >= max_size) return false;
+            if (this.total_readed >= max_size) {
+                // We already delivered `max_size` bytes on a previous chunk.
+                // Close the reader so `isDone()` becomes true; otherwise
+                // `onPull` will return `.pending` forever for non-pollable
+                // regular files.
+                close = true;
+                return false;
+            }
             const len = @min(max_size - this.total_readed, buf.len);
             if (buf.len > len) {
                 buf = buf[0..len];
             }
             this.total_readed += len;
 
-            if (buf.len == 0) {
+            if (this.total_readed >= max_size) {
+                // This chunk satisfies the slice; treat it as the final one
+                // and close the reader after delivering it.
                 close = true;
                 hasMore = false;
             }
@@ -391,7 +400,7 @@ pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState
             return false;
         }
 
-        const was_done = this.reader.isDone();
+        const was_done = this.reader.isDone() or close;
 
         if (this.pending_view.len >= buf.len) {
             @memcpy(this.pending_view[0..buf.len], buf);
@@ -411,7 +420,7 @@ pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState
         }
 
         if (bun.isSliceInBuffer(buf, reader_buffer.allocatedSlice())) {
-            if (this.reader.isDone()) {
+            if (was_done) {
                 bun.assert_eql(buf.ptr, reader_buffer.items.ptr);
                 var buffer = reader_buffer.moveToUnmanaged();
                 buffer.shrinkRetainingCapacity(buf.len);
@@ -424,7 +433,7 @@ pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState
         }
 
         if (!bun.isSliceInBuffer(buf, this.buffered.allocatedSlice())) {
-            this.pending.result = if (this.reader.isDone())
+            this.pending.result = if (was_done)
                 .{ .temporary_and_done = .fromBorrowedSliceDangerous(buf) }
             else
                 .{ .temporary = .fromBorrowedSliceDangerous(buf) };
@@ -436,7 +445,7 @@ pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState
         this.buffered = .{};
         buffered.shrinkRetainingCapacity(buf.len);
 
-        this.pending.result = if (this.reader.isDone())
+        this.pending.result = if (was_done)
             .{ .owned_and_done = .moveFromList(&buffered) }
         else
             .{ .owned = .moveFromList(&buffered) };
@@ -447,6 +456,11 @@ pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState
             reader_buffer.clearRetainingCapacity();
         }
     }
+
+    // When `close` is set we've just scheduled `this.reader.close()` via the
+    // defer above; returning true here would let the low-level read loop
+    // issue another read against the now-closed fd.
+    if (close) return false;
 
     // For pipes, we have to keep pulling or the other process will block.
     return this.read_inside_on_pull != .temporary and

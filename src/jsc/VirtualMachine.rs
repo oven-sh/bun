@@ -1564,6 +1564,15 @@ impl VirtualMachine {
                     .close_all_socket_groups(vm_ref);
             }
 
+            // Drain `TimeoutObject`s from `All.timers` while `runtime_state`
+            // and the event loop are still alive: drops their JS pins so the
+            // GC sweep below can collect them, and unlinks their heap nodes
+            // so `WTFTimer__deinit` (inside `~VM`) never sees a stale heap.
+            if let Some(hooks) = runtime_hooks() {
+                // SAFETY: `self` is the live per-thread VM; main thread.
+                unsafe { (hooks.cancel_all_timers)(core::ptr::from_mut(self)) };
+            }
+
             Zig__GlobalObject__destructOnExit(self.global());
 
             // lastChanceToFinalize() above runs Listener/Server finalize →
@@ -1795,6 +1804,10 @@ pub struct RuntimeHooks {
     /// dispatches here. No-op when `bun test` isn't running.
     pub retroactively_report_discovered_tests:
         unsafe fn(agent: *mut crate::debugger::TestReporterHandle),
+    /// Cancel every `TimeoutObject`/`ImmediateObject` still in `timer::All`
+    /// at VM teardown so their JS pins drop before `lastChanceToFinalize`.
+    /// Must run while `runtime_state` is still installed and the loop is alive.
+    pub cancel_all_timers: unsafe fn(vm: *mut VirtualMachine),
 }
 
 /// Canonical `EventLoopCtx` vtable for a `*mut VirtualMachine` owner — the JS

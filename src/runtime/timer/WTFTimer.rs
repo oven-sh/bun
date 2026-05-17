@@ -211,18 +211,22 @@ impl WTFTimer {
                 Ordering::SeqCst,
                 Ordering::SeqCst,
             );
+        }
 
-            if t.event_loop_timer.state == EventLoopTimerState::ACTIVE {
-                // SAFETY: `t.vm` is the VM that owns this timer's heap; may be
-                // called off the JS thread — `All::remove` locks.
-                // `addr_of_mut!` through the original `*mut` preserves write
-                // provenance for the heap-node mutation inside `remove`.
-                unsafe {
-                    let state = crate::jsc_hooks::runtime_state_of(t.vm.as_ptr());
-                    (*state)
-                        .timer
-                        .remove(ptr::addr_of_mut!((*this).event_loop_timer));
-                }
+        // Always unlink an ACTIVE node — even after the global is collected
+        // (`valid()` false), `~VM` → `~RunLoop::Timer` → `WTFTimer__deinit`
+        // reaches here and must not leave a freed node in `All.timers`.
+        if t.event_loop_timer.state == EventLoopTimerState::ACTIVE {
+            // SAFETY: `t.vm` is the VM that owns this timer's heap; may be
+            // called off the JS thread — `All::remove` locks.
+            // `addr_of_mut!` through the original `*mut` preserves write
+            // provenance for the heap-node mutation inside `remove`.
+            unsafe {
+                let state = crate::jsc_hooks::runtime_state_of(t.vm.as_ptr());
+                debug_assert!(!state.is_null(), "WTFTimer::cancel after runtime_state cleared");
+                (*state)
+                    .timer
+                    .remove(ptr::addr_of_mut!((*this).event_loop_timer));
             }
         }
     }

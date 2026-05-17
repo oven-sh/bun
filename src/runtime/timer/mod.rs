@@ -1070,6 +1070,51 @@ impl All {
         }
     }
 
+    /// VM-teardown pass: `cancel()` every `TimeoutObject`/`ImmediateObject`
+    /// still linked in `timers` so the in-heap `+1` ref and JS pin are released.
+    ///
+    /// # Safety
+    /// JS thread only, with the TLS `RuntimeState` still installed and `vm`
+    /// live. Caller must run this BEFORE JSC teardown (`~VM`) and BEFORE
+    /// `runtime_state` is nulled.
+    pub unsafe fn cancel_all_timeout_objects(
+        this: *mut Self,
+        vm: *mut crate::jsc::virtual_machine::VirtualMachine,
+    ) {
+        // Collect first, cancel after: `internals.cancel(vm)` mutates the heap.
+        // Iterative DFS so a degenerate heap shape can't blow the stack.
+        let mut to_cancel: Vec<*mut TimerObjectInternals> = Vec::new();
+        // SAFETY: `this` is live; `timers.0.root` is the heap root or null.
+        let mut stack: Vec<*mut EventLoopTimer> = vec![unsafe { (*this).timers.0.root }];
+        while let Some(node) = stack.pop() {
+            if node.is_null() {
+                continue;
+            }
+            // SAFETY: intrusive-heap invariant — nodes stay live while linked.
+            unsafe {
+                match (*node).tag {
+                    EventLoopTimerTag::TimeoutObject => {
+                        to_cancel.push(core::ptr::addr_of_mut!(
+                            (*TimeoutObject::from_timer_ptr(node)).internals
+                        ));
+                    }
+                    EventLoopTimerTag::ImmediateObject => {
+                        to_cancel.push(core::ptr::addr_of_mut!(
+                            (*ImmediateObject::from_timer_ptr(node)).internals
+                        ));
+                    }
+                    _ => {}
+                }
+                stack.push((*node).heap.child);
+                stack.push((*node).heap.next);
+            }
+        }
+        for internals in to_cancel {
+            // SAFETY: collected from the live heap; `cancel()` may free the parent.
+            unsafe { (*internals).cancel(vm) };
+        }
+    }
+
     pub fn increment_immediate_ref(&mut self, delta: i32, uws_loop: *mut bun_uws_sys::Loop) {
         let old = self.immediate_ref_count;
         let new = old + delta;

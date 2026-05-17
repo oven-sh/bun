@@ -51,11 +51,6 @@ function run(cmd: string, args: string[], opts: Parameters<typeof spawnSync>[2] 
   return spawnSync(cmd, args, { stdio: "inherit", cwd: repo, ...opts });
 }
 
-if (spawnSync("cargo", ["miri", "--version"], { encoding: "utf8" }).status !== 0) {
-  console.log("\x1b[36m[setup]\x1b[0m rustup component add miri");
-  if (run("rustup", ["component", "add", "miri"]).status !== 0) process.exit(1);
-}
-
 // `bun_core/build.rs` needs `build_options.rs`; cargo can't resolve the
 // workspace until `vendor/lolhtml/` (a path dep) exists. Both come from the
 // configure step, which is a no-op when already done.

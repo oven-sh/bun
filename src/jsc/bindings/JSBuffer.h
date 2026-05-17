@@ -37,7 +37,7 @@ extern "C" bool JSBuffer__isBuffer(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 
 namespace Bun {
 
-std::optional<size_t> byteLength(JSC::JSString* str, WebCore::BufferEncodingType encoding);
+std::optional<size_t> byteLength(JSC::JSString* str, JSC::JSGlobalObject* lexicalGlobalObject, WebCore::BufferEncodingType encoding);
 
 namespace Buffer {
 

@@ -432,6 +432,23 @@ pub struct BunTestRoot {
     // gpa dropped — global mimalloc
     pub active_file: BunTestPtrOptional,
     pub hook_scope: Box<DescribeScope>,
+    /// Outstanding `RefData` pointers handed to `Promise.then()` as raw-pointer
+    /// closure context (see `run_test_callback`). The `+1` taken by
+    /// `IntrusiveRc::into_raw()` is released only when the matching
+    /// `bun_test_then_or_catch` runs — but a test promise that never settles
+    /// (timeout, hung `await`) never queues that reaction, so the `RefData`
+    /// (and the `RcBox<BunTestCell>` reachable through its `Weak`) would be
+    /// reachable only through a NaN-boxed `JSValue` LSan can't trace.
+    ///
+    /// `BunTestRoot` lives for the lifetime of `test_command::exec()` (which
+    /// only exits via process-exit), so this `Vec` is a process-lifetime
+    /// owner: LSan sees the `*const RefData` here and stops reporting the
+    /// allocation. Entries are removed in `bun_test_then_or_catch` when the
+    /// promise settles. We deliberately do **not** free orphaned entries —
+    /// a never-settled promise reaction may still be queued while a later
+    /// file's microtasks run, and `from_raw()` on a freed pointer would be
+    /// a use-after-free worse than the leak.
+    pub pending_then_refs: std::cell::RefCell<Vec<*const RefData>>,
 }
 
 impl BunTestRoot {
@@ -449,6 +466,7 @@ impl BunTestRoot {
         BunTestRoot {
             active_file: None,
             hook_scope,
+            pending_then_refs: std::cell::RefCell::new(Vec::new()),
         }
     }
 
@@ -733,7 +751,17 @@ impl BunTest {
         }
 
         // SAFETY: this_ptr was created by wrapping a RefDataPtr via asPromisePtr; we adopt the +1 it carried
-        let refdata: RefDataPtr = unsafe { bun_ptr::IntrusiveRc::from_raw(this_ptr.as_promise_ptr::<RefData>()) };
+        let raw_ref: *mut RefData = this_ptr.as_promise_ptr::<RefData>();
+        let refdata: RefDataPtr = unsafe { bun_ptr::IntrusiveRc::from_raw(raw_ref) };
+        // The promise has settled — drop the process-lifetime tracking entry
+        // pushed in `run_test_callback`. Done before the `deref()` below so a
+        // freed `RefData` never lingers in the registry.
+        if let Some(runner) = Jest::runner() {
+            let mut pending = runner.bun_test_root.pending_then_refs.borrow_mut();
+            if let Some(pos) = pending.iter().position(|p| *p == raw_ref.cast_const()) {
+                pending.swap_remove(pos);
+            }
+        }
         // defer refdata.deref() — RefPtr<T> currently has NO Drop impl (src/ptr/ref_count.rs),
         // so scope-exit drop is a silent no-op. Decrement the intrusive count explicitly so
         // (a) RefData::destructor frees the box + Weak<BunTest>, and (b) a paired done() callback
@@ -1248,9 +1276,22 @@ impl BunTest {
                         } else {
                             Self::ref_(&this_strong, cfg_data.clone())
                         };
+                        // The `+1` handed to `Promise.then()` below lives only
+                        // inside a NaN-boxed `JSValue` — invisible to LSan and
+                        // never released if the promise never settles (e.g.
+                        // test timeout). Track the raw pointer in the
+                        // process-lifetime `BunTestRoot` so it stays reachable;
+                        // `bun_test_then_or_catch` removes it once consumed.
+                        let raw_ref: *mut RefData = bun_ptr::IntrusiveRc::into_raw(this_ref);
+                        this_strong
+                            .bun_test_root
+                            .get()
+                            .pending_then_refs
+                            .borrow_mut()
+                            .push(raw_ref.cast_const());
                         let _ = result.then(
                             global_this,
-                            bun_ptr::IntrusiveRc::into_raw(this_ref),
+                            raw_ref,
                             Bun__TestScope__Describe2__bunTestThen,
                             Bun__TestScope__Describe2__bunTestCatch,
                         );

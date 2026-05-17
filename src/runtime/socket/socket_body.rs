@@ -454,8 +454,11 @@ impl<const SSL: bool> NewSocket<SSL> {
                 // `RefPtr: Deref<Target = H2FrameParser>`; `on_native_close`
                 // takes `&self`, so no raw-pointer reach-through is needed.
                 h2.on_native_close();
-                // Zig `h2.deref()` — IntrusiveRc::drop decrements.
-                drop(h2);
+                // Zig `h2.deref()`. `RefPtr`/`IntrusiveRc` deliberately has no
+                // `Drop` impl (see ref_count.rs), so `drop(h2)` would silently
+                // strand the `+1` taken in `attach_to_native_socket` and the
+                // parser's refcount could never reach zero. Release it explicitly.
+                h2.deref();
             }
             NativeCallbacks::None => {}
         }

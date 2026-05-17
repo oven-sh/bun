@@ -78,7 +78,8 @@ impl<'a> HTMLScanner<'a> {
         // matching the Zig arena lifetime. (The previous global-heap
         // `Vec::leak()` stranded one slice per HTML import for the process
         // lifetime; LSan flags that under `bun_asan`.)
-        let owned: &'static [u8] = Box::leak(AstAlloc::vec_from_slice(path_to_use).into_boxed_slice());
+        let owned: &'static [u8] =
+            Box::leak(AstAlloc::vec_from_slice(path_to_use).into_boxed_slice());
         let record = ImportRecord {
             path: FsPath::init(owned),
             kind,

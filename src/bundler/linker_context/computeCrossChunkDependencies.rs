@@ -473,10 +473,11 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                     // and read back in `postProcessJSChunk`. A global-heap
                     // `Vec` + `mem::forget` strands the allocation at process exit
                     // (LSan); `c.arena()` is bulk-reclaimed with the link pass.
-                    let mut clause_items = bun_alloc::ArenaVec::<bun_ast::ClauseItem>::with_capacity_in(
-                        stable_ref_list.len(),
-                        c.arena(),
-                    );
+                    let mut clause_items =
+                        bun_alloc::ArenaVec::<bun_ast::ClauseItem>::with_capacity_in(
+                            stable_ref_list.len(),
+                            c.arena(),
+                        );
                     repr.exports_to_other_chunks.reserve(stable_ref_list.len());
                     // PERF(port): was ensureUnusedCapacity — profile if it shows up on a hot path
                     r.clear_retaining_capacity();

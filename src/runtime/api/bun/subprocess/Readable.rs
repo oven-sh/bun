@@ -251,10 +251,7 @@ impl Readable {
                     let release_start_ref = {
                         let reader = Self::pipe_reader_mut(&pipe);
                         if reader.process.is_some()
-                            && matches!(
-                                reader.state,
-                                super::subprocess_pipe_reader::State::Pending
-                            )
+                            && matches!(reader.state, super::subprocess_pipe_reader::State::Pending)
                             && reader.ref_count.get() > 1
                         {
                             reader.reader.deinit();

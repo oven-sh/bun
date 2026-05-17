@@ -1278,7 +1278,9 @@ pub fn migrate_yarn_lockfile<'a>(
                 // (see `slice_mut` above); `ptr::write` skips Drop.
                 unsafe {
                     core::ptr::write(
-                        dependencies_buf.as_mut_ptr().add(actual_root_dep_count as usize),
+                        dependencies_buf
+                            .as_mut_ptr()
+                            .add(actual_root_dep_count as usize),
                         Dependency {
                             name: dep_name_string,
                             name_hash,

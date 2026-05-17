@@ -103,7 +103,10 @@ pub struct Chunk {
 /// be dropped, so `Drop` only `dealloc`s the slab.
 #[derive(Default)]
 pub struct OwnedCssRuleSlabs(
-    pub Vec<(core::ptr::NonNull<bun_css::css_parser::BundlerCssRule>, usize)>,
+    pub  Vec<(
+        core::ptr::NonNull<bun_css::css_parser::BundlerCssRule>,
+        usize,
+    )>,
 );
 
 impl Drop for OwnedCssRuleSlabs {
@@ -112,9 +115,8 @@ impl Drop for OwnedCssRuleSlabs {
             // SAFETY: each entry is a uniquely-owned global-alloc `Vec<BundlerCssRule>`
             // slab with cap > 0; dealloc raw without running element destructors.
             unsafe {
-                let layout =
-                    core::alloc::Layout::array::<bun_css::css_parser::BundlerCssRule>(cap)
-                        .expect("recorded from a live Vec");
+                let layout = core::alloc::Layout::array::<bun_css::css_parser::BundlerCssRule>(cap)
+                    .expect("recorded from a live Vec");
                 std::alloc::dealloc(ptr.as_ptr().cast(), layout);
             }
         }

@@ -367,8 +367,7 @@ pub fn edit_update_no_args(
 
                         if manager.options.do_.contains(Do::UPDATE_TO_LATEST) {
                             // is it an aliased package
-                            let temp_version: &[u8] = if let Some(at_index) = alias_at_index
-                            {
+                            let temp_version: &[u8] = if let Some(at_index) = alias_at_index {
                                 let mut v = Vec::new();
                                 write!(
                                     &mut v,
@@ -876,7 +875,10 @@ pub fn edit(
 
                 new_dependencies[k].key = Some(Expr::allocate(
                     arena,
-                    E::EString::init(arena_dup(arena, request.get_resolved_name(&manager.lockfile))),
+                    E::EString::init(arena_dup(
+                        arena,
+                        request.get_resolved_name(&manager.lockfile),
+                    )),
                     bun_ast::Loc::EMPTY,
                 ));
 
@@ -1135,8 +1137,11 @@ pub fn edit(
                     {
                         break 'uninitialized match request.version.tag {
                             dependency::Tag::Uninitialized => b"latest".into(),
-                            _ => arena_dup(arena, request.version.literal.slice(request.version_buf()))
-                                .into(),
+                            _ => arena_dup(
+                                arena,
+                                request.version.literal.slice(request.version_buf()),
+                            )
+                            .into(),
                         };
                     } else {
                         break 'uninitialized e_string.data;

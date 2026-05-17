@@ -866,8 +866,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             arena.alloc(dev.framework.as_bundler_view());
         dev.bundler_framework_views.push(resolved_ptr);
         // SAFETY: `resolved_ptr` is a fresh arena slot, no aliasing borrows.
-        let resolved_view: &'static bun_bundler::bake_types::Framework =
-            unsafe { &*resolved_ptr };
+        let resolved_view: &'static bun_bundler::bake_types::Framework = unsafe { &*resolved_ptr };
         dev.server_transpiler_mut().options.framework = Some(resolved_view);
         dev.client_transpiler_mut().options.framework = Some(resolved_view);
         if separate_ssr_graph {

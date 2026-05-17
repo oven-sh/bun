@@ -1275,7 +1275,13 @@ impl Subprocess<'_> {
         );
         this.finalize_streams();
 
+        // If the exit handler is still installed, `on_process_exit` never ran
+        // (process still alive at GC) — release the stranded handler ref (#2 of 2).
+        let exit_handler_pending = this.process().exit_handler.is_some();
         this.process_mut().detach();
+        if exit_handler_pending {
+            this.deref();
+        }
         // Match Zig's `this.process.deref()`: release the intrusive ref now,
         // not when `ref_count` → 0. The raw `*mut Process` is left dangling but
         // no code path reads `this.process` after this (finalize runs once).

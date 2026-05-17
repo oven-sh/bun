@@ -215,11 +215,22 @@ pub struct MinifyRenamer {
     pub reserved_names: StringHashMap<u32>,
     pub slots: SymbolSlotList,
     pub top_level_symbol_to_slot: TopLevelSymbolSlotMap,
-    // PORT NOTE: see `NoOpRenamer.symbols` — non-owning view; Zig
-    // `MinifyRenamer.deinit` (renamer.zig:156) never frees `symbols`.
+    // Bundler passes a borrowed view (must not drop); transpiler `print_ast`
+    // passes an owned Map and sets `owns_symbols` so `Drop` frees it.
     pub symbols: ManuallyDrop<symbol::Map>,
+    pub owns_symbols: bool,
     /// Backs `TinyString::String` slot-name allocations (Zig: `this.allocator`).
     pub arena: Bump,
+}
+
+impl Drop for MinifyRenamer {
+    fn drop(&mut self) {
+        if self.owns_symbols {
+            // SAFETY: dropped exactly once; `owns_symbols` is only set on the
+            // owned-Map (transpiler) path where no other owner exists.
+            unsafe { ManuallyDrop::drop(&mut self.symbols) };
+        }
+    }
 }
 
 // TODO(port): Zig used `std.HashMapUnmanaged(Ref, usize, RefCtx, 80)` —
@@ -243,6 +254,7 @@ impl MinifyRenamer {
 
         Ok(Box::new(MinifyRenamer {
             symbols: ManuallyDrop::new(symbols),
+            owns_symbols: false,
             reserved_names,
             slots,
             top_level_symbol_to_slot: TopLevelSymbolSlotMap::default(),

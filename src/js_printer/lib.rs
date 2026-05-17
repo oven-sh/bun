@@ -7914,6 +7914,8 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
             tree.nested_scope_slot_counts.clone(),
             reserved_names,
         )?;
+        // `symbols` is owned here (transpiler path) — let Drop free it.
+        minify_renamer.owns_symbols = true;
 
         let mut top_level_symbols = rename::StableSymbolCountArray::new();
 

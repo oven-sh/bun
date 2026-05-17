@@ -147,7 +147,12 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                         composes: Default::default(),
                         ..BundlerStyleSheet::empty()
                     };
-                    wrap_rules_with_conditions(&mut ast, bump, &entry.conditions);
+                    wrap_rules_with_conditions(
+                        &mut ast,
+                        bump,
+                        &entry.conditions,
+                        &mut chunk.owned_css_rule_slabs,
+                    );
                     css_chunk.asts[i] = ast;
                 }
                 CssImportOrderKind::ExternalPath(p) => {
@@ -423,7 +428,12 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                         }
                     }
 
-                    wrap_rules_with_conditions(ast, bump, &entry.conditions);
+                    wrap_rules_with_conditions(
+                        ast,
+                        bump,
+                        &entry.conditions,
+                        &mut chunk.owned_css_rule_slabs,
+                    );
                     // TODO: Remove top-level duplicate rules across files
                 }
             }
@@ -435,7 +445,19 @@ fn wrap_rules_with_conditions(
     ast: &mut BundlerStyleSheet,
     temp_bump: &Bump,
     conditions: &Vec<ImportConditions>,
+    slabs: &mut crate::chunk::OwnedCssRuleSlabs,
 ) {
+    // Each wrap allocates a fresh `Vec<BundlerCssRule>` slab; `CssChunk::drop`
+    // skips element destructors, so record it for `OwnedCssRuleSlabs` to dealloc.
+    fn record_slab(slabs: &mut crate::chunk::OwnedCssRuleSlabs, rules: &mut BundlerCssRuleList) {
+        let cap = rules.v.capacity();
+        if cap != 0 {
+            let ptr = core::ptr::NonNull::new(rules.v.as_mut_ptr())
+                .expect("cap > 0 implies non-dangling");
+            slabs.0.push((ptr, cap));
+        }
+    }
+
     let mut dummy_import_records: Vec<ImportRecord> = Vec::new();
 
     let mut i: usize = conditions.len() as usize;
@@ -489,6 +511,7 @@ fn wrap_rules_with_conditions(
 
                 break 'brk new_rules;
             };
+            record_slab(slabs, &mut ast.rules);
         }
 
         // Generate "@supports" wrappers. This is not done if the rule block is
@@ -507,6 +530,7 @@ fn wrap_rules_with_conditions(
                         }));
                     break 'brk new_rules;
                 };
+                record_slab(slabs, &mut ast.rules);
             }
         }
 
@@ -524,6 +548,7 @@ fn wrap_rules_with_conditions(
                 }));
                 break 'brk new_rules;
             };
+            record_slab(slabs, &mut ast.rules);
         }
     }
 

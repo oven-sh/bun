@@ -89,9 +89,12 @@ test/cli/install/bun-install.test.ts
 test/cli/install/bun-lock.test.ts
 test/cli/install/bun-lockb.test.ts
 test/cli/install/bun-patch.test.ts
+test/cli/install/bun-pack.test.ts
 test/cli/install/bun-pm-pkg.test.ts
+test/cli/install/bun-pm-version.test.ts
 test/cli/install/bun-pm.test.ts
 test/cli/install/bun-repl.test.ts
+test/cli/run/filter-workspace.test.ts
 test/js/bun/repl/repl.test.ts
 test/cli/install/bun-update.test.ts
 test/cli/install/bun-workspaces.test.ts
@@ -281,8 +284,11 @@ test/bundler/bundler_minify.test.ts
 test/bundler/esbuild/dce.test.ts
 test/bundler/esbuild/default.test.ts
 test/bundler/esbuild/extra.test.ts
+test/bundler/esbuild/importstar.test.ts
 test/bundler/esbuild/loader.test.ts
+test/bundler/esbuild/packagejson.test.ts
 test/bundler/esbuild/splitting.test.ts
+test/bundler/esbuild/ts.test.ts
 test/bundler/html-import-manifest.test.ts
 test/js/node/process/process-on.test.ts
 test/js/node/v8/capture-stack-trace.test.js

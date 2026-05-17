@@ -219,10 +219,11 @@ impl<T, const N: usize> Default for SmallList<T, N> {
     }
 }
 impl<T: Clone, const N: usize> Clone for SmallList<T, N> {
-    #[inline]
+    // LEAK(arena): heap spill strands when the clone lives in a bump-allocated
+    // CSS AST node. Outlined under ASAN so `leak:SmallList<*>::clone` matches.
+    #[cfg_attr(bun_asan, inline(never))]
+    #[cfg_attr(not(bun_asan), inline)]
     fn clone(&self) -> Self {
-        // LEAK(arena): same as `append` below — heap spill strands when the
-        // clone lives in a bump-allocated CSS AST node. Suppressed in `bun_bin`.
         Self(self.0.clone())
     }
 }
@@ -278,13 +279,15 @@ impl<'a, T, const N: usize> IntoIterator for &'a mut SmallList<T, N> {
     }
 }
 impl<T, const N: usize> FromIterator<T> for SmallList<T, N> {
-    #[inline]
+    #[cfg_attr(bun_asan, inline(never))]
+    #[cfg_attr(not(bun_asan), inline)]
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
         Self(smallvec::SmallVec::from_iter(iter))
     }
 }
 impl<T, const N: usize> Extend<T> for SmallList<T, N> {
-    #[inline]
+    #[cfg_attr(bun_asan, inline(never))]
+    #[cfg_attr(not(bun_asan), inline)]
     fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
         self.0.extend(iter)
     }
@@ -299,7 +302,8 @@ impl<T, const N: usize> SmallList<T, N> {
         v.push(val);
         Self(v)
     }
-    #[inline]
+    #[cfg_attr(bun_asan, inline(never))]
+    #[cfg_attr(not(bun_asan), inline)]
     pub fn init_capacity(capacity: u32) -> Self {
         Self(smallvec::SmallVec::with_capacity(capacity as usize))
     }
@@ -368,20 +372,23 @@ impl<T, const N: usize> SmallList<T, N> {
     }
 
     // ── mutation ───────────────────────────────────────────────────────────
-    #[inline]
+    // LEAK(arena): the heap spill past `N` strands when `self` lives in a
+    // bump-allocated CSS AST node (no `Drop` on bulk-free). Outlined under
+    // ASAN so `leak:SmallList<*>::append` matches the v0-demangled symbol.
+    #[cfg_attr(bun_asan, inline(never))]
+    #[cfg_attr(not(bun_asan), inline)]
     pub fn append(&mut self, item: T) {
-        // LEAK(arena): the heap spill past `N` strands when `self` lives in a
-        // bump-allocated CSS AST node (no `Drop` on bulk-free). Suppressed in
-        // `bun_bin::__lsan_default_suppressions`; Phase B makes these bump-backed.
         self.0.push(item)
     }
-    #[inline]
+    #[cfg_attr(bun_asan, inline(never))]
+    #[cfg_attr(not(bun_asan), inline)]
     pub fn append_assume_capacity(&mut self, item: T) {
         // SmallVec v1 has no stable `push_unchecked`; the capacity check is a
         // single branch and `reserve` is amortised, so this is a no-op delta.
         self.0.push(item)
     }
-    #[inline]
+    #[cfg_attr(bun_asan, inline(never))]
+    #[cfg_attr(not(bun_asan), inline)]
     pub fn append_slice(&mut self, items: &[T])
     where
         T: Clone,
@@ -391,7 +398,8 @@ impl<T, const N: usize> SmallList<T, N> {
         // remain admissible.
         self.0.extend(items.iter().cloned())
     }
-    #[inline]
+    #[cfg_attr(bun_asan, inline(never))]
+    #[cfg_attr(not(bun_asan), inline)]
     pub fn append_slice_assume_capacity(&mut self, items: &[T])
     where
         T: Clone,

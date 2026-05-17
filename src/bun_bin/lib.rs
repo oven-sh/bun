@@ -246,6 +246,9 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         // strand when the `PackageManager` is `mem::forget`'d at process exit
         // (see `install/PackageManager/mod.rs`). Bounded; OS reclaims at exit.
         "leak:bun_install::package_manager_real::update_request::UpdateRequest\n",
+        // Same `mem::forget`'d `PackageManager`: the workspace `package.json`
+        // cache holds the `Source` (file bytes) for each workspace.
+        "leak:WorkspacePackageJSONCache>::get_with_path\n",
         // ── CSS AST arena: heap-backed members in arena-allocated nodes ─────
         // The CSS parser bump-allocates AST nodes in `bun_alloc::Arena`; the
         // arena bulk-frees without `Drop`. Members that own a global-heap
@@ -253,11 +256,16 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         // Pre-existing in Zig (same arena model). Phase B re-threads `'i` to
         // make these bump-backed.
         //
-        // `SmallList` heap spill past inline `N`. LSan matching is substring-based,
-        // so `>::append` also covers `append_assume_capacity` / `append_slice*`.
+        // `SmallList` heap-spilling entry points are `#[inline(never)]` under
+        // `bun_asan` so these v0-demangled patterns match (when fully inlined
+        // the DWARF inline frame is the bare method name and never matches).
+        // LSan matching is substring-based, so `>::append` also covers
+        // `append_assume_capacity` / `append_slice*`.
         "leak:SmallList<*>::append\n",
-        // Same arena model: `Clone::clone` heap-spills when an AST node is cloned past `N`.
         "leak:SmallList<*>::clone\n",
+        "leak:SmallList<*>::extend\n",
+        "leak:SmallList<*>::from_iter\n",
+        "leak:SmallList<*>::init_capacity\n",
         // ── LSan-fires-before-final-GC-sweep ────────────────────────────────
         // These wrap a Rust allocation in a JSC GC cell (or leak it to JSC as
         // an external string). Ownership is correct — the cell finalizer /
@@ -300,6 +308,13 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         // `Bun.spawnSync` memfd drain: `_buffer` strands if teardown happens
         // while the parent `PipeReader` is still ref'd.
         "leak:PosixBufferedReader>::final_buffer\n",
+        // `Bun.serve` / bake dev-server `Request` Box: handed to the JS GC
+        // wrapper or to `ctx.request_weakref` for deferred dev-server requests.
+        // LSan fires before the final GC sweep / before the deferred-request
+        // pool drains at exit. `Request::new` symbolizes as bare `new` when
+        // inlined, so anchor on the outlined callers.
+        "leak:AnyServer>::prepare_and_save_js_request_context\n",
+        "leak:NewServer<*>::prepare_js_request_context\n",
         "\0",
     )
     .as_ptr()

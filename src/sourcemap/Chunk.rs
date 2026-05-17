@@ -392,7 +392,7 @@ impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<T> {
 }
 
 /// A uniquely-owned [`line_offset_table::List`] whose per-row
-/// `columns_for_non_ascii: Vec<i32>` payloads are drained on drop.
+/// `columns_for_non_ascii: Box<[i32]>` payloads are drained on drop.
 ///
 /// `MultiArrayList::Drop` is **slab-only** — it frees the SoA buffer but never
 /// runs column destructors (a bitwise `clone` can alias two lists onto the same
@@ -406,7 +406,7 @@ pub struct OwnedLineOffsetTables(pub line_offset_table::List);
 
 impl Drop for OwnedLineOffsetTables {
     fn drop(&mut self) {
-        // Run every row's destructors (drops the `columns_for_non_ascii` Vecs);
+        // Run every row's destructors (drops the `columns_for_non_ascii` boxes);
         // the `MultiArrayList::Drop` that follows then frees the SoA slab.
         self.0.drop_elements();
     }
@@ -711,7 +711,7 @@ impl NewBuilder<VLQSourceMap> {
             // (the largest, ~24 B/line) is never touched on the hot ASCII path.
             let first_non_ascii = list.items::<"byte_offset_to_first_non_ascii", u32>()[idx];
             if original_column >= first_non_ascii as i32 {
-                let cols = &list.items::<"columns_for_non_ascii", Vec<i32>>()[idx];
+                let cols = &list.items::<"columns_for_non_ascii", Box<[i32]>>()[idx];
                 if !cols.is_empty() {
                     original_column = cols[(original_column as u32 - first_non_ascii) as usize];
                 }

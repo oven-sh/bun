@@ -18,7 +18,7 @@ use smallvec::SmallVec;
 /// as an optimization.
 #[derive(Default)]
 pub struct LineOffsetTable {
-    pub columns_for_non_ascii: Vec<i32>,
+    pub columns_for_non_ascii: Box<[i32]>,
     /// Byte offset of the first non-ASCII byte on this line, or `i32::MAX as u32`
     /// when the line is entirely ASCII (so no `columns_for_non_ascii` table exists).
     /// The sentinel can't be `0` because a line can legitimately start with a
@@ -255,10 +255,10 @@ impl LineOffsetTable {
                     // spilled → moves the heap buffer (no alloc). `mem::take` re-primes a fresh
                     // inline scratch with zero allocation. ASCII-only lines (almost all of them)
                     // store an inline `Vec::new()` and keep the scratch untouched.
-                    let owned = if columns_for_non_ascii.is_empty() {
-                        Vec::new()
+                    let owned: Box<[i32]> = if columns_for_non_ascii.is_empty() {
+                        Box::default()
                     } else {
-                        mem::take(&mut columns_for_non_ascii).into_vec()
+                        mem::take(&mut columns_for_non_ascii).into_vec().into_boxed_slice()
                     };
 
                     list.append(LineOffsetTable {
@@ -292,10 +292,10 @@ impl LineOffsetTable {
             columns_for_non_ascii.extend(core::iter::repeat_n(column, need));
         }
         {
-            let owned = if columns_for_non_ascii.is_empty() {
-                Vec::new()
+            let owned: Box<[i32]> = if columns_for_non_ascii.is_empty() {
+                Box::default()
             } else {
-                columns_for_non_ascii.into_vec()
+                columns_for_non_ascii.into_vec().into_boxed_slice()
             };
             list.append(LineOffsetTable {
                 byte_offset_to_start_of_line: line_byte_offset,

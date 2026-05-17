@@ -8042,9 +8042,9 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
                 // `MultiArrayList::Drop` only frees the column buffer — it does
                 // NOT drop column elements (Zig allocated these into the arena
                 // so it didn't matter there). The per-row `columns_for_non_ascii`
-                // Vec<i32>s live on the global heap in the Rust port; drain them
+                // Box<[i32]>s live on the global heap in the Rust port; drain them
                 // before dropping the SoA storage to avoid leaking them.
-                for v in tables.items_mut::<"columns_for_non_ascii", Vec<i32>>() {
+                for v in tables.items_mut::<"columns_for_non_ascii", Box<[i32]>>() {
                     core::mem::take(v);
                 }
                 unsafe { core::mem::ManuallyDrop::drop(tables) };
@@ -8419,8 +8419,8 @@ pub fn print_common_js<
                 // dropped exactly once here.
                 let tables = unsafe { &mut *p };
                 // `MultiArrayList::Drop` does not drop column elements; drain
-                // the global-heap Vec<i32>s before dropping the SoA storage.
-                for v in tables.items_mut::<"columns_for_non_ascii", Vec<i32>>() {
+                // the global-heap Box<[i32]>s before dropping the SoA storage.
+                for v in tables.items_mut::<"columns_for_non_ascii", Box<[i32]>>() {
                     core::mem::take(v);
                 }
                 unsafe { core::mem::ManuallyDrop::drop(tables) };

@@ -309,6 +309,16 @@ readStreamPrototype._read = function (n) {
   const buf = Buffer.allocUnsafeSlow(n);
 
   this[kFs].read(this.fd, buf, 0, n, this.pos, (er, bytesRead, buf) => {
+    // If the stream was destroyed while the read was in flight, ignore the
+    // result. The fd has been (or is about to be) closed by _destroy, and
+    // pushing more data or EOF here would clobber the destroyed state —
+    // in particular, push(null) would mark the readable side as ended and
+    // suppress the ERR_STREAM_PREMATURE_CLOSE that end-of-stream/finished/
+    // async iteration relies on. Matches Node.js behavior.
+    if (this.destroyed) {
+      return;
+    }
+
     if (er) {
       require("internal/streams/destroy").errorOrDestroy(this, er);
     } else if (bytesRead > 0) {

@@ -57,6 +57,11 @@ export const cpuTargetFlags: Flag[] = [
     desc: "ARM64 Windows: clang-cl prefix required (/clang: passes to clang)",
   },
   {
+    flag: ["-march=armv8-a", "-mtune=cortex-a53"],
+    when: c => c.ohos && c.arm64,
+    desc: "OHOS aarch64: ARMv8.0 baseline (no crypto, no SVE, no dotprod, no LSE)",
+  },
+  {
     flag: "-march=nehalem",
     when: c => c.x64 && c.baseline,
     desc: "x64 baseline: Nehalem (2008) — no AVX, broadest compatibility",
@@ -139,6 +144,35 @@ export const globalFlags: Flag[] = [
     flag: "-D__BSD_VISIBLE=1",
     when: c => c.freebsd,
     desc: "FreeBSD: expose BSD typedefs (u_long etc.) in <sys/types.h>",
+  },
+
+  // ─── OHOS cross-compilation ───
+  {
+    flag: c => [`--target=aarch64-linux-ohos`, `--sysroot=${c.ohosSysroot!}`, `-D__MUSL__`, `-mbranch-protection=none`, `-mno-outline-atomics`],
+    when: c => c.ohos && c.arm64,
+    desc: "OHOS target triple + sysroot + musl libc (no PAC/BTI/outline-atomics for OHOS device compat)",
+  },
+  {
+    flag: "-Wno-macro-redefined",
+    when: c => c.ohos,
+    desc: "OHOS: suppress WebKit cmakeconfig vs PlatformHave.h HAVE_INT128_T conflict",
+  },
+  {
+    flag: c => [`-nostdinc++`, `-I${c.ohosCrossLibs!}/libcxx/include/v1`, `-I${c.ohosCrossLibs!}/libcxxabi/include`],
+    when: c => c.ohos,
+    lang: "cxx",
+    desc: "OHOS: use musl-compatible LLVM 22 libc++ headers",
+  },
+  {
+    flag: c => [`-I${c.ohosIcuDir!}/include`],
+    when: c => c.ohos && !!c.ohosIcuDir,
+    desc: "OHOS: use cross-compiled ICU headers (sysroot ICU is incomplete); no U_DISABLE_RENAMING to match ICU lib symbol versions",
+  },
+  {
+    flag: "-fno-c++-static-destructors",
+    when: c => c.ohos,
+    lang: "cxx",
+    desc: "OHOS: match libc++ build config",
   },
 
   // ─── CPU target ───
@@ -468,6 +502,12 @@ export const bunOnlyFlags: Flag[] = [
     desc: "C++23 with GNU extensions (required to match WebKit's ABI on Linux/FreeBSD)",
   },
   {
+    flag: "-std=gnu++23",
+    when: c => c.ohos,
+    lang: "cxx",
+    desc: "C++23 with GNU extensions (match new WebKit prebuilt ABI for OHOS compat)",
+  },
+  {
     flag: "-std=c++23",
     when: c => c.darwin,
     lang: "cxx",
@@ -531,7 +571,7 @@ export const bunOnlyFlags: Flag[] = [
   },
   {
     flag: ["-fno-pic", "-fno-pie"],
-    when: c => c.unix && c.abi !== "android",
+    when: c => c.unix && c.abi !== "android" && !c.ohos,
     desc: "No position-independent code (we're a final executable)",
   },
   {
@@ -833,6 +873,63 @@ export const linkerFlags: Flag[] = [
     desc: "Dead-code strip + emit linker map",
   },
 
+  // ─── OHOS ───
+  {
+    flag: c => [`--target=aarch64-linux-ohos`, `--sysroot=${c.ohosSysroot!}`],
+    when: c => c.ohos,
+    desc: "OHOS target triple + sysroot at link time",
+  },
+  {
+    flag: "-Wl,--allow-multiple-definition",
+    when: c => c.ohos,
+    desc: "OHOS: allow iostream stub duplicate; mimalloc override disabled",
+  },
+  {
+    flag: c => [
+      `-L${c.ohosCrossLibs!}/libcxx/lib`,
+      `-L${c.ohosCrossLibs!}/libcxxabi/lib`,
+      `-L${c.ohosCrossLibs!}/libunwind/lib`,
+      c.ohosIcuDir ? `-L${c.ohosIcuDir}/lib` : "",
+      "-lc++",
+      "-lc++abi",
+      "-lunwind",
+    ].filter(f => f !== ""),
+    when: c => c.ohos,
+    desc: "OHOS: link LLVM 22 libc++ + libc++abi + libunwind",
+  },
+  {
+    flag: [
+      "-Wl,--as-needed",
+      "-Wl,-z,stack-size=8192000",
+      "-Wl,--compress-debug-sections=zlib",
+      "-Wl,-z,lazy",
+      "-Wl,-z,norelro",
+      "-Wl,-O2",
+      "-Wl,--sort-section=name",
+      "-Wl,--hash-style=both",
+      "-Wl,--build-id=sha1",
+    ],
+    when: c => c.ohos,
+    desc: "OHOS linker tuning: 8MB stack, compressed debug",
+  },
+  // ─── OHOS PIE (experimental) ───
+  {
+    flag: "-fPIE",
+    when: c => c.ohos,
+    lang: "cxx",
+    desc: "OHOS PIE: position-independent executable for spawn compatibility",
+  },
+  {
+    flag: ["-pie", "-Wl,-dynamic-linker=/system/lib/ld-musl-aarch64.so.1"],
+    when: c => c.ohos,
+    desc: "OHOS PIE: dynamic linking (allows fork/clone through seccomp)",
+  },
+  {
+    flag: "-Wl,--noinhibit-exec",
+    when: c => c.ohos,
+    desc: "OHOS: LLD alignment warnings → ignore (SCTLR_EL1.A is 0 on aarch64)",
+  },
+
   // ─── Linux ───
   {
     // Wrap glibc symbols whose default version on a modern build host is
@@ -941,7 +1038,7 @@ export const linkerFlags: Flag[] = [
   },
   {
     flag: ["-fno-pic", "-Wl,-no-pie"],
-    when: c => c.linux && c.abi !== "android",
+    when: c => c.linux && c.abi !== "android" && !c.ohos,
     desc: "No PIE (we don't need ASLR; simpler codegen)",
   },
   {

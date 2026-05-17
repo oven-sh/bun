@@ -235,7 +235,7 @@ export const webkit: Dependency = {
     // -no-pie rides along in CMAKE_C_FLAGS so try_compile() probes link on
     // PIE-default distros — without it the driver still passes -pie and the
     // -fno-pic probe object fails R_X86_64_32S relocation, killing FindThreads.
-    if (cfg.unix && cfg.abi !== "android") optFlags.push("-fno-pic", "-fno-pie", "-no-pie");
+    if (cfg.unix && cfg.abi !== "android" && !cfg.ohos) optFlags.push("-fno-pic", "-fno-pie", "-no-pie");
     if (cfg.lto) optFlags.push("-flto=full");
     if (cfg.pgoGenerate) optFlags.push(`-fprofile-generate=${cfg.pgoGenerate}`);
     if (cfg.pgoUse) {
@@ -303,12 +303,30 @@ export const webkit: Dependency = {
             CMAKE_FIND_ROOT_PATH_MODE_INCLUDE: "BOTH",
           }
         : {}),
+      ...(cfg.ohos
+        ? {
+            CMAKE_SYSTEM_NAME: "Linux",
+            CMAKE_SYSTEM_PROCESSOR: "aarch64",
+            CMAKE_C_COMPILER: cfg.cc,
+            CMAKE_CXX_COMPILER: cfg.cxx,
+            CMAKE_TRY_COMPILE_TARGET_TYPE: "STATIC_LIBRARY",
+            CMAKE_FIND_ROOT_PATH: cfg.ohosSysroot,
+            CMAKE_PREFIX_PATH: cfg.ohosIcuDir,
+            ICU_ROOT: cfg.ohosIcuDir,
+            CMAKE_THREAD_LIBS_INIT: "-lpthread",
+            CMAKE_HAVE_THREADS_LIBRARY: "1",
+            CMAKE_DL_LIBS: "",
+            CMAKE_FIND_ROOT_PATH_MODE_PACKAGE: "BOTH",
+            CMAKE_FIND_ROOT_PATH_MODE_LIBRARY: "BOTH",
+            CMAKE_FIND_ROOT_PATH_MODE_INCLUDE: "BOTH",
+          }
+        : {}),
       // Match bun's -fno-pic: WebKit's CMake defaults POSITION_INDEPENDENT_CODE
       // to ON for static-archive targets, which puts ~550 KB of vtables into
       // .data.rel.ro. We link -no-pie so this is dead weight in the RW
       // PT_LOAD. Android (PIE) overrides via the -fPIC in optFlags above
       // never being suppressed there.
-      ...(cfg.abi !== "android" ? { CMAKE_POSITION_INDEPENDENT_CODE: "OFF" } : {}),
+      ...(cfg.abi !== "android" && !cfg.ohos ? { CMAKE_POSITION_INDEPENDENT_CODE: "OFF" } : {}),
       PORT: "JSCOnly",
       ENABLE_STATIC_JSC: "ON",
       USE_THIN_ARCHIVES: "OFF",
@@ -366,6 +384,36 @@ export const webkit: Dependency = {
         cwd: srcDir,
         outputs: localIcuLibs(cfg),
       };
+    }
+
+    if (cfg.ohos) {
+      const { ohosSysroot, ohosCrossLibs, ohosIcuDir, cc, cxx } = cfg;
+      const targetFlag = `--target=aarch64-linux-ohos`;
+      const sysrootFlag = ohosSysroot ? `--sysroot=${ohosSysroot}` : "";
+      const icuInclude = ohosIcuDir ? `-I${ohosIcuDir}/include` : "";
+      if (ohosCrossLibs) {
+        args.CMAKE_CXX_FLAGS = [
+          optFlagStr, targetFlag, sysrootFlag, "-D__MUSL__",
+          `-nostdinc++ -I${ohosCrossLibs}/libcxx/include/v1`,
+          `-I${ohosCrossLibs}/libcxxabi/include`,
+          icuInclude,
+          "-fno-c++-static-destructors",
+          "-std=gnu++23",
+        ].filter(Boolean).join(" ");
+        args.CMAKE_C_FLAGS = [
+          optFlagStr, targetFlag, sysrootFlag, "-D__MUSL__",
+          icuInclude,
+        ].filter(Boolean).join(" ");
+      }
+      args.CMAKE_EXE_LINKER_FLAGS = `-L${ohosCrossLibs}/libcxx/lib -L${ohosCrossLibs}/libcxxabi/lib -L${ohosCrossLibs}/libunwind/lib -lc++ -lc++abi -lunwind`;
+      args.CMAKE_SHARED_LINKER_FLAGS = `-L${ohosCrossLibs}/libcxx/lib -L${ohosCrossLibs}/libcxxabi/lib -L${ohosCrossLibs}/libunwind/lib -lc++ -lc++abi -lunwind`;
+      if (ohosIcuDir) {
+        const hostBin = resolve(ohosIcuDir, "..", "..", "ohos-icu", "host", "bin");
+        args.ICU_GENDATA_EXECUTABLE = resolve(hostBin, "genrb");
+        args.ICU_GENCCODE_EXECUTABLE = resolve(hostBin, "genccode");
+        args.ICU_GENCMN_EXECUTABLE = resolve(hostBin, "gencmn");
+        args.ICU_PKGDATA_EXECUTABLE = resolve(hostBin, "pkgdata");
+      }
     }
 
     return spec;

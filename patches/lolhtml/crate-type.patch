@@ -1,0 +1,11 @@
+--- a/c-api/Cargo.toml
++++ b/c-api/Cargo.toml
+@@ -24,7 +24,7 @@ lto = true
+ 
+ [lib]
+ name = "lolhtml"
+-crate-type = ["staticlib", "cdylib", "rlib"]
++crate-type = ["staticlib", "rlib"]
+ 
+ [package.metadata.capi.header]
+ name = "lol_html"

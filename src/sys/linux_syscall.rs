@@ -454,10 +454,18 @@ pub unsafe fn copy_file_range(
     }
 }
 
+/// OHOS kernel sends uncatchable SIGSYS for unimplemented syscalls.
+pub(crate) unsafe extern "C" {
+    pub(crate) static BUN_OHOS_DISABLE_PIDFD: bool;
+}
+
 /// `pidfd_open(2)` — `Result` shape (caller maps to `bun_sys::Error`).
 #[inline]
 #[cfg(target_os = "linux")]
 pub fn pidfd_open(pid: i32, flags: u32) -> Result<Fd, i32> {
+    if unsafe { BUN_OHOS_DISABLE_PIDFD } {
+        return Err(libc::ENOSYS);
+    }
     let pid = rustix::process::Pid::from_raw(pid).ok_or(libc::EINVAL)?;
     let flags = rustix::process::PidfdFlags::from_bits_retain(flags);
     once(rustix::process::pidfd_open(pid, flags)).map(own_fd)
@@ -469,6 +477,9 @@ pub fn pidfd_open(pid: i32, flags: u32) -> Result<Fd, i32> {
 #[inline]
 #[cfg(target_os = "android")]
 pub fn pidfd_open(pid: i32, flags: u32) -> Result<Fd, i32> {
+    if unsafe { BUN_OHOS_DISABLE_PIDFD } {
+        return Err(libc::ENOSYS);
+    }
     if pid <= 0 {
         return Err(libc::EINVAL);
     }

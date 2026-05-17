@@ -1724,6 +1724,12 @@ impl<'a> PackageInstall<'a> {
                                     sys::E::ENXIO => {
                                         return Err(bun_core::err!("ENXIO"));
                                     }
+                                    sys::E::EPERM | sys::E::EACCES => {
+                                        // OHOS SELinux blocks hard links; fall back to copy
+                                        let inf = sys::File::openat(entry.dir, entry.basename.as_bytes(), sys::O::RDONLY, 0)?;
+                                        let outf = sys::File::create(destination_dir.fd(), entry.path.as_bytes(), true)?;
+                                        let _ = sys::copy_file::copy_file(inf.handle(), outf.handle())?;
+                                    }
                                     _ => return Err(err.into()),
                                 }
                             }

@@ -3308,7 +3308,11 @@ mod posix_impl {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     #[inline]
     pub fn can_use_memfd() -> bool {
-        // TODO(port): also gate on `BUN_FEATURE_FLAG_DISABLE_MEMFD`.
+        // OHOS: the kernel sends uncatchable SIGSYS for unimplemented
+        // syscalls. Same flag used by pidfd_open.
+        if unsafe { linux_syscall::BUN_OHOS_DISABLE_PIDFD } {
+            return false;
+        }
         !MEMFD_ENOSYS.load(core::sync::atomic::Ordering::Relaxed)
     }
     #[cfg(not(any(target_os = "linux", target_os = "android")))]

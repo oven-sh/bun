@@ -76,8 +76,13 @@ function systemLibs(cfg: Config): string[] {
     // Linux local WebKit: link system ICU (prebuilt bundles its own).
     // Assumes system ICU is in default lib paths — true on most distros.
     // Android: no system ICU; the local WebKit build must bundle it.
+    // OHOS: cross-compiled ICU at ohosIcuDir/lib.
     if (cfg.webkit === "local" && cfg.abi !== "android") {
-      libs.push("-licudata", "-licui18n", "-licuuc");
+      if (cfg.ohos && cfg.ohosIcuDir) {
+        libs.push(`-L${cfg.ohosIcuDir}/lib`, "-licudata", "-licui18n", "-licuuc");
+      } else {
+        libs.push("-licudata", "-licui18n", "-licuuc");
+      }
     }
   }
 
@@ -92,6 +97,14 @@ function systemLibs(cfg: Config): string[] {
     // execinfo: backtrace() — separate library on FreeBSD.
     // kvm/procstat/elf/util: process introspection for node:os and crash handler.
     libs.push("-lc", "-lpthread", "-lm", "-lexecinfo", "-lkvm", "-lprocstat", "-lelf", "-lutil");
+  }
+
+  if (cfg.ohos) {
+    libs.push("-lc", "-lpthread", "-ldl");
+    // Link ICU for local WebKit builds on OHOS (cross-compiled ICU at ohosIcuDir/lib).
+    if (cfg.webkit === "local" && cfg.ohosIcuDir) {
+      libs.push(`-L${cfg.ohosIcuDir}/lib`, "-licudata", "-licui18n", "-licuuc");
+    }
   }
 
   if (cfg.windows) {
@@ -651,7 +664,7 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
 function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string): void {
   // Cross-compiled binaries can't run on the build host. Skip the smoke
   // test entirely — `ninja check` becomes a no-op alias for the exe.
-  if (cfg.crossTarget !== undefined) {
+  if (cfg.crossTarget !== undefined || cfg.ohos) {
     n.phony("check", [exe]);
     return;
   }

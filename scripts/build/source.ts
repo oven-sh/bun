@@ -630,7 +630,7 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
   // cfg target/arch flags — the tool runs on the build host. cc()/link()
   // would add --target which breaks cross-compiles.
   n.rule("dep_host_cc", {
-    command: `${q(cfg.cc)} $flags -o $out $in`,
+    command: `${q(cfg.hostCc)} $flags -o $out $in`,
     description: "host-cc $out",
   });
 
@@ -1386,6 +1386,15 @@ function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input:
     const triple = spec.rustTarget ?? (cfg.arm64 ? "aarch64-pc-windows-msvc" : "x86_64-pc-windows-msvc");
     const envKey = `CARGO_TARGET_${triple.toUpperCase().replace(/-/g, "_")}_LINKER`;
     env[envKey] = cfg.msvcLinker;
+  }
+
+  // OHOS: use stable toolchain (some cargo deps pin nightly in Cargo.lock
+  // which may not be available on this CI host). Also pin the linker to
+  // clang with --target for cross-compilation (cargo defaults to gcc).
+  if (cfg.ohos && spec.rustTarget) {
+    env.RUSTUP_TOOLCHAIN = "stable";
+    const envKey = `CARGO_TARGET_${spec.rustTarget.toUpperCase().replace(/-/g, "_")}_LINKER`;
+    env[envKey] = cfg.cc;
   }
 
   // Cross-compile (Android): cargo's default `cc` linker can't handle the

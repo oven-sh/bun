@@ -502,6 +502,8 @@ impl RunCommand {
             "/private/tmp"
         } else if cfg!(target_os = "android") {
             "/data/local/tmp"
+        } else if cfg!(target_env = "ohos") {
+            "/storage/Users/currentUser/tmp"
         } else {
             "/tmp"
         };

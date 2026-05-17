@@ -2513,9 +2513,38 @@ pub fn fill_property_bit_set(
 
 // ───────────────────────────── StyleSheet ─────────────────────────────
 //
-// `CssRuleList`/`LayerName`/`ParserOptions` carry the type surface; the
+// `CssRuleList`/`LayerName` carry the type surface; the
 // behavior surface (`parse`/`minify`/`to_css`/`pluck_imports`) lives in
 // `stylesheet_impl` below.
+
+pub struct StyleSheetConfig {
+    /// Whether CSS modules parsing/emission was enabled for this stylesheet.
+    pub css_modules: Option<css_modules::Config>,
+    /// The source index assigned during parse.
+    pub source_index: u32,
+    /// Parser feature flags captured at parse time.
+    pub flags: ParserFlags,
+}
+
+impl StyleSheetConfig {
+    fn from_parser_options(options: ParserOptions<'_>) -> Self {
+        Self {
+            css_modules: options.css_modules,
+            source_index: options.source_index,
+            flags: options.flags,
+        }
+    }
+}
+
+impl Default for StyleSheetConfig {
+    fn default() -> Self {
+        Self {
+            css_modules: None,
+            source_index: 0,
+            flags: ParserFlags::empty(),
+        }
+    }
+}
 
 pub struct StyleSheet<'bump, AtRule> {
     /// A list of top-level rules within the style sheet.
@@ -2525,7 +2554,7 @@ pub struct StyleSheet<'bump, AtRule> {
     pub sources: Vec<Box<[u8]>>,
     pub source_map_urls: Vec<Option<Box<[u8]>>>,
     pub license_comments: Vec<&'bump [u8]>,
-    pub options: ParserOptions<'bump>,
+    pub config: StyleSheetConfig,
     // Zig: `tailwind: if (AtRule == BundlerAtRule) ?*BundlerTailwindState else u0`
     // TODO(port): conditional field; for now Option<Box<_>> always.
     pub tailwind: Option<Box<BundlerTailwindState>>,
@@ -2547,7 +2576,7 @@ impl<'bump, AtRule> StyleSheet<'bump, AtRule> {
             sources: Vec::new(),
             source_map_urls: Vec::new(),
             license_comments: Vec::new(),
-            options: ParserOptions::default(None),
+            config: StyleSheetConfig::default(),
             tailwind: None,
             layer_names: Vec::new(),
             local_scope: LocalScope::default(),
@@ -2587,7 +2616,7 @@ mod stylesheet_impl {
             // here and create a lookup table by name.
             let custom_media: Option<
                 ArrayHashMap<Box<[u8]>, css_rules::custom_media::CustomMediaRule>,
-            > = if self.options.flags.contains(ParserFlags::CUSTOM_MEDIA)
+            > = if self.config.flags.contains(ParserFlags::CUSTOM_MEDIA)
                 && options
                     .targets
                     .should_compile_same(compat::Feature::CustomMediaQueries)
@@ -2612,7 +2641,7 @@ mod stylesheet_impl {
                 handler_context: ctx,
                 unused_symbols: &options.unused_symbols,
                 custom_media,
-                css_modules: self.options.css_modules.is_some(),
+                css_modules: self.config.css_modules.is_some(),
                 extra,
                 err: None,
             };
@@ -2669,7 +2698,7 @@ mod stylesheet_impl {
                 printer.newline()?;
             }
 
-            if let Some(config) = &self.options.css_modules {
+            if let Some(config) = &self.config.css_modules {
                 let mut references = CssModuleReferences::default();
                 // SAFETY: `'bump`-erasure — `Printer<'a>` stores `CssModule<'a>` which
                 // holds `&'a mut CssModuleReferences<'a>`; tying the borrow to `'a`
@@ -2861,6 +2890,7 @@ mod stylesheet_impl {
             sources.push(Box::<[u8]>::from(options.filename));
             let mut source_map_urls: Vec<Option<Box<[u8]>>> = Vec::with_capacity(1);
             source_map_urls.push(parser.current_source_map_url().map(Box::<[u8]>::from));
+            let config = StyleSheetConfig::from_parser_options(options);
 
             // Spec: `.layer_names = if (comptime P == BundlerAtRuleParser)
             // at_rule_parser.layer_names else .{}` (css_parser.zig:3324). Rust
@@ -2875,7 +2905,7 @@ mod stylesheet_impl {
                     sources,
                     source_map_urls,
                     license_comments,
-                    options,
+                    config,
                     tailwind: None,
                     layer_names,
                     local_scope: parser_extra.local_scope,
@@ -2925,12 +2955,13 @@ mod stylesheet_impl {
             options: ParserOptions<'static>,
             imports_from_tailwind: CssRuleList<'static, AtRule>,
         ) -> Self {
+            let config = StyleSheetConfig::from_parser_options(options);
             Self {
                 rules: imports_from_tailwind,
                 sources: Vec::new(),
                 source_map_urls: Vec::new(),
                 license_comments: Vec::new(),
-                options,
+                config,
                 tailwind: None,
                 layer_names: Vec::new(),
                 local_scope: LocalScope::default(),

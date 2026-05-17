@@ -2241,6 +2241,22 @@ describe("createReadStream", () => {
     expect(caught).toBeDefined();
     expect(caught?.code).toBe("ERR_STREAM_PREMATURE_CLOSE");
   });
+
+  // Regression: _destroy used to register `once(kReadStreamFastPath, ...)` for an
+  // event that is never emitted when { start, autoClose } were both truthy, so
+  // 'close' never fired and the fd was leaked.
+  it("emits 'close' and releases fd with { start: 0, autoClose: true }", async () => {
+    const stream = createReadStream(join(import.meta.dir, "readFileSync.txt"), { start: 0, autoClose: true });
+    const { promise, resolve } = Promise.withResolvers<void>();
+
+    stream.on("data", () => {});
+    stream.on("close", () => resolve());
+
+    await promise;
+    expect(stream.destroyed).toBe(true);
+    expect(stream.closed).toBe(true);
+    expect(stream.fd).toBeNull();
+  });
 });
 
 describe("fs.WriteStream", () => {

@@ -345,17 +345,12 @@ readStreamPrototype._read = function (n) {
 };
 
 readStreamPrototype._destroy = function (this: FSStream, err, cb) {
-  // Usually for async IO it is safe to close a file descriptor
-  // even when there are pending operations. However, due to platform
-  // differences file IO is implemented using synchronous operations
-  // running in a thread pool. Therefore, file descriptors are not safe
-  // to close while used in a pending read or write operation. Wait for
-  // any pending IO (kIsPerformingIO) to complete (kIoDone).
-  if (this[kReadStreamFastPath]) {
-    this.once(kReadStreamFastPath, er => close(this, err || er, cb));
-  } else {
-    close(this, err, cb);
-  }
+  // An in-flight fs.read() completing after destroy() is handled in the
+  // _read callback above (see `if (this.destroyed) return`), so it is safe
+  // to close the fd immediately here. (Node wires up a kIsPerformingIO /
+  // kIoDone event pair for this on Windows where the read can't be
+  // cancelled; Bun doesn't need it.)
+  close(this, err, cb);
 };
 
 readStreamPrototype.close = function (cb) {

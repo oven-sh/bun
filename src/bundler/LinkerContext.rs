@@ -1262,7 +1262,11 @@ impl<'a> LinkerContext<'a> {
                 .extend_from_slice(&done[mapping_start..mapping_end]);
             pieces.suffix.extend_from_slice(&done[mapping_end..]);
         } else {
-            pieces.prefix.extend_from_slice(&done);
+            // No shifts → `finalize()` returns `prefix` verbatim. Move the
+            // joined buffer instead of allocating a fresh `Vec` and memcpying
+            // it; for the bundled three.js x100 case the source map JSON is
+            // ~300 MB, so this alloc+copy was ~20% of the build.
+            pieces.prefix = done.into_vec();
         }
 
         Ok(pieces)

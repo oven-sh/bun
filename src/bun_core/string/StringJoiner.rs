@@ -21,13 +21,6 @@ pub struct StringJoiner {
     pub watcher: Watcher,
 }
 
-// SAFETY: `nodes` holds `RawSlice<u8>` raw fat pointers which alias
-// caller-owned (`owns_slice = false`) or joiner-owned (`owns_slice = true`)
-// storage; no aliasing escapes `&mut self` methods. The Zig original is
-// passed across bundler worker threads (see Chunk.IntermediateOutput).
-unsafe impl Send for StringJoiner {}
-unsafe impl Sync for StringJoiner {}
-
 impl Default for StringJoiner {
     fn default() -> Self {
         Self {

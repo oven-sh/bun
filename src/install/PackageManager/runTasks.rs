@@ -278,7 +278,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
             match &task.result {
                 store_installer::Result::None => {
                     if Environment::CI_ASSERT {
-                        bun_core::assert_with_location(false, core::panic::Location::caller());
+                        unreachable!();
                     }
                     installer
                         .on_task_complete(task.entry_id, store_installer::CompleteState::Success);
@@ -334,10 +334,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         let step = installer.store.entries.items_step()
                             [task.entry_id.get() as usize]
                             .load(Ordering::Relaxed);
-                        bun_core::assert_with_location(
-                            step == store_installer::Step::Done as u32,
-                            core::panic::Location::caller(),
-                        );
+                        assert!(step == store_installer::Step::Done as u32);
                     }
                     installer
                         .on_task_complete(task.entry_id, store_installer::CompleteState::Success);

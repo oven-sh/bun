@@ -16,8 +16,7 @@ use crate::JSValue;
 // `unref()` and then lets Drop fire would double-unprotect — audit call sites
 // (Zig contract: ref/unref pairs are balanced, deinit is the release).
 
-// `enable_safety = bun.Environment.ci_assert`
-// TODO(port): map `Environment.ci_assert` to the correct cfg; using debug_assertions as proxy.
+// Zig: `enable_safety = bun.Environment.ci_assert`.
 #[cfg(debug_assertions)]
 macro_rules! enable_safety {
     () => {

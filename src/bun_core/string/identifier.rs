@@ -2,7 +2,8 @@ pub fn is_identifier_start(codepoint: i32) -> bool {
     match codepoint {
         // 'a'..='z' | 'A'..='Z' | '_' | '$'
         0x61..=0x7A | 0x41..=0x5A | 0x5F | 0x24 => true,
-        i32::MIN..=0 | 0x10FFFF..=i32::MAX => false,
+        // ASCII non-identifier bytes (punctuation, control chars) skip the table lookup.
+        i32::MIN..=0x7F | 0x10FFFF..=i32::MAX => false,
         _ => is_id_start_es_next(u32::try_from(codepoint).expect("int cast")),
     }
 }
@@ -11,7 +12,8 @@ pub fn is_identifier_part(codepoint: i32) -> bool {
     match codepoint {
         // 'a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '$'
         0x61..=0x7A | 0x41..=0x5A | 0x30..=0x39 | 0x5F | 0x24 => true,
-        i32::MIN..=0 | 0x10FFFF..=i32::MAX => false,
+        // ASCII non-identifier bytes (punctuation, control chars) skip the table lookup.
+        i32::MIN..=0x7F | 0x10FFFF..=i32::MAX => false,
         _ => is_id_continue_es_next(u32::try_from(codepoint).expect("int cast")),
     }
 }

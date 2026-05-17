@@ -962,6 +962,13 @@ impl SourceMapPieces {
         &mut self,
         shifts_: &[SourceMapShifts],
     ) -> Result<Box<[u8]>, bun_alloc::AllocError> {
+        // Nothing to splice: avoid re-joining (and re-allocating) the entire
+        // source-map JSON when there are no mappings or suffix to merge in.
+        if self.mappings.is_empty() && self.suffix.is_empty() {
+            debug_assert!(self.prefix.first() == Some(&b'{')); // invalid json
+            return Ok(core::mem::take(&mut self.prefix).into_boxed_slice());
+        }
+
         let mut shifts = shifts_;
         let mut start_of_run: usize = 0;
         let mut current: usize = 0;

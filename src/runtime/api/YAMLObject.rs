@@ -246,8 +246,7 @@ impl Stringifier {
             return Ok(());
         }
 
-        // PORT NOTE: `bun.Environment.ci_assert` → `debug_assert!` (closest analogue;
-        // `bun.assertWithLocation(cond, @src())` is a debug-only assert with source location).
+        // Zig: `bun.assertWithLocation(cond, @src())` gated on `bun.Environment.ci_assert`.
         debug_assert!(unwrapped.is_object());
 
         let object_entry = self.known_collections.get_or_put(unwrapped)?;
@@ -380,8 +379,7 @@ impl Stringifier {
             return Ok(());
         }
 
-        // PORT NOTE: `bun.Environment.ci_assert` → `debug_assert!` (closest analogue;
-        // `bun.assertWithLocation(cond, @src())` is a debug-only assert with source location).
+        // Zig: `bun.assertWithLocation(cond, @src())` gated on `bun.Environment.ci_assert`.
         debug_assert!(unwrapped.is_object());
 
         let has_anchor: Option<&mut AnchorAlias> = 'has_anchor: {

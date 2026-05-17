@@ -920,10 +920,7 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
     pub fn append_source(&mut self, unit: Enc::Unit, pos: Pos) -> Result<(), AllocError> {
         self.drain_whitespace()?;
 
-        if cfg!(feature = "ci_assert") {
-            let actual = self.parser().input[pos.cast()];
-            debug_assert!(actual == unit);
-        }
+        assert!(self.parser().input[pos.cast()] == unit);
         match &mut self.str {
             YamlString::Range(range) => {
                 if range.is_empty() {
@@ -947,10 +944,7 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
         for ws in &buf {
             match ws {
                 Whitespace::Source { pos, unit } => {
-                    if cfg!(feature = "ci_assert") {
-                        let actual = input[pos.cast()];
-                        debug_assert!(actual == *unit);
-                    }
+                    assert!(input[pos.cast()] == *unit);
                     match &mut self.str {
                         YamlString::Range(range) => {
                             if range.is_empty() {
@@ -1036,10 +1030,7 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
         self.drain_whitespace()?;
 
         let input = self.input();
-        if cfg!(feature = "ci_assert") {
-            let actual = &input[off.cast()..end.cast()];
-            debug_assert!(actual == expected);
-        }
+        assert!(&input[off.cast()..end.cast()] == expected);
 
         match &mut self.str {
             YamlString::Range(range) => {

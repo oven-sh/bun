@@ -84,8 +84,8 @@ pub struct Handlers {
     /// `Strong` is never borrowed across a reentrant call.
     pub promise: JsCell<Strong>, // Strong.Optional → bun_jsc::Strong (Drop deallocates the slot)
 
+    // Zig: gated on `bun.Environment.ci_assert`.
     #[cfg(debug_assertions)]
-    // TODO(port): Environment.ci_assert → using debug_assertions as the closest analogue
     pub protection_count: u32,
 }
 

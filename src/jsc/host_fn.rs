@@ -162,7 +162,7 @@ fn debug_exception_assertion(global_this: &JSGlobalObject, value: JSValue, func:
         }
     }
     let _ = func;
-    bun_core::assertf!(value.is_empty() == global_this.has_exception(), "host fn return/exception state mismatch");
+    assert!(value.is_empty() == global_this.has_exception(), "host fn return/exception state mismatch");
 }
 
 pub fn to_js_host_setter_value(global_this: &JSGlobalObject, value: JsResult<()>) -> bool {

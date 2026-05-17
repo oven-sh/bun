@@ -220,8 +220,13 @@ impl Listener {
         // has a listener bound to this address, swap its handlers in place
         // and return the existing JS wrapper instead of re-binding (which
         // would fail EADDRINUSE). Matches what `Bun.serve` does via
-        // `ServerConfig::compute_id`/`on_reload_from_zig`.
-        let hot_id = compute_hot_id(socket_config.hostname_or_unix.slice(), port, ssl_enabled);
+        // `ServerConfig::compute_id`/`on_reload_from_zig`. `id: null`/`""`
+        // opts out (same as `Bun.serve`).
+        let hot_id: Box<[u8]> = match opts.get(global, "id")? {
+            None => compute_hot_id(socket_config.hostname_or_unix.slice(), port, ssl_enabled),
+            Some(id) if id.is_null() => Box::default(),
+            Some(id) => Box::from(id.to_slice(global)?.slice()),
+        };
         if !hot_id.is_empty() {
             if let Some(hot) = global.bun_vm().as_mut().hot_map() {
                 if let Some(entry) = hot.get_entry(&hot_id) {
@@ -261,6 +266,15 @@ impl Listener {
                             });
                             return Ok(this_value);
                         }
+                        // `strong_self` empty ⇒ the previous listener was
+                        // `unref()`'d. We can't mint a second JS wrapper for
+                        // the same `*mut Listener` (two wrappers → double
+                        // free on finalize), so close its listen socket to
+                        // release the port and fall through to a fresh bind.
+                        // `do_stop` also drops the hot-map entry so the
+                        // insert below won't collide. Accepted connections
+                        // on the old listener stay open (force_close=false).
+                        Listener::do_stop(existing, false);
                     }
                 }
             }
@@ -881,6 +895,20 @@ impl Listener {
         match listener {
             ListenerType::Uws(socket) => {
                 Self::unlink_unix_socket_path(&self);
+                if !self.ssl {
+                    // Mirror `do_stop`: drop the `--watch` registration
+                    // before closing so a later `--watch` restart doesn't
+                    // SO_LINGER-close whatever unrelated fd the OS reused
+                    // this number for.
+                    // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+                    let fd = bun_opaque::opaque_deref_mut(socket).fd();
+                    self.handlers
+                        .get()
+                        .global_object
+                        .bun_vm()
+                        .as_mut()
+                        .remove_listening_socket_for_watch_mode(fd);
+                }
                 // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                 bun_opaque::opaque_deref_mut(socket).close();
             }

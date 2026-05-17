@@ -18,6 +18,7 @@ use bun_sys::{self, Dir, Fd, File};
 
 use crate::cli::Command;
 use crate::cli::pm_pkg_command::PmPkgCommand;
+use crate::cli::pm_sbom_command::PmSbomCommand;
 use crate::cli::pm_trusted_command::{DefaultTrustedCommand, TrustCommand, UntrustedCommand};
 use crate::cli::pm_version_command::PmVersionCommand;
 use crate::cli::pm_view_command as PmViewCommand;
@@ -158,6 +159,9 @@ impl PackageManagerCommand {
   <b><green>bun<r> <blue>list<r>                  list the dependency tree according to the current lockfile\n\
   <d>├<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile\n\
   <d>└<r> <cyan>--trusted<r>                 list only trusted dependencies\n\
+  <b><green>bun pm<r> <blue>sbom<r>                 generate a Software Bill of Materials (SBOM)\n\
+  <d>├<r> <cyan>--format<r>                  cyclonedx (default) or spdx\n\
+  <d>└<r> <cyan>-o, --outfile<r>             write the SBOM to a file instead of stdout\n\
   <b><green>bun pm<r> <blue>why<r> <d>\\<pkg\\><r>            show dependency tree explaining why a package is installed\n\
   <b><green>bun pm<r> <blue>whoami<r>               print the current npm username\n\
   <b><green>bun pm<r> <blue>view<r> <d>name[@version]<r>  view package metadata from the registry <d>(use `bun info` instead)<r>\n\
@@ -698,6 +702,9 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
         } else if strings::eql_comptime(subcommand, b"why") {
             let positionals: &[&[u8]] = pm.options.positionals;
             PmWhyCommand::exec(&&mut *ctx, pm, positionals)?;
+            Global::exit(0);
+        } else if strings::eql_comptime(subcommand, b"sbom") {
+            PmSbomCommand::exec(&&mut *ctx, pm, &cwd)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"pkg") {
             let positionals: &[&[u8]] = pm.options.positionals;

@@ -934,7 +934,6 @@ describe.concurrent("Bun REPL", () => {
         },
       });
       const exitCode = await proc.exited;
-      expect(exitCode).toBe(0);
 
       const saved = await Bun.file(path.join(String(dir), ".bun_repl_history")).text();
       // Saved history must not preserve carriage returns from the original file.
@@ -942,6 +941,7 @@ describe.concurrent("Bun REPL", () => {
       expect(saved).toContain("old_one\n");
       expect(saved).toContain("old_two\n");
       expect(saved).toContain("new_three\n");
+      expect(exitCode).toBe(0);
     });
   });
 });

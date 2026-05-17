@@ -581,8 +581,8 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
 
   async breakpointLocations(request: DAP.BreakpointLocationsRequest): Promise<DAP.BreakpointLocationsResponse> {
     const { line, endLine, column, endColumn, source: source0 } = request;
-    if (process.platform === "win32") {
-      source0.path = source0.path ? normalizeWindowsPath(source0.path) : source0.path;
+    if (process.platform === "win32" && source0.path && !source0.path.startsWith("/")) {
+      source0.path = normalizeWindowsPath(source0.path);
     }
     const source = await this.#getSource(sourceToId(source0));
 
@@ -688,8 +688,8 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
   }
 
   async #setBreakpointsByUrl(url: string, requests: DAP.SourceBreakpoint[], unsetOld?: boolean): Promise<Breakpoint[]> {
-    if (process.platform === "win32") {
-      url = url ? normalizeWindowsPath(url) : url;
+    if (process.platform === "win32" && url && !url.startsWith("/")) {
+      url = normalizeWindowsPath(url);
     }
     const source = this.#getSourceIfPresent(url);
 
@@ -1081,8 +1081,8 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
 
   async gotoTargets(request: DAP.GotoTargetsRequest): Promise<DAP.GotoTargetsResponse> {
     const { source: source0 } = request;
-    if (process.platform === "win32") {
-      source0.path = source0.path ? normalizeWindowsPath(source0.path) : source0.path;
+    if (process.platform === "win32" && source0.path && !source0.path.startsWith("/")) {
+      source0.path = normalizeWindowsPath(source0.path);
     }
     const source = await this.#getSource(sourceToId(source0));
 

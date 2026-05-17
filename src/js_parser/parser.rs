@@ -12,16 +12,6 @@ use bun_core::Output;
 use bun_wyhash::Wyhash;
 
 // Re-exports (mirrors the Zig `pub const X = @import(...)` block at the bottom).
-// Stub modules so the helper *types* in this file compile; the real bodies live
-// in their own files.
-#[allow(non_snake_case)]
-pub mod ConvertESMExportsForHmr {
-    pub type Ctx = ();
-}
-#[allow(non_snake_case)]
-pub mod ImportScanner {
-    pub type State = ();
-}
 pub use bun_paths::fs;
 
 /// `bun_options_types` is missing several items P.rs/Parser.rs reference

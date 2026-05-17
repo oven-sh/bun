@@ -1393,8 +1393,8 @@ where
     // SAFETY: `this` is the Box<ElementHandler>/Box<DocumentHandler> userdata
     // pointer we registered with lol-html; it lives in LOLHTMLContext for the
     // duration of the rewriter. `&` (not `&mut`) — `cb.call()` below re-enters
-    // JS, which may re-enter another `handler_callback` on the same handler
-    //; aliased `&H` is sound, aliased `&mut H` is not.
+    // JS, which may re-enter another `handler_callback` on the same handler;
+    // aliased `&H` is sound, aliased `&mut H` is not.
     let this = unsafe { &*this };
     let global = this.global();
     // PORT NOTE: spec (html_rewriter.zig:938,954,969,972) re-derives

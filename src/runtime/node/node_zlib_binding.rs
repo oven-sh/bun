@@ -447,8 +447,8 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
     fn async_job_run(this: *mut T) {
         // BACKREF — `this` is the live heap m_ctx payload (kept alive by the
-        // `ref_()` in `write()`); bodies use the `&self` accessor surface
-        //. `ParentRef` Deref collapses the per-site raw deref.
+        // `ref_()` in `write()`); bodies use the `&self` accessor surface.
+        // `ParentRef` Deref collapses the per-site raw deref.
         let this_ref = ParentRef::from(NonNull::new(this).expect("async_job_run: this"));
         let global_this: &JSGlobalObject = this_ref.global_this();
         // Zig: `bunVMConcurrently()` — thread-safe accessor (skips the

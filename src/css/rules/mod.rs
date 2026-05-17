@@ -385,9 +385,8 @@ pub(super) fn decl_block_to_css(
     dest.write_char(b'}')
 }
 
-/// Port of `VendorPrefix.toCss` (css_parser.zig:182). Lives here because the
-/// canonical `impl VendorPrefix` block in lib.rs hasn't grown a `to_css` yet
-/// and `rules/` is the only un-gated caller.
+/// Port of `VendorPrefix.toCss` (css_parser.zig); duplicates
+/// `VendorPrefix::to_css` (css_parser.rs).
 #[inline]
 pub(super) fn vendor_prefix_to_css(
     prefix: css::VendorPrefix,

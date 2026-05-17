@@ -214,6 +214,11 @@ struct State {
     winbuf: Vec<u8>,
     writer_idx: usize,
     total_bytes_written: usize,
+    /// First write error, recorded by `fail_pending_writers` before it drives
+    /// any failure callback. `handle_broken_pipe` completes every later
+    /// `enqueue` with it so nothing registers a poll on the (now closing)
+    /// handle. Released in `Drop` (`SystemError` has no `Drop` of its own).
+    err: Option<sys::SystemError>,
     evtloop: EventLoopHandle,
     is_writing: bool,
     started: bool,
@@ -290,6 +295,7 @@ impl IOWriter {
                 winbuf: Vec::new(),
                 writer_idx: 0,
                 total_bytes_written: 0,
+                err: None,
                 evtloop,
                 is_writing: false,
                 started: false,
@@ -841,6 +847,13 @@ impl IOWriter {
         if err.get_errno() == E::EPIPE {
             s.flags.broken_pipe = true;
         }
+        // Record the error before any callback runs: handle_broken_pipe uses
+        // it to fail re-entrant (and all later) enqueues immediately instead
+        // of letting them register a poll on the handle our caller is about
+        // to close. `SystemError` has no `Drop`, so release any prior value.
+        if let Some(prev) = s.err.replace(err.to_shell_system_error()) {
+            prev.deref();
+        }
         // Writers before writer_idx have already had their callback fired and
         // may have been freed; only notify the still-pending ones, dedup'd.
         let mut pending: Vec<ChildPtr> = Vec::new();
@@ -934,7 +947,20 @@ impl IOWriter {
     // ── enqueue ─────────────────────────────────────────────────────────
 
     fn handle_broken_pipe(&self, ptr: ChildPtr) -> Option<Yield> {
-        if self.state().flags.broken_pipe {
+        let s = self.state();
+        // Once fail_pending_writers has recorded a write error, the underlying
+        // PosixBufferedWriter is about to be closed by _on_error. A re-entrant
+        // enqueue from one of the failure callbacks would otherwise register a
+        // poll on that doomed handle and never hear back (shell hang).
+        // Complete it, and every later enqueue, with the stored error instead.
+        if let Some(e) = &s.err {
+            return Some(Yield::OnIoWriterChunk {
+                child: ptr,
+                written: 0,
+                err: Some(e.dupe()),
+            });
+        }
+        if s.flags.broken_pipe {
             let err = sys::Error::from_code(E::EPIPE, sys::Tag::write).to_system_error();
             return Some(Yield::OnIoWriterChunk {
                 child: ptr,
@@ -1007,25 +1033,15 @@ impl IOWriter {
         args: core::fmt::Arguments<'_>,
     ) -> Yield {
         use std::io::Write as _;
+        if let Some(y) = self.handle_broken_pipe(child) {
+            return y;
+        }
         let s = self.state();
         let start = s.buf.len();
         if let Some(k) = kind {
             let _ = write!(&mut s.buf, "{}: ", k.as_str());
         }
         let _ = s.buf.write_fmt(args);
-        // `buf` is written *before* checking broken_pipe (the bytes are dead
-        // on the error path but the buffer will be cleared there anyway).
-        // NOTE: inline `handle_broken_pipe` instead of calling the helper —
-        // the helper re-derives `state()` while `s` is still live, which is two
-        // simultaneous `&mut State` (UB under Stacked Borrows).
-        if s.flags.broken_pipe {
-            let err = sys::Error::from_code(E::EPIPE, sys::Tag::write).to_system_error();
-            return Yield::OnIoWriterChunk {
-                child,
-                written: 0,
-                err: Some(err),
-            };
-        }
         let end = s.buf.len();
         s.writers.push(Writer {
             ptr: child,
@@ -1179,6 +1195,10 @@ impl Drop for IOWriter {
         }
         if s.fd != Fd::INVALID {
             let _ = sys::close(s.fd);
+        }
+        // `SystemError` has no `Drop`; its `bun_core::String` refs are manual.
+        if let Some(e) = s.err.take() {
+            e.deref();
         }
         s.writer
             .disable_keeping_process_alive(s.evtloop.as_event_loop_ctx());

@@ -139,9 +139,12 @@ test("pool recovers after every connection is closed mid-handshake", async () =>
   // pool produced the internal "connection must be a PostgresSQLConnection"
   // error at least once — always a bug, never expected fallout from the test
   // scenario (the fake server just closes every connection).
+  // Fold stderr into the assertion so a fixture crash surfaces in the diff
+  // instead of leaving CI with an opaque `corrupted: undefined`.
   const line = stdout.trim().split("\n").at(-1) ?? "";
   const parsed = line ? JSON.parse(line) : {};
-  expect({ corrupted: parsed.corrupted, exitCode }).toEqual({
+  expect({ stderr, corrupted: parsed.corrupted, exitCode }).toEqual({
+    stderr: "",
     corrupted: false,
     exitCode: 0,
   });

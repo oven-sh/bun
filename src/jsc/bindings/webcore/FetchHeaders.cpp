@@ -43,6 +43,18 @@ static void removePrivilegedNoCORSRequestHeaders(HTTPHeaderMap& headers)
     headers.remove(HTTPHeaderName::Range);
 }
 
+// String::trim takes a function pointer and dispatches through
+// StringImpl::trimMatchedCharacters, which is an indirect call per probed
+// character. Header values are almost always already free of leading/trailing
+// HTTP whitespace, so do a cheap inline check on the first/last code unit and
+// only fall back to the real trim when something actually needs stripping.
+static inline String trimHTTPSpaceIfNeeded(const String& value)
+{
+    if (value.isEmpty() || (!isHTTPSpace(value[0]) && !isHTTPSpace(value[value.length() - 1])))
+        return value;
+    return value.trim(isHTTPSpace);
+}
+
 static ExceptionOr<bool> canWriteHeader(const HTTPHeaderName name, const String& value, const String& combinedValue, FetchHeaders::Guard guard)
 {
     ASSERT(value.isEmpty() || (!isHTTPSpace(value[0]) && !isHTTPSpace(value[value.length() - 1])));
@@ -67,7 +79,7 @@ static ExceptionOr<bool> canWriteHeader(const String& name, const String& value,
 
 static ExceptionOr<void> appendToHeaderMap(const String& name, const String& value, HTTPHeaderMap& headers, FetchHeaders::Guard guard)
 {
-    String normalizedValue = value.trim(isHTTPSpace);
+    String normalizedValue = trimHTTPSpaceIfNeeded(value);
     String combinedValue = normalizedValue;
     HTTPHeaderName headerName;
     if (findHTTPHeaderName(name, headerName)) {
@@ -121,7 +133,7 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
 
 static ExceptionOr<void> appendToHeaderMap(const HTTPHeaderMap::HTTPHeaderMapConstIterator::KeyValue& header, HTTPHeaderMap& headers, FetchHeaders::Guard guard)
 {
-    String normalizedValue = header.value.trim(isHTTPSpace);
+    String normalizedValue = trimHTTPSpaceIfNeeded(header.value);
     auto canWriteResult = canWriteHeader(header.key, normalizedValue, header.value, guard);
     if (canWriteResult.hasException())
         return canWriteResult.releaseException();
@@ -253,7 +265,7 @@ ExceptionOr<bool> FetchHeaders::has(const StringView name) const
 
 ExceptionOr<void> FetchHeaders::set(const HTTPHeaderName name, const String& value)
 {
-    String normalizedValue = value.trim(isHTTPSpace);
+    String normalizedValue = trimHTTPSpaceIfNeeded(value);
     auto canWriteResult = canWriteHeader(name, normalizedValue, normalizedValue, m_guard);
     if (canWriteResult.hasException())
         return canWriteResult.releaseException();
@@ -271,7 +283,7 @@ ExceptionOr<void> FetchHeaders::set(const HTTPHeaderName name, const String& val
 
 ExceptionOr<void> FetchHeaders::set(const String& name, const String& value)
 {
-    String normalizedValue = value.trim(isHTTPSpace);
+    String normalizedValue = trimHTTPSpaceIfNeeded(value);
     auto canWriteResult = canWriteHeader(name, normalizedValue, normalizedValue, m_guard);
     if (canWriteResult.hasException())
         return canWriteResult.releaseException();
@@ -290,7 +302,7 @@ ExceptionOr<void> FetchHeaders::set(const String& name, const String& value)
 void FetchHeaders::filterAndFill(const HTTPHeaderMap& headers, Guard guard)
 {
     for (auto& header : headers) {
-        String normalizedValue = header.value.trim(isHTTPSpace);
+        String normalizedValue = trimHTTPSpaceIfNeeded(header.value);
         auto canWriteResult = canWriteHeader(header.key, normalizedValue, header.value, guard);
         if (canWriteResult.hasException())
             continue;

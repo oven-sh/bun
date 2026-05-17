@@ -1485,6 +1485,17 @@ impl JSValkeyClient {
             return;
         }
 
+        // Once the VM is shutting down the event loop won't tick again, so the
+        // deferred task — and its matching `deref()` — would never run, leaking
+        // the `Holder` and stranding the `JSValkeyClient`'s refcount.  At that
+        // point `flags.finalized` is set and `this_value` has been cleared, so
+        // `on_valkey_close` can't re-enter JS — closing inline is safe.
+        if self.vm().is_shutting_down() {
+            bun_core::hint::cold();
+            self.client_mut().close();
+            return;
+        }
+
         self.ref_();
         // socket close can potentially call JS so we need to enqueue the deinit
         struct Holder {

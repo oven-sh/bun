@@ -71,6 +71,18 @@ impl<T, const BUFFER_CAPACITY: usize> Default for BoundedArrayAligned<T, BUFFER_
     }
 }
 
+// PORT NOTE: Zig `BoundedArray` is plain data with no destructor. The Rust port
+// is used with non-`Copy` element types (e.g. `BoundedArray<Vec<u8>, N>` in
+// `s3_signing::credentials::sign_request`), where the original `[MaybeUninit<T>; N]`
+// storage would silently leak the initialized elements at scope exit. Drop the
+// `[0..len]` prefix so owned elements are released; for trivially-droppable `T`
+// (the original Zig use cases) this compiles to nothing.
+impl<T, const BUFFER_CAPACITY: usize> Drop for BoundedArrayAligned<T, BUFFER_CAPACITY> {
+    fn drop(&mut self) {
+        self.clear();
+    }
+}
+
 /// `pub const Buffer = @FieldType(Self, "buffer");` — inherent assoc types are
 /// unstable; only used for introspection in Zig, so expose as a free alias.
 pub type BoundedBuffer<T, const N: usize> = [MaybeUninit<T>; N];
@@ -113,9 +125,16 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
         Ok(())
     }
 
-    /// Remove all elements from the slice.
+    /// Remove all elements from the slice, dropping each in place.
     pub fn clear(&mut self) {
+        // SAFETY: elements `[0..len]` are initialized by the public API's invariants.
+        // Reset `len` *before* dropping so a panic in a `Drop` impl can't lead to a
+        // double-drop from the outer `Drop for BoundedArrayAligned`.
+        let len = self.len;
         self.len = 0;
+        unsafe {
+            core::ptr::drop_in_place(&raw mut self.buffer[0..len] as *mut [T]);
+        }
     }
 
     /// Copy the content of an existing slice.

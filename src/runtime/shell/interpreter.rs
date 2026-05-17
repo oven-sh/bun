@@ -1474,8 +1474,46 @@ impl Interpreter {
 
         match this.cleanup_state.get() {
             CleanupState::NeedsFullCleanup => {
-                // The interpreter never finished normally (e.g. early error or
-                // never started), so we need to clean up IO and shell env here.
+                // The interpreter never finished normally (e.g. early error,
+                // never started, or abandoned mid-pipeline by a timed-out
+                // test). The state-machine tree may still be live in `nodes`,
+                // and `Base::shell` is a raw `*mut ShellExecEnv` so dropping
+                // the `Vec<Node>` would silently leak any duped env still
+                // attached to a pipeline child / subshell / cmd-subst Script.
+                // Sweep the arena and free the owned dupes before the rest of
+                // the teardown.
+                //
+                // Ownership rule (mirrors the per-node `deinit` impls and
+                // `Pipeline::deinit_child_duped_env`): a node owns
+                // `base.shell` iff it was created via `dupe_for_subshell`,
+                // which is exactly when its `base.shell` differs from its
+                // parent's — pipeline children, subshells, and command-
+                // substitution Scripts dup; everything else borrows the
+                // parent's pointer unchanged. The root Script borrows the
+                // interpreter's embedded `root_shell`.
+                {
+                    let root_shell_ptr: *mut ShellExecEnv = this.root_shell.as_ptr();
+                    let nodes = this.nodes.get();
+                    let owned_envs: Vec<*mut ShellExecEnv> = nodes
+                        .iter()
+                        .filter_map(|n| {
+                            let base = n.base()?;
+                            if base.shell.is_null() {
+                                return None;
+                            }
+                            let parent_shell: *mut ShellExecEnv =
+                                if base.parent == NodeId::INTERPRETER {
+                                    root_shell_ptr
+                                } else {
+                                    nodes.get(base.parent.idx())?.base()?.shell
+                                };
+                            (base.shell != parent_shell).then_some(base.shell)
+                        })
+                        .collect();
+                    for env in owned_envs {
+                        ShellExecEnv::deinit_impl(env);
+                    }
+                }
                 this.root_io.set(IO::default());
                 this.root_shell.with_mut(|rs| rs.deinit_embedded(true));
             }

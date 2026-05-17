@@ -281,8 +281,6 @@ impl<'a> HTMLLoader<'a> {
         Ok(())
     }
 
-    // Returns `Vec<Vec<u8>>` (not `BoundedArray`) so the inner `Vec<u8>`s
-    // are dropped — `BoundedArray` is `[MaybeUninit<T>; N]` with no `Drop`.
     fn get_head_tags(&self) -> Vec<Vec<u8>> {
         // PERF(port): was stack-fallback arena; now heap Vec<u8>
         let mut array: Vec<Vec<u8>> = Vec::with_capacity(2);

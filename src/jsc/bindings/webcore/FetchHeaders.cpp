@@ -55,6 +55,18 @@ static inline String trimHTTPSpaceIfNeeded(const String& value)
     return value.trim(isHTTPSpace);
 }
 
+// Like trimHTTPSpaceIfNeeded, but avoids the ref-count round-trip on the
+// returned String in the common no-trim case by aliasing the input. When a trim
+// is actually needed, the trimmed result is parked in `storage` (which must
+// outlive the returned reference) and a reference to it is returned.
+static inline const String& trimHTTPSpaceIfNeeded(const String& value, String& storage)
+{
+    if (value.isEmpty() || (!isHTTPSpace(value[0]) && !isHTTPSpace(value[value.length() - 1])))
+        return value;
+    storage = value.trim(isHTTPSpace);
+    return storage;
+}
+
 static ExceptionOr<bool> canWriteHeader(const HTTPHeaderName name, const String& value, const String& combinedValue, FetchHeaders::Guard guard)
 {
     ASSERT(value.isEmpty() || (!isHTTPSpace(value[0]) && !isHTTPSpace(value[value.length() - 1])));
@@ -79,8 +91,14 @@ static ExceptionOr<bool> canWriteHeader(const String& name, const String& value,
 
 static ExceptionOr<void> appendToHeaderMap(const String& name, const String& value, HTTPHeaderMap& headers, FetchHeaders::Guard guard)
 {
-    String normalizedValue = trimHTTPSpaceIfNeeded(value);
-    String combinedValue = normalizedValue;
+    // The common path here is a brand-new header with no leading/trailing HTTP
+    // whitespace. Avoid taking ownership (and the atomic ref-count round-trip
+    // that comes with it) of the value String unless we actually have to trim
+    // or merge with an existing header.
+    String trimStorage;
+    const String& normalizedValue = trimHTTPSpaceIfNeeded(value, trimStorage);
+    String combinedTemp;
+    const String* valueToSet = &normalizedValue;
     HTTPHeaderName headerName;
     if (findHTTPHeaderName(name, headerName)) {
         auto index = headers.indexOf(headerName);
@@ -89,14 +107,15 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
             if (index.isValid()) {
                 auto existing = headers.getIndex(index);
                 if (headerName == HTTPHeaderName::Cookie) {
-                    combinedValue = makeString(existing, "; "_s, normalizedValue);
+                    combinedTemp = makeString(existing, "; "_s, normalizedValue);
                 } else {
-                    combinedValue = makeString(existing, ", "_s, normalizedValue);
+                    combinedTemp = makeString(existing, ", "_s, normalizedValue);
                 }
+                valueToSet = &combinedTemp;
             }
         }
 
-        auto canWriteResult = canWriteHeader(headerName, normalizedValue, combinedValue, guard);
+        auto canWriteResult = canWriteHeader(headerName, normalizedValue, *valueToSet, guard);
 
         if (canWriteResult.hasException())
             return canWriteResult.releaseException();
@@ -104,8 +123,8 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
             return {};
 
         if (headerName != HTTPHeaderName::SetCookie) {
-            if (!headers.setIndex(index, combinedValue))
-                headers.set(headerName, combinedValue);
+            if (!headers.setIndex(index, *valueToSet))
+                headers.set(headerName, *valueToSet);
         } else {
             headers.add(headerName, normalizedValue);
         }
@@ -114,16 +133,17 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
     }
     auto index = headers.indexOf(name);
     if (index.isValid()) {
-        combinedValue = makeString(headers.getIndex(index), ", "_s, normalizedValue);
+        combinedTemp = makeString(headers.getIndex(index), ", "_s, normalizedValue);
+        valueToSet = &combinedTemp;
     }
-    auto canWriteResult = canWriteHeader(name, normalizedValue, combinedValue, guard);
+    auto canWriteResult = canWriteHeader(name, normalizedValue, *valueToSet, guard);
     if (canWriteResult.hasException())
         return canWriteResult.releaseException();
     if (!canWriteResult.releaseReturnValue())
         return {};
 
-    if (!headers.setIndex(index, combinedValue))
-        headers.set(name, combinedValue);
+    if (!headers.setIndex(index, *valueToSet))
+        headers.set(name, *valueToSet);
 
     // if (guard == FetchHeaders::Guard::RequestNoCors)
     //     removePrivilegedNoCORSRequestHeaders(headers);
@@ -133,7 +153,8 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
 
 static ExceptionOr<void> appendToHeaderMap(const HTTPHeaderMap::HTTPHeaderMapConstIterator::KeyValue& header, HTTPHeaderMap& headers, FetchHeaders::Guard guard)
 {
-    String normalizedValue = trimHTTPSpaceIfNeeded(header.value);
+    String trimStorage;
+    const String& normalizedValue = trimHTTPSpaceIfNeeded(header.value, trimStorage);
     auto canWriteResult = canWriteHeader(header.key, normalizedValue, header.value, guard);
     if (canWriteResult.hasException())
         return canWriteResult.releaseException();

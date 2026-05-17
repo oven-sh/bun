@@ -189,8 +189,9 @@ impl GetErrno for usize {
             0
         };
         // Validate instead of transmuting: the raw syscall errno range is
-        // wider than the declared `SystemErrno` discriminants.
-        SystemErrno::init(int as i64).unwrap_or(SystemErrno::SUCCESS)
+        // wider than the declared `SystemErrno` discriminants. Unknown kernel
+        // errno values must fail closed instead of being reported as success.
+        SystemErrno::init(int as i64).expect("invalid Linux raw syscall errno")
     }
 }
 

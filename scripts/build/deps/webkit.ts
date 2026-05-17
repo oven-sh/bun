@@ -39,6 +39,7 @@ export const WEBKIT_VERSION = "5488984d20e0dbfe4be2c3ba8fb18eb81a5e0e8b";
  *   like the old cmake — avoids debug/release mixing.
  */
 
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { Config } from "../config.ts";

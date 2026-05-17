@@ -50,6 +50,7 @@ pub enum Loader {
     Yaml = 18,
     Json5 = 19,
     Md = 20,
+    Xml = 21,
 }
 
 // Crosses FFI as `uint8_t default_loader` / `uint8_t loader` in
@@ -102,6 +103,7 @@ impl LoaderOptional {
             18 => Some(Loader::Yaml),
             19 => Some(Loader::Json5),
             20 => Some(Loader::Md),
+            21 => Some(Loader::Xml),
             254 => None,
             _ => {
                 debug_assert!(false, "LoaderOptional out of range: {}", self.0);
@@ -136,6 +138,7 @@ bun_core::comptime_string_map! {
         b"jsonc" => Loader::Jsonc,
         b"toml" => Loader::Toml,
         b"yaml" => Loader::Yaml,
+        b"xml" => Loader::Xml,
         b"json5" => Loader::Json5,
         b"wasm" => Loader::Wasm,
         b"napi" => Loader::Napi,
@@ -206,6 +209,7 @@ impl Loader {
             Loader::Json => "input.json",
             Loader::Toml => "input.toml",
             Loader::Yaml => "input.yaml",
+            Loader::Xml => "input.xml",
             Loader::Json5 => "input.json5",
             Loader::Wasm => "input.wasm",
             Loader::Napi => "input.node",
@@ -270,9 +274,10 @@ impl Loader {
                 | Loader::Tsx
                 | Loader::Json
                 | Loader::Jsonc
-                // toml, yaml, and json5 are included because we can serialize to the same AST as JSON
+                // toml, yaml, xml, and json5 are included because we can serialize to the same AST as JSON
                 | Loader::Toml
                 | Loader::Yaml
+                | Loader::Xml
                 | Loader::Json5
         )
     }
@@ -287,6 +292,7 @@ impl Loader {
             | Loader::Jsonc
             | Loader::Toml
             | Loader::Yaml
+            | Loader::Xml
             | Loader::Json5
             | Loader::File
             | Loader::Md => SideEffects::NoSideEffectsPureData,

@@ -6281,6 +6281,9 @@ pub mod __gated_printer {
                                 Loader::Yaml => {
                                     self.print_whitespacer(ws!(b" with { type: \"yaml\" }"))
                                 }
+                                Loader::Xml => {
+                                    self.print_whitespacer(ws!(b" with { type: \"xml\" }"))
+                                }
                                 Loader::Json5 => {
                                     self.print_whitespacer(ws!(b" with { type: \"json5\" }"))
                                 }
@@ -6339,6 +6342,7 @@ pub mod __gated_printer {
                                         Loader::Jsonc => FP::host_defined(mi.str(b"jsonc")),
                                         Loader::Toml => FP::host_defined(mi.str(b"toml")),
                                         Loader::Yaml => FP::host_defined(mi.str(b"yaml")),
+                                        Loader::Xml => FP::host_defined(mi.str(b"xml")),
                                         Loader::Wasm => FP::host_defined(mi.str(b"wasm")),
                                         Loader::Napi => FP::host_defined(mi.str(b"napi")),
                                         Loader::Base64 => FP::host_defined(mi.str(b"base64")),

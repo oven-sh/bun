@@ -811,6 +811,28 @@ pub mod parse_worker {
                 let _ = temp_log.clone_to_with_recycled(log, true);
                 return result;
             }
+            Loader::Xml => {
+                let _trace = perf::trace("Bundler.ParseXML");
+                let mut temp_log = Log::init();
+                let result = (|| -> core::result::Result<JSAst, AnyError> {
+                    let root: Expr =
+                        bun_parsers::xml::XML::parse(source, &mut temp_log, bump)?.into();
+                    Ok(JSAst::init(
+                        js_parser::new_lazy_export_ast(
+                            bump,
+                            &mut topts.define,
+                            opts,
+                            &mut temp_log,
+                            root,
+                            source,
+                            b"",
+                        )?
+                        .unwrap(),
+                    ))
+                })();
+                let _ = temp_log.clone_to_with_recycled(log, true);
+                return result;
+            }
             Loader::Json5 => {
                 let _trace = perf::trace("Bundler.ParseJSON5");
                 let mut temp_log = Log::init();

@@ -104,6 +104,22 @@ impl<T> NewId<T> {
     }
 }
 
+impl Drop for Store {
+    fn drop(&mut self) {
+        // `MultiArrayList::drop` is slab-only (frees the SoA backing buffer but
+        // never runs column destructors — see the `Drop` impl on
+        // `MultiArrayList` for why). `Entry` and `Node` own heap-backed columns
+        // (`Vec`/`OrderedArraySet` for `dependencies`, `parents`, `nodes`,
+        // `peers`), and `Store` is their unique owner, so run the per-element
+        // destructors here before the slab `Drop` reclaims the backing buffer.
+        // All `Installer::Task` worker threads have joined by the time the
+        // `Store` falls out of scope at the end of `install_isolated_packages`,
+        // so no other thread is reading these columns.
+        self.entries.drop_elements();
+        self.nodes.drop_elements();
+    }
+}
+
 impl Store {
     /// Called from multiple threads. `parent_dedupe` should not be shared between threads.
     pub fn is_cycle(

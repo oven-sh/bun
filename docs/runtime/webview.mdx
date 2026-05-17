@@ -465,7 +465,7 @@ await view.cdp("DOM.focus", { nodeId });
 
 `cdp(method, params?)` returns the `result` object from the CDP response. If Chrome returns an error (unknown method, bad params), the promise rejects with its `error.message`.
 
-Commands are scoped to this view's session (they target this tab). You must `await navigate(...)` at least once before calling `cdp()` — the first navigation establishes the session. Calling `cdp()` before that throws `ERR_INVALID_STATE`.
+Commands are scoped to this view's session (they target this tab). You must `await navigate(...)` at least once before calling `cdp()` — the first navigation establishes the session. Calling `cdp()` before that returns a Promise that rejects with `ERR_INVALID_STATE`.
 
 `params` must be a JSON-serializable object; omit it for commands that take no parameters. One `cdp()` call may be in flight at a time per view.
 

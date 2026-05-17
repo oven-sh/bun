@@ -365,9 +365,20 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncCdp, (JSGlobalObject * globalObject, 
     // command here would reach the wrong target. The user can `await
     // navigate(...)` first to get a session, or use Bun.WebView.chrome()
     // for browser-level commands (v2).
-    if (thisObject->m_sessionId.isEmpty())
-        return Bun::ERR::INVALID_STATE(scope, globalObject,
-            "WebView.cdp(): no session - await navigate() first"_s);
+    //
+    // Reject (not sync-throw): this is a state error that callers reach
+    // when Chrome dies before the attach chain completes — navigate()
+    // already rejected, and recovery code commonly does
+    // `void v.cdp('Page.stopLoading').catch(()=>{})`. A sync throw escapes
+    // that .catch() and replaces the original navigate() rejection with
+    // this misleading "await navigate() first" message. Arg-type checks
+    // below stay synchronous (programmer error, no I/O happened yet).
+    if (thisObject->m_sessionId.isEmpty()) {
+        auto* err = createError(globalObject, ErrorCode::ERR_INVALID_STATE,
+            "Invalid state: WebView.cdp(): no session - await navigate() first"_s);
+        RELEASE_AND_RETURN(scope,
+            JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, err)));
+    }
 
     JSValue methodArg = callFrame->argument(0);
     if (!methodArg.isString())

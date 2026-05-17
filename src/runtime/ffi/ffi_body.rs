@@ -1846,7 +1846,7 @@ pub fn generate_symbol_for_function(
         ));
     }
 
-    if function.threadsafe && return_type != ABIType::Void {
+    if threadsafe && return_type != ABIType::Void {
         return Ok(Some(
             ZigString::static_(b"Threadsafe functions must return void").to_error_instance(global),
         ));
@@ -2445,6 +2445,9 @@ impl Function {
         }
 
         writer.write_all(b"#define IS_CALLBACK 1\n")?;
+        if self.threadsafe {
+            writer.write_all(b"#define IS_THREADSAFE 1\n")?;
+        }
 
         'brk: {
             if self.return_type.is_floating_point() {
@@ -2501,12 +2504,43 @@ impl Function {
             for (i, arg) in self.arg_types.iter().enumerate() {
                 let printed = bun_core::fmt::print_int(&mut arg_buf[3..], i);
                 let arg_name = &arg_buf[0..3 + printed];
+                if self.threadsafe && arg.may_allocate_bigint_when_converted_to_js() {
+                    // The trampoline for a threadsafe callback may run on an
+                    // arbitrary OS thread. Converting a 64-bit integer here
+                    // would call {U,}INT64_TO_JSVALUE_SLOW, which allocates a
+                    // JSBigInt on the calling thread without the JS lock and
+                    // corrupts the GC heap. Pass the raw bits through instead
+                    // and let FFI_Callback_threadsafe_call convert them on the
+                    // JS thread using the argTypes table emitted below.
+                    write!(
+                        writer,
+                        "arguments[{}] = (ZIG_REPR_TYPE)(int64_t){};\n",
+                        i,
+                        BStr::new(arg_name)
+                    )?;
+                } else {
+                    write!(
+                        writer,
+                        "arguments[{}] = {}.asZigRepr;\n",
+                        i,
+                        arg.to_js(arg_name)
+                    )?;
+                }
+            }
+
+            if self.threadsafe {
                 write!(
                     writer,
-                    "arguments[{}] = {}.asZigRepr;\n",
-                    i,
-                    arg.to_js(arg_name)
+                    "static const uint8_t argTypes[{}] = {{",
+                    self.arg_types.len()
                 )?;
+                for (i, arg) in self.arg_types.iter().enumerate() {
+                    if i > 0 {
+                        writer.write_all(b", ")?;
+                    }
+                    write!(writer, "{}", *arg as i32)?;
+                }
+                writer.write_all(b"};\n")?;
             }
         }
 
@@ -2519,7 +2553,24 @@ impl Function {
             let fmt = bun_fmt::hex_int_upper::<16>(ptr as u64);
 
             // TODO(port): std.fmt.bufPrint → write!-into-slice
-            let written = if !self.arg_types.is_empty() {
+            let written = if self.threadsafe {
+                let mut cursor = std::io::Cursor::new(&mut inner_buf_[1..]);
+                if !self.arg_types.is_empty() {
+                    write!(
+                        &mut cursor,
+                        "FFI_Callback_call((void*)0x{}ULL, {}, arguments, argTypes)",
+                        fmt,
+                        self.arg_types.len()
+                    )?;
+                } else {
+                    write!(
+                        &mut cursor,
+                        "FFI_Callback_call((void*)0x{}ULL, 0, (ZIG_REPR_TYPE*)0, (const uint8_t*)0)",
+                        fmt
+                    )?;
+                }
+                cursor.position() as usize
+            } else if !self.arg_types.is_empty() {
                 let mut cursor = std::io::Cursor::new(&mut inner_buf_[1..]);
                 write!(
                     &mut cursor,
@@ -2572,7 +2623,7 @@ unsafe extern "C" {
     fn FFI_Callback_call_3(_: *mut c_void, _: usize, _: *mut JSValue) -> JSValue;
     fn FFI_Callback_call_4(_: *mut c_void, _: usize, _: *mut JSValue) -> JSValue;
     fn FFI_Callback_call_5(_: *mut c_void, _: usize, _: *mut JSValue) -> JSValue;
-    fn FFI_Callback_threadsafe_call(_: *mut c_void, _: usize, _: *mut JSValue) -> JSValue;
+    fn FFI_Callback_threadsafe_call(_: *mut c_void, _: usize, _: *mut JSValue, _: *const u8);
     fn FFI_Callback_call_6(_: *mut c_void, _: usize, _: *mut JSValue) -> JSValue;
     fn FFI_Callback_call_7(_: *mut c_void, _: usize, _: *mut JSValue) -> JSValue;
     fn Bun__createFFICallbackFunction(_: &JSGlobalObject, _: JSValue) -> *mut c_void;

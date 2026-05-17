@@ -534,9 +534,13 @@ impl Options {
                 self.max_concurrent_lifecycle_scripts = jobs as usize;
             }
 
-            if let Some(cache_dir) = config.cache_directory.as_deref() {
-                self.cache_directory = leak_static(cache_dir);
-            }
+            // PORT NOTE: Zig has a second `if (config.cache_directory) |cache_dir|`
+            // here (PackageManagerOptions.zig:354-355), a copy-paste duplicate of
+            // the one at the top of this block. In Zig it's harmless (slice borrows
+            // from the never-reset config arena), but here both writes go through
+            // `leak_static`, so the second one orphans the first allocation. The
+            // gate is identical and `config` is immutable, so the second write is
+            // a pure no-op behaviorally — drop it.
 
             if let Some(ignore_scripts) = config.ignore_scripts {
                 if ignore_scripts {

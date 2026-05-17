@@ -204,6 +204,7 @@ bool JSCommonJSExtensions::deleteProperty(JSC::JSCell* cell, JSC::JSGlobalObject
 extern "C" uint32_t JSCommonJSExtensions__appendFunction(Zig::GlobalObject* globalObject, JSC::JSValue value)
 {
     JSCommonJSExtensions* extensions = globalObject->lazyRequireExtensionsObject();
+    WTF::Locker locker { extensions->cellLock() };
     extensions->m_registeredFunctions.append(JSC::WriteBarrier<Unknown>());
     extensions->m_registeredFunctions.last().set(globalObject->vm(), extensions, value);
     return extensions->m_registeredFunctions.size() - 1;
@@ -212,12 +213,14 @@ extern "C" uint32_t JSCommonJSExtensions__appendFunction(Zig::GlobalObject* glob
 extern "C" void JSCommonJSExtensions__setFunction(Zig::GlobalObject* globalObject, uint32_t index, JSC::JSValue value)
 {
     JSCommonJSExtensions* extensions = globalObject->lazyRequireExtensionsObject();
-    extensions->m_registeredFunctions[index].set(globalObject->vm(), globalObject, value);
+    WTF::Locker locker { extensions->cellLock() };
+    extensions->m_registeredFunctions[index].set(globalObject->vm(), extensions, value);
 }
 
 extern "C" uint32_t JSCommonJSExtensions__swapRemove(Zig::GlobalObject* globalObject, uint32_t index)
 {
     JSCommonJSExtensions* extensions = globalObject->lazyRequireExtensionsObject();
+    WTF::Locker locker { extensions->cellLock() };
     ASSERT(extensions->m_registeredFunctions.size() > 0);
     if (extensions->m_registeredFunctions.size() == 1) {
         extensions->m_registeredFunctions.clear();
@@ -226,7 +229,7 @@ extern "C" uint32_t JSCommonJSExtensions__swapRemove(Zig::GlobalObject* globalOb
     ASSERT(index < extensions->m_registeredFunctions.size());
     if (index < (extensions->m_registeredFunctions.size() - 1)) {
         JSValue last = extensions->m_registeredFunctions.takeLast().get();
-        extensions->m_registeredFunctions[index].set(globalObject->vm(), globalObject, last);
+        extensions->m_registeredFunctions[index].set(globalObject->vm(), extensions, last);
         return extensions->m_registeredFunctions.size();
     } else {
         extensions->m_registeredFunctions.removeLast();
@@ -303,6 +306,12 @@ void JSCommonJSExtensions::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
+    // m_registeredFunctions is mutated by JSCommonJSExtensions__appendFunction,
+    // JSCommonJSExtensions__setFunction, and JSCommonJSExtensions__swapRemove on
+    // the mutator thread; take cellLock so a concurrent Vector reallocation does
+    // not free the backing buffer mid-scan when this runs on a parallel mark
+    // thread.
+    WTF::Locker locker { thisObject->cellLock() };
     for (auto& func : thisObject->m_registeredFunctions) {
         visitor.append(func);
     }

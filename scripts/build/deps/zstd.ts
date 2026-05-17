@@ -35,11 +35,13 @@ export const zstd: Dependency = {
   name: "zstd",
   versionMacro: "ZSTD_HASH",
 
-  source: () => ({
+  source: cfg => ({
     kind: "github-archive",
     repo: "facebook/zstd",
     commit: ZSTD_COMMIT,
   }),
+
+  patches: cfg => (cfg.ohos ? ["patches/zstd/ohos-qsort-r.patch"] : []),
 
   build: cfg => {
     const sources = [...SOURCES];

@@ -148,7 +148,7 @@ cp test_perf.js "$PKG_DIR/" 2>/dev/null || true
 
 cd /tmp/bun-release
 tar czf "${PKG_NAME}.tar.gz" "$PKG_NAME"
-info "包: /tmp/bun-release/${PKG_NAME}.tar.gz ($(du -sh /tmp/bun-release/${PKG_NAME}.tar.gz | awk '{print $1}'))"
+info "包: /tmp/bun-release/${PKG_NAME}.tar.gz ($(du -sh "/tmp/bun-release/${PKG_NAME}.tar.gz" | awk '{print $1}'))"
 
 # ─── 阶段8: 发布到共享目录 ──────────────────────────────────────────────
 if [ -d /mnt/linux_share ]; then

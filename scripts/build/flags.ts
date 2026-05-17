@@ -158,8 +158,8 @@ export const globalFlags: Flag[] = [
     desc: "OHOS: suppress WebKit cmakeconfig vs PlatformHave.h HAVE_INT128_T conflict",
   },
   {
-    flag: c => [`-nostdinc++`, `-I${c.ohosCrossLibs!}/libcxx/include/v1`, `-I${c.ohosCrossLibs!}/libcxxabi/include`],
-    when: c => c.ohos,
+    flag: c => [`-nostdinc++`, `-I${c.ohosCrossLibs}/libcxx/include/v1`, `-I${c.ohosCrossLibs}/libcxxabi/include`],
+    when: c => c.ohos && !!c.ohosCrossLibs,
     lang: "cxx",
     desc: "OHOS: use musl-compatible LLVM 22 libc++ headers",
   },
@@ -912,12 +912,11 @@ export const linkerFlags: Flag[] = [
     when: c => c.ohos,
     desc: "OHOS linker tuning: 8MB stack, compressed debug",
   },
-  // ─── OHOS PIE (experimental) ───
+  // ─── OHOS PIE ───
   {
     flag: "-fPIE",
     when: c => c.ohos,
-    lang: "cxx",
-    desc: "OHOS PIE: position-independent executable for spawn compatibility",
+    desc: "OHOS PIE: position-independent executable (applied to C and C++ since OHOS requires PIE for all code)",
   },
   {
     flag: ["-pie", "-Wl,-dynamic-linker=/system/lib/ld-musl-aarch64.so.1"],

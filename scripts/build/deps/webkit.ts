@@ -404,9 +404,9 @@ export const webkit: Dependency = {
           optFlagStr, targetFlag, sysrootFlag, "-D__MUSL__",
           icuInclude,
         ].filter(Boolean).join(" ");
+        args.CMAKE_EXE_LINKER_FLAGS = `-L${ohosCrossLibs}/libcxx/lib -L${ohosCrossLibs}/libcxxabi/lib -L${ohosCrossLibs}/libunwind/lib -lc++ -lc++abi -lunwind`;
+        args.CMAKE_SHARED_LINKER_FLAGS = `-L${ohosCrossLibs}/libcxx/lib -L${ohosCrossLibs}/libcxxabi/lib -L${ohosCrossLibs}/libunwind/lib -lc++ -lc++abi -lunwind`;
       }
-      args.CMAKE_EXE_LINKER_FLAGS = `-L${ohosCrossLibs}/libcxx/lib -L${ohosCrossLibs}/libcxxabi/lib -L${ohosCrossLibs}/libunwind/lib -lc++ -lc++abi -lunwind`;
-      args.CMAKE_SHARED_LINKER_FLAGS = `-L${ohosCrossLibs}/libcxx/lib -L${ohosCrossLibs}/libcxxabi/lib -L${ohosCrossLibs}/libunwind/lib -lc++ -lc++abi -lunwind`;
       if (ohosIcuDir) {
         const hostBin = resolve(ohosIcuDir, "..", "..", "ohos-icu", "host", "bin");
         args.ICU_GENDATA_EXECUTABLE = resolve(hostBin, "genrb");

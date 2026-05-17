@@ -396,7 +396,6 @@ extern "C" ssize_t posix_spawn_bun(
     }
 #endif
 
-    int debug_res = res;
     sigprocmask(SIG_SETMASK, &oldmask, 0);
 #if !OS(ANDROID) && !defined(__OHOS__)
     pthread_setcancelstate(cs, 0);

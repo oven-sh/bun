@@ -76,13 +76,8 @@ function systemLibs(cfg: Config): string[] {
     // Linux local WebKit: link system ICU (prebuilt bundles its own).
     // Assumes system ICU is in default lib paths — true on most distros.
     // Android: no system ICU; the local WebKit build must bundle it.
-    // OHOS: cross-compiled ICU at ohosIcuDir/lib.
     if (cfg.webkit === "local" && cfg.abi !== "android") {
-      if (cfg.ohos && cfg.ohosIcuDir) {
-        libs.push(`-L${cfg.ohosIcuDir}/lib`, "-licudata", "-licui18n", "-licuuc");
-      } else {
-        libs.push("-licudata", "-licui18n", "-licuuc");
-      }
+      libs.push("-licudata", "-licui18n", "-licuuc");
     }
   }
 

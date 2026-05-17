@@ -1728,7 +1728,15 @@ impl<'a> PackageInstall<'a> {
                                         // OHOS SELinux blocks hard links; fall back to copy
                                         let inf = sys::File::openat(entry.dir, entry.basename.as_bytes(), sys::O::RDONLY, 0)?;
                                         let outf = sys::File::create(destination_dir.fd(), entry.path.as_bytes(), true)?;
-                                        let _ = sys::copy_file::copy_file(inf.handle(), outf.handle())?;
+                                        let result = sys::copy_file::copy_file(inf.handle(), outf.handle());
+                                        // Preserve source file permissions after copy
+                                        if let Ok(stat) = sys::fstat(inf.handle()) {
+                                            let _ = sys::fchmod(outf.handle(), stat.st_mode);
+                                        }
+                                        // Always close FDs regardless of copy result
+                                        inf.close();
+                                        outf.close();
+                                        result?;
                                     }
                                     _ => return Err(err.into()),
                                 }

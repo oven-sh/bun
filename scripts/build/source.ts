@@ -1388,21 +1388,15 @@ function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input:
     env[envKey] = cfg.msvcLinker;
   }
 
-  // OHOS: use stable toolchain (some cargo deps pin nightly in Cargo.lock
-  // which may not be available on this CI host). Also pin the linker to
-  // clang with --target for cross-compilation (cargo defaults to gcc).
-  if (cfg.ohos && spec.rustTarget) {
-    env.RUSTUP_TOOLCHAIN = "stable";
-    const envKey = `CARGO_TARGET_${spec.rustTarget.toUpperCase().replace(/-/g, "_")}_LINKER`;
-    env[envKey] = cfg.cc;
-  }
-
-  // Cross-compile (Android): cargo's default `cc` linker can't handle the
-  // foreign ELF objects. Use our clang as the linker driver and pass
+  // Cross-compile (Android / OHOS): cargo's default `cc` linker can't handle
+  // the foreign ELF objects. Use our clang as the linker driver and pass
   // --target/--sysroot through, same as the C/C++ deps do via globalFlags.
   // The cdylib output also wants -lunwind, which lives in the NDK's
   // bundled clang resource dir (not the sysroot), so we add that -L too.
   if (cfg.crossTarget !== undefined && spec.rustTarget !== undefined) {
+    // OHOS: use stable toolchain (some cargo deps pin nightly in Cargo.lock
+    // which may not be available on this CI host).
+    if (cfg.ohos) env.RUSTUP_TOOLCHAIN = "stable";
     const envKey = `CARGO_TARGET_${spec.rustTarget.toUpperCase().replace(/-/g, "_")}_LINKER`;
     env[envKey] = cfg.cc;
     const linkArgs = [`-Clink-arg=--target=${cfg.crossTarget}`];

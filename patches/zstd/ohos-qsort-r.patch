@@ -4,7 +4,8 @@
  #endif
  #endif
  
-+/* OHOS musl lacks qsort_r entirely */
++/* OHOS musl lacks qsort_r entirely — implement via selection sort with
++ * dynamically sized swap buffer (avoids stack overflow for large elements). */
 +#if defined(__OHOS__)
 +#include <stdlib.h>
 +#include <string.h>
@@ -12,8 +13,11 @@
 +static void _zstd_qsort_r_impl(void *base, size_t nmemb, size_t size,
 +                                _zstd_qsort_r_cmp compar, void *arg) {
 +    char *b = (char *)base;
-+    char tmp[256];
++    char *tmp;
 +    size_t i, j;
++    if (nmemb < 2 || size == 0) return;
++    tmp = (char *)malloc(size);
++    if (!tmp) return;
 +    for (i = 0; i < nmemb; i++) {
 +        for (j = i + 1; j < nmemb; j++) {
 +            if (compar(b + j * size, b + i * size, arg) < 0) {
@@ -23,6 +27,7 @@
 +            }
 +        }
 +    }
++    free(tmp);
 +}
 +#define qsort_r(base, nmemb, size, compar, arg) _zstd_qsort_r_impl(base, nmemb, size, compar, arg)
 +#endif

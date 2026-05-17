@@ -332,6 +332,10 @@ export interface PartialConfig {
   ohosSysroot?: string;
   /** OHOS SDK root. Auto-detected if not provided. */
   ohosSdkRoot?: string;
+  /** OHOS cross-compiled LLVM runtime libs (libc++/libc++abi/libunwind). Auto-detected if not provided. */
+  ohosCrossLibs?: string;
+  /** OHOS cross-compiled ICU directory. Auto-detected if not provided. */
+  ohosIcuDir?: string;
   // Version pins (defaults in versions.ts).
   nodejsVersion?: string;
   nodejsAbiVersion?: string;
@@ -845,8 +849,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     if (!existsSync(ohosSysroot)) {
       throw new BuildError(`OHOS sysroot not found at ${ohosSysroot}`);
     }
-    ohosCrossLibs = resolve(cwd, "build", "ohos-cross-libs");
-    ohosIcuDir = resolve(cwd, "build", "ohos-icu", "target");
+    ohosCrossLibs = partial.ohosCrossLibs ?? resolve(cwd, "build", "ohos-cross-libs");
+    ohosIcuDir = partial.ohosIcuDir ?? resolve(cwd, "build", "ohos-icu", "target");
   }
 
   // ─── Versioning ───
@@ -1185,7 +1189,10 @@ export function bunExeName(cfg: Config): string {
 }
 
 function findHostCc(): string {
-  // Prefer system GCC (not LLVM clang) which has proper crtbegin.o etc.
+  // OHOS cross-compilation requires the system GCC (not LLVM clang) because
+  // GCC supplies crtbegin.o/crtend.o and compatible crt startup files/link
+  // behavior that the OHOS toolchain expects. This may fail on systems where
+  // /usr/bin/gcc is symlinked to clang (e.g., some container images).
   for (const name of ["/usr/bin/gcc", "/usr/bin/cc", "/bin/gcc", "/bin/cc"]) {
     if (existsSync(name)) return name;
   }
@@ -1193,6 +1200,11 @@ function findHostCc(): string {
 }
 
 function findOhosSdkRoot(): string | undefined {
+  // Environment variable takes priority (standard for cross-compilation toolchains).
+  const envRoot = process.env.OHOS_SDK_ROOT;
+  if (envRoot && existsSync(resolve(envRoot, "ohos/native/sysroot"))) {
+    return envRoot;
+  }
   const candidates = [
     resolve(homedir(), "setup-ohos-sdk"),
     resolve(homedir(), "ohos-sdk"),

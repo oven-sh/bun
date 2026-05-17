@@ -437,8 +437,8 @@ pub const BunTest = struct {
 
     /// Push an entry onto the callback-execution stack. Must be paired with
     /// `popCurrentCallback`. Call this immediately before invoking user JS
-    /// from a concurrent-safe context so nested hooks (`onTestFinished`,
-    /// `expect.assertions`) can recover which sequence they belong to.
+    /// from a concurrent-safe context so nested hooks (`onTestFinished`) can
+    /// recover which sequence they belong to.
     pub fn pushCurrentCallback(this: *BunTest, data: RefDataValue) void {
         bun.handleOom(this.current_callback_stack.append(data));
     }

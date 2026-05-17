@@ -46,6 +46,9 @@ pub struct StaticPipeWriter<P: StaticPipeWriterProcess> {
     /// BACKREF: parent process is notified on close; never owned/destroyed here.
     pub process: *mut P,
     pub event_loop: EventLoopHandle,
+    /// True once `start()` succeeded (and took its +1 ref). The owner uses this
+    /// to know whether the start ref is still outstanding.
+    pub started: bool,
     /// Slice into `self.source`'s storage, advanced as bytes are written.
     // TODO(port): lifetime — self-borrow into `self.source`; Phase B may store an
     // offset+len pair and re-slice from `self.source` instead of a raw self-pointer.
@@ -139,6 +142,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             source,
             process: subprocess,
             event_loop,
+            started: false,
             buffer: RawSlice::EMPTY,
         }));
         // SAFETY: `this` was just allocated above and is non-null.
@@ -182,7 +186,11 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         self.buffer = RawSlice::new(self.source.slice());
         #[cfg(windows)]
         {
-            return self.writer.start_with_current_pipe();
+            let r = self.writer.start_with_current_pipe();
+            // Only set on success: a half-initialized handle must not be driven
+            // to `close()` via the start-ref teardown path.
+            self.started = r.is_ok();
+            return r;
         }
         #[cfg(not(windows))]
         {
@@ -190,6 +198,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             match self.writer.start(self.stdio_result.unwrap(), true) {
                 bun_sys::Result::Err(err) => bun_sys::Result::Err(err),
                 bun_sys::Result::Ok(()) => {
+                    self.started = true;
                     #[cfg(unix)]
                     {
                         // Zig: `const poll = this.writer.handle.poll; poll.flags.insert(.socket);`

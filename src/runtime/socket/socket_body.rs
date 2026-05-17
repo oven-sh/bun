@@ -2510,6 +2510,14 @@ impl<const SSL: bool> NewSocket<SSL> {
     unsafe fn deinit_and_destroy(this: *mut Self) {
         let this_ref: &Self = unsafe { &*this };
         this_ref.mark_inactive();
+        // Client/duplex `handlers` is a per-socket heap Box. Every freeing path also
+        // nulls the field, so a still-set ptr here means the free was skipped.
+        if this_ref.flags.get().contains(Flags::OWNS_HANDLERS) {
+            if let Some(h) = this_ref.handlers.take() {
+                // SAFETY: `OWNS_HANDLERS` ⇒ `h` is the unfreed `heap::alloc` root.
+                drop(unsafe { bun_core::heap::take(h.as_ptr()) });
+            }
+        }
         this_ref.detach_native_callback();
         // PORT NOTE: Zig `JSRef.deinit()` → reset to empty (Strong drops on assign).
         this_ref.this_value.set(JsRef::empty());
@@ -2835,7 +2843,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             server_name: JsCell::new(
                 cfg.and_then(|c| c.server_name_bytes().map(Box::<[u8]>::from)),
             ),
-            flags: Cell::new(Flags::default()),
+            flags: Cell::new(Flags::default() | Flags::OWNS_HANDLERS),
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
@@ -2970,7 +2978,11 @@ impl<const SSL: bool> NewSocket<SSL> {
             // tears down `raw_handlers` (client-mode handlers free
             // themselves there). No poll_ref — `tls` keeps the loop alive.
             // active_connections=1 was already on raw_handlers from `this`.
-            flags: Cell::new(Flags::BYPASS_TLS | Flags::IS_ACTIVE | Flags::OWNED_PROTOS),
+            // OWNS_HANDLERS: `upgrade_tls` rejects server sockets, so
+            // `raw_handlers` is always the per-socket heap allocation from `this`.
+            flags: Cell::new(
+                Flags::BYPASS_TLS | Flags::IS_ACTIVE | Flags::OWNED_PROTOS | Flags::OWNS_HANDLERS,
+            ),
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
@@ -3364,7 +3376,10 @@ bitflags::bitflags! {
         /// `us_socket_raw_write` (bypassing the SSL layer) so node:net can pipe
         /// pre-handshake bytes / read the underlying TCP stream.
         const BYPASS_TLS           = 1 << 9;
-        // bits 10..15 unused (Zig: `_: u6 = 0`)
+        /// `handlers` is a per-socket `heap::alloc` Box (client/duplex mode), not the
+        /// Listener's embedded field; `deinit_and_destroy` may need to free it.
+        const OWNS_HANDLERS        = 1 << 10;
+        // bits 11..15 unused (Zig: `_: u6 = 0`)
     }
 }
 
@@ -3824,7 +3839,7 @@ pub fn js_upgrade_duplex_to_tls(
         server_name: JsCell::new(
             socket_config.and_then(|cfg| cfg.server_name_bytes().map(Box::<[u8]>::from)),
         ),
-        flags: Cell::new(Flags::default()),
+        flags: Cell::new(Flags::default() | Flags::OWNS_HANDLERS),
         this_value: JsCell::new(JsRef::empty()),
         poll_ref: JsCell::new(KeepAlive::init()),
         ref_pollref_on_connect: Cell::new(true),

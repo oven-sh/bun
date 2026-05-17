@@ -2347,7 +2347,10 @@ it("should not add duplicate package.json entries when installing the same local
   );
 
   // The positional is the absolute path; parse_with_optional_tag will tag this as `.folder`.
+  // `bun add` normalises backslashes to forward slashes before writing package.json,
+  // so the stored literal uses `/` on Windows too.
   const local_path = resolve(dep_dir);
+  const stored_path = local_path.replace(/\\/g, "/");
 
   // 1st run — clean, adds one entry keyed by the resolved package name.
   {
@@ -2391,7 +2394,7 @@ it("should not add duplicate package.json entries when installing the same local
     name: "host",
     version: "0.0.1",
     dependencies: {
-      myproject: local_path,
+      myproject: stored_path,
     },
   });
 });

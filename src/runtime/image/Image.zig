@@ -532,25 +532,14 @@ pub fn doMetadata(this: *Image, global: *jsc.JSGlobalObject, callframe: *jsc.Cal
     // in memory it's cheaper to do it inline than to bounce off the WorkPool
     // (~0.4 ms roundtrip). Path-backed sources still go async for the file I/O.
     if (this.jsThreadBytes(callframe.this(), global)) |buf| {
-        if (codecs.probe(buf, this.max_pixels)) |p| {
-            var w = p.width;
-            var h = p.height;
-            if (this.auto_orient and p.format == .jpeg) {
-                const t = exif.readJpeg(buf).transform();
-                if (t.rotate == 90 or t.rotate == 270) std.mem.swap(u32, &w, &h);
-            }
-            this.last_width = @intCast(w);
-            this.last_height = @intCast(h);
-            const obj = jsc.JSValue.createEmptyObject(global, 3);
-            obj.put(global, jsc.ZigString.static("width"), jsc.JSValue.jsNumber(w));
-            obj.put(global, jsc.ZigString.static("height"), jsc.JSValue.jsNumber(h));
-            obj.put(global, jsc.ZigString.static("format"), jsc.ZigString.init(@tagName(p.format)).toJS(global));
-            return jsc.JSPromise.resolvedPromiseValue(global, obj);
-        } else |e| switch (e) {
-            // HEIC/AVIF need the system backend → fall through to async.
-            error.UnsupportedOnPlatform => {},
-            else => return jsc.JSPromise.rejectedPromise(global, rejectError(global, e)).asValue(global),
+        if (PipelineTask.probeMeta(buf, this.max_pixels, this.auto_orient) catch |e|
+            return jsc.JSPromise.rejectedPromise(global, rejectError(global, e)).asValue(global)) |m|
+        {
+            this.last_width = @intCast(m.w);
+            this.last_height = @intCast(m.h);
+            return jsc.JSPromise.resolvedPromiseValue(global, m.toJS(global));
         }
+        // HEIC/AVIF need the system backend → fall through to async.
     }
     return this.schedule(global, callframe.this(), .metadata, .uint8array);
 }
@@ -884,9 +873,23 @@ pub const PipelineTask = struct {
         placeholder,
     };
 
+    pub const Meta = struct {
+        w: u32,
+        h: u32,
+        format: codecs.Format,
+
+        pub fn toJS(m: Meta, global: *jsc.JSGlobalObject) jsc.JSValue {
+            const obj = jsc.JSValue.createEmptyObject(global, 3);
+            obj.put(global, jsc.ZigString.static("width"), jsc.JSValue.jsNumber(m.w));
+            obj.put(global, jsc.ZigString.static("height"), jsc.JSValue.jsNumber(m.h));
+            obj.put(global, jsc.ZigString.static("format"), jsc.ZigString.init(@tagName(m.format)).toJS(global));
+            return obj;
+        }
+    };
+
     pub const Result = union(enum) {
         encoded: struct { out: codecs.Encoded, format: codecs.Format, w: u32, h: u32 },
-        meta: struct { w: u32, h: u32, format: codecs.Format },
+        meta: Meta,
         err: codecs.Error,
         io_err: bun.sys.Error,
     };
@@ -948,30 +951,31 @@ pub const PipelineTask = struct {
             break :blk owned_file.?;
         } else this.input.slice();
 
+        this.result = this.runInner(input) catch |e| .{ .err = e };
+    }
+
+    /// Body of `run()` once the encoded bytes are in memory. Split out so the
+    /// five decode/transform/encode stages can use plain `try` and the caller
+    /// folds any `codecs.Error` into `Result.err` once.
+    fn runInner(this: *PipelineTask, input: []const u8) codecs.Error!Result {
         // Header-only fast path for `.metadata()` — Sharp parses just the
         // IHDR/SOF/VP8 header; we used to decode the full RGBA buffer first
         // (~70× slower on a 1920×1080 PNG). EXIF orientation only swaps the
-        // reported dims, no pixels involved.
-        if (this.kind == .metadata) {
-            if (codecs.probe(input, this.max_pixels)) |p| {
-                var w = p.width;
-                var h = p.height;
-                if (this.auto_orient and p.format == .jpeg) {
-                    const t = exif.readJpeg(input).transform();
-                    if (t.rotate == 90 or t.rotate == 270) std.mem.swap(u32, &w, &h);
-                }
-                this.result = .{ .meta = .{ .w = w, .h = h, .format = p.format } };
-                return;
-            } else |e| switch (e) {
-                // HEIC/AVIF have no header probe — fall through to full decode
-                // via the system backend.
-                error.UnsupportedOnPlatform => {},
-                else => {
-                    this.result = .{ .err = e };
-                    return;
-                },
-            }
-        }
+        // reported dims, no pixels involved. null ⇒ HEIC/AVIF have no header
+        // probe — fall through to full decode via the system backend.
+        if (this.kind == .metadata)
+            if (try probeMeta(input, this.max_pixels, this.auto_orient)) |m|
+                return .{ .meta = m };
+
+        // Sniff format and read orientation once up front. JPEG orientation is
+        // a cheap byte walk; HEIC/TIFF/AVIF go through the system backend
+        // (ImageIO / WIC), which builds a fresh image-source per call — so
+        // resolving it once and reusing across the decode-hint, metadata-
+        // fallthrough, and applyOrientation gates below keeps the resize path
+        // (the #30235 repro) at one backend round-trip instead of two.
+        const src_format = codecs.Format.sniff(input) orelse .png;
+        const orient: exif.Orientation = if (this.auto_orient) readOrientation(input, src_format) else .normal;
+        const orient_swaps_axes = orient.transform().rotate == 90 or orient.transform().rotate == 270;
 
         // Decode-time downscale hint. The IDCT picker constrains in *stored*
         // axes, so any 90/270 rotate that runs before resize — explicit OR
@@ -984,47 +988,38 @@ pub const PipelineTask = struct {
             // r.h==0 means "preserve aspect" — constrain on width only.
             var th = if (r.h != 0) r.h else r.w;
             const swap_explicit = this.pipeline.rotate == 90 or this.pipeline.rotate == 270;
-            const swap_exif = this.auto_orient and blk2: {
-                const t = exif.readJpeg(input).transform();
-                break :blk2 t.rotate == 90 or t.rotate == 270;
-            };
-            if (swap_explicit != swap_exif) std.mem.swap(u32, &tw, &th);
+            if (swap_explicit != orient_swaps_axes) std.mem.swap(u32, &tw, &th);
             break :blk .{ .target_w = tw, .target_h = th };
         } else .{};
 
-        var decoded = codecs.decode(input, this.max_pixels, hint) catch |e| {
-            this.result = .{ .err = e };
-            return;
-        };
+        var decoded = try codecs.decode(input, this.max_pixels, hint);
         defer decoded.deinit();
 
-        const src_format = codecs.Format.sniff(input) orelse .png;
+        // .metadata on HEIC/AVIF/TIFF reaches here because probe() has no
+        // header parser for them and fell through to a full decode. We only
+        // need w/h/format — swap dimensions numerically from the orientation
+        // tag (same approach the probe-success branch above uses) instead of
+        // physically rotating the just-decoded RGBA buffer the `defer` is
+        // about to free. That keeps .metadata() off a ~w*h*4 scratch
+        // allocation and a vImage rotate pass per call on iPhone-HEIC inputs.
+        if (this.kind == .metadata) {
+            var w = decoded.width;
+            var h = decoded.height;
+            if (orient_swaps_axes) std.mem.swap(u32, &w, &h);
+            return .{ .meta = .{ .w = w, .h = h, .format = src_format } };
+        }
 
         // EXIF auto-orient: applied BEFORE any user op so resize targets and
         // metadata report the visually-upright dimensions, the way Sharp does.
-        if (this.auto_orient and src_format == .jpeg) {
-            const orient = exif.readJpeg(input);
-            if (orient != .normal) applyOrientation(&decoded, orient) catch |e| {
-                this.result = .{ .err = e };
-                return;
-            };
-        }
+        // Covers JPEG via the Zig APP1 walker and HEIC/TIFF/AVIF via the
+        // system backend (ImageIO on macOS, WIC on Windows), whose decoders
+        // hand back pixels in their *stored* orientation. (#30235)
+        if (orient != .normal) try applyOrientation(&decoded, orient);
 
-        if (this.kind == .metadata) {
-            // Reached only for HEIC/AVIF (probe fell through).
-            this.result = .{ .meta = .{ .w = decoded.width, .h = decoded.height, .format = src_format } };
-            return;
-        }
+        if (this.kind == .placeholder)
+            return try makePlaceholder(decoded.rgba, decoded.width, decoded.height);
 
-        if (this.kind == .placeholder) {
-            this.result = makePlaceholder(decoded.rgba, decoded.width, decoded.height) catch |e| .{ .err = e };
-            return;
-        }
-
-        this.applyPipeline(&decoded) catch |e| {
-            this.result = .{ .err = e };
-            return;
-        };
+        try this.applyPipeline(&decoded);
 
         // No format method chained ⇒ re-encode in the source format. For
         // decode-only sources (bmp/tiff/gif) that would dead-end in the
@@ -1044,12 +1039,8 @@ pub const PipelineTask = struct {
         // Jpegli XYB) as sRGB and visibly shifts the colours — see #30197.
         // JPEG/PNG/WebP embed it; HEIC/AVIF via the system backend do not.
         if (enc.icc_profile == null) enc.icc_profile = decoded.icc_profile;
-        const out = codecs.encode(decoded.rgba, decoded.width, decoded.height, enc) catch |e| {
-            this.result = .{ .err = e };
-            return;
-        };
-
-        this.result = .{ .encoded = .{ .out = out, .format = enc.format, .w = decoded.width, .h = decoded.height } };
+        const out = try codecs.encode(decoded.rgba, decoded.width, decoded.height, enc);
+        return .{ .encoded = .{ .out = out, .format = enc.format, .w = decoded.width, .h = decoded.height } };
     }
 
     /// `.placeholder()` body — runs on the worker. Input is the decoded RGBA
@@ -1162,44 +1153,24 @@ pub const PipelineTask = struct {
                     try promise.resolve(global, write_promise);
                 },
             },
-            .meta => |m| {
-                const obj = jsc.JSValue.createEmptyObject(global, 3);
-                obj.put(global, jsc.ZigString.static("width"), jsc.JSValue.jsNumber(m.w));
-                obj.put(global, jsc.ZigString.static("height"), jsc.JSValue.jsNumber(m.h));
-                obj.put(global, jsc.ZigString.static("format"), jsc.ZigString.init(@tagName(m.format)).toJS(global));
-                try promise.resolve(global, obj);
-            },
+            .meta => |m| try promise.resolve(global, m.toJS(global)),
             .err => |e| try promise.reject(global, rejectError(global, e)),
             .io_err => |e| try promise.reject(global, e.toJS(global)),
         }
     }
 
     /// Fixed Sharp order: rotate → flip/flop → resize. Each stage replaces
-    /// `d` in place; the old buffer is freed before assigning the new one so
-    /// peak memory is at most 2× one frame. Every stage hand-swaps only the
-    /// pixel slots — rotate/resize return a fresh `Decoded` with
-    /// `icc_profile == null`, so overwriting `d.*` wholesale would drop the
-    /// source's colour profile. Geometry doesn't change colour meaning, so
-    /// the profile survives unchanged.
+    /// `d` via `Decoded.replace*` — frees the old buffer first (peak memory
+    /// ≤ 2× one frame) and touches only pixel slots so the source's
+    /// `icc_profile` survives every geometry stage.
     fn applyPipeline(this: *PipelineTask, d: *codecs.Decoded) codecs.Error!void {
         const p = this.pipeline;
-        if (p.rotate != 0) {
-            const next = try codecs.rotate(d.rgba, d.width, d.height, p.rotate);
-            bun.default_allocator.free(d.rgba);
-            d.rgba = next.rgba;
-            d.width = next.width;
-            d.height = next.height;
-        }
-        if (p.flip) {
-            const next = try codecs.flip(d.rgba, d.width, d.height, false);
-            bun.default_allocator.free(d.rgba);
-            d.rgba = next;
-        }
-        if (p.flop) {
-            const next = try codecs.flip(d.rgba, d.width, d.height, true);
-            bun.default_allocator.free(d.rgba);
-            d.rgba = next;
-        }
+        if (p.rotate != 0)
+            d.replace(try codecs.rotate(d.rgba, d.width, d.height, p.rotate));
+        if (p.flip)
+            d.replaceRgba(try codecs.flip(d.rgba, d.width, d.height, false));
+        if (p.flop)
+            d.replaceRgba(try codecs.flip(d.rgba, d.width, d.height, true));
         if (p.resize) |r| {
             const t = resolveResize(r, d.width, d.height);
             // Guard the output canvas AND the H-then-V intermediate (always
@@ -1212,9 +1183,7 @@ pub const PipelineTask = struct {
                 @as(u64, t.w) * d.height > this.max_pixels)
                 return error.TooManyPixels;
             if (t.w != d.width or t.h != d.height) {
-                const next = try codecs.resize(d.rgba, d.width, d.height, t.w, t.h, r.filter);
-                bun.default_allocator.free(d.rgba);
-                d.rgba = next;
+                d.replaceRgba(try codecs.resize(d.rgba, d.width, d.height, t.w, t.h, r.filter));
                 d.width = t.w;
                 d.height = t.h;
             }
@@ -1244,27 +1213,57 @@ pub const PipelineTask = struct {
         return .{ .w = w, .h = h };
     }
 
+    /// Header-only probe + EXIF orient-swap. `null` ⇒ UnsupportedOnPlatform
+    /// (HEIC/AVIF/TIFF have no header parser; caller falls through to full
+    /// decode). Shared by the JS-thread sync path in `doMetadata()` and the
+    /// worker-thread path in `runInner()` so a future TIFF-IFD0 / HEIF-`ispe`
+    /// probe lands in one spot.
+    fn probeMeta(input: []const u8, max_pixels: u64, auto_orient: bool) codecs.Error!?Meta {
+        const p = codecs.probe(input, max_pixels) catch |e|
+            return if (e == error.UnsupportedOnPlatform) null else e;
+        var w = p.width;
+        var h = p.height;
+        if (auto_orient) {
+            const t = readOrientation(input, p.format).transform();
+            if (t.rotate == 90 or t.rotate == 270) std.mem.swap(u32, &w, &h);
+        }
+        return .{ .w = w, .h = h, .format = p.format };
+    }
+
+    /// EXIF Orientation for whatever container `input` is. The Zig reader in
+    /// `exif.zig` covers JPEG (APP1/Exif walker — simple enough that a pure-
+    /// Zig parser is worthwhile, and it's the JPEG path that runs on Linux
+    /// where no ImageIO exists). HEIC, TIFF, and AVIF all store orientation
+    /// inside containers with nothing in common with JPEG markers — HEIF's
+    /// `irot`/`imir` transform properties live behind an ISOBMFF box walk,
+    /// and HEIC's Exif item is reached via `iloc`/`iinf` — so we delegate
+    /// to the system backend (ImageIO/WIC), which has already parsed all of
+    /// them. Backends without a reader (or unused `backend == .bun`) return
+    /// 1, matching JPEG's "no Exif segment" fallthrough. (#30235)
+    fn readOrientation(input: []const u8, fmt: codecs.Format) exif.Orientation {
+        const v: u8 = switch (fmt) {
+            .jpeg => @intFromEnum(exif.readJpeg(input)),
+            .heic, .avif, .tiff => blk: {
+                if (codecs.system_backend) |b| if (@hasDecl(b, "orientation"))
+                    if (codecs.backend == .system) break :blk b.orientation(input);
+                break :blk 1;
+            },
+            // PNG eXIf / WebP EXIF chunks exist but are rare (no major
+            // consumer writes them by default). Leaving them at identity
+            // mirrors exif.zig's comment at the top of the file.
+            .png, .webp, .bmp, .gif => 1,
+        };
+        return if (v >= 1 and v <= 8) @enumFromInt(v) else .normal;
+    }
+
     fn applyOrientation(d: *codecs.Decoded, orient: exif.Orientation) codecs.Error!void {
         const t = orient.transform();
-        if (t.flip) {
-            const next = try codecs.flip(d.rgba, d.width, d.height, false);
-            bun.default_allocator.free(d.rgba);
-            d.rgba = next;
-        }
-        if (t.flop) {
-            const next = try codecs.flip(d.rgba, d.width, d.height, true);
-            bun.default_allocator.free(d.rgba);
-            d.rgba = next;
-        }
-        if (t.rotate != 0) {
-            // Swap pixel slots only — `next` carries no ICC profile, and the
-            // one on `d` (set by decode) must survive EXIF auto-orient.
-            const next = try codecs.rotate(d.rgba, d.width, d.height, t.rotate);
-            bun.default_allocator.free(d.rgba);
-            d.rgba = next.rgba;
-            d.width = next.width;
-            d.height = next.height;
-        }
+        if (t.flip)
+            d.replaceRgba(try codecs.flip(d.rgba, d.width, d.height, false));
+        if (t.flop)
+            d.replaceRgba(try codecs.flip(d.rgba, d.width, d.height, true));
+        if (t.rotate != 0)
+            d.replace(try codecs.rotate(d.rgba, d.width, d.height, t.rotate));
     }
 
     fn deinit(this: *PipelineTask) void {

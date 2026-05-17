@@ -126,20 +126,29 @@ fn embedIccp(ctx: *spng_ctx, icc_profile: ?[]const u8) void {
     _ = spng_set_iccp(ctx, &iccp);
 }
 
-pub fn encode(rgba: []const u8, w: u32, h: u32, level: i8, icc_profile: ?[]const u8) codecs.Error!codecs.Encoded {
+/// Shared spng encoder lifecycle for both truecolour and indexed output —
+/// only `color_type` and the optional PLTE/tRNS block differ between them.
+fn encodeImpl(data: []const u8, w: u32, h: u32, level: i8, color_type: u8, icc_profile: ?[]const u8, palette: ?*const quantize.Result) codecs.Error!codecs.Encoded {
     const ctx = spng_ctx_new(SPNG_CTX_ENCODER) orelse return error.OutOfMemory;
     defer spng_ctx_free(ctx);
     _ = spng_set_option(ctx, SPNG_ENCODE_TO_BUFFER, 1);
     if (level >= 0) _ = spng_set_option(ctx, SPNG_IMG_COMPRESSION_LEVEL, @min(level, 9));
-    var ihdr: Ihdr = .{
-        .width = w,
-        .height = h,
-        .bit_depth = 8,
-        .color_type = SPNG_COLOR_TYPE_TRUECOLOR_ALPHA,
-    };
+    var ihdr: Ihdr = .{ .width = w, .height = h, .bit_depth = 8, .color_type = color_type };
     if (spng_set_ihdr(ctx, &ihdr) != 0) return error.EncodeFailed;
     embedIccp(ctx, icc_profile);
-    if (spng_encode_image(ctx, rgba.ptr, rgba.len, SPNG_FMT_PNG, SPNG_ENCODE_FINALIZE) != 0)
+
+    if (palette) |q| {
+        var plte: Plte = .{ .n_entries = q.colors, .entries = undefined };
+        var trns: Trns = .{ .n_type3_entries = q.colors, .type3_alpha = undefined };
+        for (0..q.colors) |i| {
+            plte.entries[i] = .{ q.palette[i * 4], q.palette[i * 4 + 1], q.palette[i * 4 + 2], 255 };
+            trns.type3_alpha[i] = q.palette[i * 4 + 3];
+        }
+        if (spng_set_plte(ctx, &plte) != 0) return error.EncodeFailed;
+        if (q.has_alpha and spng_set_trns(ctx, &trns) != 0) return error.EncodeFailed;
+    }
+
+    if (spng_encode_image(ctx, data.ptr, data.len, SPNG_FMT_PNG, SPNG_ENCODE_FINALIZE) != 0)
         return error.EncodeFailed;
     var len: usize = 0;
     var err: c_int = 0;
@@ -147,6 +156,10 @@ pub fn encode(rgba: []const u8, w: u32, h: u32, level: i8, icc_profile: ?[]const
     // spng_get_png_buffer transfers ownership (libc malloc); hand to JS
     // with libc `free` as the finalizer instead of duping.
     return .{ .bytes = buf[0..len], .free = codecs.Encoded.wrap(std.c.free) };
+}
+
+pub fn encode(rgba: []const u8, w: u32, h: u32, level: i8, icc_profile: ?[]const u8) codecs.Error!codecs.Encoded {
+    return encodeImpl(rgba, w, h, level, SPNG_COLOR_TYPE_TRUECOLOR_ALPHA, icc_profile, null);
 }
 
 /// Quantize RGBA to ≤ `colors` and emit an indexed (colour-type 3) PNG
@@ -158,37 +171,7 @@ pub fn encode(rgba: []const u8, w: u32, h: u32, level: i8, icc_profile: ?[]const
 pub fn encodeIndexed(rgba: []const u8, w: u32, h: u32, level: i8, colors: u16, dither: bool, icc_profile: ?[]const u8) codecs.Error!codecs.Encoded {
     var q = try quantize.quantize(rgba, w, h, .{ .max_colors = colors, .dither = dither });
     defer q.deinit();
-
-    const ctx = spng_ctx_new(SPNG_CTX_ENCODER) orelse return error.OutOfMemory;
-    defer spng_ctx_free(ctx);
-    _ = spng_set_option(ctx, SPNG_ENCODE_TO_BUFFER, 1);
-    if (level >= 0) _ = spng_set_option(ctx, SPNG_IMG_COMPRESSION_LEVEL, @min(level, 9));
-
-    var ihdr: Ihdr = .{
-        .width = w,
-        .height = h,
-        .bit_depth = 8,
-        .color_type = SPNG_COLOR_TYPE_INDEXED,
-    };
-    if (spng_set_ihdr(ctx, &ihdr) != 0) return error.EncodeFailed;
-    embedIccp(ctx, icc_profile);
-
-    var plte: Plte = .{ .n_entries = q.colors, .entries = undefined };
-    var trns: Trns = .{ .n_type3_entries = q.colors, .type3_alpha = undefined };
-    for (0..q.colors) |i| {
-        plte.entries[i] = .{ q.palette[i * 4], q.palette[i * 4 + 1], q.palette[i * 4 + 2], 255 };
-        trns.type3_alpha[i] = q.palette[i * 4 + 3];
-    }
-    if (spng_set_plte(ctx, &plte) != 0) return error.EncodeFailed;
-    if (q.has_alpha and spng_set_trns(ctx, &trns) != 0) return error.EncodeFailed;
-
-    if (spng_encode_image(ctx, q.indices.ptr, q.indices.len, SPNG_FMT_PNG, SPNG_ENCODE_FINALIZE) != 0)
-        return error.EncodeFailed;
-
-    var len: usize = 0;
-    var err: c_int = 0;
-    const buf = spng_get_png_buffer(ctx, &len, &err) orelse return error.EncodeFailed;
-    return .{ .bytes = buf[0..len], .free = codecs.Encoded.wrap(std.c.free) };
+    return encodeImpl(q.indices, w, h, level, SPNG_COLOR_TYPE_INDEXED, icc_profile, &q);
 }
 
 const bun = @import("bun");

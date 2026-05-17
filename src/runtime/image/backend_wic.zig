@@ -86,6 +86,42 @@ pub fn decode(bytes: []const u8, max_pixels: u64) BackendError!codecs.Decoded {
     return .{ .rgba = out, .width = w, .height = h };
 }
 
+// Orientation (1..8, EXIF numbering) for the first frame; 1 (identity) on any
+// failure. The PROPVARIANT marshalling lives in the C++ shim for the same
+// reason the IPropertyBag2 writes do — see image_wic_shim.cpp. Called from
+// Image.zig's auto-orient gate for HEIC/TIFF/AVIF: TIFF carries it in IFD0
+// tag 274; HEIF carries it as `irot`/`imir` boxes which WIC surfaces as
+// WICHeifOrientation under /heifProps (NOT via the embedded Exif item — that
+// can mismatch the irot value). (#30235)
+extern fn bun_wic_read_orientation(frame: ?*anyopaque) i32;
+
+pub fn orientation(bytes: []const u8) u8 {
+    const f = factory() catch return 1;
+    if (bytes.len > std.math.maxInt(u32)) return 1;
+
+    var stream: ?*IWICStream = null;
+    if (f.vt.CreateStream(f, &stream) < 0 or stream == null) return 1;
+    defer release(stream);
+    if (stream.?.vt.InitializeFromMemory(stream.?, bytes.ptr, @intCast(bytes.len)) < 0) return 1;
+
+    var dec: ?*IWICBitmapDecoder = null;
+    // WICDecodeMetadataCacheOnDemand = 0 — match decode()'s value so the two
+    // CreateDecoderFromStream calls behave identically on the same bytes; the
+    // query reader populates lazily either way.
+    if (f.vt.CreateDecoderFromStream(f, @ptrCast(stream), null, 0, &dec) < 0 or dec == null) return 1;
+    defer release(dec);
+
+    var frame: ?*IWICBitmapSource = null;
+    if (dec.?.vt.GetFrame(dec.?, 0, &frame) < 0 or frame == null) return 1;
+    defer release(frame);
+
+    // GetFrame really returns IWICBitmapFrameDecode*; we type it as the
+    // IWICBitmapSource prefix elsewhere, but the shim casts it back to reach
+    // GetMetadataQueryReader (slot after the IWICBitmapSource block).
+    const raw = bun_wic_read_orientation(frame);
+    return if (raw >= 1 and raw <= 8) @intCast(raw) else 1;
+}
+
 pub fn encode(rgba: []const u8, width: u32, height: u32, opts: codecs.EncodeOptions) BackendError![]u8 {
     // Punt to the static codecs for everything WIC can't express the same way:
     //   • palette PNG — WIC's PNG encoder won't quantise for us;
@@ -106,11 +142,11 @@ pub fn encode(rgba: []const u8, width: u32, height: u32, opts: codecs.EncodeOpti
     defer release(stream);
 
     var enc: ?*IWICBitmapEncoder = null;
-    // WINCODEC_ERR_COMPONENTNOTFOUND when the HEIF/AV1 store extension isn't
-    // installed → BackendUnavailable so codecs.encode() falls through to
-    // UnsupportedOnPlatform instead of a generic "encode failed".
-    const guid = containerGuid(opts.format) orelse return error.BackendUnavailable;
-    if (f.vt.CreateEncoder(f, guid, null, &enc) < 0 or enc == null)
+    // WIC routes HEIC and AVIF through the same HEIF container; the
+    // HeifCompressionMethod property below picks the codec. WINCODEC_ERR_
+    // COMPONENTNOTFOUND when the HEIF/AV1 store extension isn't installed →
+    // BackendUnavailable → codecs.encode() surfaces UnsupportedOnPlatform.
+    if (f.vt.CreateEncoder(f, &GUID_ContainerFormatHeif, null, &enc) < 0 or enc == null)
         return error.BackendUnavailable;
     defer release(enc);
     // WICBitmapEncoderNoCache = 2.
@@ -344,26 +380,7 @@ const IWICBitmapFrameEncode = extern struct {
 const CLSID_WICImagingFactory: GUID = .{ .d1 = 0xcacaf262, .d2 = 0x9370, .d3 = 0x4615, .d4 = .{ 0xa1, 0x3b, 0x9f, 0x55, 0x39, 0xda, 0x4c, 0x0a } };
 const IID_IWICImagingFactory: GUID = .{ .d1 = 0xec5ec8a9, .d2 = 0xc395, .d3 = 0x4314, .d4 = .{ 0x9c, 0x77, 0x54, 0xd7, 0xa9, 0x35, 0xff, 0x70 } };
 const GUID_WICPixelFormat32bppRGBA: GUID = .{ .d1 = 0xf5c7ad2d, .d2 = 0x6a8d, .d3 = 0x43dd, .d4 = .{ 0xa7, 0xa8, 0xa2, 0x99, 0x35, 0x26, 0x1a, 0xe9 } };
-const GUID_ContainerFormatJpeg: GUID = .{ .d1 = 0x19e4a5aa, .d2 = 0x5662, .d3 = 0x4fc5, .d4 = .{ 0xa0, 0xc0, 0x17, 0x58, 0x02, 0x8e, 0x10, 0x57 } };
-const GUID_ContainerFormatPng: GUID = .{ .d1 = 0x1b7cfaf4, .d2 = 0x713f, .d3 = 0x473c, .d4 = .{ 0xbb, 0xcd, 0x61, 0x37, 0x42, 0x5f, 0xae, 0xaf } };
-const GUID_ContainerFormatWebp: GUID = .{ .d1 = 0xe094b0e2, .d2 = 0x67f2, .d3 = 0x45b3, .d4 = .{ 0xb0, 0xea, 0x11, 0x53, 0x37, 0xca, 0x7c, 0xf3 } };
 const GUID_ContainerFormatHeif: GUID = .{ .d1 = 0xe1e62521, .d2 = 0x6787, .d3 = 0x405b, .d4 = .{ 0xa3, 0x39, 0x50, 0x07, 0x15, 0xb5, 0x76, 0x3f } };
-
-fn containerGuid(f: codecs.Format) ?*const GUID {
-    return switch (f) {
-        .jpeg => &GUID_ContainerFormatJpeg,
-        .png => &GUID_ContainerFormatPng,
-        .webp => &GUID_ContainerFormatWebp,
-        // WIC routes HEIC and AVIF through the same HEIF container; the
-        // installed encoder (HEVC vs AV1) decides the codec. CreateEncoder
-        // returns WINCODEC_ERR_COMPONENTNOTFOUND if the extension isn't
-        // present, which surfaces as BackendUnavailable.
-        .heic, .avif => &GUID_ContainerFormatHeif,
-        // Decode-only formats — codecs.encode() short-circuits before this
-        // path, so this arm exists for switch exhaustiveness only.
-        .bmp, .tiff, .gif => null,
-    };
-}
 
 // ───────────────────────────── lazy factory ─────────────────────────────────
 

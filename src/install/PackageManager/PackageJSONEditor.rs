@@ -720,8 +720,22 @@ pub fn edit(
                                 }
                                 break;
                             } else {
-                                if request.version.tag == dependency::Tag::Github
-                                    || request.version.tag == dependency::Tag::Git
+                                // For non-aliased positionals where `get_name()` returns the
+                                // version literal (path/URL) rather than the resolved package
+                                // name — github/git/tarball URLs and local folder/tarball
+                                // paths — fall back to matching by the stored value so a
+                                // re-run doesn't append a duplicate `"<name>": "<literal>"`
+                                // key. Skipped when the user wrote `alias@url`: that form is
+                                // an explicit request to key by `alias`, so consolidating into
+                                // an existing entry under a different name would silently drop
+                                // the alias. `e_string.is_none()` guards so a match in an
+                                // earlier dependency list isn't re-counted across iterations.
+                                if request.e_string.is_none()
+                                    && !request.is_aliased
+                                    && (request.version.tag == dependency::Tag::Github
+                                        || request.version.tag == dependency::Tag::Git
+                                        || request.version.tag == dependency::Tag::Tarball
+                                        || request.version.tag == dependency::Tag::Folder)
                                 {
                                     for item in query
                                         .expr

@@ -6029,6 +6029,19 @@ pub mod bv2_impl {
                 this.graph.ast.items_import_records_mut()[source_index.0 as usize] =
                     core::mem::take(&mut result.ast.import_records);
 
+                // Same idea for the CSS stylesheet pointer: `BundlerStyleSheet`
+                // is `bump.alloc()`'d into the worker arena (`ParseTask.rs`),
+                // so its global-heap fields (`sources`, `source_map_urls`,
+                // `rules`, …) only get freed by the explicit `drop_in_place`
+                // loop in `deinit_without_freeing_arena`'s `take_ast_cols!`.
+                // That loop walks `graph.ast.items_css()`. Once we overwrite
+                // `parse_result.value` with `Err` below, the `Success` arm of
+                // the match in `on_parse_task_complete` never runs, so
+                // `graph.ast.set(...)` never happens and the stylesheet would
+                // be unreachable from the graph. Move it onto the row here so
+                // teardown can find and drop it.
+                this.graph.ast.items_css_mut()[source_index.0 as usize] = result.ast.css.take();
+
                 parse_result.value = parse_task::ResultValue::Err(parse_task::ResultError {
                     err,
                     step: crate::parse_task::Step::Resolve,

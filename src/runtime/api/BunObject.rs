@@ -106,7 +106,7 @@ use crate::api::cron;
 use crate::api::csrf_jsc;
 use crate::api::{
     self, FFIObject, HashObject, JSON5Object, JSONCObject, MarkdownObject, TOMLObject,
-    UnsafeObject, YAMLObject,
+    UnsafeObject, XMLObject, YAMLObject,
 };
 use crate::crypto as Crypto;
 use crate::node;
@@ -395,6 +395,7 @@ pub mod bun_object {
         BunObject_lazyPropCb_markdown => super::get_markdown_object,
         BunObject_lazyPropCb_TOML => super::get_toml_object,
         BunObject_lazyPropCb_JSON5 => super::get_json5_object,
+        BunObject_lazyPropCb_XML => super::get_xml_object,
         BunObject_lazyPropCb_YAML => super::get_yaml_object,
         BunObject_lazyPropCb_Transpiler => super::get_transpiler_constructor,
         BunObject_lazyPropCb_argv => super::get_argv,
@@ -1923,6 +1924,10 @@ pub fn get_json5_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
 
 pub fn get_yaml_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     YAMLObject::create(global_this)
+}
+
+pub fn get_xml_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+    XMLObject::create(global_this)
 }
 
 pub fn get_archive_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {

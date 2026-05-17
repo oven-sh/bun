@@ -114,6 +114,7 @@ impl DirectoryWatchStore {
             | Loader::Jsonc
             | Loader::Toml
             | Loader::Yaml
+            | Loader::Xml
             | Loader::Json5
             | Loader::Wasm
             | Loader::Napi

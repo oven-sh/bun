@@ -1961,7 +1961,7 @@ fn transpile_source_code_inner(
         && !(loader.is_java_script_like()
             || matches!(
                 loader,
-                L::Toml | L::Yaml | L::Json5 | L::Text | L::Json | L::Jsonc
+                L::Toml | L::Yaml | L::Xml | L::Json5 | L::Text | L::Json | L::Jsonc
             ))
     {
         return Ok(OwnedResolvedSource::new(ResolvedSource {
@@ -1985,6 +1985,7 @@ fn transpile_source_code_inner(
         | L::Jsonc
         | L::Toml
         | L::Yaml
+        | L::Xml
         | L::Json5
         | L::Text
         | L::Md => {
@@ -2583,7 +2584,7 @@ fn transpile_source_code_inner(
                 }
 
                 // Spec :366-384 — JSON/TOML/YAML/JSON5: export as a JS object.
-                if matches!(loader, L::Json | L::Jsonc | L::Toml | L::Yaml | L::Json5) {
+                if matches!(loader, L::Json | L::Jsonc | L::Toml | L::Yaml | L::Xml | L::Json5) {
                     // SAFETY: `jsc_vm.global` is set during init and live for
                     // VM lifetime; `global_object` (if non-null) is the live
                     // per-thread global.
@@ -3622,6 +3623,7 @@ fn force_loader_from_api_u8(api_loader: u8) -> Option<Loader> {
         19 => Some(L::Yaml),
         20 => Some(L::Json5),
         21 => Some(L::Md),
+        22 => Some(L::Xml),
         // 254 = `_none`; everything else is open-tail per schema.zig:325.
         _ => None,
     }

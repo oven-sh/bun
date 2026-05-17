@@ -1136,8 +1136,8 @@ impl Tag {
     }
 
     pub fn eql(self, rhs: Tag) -> bool {
-        self.pre.hash == rhs.pre.hash
-    }
+    self.pre.hash == rhs.pre.hash && self.build.hash == rhs.build.hash
+}
 
     pub fn parse(sliced_string: SlicedString) -> TagResult {
         Self::parse_with_pre_count(sliced_string, 0)

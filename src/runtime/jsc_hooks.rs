@@ -2696,7 +2696,7 @@ fn transpile_source_code_inner(
                         _ => (core::ptr::null_mut(), 0),
                     };
                     return Ok(OwnedResolvedSource::new(ResolvedSource {
-                        source_code: bun_core::String::clone_latin1(&source.contents),
+                        source_code: bun_core::String::clone_utf8(&source.contents),
                         specifier: input_specifier.dupe_ref(),
                         source_url: create_if_different(input_specifier, path.text),
                         already_bundled: true,
@@ -2961,24 +2961,32 @@ fn transpile_source_code_inner(
                 // `is_commonjs_module`/`module_info` patched on). Gated so the
                 // fall-through to the non-watcher tail below is an explicit,
                 // intentional degradation rather than a silent live divergence.
+                // The ref-counted watcher path creates Latin-1 strings, which
+                // cannot represent multi-byte UTF-8 sequences. If the output
+                // contains non-ASCII (from raw template literals or regex
+                // source), fall through to the normal path which uses
+                // `clone_utf8`.
                 if unsafe { &*jsc_vm }.is_watcher_enabled() {
                     // SAFETY: `extra.source_code_printer` is non-null per
                     // `TranspileExtra` contract; rederive after the print block
                     // (Stacked Borrows — see the matching note below).
                     let printer: &mut bun_js_printer::BufferPrinter =
                         unsafe { &mut *(*extra).source_code_printer };
-                    let mut resolved_source = unsafe {
-                        (*jsc_vm).ref_counted_resolved_source::<false>(
-                            printer.ctx.get_written(),
-                            input_specifier.dupe_ref(),
-                            path.text,
-                            None,
-                        )
-                    };
-                    resolved_source.is_commonjs_module = is_commonjs_module;
-                    // TODO(b2-blocked): `analyze_transpiled_module::ModuleInfo::create`.
-                    resolved_source.module_info = core::ptr::null_mut();
-                    return Ok(OwnedResolvedSource::new(resolved_source));
+                    let written = printer.ctx.get_written();
+                    if bun_core::strings::is_all_ascii(written) {
+                        let mut resolved_source = unsafe {
+                            (*jsc_vm).ref_counted_resolved_source::<false>(
+                                written,
+                                input_specifier.dupe_ref(),
+                                path.text,
+                                None,
+                            )
+                        };
+                        resolved_source.is_commonjs_module = is_commonjs_module;
+                        // TODO(b2-blocked): `analyze_transpiled_module::ModuleInfo::create`.
+                        resolved_source.module_info = core::ptr::null_mut();
+                        return Ok(OwnedResolvedSource::new(resolved_source));
+                    }
                 }
 
                 // Spec :561-592 — final ResolvedSource.
@@ -3045,7 +3053,7 @@ fn transpile_source_code_inner(
                 // does, and `r#impl` is `Some(Jsc)` here), so it is always
                 // `None`.
                 debug_assert!(cache.output_code.is_none());
-                let source_code = bun_core::String::clone_latin1(written);
+                let source_code = bun_core::String::clone_utf8(written);
                 if written.len() > 1024 * 1024 * 2 || unsafe { &*jsc_vm }.smol {
                     // PERF(port): spec deinits the printer buffer; Rust drops on
                     // next `reset()`. TODO(port): expose `BufferWriter::deinit`.

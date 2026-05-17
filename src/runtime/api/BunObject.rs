@@ -1641,8 +1641,7 @@ pub fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
                     // so a foreign-tag entry (e.g. a `Bun.listen` with the
                     // same user-supplied `id`) survives to here. Skip
                     // registration rather than panicking; the tag check
-                    // keeps the entries from ever being mis-cast, and
-                    // `NewServer::stop` tolerates the id being absent.
+                    // keeps the entries from ever being mis-cast.
                     if hot.get_entry(&server_ref.config.id).is_none() {
                         hot.insert_raw(
                             &server_ref.config.id,
@@ -1651,6 +1650,13 @@ pub fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
                                 ptr: server.cast::<()>(),
                             },
                         );
+                    } else {
+                        // Not registered → `NewServer::stop` must not
+                        // `hot.remove` the foreign entry that *is* there.
+                        // Clear the id so its `allow_hot && !id.is_empty()`
+                        // gate is false (mirrors `Listener::hot_id`, which
+                        // is only set on a successful insert).
+                        server_ref.config.id = Box::default();
                     }
                 }
             }

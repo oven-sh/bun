@@ -1,0 +1,162 @@
+ninja: Entering directory `build/debug'
+[1/8] mkdir stamps
+[2/8] mkdir codegen
+[3/8] install /home/ubuntu/bun-ub-soak/bun
+bun install v1.3.5 (1e86cebd)
+
++ @lezer/common@1.3.0
++ @lezer/cpp@1.1.3
++ bun-tracestrings@github:oven-sh/bun.report#912ca63
++ esbuild@0.21.5
++ mitata@0.1.14
++ peechy@0.4.34
++ prettier@3.6.2
++ prettier-plugin-organize-imports@4.3.0
++ react@18.3.1
++ react-dom@18.3.1
++ source-map-js@1.2.1
++ typescript@6.0.2
+
+232 packages installed [420.00ms]
+[4/8] gen ZigGeneratedClasses.{zig,cpp,h}
+Found 2 classes from /home/ubuntu/bun-ub-soak/bun/src/jsc/resolve_message.classes.ts
+  - ResolveMessage (13 fields)
+  - BuildMessage (10 fields)
+Found 1 classes from /home/ubuntu/bun-ub-soak/bun/src/runtime/api/Archive.classes.ts
+  - Archive (4 fields, 1 class fields)
+Found 2 classes from /home/ubuntu/bun-ub-soak/bun/src/runtime/api/BunObject.classes.ts
+  - ResourceUsage (8 fields)
+  - Subprocess (20 fields)
+Found 1 classes from /home/ubuntu/bun-ub-soak/bun/src/runtime/api/cron.classes.ts
+  - CronJob (5 fields)
+Found 3 classes from /home/ubuntu/bun-ub-soak/bun/src/runtime/api/filesystem_router.classes.ts
+  - FileSystemRouter (5 fields)
+  - FrameworkFileSystemRouter (2 fields)
+  - MatchedRoute (8 fields)
+Found 1 classes from /home/ubuntu/bun-ub-soak/bun/src/runtime/api/Glob.classes.ts
+  - Glob (5 fields)
+Found 1 classes from /home/ubuntu/bun-ub-soak/bun/src/runtime/api/h2.classes.ts
+  - H2FrameParser (29 fields)
+Found 8 classes from /home/ubuntu/bun-ub-soak/bun/src/runtime/api/html_rewriter.classes.ts
+  - HTMLRewriter (3 fields)
+  - TextChunk (7 fields)
+  - DocType (5 fields)
+  - DocEnd (1 fields)
+  - Comment (6 fields)
+  - EndTag (4 fields)
+  - AttributeIterator (2 fields)
+  - Element (19 fields)
+Found 2 classes from /home/ubuntu/bun-ub-soak/bun/src/runtime/api/JSBundler.classes.ts
+  - Transpiler (4 fields)
+  - BuildArtifact (12 fields)
+Found 1 classes from /home/ubuntu/bun-ub-soak/bun/src/runtime/api/ParsedShellScript.classes.ts
+  - ParsedShellScript (3 fields)
+Found 2 classes from /home/ubuntu/bun-ub-soak/bun/src/runtime/api/ResumableSink.classes.ts
+  - ResumableFetchSink (4 fields)
+  - ResumableS3UploadSink (4 fields)
+Found 1 classes from /home/ubuntu/bun-ub-soak/bun/src/runtime/api/S3Client.classes.ts
+  - S3Client (9 fields, 9 class fields)
+Found 1 classes from /home/ubuntu/bun-ub-soak/bun/src/runtime/api/S3Stat.classes.ts
+  - S3Stat (4 fields)
+Found 1 classes from /home/ubuntu/bun-ub-soak/bun/src/runtime/api/SecureContext.classes.ts
+  - SecureContext (1 class fields)
+Found 1 classes from /home/ubuntu/bun-ub-soak/bun/src/runtime/api/Shell.classes.ts
+  - ShellInterpreter (3 fields)
+Found 1 classes from /home/ubuntu/bun-ub-soak/bun/src/runtime/api/sourcemap.classes.ts
+  - SourceMap (4 fields)
+Found 4 classes from /home/ubuntu/bun-ub-soak/bun/src/runtime/api/sql.classes.ts
+  - PostgresSQLConnection (8 fields)
+  - PostgresSQLQuery (5 fields)
+  - MySQLConnection (8 fields)
+  - MySQLQuery (5 fields)
+Found 3 classes from /home/ubuntu/bun-ub-soak/bun/src/runtime/api/streams.classes.ts
+  - BlobInternalReadableStreamSource (13 fields)
+  - FileInternalReadableStreamSource (10 fields)
+  - BytesInternalReadableStreamSource (13 fields)
+Found 1 classes from /home/ubuntu/bun-ub-soak/bun/src/runtime/api/Terminal.classes.ts
+  - Terminal (12 fields)
+Found 3 classes from /home/ubuntu/bun-ub-soak/bun/src/runtime/api/zlib.classes.ts
+  - NativeZlib (7 fields)
+  - NativeBrotli (7 fields)
+  - NativeZstd (7 fields)
+Found 10 classes from /home/ubuntu/bun-ub-soak/bun/src/runtime/crypto/crypto.classes.ts
+  - Crypto (3 fields)
+  - SHA1 (3 fields, 2 class fields)
+  - MD5 (3 fields, 2 class fields)
+  - MD4 (3 fields, 2 class fields)
+  - SHA224 (3 fields, 2 class fields)
+  - SHA512 (3 fields, 2 class fields)
+  - SHA384 (3 fields, 2 class fields)
+  - SHA256 (3 fields, 2 class fields)
+  - SHA512_256 (3 fields, 2 class fields)
+  - CryptoHasher (5 fields, 2 class fields)
+Found 1 classes from /home/ubuntu/bun-ub-soak/bun/src/runtime/ffi/ffi.classes.ts
+  - FFI (2 fields)
+Found 1 classes from /home/ubuntu/bun-ub-soak/bun/src/runtime/image/Image.classes.ts
+  - Image (21 fields, 4 class fields)
+Found 6 classes from /home/ubuntu/bun-ub-soak/bun/src/runtime/node/node.classes.ts
+  - DNSResolver (16 fields)
+  - FSWatcher (4 fields)
+  - StatWatcher (3 fields)
+  - Timeout (12 fields)
+  - Immediate (6 fields)
+  - NodeJSFS (89 fields)
+Found 7 classes from /home/ubuntu/bun-ub-soak/bun/src/runtime/server/server.classes.ts
+  - HTTPServer (21 fields)
+  - DebugHTTPServer (21 fields)
+  - HTTPSServer (21 fields)
+  - DebugHTTPSServer (21 fields)
+  - NodeHTTPResponse (25 fields)
+  - ServerWebSocket (20 fields)
+  - HTMLBundle (1 fields)
+Found 6 classes from /home/ubuntu/bun-ub-soak/bun/src/runtime/socket/sockets.classes.ts
+  - TLSSocket (53 fields)
+  - TCPSocket (51 fields)
+  - Listener (11 fields)
+  - UDPSocket (22 fields)
+  - SocketAddress (6 fields, 2 class fields)
+  - BlockList (5 fields, 1 class fields)
+Found 15 classes from /home/ubuntu/bun-ub-soak/bun/src/runtime/test_runner/jest.classes.ts
+  - ExpectAnything
+  - ExpectAny
+  - ExpectCloseTo
+  - ExpectObjectContaining
+  - ExpectStringContaining
+  - ExpectStringMatching
+  - ExpectArrayContaining
+  - ExpectCustomAsymmetricMatcher (1 fields)
+  - ExpectMatcherContext (5 fields)
+  - ExpectMatcherUtils (6 fields)
+  - ExpectStatic (10 fields)
+  - Expect (89 fields, 15 class fields)
+  - ExpectTypeOf (38 fields)
+  - DoneCallback
+  - ScopeFunctions (13 fields)
+Found 1 classes from /home/ubuntu/bun-ub-soak/bun/src/runtime/valkey_jsc/valkey.classes.ts
+  - RedisClient (167 fields)
+Found 2 classes from /home/ubuntu/bun-ub-soak/bun/src/runtime/webcore/encoding.classes.ts
+  - TextDecoder (4 fields)
+  - TextEncoderStreamEncoder (2 fields)
+Found 3 classes from /home/ubuntu/bun-ub-soak/bun/src/runtime/webcore/response.classes.ts
+  - Request (21 fields)
+  - Response (16 fields, 3 class fields)
+  - Blob (18 fields)
+generated_classes.rs: 92 classes (78 resolved), 1432 exported symbols
+[5/8] gen generated_host_exports.rs
+generated_host_exports.rs: 90 exports (host=3, lazy=10, generic=77, rust=0); 265 extern-C blocks audited
+[6/8] gen cpp.{zig,rs} (cppbind)
+[7/8] gen JSSink.{cpp,h,lut.h,rs}
+generated_jssink.rs: 6 sinks, 66 exported symbols
+Generating /home/ubuntu/bun-ub-soak/bun/build/debug/codegen/JSSink.lut.h from /home/ubuntu/bun-ub-soak/bun/build/debug/codegen/JSSink.lut.txt
+[8/8] gen JS modules (bundle-modules)
+Preprocess modules (8322ms)
+Bundle modules (46ms)
+Postprocesss modules (37ms)
+Bundle Functions (3038ms)
+Generate Code (12ms)
+
+[11.48s] Bundled "src/js" for development
+  1800 kb
+  138 internal modules
+  12 native modules
+  362 internal functions across 37 files

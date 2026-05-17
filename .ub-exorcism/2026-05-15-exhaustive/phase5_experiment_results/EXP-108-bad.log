@@ -1,0 +1,44 @@
+   Compiling exp-108-event-loop-run-callback-reentry v0.0.0 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-108)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp-108-event-loop-run-callback-reentry`
+error: Undefined Behavior: reborrow through <983> at alloc536[0x0] is forbidden
+  --> src/main.rs:33:31
+   |
+33 |     let event_loop = unsafe { &mut *owner };
+   |                               ^^^^^^^^^^^ Undefined Behavior occurred here
+   |
+   = help: this indicates a potential bug in the program: it performed an invalid operation, but the Tree Borrows rules it violated are still experimental
+   = help: see https://github.com/rust-lang/unsafe-code-guidelines/blob/master/wip/tree-borrows.md for further information
+   = help: the accessed tag <983> is foreign to the protected tag <1002> (i.e., it is not a child)
+   = help: this reborrow (acting as a foreign read access) would cause the protected tag <1002> (currently Unique) to become Disabled
+   = help: protected tags must never be Disabled
+help: the accessed tag <983> was created here
+  --> src/main.rs:40:15
+   |
+40 |     let raw = Box::into_raw(Box::new(EventLoop::default()));
+   |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: the protected tag <1002> was created here, in the initial state Reserved
+  --> src/main.rs:16:25
+   |
+16 |     fn run_callback_bad(&mut self, callback: fn(*mut EventLoop), owner: *mut EventLoop) {
+   |                         ^^^^^^^^^
+help: the protected tag <1002> later transitioned to Unique due to a child write access at offsets [0x0..0x8]
+  --> src/main.rs:9:9
+   |
+ 9 |         self.entered_event_loop_count += 1;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: this transition corresponds to the first write to a 2-phase borrowed mutable reference
+   = note: stack backtrace:
+           0: js_reenters_event_loop
+               at src/main.rs:33:31: 33:42
+           1: EventLoop::run_callback_bad
+               at src/main.rs:19:9: 19:24
+           2: bad_path
+               at src/main.rs:42:9: 42:61
+           3: main
+               at src/main.rs:58:14: 58:24
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

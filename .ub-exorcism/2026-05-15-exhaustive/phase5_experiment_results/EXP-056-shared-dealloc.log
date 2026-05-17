@@ -1,0 +1,52 @@
+   Compiling exp_056_node_http_response_shared_dealloc v0.0.0 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-056)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp_056_node_http_response_shared_dealloc`
+warning: field `payload` is never read
+ --> src/main.rs:5:5
+  |
+3 | struct NodeHTTPResponseShape {
+  |        --------------------- field in this struct
+4 |     ref_count: Cell<u32>,
+5 |     payload: Vec<u8>,
+  |     ^^^^^^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+error: Undefined Behavior: deallocation through <490> at alloc286[0x0] is forbidden
+    --> /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/boxed.rs:1952:17
+     |
+1952 |                 self.1.deallocate(From::from(ptr.cast()), layout);
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Undefined Behavior occurred here
+     |
+     = help: this indicates a potential bug in the program: it performed an invalid operation, but the Tree Borrows rules it violated are still experimental
+     = help: see https://github.com/rust-lang/unsafe-code-guidelines/blob/master/wip/tree-borrows.md for further information
+     = help: the accessed tag <490> is a child of the conflicting tag <480>
+     = help: the conflicting tag <480> has state Frozen which forbids this deallocation (acting as a child write access)
+help: the accessed tag <490> was created here
+    --> src/main.rs:19:13
+     |
+  19 |             drop(Box::from_raw(self.as_ctx_ptr()));
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: the conflicting tag <480> was created here, in the initial state Cell
+    --> src/main.rs:11:9
+     |
+  11 |         std::ptr::from_ref(self).cast_mut()
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^
+     = note: stack backtrace:
+             0: <std::boxed::Box<NodeHTTPResponseShape> as std::ops::Drop>::drop
+                 at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/boxed.rs:1952:17: 1952:66
+             1: std::ptr::drop_in_place::<std::boxed::Box<NodeHTTPResponseShape>> - shim(Some(std::boxed::Box<NodeHTTPResponseShape>))
+                 at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:809:1: 811:25
+             2: std::mem::drop::<std::boxed::Box<NodeHTTPResponseShape>>
+                 at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/mod.rs:1004:1: 1004:2
+             3: NodeHTTPResponseShape::deinit
+                 at src/main.rs:19:13: 19:51
+             4: NodeHTTPResponseShape::deref
+                 at src/main.rs:27:13: 27:26
+             5: main
+                 at src/main.rs:42:5: 42:19
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error; 1 warning emitted
+

@@ -1,0 +1,26 @@
+   Compiling exp-074-timer-parent-ptr-shared-write v0.1.0 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-074)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp-074-timer-parent-ptr-shared-write`
+error: Undefined Behavior: attempting a write access using <251> at alloc112[0x0], but that tag does not exist in the borrow stack for this location
+  --> src/main.rs:39:18
+   |
+39 |         unsafe { (*self.event_loop_timer()).state = state };
+   |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this error occurs as part of an access at alloc112[0x0..0x1]
+   |
+   = help: this indicates a potential bug in the program: it performed an invalid operation, but the Stacked Borrows rules it violated are still experimental
+   = help: see https://github.com/rust-lang/unsafe-code-guidelines/blob/master/wip/stacked-borrows.md for further information
+help: <251> was created by a SharedReadOnly retag at offsets [0x1..0x2]
+  --> src/main.rs:29:20
+   |
+29 |         let this = core::ptr::from_ref::<Self>(self).cast_mut();
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: stack backtrace:
+           0: TimerObjectInternals::set_event_loop_timer_state
+               at src/main.rs:39:18: 39:58
+           1: main
+               at src/main.rs:50:5: 50:44
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

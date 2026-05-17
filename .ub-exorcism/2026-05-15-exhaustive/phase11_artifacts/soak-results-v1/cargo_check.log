@@ -1,0 +1,646 @@
+    Updating crates.io index
+ Downloading crates ...
+  Downloaded blowfish v0.9.1
+  Downloaded bcrypt v0.19.0
+  Downloaded const_format_proc_macros v0.2.34
+  Downloaded blake2b_simd v1.0.4
+  Downloaded new_debug_unreachable v1.0.6
+  Downloaded phf_codegen v0.13.1
+  Downloaded enum-map-derive v0.17.0
+  Downloaded phf_shared v0.13.1
+  Downloaded phf_shared v0.11.3
+  Downloaded unicode-xid v0.2.6
+  Downloaded phf_generator v0.13.1
+  Downloaded dtoa-short v0.3.5
+  Downloaded strum v0.26.3
+  Downloaded keccak v0.1.6
+  Downloaded typed-arena v2.0.2
+  Downloaded precomputed-hash v0.1.1
+  Downloaded konst_macro_rules v0.2.19
+  Downloaded phf_generator v0.11.3
+  Downloaded dtoa v1.0.11
+  Downloaded phf v0.13.1
+  Downloaded enum-map v2.7.3
+  Downloaded phf_macros v0.13.1
+  Downloaded phf_macros v0.11.3
+  Downloaded servo_arc v0.4.3
+  Downloaded cssparser-macros v0.6.1
+  Downloaded phf v0.11.3
+  Downloaded strum_macros v0.26.4
+  Downloaded mime v0.3.17
+  Downloaded enumset v1.1.10
+  Downloaded twox-hash v2.1.2
+  Downloaded const_format v0.2.36
+  Downloaded cssparser v0.36.0
+  Downloaded enumset_derive v0.14.0
+  Downloaded rust-argon2 v3.0.0
+  Downloaded selectors v0.33.0
+  Downloaded derive_more v2.1.1
+  Downloaded konst v0.2.20
+  Downloaded derive_more-impl v2.1.1
+  Downloaded rustix v0.38.44
+  Downloaded sha3 v0.10.9
+  Downloaded linux-raw-sys v0.4.15
+   Compiling proc-macro2 v1.0.106
+   Compiling quote v1.0.45
+   Compiling unicode-ident v1.0.24
+   Compiling siphasher v1.0.3
+   Compiling fnv v1.0.7
+   Compiling libc v0.2.186
+   Compiling ident_case v1.0.1
+   Compiling rand_core v0.6.4
+   Compiling rustversion v1.0.22
+    Checking bitflags v2.11.1
+    Checking memchr v2.8.0
+   Compiling phf_shared v0.11.3
+   Compiling rand v0.8.6
+    Checking konst_macro_rules v0.2.19
+   Compiling unicode-xid v0.2.6
+   Compiling heck v0.5.0
+    Checking konst v0.2.20
+    Checking scopeguard v1.2.0
+    Checking allocator-api2 v0.2.21
+   Compiling thiserror v2.0.18
+    Checking bstr v1.12.1
+    Checking itoa v1.0.18
+   Compiling phf_generator v0.11.3
+    Checking bun_opaque v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/opaque)
+    Checking typed-arena v2.0.2
+   Compiling bun_output_tags v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/bun_output_tags)
+    Checking bumpalo v3.20.2
+    Checking twox-hash v2.1.2
+   Compiling bun_core v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/bun_core)
+    Checking bytemuck v1.25.0
+    Checking smallvec v1.15.1
+   Compiling paste v1.0.15
+    Checking bun_hash v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/hash)
+   Compiling rustix v0.38.44
+    Checking bun_windows_sys v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/windows_sys)
+    Checking hashbrown v0.15.5
+    Checking linux-raw-sys v0.4.15
+   Compiling syn v2.0.117
+   Compiling phf_shared v0.13.1
+   Compiling const_format_proc_macros v0.2.34
+   Compiling fastrand v2.4.1
+   Compiling phf_generator v0.13.1
+   Compiling phf_codegen v0.13.1
+    Checking dtoa v1.0.11
+    Checking cfg-if v1.0.4
+    Checking stable_deref_trait v1.2.1
+    Checking new_debug_unreachable v1.0.6
+    Checking log v0.4.29
+    Checking servo_arc v0.4.3
+    Checking equivalent v1.0.2
+   Compiling selectors v0.33.0
+    Checking dtoa-short v0.3.5
+    Checking foldhash v0.2.0
+    Checking rustc-hash v2.1.2
+    Checking precomputed-hash v0.1.1
+    Checking encoding_rs v0.8.35
+    Checking mime v0.3.17
+   Compiling lol_html_c_api v1.3.1 (/home/ubuntu/bun-ub-soak/bun/vendor/lolhtml/c-api)
+    Checking hashbrown v0.16.1
+   Compiling bun_install v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/install)
+   Compiling bun_jsc v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/jsc)
+   Compiling version_check v0.9.5
+    Checking const_format v0.2.36
+    Checking typenum v1.20.0
+   Compiling generic-array v0.14.7
+    Checking subtle v2.6.1
+   Compiling getrandom v0.4.2
+   Compiling crossbeam-utils v0.8.21
+    Checking constant_time_eq v0.4.2
+    Checking arrayvec v0.7.6
+    Checking byteorder v1.5.0
+    Checking base64 v0.22.1
+    Checking arrayref v0.3.9
+    Checking blake2b_simd v1.0.4
+    Checking keccak v0.1.6
+    Checking zeroize v1.8.2
+   Compiling bun_runtime v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/runtime)
+    Checking rust-argon2 v3.0.0
+    Checking crypto-common v0.1.7
+    Checking inout v0.1.4
+    Checking block-buffer v0.10.4
+    Checking cipher v0.4.4
+    Checking digest v0.10.7
+    Checking blake2 v0.10.6
+    Checking sha3 v0.10.9
+    Checking blowfish v0.9.1
+    Checking bcrypt v0.19.0
+   Compiling darling_core v0.21.3
+   Compiling strum_macros v0.26.4
+   Compiling phf_macros v0.11.3
+   Compiling enum-map-derive v0.17.0
+   Compiling thiserror-impl v2.0.18
+   Compiling bun_dispatch v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/dispatch)
+   Compiling bun_core_macros v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/bun_core_macros)
+   Compiling phf_macros v0.13.1
+    Checking enum-map v2.7.3
+   Compiling cssparser-macros v0.6.1
+    Checking phf v0.11.3
+   Compiling bun_jsc_macros v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/jsc_macros)
+   Compiling derive_more-impl v2.1.1
+   Compiling bun_css_derive v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/css_derive)
+    Checking phf v0.13.1
+    Checking cssparser v0.36.0
+   Compiling bun_clap_macros v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/clap_macros)
+    Checking derive_more v2.1.1
+    Checking strum v0.26.3
+   Compiling darling_macro v0.21.3
+   Compiling darling v0.21.3
+   Compiling enumset_derive v0.14.0
+    Checking lol_html v2.7.2 (/home/ubuntu/bun-ub-soak/bun/vendor/lolhtml)
+    Checking enumset v1.1.10
+    Checking bun_wyhash v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/wyhash)
+    Checking bun_mimalloc_sys v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/mimalloc_sys)
+    Checking bun_simdutf_sys v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/simdutf_sys)
+    Checking bun_highway v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/highway)
+    Checking bun_libuv_sys v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/libuv_sys)
+    Checking bun_brotli_sys v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/brotli_sys)
+    Checking bun_js v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/js)
+    Checking bun_node-fallbacks v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/node-fallbacks)
+    Checking bun_picohttp_sys v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/picohttp_sys)
+    Checking bun_meta v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/meta)
+    Checking bun_alloc v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/bun_alloc)
+    Checking bun_libdeflate_sys v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/libdeflate_sys)
+warning: unreachable `pub` item
+    --> src/bun_core/output.rs:1647:9
+     |
+1647 |         pub static $name: $crate::output::ScopedLogger = $crate::output::ScopedLogger::new(
+     |         ---^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |         |
+     |         help: consider restricting its visibility: `pub(super)`
+     |
+    ::: src/bun_core/string/immutable/unicode.rs:23:1
+     |
+  23 | crate::declare_scope!(strings, hidden);
+     | -------------------------------------- in this macro invocation
+     |
+     = help: or consider exporting it for use by other crates
+note: the lint level is defined here
+    --> src/bun_core/lib.rs:11:26
+     |
+  11 | #![warn(unused_must_use, unreachable_pub)]
+     |                          ^^^^^^^^^^^^^^^
+     = note: this warning originates in the macro `crate::declare_scope` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+    --> src/bun_core/string/immutable/unicode.rs:1507:5
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |     ^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> src/bun_core/string/immutable/unicode.rs:1507:27
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |                           ^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> src/bun_core/string/immutable/unicode.rs:1507:50
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |                                                  ^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> src/bun_core/string/immutable/unicode.rs:1507:74
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |                                                                          ^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> src/bun_core/string/immutable/unicode.rs:1508:5
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+1508 |     u16_get_supplementary, u16_is_lead, u16_is_surrogate, u16_is_trail,
+     |     ^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> src/bun_core/string/immutable/unicode.rs:1508:41
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+1508 |     u16_get_supplementary, u16_is_lead, u16_is_surrogate, u16_is_trail,
+     |                                         ^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> src/bun_core/lib.rs:2159:5
+     |
+2159 |     pub fn is_ip_address(input: &[u8]) -> bool {
+     |     ---^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |     |
+     |     help: consider restricting its visibility: `pub(crate)`
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: `bun_core` (lib) generated 8 warnings (run `cargo fix --lib -p bun_core` to apply 7 suggestions)
+    Checking bun_paths v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/paths)
+    Checking bun_ptr v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/ptr)
+    Checking bun_errno v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/errno)
+    Checking bun_boringssl_sys v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/boringssl_sys)
+    Checking bun_safety v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/safety)
+    Checking bun_zlib_sys v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/zlib_sys)
+    Checking bun_cares_sys v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/cares_sys)
+    Checking bun_zstd v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/zstd)
+    Checking bun_picohttp v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/picohttp)
+    Checking bun_lolhtml_sys v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/lolhtml_sys)
+    Checking bun_output v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/output)
+warning: ambiguous glob re-exports
+  --> src/paths/lib.rs:39:13
+   |
+39 |     pub use super::string_paths::*;
+   |             ^^^^^^^^^^^^^^^^^^^^^^ the name `is_windows_absolute_path_missing_drive_letter` in the value namespace is first re-exported here
+40 |     pub use bun_core::strings::*;
+   |             -------------------- but the name `is_windows_absolute_path_missing_drive_letter` in the value namespace is also re-exported here
+   |
+   = note: `#[warn(ambiguous_glob_reexports)]` on by default
+
+warning: ambiguous glob re-exports
+  --> src/paths/lib.rs:39:13
+   |
+39 |     pub use super::string_paths::*;
+   |             ^^^^^^^^^^^^^^^^^^^^^^ the name `basename` in the value namespace is first re-exported here
+40 |     pub use bun_core::strings::*;
+   |             -------------------- but the name `basename` in the value namespace is also re-exported here
+
+    Checking bun_clap v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/clap)
+    Checking bun_valkey v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/valkey)
+    Checking bun_platform v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/platform)
+    Checking bun_libarchive_sys v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/libarchive_sys)
+    Checking bun_codegen v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/codegen)
+    Checking bun_collections v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/collections)
+    Checking bun_tcc_sys v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/tcc_sys)
+warning: `bun_paths` (lib) generated 2 warnings
+    Checking bun_sys v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/sys)
+    Checking bun_url v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/url)
+    Checking bun_semver v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/semver)
+    Checking bun_base64 v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/base64)
+    Checking bun_shell_parser v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/shell_parser)
+    Checking bun_unicode v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/unicode)
+    Checking bun_http_types v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/http_types)
+    Checking bun_threading v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/threading)
+    Checking bun_ast v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/ast)
+    Checking bun_which v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/which)
+    Checking bun_libarchive v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/libarchive)
+    Checking bun_boringssl v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/boringssl)
+    Checking bun_glob v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/glob)
+    Checking bun_sha_hmac v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/sha_hmac)
+    Checking bun_analytics v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/analytics)
+    Checking bun_perf v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/perf)
+    Checking bun_md v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/md)
+    Checking bun_dns v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/dns)
+    Checking bun_exe_format v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/exe_format)
+warning: unused import: `strings`
+  --> src/ast/expr.rs:13:22
+   |
+13 | use bun_core::{ZStr, strings};
+   |                      ^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+    Checking bun_watcher v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/watcher)
+    Checking bun_spawn_sys v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/spawn_sys)
+    Checking bun_sql v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/sql)
+    Checking bun_csrf v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/csrf)
+    Checking bun_uws_sys v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/uws_sys)
+    Checking bun_s3_signing v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/s3_signing)
+    Checking bun_io v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/io)
+    Checking bun_uws v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/uws)
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:21:9
+   |
+21 |           pub static ENABLED: AtomicBool = AtomicBool::new(false);
+   |           ---^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+53 | /     debug_socket_monitor!(
+54 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR,
+55 | |         "writing to {}"
+56 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+note: the lint level is defined here
+  --> src/sql/lib.rs:9:9
+   |
+ 9 | #![warn(unreachable_pub)]
+   |         ^^^^^^^^^^^^^^^
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:25:9
+   |
+25 |           pub static CHECK: Once = Once::new();
+   |           ---^^^^^^^^^^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+53 | /     debug_socket_monitor!(
+54 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR,
+55 | |         "writing to {}"
+56 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:27:9
+   |
+27 |           pub fn load() {
+   |           ---^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+53 | /     debug_socket_monitor!(
+54 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR,
+55 | |         "writing to {}"
+56 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:43:9
+   |
+43 |           pub fn write(data: &[u8]) {
+   |           ---^^^^^^^^^^^^^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+53 | /     debug_socket_monitor!(
+54 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR,
+55 | |         "writing to {}"
+56 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:21:9
+   |
+21 |           pub static ENABLED: AtomicBool = AtomicBool::new(false);
+   |           ---^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+61 | /     debug_socket_monitor!(
+62 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR_READER,
+63 | |         "duplicating reads to {}"
+64 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:25:9
+   |
+25 |           pub static CHECK: Once = Once::new();
+   |           ---^^^^^^^^^^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+61 | /     debug_socket_monitor!(
+62 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR_READER,
+63 | |         "duplicating reads to {}"
+64 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:27:9
+   |
+27 |           pub fn load() {
+   |           ---^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+61 | /     debug_socket_monitor!(
+62 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR_READER,
+63 | |         "duplicating reads to {}"
+64 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:43:9
+   |
+43 |           pub fn write(data: &[u8]) {
+   |           ---^^^^^^^^^^^^^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+61 | /     debug_socket_monitor!(
+62 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR_READER,
+63 | |         "duplicating reads to {}"
+64 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: `bun_sql` (lib) generated 8 warnings
+warning: `bun_ast` (lib) generated 1 warning (run `cargo fix --lib -p bun_ast` to apply 1 suggestion)
+    Checking bun_dotenv v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/dotenv)
+    Checking bun_install_types v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/install_types)
+    Checking bun_parsers v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/parsers)
+    Checking bun_zlib v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/zlib)
+    Checking bun_css v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/css)
+    Checking bun_brotli v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/brotli)
+    Checking bun_event_loop v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/event_loop)
+    Checking bun_options_types v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/options_types)
+    Checking bun_http v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/http)
+    Checking bun_crash_handler v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/crash_handler)
+    Checking bun_resolve_builtins v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/resolve_builtins)
+    Checking bun_api v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/api)
+    Checking bun_sourcemap v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/sourcemap)
+    Checking bun_js_parser v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/js_parser)
+    Checking bun_spawn v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/spawn)
+    Checking bun_js_printer v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/js_printer)
+warning: unused import: `RefCounted`
+ --> src/spawn/static_pipe_writer.rs:8:48
+  |
+8 | use bun_ptr::{IntrusiveRc, RawSlice, RefCount, RefCounted};
+  |                                                ^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `bun_spawn` (lib) generated 1 warning (run `cargo fix --lib -p bun_spawn` to apply 1 suggestion)
+    Checking bun_patch v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/patch)
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+   --> src/js_printer/renamer.rs:689:58
+    |
+689 |         let s: *mut NumberScope = self.number_scope_pool.get();
+    |                                                          ^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+   --> src/js_printer/renamer.rs:753:80
+    |
+753 |                 let new_child_scope: *mut NumberScope = self.number_scope_pool.get();
+    |                                                                                ^^^
+
+warning: `bun_js_printer` (lib) generated 2 warnings
+    Checking bun_resolver v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/resolver)
+    Checking bun_ini v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/ini)
+warning: unreachable `pub` item
+   --> src/resolver/fs.rs:167:1
+    |
+167 | pub type EntryStoreBacking = allocators::BSSList<Entry, { preallocate::counts::FILES * 2 }>;
+    | ---^^^^^^^^^^^^^^^^^^^^^^^
+    | |
+    | help: consider restricting its visibility: `pub(crate)`
+    |
+    = help: or consider exporting it for use by other crates
+note: the lint level is defined here
+   --> src/resolver/lib.rs:33:9
+    |
+ 33 | #![warn(unreachable_pub)]
+    |         ^^^^^^^^^^^^^^^
+
+warning: `bun_resolver` (lib) generated 1 warning (run `cargo fix --lib -p bun_resolver` to apply 1 suggestion)
+    Checking bun_router v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/router)
+    Checking bun_bundler v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/bundler)
+    Checking bun_standalone_graph v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/standalone_graph)
+    Checking bun_transpiler v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/transpiler)
+    Checking bun_bunfig v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/bunfig)
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+   --> src/install/PackageManager/PackageManagerEnqueue.rs:358:48
+    |
+358 |     let task = this.preallocated_resolve_tasks.get();
+    |                                                ^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+    --> src/install/PackageManager/PackageManagerEnqueue.rs:1659:48
+     |
+1659 |     let task = this.preallocated_resolve_tasks.get();
+     |                                                ^^^
+
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+    --> src/install/PackageManager/PackageManagerEnqueue.rs:1803:48
+     |
+1803 |     let task = this.preallocated_resolve_tasks.get();
+     |                                                ^^^
+
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+    --> src/install/PackageManager/runTasks.rs:1711:37
+     |
+1711 |     this.preallocated_network_tasks.get()
+     |                                     ^^^
+
+warning: `bun_install` (lib) generated 4 warnings
+warning: unnecessary `unsafe` block
+    --> src/jsc/VirtualMachine.rs:1515:17
+     |
+1515 |                 unsafe { (hook.func)(hook.ctx) };
+     |                 ^^^^^^ unnecessary `unsafe` block
+     |
+     = note: `#[warn(unused_unsafe)]` (part of `#[warn(unused)]`) on by default
+
+warning: type `SecretsCtx` is more private than the item `SecretsJob`
+  --> src/jsc/JSSecrets.rs:64:1
+   |
+64 | pub type SecretsJob = AnyTaskJob<SecretsCtx>;
+   | ^^^^^^^^^^^^^^^^^^^ type alias `SecretsJob` is reachable at visibility `pub`
+   |
+note: but type `SecretsCtx` is only usable at visibility `pub(self)`
+  --> src/jsc/JSSecrets.rs:23:1
+   |
+23 | struct SecretsCtx {
+   | ^^^^^^^^^^^^^^^^^
+   = note: `#[warn(private_interfaces)]` on by default
+
+warning: `bun_jsc` (lib) generated 2 warnings
+    Checking bun_js_parser_jsc v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/js_parser_jsc)
+    Checking bun_ast_jsc v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/ast_jsc)
+    Checking bun_semver_jsc v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/semver_jsc)
+    Checking bun_css_jsc v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/css_jsc)
+    Checking bun_sys_jsc v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/sys_jsc)
+    Checking bun_bundler_jsc v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/bundler_jsc)
+    Checking bun_sql_jsc v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/sql_jsc)
+    Checking bun_http_jsc v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/http_jsc)
+    Checking bun_sourcemap_jsc v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/sourcemap_jsc)
+    Checking bun_patch_jsc v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/patch_jsc)
+    Checking bun_url_jsc v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/url_jsc)
+    Checking bun_install_jsc v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/install_jsc)
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+    --> src/runtime/server/server_body.rs:3415:54
+     |
+3415 |         let ctx_slot = unsafe { (*this.request_pool).get() };
+     |                                                      ^^^
+     |
+     = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::try_get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+   --> src/runtime/server/mod.rs:705:56
+    |
+705 |         let ctx_slot = unsafe { (*server.request_pool).try_get() };
+    |                                                        ^^^^^^^
+
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+    --> src/runtime/bake/DevServer.rs:2097:55
+     |
+2097 |         let deferred_ptr = self.deferred_request_pool.get();
+     |                                                       ^^^
+
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::try_get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+    --> src/runtime/api/bun/h2_frame_parser.rs:7375:33
+     |
+7375 |                 let slot = pool.try_get();
+     |                                 ^^^^^^^
+
+warning: unused `bun_css::Maybe` that must be used
+    --> src/runtime/webcore/Blob.rs:4377:41
+     |
+4377 | ...                   f.close();
+     |                       ^^^^^^^^^
+     |
+     = note: this `Result` may be an `Err` variant, which should be handled
+note: the lint level is defined here
+    --> src/runtime/lib.rs:8:9
+     |
+   8 | #![warn(unused_must_use)]
+     |         ^^^^^^^^^^^^^^^
+help: use `let _ = ...` to ignore the resulting value
+     |
+4377 |                                         let _ = f.close();
+     |                                         +++++++
+
+warning: `bun_runtime` (lib) generated 5 warnings
+    Checking bun_bin v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/bun_bin)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 13s

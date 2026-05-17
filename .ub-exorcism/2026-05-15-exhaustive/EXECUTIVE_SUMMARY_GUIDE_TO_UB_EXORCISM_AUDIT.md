@@ -165,8 +165,7 @@ bash .ub-exorcism/2026-05-15-exhaustive/scripts/audit/check-registry-drift.sh
 ├── UNDEFINED_BEHAVIOR_EXPERIMENT_DESIGNS.md            ← the registry (106 EXPs)
 ├── phase8_remediation_plan.md                          ← rubric-scored fixes
 ├── phase1_notes/                                       ← per-module Phase 1 digests
-├── phase2_raw/                                         ← raw ast-grep output (big)
-├── phase3_raw/                                         ← raw Phase 3 sweeper output
+├── phase2_raw/                                         ← raw per-sweep stderr/stdout (cited evidence)
 ├── phase3_dynamic_findings.md                          ← Phase 3 synthesis
 ├── phase4_unified_findings.md                          ← dedup'd, severity-ranked
 ├── phase5_experiment_results/                          ← per-EXP Miri/loom logs
@@ -336,7 +335,7 @@ bv --robot-suggest --format=json                    # hygiene: dups, missing dep
 | 0 RUN BOOTSTRAP | [`phase0_run.json`](phase0_run.json), [`phase0_toolchain_inventory.json`](phase0_toolchain_inventory.json) | ✓ |
 | 1 RECON | [`phase1_unsafe_surface_inventory.md`](phase1_unsafe_surface_inventory.md) + [`phase1_notes/`](phase1_notes/) | ✓ |
 | 2 STATIC SWEEP | `phase2_findings_<bucket>.md` files (one per UB bucket) + [`phase2_raw/`](phase2_raw/) | ✓ |
-| 3 DYNAMIC SWEEP | [`phase3_dynamic_findings.md`](phase3_dynamic_findings.md) + [`phase3_raw/`](phase3_raw/) | ✓ |
+| 3 DYNAMIC SWEEP | [`phase3_dynamic_findings.md`](phase3_dynamic_findings.md) | ✓ |
 | 4 SYNTHESIS | [`phase4_unified_findings.md`](phase4_unified_findings.md) + first registry draft | ✓ |
 | 5 EXP EXECUTION | [`phase5_experiment_results/`](phase5_experiment_results/) (per-EXP `.log` files) | ✓ |
 | 6 IDEA WIZARD | [`phase6_idea_wizard.md`](phase6_idea_wizard.md) (11 new design-vehicle EXPs surfaced) | ✓ |

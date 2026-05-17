@@ -1,0 +1,29 @@
+   Compiling exp091-bindgen-array-layout-mismatch v0.1.0 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-091)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp091-bindgen-array-layout-mismatch`
+error: Undefined Behavior: incorrect layout on deallocation: alloc209 has size 8 and alignment 8, but gave size 8 and alignment 4
+   --> /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:876:17
+    |
+876 |                 self.alloc.deallocate(ptr, layout);
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Undefined Behavior occurred here
+    |
+    = help: this indicates a bug in the program: it performed an invalid operation, and caused Undefined Behavior
+    = help: see https://doc.rust-lang.org/nightly/reference/behavior-considered-undefined.html for further information
+    = note: stack backtrace:
+            0: alloc::raw_vec::RawVecInner::deallocate
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:876:17: 876:51
+            1: <alloc::raw_vec::RawVec<Zig> as std::ops::Drop>::drop
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:424:18: 424:50
+            2: std::ptr::drop_in_place::<alloc::raw_vec::RawVec<Zig>> - shim(Some(alloc::raw_vec::RawVec<Zig>))
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:809:1: 811:25
+            3: std::ptr::drop_in_place::<std::vec::Vec<Zig>> - shim(Some(std::vec::Vec<Zig>))
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:809:1: 811:25
+            4: std::mem::drop::<std::vec::Vec<Zig>>
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/mod.rs:1004:1: 1004:2
+            5: main
+                at src/main.rs:123:5: 123:20
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

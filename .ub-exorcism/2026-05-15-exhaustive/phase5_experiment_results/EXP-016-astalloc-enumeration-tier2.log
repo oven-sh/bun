@@ -1,0 +1,52 @@
+src/js_parser_jsc/Macro.rs:753:                        items: bun_alloc::AstAlloc::vec(),
+src/js_parser_jsc/Macro.rs:790:                        properties: bun_alloc::AstAlloc::vec(),
+src/ast/nodes.rs:521:pub type ExprNodeList = Vec<Expr, bun_alloc::AstAlloc>;
+src/ast/lib.rs:3367:    let mut v: Vec<u8, bun_alloc::AstAlloc> = bun_alloc::AstAlloc::vec();
+src/ast/e.rs:57:            items: bun_alloc::AstAlloc::vec(),
+src/ast/e.rs:72:        items: bun_alloc::AstAlloc::vec(),
+src/ast/e.rs:248:            args: bun_alloc::AstAlloc::vec(),
+src/ast/e.rs:300:            args: bun_alloc::AstAlloc::vec(),
+src/ast/e.rs:667:            properties: bun_alloc::AstAlloc::vec(),
+src/ast/e.rs:668:            children: bun_alloc::AstAlloc::vec(),
+src/ast/e.rs:886:            properties: bun_alloc::AstAlloc::vec(),
+src/ast/e.rs:961:        properties: bun_alloc::AstAlloc::vec(),
+src/ast/g.rs:27:pub type DeclList = Vec<Decl, bun_alloc::AstAlloc>;
+src/ast/g.rs:83:            ts_decorators: bun_alloc::AstAlloc::vec(),
+src/ast/g.rs:142:    pub stmts: Vec<Stmt, bun_alloc::AstAlloc>,
+src/ast/g.rs:149:            stmts: bun_alloc::AstAlloc::vec(),
+src/ast/g.rs:183:pub type PropertyList = Vec<Property, bun_alloc::AstAlloc>;
+src/ast/g.rs:192:            ts_decorators: bun_alloc::AstAlloc::vec(),
+src/ast/g.rs:226:                stmts: bun_alloc::AstAlloc::vec_from_slice(csb_ref.stmts.slice()),
+src/ast/g.rs:372:            ts_decorators: bun_alloc::AstAlloc::vec(),
+src/ast/scope.rs:33:    pub children: AstVec<StoreRef<Scope>>,
+src/ast/scope.rs:36:    pub generated: AstVec<Ref>,
+src/ast/scope.rs:68:    /// calls. `AstAlloc::vec` and `StringHashMap::new_in` are both `const fn`.
+src/ast/scope.rs:73:        children: AstAlloc::vec(),
+src/ast/scope.rs:75:        generated: AstAlloc::vec(),
+src/ast/s.rs:249:            decls: bun_alloc::AstAlloc::vec(),
+src/js_parser/repl_transforms.rs:493:                args: bun_alloc::AstAlloc::vec(),
+src/js_parser/p.rs:5351:                    let mut decls = bun_alloc::AstAlloc::vec();
+src/js_parser/p.rs:7235:                                        items: bun_alloc::AstAlloc::vec(),
+src/js_parser/p.rs:7372:                                    items: bun_alloc::AstAlloc::vec(),
+src/js_parser/p.rs:9077:            children: bun_alloc::AstAlloc::vec(),
+src/js_parser/p.rs:9078:            generated: bun_alloc::AstAlloc::vec(),
+src/js_parser/p.rs:9677:            let mut decls = bun_alloc::AstAlloc::vec();
+src/js_parser/parser.rs:1846:            ts_decorators: bun_alloc::AstAlloc::vec(),
+src/js_parser/lower/lower_esm_exports_hmr.rs:256:                        let mut decls = bun_alloc::AstAlloc::vec();
+src/js_parser/lower/lower_esm_exports_hmr.rs:776:                            args: bun_alloc::AstAlloc::vec(),
+src/js_parser/parse/parse_fn.rs:241:            let mut ts_decorators = bun_alloc::AstAlloc::vec();
+src/js_parser/parse/parse_typescript.rs:45:            return Ok(bun_alloc::AstAlloc::vec());
+src/js_parser/lower/lower_decorators.rs:87:        ts_decorators: bun_alloc::AstAlloc::vec(),
+src/js_parser/lower/lower_decorators.rs:236:                args: bun_alloc::AstAlloc::vec(),
+src/js_parser/lower/lower_decorators.rs:257:                args: bun_alloc::AstAlloc::vec(),
+src/js_parser/lower/lower_decorators.rs:2042:                                    args: bun_alloc::AstAlloc::vec(),
+src/js_parser/parse/parse_stmt.rs:1795:                    let mut decls: G::DeclList = bun_alloc::AstAlloc::vec();
+src/js_parser/parse/parse_prefix.rs:724:            (bun_alloc::AstAlloc::vec(), bun_ast::Loc::EMPTY)
+src/js_parser/parse/parse_jsx.rs:34:        let mut properties = bun_alloc::AstAlloc::vec();
+--- explicit Drop impls under ast/js_parser ---
+src/js_parser_jsc/Macro.rs:991:        impl Drop for JsArgs {
+src/ast/new_store.rs:164:            impl Drop for Store {
+src/ast/lib.rs:3387:impl Drop for StoreAstAllocHeap {
+src/ast/lib.rs:3404:impl Drop for StoreResetGuard {
+src/ast/lib.rs:3450:impl Drop for DisableStoreReset {
+src/ast/ast_memory_allocator.rs:89:impl Drop for ASTMemoryAllocator {

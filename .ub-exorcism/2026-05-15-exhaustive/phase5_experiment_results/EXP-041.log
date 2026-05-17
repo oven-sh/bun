@@ -1,0 +1,27 @@
+   Compiling exp-041-wsctx-active-connections-addrof-castmut v0.0.0 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-041)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp-041-wsctx-active-connections-addrof-castmut`
+error: Undefined Behavior: write access through <226> at alloc107[0x0] is forbidden
+  --> src/main.rs:33:13
+   |
+33 |             *p = (*p).saturating_add(n);
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^ Undefined Behavior occurred here
+   |
+   = help: this indicates a potential bug in the program: it performed an invalid operation, but the Tree Borrows rules it violated are still experimental
+   = help: see https://github.com/rust-lang/unsafe-code-guidelines/blob/master/wip/tree-borrows.md for further information
+   = help: the accessed tag <226> has state Frozen which forbids this child write access
+help: the accessed tag <226> was created here, in the initial state Frozen
+  --> src/main.rs:30:12
+   |
+30 |     fn add(&self, n: usize) {
+   |            ^^^^^
+   = note: stack backtrace:
+           0: Ctx::add
+               at src/main.rs:33:13: 33:40
+           1: main
+               at src/main.rs:69:5: 69:15
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

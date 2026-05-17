@@ -1,0 +1,26 @@
+warning: unexpected `cfg` condition name: `loom`
+  --> src/lib.rs:22:8
+   |
+22 | #![cfg(loom)]
+   |        ^^^^
+   |
+   = help: expected names are: `docsrs`, `feature`, and `test` and 32 more
+   = help: consider using a Cargo feature instead
+   = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+            [lints.rust]
+            unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
+   = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(loom)");` to the top of the `build.rs`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+   = note: `#[warn(unexpected_cfgs)]` on by default
+
+warning: `exp-031-watcher-atomics-loom` (lib test) generated 1 warning
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.03s
+     Running unittests src/lib.rs (/tmp/cargo-target/release/deps/exp_031_watcher_atomics_loom-557c762eac0d0c95)
+
+running 3 tests
+test loom_sanity_relaxed_should_race ... ignored
+test loom_publish_two_distinct_slots ... ok
+test loom_single_publish_take ... ok
+
+test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.01s
+

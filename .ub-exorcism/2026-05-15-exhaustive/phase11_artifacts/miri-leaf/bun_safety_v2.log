@@ -1,0 +1,40 @@
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+   Doc-tests bun_safety
+
+running 2 tests
+test src/safety/CriticalSection.rs - critical_section (line 18) ... FAILED
+test src/safety/CriticalSection.rs - critical_section (line 6) ... FAILED
+
+failures:
+
+---- src/safety/CriticalSection.rs - critical_section (line 18) stdout ----
+error: expected one of `!` or `::`, found `.`
+  --> src/safety/CriticalSection.rs:19:12
+   |
+19 | shared_data.critical_section.beginReadOnly();
+   |            ^ expected one of `!` or `::`
+
+error: aborting due to 1 previous error
+
+Couldn't compile the test.
+---- src/safety/CriticalSection.rs - critical_section (line 6) stdout ----
+error: expected one of `!` or `::`, found `.`
+ --> src/safety/CriticalSection.rs:7:12
+  |
+7 | shared_data.critical_section.begin();
+  |            ^ expected one of `!` or `::`
+
+error: aborting due to 1 previous error
+
+Couldn't compile the test.
+
+failures:
+    src/safety/CriticalSection.rs - critical_section (line 18)
+    src/safety/CriticalSection.rs - critical_section (line 6)
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+error: doctest failed, to rerun pass `--doc`

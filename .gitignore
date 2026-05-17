@@ -224,3 +224,11 @@ src/runtime/bake/generated.ts
 .ub-exorcism/**/__pycache__/
 .ub-exorcism/**/*.pyc
 .ub-exorcism/**/*.pid
+
+# Exception: audit witness logs ARE evidence (captured Miri / sanitizer /
+# loom output from the audited base). They override the global `*.log`
+# exclusion above for paths inside `.ub-exorcism/`; without this the audit's
+# phase5_experiment_results/, phase11_artifacts/, and phase2_raw/ logs are
+# silently filtered out, which makes the registry's `Raw log: ...` citations
+# point at files that never landed.
+!.ub-exorcism/**/*.log

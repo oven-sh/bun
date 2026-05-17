@@ -1,0 +1,23 @@
+   Compiling exp_034_migration_set_len_uninit_tag v0.0.1 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-034)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/repro`
+error: Undefined Behavior: reading memory at alloc212[0x8..0x9], but memory is uninitialized at [0x8..0x9], and this operation requires initialized memory
+  --> src/main.rs:98:41
+   |
+98 |         let tag: DependencyVersionTag = std::ptr::read(&dep0.version_tag);
+   |                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Undefined Behavior occurred here
+   |
+   = help: this indicates a bug in the program: it performed an invalid operation, and caused Undefined Behavior
+   = help: see https://doc.rust-lang.org/nightly/reference/behavior-considered-undefined.html for further information
+
+Uninitialized memory occurred at alloc212[0x8..0x9], in this allocation:
+alloc212 (Rust heap, size: 48, align: 4) {
+    0x00 │ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ │ ░░░░░░░░░░░░░░░░
+    0x10 │ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ │ ░░░░░░░░░░░░░░░░
+    0x20 │ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ │ ░░░░░░░░░░░░░░░░
+}
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

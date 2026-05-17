@@ -1,0 +1,1865 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on shared package cache
+    Blocking waiting for file lock on build directory
+warning: unreachable `pub` item
+    --> src/bun_core/output.rs:1647:9
+     |
+1647 |         pub static $name: $crate::output::ScopedLogger = $crate::output::ScopedLogger::new(
+     |         ---^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |         |
+     |         help: consider restricting its visibility: `pub(super)`
+     |
+    ::: src/bun_core/string/immutable/unicode.rs:23:1
+     |
+  23 | crate::declare_scope!(strings, hidden);
+     | -------------------------------------- in this macro invocation
+     |
+     = help: or consider exporting it for use by other crates
+note: the lint level is defined here
+    --> src/bun_core/lib.rs:11:26
+     |
+  11 | #![warn(unused_must_use, unreachable_pub)]
+     |                          ^^^^^^^^^^^^^^^
+     = note: this warning originates in the macro `crate::declare_scope` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+    --> src/bun_core/string/immutable/unicode.rs:1507:5
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |     ^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> src/bun_core/string/immutable/unicode.rs:1507:27
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |                           ^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> src/bun_core/string/immutable/unicode.rs:1507:50
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |                                                  ^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> src/bun_core/string/immutable/unicode.rs:1507:74
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |                                                                          ^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> src/bun_core/string/immutable/unicode.rs:1508:5
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+1508 |     u16_get_supplementary, u16_is_lead, u16_is_surrogate, u16_is_trail,
+     |     ^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> src/bun_core/string/immutable/unicode.rs:1508:41
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+1508 |     u16_get_supplementary, u16_is_lead, u16_is_surrogate, u16_is_trail,
+     |                                         ^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> src/bun_core/lib.rs:2159:5
+     |
+2159 |     pub fn is_ip_address(input: &[u8]) -> bool {
+     |     ---^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |     |
+     |     help: consider restricting its visibility: `pub(crate)`
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: `bun_core` (lib) generated 8 warnings (run `cargo fix --lib -p bun_core` to apply 7 suggestions)
+warning: ambiguous glob re-exports
+  --> src/paths/lib.rs:39:13
+   |
+39 |     pub use super::string_paths::*;
+   |             ^^^^^^^^^^^^^^^^^^^^^^ the name `is_windows_absolute_path_missing_drive_letter` in the value namespace is first re-exported here
+40 |     pub use bun_core::strings::*;
+   |             -------------------- but the name `is_windows_absolute_path_missing_drive_letter` in the value namespace is also re-exported here
+   |
+   = note: `#[warn(ambiguous_glob_reexports)]` on by default
+
+warning: ambiguous glob re-exports
+  --> src/paths/lib.rs:39:13
+   |
+39 |     pub use super::string_paths::*;
+   |             ^^^^^^^^^^^^^^^^^^^^^^ the name `basename` in the value namespace is first re-exported here
+40 |     pub use bun_core::strings::*;
+   |             -------------------- but the name `basename` in the value namespace is also re-exported here
+
+warning: `bun_paths` (lib) generated 2 warnings
+warning: unused import: `strings`
+  --> src/ast/expr.rs:13:22
+   |
+13 | use bun_core::{ZStr, strings};
+   |                      ^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `bun_ast` (lib) generated 1 warning (run `cargo fix --lib -p bun_ast` to apply 1 suggestion)
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+   --> src/js_printer/renamer.rs:689:58
+    |
+689 |         let s: *mut NumberScope = self.number_scope_pool.get();
+    |                                                          ^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+   --> src/js_printer/renamer.rs:753:80
+    |
+753 |                 let new_child_scope: *mut NumberScope = self.number_scope_pool.get();
+    |                                                                                ^^^
+
+warning: unused import: `RefCounted`
+ --> src/spawn/static_pipe_writer.rs:8:48
+  |
+8 | use bun_ptr::{IntrusiveRc, RawSlice, RefCount, RefCounted};
+  |                                                ^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `bun_js_printer` (lib) generated 2 warnings
+warning: `bun_spawn` (lib) generated 1 warning (run `cargo fix --lib -p bun_spawn` to apply 1 suggestion)
+warning: unreachable `pub` item
+   --> src/resolver/fs.rs:167:1
+    |
+167 | pub type EntryStoreBacking = allocators::BSSList<Entry, { preallocate::counts::FILES * 2 }>;
+    | ---^^^^^^^^^^^^^^^^^^^^^^^
+    | |
+    | help: consider restricting its visibility: `pub(crate)`
+    |
+    = help: or consider exporting it for use by other crates
+note: the lint level is defined here
+   --> src/resolver/lib.rs:33:9
+    |
+ 33 | #![warn(unreachable_pub)]
+    |         ^^^^^^^^^^^^^^^
+
+warning: `bun_resolver` (lib) generated 1 warning (run `cargo fix --lib -p bun_resolver` to apply 1 suggestion)
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:21:9
+   |
+21 |           pub static ENABLED: AtomicBool = AtomicBool::new(false);
+   |           ---^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+53 | /     debug_socket_monitor!(
+54 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR,
+55 | |         "writing to {}"
+56 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+note: the lint level is defined here
+  --> src/sql/lib.rs:9:9
+   |
+ 9 | #![warn(unreachable_pub)]
+   |         ^^^^^^^^^^^^^^^
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:25:9
+   |
+25 |           pub static CHECK: Once = Once::new();
+   |           ---^^^^^^^^^^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+53 | /     debug_socket_monitor!(
+54 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR,
+55 | |         "writing to {}"
+56 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:27:9
+   |
+27 |           pub fn load() {
+   |           ---^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+53 | /     debug_socket_monitor!(
+54 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR,
+55 | |         "writing to {}"
+56 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:43:9
+   |
+43 |           pub fn write(data: &[u8]) {
+   |           ---^^^^^^^^^^^^^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+53 | /     debug_socket_monitor!(
+54 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR,
+55 | |         "writing to {}"
+56 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:21:9
+   |
+21 |           pub static ENABLED: AtomicBool = AtomicBool::new(false);
+   |           ---^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+61 | /     debug_socket_monitor!(
+62 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR_READER,
+63 | |         "duplicating reads to {}"
+64 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:25:9
+   |
+25 |           pub static CHECK: Once = Once::new();
+   |           ---^^^^^^^^^^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+61 | /     debug_socket_monitor!(
+62 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR_READER,
+63 | |         "duplicating reads to {}"
+64 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:27:9
+   |
+27 |           pub fn load() {
+   |           ---^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+61 | /     debug_socket_monitor!(
+62 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR_READER,
+63 | |         "duplicating reads to {}"
+64 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:43:9
+   |
+43 |           pub fn write(data: &[u8]) {
+   |           ---^^^^^^^^^^^^^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+61 | /     debug_socket_monitor!(
+62 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR_READER,
+63 | |         "duplicating reads to {}"
+64 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: `bun_sql` (lib) generated 8 warnings
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+   --> src/install/PackageManager/PackageManagerEnqueue.rs:358:48
+    |
+358 |     let task = this.preallocated_resolve_tasks.get();
+    |                                                ^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+    --> src/install/PackageManager/PackageManagerEnqueue.rs:1659:48
+     |
+1659 |     let task = this.preallocated_resolve_tasks.get();
+     |                                                ^^^
+
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+    --> src/install/PackageManager/PackageManagerEnqueue.rs:1803:48
+     |
+1803 |     let task = this.preallocated_resolve_tasks.get();
+     |                                                ^^^
+
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+    --> src/install/PackageManager/runTasks.rs:1711:37
+     |
+1711 |     this.preallocated_network_tasks.get()
+     |                                     ^^^
+
+warning: `bun_install` (lib) generated 4 warnings
+warning: unnecessary `unsafe` block
+    --> src/jsc/VirtualMachine.rs:1515:17
+     |
+1515 |                 unsafe { (hook.func)(hook.ctx) };
+     |                 ^^^^^^ unnecessary `unsafe` block
+     |
+     = note: `#[warn(unused_unsafe)]` (part of `#[warn(unused)]`) on by default
+
+warning: type `js_secrets::SecretsCtx` is more private than the item `js_secrets::SecretsJob`
+  --> src/jsc/JSSecrets.rs:64:1
+   |
+64 | pub type SecretsJob = AnyTaskJob<SecretsCtx>;
+   | ^^^^^^^^^^^^^^^^^^^ type alias `js_secrets::SecretsJob` is reachable at visibility `pub`
+   |
+note: but type `js_secrets::SecretsCtx` is only usable at visibility `pub(self)`
+  --> src/jsc/JSSecrets.rs:23:1
+   |
+23 | struct SecretsCtx {
+   | ^^^^^^^^^^^^^^^^^
+   = note: `#[warn(private_interfaces)]` on by default
+
+warning: `bun_jsc` (lib) generated 2 warnings
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+    --> src/runtime/server/server_body.rs:3415:54
+     |
+3415 |         let ctx_slot = unsafe { (*this.request_pool).get() };
+     |                                                      ^^^
+     |
+     = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::try_get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+   --> src/runtime/server/mod.rs:705:56
+    |
+705 |         let ctx_slot = unsafe { (*server.request_pool).try_get() };
+    |                                                        ^^^^^^^
+
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+    --> src/runtime/bake/DevServer.rs:2097:55
+     |
+2097 |         let deferred_ptr = self.deferred_request_pool.get();
+     |                                                       ^^^
+
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::try_get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+    --> src/runtime/api/bun/h2_frame_parser.rs:7375:33
+     |
+7375 |                 let slot = pool.try_get();
+     |                                 ^^^^^^^
+
+warning: unused `bun_css::Maybe` that must be used
+    --> src/runtime/webcore/Blob.rs:4377:41
+     |
+4377 | ...                   f.close();
+     |                       ^^^^^^^^^
+     |
+     = note: this `Result` may be an `Err` variant, which should be handled
+note: the lint level is defined here
+    --> src/runtime/lib.rs:8:9
+     |
+   8 | #![warn(unused_must_use)]
+     |         ^^^^^^^^^^^^^^^
+help: use `let _ = ...` to ignore the resulting value
+     |
+4377 |                                         let _ = f.close();
+     |                                         +++++++
+
+warning: `bun_runtime` (lib) generated 5 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.82s
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_alloc-8c77f5b7cf9b5d08)
+
+running 10 tests
+test stack_fallback::tests::alignment ... ok
+test stack_fallback::tests::alloc_within_stack ... ok
+test stack_fallback::tests::dealloc_range_check ... ok
+test stack_fallback::tests::get_twice_panics - should panic ... ok
+test stack_fallback::tests::grow_in_place ... ok
+test stack_fallback::tests::grow_spills_to_fallback ... ok
+test stack_fallback::tests::overflow_to_fallback ... ok
+test stack_fallback::tests::reset_clears_guard ... ok
+test stack_fallback::tests::shrink_rewinds_last ... ok
+test stack_fallback::tests::vec_roundtrip ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.28s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_analytics-6e45602be236d811)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_api-f0328c508bb5d7c6)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_ast-94c2468ae63f1cb4)
+warning: unused import: `strings`
+  --> src/ast/expr.rs:13:22
+   |
+13 | use bun_core::{ZStr, strings};
+   |                      ^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+
+running 5 tests
+test known_global::tests::lookup_exhaustive ... ok
+test lexer_tables::tests::keyword_fn_matches_phf_table ... ok
+test lexer_tables::tests::property_modifier_find_matches_phf_map ... ok
+test lexer_tables::tests::strict_mode_reserved_fn_matches_phf_set ... ok
+test runtime::tests::all_sorted_matches_zig_comptime ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.78s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_ast_jsc-cc13e7c4f6b31c4d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_base64-f451b4ab7a0c536a)
+
+running 2 tests
+test zig_base64::tests::test_base64 ... ok
+test zig_base64::tests::test_base64_url_safe_no_pad ... FAILED
+
+failures:
+
+---- zig_base64::tests::test_base64_url_safe_no_pad stdout ----
+
+thread 'zig_base64::tests::test_base64_url_safe_no_pad' (1002) panicked at src/base64/lib.rs:885:22:
+called `Result::unwrap()` on an `Err` value: NoSpaceLeft
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+note: in Miri, you may have to set `MIRIFLAGS=-Zmiri-env-forward=RUST_BACKTRACE` for the environment variable to have an effect
+
+
+failures:
+    zig_base64::tests::test_base64_url_safe_no_pad
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.52s
+
+error: test failed, to rerun pass `-p bun_base64 --lib`
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_rust-1e6a395c44e9978a)
+error: unsupported operation: can't call foreign function `mi_malloc` on OS `linux`
+ --> src/mimalloc_sys/mimalloc.rs:515:8
+  |
+  = note: unsupported operation occurred here
+  |
+  = help: this means the program tried to do something Miri does not support; it does not indicate a bug in the program
+  = note: stack backtrace:
+          0: bun_alloc::mimalloc::mi_malloc_auto_align
+              at src/mimalloc_sys/mimalloc.rs:515:9: 515:24
+          1: <bun_alloc::Mimalloc as std::alloc::GlobalAlloc>::alloc
+              at src/bun_alloc/lib.rs:627:9: 627:70
+          2: _::__rust_alloc
+              at src/bun_bin/lib.rs:52:15: 52:34
+          3: alloc::raw_vec::RawVecInner::try_allocate_in
+              at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:465:41: 465:63
+          4: alloc::raw_vec::RawVecInner::with_capacity_in
+              at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:434:15: 434:92
+          5: alloc::raw_vec::RawVec::<std::ffi::OsString>::with_capacity_in
+              at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:177:20: 177:77
+          6: std::vec::Vec::<std::ffi::OsString>::with_capacity_in
+              at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:977:20: 977:61
+          7: std::vec::Vec::<std::ffi::OsString>::with_capacity
+              at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:524:9: 524:49
+          8: std::sys::args::unix::args
+              at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sys/args/unix.rs:24:19: 24:52
+          9: std::env::args_os
+              at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/env.rs:861:21: 861:38
+          10: std::env::args
+              at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/env.rs:826:19: 826:28
+          11: test::test_main_static
+              at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/test/src/lib.rs:191:16: 191:27
+          12: main
+              at no-location
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+
+error: test failed, to rerun pass `-p bun_bin --lib`
+
+Caused by:
+  process didn't exit successfully: `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /home/ubuntu/bun-ub-soak/bun/target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_rust-1e6a395c44e9978a` (exit status: 1)
+note: test exited abnormally; to see the full output pass --no-capture to the harness.
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_boringssl-df343b6a90a34f11)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_boringssl_sys-6bfb317d14393c79)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_brotli-8a77919ff3f8a02b)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_brotli_sys-166b776e18a91f2b)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_bundler-6c0f853a2604750d)
+
+running 1 test
+test options_impl::default_loaders_match_table ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_bundler_jsc-51202aff7d5f634c)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_bunfig-2680b95ec99c2b50)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_cares_sys-850af11f2d27021c)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_clap-20a39ccc30c9146f)
+
+running 10 tests
+test args::tests::shell_iterator ... ok
+test args::tests::slice_iterator ... ok
+test streaming::tests::all_params ... ok
+test streaming::tests::errors ... FAILED
+test streaming::tests::long_params ... ok
+test streaming::tests::positional_params ... ok
+test streaming::tests::short_params ... ok
+test tests::comptime_table_const_eval ... ok
+test tests::parse_param_macro_static_tables ... ok
+test tests::parse_param_test ... ok
+
+failures:
+
+---- streaming::tests::errors stdout ----
+
+thread 'streaming::tests::errors' (1004) panicked at src/clap/streaming.rs:414:9:
+assertion failed: false
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+note: in Miri, you may have to set `MIRIFLAGS=-Zmiri-env-forward=RUST_BACKTRACE` for the environment variable to have an effect
+
+
+failures:
+    streaming::tests::errors
+
+test result: FAILED. 9 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.48s
+
+error: test failed, to rerun pass `-p bun_clap --lib`
+     Running unittests lib.rs (target/miri/debug/deps/bun_clap_macros-f4ae87f0bc06e4c8)
+Running unit tests of `proc-macro` crates is not currently supported by Miri.
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_codegen-9d68d08dfde6b851)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_collections-06bb5043d2b4757d)
+error: generic parameters may not be used in const operations
+    --> src/collections/bit_set.rs:1903:28
+     |
+1903 |         [(); num_masks_for(SIZE)]:,
+     |                            ^^^^ cannot perform const operation using `SIZE`
+     |
+     = help: const parameters may only be used as standalone arguments here, i.e. `SIZE`
+     = help: add `#![feature(generic_const_exprs)]` to allow generic const expressions
+
+error: generic parameters may not be used in const operations
+    --> src/collections/bit_set.rs:1913:28
+     |
+1913 |         [(); num_masks_for(SIZE)]:,
+     |                            ^^^^ cannot perform const operation using `SIZE`
+     |
+     = help: const parameters may only be used as standalone arguments here, i.e. `SIZE`
+     = help: add `#![feature(generic_const_exprs)]` to allow generic const expressions
+
+error[E0433]: cannot find type `IntegerBitSet` in this scope
+   --> src/collections/hive_array.rs:744:18
+    |
+744 |         a.used = IntegerBitSet::init_empty();
+    |                  ^^^^^^^^^^^^^ use of undeclared type `IntegerBitSet`
+    |
+help: consider importing this struct through its public re-export
+    |
+714 +     use crate::IntegerBitSet;
+    |
+
+error[E0034]: multiple applicable items in scope
+   --> src/collections/linear_fifo.rs:883:74
+    |
+883 |         let mut fifo: LinearFifo<u8, StaticBuffer<u8, 32>> = LinearFifo::init();
+    |                                                                          ^^^^ multiple `init` found
+    |
+note: candidate #1 is defined in an impl for the type `linear_fifo::LinearFifo<T, linear_fifo::DynamicBuffer<T>>`
+   --> src/collections/linear_fifo.rs:237:5
+    |
+237 |     pub fn init() -> Self {
+    |     ^^^^^^^^^^^^^^^^^^^^^
+note: candidate #2 is defined in an impl for the type `linear_fifo::LinearFifo<T, linear_fifo::SliceBuffer<'a, T>>`
+   --> src/collections/linear_fifo.rs:224:5
+    |
+224 |     pub fn init(buf: &'a mut [T]) -> Self {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: candidate #3 is defined in an impl for the type `linear_fifo::LinearFifo<T, linear_fifo::StaticBuffer<T, N>>`
+   --> src/collections/linear_fifo.rs:212:5
+    |
+212 |     pub fn init() -> Self {
+    |     ^^^^^^^^^^^^^^^^^^^^^
+
+error: aborting due to 4 previous errors
+
+Some errors have detailed explanations: E0034, E0433.
+For more information about an error, try `rustc --explain E0034`.
+error: test failed, to rerun pass `-p bun_collections --lib`
+
+Caused by:
+  process didn't exit successfully: `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /home/ubuntu/bun-ub-soak/bun/target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_collections-06bb5043d2b4757d` (exit status: 1)
+note: test exited abnormally; to see the full output pass --no-capture to the harness.
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_core-a486cf494e191d98)
+warning: unreachable `pub` item
+    --> src/bun_core/output.rs:1647:9
+     |
+1647 |         pub static $name: $crate::output::ScopedLogger = $crate::output::ScopedLogger::new(
+     |         ---^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |         |
+     |         help: consider restricting its visibility: `pub(super)`
+     |
+    ::: src/bun_core/string/immutable/unicode.rs:23:1
+     |
+  23 | crate::declare_scope!(strings, hidden);
+     | -------------------------------------- in this macro invocation
+     |
+     = help: or consider exporting it for use by other crates
+note: the lint level is defined here
+    --> src/bun_core/lib.rs:11:26
+     |
+  11 | #![warn(unused_must_use, unreachable_pub)]
+     |                          ^^^^^^^^^^^^^^^
+     = note: this warning originates in the macro `crate::declare_scope` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+    --> src/bun_core/string/immutable/unicode.rs:1507:5
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |     ^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> src/bun_core/string/immutable/unicode.rs:1507:27
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |                           ^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> src/bun_core/string/immutable/unicode.rs:1507:50
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |                                                  ^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> src/bun_core/string/immutable/unicode.rs:1507:74
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |                                                                          ^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> src/bun_core/string/immutable/unicode.rs:1508:5
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+1508 |     u16_get_supplementary, u16_is_lead, u16_is_surrogate, u16_is_trail,
+     |     ^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> src/bun_core/string/immutable/unicode.rs:1508:41
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+1508 |     u16_get_supplementary, u16_is_lead, u16_is_surrogate, u16_is_trail,
+     |                                         ^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> src/bun_core/lib.rs:2159:5
+     |
+2159 |     pub fn is_ip_address(input: &[u8]) -> bool {
+     |     ---^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |     |
+     |     help: consider restricting its visibility: `pub(crate)`
+     |
+     = help: or consider exporting it for use by other crates
+
+
+running 25 tests
+test Progress::tests::basic_functionality ... ignored, uses thread::sleep() and is therefore slow; also prints bogus progress data to stderr
+test atomic_cell::tests::atomic_cell_bool ... ok
+test atomic_cell::tests::atomic_cell_fetch_update ... ok
+test atomic_cell::tests::atomic_cell_ptr ... ok
+test atomic_cell::tests::atomic_cell_roundtrip_ints ... ok
+test deprecated::tests::basic_doubly_linked_list_test ... error: Undefined Behavior: attempting a read access using <227806> at alloc89302[0x10], but that tag does not exist in the borrow stack for this location
+   --> src/bun_core/deprecated.rs:391:29
+    |
+391 |                     assert!((*it).data == index);
+    |                             ^^^^^^^^^^ this error occurs as part of an access at alloc89302[0x10..0x14]
+    |
+    = help: this indicates a potential bug in the program: it performed an invalid operation, but the Stacked Borrows rules it violated are still experimental
+    = help: see https://github.com/rust-lang/unsafe-code-guidelines/blob/master/wip/stacked-borrows.md for further information
+help: <227806> was created by a SharedReadWrite retag at offsets [0x0..0x18]
+   --> src/bun_core/deprecated.rs:380:25
+    |
+380 |             list.append(&mut two); // {2}
+    |                         ^^^^^^^^
+help: <227806> was later invalidated at offsets [0x0..0x18] by a Unique retag
+   --> src/bun_core/deprecated.rs:384:31
+    |
+384 |             list.insert_after(&mut two, &mut three); // {1, 2, 3, 4, 5}
+    |                               ^^^^^^^^
+    = note: this is on thread `deprecated::tes`
+    = note: stack backtrace:
+            0: deprecated::tests::basic_doubly_linked_list_test
+                at src/bun_core/deprecated.rs:391:29: 391:39
+            1: deprecated::tests::basic_doubly_linked_list_test::{closure#0}
+                at src/bun_core/deprecated.rs:369:39: 369:39
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error; 8 warnings emitted
+
+error: test failed, to rerun pass `-p bun_core --lib`
+
+Caused by:
+  process didn't exit successfully: `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /home/ubuntu/bun-ub-soak/bun/target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_core-a486cf494e191d98` (exit status: 1)
+note: test exited abnormally; to see the full output pass --no-capture to the harness.
+     Running unittests lib.rs (target/miri/debug/deps/bun_core_macros-a058edfab33be9c8)
+Running unit tests of `proc-macro` crates is not currently supported by Miri.
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_crash_handler-3a5380230068db53)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_csrf-55caf7cbe170e98a)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_css-2935c921ed2ba98a)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/debug/deps/bun_css_derive-34b9643c6dc51767)
+Running unit tests of `proc-macro` crates is not currently supported by Miri.
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_css_jsc-c492ff4d81707c7d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/debug/deps/bun_dispatch-407085d5976258d7)
+Running unit tests of `proc-macro` crates is not currently supported by Miri.
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_dns-467252445125813d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_dotenv-09633b3a44368d14)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_errno-5a1685504d1b0ec4)
+
+running 3 tests
+test errno_name_tests::coreutils_map ... ok
+test errno_name_tests::errno_mapping ... ok
+test errno_name_tests::errno_table_full_range ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.20s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_event_loop-42f1c74d835f2a65)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_exe_format-e8b0a3c650475889)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_glob-a574762efd3a7bba)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_hash-0a2fb4284925f654)
+
+running 19 tests
+test adler32::tests::long ... ok
+test adler32::tests::sanity ... ok
+test adler32::tests::very_long ... ok
+test adler32::tests::very_long_with_variation ... ok
+test cityhash::tests::cityhash32_smhasher ... ok
+test cityhash::tests::cityhash64_smhasher ... ok
+test murmur::tests::murmur2_32_smhasher ... ok
+test murmur::tests::murmur2_32_uint ... ok
+test murmur::tests::murmur2_64_smhasher ... ok
+test murmur::tests::murmur2_64_uint ... ok
+test murmur::tests::murmur3_32_smhasher ... ok
+test murmur::tests::murmur3_32_uint ... ok
+test rapidhash::tests::vectors ... ok
+test xxhash::tests::xxhash32_smhasher ... ok
+test xxhash::tests::xxhash32_vectors ... ok
+test xxhash::tests::xxhash3_smhasher ... ok
+test xxhash::tests::xxhash3_vectors ... ok
+test xxhash::tests::xxhash64_smhasher ... ok
+test xxhash::tests::xxhash64_vectors ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 32.75s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_highway-64cfe172a9bde5cd)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_http-80d366100d0a1ef0)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_http_jsc-019de576f986df24)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_http_types-591186ab003b918e)
+
+running 1 test
+test Method::tests::which_roundtrip ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_ini-03fafae551c112c8)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_install-2cad251ef86c56a0)
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+   --> src/install/PackageManager/PackageManagerEnqueue.rs:358:48
+    |
+358 |     let task = this.preallocated_resolve_tasks.get();
+    |                                                ^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+    --> src/install/PackageManager/PackageManagerEnqueue.rs:1659:48
+     |
+1659 |     let task = this.preallocated_resolve_tasks.get();
+     |                                                ^^^
+
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+    --> src/install/PackageManager/PackageManagerEnqueue.rs:1803:48
+     |
+1803 |     let task = this.preallocated_resolve_tasks.get();
+     |                                                ^^^
+
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+    --> src/install/PackageManager/runTasks.rs:1711:37
+     |
+1711 |     this.preallocated_network_tasks.get()
+     |                                     ^^^
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_install_jsc-17af37a6e5ce067d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_install_types-6e58bd55f6389e34)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_io-fd8602413d1bf2d6)
+
+running 4 tests
+test write::tests::buf_writer_basic ... ok
+test write::tests::buf_writer_large_bypass ... ok
+test write::tests::fmt_adapter ... error: unsupported operation: can't call foreign function `simdutf__validate_utf8` on OS `linux`
+ --> src/simdutf_sys/simdutf.rs:254:17
+  |
+  = note: unsupported operation occurred here
+  |
+  = help: this means the program tried to do something Miri does not support; it does not indicate a bug in the program
+  = note: this is on thread `write::tests::f`
+  = note: stack backtrace:
+          0: bun_simdutf_sys::simdutf::validate::utf8
+              at src/simdutf_sys/simdutf.rs:254:18: 254:69
+          1: bun_core::str_utf8
+              at src/bun_core/string/immutable.rs:1911:8: 1911:38
+          2: <write::FmtAdapter<'_, std::string::String> as bun_core::string::Write>::write_all
+              at src/io/write.rs:349:23: 349:46
+          3: write::tests::fmt_adapter
+              at src/io/write.rs:462:13: 462:32
+          4: write::tests::fmt_adapter::{closure#0}
+              at src/io/write.rs:458:21: 458:21
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+
+error: test failed, to rerun pass `-p bun_io --lib`
+
+Caused by:
+  process didn't exit successfully: `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /home/ubuntu/bun-ub-soak/bun/target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_io-fd8602413d1bf2d6` (exit status: 1)
+note: test exited abnormally; to see the full output pass --no-capture to the harness.
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_js-3bf4b2e59441ebe5)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_js_parser-11fcce9a41e13b28)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_js_parser_jsc-10e480a1eb9f5117)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_js_printer-a19d47cbcbb8e323)
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+   --> src/js_printer/renamer.rs:689:58
+    |
+689 |         let s: *mut NumberScope = self.number_scope_pool.get();
+    |                                                          ^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+   --> src/js_printer/renamer.rs:753:80
+    |
+753 |                 let new_child_scope: *mut NumberScope = self.number_scope_pool.get();
+    |                                                                                ^^^
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_jsc-d61dcce32a756509)
+warning: unnecessary `unsafe` block
+    --> src/jsc/VirtualMachine.rs:1515:17
+     |
+1515 |                 unsafe { (hook.func)(hook.ctx) };
+     |                 ^^^^^^ unnecessary `unsafe` block
+     |
+     = note: `#[warn(unused_unsafe)]` (part of `#[warn(unused)]`) on by default
+
+warning: type `js_secrets::SecretsCtx` is more private than the item `js_secrets::SecretsJob`
+  --> src/jsc/JSSecrets.rs:64:1
+   |
+64 | pub type SecretsJob = AnyTaskJob<SecretsCtx>;
+   | ^^^^^^^^^^^^^^^^^^^ type alias `js_secrets::SecretsJob` is reachable at visibility `pub`
+   |
+note: but type `js_secrets::SecretsCtx` is only usable at visibility `pub(self)`
+  --> src/jsc/JSSecrets.rs:23:1
+   |
+23 | struct SecretsCtx {
+   | ^^^^^^^^^^^^^^^^^
+   = note: `#[warn(private_interfaces)]` on by default
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/debug/deps/bun_jsc_macros-bece6942284426e8)
+Running unit tests of `proc-macro` crates is not currently supported by Miri.
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_libarchive-d2a8ee5232fc1338)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_libarchive_sys-4c81c45bf08029c7)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_libdeflate_sys-1dcd84f789b83435)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_libuv_sys-8b0449f02af19ee7)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_lolhtml_sys-468c9d50dc029abf)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_md-835d3c9944fc9da8)
+
+running 14 tests
+test unicode::tests::alternating_range_latin_extended_a ... ok
+test unicode::tests::ascii_case_folding ... ok
+test unicode::tests::cyrillic_case_folding ... ok
+test unicode::tests::deseret_alphabet ... ok
+test unicode::tests::fullwidth_latin_uppercase ... ok
+test unicode::tests::greek_case_folding ... ok
+test unicode::tests::kelvin_sign ... ok
+test unicode::tests::latin_1_supplement_case_folding ... ok
+test unicode::tests::micro_sign ... ok
+test unicode::tests::no_mapping_already_lowercase_or_not_a_letter ... ok
+test unicode::tests::omega_symbol ... ok
+test unicode::tests::three_codepoint_fold_ffi_ligature ... ok
+test unicode::tests::two_codepoint_fold_fi_ligature ... ok
+test unicode::tests::two_codepoint_fold_german_eszett ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.65s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_meta-2c8d4be9f5d057c0)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_mimalloc_sys-f93dfc44842f5e7c)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_node_fallbacks-d16618086601c5e8)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_opaque-c5b7096bd3ab7248)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_options_types-acdbe2a448656719)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_output-6cf3d58ab9deb89e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_output_tags-5db38952b382edbe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_parsers-e973f6639c2f883e)
+error[E0277]: the trait bound `&std::vec::Vec<u8>: bun_ast::IntoStr` is not satisfied
+    --> src/parsers/json.rs:1396:71
+     |
+1396 |         let source = bun_ast::Source::init_path_string("source.json", &contents);
+     |                      ---------------------------------                ^^^^^^^^^ the trait `bun_ast::IntoStr` is not implemented for `&std::vec::Vec<u8>`
+     |                      |
+     |                      required by a bound introduced by this call
+     |
+note: required by a bound in `bun_ast::Source::init_path_string`
+    --> src/ast/lib.rs:2747:71
+     |
+2747 |     pub fn init_path_string(path_string: impl IntoStr, contents: impl IntoStr) -> Source {
+     |                                                                       ^^^^^^^ required by this bound in `Source::init_path_string`
+help: consider dereferencing here
+     |
+1396 |         let source = bun_ast::Source::init_path_string("source.json", &*contents);
+     |                                                                        +
+
+error[E0277]: `bun_ast::Expr` doesn't implement `std::fmt::Debug`
+    --> src/parsers/json.rs:1403:17
+     |
+1402 |                 "--FAIL--\nExpr {:?}\nLog: {}\n--FAIL--",
+     |                                 ---- required by this formatting parameter
+1403 |                 expr,
+     |                 ^^^^ `bun_ast::Expr` cannot be formatted using `{:?}` because it doesn't implement `std::fmt::Debug`
+     |
+     = help: the trait `std::fmt::Debug` is not implemented for `bun_ast::Expr`
+
+error[E0063]: missing fields `indent` and `minify_whitespace` in initializer of `bun_js_printer::PrintJsonOptions<'_>`
+    --> src/parsers/json.rs:1414:13
+     |
+1414 |             js_printer::PrintJsonOptions {
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ missing `indent` and `minify_whitespace`
+
+error[E0599]: no method named `as_slice` found for struct `bun_str::MutableString` in the current scope
+    --> src/parsers/json.rs:1419:37
+     |
+1419 |         let buf = writer.ctx.buffer.as_slice();
+     |                                     ^^^^^^^^
+     |
+help: one of the expressions' fields has a method of the same name
+     |
+1419 |         let buf = writer.ctx.buffer.list.as_slice();
+     |                                     +++++
+help: there is a method `slice` with a similar name
+     |
+1419 -         let buf = writer.ctx.buffer.as_slice();
+1419 +         let buf = writer.ctx.buffer.slice();
+     |
+
+error: aborting due to 4 previous errors
+
+Some errors have detailed explanations: E0063, E0277, E0599.
+For more information about an error, try `rustc --explain E0063`.
+error: test failed, to rerun pass `-p bun_parsers --lib`
+
+Caused by:
+  process didn't exit successfully: `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /home/ubuntu/bun-ub-soak/bun/target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_parsers-e973f6639c2f883e` (exit status: 1)
+note: test exited abnormally; to see the full output pass --no-capture to the harness.
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_patch-6b935f988766b7fc)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_patch_jsc-1fa9fe4b52fb6c61)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_paths-9df8da6b8503723f)
+warning: ambiguous glob re-exports
+  --> src/paths/lib.rs:39:13
+   |
+39 |     pub use super::string_paths::*;
+   |             ^^^^^^^^^^^^^^^^^^^^^^ the name `is_windows_absolute_path_missing_drive_letter` in the value namespace is first re-exported here
+40 |     pub use bun_core::strings::*;
+   |             -------------------- but the name `is_windows_absolute_path_missing_drive_letter` in the value namespace is also re-exported here
+   |
+   = note: `#[warn(ambiguous_glob_reexports)]` on by default
+
+warning: ambiguous glob re-exports
+  --> src/paths/lib.rs:39:13
+   |
+39 |     pub use super::string_paths::*;
+   |             ^^^^^^^^^^^^^^^^^^^^^^ the name `basename` in the value namespace is first re-exported here
+40 |     pub use bun_core::strings::*;
+   |             -------------------- but the name `basename` in the value namespace is also re-exported here
+
+
+running 3 tests
+test component_iterator::tests::back_then_forward ... FAILED
+test component_iterator::tests::posix_basic ... ok
+test component_iterator::tests::windows_roots ... ok
+
+failures:
+
+---- component_iterator::tests::back_then_forward stdout ----
+
+thread 'component_iterator::tests::back_then_forward' (1001) panicked at src/paths/component_iterator.rs:416:9:
+assertion `left == right` failed
+  left: [98]
+ right: [97]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+note: in Miri, you may have to set `MIRIFLAGS=-Zmiri-env-forward=RUST_BACKTRACE` for the environment variable to have an effect
+
+
+failures:
+    component_iterator::tests::back_then_forward
+
+test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.50s
+
+error: test failed, to rerun pass `-p bun_paths --lib`
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_perf-0cf05849c0861f70)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_picohttp-ef496c9e2d296704)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_picohttp_sys-f64bd3e4ddd93641)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_platform-7696b2c6d08ceeef)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_ptr-8308df39bed1061a)
+
+running 1 test
+test cow_slice::tests::cow_slice ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_resolve_builtins-6480eb57ad04d99c)
+
+running 1 test
+test node_builtins::tests::cardinalities_match_zig_spec ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_resolver-cb661912a4c353cb)
+warning: unreachable `pub` item
+   --> src/resolver/fs.rs:167:1
+    |
+167 | pub type EntryStoreBacking = allocators::BSSList<Entry, { preallocate::counts::FILES * 2 }>;
+    | ---^^^^^^^^^^^^^^^^^^^^^^^
+    | |
+    | help: consider restricting its visibility: `pub(crate)`
+    |
+    = help: or consider exporting it for use by other crates
+note: the lint level is defined here
+   --> src/resolver/lib.rs:33:9
+    |
+ 33 | #![warn(unreachable_pub)]
+    |         ^^^^^^^^^^^^^^^
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_router-6852b302928a8a64)
+error[E0425]: cannot find value `fs` in this scope
+    --> src/router/lib.rs:2142:61
+     |
+2142 |             let fs_opaque: &'static FileSystem = unsafe { &*fs };
+     |                                                             ^^ not found in this scope
+
+error[E0425]: cannot find value `fs` in this scope
+    --> src/router/lib.rs:2174:85
+     |
+2174 |             let mut resolver = TestResolver(bun_resolver::Resolver::init1(&mut log, fs, opts));
+     |                                                                                     ^^ not found in this scope
+
+error[E0425]: cannot find value `fs` in this scope
+    --> src/router/lib.rs:2212:61
+     |
+2212 |             let fs_opaque: &'static FileSystem = unsafe { &*fs };
+     |                                                             ^^ not found in this scope
+
+error[E0425]: cannot find value `fs` in this scope
+    --> src/router/lib.rs:2235:85
+     |
+2235 |             let mut resolver = TestResolver(bun_resolver::Resolver::init1(&mut log, fs, opts));
+     |                                                                                     ^^ not found in this scope
+
+error[E0277]: the trait bound `&mut bun_core::io::Writer: bun_ast::IntoLogWrite` is not satisfied
+    --> src/router/lib.rs:2159:48
+     |
+2159 |                 let _ = unsafe { &*log }.print(bun_core::output::error_writer());
+     |                                          ----- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `std::fmt::Write` is not implemented for `bun_core::io::Writer`
+     |                                          |
+     |                                          required by a bound introduced by this call
+     |
+     = note: `bun_core::io::Writer` implements similarly named trait `bun_core::string::Write`, but not `std::fmt::Write`
+help: the trait `bun_ast::IntoLogWrite` is implemented for `*mut bun_core::io::Writer`
+    --> src/ast/lib.rs:616:1
+     |
+ 616 | impl IntoLogWrite for *mut bun_core::io::Writer {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     = note: required for `&mut bun_core::io::Writer` to implement `bun_ast::IntoLogWrite`
+note: required by a bound in `bun_ast::Log::print`
+    --> src/ast/lib.rs:2433:21
+     |
+2433 |     pub fn print<W: IntoLogWrite>(&self, to: W) -> fmt::Result {
+     |                     ^^^^^^^^^^^^ required by this bound in `Log::print`
+
+error[E0277]: the trait bound `&mut bun_core::io::Writer: bun_ast::IntoLogWrite` is not satisfied
+    --> src/router/lib.rs:2226:48
+     |
+2226 |                 let _ = unsafe { &*log }.print(bun_core::output::error_writer());
+     |                                          ----- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `std::fmt::Write` is not implemented for `bun_core::io::Writer`
+     |                                          |
+     |                                          required by a bound introduced by this call
+     |
+     = note: `bun_core::io::Writer` implements similarly named trait `bun_core::string::Write`, but not `std::fmt::Write`
+help: the trait `bun_ast::IntoLogWrite` is implemented for `*mut bun_core::io::Writer`
+    --> src/ast/lib.rs:616:1
+     |
+ 616 | impl IntoLogWrite for *mut bun_core::io::Writer {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     = note: required for `&mut bun_core::io::Writer` to implement `bun_ast::IntoLogWrite`
+note: required by a bound in `bun_ast::Log::print`
+    --> src/ast/lib.rs:2433:21
+     |
+2433 |     pub fn print<W: IntoLogWrite>(&self, to: W) -> fmt::Result {
+     |                     ^^^^^^^^^^^^ required by this bound in `Log::print`
+
+error: aborting due to 6 previous errors
+
+Some errors have detailed explanations: E0277, E0425.
+For more information about an error, try `rustc --explain E0277`.
+error: test failed, to rerun pass `-p bun_router --lib`
+
+Caused by:
+  process didn't exit successfully: `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /home/ubuntu/bun-ub-soak/bun/target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_router-6852b302928a8a64` (exit status: 1)
+note: test exited abnormally; to see the full output pass --no-capture to the harness.
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_runtime-c79ae34d42531593)
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+    --> src/runtime/server/server_body.rs:3415:54
+     |
+3415 |         let ctx_slot = unsafe { (*this.request_pool).get() };
+     |                                                      ^^^
+     |
+     = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::try_get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+   --> src/runtime/server/mod.rs:705:56
+    |
+705 |         let ctx_slot = unsafe { (*server.request_pool).try_get() };
+    |                                                        ^^^^^^^
+
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+    --> src/runtime/bake/DevServer.rs:2097:55
+     |
+2097 |         let deferred_ptr = self.deferred_request_pool.get();
+     |                                                       ^^^
+
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::try_get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+    --> src/runtime/api/bun/h2_frame_parser.rs:7375:33
+     |
+7375 |                 let slot = pool.try_get();
+     |                                 ^^^^^^^
+
+warning: unused `bun_css::Maybe` that must be used
+    --> src/runtime/webcore/Blob.rs:4377:41
+     |
+4377 | ...                   f.close();
+     |                       ^^^^^^^^^
+     |
+     = note: this `Result` may be an `Err` variant, which should be handled
+note: the lint level is defined here
+    --> src/runtime/lib.rs:8:9
+     |
+   8 | #![warn(unused_must_use)]
+     |         ^^^^^^^^^^^^^^^
+help: use `let _ = ...` to ignore the resulting value
+     |
+4377 |                                         let _ = f.close();
+     |                                         +++++++
+
+
+running 10 tests
+test node::myers_diff_impl::tests::test_are_lines_equal ... ok
+test node::myers_diff_impl::tests::test_str_differ ... ok
+test test_runner::diff::diff_match_patch::tests::test_diff_basic ... ok
+test test_runner::diff::diff_match_patch::tests::test_diff_bisect ... error: unsupported operation: `clock_gettime` with `REALTIME` clocks not available when isolation is enabled
+   --> /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sys/pal/unix/time.rs:107:22
+    |
+107 |         cvt(unsafe { libc::clock_gettime(clock, t.as_mut_ptr()) }).unwrap();
+    |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsupported operation occurred here
+    |
+    = help: set `MIRIFLAGS=-Zmiri-disable-isolation` to disable isolation;
+    = help: or set `MIRIFLAGS=-Zmiri-isolation-error=warn` to make Miri return an error code from isolated operations (if supported for that operation) and continue with a warning
+    = note: this is on thread `test_runner::di`
+    = note: stack backtrace:
+            0: std::sys::pal::unix::time::Timespec::now
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sys/pal/unix/time.rs:107:22: 107:64
+            1: std::sys::time::unix::SystemTime::now
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sys/time/unix.rs:24:25: 24:60
+            2: std::time::SystemTime::now
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/time.rs:602:20: 602:43
+            3: test_runner::diff::diff_match_patch::milli_timestamp
+                at src/runtime/test_runner/diff/diff_match_patch.rs:1575:5: 1575:33
+            4: test_runner::diff::diff_match_patch::DiffMatchPatch::<u8>::diff_bisect
+                at src/runtime/test_runner/diff/diff_match_patch.rs:546:16: 546:33
+            5: test_runner::diff::diff_match_patch::tests::test_diff_bisect
+                at src/runtime/test_runner/diff/diff_match_patch.rs:1680:21: 1680:53
+            6: test_runner::diff::diff_match_patch::tests::test_diff_bisect::{closure#0}
+                at src/runtime/test_runner/diff/diff_match_patch.rs:1670:26: 1670:26
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error; 5 warnings emitted
+
+error: test failed, to rerun pass `-p bun_runtime --lib`
+
+Caused by:
+  process didn't exit successfully: `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /home/ubuntu/bun-ub-soak/bun/target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_runtime-c79ae34d42531593` (exit status: 1)
+note: test exited abnormally; to see the full output pass --no-capture to the harness.
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_s3_signing-4a1c048c577261ca)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_safety-f6d12a9ff19161c1)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_semver-9064ba0684a5ba0e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_semver_jsc-83d020e665f70b91)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_sha_hmac-b42f9ac8a225c72b)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_shell_parser-915150204dbd0f92)
+
+running 1 test
+test braces::tests::lexer ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_simdutf_sys-e30d78868a29ac58)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_sourcemap-a2e3a2d6c654a936)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_sourcemap_jsc-e76ef5cb1f4ec290)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_spawn-9e099d02cfd9c577)
+warning: unused import: `RefCounted`
+ --> src/spawn/static_pipe_writer.rs:8:48
+  |
+8 | use bun_ptr::{IntrusiveRc, RawSlice, RefCount, RefCounted};
+  |                                                ^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_spawn_sys-a2a42535a53f7f53)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_sql-c877bc74e50fc26f)
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:21:9
+   |
+21 |           pub static ENABLED: AtomicBool = AtomicBool::new(false);
+   |           ---^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+53 | /     debug_socket_monitor!(
+54 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR,
+55 | |         "writing to {}"
+56 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+note: the lint level is defined here
+  --> src/sql/lib.rs:9:9
+   |
+ 9 | #![warn(unreachable_pub)]
+   |         ^^^^^^^^^^^^^^^
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:25:9
+   |
+25 |           pub static CHECK: Once = Once::new();
+   |           ---^^^^^^^^^^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+53 | /     debug_socket_monitor!(
+54 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR,
+55 | |         "writing to {}"
+56 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:27:9
+   |
+27 |           pub fn load() {
+   |           ---^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+53 | /     debug_socket_monitor!(
+54 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR,
+55 | |         "writing to {}"
+56 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:43:9
+   |
+43 |           pub fn write(data: &[u8]) {
+   |           ---^^^^^^^^^^^^^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+53 | /     debug_socket_monitor!(
+54 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR,
+55 | |         "writing to {}"
+56 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:21:9
+   |
+21 |           pub static ENABLED: AtomicBool = AtomicBool::new(false);
+   |           ---^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+61 | /     debug_socket_monitor!(
+62 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR_READER,
+63 | |         "duplicating reads to {}"
+64 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:25:9
+   |
+25 |           pub static CHECK: Once = Once::new();
+   |           ---^^^^^^^^^^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+61 | /     debug_socket_monitor!(
+62 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR_READER,
+63 | |         "duplicating reads to {}"
+64 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:27:9
+   |
+27 |           pub fn load() {
+   |           ---^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+61 | /     debug_socket_monitor!(
+62 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR_READER,
+63 | |         "duplicating reads to {}"
+64 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:43:9
+   |
+43 |           pub fn write(data: &[u8]) {
+   |           ---^^^^^^^^^^^^^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+61 | /     debug_socket_monitor!(
+62 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR_READER,
+63 | |         "duplicating reads to {}"
+64 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_sql_jsc-7f544de198f5033d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_standalone_graph-982f4f9471f95515)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_sys-9fcbcdf0b54032ee)
+
+running 1 test
+test libuv_error_map::enoent_label ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_sys_jsc-1968f465d80f759f)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_tcc_sys-ec4d5599a1b4b8c3)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_threading-16208a3e9d79bc62)
+
+running 2 tests
+test rwlock::tests::raw_internal_state ... ok
+test rwlock::tests::smoke ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_transpiler-c5a3784d2f2fefbe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_unicode-1e36114bbda3ea44)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_url-20888a4bc06a058f)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_url_jsc-13f946ae9f9d9cc7)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_uws-3da0a8953642d215)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_uws_sys-573db3e741d25a51)
+
+running 2 tests
+test quic::header::classify_tests::all_entries_hit ... ok
+test quic::header::classify_tests::misses ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.81s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_valkey-7e5879744b71d233)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_watcher-bf837c3086e130e6)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_which-ef14d8e1557c35b3)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_windows_sys-bc8582ce53ccc1ae)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_wyhash-5560c4edc66b327c)
+
+running 8 tests
+test tests::hash_const_matches_runtime ... ok
+test tests::test_hash_ascii_lowercase ... ok
+test tests::test_iterative_api ... ok
+test tests::test_iterative_chunked_matches_oneshot ... ok
+test tests::test_iterative_maintains_last_sixteen ... ok
+test tests::test_smhasher ... ok
+test tests::test_vectors ... ok
+test tests::test_wyhash_is_not_wyhash11 ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.66s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_zlib-18c882e211c5839c)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_zlib_sys-06ebfa8c60e5f6c6)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_zstd-68dd8b41aa4b3388)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+error: 10 targets failed:
+    `-p bun_base64 --lib`
+    `-p bun_bin --lib`
+    `-p bun_clap --lib`
+    `-p bun_collections --lib`
+    `-p bun_core --lib`
+    `-p bun_io --lib`
+    `-p bun_parsers --lib`
+    `-p bun_paths --lib`
+    `-p bun_router --lib`
+    `-p bun_runtime --lib`

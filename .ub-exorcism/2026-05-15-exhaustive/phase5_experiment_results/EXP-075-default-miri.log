@@ -1,0 +1,26 @@
+    Blocking waiting for file lock on build directory
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp-075-devserver-from-ref-backref`
+error: Undefined Behavior: attempting a write access using <243> at alloc109[0x0], but that tag only grants SharedReadOnly permission for this location
+  --> src/main.rs:29:13
+   |
+29 |             (*self.dev.cast_mut()).deferred_request_pool += 1;
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this error occurs as part of an access at alloc109[0x0..0x8]
+   |
+   = help: this indicates a potential bug in the program: it performed an invalid operation, but the Stacked Borrows rules it violated are still experimental
+   = help: see https://github.com/rust-lang/unsafe-code-guidelines/blob/master/wip/stacked-borrows.md for further information
+help: <243> was created by a SharedReadOnly retag at offsets [0x0..0x8]
+  --> src/main.rs:21:18
+   |
+21 |             dev: core::ptr::from_ref(self),
+   |                  ^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: stack backtrace:
+           0: DeferredRequest::free
+               at src/main.rs:29:13: 29:62
+           1: main
+               at src/main.rs:40:5: 40:20
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

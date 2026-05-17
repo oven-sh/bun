@@ -1,0 +1,29 @@
+    Updating crates.io index
+     Locking 17 packages to latest compatible versions
+      Adding rustix v0.38.44 (available: v1.1.4)
+   Compiling rustix v0.38.44
+   Compiling linux-raw-sys v0.4.15
+   Compiling bitflags v2.11.1
+   Compiling libc v0.2.186
+   Compiling codex-stat-layout v0.0.0 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/CODEX-stat-layout)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.11s
+     Running `/tmp/cargo-target/debug/codex-stat-layout`
+target = x86_64
+size  rustix=144 libc=144
+align rustix=8 libc=8
+st_dev           rustix=0   libc=0   OK
+st_ino           rustix=8   libc=8   OK
+st_nlink         rustix=16  libc=16  OK
+st_mode          rustix=24  libc=24  OK
+st_uid           rustix=28  libc=28  OK
+st_gid           rustix=32  libc=32  OK
+st_rdev          rustix=40  libc=40  OK
+st_size          rustix=48  libc=48  OK
+st_blksize       rustix=56  libc=56  OK
+st_blocks        rustix=64  libc=64  OK
+st_atime         rustix=72  libc=72  OK
+st_atime_nsec    rustix=80  libc=80  OK
+st_mtime         rustix=88  libc=88  OK
+st_mtime_nsec    rustix=96  libc=96  OK
+st_ctime         rustix=104 libc=104 OK
+st_ctime_nsec    rustix=112 libc=112 OK

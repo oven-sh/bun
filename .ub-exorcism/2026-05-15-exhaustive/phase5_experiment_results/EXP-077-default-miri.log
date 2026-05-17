@@ -1,0 +1,21 @@
+   Compiling exp-077-css-static-lifetime v0.0.0 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-077)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp-077-css-static-lifetime`
+error: Undefined Behavior: constructing invalid value of type ToCssResult: at .exports.<enum-variant(Some)>.0.name, encountered a dangling reference (use-after-free)
+  --> src/main.rs:25:5
+   |
+25 |     result
+   |     ^^^^^^ Undefined Behavior occurred here
+   |
+   = help: this indicates a bug in the program: it performed an invalid operation, and caused Undefined Behavior
+   = help: see https://doc.rust-lang.org/nightly/reference/behavior-considered-undefined.html for further information
+   = note: stack backtrace:
+           0: make_result
+               at src/main.rs:25:5: 25:11
+           1: main
+               at src/main.rs:29:18: 29:31
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

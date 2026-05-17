@@ -1,9 +1,11 @@
 # Codex ast-grep UB Sweep Review — 2026-05-16
 
-This is a triage layer over the raw skill detector output in
-`phase3_raw/codex_ast_grep_ub_patterns_2026-05-16.txt`. Codex later reran the
-same skill detector directly and captured the equivalent output at
-`phase2_raw/codex_ast_grep_ub_patterns_2026-05-16.log`.
+This is a triage layer over the raw skill ast-grep detector output. The
+~6 MB raw dump (originally at `phase3_raw/codex_ast_grep_ub_patterns_2026-05-16.txt`,
+plus a near-duplicate at `codex_sweeps/`) was dropped from the PR to keep the
+diff reviewable. The triaged digest below preserves every actionable signal;
+to regenerate the raw dump, rerun the skill's ast-grep ruleset against
+`origin/main@4d443e5402`.
 
 The important rule: **ast-grep hits are candidates, not verdicts**. This pass is
 for preventing two opposite mistakes:

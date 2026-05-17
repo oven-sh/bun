@@ -336,6 +336,13 @@ impl Crypto {
     pub fn constructor(global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<*mut Crypto> {
         Err(global.throw_illegal_constructor("Crypto"))
     }
+
+    // `#[JsClass]` emits `CryptoClass__finalize` calling this when the GC frees
+    // `JSCrypto` (e.g. on VM teardown with `BUN_DESTRUCT_VM_ON_EXIT=1`).
+    // `Crypto` owns no resources beyond its own allocation, so dropping the
+    // `Box` is the entire body. Without this the `m_ctx` `Box<Crypto>` from
+    // `CryptoObject__create` is never freed.
+    pub fn finalize(self: Box<Self>) {}
 }
 
 fn random_data(global: &JSGlobalObject, slice: &mut [u8]) {

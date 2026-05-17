@@ -13,7 +13,7 @@ beforeAll(() => {
 describe.concurrent(() => {
   it("two invalid arguments, should display error message and suggest command", async () => {
     const cwd = tmpdirSync();
-    const { stderr } = spawn({
+    await using proc = spawn({
       cmd: [bunExe(), "upgrade", "bun-types", "--dev"],
       cwd,
       stdout: null,
@@ -22,14 +22,14 @@ describe.concurrent(() => {
       env,
     });
 
-    const err = await stderr.text();
+    const err = await proc.stderr.text();
     expect(err.split(/\r?\n/)).toContain("error: This command updates Bun itself, and does not take package names.");
     expect(err.split(/\r?\n/)).toContain("note: Use `bun update bun-types --dev` instead.");
   });
 
   it("two invalid arguments flipped, should display error message and suggest command", async () => {
     const cwd = tmpdirSync();
-    const { stderr } = spawn({
+    await using proc = spawn({
       cmd: [bunExe(), "upgrade", "--dev", "bun-types"],
       cwd,
       stdout: null,
@@ -38,14 +38,14 @@ describe.concurrent(() => {
       env,
     });
 
-    const err = await stderr.text();
+    const err = await proc.stderr.text();
     expect(err.split(/\r?\n/)).toContain("error: This command updates Bun itself, and does not take package names.");
     expect(err.split(/\r?\n/)).toContain("note: Use `bun update --dev bun-types` instead.");
   });
 
   it("one invalid argument, should display error message and suggest command", async () => {
     const cwd = tmpdirSync();
-    const { stderr } = spawn({
+    await using proc = spawn({
       cmd: [bunExe(), "upgrade", "bun-types"],
       cwd,
       stdout: null,
@@ -54,14 +54,14 @@ describe.concurrent(() => {
       env,
     });
 
-    const err = await stderr.text();
+    const err = await proc.stderr.text();
     expect(err.split(/\r?\n/)).toContain("error: This command updates Bun itself, and does not take package names.");
     expect(err.split(/\r?\n/)).toContain("note: Use `bun update bun-types` instead.");
   });
 
   it("one valid argument, should succeed", async () => {
     const cwd = tmpdirSync();
-    const { stderr } = spawn({
+    await using proc = spawn({
       cmd: [bunExe(), "upgrade", "--help"],
       cwd,
       stdout: null,
@@ -70,7 +70,7 @@ describe.concurrent(() => {
       env,
     });
 
-    const err = await stderr.text();
+    const err = await proc.stderr.text();
     // Should not contain error message
     expect(err.split(/\r?\n/)).not.toContain(
       "error: This command updates bun itself, and does not take package names.",
@@ -82,7 +82,7 @@ describe.concurrent(() => {
     const cwd = tmpdirSync();
     const execPath = join(cwd, basename(bunExe()));
     await copyFile(bunExe(), execPath);
-    const { stderr } = spawn({
+    await using proc = spawn({
       cmd: [execPath, "upgrade", "--stable", "--profile"],
       cwd,
       stdout: null,
@@ -91,7 +91,7 @@ describe.concurrent(() => {
       env,
     });
 
-    const err = await stderr.text();
+    const err = await proc.stderr.text();
     // Should not contain error message
     expect(err.split(/\r?\n/)).not.toContain(
       "error: This command updates Bun itself, and does not take package names.",
@@ -176,7 +176,7 @@ describe.concurrent(() => {
     const execPath = join(cwd, basename(bunExe()));
     await copyFile(bunExe(), execPath);
 
-    const { stderr } = Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [execPath, "upgrade"],
       cwd,
       stdout: null,
@@ -192,6 +192,10 @@ describe.concurrent(() => {
     closeTempDirHandle();
 
     // Should not contain error message
-    expect(await stderr.text()).not.toContain("error:");
+    expect(await proc.stderr.text()).not.toContain("error:");
+    // Reap the subprocess: stderr can close before the child exits, and an
+    // unreaped child is force-killed by the test runner at test end without
+    // draining the Subprocess refcount — LSan then flags it as a leak.
+    await proc.exited;
   });
 });

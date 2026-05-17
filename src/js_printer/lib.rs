@@ -1137,11 +1137,14 @@ pub fn quote_for_json(
     // Zig: `comptime ascii_only: bool`. We now thread `ascii_only` at runtime so
     // the heavy escaper isn't monomorphized per ascii_only/quote-char combo.
     //
-    // Heuristic reservation (~6% slack) instead of `estimate_length_for_utf8`,
+    // Heuristic reservation (~12.5% slack) instead of `estimate_length_for_utf8`,
     // which would do a full SIMD scan + per-escape rune decode over `text` just
     // to size the buffer — the same work `write_pre_quoted_string_inner` repeats
-    // immediately below. The writer grows on demand if this under-shoots.
-    bytes.grow_if_needed(text.len() + (text.len() >> 4) + 8)?;
+    // immediately below. Tab-indented JS (e.g. three.js) has ~9.4% of bytes
+    // needing 2-byte escapes (tabs + newlines + quotes/backslashes), so 6.25%
+    // slack would under-shoot and force a 2x doubling memcpy of the whole
+    // source. The writer still grows on demand if this under-shoots.
+    bytes.grow_if_needed(text.len() + (text.len() >> 3) + 8)?;
     bytes.append_char(b'"')?;
     write_pre_quoted_string_inner::<_, { Encoding::Utf8 }>(text, bytes, b'"', ascii_only, true)?;
     bytes.append_char(b'"').expect("unreachable");

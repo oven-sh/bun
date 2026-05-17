@@ -739,7 +739,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let loc = p.lexer.loc();
         p.lexer.next()?;
         let mut is_single_line = !p.lexer.has_newline_before;
-        let mut items: bun_alloc::ArenaVec<'_, Expr> = bun_alloc::ArenaVec::new_in(p.arena);
+        let mut items: smallvec::SmallVec<[Expr; 8]> = smallvec::SmallVec::new();
         let mut self_errors = DeferredErrors::default();
         let mut comma_after_spread = bun_ast::Loc::default();
 
@@ -815,7 +815,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // In this case, we can't distinguish between the two yet
             self_errors.merge_into(errors.unwrap());
         }
-        let items_list = ExprNodeList::from_bump_vec(items);
+        let items_list = ExprNodeList::from_arena_slice(&items);
         Ok(p.new_expr(
             E::Array {
                 items: items_list,

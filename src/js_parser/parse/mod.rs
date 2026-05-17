@@ -353,7 +353,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.allow_in = true;
         // TODO(port): errdefer — restore `p.allow_in = old_allow_in` on error path
 
-        let mut args = BumpVec::<Expr>::new_in(p.arena);
+        let mut args: smallvec::SmallVec<[Expr; 4]> = smallvec::SmallVec::new();
         p.lexer.expect(T::TOpenParen)?;
 
         while p.lexer.token != T::TCloseParen {
@@ -377,7 +377,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.expect(T::TCloseParen)?;
         p.allow_in = old_allow_in;
         Ok(ExprListLoc {
-            list: ExprNodeList::from_bump_vec(args),
+            list: ExprNodeList::from_arena_slice(&args),
             loc: close_paren_loc,
         })
     }
@@ -1253,7 +1253,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         opts: &mut ParseStatementOptions<'a>,
     ) -> Result<G::DeclList, Error> {
         let p = self;
-        let mut decls = BumpVec::<G::Decl>::new_in(p.arena);
+        let mut decls: smallvec::SmallVec<[G::Decl; 4]> = smallvec::SmallVec::new();
 
         loop {
             // Forbid "let let" and "const let" but not "var let"
@@ -1306,7 +1306,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.next()?;
         }
 
-        Ok(G::DeclList::from_bump_vec(decls))
+        Ok(G::DeclList::from_arena_slice(&decls))
     }
 
     pub fn parse_path(&mut self) -> Result<ParsedPath<'a>, Error> {

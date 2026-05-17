@@ -295,7 +295,7 @@ impl SystemErrno {
     /// constructing the enum so invalid input panics instead of creating an
     /// invalid `#[repr(u16)]` enum value.
     ///
-    /// On POSIX the enum is dense `0..MAX`, so we debug-assert `n < MAX`.
+    /// On POSIX the enum is dense `0..MAX`, so we assert `n < MAX`.
     /// On Windows the enum is **sparse** (dense `0..=137` plus isolated `UV_E*`
     /// discriminants in the ~3000-4095 range — see windows_errno.rs), so the
     /// `< MAX` bound does not hold for valid tags and the assert is skipped.

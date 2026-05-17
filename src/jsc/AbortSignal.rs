@@ -326,8 +326,7 @@ impl Timeout {
             generation: VirtualMachine::get().test_isolation_generation,
         }));
 
-        // PORT NOTE: `Environment.ci_assert` → `debug_assertions`
-        // (no `ci_assert` feature in bun_jsc; matches ptr/ref_count.rs precedent).
+        // Zig: gated on `bun.Environment.ci_assert`.
         #[cfg(debug_assertions)]
         // `AbortSignal` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
         // centralised non-null deref proof (caller contract: non-null).

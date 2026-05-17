@@ -877,11 +877,8 @@ impl BunTest {
         let task = jsc::ManagedTask::ManagedTask::new::<RunTestsTask>(done_callback_test, call_erased);
         let vm = global_this.bun_vm().as_mut();
         let Some(strong) = weak.upgrade() else {
-            // PORT NOTE: `bun.Environment.ci_assert` → `cfg!(debug_assertions)` (closest analogue;
-            // see src/ptr/ref_count.rs / src/collections/baby_list.rs for the same mapping).
-            if cfg!(debug_assertions) {
-                debug_assert!(false); // shouldn't be calling runNextTick after moving on to the next file
-            }
+            // Zig: gated on `bun.Environment.ci_assert`.
+            debug_assert!(false); // shouldn't be calling runNextTick after moving on to the next file
             return; // but just in case
         };
         // SAFETY: single field write through `UnsafeCell`; no other `&mut` live.

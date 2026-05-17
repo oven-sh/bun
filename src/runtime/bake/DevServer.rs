@@ -3895,7 +3895,7 @@ pub fn finalize_bundle(
                     code: compile_result.code().to_vec().into_boxed_slice(),
                     source_map: Some(incremental_graph::ReceiveChunkSourceMap {
                         chunk: source_map,
-                        escaped_source: quoted_contents.clone(),
+                        escaped_source: quoted_contents.clone().map(Vec::into_boxed_slice),
                     }),
                 },
                 false,
@@ -3907,7 +3907,7 @@ pub fn finalize_bundle(
                     code: compile_result.code().to_vec().into_boxed_slice(),
                     source_map: Some(incremental_graph::ReceiveChunkSourceMap {
                         chunk: source_map,
-                        escaped_source: quoted_contents.clone(),
+                        escaped_source: quoted_contents.clone().map(Vec::into_boxed_slice),
                     }),
                 },
                 graph == bake::Graph::Ssr,

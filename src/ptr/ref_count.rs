@@ -371,11 +371,8 @@ impl<T: RefCounted> RefCount<T> {
 
     /// The count is 0 after the destructor is called.
     pub fn assert_no_refs(&self) {
-        // PORT NOTE: `bun.Environment.ci_assert` → `cfg!(debug_assertions)` (closest analogue;
-        // see baby_list.rs). No `ci_assert` Cargo feature exists.
-        if cfg!(debug_assertions) {
-            debug_assert!(self.raw_count.get() == 0);
-        }
+        // Zig: gated on `bun.Environment.ci_assert`.
+        assert!(self.raw_count.get() == 0);
     }
 
     /// Sets the ref count to 0 without running the destructor.
@@ -592,10 +589,8 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
 
     /// The count is 0 after the destructor is called.
     pub fn assert_no_refs(&self) {
-        // PORT NOTE: `bun.Environment.ci_assert` → `cfg!(debug_assertions)`.
-        if cfg!(debug_assertions) {
-            debug_assert!(self.raw_count.load(Ordering::SeqCst) == 0);
-        }
+        // Zig: gated on `bun.Environment.ci_assert`.
+        assert!(self.raw_count.load(Ordering::SeqCst) == 0);
     }
 
     /// Sets the ref count to 0 without running the destructor.

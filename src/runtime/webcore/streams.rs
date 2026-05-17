@@ -903,9 +903,7 @@ impl StreamResult {
                 ArrayBuffer::create::<{ JSType::Uint8Array }>(global_this, temp.slice())
             }
             StreamResult::IntoArray(array) => Ok(JSValue::from(array.len)),
-            StreamResult::IntoArrayAndDone(array) => {
-                Ok(JSValue::from(array.len))
-            }
+            StreamResult::IntoArrayAndDone(array) => Ok(JSValue::from(array.len)),
             StreamResult::Pending(pending) => {
                 // SAFETY: pending is a valid borrowed pointer per BORROW_PARAM classification
                 let promise = unsafe { &mut **pending }.promise(global_this);

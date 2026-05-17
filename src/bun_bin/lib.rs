@@ -247,6 +247,23 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         "leak:BuildMessage>::create\n",
         "leak:ResolveMessage>::create\n",
         "leak:TextDecoder>::decode_slice\n",
+        // Same category, but the GC sweep is *skipped entirely*: when JS calls
+        // `process.exit()`, `Zig__GlobalObject__destructOnExit` early-returns
+        // on `vm.entryScope != nullptr`, so JS-rooted Rust allocations are
+        // never finalized. Pre-existing in Zig; visible since the ASAN
+        // system-allocator change. Reachable from live JS objects at exit.
+        //
+        // `Bun.build()` output `BuildArtifact` (and its `Blob` `Store`) boxed
+        // in `OutputFileJsc::to_js`; freed by `JsFinalize::finalize`.
+        "leak:OutputFileJsc>::to_js\n",
+        // `Bun.Transpiler` default `BundleOptions` (e.g. `output_dir` `Box`)
+        // owned by `JSTranspiler`; freed by `JsCell::Drop`.
+        "leak:bun_bundler::options_impl::BundleOptions>::from_api\n",
+        // `Bun.file().stream()` — `FileReader::buffered` `Vec` strands when a
+        // reader is in flight at exit: `Source::finalize()` releases the JS
+        // wrapper's ref, but the reader's `waiting_for_on_reader_done` `+1` is
+        // never released because the event loop has stopped.
+        "leak:file_reader::FileReader>::on_read_chunk\n",
         "\0",
     )
     .as_ptr()

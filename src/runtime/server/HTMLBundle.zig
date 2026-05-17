@@ -295,7 +295,7 @@ pub const Route = struct {
             config.force_node_env = .development;
             config.jsx.development = true;
         }
-        config.source_map = .linked;
+        config.source_map = if (is_development) .linked else .none;
 
         const completion_task = try bun.BundleV2.createAndScheduleCompletionTask(
             config,

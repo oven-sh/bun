@@ -2093,8 +2093,25 @@ mod posix_impl {
     pub fn fstat(fd: Fd) -> Maybe<Stat> {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            return super::linux_syscall::fstat(fd)
-                .map_err(|e| Error::from_code_int(e, Tag::fstat));
+            return match super::linux_syscall::fstat(fd) {
+                Ok(stat) => Ok(stat),
+                Err(e) if e == libc::EACCES => {
+                    // Some platforms (e.g. with SELinux) return EACCES
+                    // on fstat for socket fds. Probe SO_TYPE to confirm.
+                    let mut sock_type: libc::c_int = 0;
+                    let mut sock_len: libc::socklen_t = core::mem::size_of_val(&sock_type) as _;
+                    let rc = unsafe {
+                        libc::getsockopt(fd.native(), libc::SOL_SOCKET, libc::SO_TYPE,
+                            &mut sock_type as *mut _ as *mut libc::c_void, &mut sock_len)
+                    };
+                    if rc == 0 {
+                        Ok(unsafe { core::mem::zeroed() })
+                    } else {
+                        Err(Error::from_code_int(e, Tag::fstat))
+                    }
+                }
+                Err(e) => Err(Error::from_code_int(e, Tag::fstat)),
+            };
         }
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {

@@ -2741,7 +2741,22 @@ lexer_impl_header! {
         source: &'a Source,
         arena: &'a Arena,
     ) -> Result<Self, Error> {
+        Self::init_with_track_comments(log, source, arena, false)
+    }
+
+    /// `log` is *not* tied to `'a` — see `init_without_reading`.
+    pub fn init_with_track_comments(
+        log: &mut Log,
+        source: &'a Source,
+        arena: &'a Arena,
+        track_comments: bool,
+    ) -> Result<Self, Error> {
         let mut lex = Self::init_without_reading(log, source, arena);
+        // Set this before calling step()/next() — the very first token may
+        // be a comment, and scan_comment_text() only records comments when
+        // track_comments is true. Flipping the flag afterwards misses any
+        // comment(s) at the start of the file (issue #30489).
+        lex.track_comments = track_comments;
         lex.step();
         lex.next()?;
         Ok(lex)

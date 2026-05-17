@@ -7875,7 +7875,8 @@ pub fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
     // `data` directly; the prepend-count (Lazy) path writes through
     // `internal` and would just waste the reservation.
     if builder.source_map.ctx.internal.is_none() {
-        let hint = (source.contents.len() / 4).max(tree.approximate_newline_count.saturating_mul(4));
+        let hint =
+            (source.contents.len() / 4).max(tree.approximate_newline_count.saturating_mul(4));
         let _ = builder.source_map.ctx.data.grow_if_needed(hint);
     }
     builder

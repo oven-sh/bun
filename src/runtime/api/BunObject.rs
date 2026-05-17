@@ -1653,10 +1653,11 @@ pub fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
                     } else {
                         // Not registered → `NewServer::stop` must not
                         // `hot.remove` the foreign entry that *is* there.
-                        // Clear the id so its `allow_hot && !id.is_empty()`
-                        // gate is false (mirrors `Listener::hot_id`, which
-                        // is only set on a successful insert).
-                        server_ref.config.id = Box::default();
+                        // Flip `allow_hot` so its `allow_hot && !id.is_empty()`
+                        // gate is false, but leave `config.id` intact so the
+                        // user-visible `server.id` getter still reflects what
+                        // was passed.
+                        server_ref.config.allow_hot = false;
                     }
                 }
             }

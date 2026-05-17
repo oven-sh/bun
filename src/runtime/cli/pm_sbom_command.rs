@@ -825,7 +825,13 @@ fn collect_deps(
     }
     let resolved = pkg_dep_resolutions[comp.package_id as usize].get(resolutions_buf);
     for &resolved_id in resolved.iter() {
-        if resolved_id == invalid_package_id || resolved_id as usize >= pkg_len {
+        // Skip invalid/out-of-range, and self-edges (e.g. `"pkg": "file:."`)
+        // to match the BFS scope loop and avoid emitting a reflexive
+        // `A dependsOn A` / `A DEPENDS_ON A` edge in the output.
+        if resolved_id == invalid_package_id
+            || resolved_id as usize >= pkg_len
+            || resolved_id == comp.package_id
+        {
             continue;
         }
         // Deduplicate — a package can list the same dep under both

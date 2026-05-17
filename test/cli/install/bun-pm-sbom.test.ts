@@ -384,8 +384,12 @@ describe("bun pm sbom", () => {
   });
 
   test("prints in `bun pm` help", async () => {
+    // `bun pm --help` short-circuits in CommandLineArguments::parse before
+    // PackageManager::init() runs, so this is hermetic regardless of cwd.
+    // Bare `bun pm` (no --help) would go through init() and depend on the
+    // runner's cwd having a package.json in its ancestry.
     await using proc = spawn({
-      cmd: [bunExe(), "pm"],
+      cmd: [bunExe(), "pm", "--help"],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",

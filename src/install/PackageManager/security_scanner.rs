@@ -23,7 +23,7 @@ use bun_install::{
 use bun_io::Loop as AsyncLoop;
 use bun_io::pipe_reader::PosixFlags;
 use bun_io::{BufferedReader, ReadState};
-use bun_ptr::{RefPtr, ThreadSafeRefCount};
+use bun_ptr::{RefCount, RefPtr, ThreadSafeRefCount};
 use bun_spawn::subprocess::{self, StdioResult};
 use bun_spawn::{
     self as spawn, Exited, Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions,
@@ -1386,7 +1386,14 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         // SAFETY: `writer_local` holds a live ref; `start()` mutates the writer
         // in place (raw intrusive object — no Rust aliasing across the RefPtr).
-        match unsafe { (*writer_local.as_ptr()).start() } {
+        let writer_ptr = writer_local.as_ptr();
+        let start_result = unsafe { (*writer_ptr).start() };
+        // `start()` always self-refs but neither POSIX (`PosixBufferedWriter::close()`)
+        // nor Windows (`BaseWindowsPipeWriter::close()`) ever derefs it, so the box
+        // strands at exit (LSan). The field ref keeps the writer alive; balance here.
+        // SAFETY: `writer_local` keeps `*writer_ptr` live; we own the `start()` ref.
+        unsafe { RefCount::<StaticPipeWriter>::deref(writer_ptr) };
+        match start_result {
             Err(e) => {
                 writer_local.deref();
                 Output::err_generic(

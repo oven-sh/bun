@@ -77,6 +77,8 @@ impl SupportsCondition {
         // `#[derive(DeepClone)]` can't be used while `Selector`/`Unknown`
         // carry `&'static [u8]`; the blanket `&'bump [u8]` impl doesn't unify
         // with a fresh `'__bump`).
+        // LEAK(arena): `And`/`Or`/`Not` carry global-heap `Vec`/`Box` inside arena AST
+        // nodes (no `Drop` on bulk-free). Phase B re-threads `'i` to make these `bump`-backed.
         match self {
             Self::Not(c) => Self::Not(Box::new(c.deep_clone(bump))),
             Self::And(v) => Self::And(v.iter().map(|c| c.deep_clone(bump)).collect()),

@@ -179,7 +179,9 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             "StaticPipeWriter(0x{:x}) start()",
             std::ptr::from_ref(self) as usize
         );
-        // Zig `this.ref()` — intrusive-refcount increment.
+        // Zig `this.ref()` — intrusive-refcount increment. NOTE: this ref is never
+        // balanced by `BufferedWriter::close()`; `security_scanner::finish_spawn`
+        // derefs it itself — coordinate any fix here with that call site.
         // SAFETY: `self` is a live `Self` (created via `create()`/`heap::alloc`).
         unsafe { RefCount::<Self>::ref_(std::ptr::from_mut::<Self>(self)) };
         // TODO(port): self-borrow — see `buffer` field note.

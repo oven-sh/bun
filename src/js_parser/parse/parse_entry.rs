@@ -322,7 +322,12 @@ impl<'a> Parser<'a> {
         define: &'a Define,
         bump: &'a Arena,
     ) -> Result<Parser<'a>, Error> {
-        let lexer = js_lexer::Lexer::init(log, source, bump)?;
+        // Track comments when identifier minification is on, so the renamer's
+        // character-frequency analysis can subtract comment text from the
+        // histogram (issue #30489). The flag must be set before the lexer
+        // consumes the first token, which may itself be a comment.
+        let track_comments = options.features.minify_identifiers;
+        let lexer = js_lexer::Lexer::init_with_track_comments(log, source, bump, track_comments)?;
         // Copy the lexer's `NonNull<Log>` so both handles share one provenance
         // chain (the `&'a mut Log` was consumed by `Lexer::init`).
         let log_ptr = lexer.log;

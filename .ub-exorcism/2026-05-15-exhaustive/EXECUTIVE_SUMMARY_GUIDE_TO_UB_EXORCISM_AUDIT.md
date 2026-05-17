@@ -73,10 +73,14 @@ If you are an AI coding agent opening this PR cold, follow this path:
 ### "I want to fix one of the findings"
 1. Look up the EXP in the registry (above)
 2. Open the corresponding remediation plan in [`phase8_remediation_plan.md`](phase8_remediation_plan.md); the `### R-EXP-NNN` section holds rubric-scored candidates, the chosen winner, rationale, proves-original-UB, and proves-new-soundness
-3. Run the pre-fix reproducer to confirm the bug still exists. On the audited
+3. Run the pre-fix reproducer from the registry's **Invocation** block to
+   confirm the bug still exists. Many EXPs are standalone Cargo reproducers and
+   can use the staged runner; others, such as EXP-094, are in-tree Bun crate
+   tests and must be run with the exact command in the registry. On the audited
    base, a confirmed UB reproducer should produce the documented signal and
    usually exits non-zero:
    ```bash
+   # Standalone EXP only:
    bash .ub-exorcism/2026-05-15-exhaustive/scripts/regression-runner.sh EXP-NNN sb
    ```
 4. Implement the rubric winner (see also any `CODEX_<EXP>_CORRECTION_*.md` docs)
@@ -449,15 +453,24 @@ their fixes land; the important question is whether the failure matches the
 registry's expected signal. The current PR also does not ship a
 `REPRODUCIBILITY_HASH`, so the hash comparison is a future promotion gate.
 
-### "Verify one specific finding"
+### "Verify one standalone finding"
 ```bash
-# Miri reproducer (standalone)
-cd .ub-exorcism/2026-05-15-exhaustive/experiments/EXP-094
-MIRIFLAGS="-Zmiri-strict-provenance" cargo +nightly miri run
+# EXP-086 ships as a standalone Miri experiment.
+cd .ub-exorcism/2026-05-15-exhaustive/experiments/EXP-086
+cargo +nightly miri run
 
-# Or via runner (adds BEGIN/END logging + index.jsonl).
+# Or via the staged runner (adds BEGIN/END logging + index.jsonl).
 # Pre-fix confirmed-UB runs should exit non-zero with the expected signal.
-bash .ub-exorcism/2026-05-15-exhaustive/scripts/regression-runner.sh EXP-094 sp
+bash .ub-exorcism/2026-05-15-exhaustive/scripts/regression-runner.sh EXP-086 sb
+```
+
+### "Verify one in-tree finding"
+```bash
+# EXP-094 is not a standalone experiment directory; the in-tree bun_core test
+# is the reproducer. Run this in a checkout that still contains the pre-fix
+# DoublyLinkedList implementation.
+MIRIFLAGS="-Zmiri-strict-provenance" cargo +nightly miri test \
+  -p bun_core --lib basic_doubly_linked_list_test
 ```
 
 ### "Verify the Kani symbolic proofs (EXP-109 model)"
@@ -628,9 +641,13 @@ awk "/^## EXP-094:/,/^## EXP-/" $AUDIT/UNDEFINED_BEHAVIOR_EXPERIMENT_DESIGNS.md
 # Find which EXPs touch the file you're editing
 echo "src/runtime/timer/mod.rs" | bash $AUDIT/scripts/ci/registry-paths.sh
 
-# Reproduce a Miri witness for one EXP.
+# Reproduce a standalone Miri witness for one EXP.
 # Non-zero is expected before the corresponding fix lands.
-bash $AUDIT/scripts/regression-runner.sh EXP-094 sp
+bash $AUDIT/scripts/regression-runner.sh EXP-086 sb
+
+# Reproduce EXP-094's in-tree witness in a pre-fix checkout.
+MIRIFLAGS="-Zmiri-strict-provenance" cargo +nightly miri test \
+  -p bun_core --lib basic_doubly_linked_list_test
 
 # Compute the CI shard for a PR diff
 bash $AUDIT/scripts/ci/compute-affected-exps.sh main HEAD --configs sb,tb

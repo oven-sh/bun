@@ -2583,15 +2583,8 @@ mod stylesheet_impl {
             // the same `'static` tag. The arena outlives the stylesheet (caller
             // invariant, same as parsing).
             let arena: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(arena) };
-            // SAFETY: `MinifyContext<'a, 'static>` with invariant `&mut` ties
-            // `'a` to `'static` transitively. Cast the short-lived borrows to
-            // `'static` — they don't escape `minify` (it returns `Result<(), _>`).
-            let targets: &'static _ = unsafe { bun_ptr::detach_lifetime_ref(&options.targets) };
-            let unused_symbols: &'static _ =
-                unsafe { bun_ptr::detach_lifetime_ref(&options.unused_symbols) };
-            let extra: &'static _ = unsafe { bun_ptr::detach_lifetime_ref(extra) };
 
-            let ctx = PropertyHandlerContext::new(arena, *targets, unused_symbols);
+            let ctx = PropertyHandlerContext::new(arena, options.targets, &options.unused_symbols);
             let mut handler = DeclarationHandler::new(arena);
             let mut important_handler = DeclarationHandler::new(arena);
 
@@ -2619,11 +2612,11 @@ mod stylesheet_impl {
 
             let mut minify_ctx = MinifyContext {
                 arena,
-                targets,
+                targets: &options.targets,
                 handler: &mut handler,
                 important_handler: &mut important_handler,
                 handler_context: ctx,
-                unused_symbols,
+                unused_symbols: &options.unused_symbols,
                 custom_media,
                 css_modules: self.options.css_modules.is_some(),
                 extra,

@@ -30,10 +30,10 @@ pub enum DeclarationContext {
     StyleAttribute,
 }
 
-pub struct PropertyHandlerContext<'a> {
+pub struct PropertyHandlerContext<'ctx, 'bump> {
     // PORT NOTE: `arena` is the parser arena that owns the AST being
-    // minified; bound to `'a` alongside the other borrowed inputs.
-    pub arena: &'a Bump,
+    // minified.
+    pub arena: &'bump Bump,
     pub targets: css::targets::Targets,
     pub is_important: bool,
     pub supports: Vec<SupportsEntry>,
@@ -41,15 +41,15 @@ pub struct PropertyHandlerContext<'a> {
     pub rtl: Vec<css::Property>,
     pub dark: Vec<css::Property>,
     pub context: DeclarationContext,
-    pub unused_symbols: &'a ArrayHashMap<Box<[u8]>, ()>,
+    pub unused_symbols: &'ctx ArrayHashMap<Box<[u8]>, ()>,
 }
 
-impl<'a> PropertyHandlerContext<'a> {
+impl<'ctx, 'bump> PropertyHandlerContext<'ctx, 'bump> {
     pub fn new(
-        arena: &'a Bump,
+        arena: &'bump Bump,
         targets: css::targets::Targets,
-        unused_symbols: &'a ArrayHashMap<Box<[u8]>, ()>,
-    ) -> PropertyHandlerContext<'a> {
+        unused_symbols: &'ctx ArrayHashMap<Box<[u8]>, ()>,
+    ) -> PropertyHandlerContext<'ctx, 'bump> {
         PropertyHandlerContext {
             arena,
             targets,
@@ -63,7 +63,7 @@ impl<'a> PropertyHandlerContext<'a> {
         }
     }
 
-    pub fn child(&self, context: DeclarationContext) -> PropertyHandlerContext<'a> {
+    pub fn child(&self, context: DeclarationContext) -> PropertyHandlerContext<'ctx, 'bump> {
         PropertyHandlerContext {
             arena: self.arena,
             targets: self.targets,
@@ -104,22 +104,22 @@ impl<'a> PropertyHandlerContext<'a> {
 // These build whole rule subtrees and are only called from the (still-gated)
 // minify path; un-gate alongside `rules/style.rs`.
 
-impl<'a> PropertyHandlerContext<'a> {
+impl<'ctx, 'bump> PropertyHandlerContext<'ctx, 'bump> {
     /// Clone a std-Vec property list into a bump-allocated `DeclarationList`.
     #[inline]
-    fn clone_decls(&self, list: &Vec<css::Property>) -> css::DeclarationList<'a> {
+    fn clone_decls(&self, list: &Vec<css::Property>) -> css::DeclarationList<'bump> {
         bun_alloc::vec_from_iter_in(list.iter().map(|p| p.deep_clone(self.arena)), self.arena)
     }
 
     pub fn get_supports_rules<T>(
         &self,
         style_rule: &css::StyleRule<'_, T>,
-    ) -> Vec<css::CssRule<'a, T>> {
+    ) -> Vec<css::CssRule<'bump, T>> {
         if self.supports.is_empty() {
             return Vec::new();
         }
 
-        let mut dest: Vec<css::CssRule<'a, T>> = Vec::with_capacity(self.supports.len());
+        let mut dest: Vec<css::CssRule<'bump, T>> = Vec::with_capacity(self.supports.len());
 
         for entry in &self.supports {
             // PERF(port): was appendAssumeCapacity
@@ -127,7 +127,7 @@ impl<'a> PropertyHandlerContext<'a> {
                 condition: entry.condition.deep_clone(self.arena),
                 rules: css::CssRuleList {
                     v: {
-                        let mut v: Vec<css::CssRule<'a, T>> = Vec::with_capacity(1);
+                        let mut v: Vec<css::CssRule<'bump, T>> = Vec::with_capacity(1);
 
                         // PERF(port): was appendAssumeCapacity
                         v.push(css::CssRule::Style(css::StyleRule {
@@ -155,9 +155,9 @@ impl<'a> PropertyHandlerContext<'a> {
     pub fn get_additional_rules<T>(
         &self,
         style_rule: &css::StyleRule<'_, T>,
-    ) -> Vec<css::CssRule<'a, T>> {
+    ) -> Vec<css::CssRule<'bump, T>> {
         // TODO: :dir/:lang raises the specificity of the selector. Use :where to lower it?
-        let mut dest: Vec<css::CssRule<'a, T>> = Vec::new();
+        let mut dest: Vec<css::CssRule<'bump, T>> = Vec::new();
 
         if !self.ltr.is_empty() {
             self.get_additional_rules_helper(
@@ -203,7 +203,7 @@ impl<'a> PropertyHandlerContext<'a> {
                     },
                 },
                 rules: {
-                    let mut list: css::CssRuleList<'a, T> = css::CssRuleList::default();
+                    let mut list: css::CssRuleList<'bump, T> = css::CssRuleList::default();
 
                     list.v.push(css::CssRule::Style(css::StyleRule {
                         selectors: style_rule.selectors.deep_clone(),
@@ -233,7 +233,7 @@ impl<'a> PropertyHandlerContext<'a> {
         dir: css::selector::parser::Direction,
         decls: &Vec<css::Property>,
         sty: &css::StyleRule<'_, T>,
-        dest: &mut Vec<css::CssRule<'a, T>>,
+        dest: &mut Vec<css::CssRule<'bump, T>>,
     ) {
         let mut selectors = sty.selectors.deep_clone();
         for selector in selectors.v.slice_mut() {
@@ -257,7 +257,7 @@ impl<'a> PropertyHandlerContext<'a> {
     }
 }
 
-impl<'a> PropertyHandlerContext<'a> {
+impl<'ctx, 'bump> PropertyHandlerContext<'ctx, 'bump> {
     pub fn reset(&mut self) {
         // PORT NOTE: per-element `deinit()` calls dropped — Vec::clear drops each element,
         // and SupportsEntry / Property own their resources via Drop.
@@ -268,7 +268,7 @@ impl<'a> PropertyHandlerContext<'a> {
     }
 }
 
-impl<'a> PropertyHandlerContext<'a> {
+impl<'ctx, 'bump> PropertyHandlerContext<'ctx, 'bump> {
     pub fn add_conditional_property(
         &mut self,
         condition: css::SupportsCondition,

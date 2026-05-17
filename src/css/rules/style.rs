@@ -289,12 +289,12 @@ impl<'bump, R> StyleRule<'bump, R> {
 
         if self.rules.v.len() > 0 {
             let mut handler_context = context.handler_context.child(DeclarationContext::StyleRule);
-            core::mem::swap::<PropertyHandlerContext<'_>>(
+            core::mem::swap::<PropertyHandlerContext<'_, '_>>(
                 &mut context.handler_context,
                 &mut handler_context,
             );
             self.rules.minify(context, unused)?;
-            core::mem::swap::<PropertyHandlerContext<'_>>(
+            core::mem::swap::<PropertyHandlerContext<'_, '_>>(
                 &mut context.handler_context,
                 &mut handler_context,
             );

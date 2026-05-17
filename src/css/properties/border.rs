@@ -675,7 +675,7 @@ mod border_handler_body {
         // here because the per-side BorderShorthand pointers are passed separately.
         flushed_properties: &'a mut BorderProperty,
         dest: &'a mut DeclarationList<'bump>,
-        ctx: &'a mut PropertyHandlerContext<'ctx>,
+        ctx: &'a mut PropertyHandlerContext<'ctx, 'bump>,
         // PORT NOTE: `arena` field dropped from PropertyHandlerContext; the
         // arena is recovered once via `dest.bump()` and threaded here.
         arena: &'bump Bump,
@@ -1233,11 +1233,11 @@ mod border_handler_body {
     use flush_category;
 
     impl BorderHandler {
-        pub fn handle_property(
+        pub fn handle_property<'ctx, 'bump>(
             &mut self,
             property: &Property,
-            dest: &mut DeclarationList,
-            context: &mut PropertyHandlerContext,
+            dest: &mut DeclarationList<'bump>,
+            context: &mut PropertyHandlerContext<'ctx, 'bump>,
         ) -> bool {
             // PORT NOTE: `arena` field dropped from PropertyHandlerContext; the
             // arena is recovered via `dest.bump()` (DeclarationList = bumpalo::Vec).
@@ -1481,10 +1481,10 @@ mod border_handler_body {
             true
         }
 
-        pub fn finalize(
+        pub fn finalize<'ctx, 'bump>(
             &mut self,
-            dest: &mut DeclarationList,
-            context: &mut PropertyHandlerContext,
+            dest: &mut DeclarationList<'bump>,
+            context: &mut PropertyHandlerContext<'ctx, 'bump>,
         ) {
             self.flush(dest, context);
             self.flushed_properties = BorderProperty::empty();
@@ -1492,7 +1492,11 @@ mod border_handler_body {
             self.border_radius_handler.finalize(dest, context);
         }
 
-        fn flush(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
+        fn flush<'ctx, 'bump>(
+            &mut self,
+            dest: &mut DeclarationList<'bump>,
+            context: &mut PropertyHandlerContext<'ctx, 'bump>,
+        ) {
             if !self.has_any {
                 return;
             }

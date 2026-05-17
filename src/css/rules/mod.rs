@@ -684,7 +684,7 @@ fn minify_style_arm<'bump, R: for<'b> css::generics::DeepClone<'b>>(
         supports: Vec<CssRule<'bump, R>>,
         logical: Vec<CssRule<'bump, R>>,
     }
-    let mut incompatible_rules: SmallList<IncompatibleRuleEntry<R>, 1> =
+    let mut incompatible_rules: SmallList<IncompatibleRuleEntry<'bump, R>, 1> =
         SmallList::init_capacity(incompatible.len());
     while incompatible.len() > 0 {
         let sel = incompatible.ordered_remove(0);
@@ -713,7 +713,7 @@ fn minify_style_arm<'bump, R: for<'b> css::generics::DeepClone<'b>>(
     // If the rule has nested rules, and we have extra rules to insert such as for logical properties,
     // we need to split the rule in two so we can insert the extra rules in between the declarations from
     // the main rule and the nested rules.
-    let nested_rule: Option<style::StyleRule<R>> = if !sty.rules.v.is_empty()
+    let nested_rule: Option<style::StyleRule<'bump, R>> = if !sty.rules.v.is_empty()
         && sty.selectors.v.len() > 0
         && (!logical.is_empty() || !supps.is_empty() || !incompatible_rules.is_empty())
     {
@@ -959,23 +959,23 @@ pub struct StyleContext<'a> {
 // per-minify borrow scope (short). `&'a mut DeclarationHandler<'a>` would force
 // the handler borrow to outlive the arena (invariance via `bumpalo::Vec`),
 // making `Stylesheet::minify`'s stack-local handlers unusable.
-pub struct MinifyContext<'a, 'bump> {
+pub struct MinifyContext<'ctx, 'bump> {
     /// Arena that owns the AST being minified (same arena it was parsed into).
     pub arena: &'bump bun_alloc::Arena,
-    pub targets: &'a css::targets::Targets,
-    pub handler: &'a mut css::DeclarationHandler<'bump>,
-    pub important_handler: &'a mut css::DeclarationHandler<'bump>,
-    pub handler_context: css::PropertyHandlerContext<'bump>,
+    pub targets: &'ctx css::targets::Targets,
+    pub handler: &'ctx mut css::DeclarationHandler<'bump>,
+    pub important_handler: &'ctx mut css::DeclarationHandler<'bump>,
+    pub handler_context: css::PropertyHandlerContext<'ctx, 'bump>,
     /// Class/id names known to be unused (tree-shaking input).
     // PORT NOTE: Zig `*const std.StringArrayHashMapUnmanaged(void)`.
     // `selector::is_unused` currently borrows `&ArrayHashMap<&[u8], ()>`; the
     // owning `MinifyOptions` stores `Box<[u8]>` keys — reconcile when
     // `style.rs::minify` un-gates (single key type, `Borrow<[u8]>` lookup).
-    pub unused_symbols: &'a bun_collections::ArrayHashMap<Box<[u8]>, ()>,
+    pub unused_symbols: &'ctx bun_collections::ArrayHashMap<Box<[u8]>, ()>,
     /// Pre-scanned `@custom-media` definitions, if the feature is enabled.
     pub custom_media:
         Option<bun_collections::ArrayHashMap<Box<[u8]>, custom_media::CustomMediaRule>>,
-    pub extra: &'a css::StylesheetExtra,
+    pub extra: &'ctx css::StylesheetExtra,
     pub css_modules: bool,
     /// First minification error encountered (Zig surfaced this out-of-band).
     pub err: Option<css::error::MinifyError>,

@@ -952,7 +952,7 @@ impl FontHandler {
         &mut self,
         property: &crate::properties::Property,
         dest: &mut crate::DeclarationList<'_>,
-        context: &mut crate::PropertyHandlerContext<'_>,
+        context: &mut crate::PropertyHandlerContext<'_, '_>,
     ) -> bool {
         use crate::properties::Property;
         // PORT NOTE: `arena` field dropped from PropertyHandlerContext; the
@@ -1028,7 +1028,7 @@ impl FontHandler {
     pub fn finalize(
         &mut self,
         decls: &mut crate::DeclarationList<'_>,
-        context: &mut crate::PropertyHandlerContext<'_>,
+        context: &mut crate::PropertyHandlerContext<'_, '_>,
     ) {
         self.flush(decls, context);
         self.flushed_properties = FontProperty::empty();
@@ -1039,7 +1039,7 @@ impl FontHandler {
     fn flush(
         &mut self,
         decls: &mut crate::DeclarationList<'_>,
-        context: &mut crate::PropertyHandlerContext<'_>,
+        context: &mut crate::PropertyHandlerContext<'_, '_>,
     ) {
         use crate::properties::Property;
 

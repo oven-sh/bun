@@ -1241,8 +1241,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         stdin: JsCell::new(Writable::Ignore),
         stdout: JsCell::new(Readable::Ignore),
         stderr: JsCell::new(Readable::Ignore),
-        // 1. JavaScript.
-        // 2. Process.
+        // 1=JS (released in Subprocess::finalize), 2=Process exit handler
+        // (released in Subprocess::on_process_exit; stranded if child outlives VM teardown).
         ref_count: bun_ptr::RefCount::init_exact_refs(2),
         stdio_pipes: JsCell::new(core::mem::take(&mut spawned_extra_pipes)),
         ipc_data: JsCell::new(None),

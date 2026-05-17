@@ -4411,6 +4411,8 @@ impl H2FrameParser {
     }
 
     /// Returned *Stream is heap-allocated and stable for the lifetime of this H2FrameParser.
+    /// Freed in `deinit()` (every `streams` entry is `heap::take`'d) once `finalize()` →
+    /// `rc_deref()` drops the JS wrapper's last ref. Lives only as long as the parser.
     fn handle_received_stream_id(&self, stream_identifier: u32) -> Option<*mut Stream> {
         // connection stream
         if stream_identifier == 0 {

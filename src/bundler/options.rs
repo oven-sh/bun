@@ -1771,6 +1771,8 @@ impl<'a> BundleOptions<'a> {
         self.loaders.get(ext).copied().unwrap_or(Loader::File)
     }
 
+    // LIFECYCLE: `Box<[u8]>` config strings here are owned by the returned `BundleOptions`; CLI
+    // callers park it in the process-lifetime `Transpiler` (LSan root region in build_command.rs).
     pub fn from_api(
         fs: &mut Fs::FileSystem,
         log: *mut bun_ast::Log,

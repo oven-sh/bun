@@ -720,14 +720,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let ctx: *mut ServerRequestContext<SSL, DEBUG> = ctx_slot;
         let ctx_mut = unsafe { &mut *ctx };
 
-        // `VirtualMachine::jsc_vm()` is the safe accessor for the JSC VM
-        // (set in VM init; valid for the JS thread's lifetime).
-        server
-            .vm()
-            .jsc_vm()
-            .deprecated_report_extra_memory(
-                core::mem::size_of::<ServerRequestContext<SSL, DEBUG>>(),
-            );
+        // Note: the context lives in a pre-allocated `HiveArray::Fallback`
+        // slot that is recycled per request, not freshly heap-allocated, so
+        // we deliberately do NOT report it as extra GC memory here. Doing so
+        // per request hits `Heap::deprecatedReportExtraMemorySlowCase` (and
+        // `collectIfNecessaryOrDefer`) on every request and inflates the
+        // GC heuristic for memory that isn't actually growing.
 
         // Allocate the pooled body slot. `hive_alloc` is the typed front-end
         // for the type-erased `init_request_body_value` hook (the hook lives

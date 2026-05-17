@@ -3170,11 +3170,13 @@ where
         };
         // SAFETY: ctx_slot was just initialized by create_in.
         let ctx = unsafe { &mut *ctx_slot };
-        // `VirtualMachine::jsc_vm()` is the safe accessor for the JSC VM
-        // owned by the per-thread VirtualMachine.
-        self.vm_ref()
-            .jsc_vm()
-            .deprecated_report_extra_memory(mem::size_of::<Ctx>());
+
+        // Note: the context lives in a pre-allocated `HiveArray::Fallback`
+        // slot that is recycled per request, not freshly heap-allocated, so
+        // we deliberately do NOT report it as extra GC memory here. Doing so
+        // per request hits `Heap::deprecatedReportExtraMemorySlowCase` (and
+        // `collectIfNecessaryOrDefer`) on every request and inflates the
+        // GC heuristic for memory that isn't actually growing.
 
         // `vm.initRequestBodyValue(.{ .Null = {} })` — typed wrapper over the
         // type-erased RuntimeHooks vtable. Returns `NonNull<HiveRef>` with

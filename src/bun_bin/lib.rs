@@ -139,7 +139,10 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         "leak:Resolver>::dir_info_cached_maybe_log\n",
         "leak:bun_resolver::fs::RealFS>::read_directory\n",
         "leak:bun_jsc::JSGlobalObject::JSGlobalObject>::create\n",
-        "leak:bun_js_printer::js_printer::print_ast\n",
+        // `print_ast` lives at the crate root (`bun_js_printer::print_ast`),
+        // not in a `js_printer` submodule — keep the path matching the
+        // demangled frame so the runtime sourcemap-cache blobs are suppressed.
+        "leak:bun_js_printer::print_ast\n",
         "leak:bun_jsc::ipc::on_data2\n",
         "leak:bun_runtime::node::fs_events::init_core_foundation\n",
         "leak:bun_runtime::node::fs_events::init_core_services\n",
@@ -210,6 +213,11 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         // slots). LSAN does not scan other threads' TLS roots at exit (same
         // category as the `std::thread::Thread>::new` false positive above).
         "leak:bun_js_parser::parser::StringVoidMap\n",
+        // `BSSMapInner` singletons live in anonymous-mmap pages from
+        // `bss_lazy_bytes`, which LSan does not scan as roots — the global-heap
+        // hashbrown table backing `BSSMapInner::index` is therefore reported as
+        // unreachable even though the singleton is process-lifetime.
+        "leak:BSSMapInner>::get_or_put\n",
         // `intern_location_file` `Box::leak`s a `CString` per `src!()` callsite
         // into a thread-local cache (debug/ASAN-only — release uses static
         // `c"…"` literals). Bounded leak by design; the per-thread `HashMap`

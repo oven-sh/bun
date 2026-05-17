@@ -525,7 +525,12 @@ impl ExtractTarball {
             // Now that we've extracted the archive, we rename.
             #[cfg(windows)]
             {
-                let mut did_retry = false;
+                // Windows EBUSY/SHARING_VIOLATION on `NtSetInformationFile` is
+                // transient when a concurrent process (another `bun install`
+                // sharing the cache, AV, the Search Indexer) is closing its
+                // handle to the destination. Back off briefly between retries.
+                const MAX_RETRIES: u32 = 4;
+                let mut retries: u32 = 0;
                 let mut path2_buf = WPathBuffer::uninit();
                 let path2 = strings::to_wpath_normalized(&mut path2_buf, folder_name);
                 if create_subdir {
@@ -572,7 +577,7 @@ impl ExtractTarball {
                         true,
                     ) {
                         bun_sys::Result::Err(err) => {
-                            if !did_retry {
+                            if retries < MAX_RETRIES {
                                 match err.get_errno() {
                                     sys::Errno::NOTEMPTY
                                     | sys::Errno::PERM
@@ -611,7 +616,14 @@ impl ExtractTarball {
                                                 let _ = tmpdir.delete_tree(tempdest.as_bytes());
                                             }
                                         }
-                                        did_retry = true;
+                                        retries += 1;
+                                        // 10ms, 20ms, 40ms, 80ms — long enough
+                                        // for a concurrent close to land,
+                                        // short enough to not slow a legit
+                                        // failure noticeably.
+                                        std::thread::sleep(std::time::Duration::from_millis(
+                                            10u64 << (retries - 1),
+                                        ));
                                         continue;
                                     }
                                     _ => {}

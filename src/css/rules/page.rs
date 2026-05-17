@@ -81,17 +81,16 @@ impl PageSelector {
     }
 }
 
-pub struct PageMarginRule {
+pub struct PageMarginRule<'bump> {
     /// The margin box identifier for this rule.
     pub margin_box: PageMarginBox,
     /// The declarations within the rule.
-    // PORT NOTE: lifetime erased to `'static` per rules/mod.rs `CssRule<R>` note.
-    pub declarations: DeclarationBlock<'static>,
+    pub declarations: DeclarationBlock<'bump>,
     /// The location of the rule in the source file.
     pub loc: Location,
 }
 
-impl PageMarginRule {
+impl PageMarginRule<'_> {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
@@ -102,31 +101,30 @@ impl PageMarginRule {
     }
 }
 
-impl PageMarginRule {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+impl PageMarginRule<'_> {
+    pub fn deep_clone<'b>(&self, bump: &'b bun_alloc::Arena) -> PageMarginRule<'b> {
         // PORT NOTE: `css.implementDeepClone` field-walk. `PageMarginBox` is `Copy`.
-        Self {
+        PageMarginRule {
             margin_box: self.margin_box,
-            declarations: super::dc::decl_block_static(&self.declarations, bump),
+            declarations: super::dc::decl_block(&self.declarations, bump),
             loc: self.loc,
         }
     }
 }
 
 /// A [@page](https://www.w3.org/TR/css-page-3/#at-page-rule) rule.
-pub struct PageRule {
+pub struct PageRule<'bump> {
     /// A list of page selectors.
     pub selectors: ArrayList<PageSelector>,
     /// The declarations within the `@page` rule.
-    // PORT NOTE: lifetime erased to `'static` per rules/mod.rs `CssRule<R>` note.
-    pub declarations: DeclarationBlock<'static>,
+    pub declarations: DeclarationBlock<'bump>,
     /// The nested margin rules.
-    pub rules: ArrayList<PageMarginRule>,
+    pub rules: ArrayList<PageMarginRule<'bump>>,
     /// The location of the rule in the source file.
     pub loc: Location,
 }
 
-impl PageRule {
+impl PageRule<'_> {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
@@ -188,12 +186,12 @@ impl PageRule {
     }
 }
 
-impl PageRule {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+impl PageRule<'_> {
+    pub fn deep_clone<'b>(&self, bump: &'b bun_alloc::Arena) -> PageRule<'b> {
         // PORT NOTE: `css.implementDeepClone` field-walk.
-        Self {
+        PageRule {
             selectors: self.selectors.iter().map(|s| s.deep_clone(bump)).collect(),
-            declarations: super::dc::decl_block_static(&self.declarations, bump),
+            declarations: super::dc::decl_block(&self.declarations, bump),
             rules: self.rules.iter().map(|r| r.deep_clone(bump)).collect(),
             loc: self.loc,
         }
@@ -201,20 +199,20 @@ impl PageRule {
 }
 
 // ─── PageRule parse ───────────────────────────────────────────────────────
-impl PageRule {
+impl PageRule<'static> {
     pub fn parse(
         selectors: ArrayList<PageSelector>,
         input: &mut css::Parser,
         loc: Location,
         options: &css::ParserOptions,
-    ) -> css::Result<PageRule> {
+    ) -> css::Result<PageRule<'static>> {
         // SAFETY: `Tokenizer<'a>` owns `arena: &'a Bump`; the arena outlives
         // every `DeclarationBlock` produced from this parser. `'static` here is
         // the crate-wide erasure (see declaration.rs `DeclarationBlock::parse`).
         let bump: &'static bun_alloc::Arena =
             unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(input.arena()) };
         let mut declarations = DeclarationBlock::new_in(bump);
-        let mut rules: ArrayList<PageMarginRule> = ArrayList::new();
+        let mut rules: ArrayList<PageMarginRule<'static>> = ArrayList::new();
         let mut rule_parser = PageRuleParser {
             declarations: &mut declarations,
             rules: &mut rules,
@@ -309,7 +307,7 @@ pub enum PageMarginBox {
 
 pub struct PageRuleParser<'a> {
     pub declarations: &'a mut DeclarationBlock<'static>,
-    pub rules: &'a mut ArrayList<PageMarginRule>,
+    pub rules: &'a mut ArrayList<PageMarginRule<'static>>,
     pub options: &'a css::ParserOptions<'a>,
 }
 

@@ -345,11 +345,11 @@ readStreamPrototype._read = function (n) {
 };
 
 readStreamPrototype._destroy = function (this: FSStream, err, cb) {
-  // An in-flight fs.read() completing after destroy() is handled in the
-  // _read callback above (see `if (this.destroyed) return`), so it is safe
-  // to close the fd immediately here. (Node wires up a kIsPerformingIO /
-  // kIoDone event pair for this on Windows where the read can't be
-  // cancelled; Bun doesn't need it.)
+  // If a read happens to complete after destroy() has run, the _read
+  // callback above short-circuits on `this.destroyed`, so the stream's
+  // readable state can't be clobbered. Close the fd immediately, matching
+  // the behavior the common `createReadStream(path)` path has had since
+  // #16754.
   close(this, err, cb);
 };
 

@@ -3143,25 +3143,39 @@ JSC_DEFINE_HOST_FUNCTION(Process_functioninitgroups, (JSGlobalObject * globalObj
         auto str = userValue.getString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         auto utf8 = str.utf8();
-        auto len = utf8.length();
-        if (len >= sizeof(usernameBuf)) {
+        struct passwd pwd;
+        struct passwd* pp = nullptr;
+        char buf[8192];
+        if (getpwnam_r(utf8.data(), &pwd, buf, sizeof(buf), &pp) == 0 && pp != nullptr) {
+            size_t len = strlen(pp->pw_name);
+            if (len >= sizeof(usernameBuf)) {
+                auto message = makeString("User identifier does not exist: "_s, str);
+                scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_CREDENTIAL, message));
+                return {};
+            }
+            memcpy(usernameBuf, pp->pw_name, len + 1);
+            username = usernameBuf;
+        } else {
             auto message = makeString("User identifier does not exist: "_s, str);
             scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_CREDENTIAL, message));
             return {};
         }
-        memcpy(usernameBuf, utf8.data(), len + 1);
-        username = usernameBuf;
     } else if (userValue.isNumber()) {
         uint32_t uid = 0;
         Bun::V::validateInteger(scope, globalObject, userValue, "user"_s, jsNumber(0), jsNumber(std::pow(2, 31) - 1), &uid);
         RETURN_IF_EXCEPTION(scope, {});
 
-        struct passwd pwd;
-        struct passwd* pp = nullptr;
-        char buf[8192];
-        if (getpwuid_r(static_cast<uid_t>(uid), &pwd, buf, sizeof(buf), &pp) == 0 && pp != nullptr) {
-            auto len = strlen(pp->pw_name);
-            memcpy(usernameBuf, pp->pw_name, len + 1);
+        struct passwd pwd2;
+        struct passwd* pp2 = nullptr;
+        char buf2[8192];
+        if (getpwuid_r(static_cast<uid_t>(uid), &pwd2, buf2, sizeof(buf2), &pp2) == 0 && pp2 != nullptr) {
+            size_t len = strlen(pp2->pw_name);
+            if (len >= sizeof(usernameBuf)) {
+                auto message = makeString("User identifier does not exist: "_s, String::number(uid));
+                scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_CREDENTIAL, message));
+                return {};
+            }
+            memcpy(usernameBuf, pp2->pw_name, len + 1);
             username = usernameBuf;
         } else {
             auto message = makeString("User identifier does not exist: "_s, String::number(uid));

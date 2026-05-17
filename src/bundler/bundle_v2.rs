@@ -4093,59 +4093,79 @@ pub mod bv2_impl {
             )?;
             this.unique_key = generate_unique_key();
 
-            if this.transpiler.log().has_errors() {
-                return Err(bun_core::err!("BuildFailed"));
-            }
+            // Wrap the body so every exit path (`?`, `BuildFailed`, empty-chunks
+            // early-return) hits the cleanup below — same pattern as
+            // `generate_from_cli`. Without it, the parse-side `BundlerStyleSheet`s
+            // (`bump.alloc()`'d in worker arenas, see `ParseTask.rs`) and the
+            // global-heap `Vec`s parked in `graph.ast` / `linker.graph.meta`
+            // strand when `this` drops, because `MultiArrayList::drop` is
+            // slab-only and arena bulk-free skips `Drop`. `chunks` is local to
+            // the closure so `CssChunk::Drop` (which `set_len(0)`s its bitwise
+            // `asts` aliases of those stylesheets) runs *before*
+            // `deinit_without_freeing_arena()` `drop_in_place`s the originals.
+            let result = (|| -> Result<Vec<options::OutputFile>, Error> {
+                if this.transpiler.log().has_errors() {
+                    return Err(bun_core::err!("BuildFailed"));
+                }
 
-            this.enqueue_entry_points_bake_production(entry_points)?;
+                this.enqueue_entry_points_bake_production(entry_points)?;
 
-            if this.transpiler.log().has_errors() {
-                return Err(bun_core::err!("BuildFailed"));
-            }
+                if this.transpiler.log().has_errors() {
+                    return Err(bun_core::err!("BuildFailed"));
+                }
 
-            this.wait_for_parse();
+                this.wait_for_parse();
 
-            if this.transpiler.log().has_errors() {
-                return Err(bun_core::err!("BuildFailed"));
-            }
+                if this.transpiler.log().has_errors() {
+                    return Err(bun_core::err!("BuildFailed"));
+                }
 
-            this.scan_for_secondary_paths();
+                this.scan_for_secondary_paths();
 
-            this.process_server_component_manifest_files()?;
+                this.process_server_component_manifest_files()?;
 
-            let mut reachable_files = this.find_reachable_files()?;
+                let mut reachable_files = this.find_reachable_files()?;
 
-            this.process_files_to_copy(&reachable_files)?;
+                this.process_files_to_copy(&reachable_files)?;
 
-            this.add_server_component_boundaries_as_extra_entry_points()?;
+                this.add_server_component_boundaries_as_extra_entry_points()?;
 
-            this.clone_ast()?;
+                this.clone_ast()?;
 
-            // SAFETY: see `generate_from_cli` — raw-ptr borrow sidestep for
-            // `link` takes a raw `*mut BundleV2` and only touches fields disjoint
-            // from `this.linker`.
-            let mut chunks = unsafe {
-                let bundle_ptr: *mut BundleV2 = &raw mut *this;
-                let ep = (*bundle_ptr).graph.entry_points.as_slice();
-                // Spec: value-copy (original preserved for `StaticRouteVisitor`).
-                // Borrow — do NOT `take` (see `generate_from_cli`).
-                let scbs = &(*bundle_ptr).graph.server_component_boundaries;
-                // Project `.linker` via `bundle_ptr` so no second `Box::deref_mut`
-                // retag invalidates `ep`/`scbs` (SB hygiene).
-                (*bundle_ptr)
-                    .linker
-                    .link(bundle_ptr, ep, scbs, &mut reachable_files)?
-            };
+                // SAFETY: see `generate_from_cli` — raw-ptr borrow sidestep for
+                // `link` takes a raw `*mut BundleV2` and only touches fields disjoint
+                // from `this.linker`.
+                let mut chunks = unsafe {
+                    let bundle_ptr: *mut BundleV2 = &raw mut *this;
+                    let ep = (*bundle_ptr).graph.entry_points.as_slice();
+                    // Spec: value-copy (original preserved for `StaticRouteVisitor`).
+                    // Borrow — do NOT `take` (see `generate_from_cli`).
+                    let scbs = &(*bundle_ptr).graph.server_component_boundaries;
+                    // Project `.linker` via `bundle_ptr` so no second `Box::deref_mut`
+                    // retag invalidates `ep`/`scbs` (SB hygiene).
+                    (*bundle_ptr)
+                        .linker
+                        .link(bundle_ptr, ep, scbs, &mut reachable_files)?
+                };
 
-            if chunks.is_empty() {
-                return Ok(Vec::new());
-            }
+                if chunks.is_empty() {
+                    return Ok(Vec::new());
+                }
 
-            let mut chunks = chunks;
-            crate::linker_context_mod::generate_chunks_in_parallel::<false>(
-                &mut this.linker,
-                &mut chunks,
-            )
+                crate::linker_context_mod::generate_chunks_in_parallel::<false>(
+                    &mut this.linker,
+                    &mut chunks,
+                )
+            })();
+
+            // Free global-heap columns parked in the graph (parse-side
+            // `BundlerStyleSheet`s, AST `Vec`s, `linker.graph.meta`, …). This
+            // bake-production path was the only bundler entry point that
+            // returned without it, leaking `StyleSheet::sources` /
+            // `source_map_urls` and friends on every `bun build --app`.
+            this.deinit_without_freeing_arena();
+
+            result
         }
 
         #[cold]

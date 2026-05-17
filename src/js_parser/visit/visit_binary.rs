@@ -561,7 +561,6 @@ impl BinaryExpressionVisitor {
                 if p.should_fold_typescript_constant_expressions {
                     if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
                     {
-                        // TODO(port): math arrives from move-in (was bun_jsc::math → js_parser)
                         let folded = bun_ast::math::pow(vals[0], vals[1]);
                         if should_fold_arithmetic(p, folded, vals[0], vals[1], 2) {
                             return p.new_expr(E::Number { value: folded }, v.loc);

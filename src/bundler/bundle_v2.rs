@@ -3861,21 +3861,6 @@ pub mod bv2_impl {
             source_code_size: &mut u64,
             fetcher: Option<&DependenciesScanner>,
         ) -> Result<BuildResult, Error> {
-            // Defer mimalloc page purge for the duration of the bundle.
-            // The default 10ms purge delay causes madvise(MADV_DONTNEED)/munmap
-            // mid-bundle, which forces freshly-recycled pages to fault back in
-            // and triggers cross-CPU TLB shootdowns under the parser/printer
-            // thread pool. A one-shot CLI build exits right after, so deferring
-            // purges only costs RSS for the lifetime of the process; for
-            // `--watch` the guard restores the default once the initial build
-            // returns so the long-lived watcher still releases memory.
-            let _purge_delay_guard = {
-                use bun_alloc::mimalloc::{Option as MiOption, mi_option_get, mi_option_set};
-                let prev = mi_option_get(MiOption::purge_delay);
-                mi_option_set(MiOption::purge_delay, -1);
-                scopeguard::guard(prev, |prev| mi_option_set(MiOption::purge_delay, prev))
-            };
-
             let mut this = BundleV2::init(
                 transpiler,
                 None,

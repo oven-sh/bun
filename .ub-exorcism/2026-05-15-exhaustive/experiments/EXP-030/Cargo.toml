@@ -1,0 +1,15 @@
+[package]
+name = "exp-030-threadpool-queue-loom"
+version = "0.0.0"
+edition = "2021"
+
+[workspace]
+
+[lib]
+path = "src/lib.rs"
+
+[target.'cfg(loom)'.dependencies]
+loom = "0.7"
+
+[profile.release]
+debug = true

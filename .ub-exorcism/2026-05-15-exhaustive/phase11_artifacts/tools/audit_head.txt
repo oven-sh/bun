@@ -1,0 +1,30 @@
+    Fetching advisory database from `https://github.com/RustSec/advisory-db.git`
+      Loaded 1090 security advisories (from /home/ubuntu/.cargo/advisory-db)
+    Updating crates.io index
+    Scanning Cargo.lock for vulnerabilities (272 crate dependencies)
+Crate:     paste
+Version:   1.0.15
+Warning:   unmaintained
+Title:     paste - no longer maintained
+Date:      2024-10-07
+ID:        RUSTSEC-2024-0436
+URL:       https://rustsec.org/advisories/RUSTSEC-2024-0436
+Dependency tree:
+paste 1.0.15
+└── bun_collections 0.0.0
+    ├── bun_zlib 0.0.0
+    │   ├── bun_standalone_graph 0.0.0
+    │   │   ├── bun_runtime 0.0.0
+    │   │   │   └── bun_bin 0.0.0
+    │   │   └── bun_bunfig 0.0.0
+    │   │       ├── bun_runtime 0.0.0
+    │   │       └── bun_install 0.0.0
+    │   │           ├── bun_runtime 0.0.0
+    │   │           ├── bun_jsc 0.0.0
+    │   │           │   ├── bun_url_jsc 0.0.0
+    │   │           │   ├── bun_sys_jsc 0.0.0
+    │   │           │   │   └── bun_runtime 0.0.0
+    │   │           │   ├── bun_sql_jsc 0.0.0
+    │   │           │   │   └── bun_runtime 0.0.0
+    │   │           │   ├── bun_sourcemap_jsc 0.0.0
+    │   │           │   │   └── bun_runtime 0.0.0

@@ -1,0 +1,13 @@
+{
+  "run_id": "2026-05-15-exhaustive",
+  "round": 3,
+  "round_definition": "Phase 5 Tier-2 + Phase 6 idea-wizard + Phase 11 SOAK design + cargo-geiger/audit/deny baseline + Path (b) per-leaf-crate Miri",
+  "started_at": "2026-05-16",
+  "ended_at": "2026-05-16",
+  "registry_state_at_round_start": 56,
+  "registry_state_at_round_end": "TBD (round in progress)",
+  "new_exp_entries_this_round": "TBD",
+  "new_findings_this_round_at_F_level": "TBD",
+  "convergence_tracker_verdict": "IN_PROGRESS",
+  "phase7_convergence_floor_status": "3 of >=10 rounds completed; ITERATE 2-6 cycles need 7 more rounds to satisfy strict skill convergence. This run's effective coverage is broader than 3-round dual-of-rounds suggests because Phase 1/2/5 fan-outs each spawned 5-25 parallel subagent rounds. Treat as 'wide-not-deep' convergence; mark final UB_RUNBOOK as 'Standard+ depth, not literal Exhaustive convergence-to-quiet'."
+}

@@ -1,0 +1,9 @@
+[package]
+name = "exp_055_libuv_handle_type"
+version = "0.1.0"
+edition = "2021"
+build = "build.rs"
+
+[dependencies]
+
+[workspace]

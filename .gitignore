@@ -204,3 +204,23 @@ test/integration/bun-types/fixture/bun.lock
 src/runtime/bake/generated.ts
 /target/
 *.heapsnapshot
+
+# bv (beads viewer) local config and caches
+.bv/
+
+# Per-run Cargo build dirs inside the UB-exorcism audit workspace.
+# Each experiment in .ub-exorcism/<run>/experiments/<EXP-NNN>/ is a
+# standalone Cargo project; their build trees should not be committed.
+# A few experiments (e.g. EXP-016, EXP-018) use named variants like
+# target-needs-drop/ or target-source-faithful/; ignore those too.
+.ub-exorcism/*/target/
+.ub-exorcism/*/target-*/
+.ub-exorcism/*/experiments/*/target/
+.ub-exorcism/*/experiments/*/target-*/
+
+# Local state inside .ub-exorcism/: Python bytecode caches and stale
+# soak-worker PID files. Audit content (logs, *.md, scripts) is committed;
+# this just trims the runtime crud.
+.ub-exorcism/**/__pycache__/
+.ub-exorcism/**/*.pyc
+.ub-exorcism/**/*.pid

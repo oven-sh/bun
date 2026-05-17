@@ -1,0 +1,15 @@
+id: await-holding-refcell
+language: rust
+severity: warning
+message: A RefCell borrow is held in a scope that contains an .await; risks running borrow guards across thread migration / re-entry.
+rule:
+  any:
+    - pattern: |
+        let $X = $E.borrow();
+        $$$
+        $$$.await
+    - pattern: |
+        let $X = $E.borrow_mut();
+        $$$
+        $$$.await
+  kind: block

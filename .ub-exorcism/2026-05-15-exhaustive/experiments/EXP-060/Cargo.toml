@@ -1,0 +1,8 @@
+[package]
+name = "exp-060-napi-tsfn-mut-raw-handle"
+version = "0.0.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]

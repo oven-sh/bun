@@ -1,0 +1,9 @@
+error: no bin target named `pin` in default-run packages
+help: available bin targets:
+    aliasing
+    data_races
+    escape
+    pin_walker
+    safety_doc_coverage
+    transmute_pairs
+    validity

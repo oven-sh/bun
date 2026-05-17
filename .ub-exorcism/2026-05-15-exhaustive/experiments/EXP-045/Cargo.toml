@@ -1,0 +1,8 @@
+[package]
+name = "exp_045_jscell_send_sync"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+
+[workspace]

@@ -1,0 +1,8 @@
+[package]
+name = "exp_084_virtual_machine_send_sync_tls_trap"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]

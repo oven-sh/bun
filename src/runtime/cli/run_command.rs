@@ -2426,19 +2426,10 @@ impl RunCommand {
         // transpiler — so the bundler-linker / `tsconfig.json` / JSX-runtime
         // setup would be dead weight (and the largest block of bundler code
         // otherwise faulted in for a plain `bun run <script>`).
-        //
-        // Park the slot in the process-lifetime CLI arena (Zig: process-arena
-        // `var this_transpiler` with no defer). A stack `MaybeUninit` would
-        // never run `Drop`, so the global-heap `BundleOptions`/`Define`/env
-        // allocations inside the Transpiler would read as direct leaks under
-        // ASAN+LSan on every code path that returns from this function (e.g.
-        // `--if-present` with a missing script). Same pattern as
-        // `BuildCommand::exec` (build_command.rs:130-139).
-        let this_transpiler: &'static mut ::core::mem::MaybeUninit<Transpiler<'static>> =
-            runner_arena().alloc(::core::mem::MaybeUninit::<Transpiler<'static>>::uninit());
+        let mut this_transpiler = ::core::mem::MaybeUninit::<Transpiler<'static>>::uninit();
         let root_dir_info = Self::configure_env_for_run_without_linker(
             ctx,
-            this_transpiler,
+            &mut this_transpiler,
             None,
             log_errors,
             false,
@@ -2446,14 +2437,6 @@ impl RunCommand {
         // SAFETY: `configure_env_for_run_without_linker` returned `Ok`, so the
         // slot is fully initialized via `MaybeUninit::write`.
         let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
-        // The arena is a mimalloc heap LSan never scans, so the global-heap
-        // strings reachable only through this struct read as false-positive
-        // leaks at exit. Register the parked slot as a root region so LSan
-        // can follow the pointers it holds.
-        bun_core::asan::register_root_region(
-            std::ptr::from_ref::<Transpiler>(this_transpiler).cast(),
-            ::core::mem::size_of::<Transpiler>(),
-        );
         let force_using_bun = ctx.debug.run_in_bun;
         let mut original_path: Vec<u8> = Vec::new();
         Self::configure_path_for_run(

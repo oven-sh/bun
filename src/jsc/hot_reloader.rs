@@ -1189,7 +1189,9 @@ where
                         }
 
                         'locked: {
-                            let Some(dir_ent) = entries_option else { break 'locked };
+                            let Some(dir_ent) = entries_option else {
+                                break 'locked;
+                            };
                             // `bust_entries_cache` now marks the `DirEntry` stale in place
                             // instead of orphaning the slot. That means a concurrent resolve
                             // (under `entries_mutex`) can rewrite this exact `DirEntry`/

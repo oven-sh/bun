@@ -2912,32 +2912,38 @@ fn transpile_source_code_inner(
                 // `is_commonjs_module`/`module_info` patched on). Gated so the
                 // fall-through to the non-watcher tail below is an explicit,
                 // intentional degradation rather than a silent live divergence.
+                //
                 // The ref-counted watcher path creates Latin-1 strings, which
                 // cannot represent multi-byte UTF-8 sequences. If the output
                 // contains non-ASCII (from raw template literals or regex
                 // source), fall through to the normal path which uses
                 // `clone_utf8`.
-                if unsafe { &*jsc_vm }.is_watcher_enabled() {
+                if unsafe { &*jsc_vm }.is_watcher_enabled()
+                    && bun_core::strings::is_all_ascii({
+                        // SAFETY: `extra.source_code_printer` is non-null per
+                        // `TranspileExtra` contract.
+                        let p: &bun_js_printer::BufferPrinter =
+                            unsafe { &*(*extra).source_code_printer };
+                        p.ctx.get_written()
+                    })
+                {
                     // SAFETY: `extra.source_code_printer` is non-null per
                     // `TranspileExtra` contract; rederive after the print block
                     // (Stacked Borrows — see the matching note below).
                     let printer: &mut bun_js_printer::BufferPrinter =
                         unsafe { &mut *(*extra).source_code_printer };
-                    let written = printer.ctx.get_written();
-                    if bun_core::strings::is_all_ascii(written) {
-                        let mut resolved_source = unsafe {
-                            (*jsc_vm).ref_counted_resolved_source::<false>(
-                                written,
-                                input_specifier.dupe_ref(),
-                                path.text,
-                                None,
-                            )
-                        };
-                        resolved_source.is_commonjs_module = is_commonjs_module;
-                        // TODO(b2-blocked): `analyze_transpiled_module::ModuleInfo::create`.
-                        resolved_source.module_info = core::ptr::null_mut();
-                        return Ok(OwnedResolvedSource::new(resolved_source));
-                    }
+                    let mut resolved_source = unsafe {
+                        (*jsc_vm).ref_counted_resolved_source::<false>(
+                            printer.ctx.get_written(),
+                            input_specifier.dupe_ref(),
+                            path.text,
+                            None,
+                        )
+                    };
+                    resolved_source.is_commonjs_module = is_commonjs_module;
+                    // TODO(b2-blocked): `analyze_transpiled_module::ModuleInfo::create`.
+                    resolved_source.module_info = core::ptr::null_mut();
+                    return Ok(OwnedResolvedSource::new(resolved_source));
                 }
 
                 // Spec :561-592 — final ResolvedSource.

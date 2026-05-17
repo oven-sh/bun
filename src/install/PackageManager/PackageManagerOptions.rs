@@ -421,9 +421,12 @@ impl Options {
         // on the OOM error path the field is irrelevant (process aborts).
 
         if let Some(config) = bun_install_ref {
-            if let Some(cache_directory) = config.cache_directory.as_deref() {
-                self.cache_directory = leak_static(cache_directory);
-            }
+            // PORT NOTE: Zig also assigned `this.cache_directory` here AND again
+            // ~100 lines below from the same `config.cache_directory`. Zig
+            // borrowed the slice (no allocation), so the redundancy was
+            // harmless; the Rust port routes both through `leak_static`, so
+            // the first assignment's `Box<[u8]>` was overwritten — and leaked —
+            // by the second. Keep only the later assignment.
 
             if let Some(scoped) = &config.scoped {
                 for (name, registry_) in scoped.scopes.keys().iter().zip(scoped.scopes.values()) {

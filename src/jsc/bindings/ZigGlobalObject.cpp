@@ -3855,6 +3855,8 @@ void GlobalObject::adoptNapiEnvsForTestIsolation(GlobalObject* oldGlobal)
 
 void GlobalObject::setNodeWorkerEnvironmentData(JSMap* data) { m_nodeWorkerEnvironmentData.set(vm(), this, data); }
 
+extern "C" void Bun__InspectorConnection__disconnectAllOnExit(Zig::GlobalObject*);
+
 extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -3864,6 +3866,13 @@ extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObjec
         // can run JS finalizers instead of stranding every JS-managed Rust allocation.
         vm.entryScope = nullptr;
     }
+    // While an inspector frontend is connected, JSGlobalObjectInspectorController
+    // holds a `RefPtr<VM>` + `Strong<JSGlobalObject>` (see connectFrontend). If
+    // we deref the VM below without dropping those, refcount never reaches 0,
+    // ~VM/lastChanceToFinalize never run, and every JS-managed native object
+    // (test runner ScopeFunctions, Bun.stderr's Blob, …) leaks. Disconnect now,
+    // on the owning thread, so the VM can actually tear down.
+    Bun__InspectorConnection__disconnectAllOnExit(globalObject);
     // Hold a Ref so the RunLoop is guaranteed to outlive the VM teardown below.
     Ref<WTF::RunLoop> runLoop = vm.runLoop();
     gcUnprotect(globalObject);

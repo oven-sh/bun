@@ -8887,12 +8887,12 @@ describe.concurrent("bun-install", () => {
   // different code path there.
   //
   // Parametrized over the two linkers because they share almost no directory-
-  // creation code — isolated goes through `isolated_install.zig` /
-  // `isolated_install/Installer.zig`, hoisted through `hoisted_install.zig`
-  // and `PackageInstall.installWithHardlink`. Bin linking in particular
-  // relied on `Bin.Linker.ensureUmask()` being primed by the hoisted entry
-  // point; the isolated path never called it, so bin targets would chmod to
-  // 0o777 regardless of umask.
+  // creation code — isolated goes through `isolated_install.rs` /
+  // `isolated_install/Installer.rs`, hoisted through `hoisted_install.rs`
+  // and `PackageInstall::install_with_hardlink`. Bin linking in particular
+  // relied on `Bin::Linker::ensure_umask()` being primed by the hoisted
+  // entry point; the isolated path never called it, so bin targets would
+  // chmod to 0o777 regardless of umask.
   for (const linker of ["hoisted", "isolated"] as const) {
     it.skipIf(isWindows)(
       `${linker} install respects process umask for directories and bin targets (#29723)`,

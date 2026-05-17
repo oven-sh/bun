@@ -2153,6 +2153,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, data.body_loc)
                 .expect("unreachable");
+            // Every case body shares one lexical scope but is entered conditionally,
+            // so a `const` declared in one case does not dominate references to that
+            // name in other cases. Disable the const-local-prefix inlining for the
+            // entire switch body — otherwise `case 'a': console.log(X)` could be
+            // rewritten to use the value from `case '*': const X = 2;` above it and
+            // silently bypass the TDZ error the spec requires (issue #30932).
+            p.cur_scope().is_after_const_local_prefix = true;
             let old_is_inside_switch = p.fn_or_arrow_data_visit.is_inside_switch;
             p.fn_or_arrow_data_visit.is_inside_switch = true;
             let cases = data.cases.slice_mut();
@@ -2164,7 +2171,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     //                 p.warnAboutTypeofAndString(s.Test, *c.Value)
                 }
                 let mut _stmts = stmts_to_list(p.arena, cases[i].body);
-                p.visit_stmts(&mut _stmts, StmtsKind::None)
+                p.visit_stmts(&mut _stmts, StmtsKind::SwitchStmt)
                     .expect("unreachable");
                 cases[i].body = list_to_stmts(_stmts);
             }

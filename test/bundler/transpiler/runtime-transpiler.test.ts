@@ -209,3 +209,97 @@ test("math.pow", () => {
   expect(foo2(20.4) + "").toEqual("0.22140372138502384");
   expect(20.4 ** -0.5 + "").toEqual("0.22140372138502384");
 });
+
+// https://github.com/oven-sh/bun/issues/30932
+describe("switch-case const does not leak across cases", () => {
+  test("literal-initialized const is not inlined into sibling case", () => {
+    // Pre-fix, Bun's const-prefix inliner treated `const CONSTANT = 2` in
+    // `case "*"` as an inlineable value and replaced `CONSTANT` in `case "a"`
+    // with `2`, so the second case returned "a=2". Per the spec the inner
+    // `const CONSTANT` hoists into the switch's lexical scope and shadows
+    // anything outside, so a reference from a sibling case that runs before
+    // the declaration must throw a TDZ ReferenceError.
+    function test(action) {
+      switch (action) {
+        case "*":
+          const CONSTANT = 2;
+          return "matched " + CONSTANT;
+        case "a":
+          return "a=" + CONSTANT;
+      }
+    }
+    expect(() => test("a")).toThrow(ReferenceError);
+    expect(test("*")).toBe("matched 2");
+  });
+
+  test("non-foldable const is not substituted out of sibling case", () => {
+    // Pre-fix, the single-use-substitution pass saw `use_count_estimate == 1`
+    // for `const X = Math.random()` while visiting `case "*"` (the reference
+    // in `case "a"` had not been visited yet), inlined the `Math.random()`
+    // call into the case "*" return, and deleted the declaration — leaving
+    // `case "a"` with a dangling reference that would throw
+    // `X is not defined` instead of a TDZ error.
+    function test(action) {
+      switch (action) {
+        case "*":
+          const X = Math.random();
+          return "* " + X;
+        case "a":
+          return "a " + X;
+      }
+    }
+    expect(() => test("a")).toThrow(
+      expect.objectContaining({
+        name: "ReferenceError",
+        message: expect.stringContaining("before initialization"),
+      }),
+    );
+  });
+
+  test("outer const is shadowed by inner const, not leaked through", () => {
+    // Matches the shape of the reported repro: an outer `CONSTANT = 1` is
+    // shadowed by a switch-scoped `const CONSTANT = 2`. Bun used to resolve
+    // the `case "a"` reference to the inlined `2`; Node and the spec require
+    // a TDZ ReferenceError because the inner binding hoists over the entire
+    // switch body.
+    const CONSTANT = 1;
+    function test(action) {
+      switch (action) {
+        case "*":
+          const CONSTANT = 2;
+          return "* " + CONSTANT;
+        case "a":
+          return "a " + CONSTANT;
+      }
+      return "outer=" + CONSTANT;
+    }
+    expect(() => test("a")).toThrow(ReferenceError);
+    expect(test("*")).toBe("* 2");
+    // Outside the switch body the outer `CONSTANT` is still visible.
+    expect(test("other")).toBe("outer=1");
+  });
+
+  test("declaration + use in the same case still works", () => {
+    function test() {
+      switch ("a") {
+        case "a": {
+          const X = 42;
+          return X;
+        }
+      }
+    }
+    expect(test()).toBe(42);
+  });
+
+  test("fall-through from declaring case still initializes binding", () => {
+    function test() {
+      switch ("a") {
+        case "a":
+          const X = 100;
+        case "b":
+          return "X=" + X;
+      }
+    }
+    expect(test()).toBe("X=100");
+  });
+});

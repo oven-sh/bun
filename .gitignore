@@ -232,3 +232,10 @@ src/runtime/bake/generated.ts
 # silently filtered out, which makes the registry's `Raw log: ...` citations
 # point at files that never landed.
 !.ub-exorcism/**/*.log
+
+# Keep the large raw ast-grep detector dumps out of the PR even though normal
+# audit witness logs are allowed above. The reviewed triage docs preserve the
+# actionable signal and include regeneration instructions.
+.ub-exorcism/**/phase2_raw/codex_ast_grep_ub_patterns*.log
+.ub-exorcism/**/phase3_raw/codex_ast_grep_ub_patterns*.txt
+.ub-exorcism/**/codex_sweeps/ast_grep_ub_patterns*.txt

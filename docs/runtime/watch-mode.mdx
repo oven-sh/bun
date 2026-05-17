@@ -88,8 +88,9 @@ Use `bun --hot` to enable hot reloading when executing code with Bun. This is di
 <Note>
   This is not the same as hot reloading in the browser! Many frameworks provide a "hot reloading" experience, where you
   can edit & save your frontend code (say, a React component) and see the changes reflected in the browser without
-  refreshing the page. Bun's `--hot` is the server-side equivalent of this experience. To get hot reloading in the
-  browser, use a framework like [Vite](https://vite.dev).
+  refreshing the page. Bun's `--hot` is the server-side equivalent of this experience. For browser HMR, use Bun's
+  full-stack development server, which supports Hot Module Replacement out of the box — see [Hot
+  reloading](/bundler/hot-reloading).
 </Note>
 
 ```bash terminal icon="terminal"
@@ -143,7 +144,7 @@ Bun.serve({
 ```
 
 <Note>
-**Note** — In a future version of Bun, support for Vite's `import.meta.hot` is planned to enable better lifecycle management for hot reloading and to align with the ecosystem.
+**Note** — For client-side hot reloading with `import.meta.hot` (modeled after Vite's HMR API), use Bun's full-stack development server. See [Hot reloading](/bundler/hot-reloading).
 
 </Note>
 

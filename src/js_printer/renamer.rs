@@ -1118,9 +1118,15 @@ impl NumberScope {
         }
 
         // Each name starts off with a count of 1 so that the first collision with
-        // "name" is called "name2"
-        if !collided && !normalized {
-            debug_assert!(strings::eql_long(name, input_name, true));
+        // "name" is called "name2".
+        //
+        // `name` may still equal `input_name` bytewise even when `normalized`
+        // is true: `ensure_valid_identifier` returns the input bytes unchanged
+        // for an identifier whose first codepoint is a non-ASCII ID_Start
+        // (e.g. `é`, `π`), since only `is_simple_ascii_identifier` is
+        // ASCII-restricted. The hot ASCII path skips the byte compare via
+        // `!normalized`; the rare non-ASCII path falls back to it.
+        if !collided && (!normalized || strings::eql_long(name, input_name, true)) {
             // `input_name` is `Symbol::original_name.slice()` — an AST-arena
             // slice that outlives the renamer (see [`NameKey`] doc). No copy.
             let prev = self
@@ -1129,7 +1135,6 @@ impl NumberScope {
             debug_assert!(prev.is_none(), "put_no_clobber: key already present");
             return UnusedName::NoCollision;
         }
-        debug_assert!(!strings::eql_long(name, input_name, true));
 
         // Zig: `allocator.dupe(u8, name)` — allocate into the renamer arena.
         let duped: &[u8] = arena.alloc_slice_copy(name);

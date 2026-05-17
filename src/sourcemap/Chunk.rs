@@ -708,7 +708,7 @@ impl NewBuilder<VLQSourceMap> {
         {
             // `first_non_ascii` is `i32::MAX as u32` for ASCII-only lines, so the
             // comparison below is false and the `columns_for_non_ascii` SoA column
-            // (the largest, ~24 B/line) is never touched on the hot ASCII path.
+            // (the largest, ~16 B/line) is never touched on the hot ASCII path.
             let first_non_ascii = list.items::<"byte_offset_to_first_non_ascii", u32>()[idx];
             if original_column >= first_non_ascii as i32 {
                 let cols = &list.items::<"columns_for_non_ascii", Box<[i32]>>()[idx];

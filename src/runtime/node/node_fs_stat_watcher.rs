@@ -180,7 +180,7 @@ impl StatWatcherScheduler {
         // BACKREF — `this` is the live ref-counted scheduler (last ref); wrap
         // once so the field reads below go through safe `ParentRef` Deref.
         let this_ref = ParentRef::from(NonNull::new(this).expect("deinit: scheduler"));
-        bun_core::assertf!(
+        assert!(
             this_ref.watchers.is_empty(),
             "destroying StatWatcherScheduler while it still has watchers",
         );

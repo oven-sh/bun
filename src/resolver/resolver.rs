@@ -4086,7 +4086,7 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        ::bun_core::assertf!(
+        assert!(
             bun_paths::is_absolute(input_path),
             "cannot resolve DirInfo for non-absolute path: {}",
             bstr::BStr::new(input_path)
@@ -5906,7 +5906,7 @@ impl<'a> Resolver<'a> {
             // `path` is stored in the permanent `dir_cache` as `DirInfo.abs_path`. It must not
             // point into a reused threadlocal scratch buffer, or a later resolution will
             // corrupt cached entries. Callers must intern it (e.g. via `DirnameStore`) first.
-            ::bun_core::assertf!(
+            assert!(
                 !allocators::is_slice_in_buffer(path, &bufs!(path_in_global_disk_cache)[..]),
                 "DirInfo.abs_path must not point into the threadlocal path_in_global_disk_cache buffer (got \"{}\")",
                 bstr::BStr::new(path)

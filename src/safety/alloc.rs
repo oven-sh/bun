@@ -50,7 +50,7 @@ fn guaranteed_mismatch(alloc1: StdAllocator, alloc2: StdAllocator) -> bool {
     ptr1 != ptr2
 }
 
-/// Asserts that two allocators are equal (in `ci_assert` builds).
+/// Asserts that two allocators are equal (in debug builds).
 ///
 /// This function may have false negatives; that is, it may fail to detect that two allocators
 /// are different. However, in practice, it's a useful safety check.
@@ -90,7 +90,7 @@ pub fn assert_eq_fmt(alloc1: StdAllocator, alloc2: StdAllocator, args: fmt::Argu
             ),
         );
     }
-    bun_core::assertf!(false, "{}", args);
+    panic!("{}", args);
 }
 
 /// Use this in unmanaged containers to ensure multiple allocators aren't being used with the same
@@ -100,7 +100,7 @@ pub fn assert_eq_fmt(alloc1: StdAllocator, alloc2: StdAllocator, args: fmt::Argu
 /// any methods on this type.)
 pub struct CheckedAllocator {
     // Zig: `#allocator: if (enabled) NullableAllocator else void = if (enabled) .init(null)`
-    #[cfg(feature = "ci_assert")]
+    #[cfg(debug_assertions)]
     allocator: NullableAllocator,
     // Zig: `#trace: if (traces_enabled) StoredTrace else void = if (traces_enabled) StoredTrace.empty`
     #[cfg(debug_assertions)]
@@ -111,7 +111,7 @@ impl Default for CheckedAllocator {
     #[inline]
     fn default() -> Self {
         Self {
-            #[cfg(feature = "ci_assert")]
+            #[cfg(debug_assertions)]
             allocator: NullableAllocator::NULL,
             #[cfg(debug_assertions)]
             trace: StoredTrace::EMPTY,
@@ -131,7 +131,7 @@ impl CheckedAllocator {
         if !ENABLED {
             return;
         }
-        #[cfg(feature = "ci_assert")]
+        #[cfg(debug_assertions)]
         if self.allocator.is_null() {
             self.allocator = NullableAllocator::init(Some(alloc));
             #[cfg(debug_assertions)]
@@ -150,7 +150,7 @@ impl CheckedAllocator {
         if !ENABLED {
             return;
         }
-        #[cfg(feature = "ci_assert")]
+        #[cfg(debug_assertions)]
         {
             let Some(old_alloc) = self.allocator.get() else {
                 return;
@@ -195,7 +195,7 @@ impl CheckedAllocator {
         if !ENABLED {
             return;
         }
-        #[cfg(feature = "ci_assert")]
+        #[cfg(debug_assertions)]
         {
             let new_std = new_alloc.allocator();
 
@@ -233,7 +233,7 @@ pub trait AsMimallocArenaAllocator {
     fn allocator(&self) -> StdAllocator;
 }
 
-pub const ENABLED: bool = cfg!(feature = "ci_assert");
+pub const ENABLED: bool = cfg!(debug_assertions);
 
 #[allow(dead_code)]
 const TRACES_ENABLED: bool = cfg!(debug_assertions);

@@ -18,8 +18,8 @@
 //! easy-to-use API for the parser.
 
 use crate::SmallList;
-use bun_alloc::ArenaPtr;
 pub use crate::{PrintErr, Printer};
+use bun_alloc::ArenaPtr;
 
 use crate::selector::parser::{
     BunSelectorImpl as ValidSelectorImpl, Combinator, GenericComponent, SelectorFlags,

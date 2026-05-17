@@ -1,12 +1,16 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tls as validTls } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir, tls as validTls } from "harness";
 import { join } from "node:path";
 
 // SSLConfig.readFromBlob() used to dupeZ the buffer returned by
 // readFileWithOptions(.null_terminated) and never freed the original,
 // leaking one buffer the size of each cert/key file every time a TLS
 // option was passed as a Bun.file() blob.
-test("passing Bun.file() as tls cert/key does not leak file contents", async () => {
+// Under ASAN the system allocator's quarantine retains far more than this
+// test's ~50 MB pre-fix leak signature, so the test cannot distinguish leak
+// from no-leak there. Skip it instead of widening the threshold past the
+// signature.
+test.skipIf(isASAN)("passing Bun.file() as tls cert/key does not leak file contents", async () => {
   // PEM parsers ignore content after the -----END ...----- marker, so pad
   // the files with trailing junk to make the leak measurable: ~256KB per
   // file, two files per iteration, 100 iterations -> ~50MB expected growth

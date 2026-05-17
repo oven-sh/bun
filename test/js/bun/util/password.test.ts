@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test";
 
 import { password } from "bun";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN } from "harness";
 
 const placeholder = "hey";
 
-describe("does not leak", () => {
+// ASAN's quarantine retains freed allocations (default 256 MB) so the tight
+// 4 MB / 20 MB RSS thresholds here cannot be made meaningful under bun-asan.
+describe.skipIf(isASAN)("does not leak", () => {
   async function run(code: string) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--smol", "-e", code],

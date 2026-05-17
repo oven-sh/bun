@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { isASAN } from "harness";
 
 describe("Structured Clone Fast Path", () => {
   test("structuredClone should work with empty object", () => {
@@ -54,7 +55,9 @@ describe("Structured Clone Fast Path", () => {
     });
   }
 
-  test("structuredClone should use a constant amount of memory for string inputs", () => {
+  // ASAN's quarantine retains freed allocations (default 256 MB) so the tight
+  // 1 MB / 8 MB RSS thresholds here cannot be made meaningful under bun-asan.
+  test.skipIf(isASAN)("structuredClone should use a constant amount of memory for string inputs", () => {
     const clones: Array<string> = [];
     // Create a 512KB string to test fast path
     const largeString = Buffer.alloc(512 * 1024, "a").toString();
@@ -73,7 +76,7 @@ describe("Structured Clone Fast Path", () => {
     expect(clones.length).toBe(10000 + 100);
   });
 
-  test("structuredClone should use a constant amount of memory for simple object inputs", () => {
+  test.skipIf(isASAN)("structuredClone should use a constant amount of memory for simple object inputs", () => {
     // Create a 512KB string to test fast path
     const largeValue = { property: Buffer.alloc(512 * 1024, "a").toString() };
     for (let i = 0; i < 100; i++) {

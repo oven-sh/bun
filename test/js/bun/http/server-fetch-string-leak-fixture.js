@@ -3,6 +3,9 @@
 // bun.String. Both code paths are exercised:
 //   - absolute URL with a hostname (dupe branch)
 //   - relative path with no hostname (append-to-base-url branch)
+// ASAN's quarantine retains freed allocations (default 256 MB) so RSS deltas
+// run far higher under bun-asan; widen the threshold to avoid false positives.
+const isASAN = process.execPath.includes("bun-asan");
 using server = Bun.serve({
   port: 0,
   fetch() {
@@ -33,7 +36,7 @@ console.log("RSS delta:", deltaMB.toFixed(1), "MB");
 
 // 4096 iterations * 2 calls * ~32 KiB = ~256 MiB leaked when broken.
 // With the fix, growth is a few MiB of allocator jitter at most.
-if (deltaMB > 64) {
+if (deltaMB > (isASAN ? 320 : 64)) {
   console.error("server.fetch(string) leaked URL buffers");
   process.exit(1);
 }

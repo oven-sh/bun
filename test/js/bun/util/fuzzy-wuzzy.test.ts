@@ -436,7 +436,6 @@ const modules = [
   "_http_server",
   "http2",
   "process",
-  "undici",
   "timers",
   "punycode",
   "trace_events",

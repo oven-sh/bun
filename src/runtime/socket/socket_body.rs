@@ -2642,6 +2642,16 @@ impl<const SSL: bool> NewSocket<SSL> {
         this_ref.this_value.with_mut(|r| r.finalize());
         if !this_ref.socket.get().is_closed() {
             this_ref.close_and_detach(uws::CloseCode::Failure);
+        } else {
+            // The socket was already closed without a JS `on_close` dispatch
+            // (e.g. `close_all_socket_groups()` during `process.exit()` /
+            // `BUN_DESTRUCT_VM_ON_EXIT=1` teardown). `close_and_detach()` is
+            // skipped above, so the +1 `IntrusiveRc` stowed in `native_callback`
+            // by `attach_native_callback()` would never be released and the
+            // attached `H2FrameParser` (and its `streams` map) would leak.
+            // `detach_native_callback()` is idempotent — it `replace()`s the
+            // slot with `None` and is a no-op if `on_close` already ran.
+            this_ref.detach_native_callback();
         }
 
         this_ref.deref();

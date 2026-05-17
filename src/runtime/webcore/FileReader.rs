@@ -443,7 +443,12 @@ impl FileReader {
             #[cfg(unix)]
             {
                 use bun_io::pipe_reader::PosixFlags;
-                if self.reader().flags.contains(PosixFlags::POLLABLE) && !self.reader().is_done() {
+                // `!started`: a second `on_start()` lands here (lazy was reset to None);
+                // re-incrementing strands a ref the single bool can't track and leaks the Source.
+                if !self.started.get()
+                    && self.reader().flags.contains(PosixFlags::POLLABLE)
+                    && !self.reader().is_done()
+                {
                     self.waiting_for_on_reader_done.set(true);
                     // SAFETY: see `parent()`.
                     unsafe { (*self.parent()).increment_count() };

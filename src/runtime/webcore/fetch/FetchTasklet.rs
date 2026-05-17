@@ -2134,6 +2134,9 @@ impl FetchTasklet {
         }
         // will deinit when done with the http client (when is_done = true)
         if task_ref.javascript_vm.is_shutting_down() {
+            // VM teardown: the JS-thread side will never drain this buffer (its
+            // on_progress_update bails the same way), so free the body bytes now.
+            task_ref.scheduled_response_buffer = MutableString::default();
             task_ref.mutex.unlock();
             if is_done {
                 FetchTasklet::deref_from_thread(task);

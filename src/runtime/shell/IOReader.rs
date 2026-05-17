@@ -52,6 +52,10 @@ struct State {
     #[cfg(windows)]
     is_reading: bool,
     started: bool,
+    /// Re-entrancy guard for `drain_readers()`. `start()` can be reached from
+    /// inside a drain (via the Yield trampoline) and must not recurse; the
+    /// outer drain loop will pick up any reader appended in the meantime.
+    draining: bool,
     /// Weak self-ref so `keepalive()` can bump the strong count from `&self`
     /// without unsafe Arc-pointer reconstruction. Set via `Arc::new_cyclic` in
     /// `init()` (the sole constructor).
@@ -151,6 +155,7 @@ impl IOReader {
                 #[cfg(windows)]
                 is_reading: false,
                 started: false,
+                draining: false,
                 self_weak: std::sync::Weak::clone(w),
                 interp: None,
             }),
@@ -245,6 +250,19 @@ impl IOReader {
             if s.is_reading {
                 return Yield::suspended();
             }
+            // A reader's done-handler can start a new command that calls
+            // `add_reader`+`start()` on this same IOReader after the pipe has
+            // reached EOF. On Windows the underlying BufferedReader has
+            // already nulled its `source` by then, so `start_with_current_pipe`
+            // would unwrap a `None`. There is nothing left to read; drain the
+            // newly-registered reader(s) now so they don't hang.
+            // `drain_readers()` is re-entrancy-guarded so calling it from
+            // inside an existing drain (via the Yield trampoline) is a no-op —
+            // the outer loop handles the new entry.
+            if self.reader().is_done() {
+                self.drain_readers();
+                return Yield::suspended();
+            }
             s.is_reading = true;
             if let Err(e) = self.reader().start_with_current_pipe() {
                 self.on_reader_error(&e);
@@ -326,15 +344,7 @@ impl IOReader {
         let s = self.state();
         s.err = Some(err.to_shell_system_error());
         s.raw_err = Some(err.clone());
-        // NOTE: reshaped for borrowck — copy out before dispatching.
-        let readers: Vec<ChildPtr> = s.readers.clone();
-        let interp = s.interp;
-        for r in readers {
-            // Re-derive a fresh SystemError per callee (see
-            // IOWriter.on_error note).
-            let ee = err.to_shell_system_error();
-            self.run_yield(dispatch_reader_done(r, Some(ee), interp));
-        }
+        self.drain_readers();
     }
 
     fn on_reader_done_cb(&self) {
@@ -344,17 +354,42 @@ impl IOReader {
         // Hold a strong ref across the body.
         let _keepalive = self.keepalive();
         self.set_reading(false);
+        self.drain_readers();
+    }
+
+    /// Notify every registered reader that this IOReader is finished,
+    /// including readers appended while draining.
+    ///
+    /// `run_yield` drives the Yield trampoline which can (a) call
+    /// `add_reader()` on this same IOReader — iterating a snapshot would miss
+    /// those, and leaving already-notified entries in `readers` would let
+    /// `add_reader`'s `contains()` dedup match a freed-then-reused `NodeId` —
+    /// and (b) drop the last external Arc. Pop each reader out via
+    /// `swap_remove(0)` before dispatching so neither hazard applies.
+    ///
+    /// Re-entrant calls (reached via `start()` from inside the trampoline)
+    /// are no-ops; the outermost loop owns the drain and will pick up
+    /// anything appended in the meantime. Keeps `Yield::run` nesting bounded.
+    fn drain_readers(&self) {
         let s = self.state();
-        let readers: Vec<ChildPtr> = s.readers.clone();
+        if s.draining {
+            return;
+        }
+        s.draining = true;
         let interp = s.interp;
-        // `SystemError` isn't `Clone` yet, so we keep the source `sys::Error`
-        // (which IS `Clone`) and re-derive a fresh `SystemError` per callee —
-        // same approach as `on_reader_error`.
-        let raw_err = s.raw_err.clone();
-        for r in readers {
-            let ee = raw_err.as_ref().map(|e| e.to_shell_system_error());
+        while !self.state().readers.is_empty() {
+            let r = self.state().readers.swap_remove(0);
+            // `SystemError` isn't `Clone` yet, so we keep the source
+            // `sys::Error` (which IS `Clone`) and re-derive a fresh
+            // `SystemError` per callee.
+            let ee = self
+                .state()
+                .raw_err
+                .as_ref()
+                .map(|e| e.to_shell_system_error());
             self.run_yield(dispatch_reader_done(r, ee, interp));
         }
+        self.state().draining = false;
     }
 
     fn run_yield(&self, y: Yield) {

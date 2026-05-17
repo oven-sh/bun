@@ -5,9 +5,7 @@ import { bunEnv, bunExe, isASAN } from "harness";
 
 const placeholder = "hey";
 
-// ASAN's quarantine retains freed allocations (default 256 MB) so the tight
-// 4 MB / 20 MB RSS thresholds here cannot be made meaningful under bun-asan.
-describe.skipIf(isASAN)("does not leak", () => {
+describe("does not leak", () => {
   async function run(code: string) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--smol", "-e", code],
@@ -32,7 +30,10 @@ describe.skipIf(isASAN)("does not leak", () => {
         for (let i = 0; i < 60000; i++) Bun.password.hashSync("hey", opts);
         Bun.gc(true);
         const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
-        if (growthMB > 4) throw new Error("leaked " + growthMB.toFixed(2) + "MB");
+        // ASAN's free quarantine (default 256 MB) plus redzones and glibc page
+        // retention inflate RSS even when nothing is leaking.
+        const limit = ${isASAN ? 400 : 4};
+        if (growthMB > limit) throw new Error("leaked " + growthMB.toFixed(2) + "MB (limit " + limit + "MB)");
       `);
   }, 90_000);
 
@@ -50,7 +51,10 @@ describe.skipIf(isASAN)("does not leak", () => {
         for (let i = 0; i < 2000; i++) await batch(100);
         Bun.gc(true);
         const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
-        if (growthMB > 20) throw new Error("leaked " + growthMB.toFixed(2) + "MB");
+        // ASAN's free quarantine (default 256 MB) plus redzones and glibc page
+        // retention inflate RSS even when nothing is leaking.
+        const limit = ${isASAN ? 400 : 20};
+        if (growthMB > limit) throw new Error("leaked " + growthMB.toFixed(2) + "MB (limit " + limit + "MB)");
       `);
   }, 90_000);
 });

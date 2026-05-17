@@ -55,9 +55,7 @@ describe("Structured Clone Fast Path", () => {
     });
   }
 
-  // ASAN's quarantine retains freed allocations (default 256 MB) so the tight
-  // 1 MB / 8 MB RSS thresholds here cannot be made meaningful under bun-asan.
-  test.skipIf(isASAN)("structuredClone should use a constant amount of memory for string inputs", () => {
+  test("structuredClone should use a constant amount of memory for string inputs", () => {
     const clones: Array<string> = [];
     // Create a 512KB string to test fast path
     const largeString = Buffer.alloc(512 * 1024, "a").toString();
@@ -72,11 +70,13 @@ describe("Structured Clone Fast Path", () => {
     Bun.gc(true);
     const rss2 = process.memoryUsage.rss();
     const delta = rss2 - rss;
-    expect(delta).toBeLessThan(1024 * 1024 * 8);
+    // ASAN's free quarantine (default 256 MB) plus redzones and glibc page
+    // retention inflate RSS even when nothing is leaking.
+    expect(delta).toBeLessThan(isASAN ? 1024 * 1024 * 400 : 1024 * 1024 * 8);
     expect(clones.length).toBe(10000 + 100);
   });
 
-  test.skipIf(isASAN)("structuredClone should use a constant amount of memory for simple object inputs", () => {
+  test("structuredClone should use a constant amount of memory for simple object inputs", () => {
     // Create a 512KB string to test fast path
     const largeValue = { property: Buffer.alloc(512 * 1024, "a").toString() };
     for (let i = 0; i < 100; i++) {
@@ -90,7 +90,9 @@ describe("Structured Clone Fast Path", () => {
     Bun.gc(true);
     const rss2 = process.memoryUsage.rss();
     const delta = rss2 - rss;
-    expect(delta).toBeLessThan(1024 * 1024);
+    // ASAN's free quarantine (default 256 MB) plus redzones and glibc page
+    // retention inflate RSS even when nothing is leaking.
+    expect(delta).toBeLessThan(isASAN ? 1024 * 1024 * 400 : 1024 * 1024);
   });
 
   // === Array fast path tests ===

@@ -740,11 +740,7 @@ describe.concurrent(() => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stdout).toBe("");
       expect(stderr).toBe("hi { a: 1 } [ 1, 2 ]\n");
       expect(exitCode).toBe(0);
@@ -752,11 +748,7 @@ describe.concurrent(() => {
 
     it("handles printf-style format specifiers via util.format", async () => {
       await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `process._rawDebug('val: %d', 42); process._rawDebug('%s: %j', 'key', {a: 1});`,
-        ],
+        cmd: [bunExe(), "-e", `process._rawDebug('val: %d', 42); process._rawDebug('%s: %j', 'key', {a: 1});`],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",

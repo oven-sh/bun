@@ -3209,6 +3209,19 @@ impl Data {
                 Data::ENull(_) | Data::EUndefined(_) => {
                     return Equality::FALSE;
                 }
+                Data::EString(_) => {
+                    if K::STRICT {
+                        // "true === 'x'" is false (different types)
+                        return Equality::FALSE;
+                    }
+                }
+                Data::EInlinedEnum(r) => {
+                    if K::STRICT {
+                        if matches!(r.value.data, Data::EString(_) | Data::ENumber(_)) {
+                            return Equality::FALSE;
+                        }
+                    }
+                }
                 _ => {}
             },
             Data::ENumber(l) => match right {
@@ -3226,6 +3239,12 @@ impl Data {
                             equal: l.value == rn.value,
                             ..Default::default()
                         };
+                    }
+                    // Different types under === are never equal
+                    if K::STRICT {
+                        if matches!(r.value.data, Data::EString(_)) {
+                            return Equality::FALSE;
+                        }
                     }
                 }
                 Data::EBoolean(r) | Data::EBranchBoolean(r) => {
@@ -3249,6 +3268,22 @@ impl Data {
                 Data::ENull(_) | Data::EUndefined(_) => {
                     // "(not null or undefined) == undefined" is false
                     return Equality::FALSE;
+                }
+                Data::EString(r) => {
+                    if K::STRICT {
+                        // "42 === 'x'" is false (different types)
+                        return Equality::FALSE;
+                    }
+                    // Loose: "0" == 0 is true, "" == 0 is true
+                    let mut r = *r;
+                    r.resolve_rope_if_needed(p.arena());
+                    if l.value == 0.0 && (r.is_blank() || r.eql_comptime(b"0")) {
+                        return Equality::TRUE;
+                    }
+                    if l.value == 1.0 && r.eql_comptime(b"1") {
+                        return Equality::TRUE;
+                    }
+                    return Equality::UNKNOWN;
                 }
                 _ => {}
             },
@@ -3297,6 +3332,15 @@ impl Data {
                                 ..Default::default()
                             };
                         }
+                        if K::STRICT {
+                            // e_string vs e_inlined_enum wrapping a non-string type
+                            if matches!(
+                                inlined.value.data,
+                                Data::ENumber(_) | Data::EBoolean(_) | Data::EBranchBoolean(_)
+                            ) {
+                                return Equality::FALSE;
+                            }
+                        }
                     }
                     Data::ENull(_) | Data::EUndefined(_) => {
                         return Equality::FALSE;
@@ -3313,6 +3357,11 @@ impl Data {
                             // the string could still equal 0 or 1 but it could be hex, binary, octal, ...
                             return Equality::UNKNOWN;
                         } else {
+                            return Equality::FALSE;
+                        }
+                    }
+                    Data::EBoolean(_) | Data::EBranchBoolean(_) => {
+                        if K::STRICT {
                             return Equality::FALSE;
                         }
                     }

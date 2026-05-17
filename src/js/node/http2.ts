@@ -2466,8 +2466,20 @@ class ServerHttp2Stream extends Http2Stream {
   constructor(streamId, session, headers) {
     super(streamId, session, headers);
   }
-  pushStream() {
-    throw $ERR_HTTP2_PUSH_DISABLED();
+  pushStream(headers, options, callback) {
+    // Argument shuffle: pushStream(headers, callback) is valid.
+    if (typeof options === "function") {
+      callback = options;
+      options = undefined;
+    }
+    validateFunction(callback, "callback");
+    // Bun does not currently implement sending PUSH_PROMISE frames. Node
+    // throws ERR_HTTP2_PUSH_DISABLED synchronously only when the peer
+    // explicitly disabled push; otherwise runtime errors are delivered via
+    // the error-first callback on the next tick. Route the "not supported"
+    // case through the callback so user code written against Node's
+    // callback contract doesn't crash inside the 'stream' event handler.
+    process.nextTick(callback, $ERR_HTTP2_PUSH_DISABLED());
   }
 
   respondWithFile(path, headers, options) {

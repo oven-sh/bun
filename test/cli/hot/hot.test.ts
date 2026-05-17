@@ -777,7 +777,7 @@ describe("should reuse the listening socket on hot reload", () => {
       "Bun.listen",
       `const server = Bun.listen({
          hostname: "127.0.0.1",
-         port: PORT,
+         port: 0,
          socket: {
            open(s) { s.write("v" + globalThis.reloadCount); s.flush(); },
            data() {},
@@ -806,7 +806,7 @@ describe("should reuse the listening socket on hot reload", () => {
       "Bun.serve",
       `const server = Bun.serve({
          hostname: "127.0.0.1",
-         port: PORT,
+         port: 0,
          fetch() { return new Response("v" + globalThis.reloadCount); },
        });`,
       async (port: number) => {
@@ -818,9 +818,13 @@ describe("should reuse the listening socket on hot reload", () => {
     it(
       name,
       async () => {
+        // The hot-reload registry keys on the *requested* address, so
+        // `port: 0` matches itself across reloads and the child keeps the
+        // same resolved port. We read that port back from the first event
+        // rather than reserving one in the parent (which would be a TOCTOU
+        // race with other processes on the CI box).
         const source = (n: number) => `
 globalThis.reloadCount = ${n};
-const PORT = Number(process.env.PORT);
 ${listen}
 console.log(JSON.stringify({ listening: true, port: server.port, reload: globalThis.reloadCount }));
 `;
@@ -829,19 +833,9 @@ console.log(JSON.stringify({ listening: true, port: server.port, reload: globalT
         });
         const entry = join(String(dir), "index.ts");
 
-        // Reserve a port so the fixture always requests the same one (the
-        // reuse path keys on the *requested* host:port).
-        const reserve = Bun.listen({
-          hostname: "127.0.0.1",
-          port: 0,
-          socket: { data() {} },
-        });
-        const port = reserve.port;
-        reserve.stop(true);
-
         await using runner = spawn({
           cmd: [bunExe(), "--hot", "run", entry],
-          env: { ...bunEnv, PORT: String(port) },
+          env: bunEnv,
           cwd: String(dir),
           stdout: "pipe",
           stderr: "pipe",
@@ -859,34 +853,45 @@ console.log(JSON.stringify({ listening: true, port: server.port, reload: globalT
               runner.kill();
             }
           }
-        })();
+        })().catch(() => {});
 
         const events: Array<{ listening: boolean; port: number; reload: number }> = [];
         const responses: string[] = [];
         let buf = "";
         const target = 3;
+        let port = 0;
 
-        for await (const chunk of runner.stdout) {
-          buf += new TextDecoder().decode(chunk);
-          const lines = buf.split("\n");
-          buf = lines.pop() ?? "";
-          let advanced = false;
-          for (const line of lines) {
-            if (!line.startsWith("{")) continue;
-            const ev = JSON.parse(line);
-            events.push(ev);
-            advanced = true;
-          }
-          if (!advanced) continue;
-          if (events.length >= target) {
+        try {
+          for await (const chunk of runner.stdout) {
+            buf += new TextDecoder().decode(chunk);
+            const lines = buf.split("\n");
+            buf = lines.pop() ?? "";
+            let advanced = false;
+            for (const line of lines) {
+              if (!line.startsWith("{")) continue;
+              const ev = JSON.parse(line);
+              // File watchers can fire more than once for a single write
+              // (truncate+write); ignore repeats of the current generation
+              // so the strict-sequence assertions below aren't at the mercy
+              // of platform watcher coalescing.
+              if (events.length > 0 && events[events.length - 1].reload === ev.reload) continue;
+              events.push(ev);
+              port ||= ev.port;
+              advanced = true;
+            }
+            if (!advanced) continue;
+            if (events.length >= target) {
+              responses.push(await extract(port));
+              runner.kill();
+              break;
+            }
+            // Verify the new handlers are actually wired up (not just that
+            // listen() didn't throw), then trigger the next reload.
             responses.push(await extract(port));
-            runner.kill();
-            break;
+            writeFileSync(entry, source(events.length + 1));
           }
-          // Verify the new handlers are actually wired up (not just that
-          // listen() didn't throw), then trigger the next reload.
-          responses.push(await extract(port));
-          writeFileSync(entry, source(events.length + 1));
+        } catch {
+          // runner.kill() from the stderr reader aborts this iterator.
         }
 
         runner.kill();

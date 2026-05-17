@@ -140,7 +140,7 @@ Register-ArgumentCompleter -Native -CommandName bun, bunx -ScriptBlock {
             'update'   { _bun_complete_install_flags $currentToken }
             'build'    { _bun_complete_build_flags $currentToken }
             'init'     { _bun_complete_init_flags $currentToken }
-            'publish'  { _bun_complete_install_flags $currentToken; _bun_complete_publish_flags $currentToken }
+            'publish'  { _bun_complete_publish_flags $currentToken; _bun_complete_install_flags $currentToken }
             'outdated' { _bun_complete_install_flags $currentToken }
             'link'     { _bun_complete_install_flags $currentToken }
             'unlink'   { _bun_complete_install_flags $currentToken }
@@ -168,7 +168,7 @@ Register-ArgumentCompleter -Native -CommandName bun, bunx -ScriptBlock {
         'pm' {
             @('bin', 'cache', 'default-trusted', 'hash', 'hash-print', 'hash-string',
               'ls', 'migrate', 'pack', 'pkg', 'scan', 'trust', 'untrusted',
-              'version', 'view', 'who', 'whoami', 'why') |
+              'version', 'view', 'whoami', 'why') |
                 Where-Object { $_ -like "$currentToken*" } |
                 ForEach-Object {
                     [CompletionResult]::new($_, $_, 'ParameterValue', "pm $_")
@@ -359,10 +359,13 @@ function _bun_complete_audit_flags {
 
 function _bun_complete_publish_flags {
     param([string]$word)
+    # Publish-specific flags (in addition to shared install flags)
     $flags = @(
-        @{ Name = '--access';  Desc = 'Set package access level (public|restricted)' }
-        @{ Name = '--tag';     Desc = 'Publish with a specific dist-tag' }
-        @{ Name = '--otp';     Desc = 'One-time password for 2FA' }
+        @{ Name = '--access';       Desc = 'Set package access level (public|restricted)' }
+        @{ Name = '--tag';          Desc = 'Publish with a specific dist-tag' }
+        @{ Name = '--otp';          Desc = 'One-time password for 2FA' }
+        @{ Name = '--dry-run';      Desc = "Don't actually publish" }
+        @{ Name = '--auth-type';    Desc = 'Authentication type (legacy|web)' }
     )
     $flags | Where-Object { $_.Name -like "$word*" } | ForEach-Object {
         [CompletionResult]::new($_.Name, $_.Name, 'ParameterName', $_.Desc)
@@ -380,4 +383,5 @@ function _bun_complete_patch_flags {
     $flags | Where-Object { $_.Name -like "$word*" } | ForEach-Object {
         [CompletionResult]::new($_.Name, $_.Name, 'ParameterName', $_.Desc)
     }
+    _bun_complete_install_flags $word
 }

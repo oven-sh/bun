@@ -26,14 +26,39 @@ infrastructure.
 | Verdict counts source-of-truth | [`phase7_convergence_round_123.json`](phase7_convergence_round_123.json) |
 
 **One-paragraph summary:** This audit applied the
-`/rust-undefined-behavior-exorcist` skill to Bun's Rust runtime (~108
-workspace crates, ~3M LoC) over a multi-day exhaustive run. 70 distinct
-Undefined Behavior witnesses were confirmed with Miri, Tree-Borrows, loom,
-or source-faithful contract traces against `origin/main@4d443e5402`. The
-audit reached formal convergence (no new findings for 2 consecutive rounds,
-≥10 rounds total). 17 strong-negative reviews, 5 incidental non-UB
-findings, and 1 RUSTSEC advisory round out the deliverable. **Every file
-in this directory is review-quality evidence with a path you can read.**
+`/rust-undefined-behavior-exorcist` skill to Bun's Rust runtime in Exhaustive
+mode. The run partitioned 108 workspace crates into 21 sections, seeded the
+search with the prior unsafe-code audit's 11,044-site inventory, and converged
+at round 123. The registry contains 70 `CONFIRMED_UB` entries with Miri,
+Tree-Borrows, loom, sanitizer, or source-faithful contract evidence against
+`origin/main@4d443e5402`; it also records 17 `NO_EVIDENCE` negative results,
+17 `DEFERRED` policy/design items, and 2 `RESOLVED` exemplars. The supporting
+artifacts include 17 strong-negative reviews, 5 incidental non-UB findings,
+and 1 RUSTSEC advisory. The key artifacts are linked below; raw logs and helper
+outputs are included so an agent can re-check the claims rather than trust the
+summary.
+
+## Agent operating route
+
+If you are an AI coding agent opening this PR cold, follow this path:
+
+1. Read this file through once. It tells you which artifacts are authoritative
+   and which ones are historical notes from earlier passes.
+2. For a headline or count, trust [`phase7_convergence_round_123.json`](phase7_convergence_round_123.json)
+   first, then [`FINAL_UB_REPORT.md`](FINAL_UB_REPORT.md). Other synthesis
+   docs may preserve older intermediate counts for audit history.
+3. For a specific bug, start at the `EXP-NNN` entry in
+   [`UNDEFINED_BEHAVIOR_EXPERIMENT_DESIGNS.md`](UNDEFINED_BEHAVIOR_EXPERIMENT_DESIGNS.md),
+   then read the matching `R-EXP-NNN` or `R-S<N>` section in
+   [`phase8_remediation_plan.md`](phase8_remediation_plan.md).
+4. Before implementing, run the relevant standalone witness manually. Known
+   pre-fix UB witnesses are expected to fail with a matching Miri/sanitizer
+   signal. A clean run before a fix usually means either upstream drift or a
+   stale experiment.
+5. Treat the local bead graph as the implementation plan, not as evidence. The
+   registry and result logs prove the findings; beads organize the work.
+6. Do not close an R/T/D close cluster until remediation, regression coverage,
+   and SAFETY documentation all landed and the cluster-level checks pass.
 
 ---
 
@@ -48,24 +73,42 @@ in this directory is review-quality evidence with a path you can read.**
 ### "I want to fix one of the findings"
 1. Look up the EXP in the registry (above)
 2. Open the corresponding remediation plan in [`phase8_remediation_plan.md`](phase8_remediation_plan.md); the `### R-EXP-NNN` section holds rubric-scored candidates, the chosen winner, rationale, proves-original-UB, and proves-new-soundness
-3. Run the pre-fix reproducer to confirm the bug still exists:
+3. Run the pre-fix reproducer to confirm the bug still exists. On the audited
+   base, a confirmed UB reproducer should produce the documented signal and
+   usually exits non-zero:
    ```bash
    bash .ub-exorcism/2026-05-15-exhaustive/scripts/regression-runner.sh EXP-NNN sb
    ```
 4. Implement the rubric winner (see also any `CODEX_<EXP>_CORRECTION_*.md` docs)
-5. Re-run the reproducer; the run must now be Miri-clean
+5. Re-run the reproducer; after the fix, the relevant Miri/sanitizer config
+   must be clean or the experiment must be rewritten into a compile-fail/API
+   regression if the fixed type no longer permits the bad state
 6. Add the SAFETY comment per [`scripts/audit/check-safety-blocks.sh`](scripts/audit/check-safety-blocks.sh)
-7. Update the registry verdict from `CONFIRMED_UB` to `RESOLVED` with a citation to the post-fix witness log
+7. Land the T bead and D bead alongside the R bead. For bundled structural
+   fixes, land the whole close cluster atomically.
+8. Update the registry verdict from `CONFIRMED_UB` to `RESOLVED` with a citation to the post-fix witness log
 
-### "I want to verify the audit reproduces"
+### "I want to smoke-check the staged audit infrastructure"
 ```bash
 cd .ub-exorcism/2026-05-15-exhaustive
 bash scripts/audit/verify-runbook.sh --quick
 ```
-This runs: prereq check → vendor bootstrap → ninja codegen → `cargo check --workspace` → smoke-run every EXP regression → computes a manifest hash. See [`scripts/audit/verify-runbook.sh`](scripts/audit/verify-runbook.sh) for the 8-step contract.
+This helper checks prerequisites, bootstraps vendor sources, runs codegen when
+available, runs `cargo check --workspace`, then attempts the EXP regression
+runner matrix and computes a manifest digest. It is staged audit infrastructure,
+not yet canonical Bun CI. Two important caveats:
+
+- Known pre-fix UB witnesses exit non-zero until their fixes land. Use their
+  logs to confirm the expected signal, not as a blanket "all green" test.
+- No `REPRODUCIBILITY_HASH` file is currently shipped in this PR. Treat the
+  hash step as a future promotion gate once expected-signal semantics are wired
+  into the runner.
+
+See [`scripts/audit/verify-runbook.sh`](scripts/audit/verify-runbook.sh) for
+the exact 8-step contract.
 
 ### "I want to understand the methodology"
-1. **Phases:** [`phase1_inventory_*`](phase1_notes/), [`phase2_findings_*`](.) by UB bucket, [`phase3_dynamic_findings.md`](phase3_dynamic_findings.md) (Miri/sanitizer/loom/fuzz), [`phase4_unified_findings.md`](phase4_unified_findings.md), [`phase5_experiment_results/`](phase5_experiment_results/), [`phase6_idea_wizard.md`](phase6_idea_wizard.md), [`phase7_convergence_round_*.json`](.) (round-by-round), [`phase8_remediation_plan.md`](phase8_remediation_plan.md), [`phase10_fresh_eyes_log.md`](phase10_fresh_eyes_log.md), [`phase11_artifacts/`](phase11_artifacts/), [`phase11_execution_log.md`](phase11_execution_log.md), [`phase11_soak_designs.md`](phase11_soak_designs.md)
+1. **Phases:** start with [`phase0_run.json`](phase0_run.json), [`phase1_unsafe_surface_inventory.md`](phase1_unsafe_surface_inventory.md), and [`phase1_notes/`](phase1_notes/), then read the `phase2_findings_*.md` bucket files, [`phase3_dynamic_findings.md`](phase3_dynamic_findings.md), [`phase4_unified_findings.md`](phase4_unified_findings.md), [`phase5_experiment_results/`](phase5_experiment_results/), [`phase6_idea_wizard.md`](phase6_idea_wizard.md), [`phase7_convergence_round_123.json`](phase7_convergence_round_123.json), [`phase8_remediation_plan.md`](phase8_remediation_plan.md), [`phase10_fresh_eyes_log.md`](phase10_fresh_eyes_log.md), [`phase11_artifacts/`](phase11_artifacts/), [`phase11_execution_log.md`](phase11_execution_log.md), and [`phase11_soak_designs.md`](phase11_soak_designs.md).
 2. **Operator walkthrough** (the 12 mined rituals as named operators applied to one real EXP): [`operator_walkthrough/EXP-004.md`](operator_walkthrough/EXP-004.md)
 3. **Skill philosophy:** read the skill at `/rust-undefined-behavior-exorcist`'s `SKILL.md`
 
@@ -75,7 +118,7 @@ This runs: prereq check → vendor bootstrap → ninja codegen → `cargo check 
 # 2. Author the standalone reproducer
 mkdir -p .ub-exorcism/2026-05-15-exhaustive/experiments/EXP-NNN/src
 # (write src/main.rs)
-# 3. Auto-file the R/T/D bead triplet
+# 3. Auto-file the R/T/D close cluster
 bash .ub-exorcism/2026-05-15-exhaustive/scripts/audit/file-new-exp-triplet.sh \
     EXP-NNN "one-line title" --severity CONDITIONAL_UB --bucket "1+15"
 # 4. Verify no drift
@@ -104,7 +147,7 @@ bash .ub-exorcism/2026-05-15-exhaustive/scripts/audit/check-registry-drift.sh
 | `DEFERRED` (17) | Either (a) strict-provenance migration that's intentional release-gate policy, or (b) remediation-design vehicle (e.g., loom-torture harness, lint proc-macro proposal). | Read the `Notes:` block; act only if the policy/design has settled. |
 | `RESOLVED` (2) | Fix already shipped (EXP-012 callback-receiver re-entry; EXP-037 Windows watcher regression guard). | Use as exemplar for similar finding shapes. |
 
-**Parenthetical detail suffixes are common**, e.g. `CONFIRMED_UB (POSIX async-signal-safety contract violation; not a Miri Rust abstract-machine trace)` or `CONFIRMED_UB (latent — sound today, witnessed under stack-construction)`. These describe the *rigor* of the witness, not a different verdict class.
+**Parenthetical detail suffixes are common**, e.g. `CONFIRMED_UB (POSIX async-signal-safety contract violation; not a Miri Rust abstract-machine trace)` or `CONFIRMED_UB (latent; sound today, witnessed under stack-construction)`. These describe the *rigor* of the witness, not a different verdict class.
 
 ---
 
@@ -147,7 +190,7 @@ bash .ub-exorcism/2026-05-15-exhaustive/scripts/audit/check-registry-drift.sh
 │   │   ├── check-close-order.sh                        ← META-CLOSE-ORDER-ENFORCEMENT
 │   │   ├── check-registry-drift.sh                     ← META-REGISTRY-DRIFT-CHECKER
 │   │   ├── check-safety-blocks.sh                      ← META-DOC-CONVENTIONS enforcer
-│   │   ├── file-new-exp-triplet.sh                     ← auto-file R/T/D for new EXP
+│   │   ├── file-new-exp-triplet.sh                     ← auto-file R/T/D close cluster for new EXP
 │   │   ├── match-signal-to-exp.py                      ← UB stderr → candidate EXP(s)
 │   │   ├── resolve_crate.py                            ← src/path → crate name
 │   │   ├── rubric-prompt.sh                            ← META-RUBRIC-SCORING prompter
@@ -169,22 +212,25 @@ All scripts are at `.ub-exorcism/2026-05-15-exhaustive/scripts/`. They are
 `scripts/` location; promotion requires maintainer review. Each script's
 docstring documents its CANONICAL LOCATION for that future migration.
 
-**Every script has been smoke-tested end-to-end. They are runnable today.**
+The table records the smoke-test outcome captured during the audit. These
+helpers are useful today from the staged location, but they are not yet a
+canonical Bun API. Before promoting any script into `scripts/`, rerun its
+smoke test and review it against Bun's CI conventions.
 
 | Script | What it does | Smoke-test outcome |
 |---|---|---|
 | `regression-runner.sh <EXP-ID> <sb\|tb\|sp\|sa\|integration>` | Runs ONE regression for ONE EXP; emits BEGIN/END-bracketed log + appends to `phase11_artifacts/regression/index.jsonl` | ✓ ran on EXP-109, correctly reported `exit=1 ub_lines=1` matching expected Miri witness |
 | `audit/bootstrap-vendor.sh [--list\|--only <lib>]` | Bootstraps missing vendor sources (fix for incidental I-2). Refuses `--force` for safety. | ✓ `--list` shows all 24 vendor specs; default safely skips already-populated dirs |
-| `audit/check-close-order.sh [--bead <id>\|--json]` | Enforces R/T/D triplet close-order contract (beads_rust doesn't enforce natively) | ✓ "no violations across 62 EXP triplets + 7 S triplets" |
-| `audit/check-registry-drift.sh [--json\|--fix]` | Verifies bead labels match registry verdicts; detects missing R/T/D triplets and structural-fix absorbed-EXP coverage | ✓ 13 real actionable drift items (post-bundle-aware parser) |
+| `audit/check-close-order.sh [--bead <id>\|--json]` | Enforces R/T/D close-cluster rules that `beads_rust` does not enforce natively | ✓ documented no close-order violations after the final bead pass; current `br dep cycles` and `bv --robot-alerts` are clean |
+| `audit/check-registry-drift.sh [--json\|--fix]` | Verifies bead labels match registry verdicts; detects missing R/T/D close clusters and structural-fix absorbed-EXP coverage | ✓ 13 real actionable drift items (post-bundle-aware parser) |
 | `audit/check-safety-blocks.sh [--crate <name>\|--json]` | Greps `unsafe fn` / `unsafe {` sites for missing SAFETY blocks | ✓ found 13 real undocumented unsafe sites in `bun_threading` |
-| `audit/file-new-exp-triplet.sh EXP-NNN "title" [--severity X --bucket Y]` | Auto-files R/T/D bead triplet for a newly-promoted EXP | ✓ rejects unknown EXP-NNN; validates returned bead IDs match `bun-XXXX` pattern |
+| `audit/file-new-exp-triplet.sh EXP-NNN "title" [--severity X --bucket Y]` | Auto-files an R/T/D close cluster for a newly-promoted EXP | ✓ rejects unknown EXP-NNN; validates returned bead IDs match `bun-XXXX` pattern |
 | `audit/match-signal-to-exp.py [--json]` | Classifies a Miri/sanitizer stderr against the audit's 11 known UB signal classes; suggests candidate EXP-NNN(s) | ✓ correctly classified EXP-109's Miri log as "dangling-pointer" with EXP-056/081/109 candidates |
 | `audit/resolve_crate.py [--json]` | Maps `src/path:line` → `bun_<crate>` workspace name | ✓ `src/runtime/timer/mod.rs` → `bun_runtime` |
 | `audit/rubric-prompt.sh EXP-NNN` | Walks an implementer through re-scoring a rubric before close | ✓ usage error returns 2, nonexistent EXP returns 1 |
 | `audit/rubric-status.sh [--json\|--exp EXP-NNN]` | Reports per-R-EXP Winner-recorded status; filters non-actionable verdicts | ✓ finds 1 real missing winner (EXP-043), exit 1 |
-| `audit/triage-soak-results.sh [--kill <tag>\|--json]` | Pulls + triages SOAK campaign results from a remote worker. **Requires `BUN_SOAK_WORKER` env var** (no embedded secrets). | ✓ correctly fails without env var; with env var, pulled live status from 10 SOAK campaigns |
-| `audit/verify-runbook.sh [--quick\|--update-hash]` | Single-command reproducibility gate (8 steps) | ✓ steps 1-4 PASS; step 5 (cargo check) is slow; manifest hash is deterministic |
+| `audit/triage-soak-results.sh [--kill <tag>\|--json]` | Pulls + triages SOAK campaign results from a remote worker. **Requires `BUN_SOAK_WORKER` env var** (no embedded secrets). | ✓ correctly fails without env var; documented live-status pull requires operator-provided worker config |
+| `audit/verify-runbook.sh [--quick\|--update-hash]` | Staged reproducibility gate (8 steps) | ✓ steps 1-4 PASS in stored logs; `cargo check --workspace` is recorded separately as passing in `phase11_artifacts/cargo_check_workspace_v2.log`; full all-EXP pass awaits expected-signal semantics + `REPRODUCIBILITY_HASH` promotion |
 | `ci/compute-affected-exps.sh <base> <head> [--configs sb,tb,sp,sa]` | Emits GHA-matrix JSON of EXPs whose files changed in the diff | ✓ `HEAD~1 HEAD` → `affected_exps=1 matrix_size=1` (correct precise matching) |
 | `ci/registry-paths.sh [--json]` | Inverse of `compute-affected-exps`: stdin paths → matching EXP-IDs | ✓ `src/runtime/timer/mod.rs` → `EXP-026` |
 
@@ -215,49 +261,66 @@ These patterns recur; if you author a 15th META script, check for them.
 
 The audit uses [`beads_rust`](https://github.com/Dicklesworthstone/beads_rust)
 (`br` CLI) as its dependency-aware issue tracker. The `.beads/` directory is
-**git-excluded** (local-only per audit policy); after PR merge, beads can be
-exported via `br sync --flush-only` into the canonical issue tracker if
-desired. Bead counts at audit close:
+**git-excluded** and local-only per audit policy. This PR includes the audit
+artifacts and the bead author log, not the `.beads/` database itself. If you
+have the local bead DB generated during the run, `bv --robot-triage` reports
+the current graph as:
 
-- **R-EXP-NNN** (48 single + 7 bundled): remediation work items
-- **T-EXP-NNN** (51): regression tests
-- **D-EXP-NNN** (60): per-site SAFETY comment work
-- **R-S<X>** / **T-S<X>** / **D-S<X>** (7+7+7 = 21): structural-fix beads
-  bundling multiple absorbed EXPs
-- **META-*** (14): infrastructure beads (CI sharding, close-order
-  enforcement, SOAK triage, etc.)
-- **TOTAL: 200 active, plus a few closed or tombstoned**
+- **201 open active beads**, **1 closed bead**, and **4 tombstones** in a
+  206-record local database
+- **50 R-EXP** remediation beads
+- **53 T-EXP** regression-test beads
+- **62 D-EXP** docs/SAFETY-comment beads
+- **7 R-S / 7 T-S / 7 D-S** structural-fix beads
+- **15 META** infrastructure beads
+- **0 dependency cycles** and **0 `bv --robot-alerts` findings** at this review
+
+The older [`phase9_beads_log.md`](phase9_beads_log.md) is still useful, but it
+is a historical author log. It preserves the state before later Codex refreshes
+added EXP-094/095 and the final bead-quality pass. For current implementation
+planning, trust the local `br`/`bv` graph if present, and trust the registry
+for finding counts.
 
 ### Bead dependency contract
 
-Every R/T/D triplet enforces a close-order via `META-CLOSE-ORDER-ENFORCEMENT`
-(implemented by [`scripts/audit/check-close-order.sh`](scripts/audit/check-close-order.sh)):
-- R-EXP-NNN closes only after T-EXP-NNN AND D-EXP-NNN close
-- Same triangular contract for the structural variants (R-S<X> / T-S<X> / D-S<X>)
-- Absorbed EXPs (per [`phase8_remediation_plan.md`](phase8_remediation_plan.md)'s
-  "Blast radius — closes:" bullet lists) inherit R/T coverage from the S bundle
+The final bead model is an **atomic close cluster**, not a sequential
+"remediation closes last" model:
+
+- Each finding cluster has an R bead (code remediation), a T bead (unit,
+  integration, Miri, loom, fuzz, or compile-fail coverage), and a D bead
+  (SAFETY comments plus source docs where needed).
+- A cluster is considered complete only when all three are ready to close
+  together and the close-order checker passes.
+- Structural-fix clusters use the same shape: `R-S<N>`, `T-S<N>`, `D-S<N>`.
+  Absorbed EXPs inherit implementation and test coverage from the structural
+  bundle only when the bundle's "closes:" list in
+  [`phase8_remediation_plan.md`](phase8_remediation_plan.md) explicitly names
+  them.
+- Do not close an R bead as "done" merely because code compiles. The matching
+  test and SAFETY documentation are part of the fix.
 
 ### Working a bead
 
 ```bash
-br ready                          # show actionable work (no blockers)
-br show <id>                      # full details including dependency graph
-br show <id> --json | jq '.[0]'   # machine-readable
-br dep tree <id>                  # what blocks what
-br update <id> --status in_progress
+CI=1 br ready --json                  # actionable work, machine-readable
+CI=1 br show <id> --json              # full details including dependency graph
+br dep tree <id>                      # human-readable blocker tree
+CI=1 br update <id> --status in_progress --json
 # ... do the work ...
-br close <id> --reason "..."
-br sync --flush-only              # export to JSONL (no git ops)
+bash .ub-exorcism/2026-05-15-exhaustive/scripts/audit/check-close-order.sh --json
+bash .ub-exorcism/2026-05-15-exhaustive/scripts/audit/check-registry-drift.sh --json
+CI=1 br close <id> --reason "..." --json
+CI=1 br sync --flush-only             # export to JSONL; br does not run git
 ```
 
 ### Bead-graph health metrics
 
 Run [`bv`](https://github.com/Dicklesworthstone/bv) for graph-aware triage:
 ```bash
-bv --robot-triage | jq '.triage.quick_ref'          # top 3 picks + counts
-bv --robot-insights | jq '.Cycles'                  # must be null
-bv --robot-insights | jq '.Keystones[0:5]'          # what unblocks the most
-bv --robot-suggest                                  # hygiene: dups, missing deps
+bv --robot-triage --format=json | jq '.triage.quick_ref'
+bv --robot-alerts --format=json | jq '.summary'     # must show 0 alerts
+bv --robot-insights --format=json | jq '.Cycles'    # must be [] / null
+bv --robot-suggest --format=json                    # hygiene: dups, missing deps
 ```
 
 ---
@@ -277,7 +340,7 @@ bv --robot-suggest                                  # hygiene: dups, missing dep
 | 8 REMEDIATE | [`phase8_remediation_plan.md`](phase8_remediation_plan.md) (rubric-scored) | ✓ |
 | 9 BEADS | (in `.beads/`, local-only) | ✓ |
 | 10 FRESH EYES | [`phase10_fresh_eyes_log.md`](phase10_fresh_eyes_log.md) + [`ADVERSARIAL_REAUDIT_2026-05-16.md`](ADVERSARIAL_REAUDIT_2026-05-16.md) + [`FRESH_EYES_REVIEW_2026-05-16.md`](FRESH_EYES_REVIEW_2026-05-16.md) | ✓ 5 passes |
-| 11 SOAK | [`phase11_soak_designs.md`](phase11_soak_designs.md), [`phase11_execution_log.md`](phase11_execution_log.md), [`phase11_artifacts/`](phase11_artifacts/) | ✓ all 10 campaigns DONE |
+| 11 SOAK | [`phase11_soak_designs.md`](phase11_soak_designs.md), [`phase11_execution_log.md`](phase11_execution_log.md), [`phase11_artifacts/`](phase11_artifacts/) | ✓ design + pulled artifacts; execution log contains historical in-flight status, so prefer `phase11_artifacts/` + `FINAL_UB_REPORT.md` for current results |
 | 12 FINAL | [`FINAL_UB_REPORT.md`](FINAL_UB_REPORT.md) (v2) + [`UB_RUNBOOK.md`](UB_RUNBOOK.md) | ✓ |
 
 ---
@@ -333,9 +396,12 @@ unblock these is when the strict-provenance migration is on Bun's roadmap.
 A unique audit angle: read the `.zig` sibling kept in-tree (per
 `CLAUDE.md` §"Language Structure") to determine whether a finding is a
 **port regression** (Rust port introduced UB that Zig didn't have, e.g.,
-EXP-111's `&'r mut` translation of Zig's raw pointer) or a
-**faithfully-preserved pre-existing bug** (e.g., EXP-109's bare-handle
-shape exists identically in `src/runtime/ffi/ffi.zig:1496-1508`). See
+EXP-111's `&'r mut` translation of Zig's raw pointer), a pre-existing shape
+carried forward from Zig, or a Rust-shape model that is compensated elsewhere
+in the production graph. EXP-109 is the cautionary example: the bare-handle
+shape exists in the Zig sibling, but the production Rust/C++ callback path is
+currently rooted through `FFICallbackFunctionWrapper`, so the EXP-109
+production claim was demoted to `NO_EVIDENCE`. See
 [`DIFFERENTIAL_RUST_VS_ZIG_2026-05-16.md`](DIFFERENTIAL_RUST_VS_ZIG_2026-05-16.md).
 
 ---
@@ -360,24 +426,28 @@ This audit produced a self-correction loop you can study and reuse:
    - Synthesis docs that cite the count
    - `CODEX_*_CORRECTION_*.md` doc that records the rationale
 
-This pattern's discipline cost is real: ≥5 fresh-eyes review passes during
-this audit found **11 distinct blunders** in my own prior work plus
-**18 additional script bugs** uncovered by actually running every META script
-adversarially. The audit's credibility rests on its **willingness to find
-and document its own errors**. Pretending no errors existed was never the
-goal. See [`FRESH_EYES_REVIEW_2026-05-16.md`](FRESH_EYES_REVIEW_2026-05-16.md)
+This pattern has a real cost: at least 5 fresh-eyes review passes found
+**11 distinct blunders** in earlier audit drafts, plus **18 additional script
+bugs** uncovered by actually running every META script adversarially. The
+audit's credibility rests on its willingness to find and document its own
+errors. See [`FRESH_EYES_REVIEW_2026-05-16.md`](FRESH_EYES_REVIEW_2026-05-16.md)
 for the running record.
 
 ---
 
 ## Reproducibility & verification recipes
 
-### "Verify the audit at audit base reproduces"
+### "Smoke the staged reproducibility helper"
 ```bash
 cd .ub-exorcism/2026-05-15-exhaustive
-bash scripts/audit/verify-runbook.sh --quick   # ~30 min
-# Or full (hours): bash scripts/audit/verify-runbook.sh
+bash scripts/audit/verify-runbook.sh --quick
 ```
+
+Use this as an infrastructure smoke test, not as a proof that every pre-fix
+known-UB experiment is green. Confirmed UB witnesses are expected to fail until
+their fixes land; the important question is whether the failure matches the
+registry's expected signal. The current PR also does not ship a
+`REPRODUCIBILITY_HASH`, so the hash comparison is a future promotion gate.
 
 ### "Verify one specific finding"
 ```bash
@@ -385,11 +455,13 @@ bash scripts/audit/verify-runbook.sh --quick   # ~30 min
 cd .ub-exorcism/2026-05-15-exhaustive/experiments/EXP-094
 MIRIFLAGS="-Zmiri-strict-provenance" cargo +nightly miri run
 
-# Or via runner (adds BEGIN/END logging + index.jsonl):
+# Or via runner (adds BEGIN/END logging + index.jsonl).
+# Pre-fix confirmed-UB runs should exit non-zero with the expected signal.
 bash .ub-exorcism/2026-05-15-exhaustive/scripts/regression-runner.sh EXP-094 sp
 ```
 
 ### "Verify the Kani symbolic proofs (EXP-109 model)"
+If `cargo-kani` is installed:
 ```bash
 cd .ub-exorcism/2026-05-15-exhaustive/experiments/EXP-109-kani
 cargo kani --harness proof_strong_protects_value_across_gc
@@ -434,7 +506,8 @@ the following anti-patterns recurred enough to be worth pre-empting:
 - **"Speculate about a UB and call it CONFIRMED."** The verdict
   `CONFIRMED_UB` REQUIRES a Miri / loom / Tree-Borrows / sanitizer log on
   disk under `phase5_experiment_results/` or `phase11_artifacts/`.
-  Speculation goes in `CANDIDATE` or `DEFERRED`.
+  Speculation stays `OPEN`, `NEEDS_REFINEMENT`, or `DEFERRED` until an
+  experiment produces a falsifiable verdict.
 - **"Skip the falsifiability clause."** Every EXP entry must say what
   conditions would close/demote the finding. This is the
   "falsifiability" field; an entry without one isn't auditable.
@@ -461,26 +534,27 @@ the following anti-patterns recurred enough to be worth pre-empting:
 - **Updating the label without updating the title/description body.** Pass
   3's fresh-eyes review found two beads where the label said
   `NO_EVIDENCE_PRODUCTION` but the body still asserted the falsified
-  hypothesis as CANDIDATE. Update all three places.
+  hypothesis as a candidate. Update all three places.
 - **Filing a bead for a finding without a registry entry.** The bead graph
   and the registry must agree. [`scripts/audit/check-registry-drift.sh`](scripts/audit/check-registry-drift.sh)
   enforces this; run it before closing any bead.
 
 ---
 
-## What this audit is NOT
+## Scope boundaries
 
-- **NOT a security audit.** UB exorcism overlaps with security (memory
-  safety, race conditions) but doesn't cover authentication, authorization,
-  injection vulnerabilities, etc. For a security audit, use `/security-review`.
-- **NOT a code-quality review.** The audit's stance is "is there UB?" not
-  "is this code well-designed?". Stylistic concerns are out of scope.
-- **NOT a perf audit.** Although UB and perf can intersect (e.g., undefined
-  behavior in hot paths matters more), perf was deliberately scoped out.
-- **NOT a guarantee.** Even at convergence, "found nothing" doesn't mean
-  "nothing exists." The audit's strongest claims are positive (here is a
-  Miri witness) and negative-with-evidence (we ran detector X over surface Y
-  and found nothing); neither implies the absence of every possible UB.
+- **Security:** UB exorcism overlaps with security through memory safety and
+  race conditions, but it does not cover authentication, authorization,
+  injection vulnerabilities, or secrets handling. Use a security-review skill
+  for that surface.
+- **General code quality:** the question here is "can this execution reach
+  Rust UB or an unsound safe API?", not whether the code is stylistically
+  ideal.
+- **Performance:** performance was deliberately scoped out except where a
+  performance-only unsafe optimization affects soundness.
+- **Guarantees:** convergence does not prove absence of every possible UB.
+  The strongest claims are positive witnesses and negative-with-evidence
+  sweeps, for example "detector X ran over surface Y and found nothing."
 
 ---
 
@@ -489,9 +563,9 @@ the following anti-patterns recurred enough to be worth pre-empting:
 - **EXP**: an experiment entry in the registry
   (`UNDEFINED_BEHAVIOR_EXPERIMENT_DESIGNS.md`). Numbered EXP-001 through
   EXP-111; some numbers reserved.
-- **R-EXP-NNN / T-EXP-NNN / D-EXP-NNN**: the bead triplet for one EXP
-  (Remediation, Test, Documentation/SAFETY-block).
-- **R-S<X> / T-S<X> / D-S<X>**: structural-fix bead triplet that bundles
+- **R-EXP-NNN / T-EXP-NNN / D-EXP-NNN**: the close cluster for one EXP:
+  Remediation, Test, and Documentation/SAFETY-block.
+- **R-S<X> / T-S<X> / D-S<X>**: structural-fix close cluster that bundles
   multiple absorbed EXPs (e.g., R-S1 absorbs EXP-002, EXP-018, EXP-019).
 - **META-*** bead: infrastructure bead (no EXP; documents a workflow gate
   like META-RUBRIC-SCORING or META-CI-SHARDING).
@@ -528,9 +602,12 @@ the following anti-patterns recurred enough to be worth pre-empting:
   `src/glob/`. Other areas (e.g., `src/bake/` HMR machinery beyond
   EXP-028/031/075) may merit follow-up audits.
 - **Bead state:** the `.beads/` directory is git-excluded; bead counts cited
-  here reflect a snapshot of approximately 200 active beads at audit close.
-  Run `br list --limit 0 --json | jq '.issues | length'` locally if you
-  cloned the bead database.
+  here reflect the local graph available during this review: 201 open active
+  beads, 1 closed bead, and 4 tombstones in the `bv` health view. Run
+  `CI=1 br list --all --json --limit 0` locally if you have the bead database.
+  Public PR reviewers should treat [`phase9_beads_log.md`](phase9_beads_log.md)
+  as a historical author log, not the final source of truth for current bead
+  counts.
 
 ---
 
@@ -551,20 +628,27 @@ awk "/^## EXP-094:/,/^## EXP-/" $AUDIT/UNDEFINED_BEHAVIOR_EXPERIMENT_DESIGNS.md
 # Find which EXPs touch the file you're editing
 echo "src/runtime/timer/mod.rs" | bash $AUDIT/scripts/ci/registry-paths.sh
 
-# Reproduce a Miri witness for one EXP
+# Reproduce a Miri witness for one EXP.
+# Non-zero is expected before the corresponding fix lands.
 bash $AUDIT/scripts/regression-runner.sh EXP-094 sp
 
 # Compute the CI shard for a PR diff
 bash $AUDIT/scripts/ci/compute-affected-exps.sh main HEAD --configs sb,tb
 
-# Verify the audit reproduces (~30 min in --quick mode)
+# Smoke the staged runbook helper.
+# Known UB witnesses are expected to fail until fixes land.
 bash $AUDIT/scripts/audit/verify-runbook.sh --quick
 
 # Check audit hygiene
-bash $AUDIT/scripts/audit/check-registry-drift.sh    # drift between registry + beads
-bash $AUDIT/scripts/audit/check-close-order.sh       # R/T/D close-order violations
-bash $AUDIT/scripts/audit/rubric-status.sh           # which R-EXPs lack a Winner
+bash $AUDIT/scripts/audit/check-registry-drift.sh --json
+bash $AUDIT/scripts/audit/check-close-order.sh --json
+bash $AUDIT/scripts/audit/rubric-status.sh --json
 bash $AUDIT/scripts/audit/check-safety-blocks.sh --crate bun_runtime   # undocumented unsafe sites
+
+# If the local bead DB exists, inspect graph health without launching a TUI.
+CI=1 br ready --json
+bv --robot-alerts --format=json
+bv --robot-triage --format=json | jq '.triage.quick_ref'
 ```
 
 ---

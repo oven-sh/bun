@@ -864,6 +864,29 @@ pub unsafe fn __bun_run_immediate_task(
     }
 }
 
+/// `__bun_cancel_pending_immediate` body — VM-teardown release of the event
+/// loop's `+1` ref on a still-queued `ImmediateObject` (low tier stores
+/// `*mut ()`, high tier owns the cast). Does not run the callback.
+///
+/// # Safety
+/// `task` was produced by `enqueue_immediate_task` from a live
+/// `timer::ImmediateObject` whose event-loop ref has not yet been released;
+/// `vm` is the live per-thread VM with `RuntimeState` still installed.
+#[unsafe(no_mangle)]
+pub unsafe fn __bun_cancel_pending_immediate(
+    task: *mut (),
+    vm: *mut bun_jsc::virtual_machine::VirtualMachine,
+) {
+    // SAFETY: per fn contract — the only producer (`TimerObjectInternals::init`)
+    // stores a `*mut crate::timer::ImmediateObject`, so the cast is the identity.
+    unsafe {
+        crate::timer::ImmediateObject::cancel_pending(
+            task.cast::<crate::timer::ImmediateObject>(),
+            vm,
+        );
+    }
+}
+
 /// `__bun_run_wtf_timer` body — cast the low-tier erased `*mut ()` to the real
 /// `crate::timer::WTFTimer` and fire it (spec event_loop.zig:302-306
 /// `imminent_gc_timer.swap(null).?.run(vm)`).

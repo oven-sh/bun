@@ -38,6 +38,25 @@ impl ImmediateObject {
             TimerObjectInternals::run_immediate_task(core::ptr::addr_of_mut!((*this).internals), vm)
         }
     }
+
+    /// VM-teardown only: drop the event loop's `+1` ref on a still-queued
+    /// immediate without running it. Reached from `EventLoop::deinit()` via
+    /// `__bun_cancel_pending_immediate` (definer in [`crate::dispatch`]).
+    ///
+    /// # Safety
+    /// `this` was produced by `enqueue_immediate_task` from a live
+    /// heap-allocated `ImmediateObject`; `vm` is the per-thread VM.
+    #[inline]
+    pub unsafe fn cancel_pending(this: *mut Self, vm: *mut VirtualMachine) {
+        // SAFETY: per fn contract — `this` live; do NOT form `&mut *this`
+        // (the body `deref()`s and may free `*this`).
+        unsafe {
+            TimerObjectInternals::cancel_pending_immediate(
+                core::ptr::addr_of_mut!((*this).internals),
+                vm,
+            );
+        }
+    }
 }
 
 // ported from: src/runtime/timer/ImmediateObject.zig

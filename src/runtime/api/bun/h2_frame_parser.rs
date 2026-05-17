@@ -7284,6 +7284,9 @@ impl H2FrameParser {
                 BunSocket::Tcp(bun_ptr::BackRef::from(socket_nn.cast::<TCPSocket>()))
             }
         } else {
+            // attach_native_callback dropped the IntrusiveRc without releasing the
+            // init_ref above (no Drop impl); balance it here. Zig refs only on success.
+            self.deref();
             socket_ref.ref_();
             if SSL {
                 BunSocket::TlsWriteonly(bun_ptr::BackRef::from(socket_nn.cast::<TLSSocket>()))
@@ -7600,7 +7603,26 @@ impl H2FrameParser {
     pub fn finalize(self: Box<Self>) {
         bun_output::scoped_log!(H2FrameParser, "finalize");
         // PORT NOTE: JsRef::deinit() dropped — overwrite with empty(); Drop releases the Strong slot.
-        bun_ptr::finalize_js_box(self, |this| this.strong_this.set(JsRef::empty()));
+        bun_ptr::finalize_js_box(self, |this| {
+            this.strong_this.set(JsRef::empty());
+            // process.exit() never unwinds, so a stack-rooted ref (e.g. on_native_read's
+            // self.ref_()) can be permanently stranded and deinit() never runs. Free the
+            // streams here so they don't leak under BUN_DESTRUCT_VM_ON_EXIT; deinit()'s own
+            // stream loop sees an empty map afterwards, so this never double-frees.
+            if VirtualMachine::get().is_shutting_down() {
+                let streams = this.streams.replace(BunHashMap::default());
+                for (_, item) in streams.iter() {
+                    let stream = *item;
+                    // SAFETY: `stream` came from `this.streams`; the map has been emptied so
+                    // each entry is freed exactly once.
+                    unsafe {
+                        (*stream).free_resources::<true>(this);
+                        drop(bun_core::heap::take(stream));
+                    }
+                }
+                drop(streams);
+            }
+        });
     }
 }
 

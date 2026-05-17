@@ -133,11 +133,7 @@ test("pool recovers after every connection is closed mid-handshake", async () =>
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // Fixture prints a single JSON line on stdout. `corrupted: true` means the
   // pool produced the internal "connection must be a PostgresSQLConnection"

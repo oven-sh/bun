@@ -1453,7 +1453,6 @@ pub static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     cron_clear_all_reload,
     terminate_all_workers_and_wait,
     retroactively_report_discovered_tests,
-    cancel_all_timers,
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1553,20 +1552,6 @@ fn cron_clear_all_reload(vm: &mut VirtualMachine) {
 /// Main-thread only; called from `global_exit` after `is_shutting_down` is set.
 fn terminate_all_workers_and_wait(timeout_ms: u64) {
     bun_jsc::web_worker::terminate_all_and_wait(timeout_ms);
-}
-
-/// `RuntimeHooks::cancel_all_timers` — cancel every JS timer object still
-/// linked in the heap so its pin drops before the GC sweep / `~VM`.
-///
-/// # Safety
-/// `vm` is the live per-thread VM; `runtime_state()` must still be installed.
-unsafe fn cancel_all_timers(vm: *mut VirtualMachine) {
-    let state = runtime_state();
-    if state.is_null() {
-        return;
-    }
-    // SAFETY: `state` is the live boxed `RuntimeState`; `vm` per fn contract.
-    unsafe { timer::All::cancel_all_timeout_objects(ptr::addr_of_mut!((*state).timer), vm) };
 }
 
 /// `TestReporterAgent.retroactivelyReportDiscoveredTests(agent)` — spec

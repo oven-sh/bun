@@ -1449,7 +1449,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
 
-        if e_.optional_chain.is_none() {
+        // `import.meta` is always an object, so `import.meta?.x` is
+        // equivalent to `import.meta.x`. Allow the rewrite through the
+        // optional chain so the transpiler can constant-fold
+        // `import.meta?.main` to `true`/`false` under `--compile` (see
+        // #30084). Other optional chains still skip the rewrite because
+        // their target may be nullish at runtime.
+        let target_is_always_object = matches!(e_.target.data, Data::EImportMeta(..));
+
+        if e_.optional_chain.is_none() || target_is_always_object {
             if let Some(_expr) = p.maybe_rewrite_property_access(
                 expr.loc,
                 e_.target,

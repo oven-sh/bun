@@ -1884,9 +1884,12 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
     fn register_auto_flusher(&mut self) {
         let Some(res) = self.any_res() else { return };
-        // if we enqueue data we should reset the timeout
-        res.reset_timeout();
         if !self.auto_flusher.registered.get() {
+            // if we enqueue data we should reset the timeout. Once the
+            // auto-flusher is registered, the pending flush (or the eventual
+            // res.write()/res.end()) resets it again, so there's no need to
+            // pay the FFI hop on every buffered chunk in the same drain.
+            res.reset_timeout();
             let vm = self.global_this().bun_vm();
             AutoFlusher::register_deferred_microtask_with_type_unchecked::<Self>(self, vm);
         }

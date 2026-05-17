@@ -1278,7 +1278,8 @@ impl MediaList {
     /// Zig: `MediaList.deepClone` — element-wise clone of `media_queries`.
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // Arena-backed: result lands in arena AST nodes; bulk-free won't run Drop.
-        let mut media_queries = Vec::with_capacity_in(self.media_queries.len(), ArenaPtr::new(bump));
+        let mut media_queries =
+            Vec::with_capacity_in(self.media_queries.len(), ArenaPtr::new(bump));
         media_queries.extend(self.media_queries.iter().map(|q| q.deep_clone(bump)));
         Self { media_queries }
     }

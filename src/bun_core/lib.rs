@@ -19,6 +19,7 @@ pub mod tty;
 pub mod util;
 pub mod vibe;
 pub use atomic_cell::{Atom, AtomicCell, ThreadCell};
+pub use vibe::SyncVibeCell;
 
 /// Shared state-machine tag for the streaming (de)compressors in
 /// `bun_brotli` / `bun_zlib` / `bun_zstd`. Mirrors the identical

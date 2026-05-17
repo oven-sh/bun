@@ -737,9 +737,9 @@ pub fn http_thread_mut() -> &'static mut HTTPThread {
 
 // TODO: this needs to be freed when Worker Threads are implemented
 // HTTP-thread-only; `RacyCell` is the alias-safe static cell.
-pub static SOCKET_ASYNC_HTTP_ABORT_TRACKER: bun_core::RacyCell<
+pub static SOCKET_ASYNC_HTTP_ABORT_TRACKER: bun_core::SyncVibeCell<
     Option<bun_collections::ArrayHashMap<u32, bun_uws::AnySocket>>,
-> = bun_core::RacyCell::new(None);
+> = bun_core::SyncVibeCell::new(None);
 
 // ═══════════════════════════════════════════════════════════════════════
 // Prelude: imports, constants, helper fns, and bridge impls the
@@ -836,12 +836,12 @@ static PRINT_EVERY_I: AtomicUsize = AtomicUsize::new(0);
 // we always rewrite the entire HTTP request when write() returns EAGAIN
 // so we can reuse this buffer
 const MAX_REQUEST_HEADERS: usize = 256;
-static SHARED_REQUEST_HEADERS_BUF: bun_core::RacyCell<[picohttp::Header; MAX_REQUEST_HEADERS]> =
-    bun_core::RacyCell::new([picohttp::Header::ZERO; MAX_REQUEST_HEADERS]);
+static SHARED_REQUEST_HEADERS_BUF: bun_core::SyncVibeCell<[picohttp::Header; MAX_REQUEST_HEADERS]> =
+    bun_core::SyncVibeCell::new([picohttp::Header::ZERO; MAX_REQUEST_HEADERS]);
 
 // this doesn't need to be stack memory because it is immediately cloned after use
-static SHARED_RESPONSE_HEADERS_BUF: bun_core::RacyCell<[picohttp::Header; 256]> =
-    bun_core::RacyCell::new([picohttp::Header::ZERO; 256]);
+static SHARED_RESPONSE_HEADERS_BUF: bun_core::SyncVibeCell<[picohttp::Header; 256]> =
+    bun_core::SyncVibeCell::new([picohttp::Header::ZERO; 256]);
 
 // the first packet for Transfer-Encoding: chunked
 // is usually pretty small or sometimes even just a length

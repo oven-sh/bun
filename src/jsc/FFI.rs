@@ -55,16 +55,16 @@ impl union_EncodedJSValue {
 // identical to a bare `EncodedJSValue`; the wrapper only satisfies `Sync`
 // (the union contains `*mut c_void`).
 #[unsafe(no_mangle)]
-pub static ValueUndefined: bun_core::RacyCell<EncodedJSValue> =
-    bun_core::RacyCell::new(EncodedJSValue {
+pub static ValueUndefined: bun_core::SyncVibeCell<EncodedJSValue> =
+    bun_core::SyncVibeCell::new(EncodedJSValue {
         as_int64: (2 | 8) as i64,
     });
 
 pub const TRUE_I64: i64 = ((2 | 4) | 1) as i64;
 
 #[unsafe(no_mangle)]
-pub static ValueTrue: bun_core::RacyCell<EncodedJSValue> =
-    bun_core::RacyCell::new(EncodedJSValue { as_int64: TRUE_I64 });
+pub static ValueTrue: bun_core::SyncVibeCell<EncodedJSValue> =
+    bun_core::SyncVibeCell::new(EncodedJSValue { as_int64: TRUE_I64 });
 
 pub type JSContext = *mut c_void;
 

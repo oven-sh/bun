@@ -11,6 +11,8 @@
 // likely replace them with direct `.collect()` / `Vec::from` at the caller.
 
 use core::hash::Hash;
+use std::cell::UnsafeCell;
+use std::ptr;
 
 // TODO(port): impls for bun_collections::{VecExt, HashMap, MultiArrayList} move to
 // bun_collections (move-in pass) — orphan rule lets the higher-tier crate impl
@@ -2261,7 +2263,7 @@ impl Version {
 /// for scratch buffers and FFI-shaped globals where the Zig already proved
 /// thread-affinity.
 #[repr(transparent)]
-pub struct RacyCell<T: ?Sized>(core::cell::Cell<T>);
+pub struct RacyCell<T: ?Sized>(UnsafeCell<T>);
 // SAFETY: by construction, callers promise external synchronization or
 // single-thread access. Unlike std's nightly `SyncUnsafeCell` (which gates
 // `Sync` on `T: Sync`), this impl is intentionally unconditional: many
@@ -2273,20 +2275,24 @@ pub struct RacyCell<T: ?Sized>(core::cell::Cell<T>);
 // `thread_local!` or a real lock for those. (The inner storage here is
 // `Cell<T>` purely so `read`/`write` bodies are safe code — the cross-thread
 // hazard is fully accounted for by this `unsafe impl Sync`.)
-unsafe impl<T: ?Sized> Sync for RacyCell<T> {}
+unsafe impl<T: ?Sized + Sync> Sync for RacyCell<T> {}
 unsafe impl<T: ?Sized + Send> Send for RacyCell<T> {}
 
-impl<T> RacyCell<T> {
-    #[inline]
-    pub const fn new(value: T) -> Self {
-        Self(core::cell::Cell::new(value))
-    }
+impl<T: ?Sized> RacyCell<T> {
     /// Raw pointer to the contained value. Never produces a reference; callers
     /// deref per-access (`unsafe { *X.get() }` / `unsafe { (*X.get()).field }`).
     #[inline]
     pub const fn get(&self) -> *mut T {
-        self.0.as_ptr()
+        self.0.get()
     }
+}
+
+impl<T> RacyCell<T> {
+    #[inline]
+    pub const fn new(value: T) -> Self {
+        Self(UnsafeCell::new(value))
+    }
+
     /// Convenience: read a `Copy` value. Single load, no aliasing assertion.
     ///
     /// # Safety
@@ -2296,17 +2302,22 @@ impl<T> RacyCell<T> {
     where
         T: Copy,
     {
-        self.0.get()
+        unsafe { ptr::read(self.0.get()) }
     }
+
     /// Convenience: overwrite the value.
     ///
     /// # Safety
     /// Caller guarantees no concurrent reader/writer on another thread.
+    /// Caller should also ensure that value is not Drop
     #[inline]
     pub unsafe fn write(&self, value: T) {
-        self.0.set(value)
+        unsafe {
+            ptr::write(self.get(), value);
+        }
     }
 }
+
 impl<T: Default> Default for RacyCell<T> {
     fn default() -> Self {
         Self::new(T::default())

@@ -15,6 +15,8 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/JSBoundFunction.h>
+#include <JavaScriptCore/PropertyNameArray.h>
+#include <JavaScriptCore/ProxyObject.h>
 using namespace JSC;
 
 namespace Zig {
@@ -100,11 +102,37 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetThis, (JSGlobalObject * globalObjec
     return JSC::JSValue::encode(callSite->thisValue());
 }
 
-// TODO: doesn't get class name
+// Matches V8's CallSiteInfo::GetTypeName: returns the name of the constructor
+// that produced the receiver (or its prototype's constructor), falling back to
+// @@toStringTag / [[Class]]. Returns null for strict-mode frames and for
+// null/undefined receivers, never the string "undefined" or an empty string.
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetTypeName, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ENTER_PROTO_FUNC();
-    return JSC::JSValue::encode(JSC::jsTypeStringForValue(globalObject, callSite->thisValue()));
+
+    JSC::JSValue thisValue = callSite->thisValue();
+
+    // V8 returns null when the receiver can't be identified: strict-mode
+    // frames, explicit `this === null`/`undefined`, and calls on the global
+    // object.
+    if (!thisValue || thisValue.isUndefinedOrNull()) {
+        return JSC::JSValue::encode(JSC::jsNull());
+    }
+
+    JSC::JSObject* thisObject = thisValue.toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!thisObject || thisObject->isGlobalObject()) {
+        return JSC::JSValue::encode(JSC::jsNull());
+    }
+
+    // JSObject::calculatedClassName implements the V8 cascade: own
+    // constructor -> proto's constructor -> @@toStringTag -> classInfo -> "Object".
+    String className = JSObject::calculatedClassName(thisObject);
+    if (className.isEmpty()) {
+        return JSC::JSValue::encode(JSC::jsNull());
+    }
+
+    return JSC::JSValue::encode(JSC::jsString(vm, className));
 }
 
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetFunction, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -113,16 +141,122 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetFunction, (JSGlobalObject * globalO
     return JSC::JSValue::encode(callSite->function());
 }
 
+// V8 returns null (not "") when the frame's function has no name.
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetFunctionName, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ENTER_PROTO_FUNC();
-    return JSC::JSValue::encode(callSite->functionName());
+    JSValue name = callSite->functionName();
+    if (JSC::JSString* str = dynamicDowncast<JSC::JSString>(name)) {
+        if (str->length() == 0) {
+            return JSC::JSValue::encode(JSC::jsNull());
+        }
+        return JSC::JSValue::encode(str);
+    }
+    return JSC::JSValue::encode(JSC::jsNull());
 }
 
-// TODO
+// Matches V8's CallSiteInfo::GetMethodName: walks the receiver and its
+// prototype chain looking for a property whose value is identity-equal to the
+// frame's function. Returns null if the receiver is nullish, if no matching
+// property is found, or if more than one distinct property name matches.
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetMethodName, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    return callSiteProtoFuncGetFunctionName(globalObject, callFrame);
+    ENTER_PROTO_FUNC();
+
+    JSC::JSValue thisValue = callSite->thisValue();
+    if (!thisValue || thisValue.isUndefinedOrNull()) {
+        return JSC::JSValue::encode(JSC::jsNull());
+    }
+
+    JSC::JSValue functionValue = callSite->function();
+    if (!functionValue || !functionValue.isCell()) {
+        return JSC::JSValue::encode(JSC::jsNull());
+    }
+    JSC::JSCell* functionCell = functionValue.asCell();
+
+    JSC::JSObject* thisObject = thisValue.toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!thisObject) {
+        return JSC::JSValue::encode(JSC::jsNull());
+    }
+
+    // Walk `this` and its prototype chain. Collect property names whose value
+    // is identity-equal to the frame's function. Bound functions and proxies
+    // aren't inspected (V8 gives up on them too).
+    Identifier foundName;
+    bool foundMultiple = false;
+
+    JSC::JSObject* current = thisObject;
+    // Cap the depth to avoid pathological prototype chains; 128 matches other
+    // JSC traversals and is more than any real chain.
+    constexpr unsigned maxDepth = 128;
+    for (unsigned depth = 0; current && depth < maxDepth; ++depth) {
+        if (current->type() == JSC::ProxyObjectType) {
+            break;
+        }
+
+        PropertyNameArrayBuilder properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+        {
+            auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            current->methodTable()->getOwnPropertyNames(current, globalObject, properties, DontEnumPropertiesMode::Include);
+            if (topExceptionScope.exception()) [[unlikely]] {
+                (void)topExceptionScope.tryClearException();
+                break;
+            }
+        }
+
+        for (const auto& propertyName : properties) {
+            PropertySlot slot(current, PropertySlot::InternalMethodType::VMInquiry, &vm);
+            auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            bool hasProperty = current->methodTable()->getOwnPropertySlot(current, globalObject, propertyName, slot);
+            if (topExceptionScope.exception()) [[unlikely]] {
+                (void)topExceptionScope.tryClearException();
+                continue;
+            }
+            if (!hasProperty) {
+                continue;
+            }
+            // Only examine direct values (mirrors V8: accessor/computed props
+            // would require invoking user code).
+            if (!slot.isValue()) {
+                continue;
+            }
+            JSValue value = slot.getValue(globalObject, propertyName);
+            if (topExceptionScope.exception()) [[unlikely]] {
+                (void)topExceptionScope.tryClearException();
+                continue;
+            }
+            if (!value.isCell() || value.asCell() != functionCell) {
+                continue;
+            }
+
+            if (foundName.isNull()) {
+                foundName = propertyName;
+            } else if (foundName != propertyName) {
+                foundMultiple = true;
+                break;
+            }
+        }
+
+        if (foundMultiple) {
+            break;
+        }
+
+        if (current->structure()->typeInfo().overridesGetPrototype()) [[unlikely]] {
+            break;
+        }
+        JSValue protoValue = current->getPrototypeDirect();
+        if (!protoValue.isObject()) {
+            break;
+        }
+        current = asObject(protoValue);
+    }
+
+    if (foundName.isNull() || foundMultiple) {
+        return JSC::JSValue::encode(JSC::jsNull());
+    }
+
+    return JSC::JSValue::encode(JSC::jsString(vm, foundName.string()));
 }
 
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetFileName, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

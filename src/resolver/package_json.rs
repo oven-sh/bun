@@ -1086,7 +1086,7 @@ impl PackageJSON {
         ) {
             Ok(e) => e,
             Err(err) => {
-                if err != bun_core::err!("IsDir") {
+                if err != bun_core::err!("IsDir") && err != bun_core::err!("PermissionDenied") && err != bun_core::err!("AccessDenied") && err != bun_core::err!("EPERM") && err != bun_core::err!("EACCES") {
                     r_log.add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,

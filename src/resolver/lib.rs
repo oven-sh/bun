@@ -1127,7 +1127,7 @@ pub mod fs {
         ) -> core::result::Result<&'static mut EntriesOption, bun_core::Error> {
             if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
                 let mut get_or_put_result = self.entries.get_or_put(dir)?;
-                if err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound") {
+                if err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound") || err == bun_core::err!("PermissionDenied") || err == bun_core::err!("AccessDenied") || err == bun_core::err!("EPERM") || err == bun_core::err!("EACCES") {
                     self.entries.mark_not_found(get_or_put_result);
                     return Ok(temp_entries_option_write(EntriesOption::Err(
                         dir_entry::Err {

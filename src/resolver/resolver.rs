@@ -4376,7 +4376,11 @@ impl<'a> Resolver<'a> {
                             self.dir_cache_mut().mark_not_found(queue_top.result);
                             rfs!().entries.mark_not_found(cached_dir_entry_result);
                             if !(err == bun_core::err!("ENOENT")
-                                || err == bun_core::err!("FileNotFound"))
+                                || err == bun_core::err!("FileNotFound")
+                                || err == bun_core::err!("PermissionDenied")
+                                || err == bun_core::err!("AccessDenied")
+                                || err == bun_core::err!("EPERM")
+                                || err == bun_core::err!("EACCES"))
                             {
                                 if enable_logging {
                                     let pretty = queue_top_unsafe_path;
@@ -5587,7 +5591,11 @@ impl<'a> Resolver<'a> {
                 e if e == bun_core::err!("ENOENT")
                     || e == bun_core::err!("FileNotFound")
                     || e == bun_core::err!("ENOTDIR")
-                    || e == bun_core::err!("NotDir") => {}
+                    || e == bun_core::err!("NotDir")
+                    || e == bun_core::err!("PermissionDenied")
+                    || e == bun_core::err!("AccessDenied")
+                    || e == bun_core::err!("EPERM")
+                    || e == bun_core::err!("EACCES") => {}
                 _ => {
                     let _ = self.log_mut().add_error_fmt(
                         None,
@@ -6252,7 +6260,7 @@ impl<'a> Resolver<'a> {
                     Ok(v) => v.map(bun_core::heap::into_raw),
                     Err(err) => {
                         let pretty = tsconfigpath;
-                        if err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound")
+                        if err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound") || err == bun_core::err!("PermissionDenied") || err == bun_core::err!("AccessDenied") || err == bun_core::err!("EPERM") || err == bun_core::err!("EACCES")
                         {
                             let _ = self.log_mut().add_error_fmt(
                                 None,

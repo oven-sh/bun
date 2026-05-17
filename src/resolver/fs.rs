@@ -2128,7 +2128,7 @@ impl RealFS {
             // always `Some` here.
             let entries = entries.expect("caller holds entries_mutex when ENABLE_ENTRY_CACHE");
             let mut get_or_put_result = entries.get_or_put(dir)?;
-            if err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound") {
+            if err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound") || err == bun_core::err!("PermissionDenied") || err == bun_core::err!("AccessDenied") || err == bun_core::err!("EPERM") || err == bun_core::err!("EACCES") {
                 entries.mark_not_found(get_or_put_result);
                 return Ok(TEMP_ENTRIES_OPTION.with_borrow_mut(|slot| {
                     slot.write(EntriesOption::Err(dir_entry::Err {

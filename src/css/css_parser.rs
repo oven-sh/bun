@@ -2334,7 +2334,7 @@ impl Default for MinifyOptions {
     }
 }
 
-pub type BundlerStyleSheet = StyleSheet<BundlerAtRule>;
+pub type BundlerStyleSheet = StyleSheet<'static, BundlerAtRule>;
 pub type BundlerCssRuleList = CssRuleList<'static, BundlerAtRule>;
 pub type BundlerCssRule = CssRule<'static, BundlerAtRule>;
 pub type BundlerLayerBlockRule = css_rules::layer::LayerBlockRule<'static, BundlerAtRule>;
@@ -2517,15 +2517,15 @@ pub fn fill_property_bit_set(
 // behavior surface (`parse`/`minify`/`to_css`/`pluck_imports`) lives in
 // `stylesheet_impl` below.
 
-pub struct StyleSheet<AtRule> {
+pub struct StyleSheet<'bump, AtRule> {
     /// A list of top-level rules within the style sheet.
-    pub rules: CssRuleList<'static, AtRule>,
+    pub rules: CssRuleList<'bump, AtRule>,
     // PERF(port): was arena bulk-free (sources / source_map_urls /
     // license_comments were ArrayList fed input.arena()) — profile if hot.
     pub sources: Vec<Box<[u8]>>,
     pub source_map_urls: Vec<Option<Box<[u8]>>>,
-    pub license_comments: Vec<&'static [u8]>, // TODO(port): lifetime — arena
-    pub options: ParserOptions<'static>,      // TODO(port): lifetime
+    pub license_comments: Vec<&'bump [u8]>,
+    pub options: ParserOptions<'bump>,
     // Zig: `tailwind: if (AtRule == BundlerAtRule) ?*BundlerTailwindState else u0`
     // TODO(port): conditional field; for now Option<Box<_>> always.
     pub tailwind: Option<Box<BundlerTailwindState>>,
@@ -2540,7 +2540,7 @@ pub struct StyleSheet<AtRule> {
     pub composes: ComposesMap,
 }
 
-impl<AtRule> StyleSheet<AtRule> {
+impl<'bump, AtRule> StyleSheet<'bump, AtRule> {
     pub fn empty() -> Self {
         Self {
             rules: CssRuleList::default(),
@@ -2563,7 +2563,7 @@ impl<AtRule> StyleSheet<AtRule> {
 mod stylesheet_impl {
     use super::*;
 
-    impl<AtRule> StyleSheet<AtRule> {
+    impl<'bump, AtRule> StyleSheet<'bump, AtRule> {
         /// Minify and transform the style sheet for the provided browser targets.
         ///
         /// PORT NOTE: `arena` is the arena that owns this stylesheet's AST
@@ -2571,19 +2571,13 @@ mod stylesheet_impl {
         /// downstream `deep_clone` calls allocate alongside the existing tree.
         pub fn minify(
             &mut self,
-            arena: &Bump,
+            arena: &'bump Bump,
             options: &MinifyOptions,
             extra: &StylesheetExtra,
         ) -> Maybe<(), Err<MinifyErrorKind>>
         where
             AtRule: for<'b> generic::DeepClone<'b>,
         {
-            // SAFETY: `self.rules` is `CssRuleList<'static, AtRule>` — the parser
-            // erased the arena lifetime to `'static`. The MinifyContext must carry
-            // the same `'static` tag. The arena outlives the stylesheet (caller
-            // invariant, same as parsing).
-            let arena: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(arena) };
-
             let ctx = PropertyHandlerContext::new(arena, options.targets, &options.unused_symbols);
             let mut handler = DeclarationHandler::new(arena);
             let mut important_handler = DeclarationHandler::new(arena);
@@ -2768,7 +2762,7 @@ mod stylesheet_impl {
             options: ParserOptions<'static>,
             import_records: Option<&mut Vec<ImportRecord>>,
             source_index: SrcIndex,
-        ) -> Maybe<(StyleSheet<DefaultAtRule>, StylesheetExtra), Err<ParserError>> {
+        ) -> Maybe<(StyleSheet<'static, DefaultAtRule>, StylesheetExtra), Err<ParserError>> {
             // PORT NOTE: Zig instantiated `StyleSheet(DefaultAtRule).parse`; Rust
             // cannot vary `Self`'s `AtRule` param against `DefaultAtRuleParser`, so
             // this returns the concrete `StyleSheet<DefaultAtRule>`. Callers that
@@ -2951,7 +2945,7 @@ mod stylesheet_impl {
         /// separate rule list, replacing them with `.ignored` rules.
         pub fn pluck_imports(
             &mut self,
-            out: &mut CssRuleList<'static, AtRule>,
+            out: &mut CssRuleList<'bump, AtRule>,
             new_import_records: &mut Vec<ImportRecord>,
         ) {
             // PORT NOTE: the Zig fn takes `*const @This()` but writes
@@ -3116,7 +3110,7 @@ mod stylesheet_impl {
         }
     }
 
-    impl StyleSheet<BundlerAtRule> {
+    impl StyleSheet<'static, BundlerAtRule> {
         pub fn parse_bundler(
             arena: &'static Bump,
             code: &[u8],

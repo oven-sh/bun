@@ -106,7 +106,7 @@ impl Start {
     pub fn to_js(self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
             Start::Empty | Start::Ready => Ok(JSValue::UNDEFINED),
-            Start::ChunkSize(chunk) => Ok(JSValue::js_number(chunk as f64)),
+            Start::ChunkSize(chunk) => Ok(JSValue::js_number_from_uint64(chunk)),
             Start::Err(err) => Err(err.throw(global_this)),
             Start::OwnedAndDone(mut list) => {
                 // PORT NOTE: Zig captures `|list|` by bitwise copy with no destructor and
@@ -594,12 +594,12 @@ impl Writable {
             Writable::Err(err) => {
                 JSPromise::rejected_promise(global_this, err.to_js(global_this)).to_js()
             }
-            Writable::Owned(len) => JSValue::js_number(len as f64),
-            Writable::OwnedAndDone(len) => JSValue::js_number(len as f64),
-            Writable::TemporaryAndDone(len) => JSValue::js_number(len as f64),
-            Writable::Temporary(len) => JSValue::js_number(len as f64),
-            Writable::IntoArray(len) => JSValue::js_number(len as f64),
-            Writable::IntoArrayAndDone(len) => JSValue::js_number(len as f64),
+            Writable::Owned(len) => JSValue::js_number_from_uint64(len),
+            Writable::OwnedAndDone(len) => JSValue::js_number_from_uint64(len),
+            Writable::TemporaryAndDone(len) => JSValue::js_number_from_uint64(len),
+            Writable::Temporary(len) => JSValue::js_number_from_uint64(len),
+            Writable::IntoArray(len) => JSValue::js_number_from_uint64(len),
+            Writable::IntoArrayAndDone(len) => JSValue::js_number_from_uint64(len),
             // false == controller.close()
             // undefined == noop, but we probably won't send it
             Writable::Done => JSValue::TRUE,
@@ -1563,7 +1563,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
     fn flush_from_js_no_wait(&mut self) -> bun_sys::Result<JSValue> {
         bun_core::scoped_log!(HTTPServerWritableLog, "flushFromJSNoWait");
-        bun_sys::Result::Ok(JSValue::js_number(self.flush_no_wait() as f64))
+        bun_sys::Result::Ok(JSValue::js_number_from_uint64(self.flush_no_wait() as u64))
     }
 
     pub fn flush_no_wait(&mut self) -> usize {
@@ -1613,7 +1613,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             if self.send_readable(0) {
                 return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
                     global_this,
-                    JSValue::js_number(slice_len as f64),
+                    JSValue::js_number_from_uint64(slice_len as u64),
                 ));
             }
         }
@@ -1819,7 +1819,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         bun_core::scoped_log!(HTTPServerWritableLog, "endFromJS()");
 
         if self.requested_end {
-            return bun_sys::Result::Ok(JSValue::js_number(0.0));
+            return bun_sys::Result::Ok(JSValue::js_number_from_int32(0));
         }
 
         if self.done || self.res.is_none() || self.any_res().unwrap().has_responded() {
@@ -1827,7 +1827,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             self.signal.close(None);
             self.mark_done();
             self.finalize();
-            return bun_sys::Result::Ok(JSValue::js_number(0.0));
+            return bun_sys::Result::Ok(JSValue::js_number_from_int32(0));
         }
 
         self.requested_end = true;
@@ -1854,7 +1854,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         self.signal.close(None);
         self.finalize();
 
-        bun_sys::Result::Ok(JSValue::js_number(self.wrote as f64))
+        bun_sys::Result::Ok(JSValue::js_number_from_uint64(self.wrote))
     }
 
     pub fn sink(&mut self) -> Sink<'_> {

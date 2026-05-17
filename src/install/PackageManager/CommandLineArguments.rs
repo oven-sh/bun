@@ -195,6 +195,12 @@ pub static PM_PARAMS: &[ParamType] = concat_params![
         clap::param!(
             "--depth <NUM>                          Maximum depth of the dependency tree to display"
         ),
+        clap::param!(
+            "--format <STR>                         SBOM output format: cyclonedx (default) or spdx"
+        ),
+        clap::param!(
+            "-o, --outfile <STR>                    Write the SBOM to a file instead of stdout"
+        ),
         clap::param!("<POS> ...                         "),
     ]
 ];
@@ -436,6 +442,10 @@ pub struct CommandLineArguments {
     pub top_only: bool,
     pub depth: Option<usize>,
 
+    // `bun pm sbom` options
+    pub sbom_format: Option<&'static [u8]>,
+    pub sbom_outfile: Option<&'static [u8]>,
+
     // `bun audit` options
     pub audit_level: Option<AuditLevel>,
     pub audit_ignore_list: &'static [&'static [u8]],
@@ -520,6 +530,9 @@ impl Default for CommandLineArguments {
 
             top_only: false,
             depth: None,
+
+            sbom_format: None,
+            sbom_outfile: None,
 
             audit_level: None,
             audit_ignore_list: &[],
@@ -1442,6 +1455,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
             if let Some(message) = args.option(b"--message") {
                 cli.message = Some(message);
             }
+
+            // `bun pm sbom` command options
+            cli.sbom_format = args.option(b"--format");
+            cli.sbom_outfile = args.option(b"--outfile");
         }
 
         // `bun pm why` and `bun why` options

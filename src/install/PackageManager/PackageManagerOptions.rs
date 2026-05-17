@@ -73,6 +73,10 @@ pub struct Options {
     pub top_only: bool,
     pub depth: Option<usize>,
 
+    // `bun pm sbom` command options
+    pub sbom_format: Option<&'static [u8]>,
+    pub sbom_outfile: Option<&'static [u8]>,
+
     /// isolated installs (pnpm-like) or hoisted installs (yarn-like, original)
     pub node_linker: NodeLinker,
 
@@ -148,6 +152,8 @@ impl Default for Options {
             force: false,
             top_only: false,
             depth: None,
+            sbom_format: None,
+            sbom_outfile: None,
             node_linker: NodeLinker::Auto,
             public_hoist_pattern: None,
             hoist_pattern: None,
@@ -883,6 +889,10 @@ impl Options {
             // `bun pm why` command options
             self.top_only = cli.top_only;
             self.depth = cli.depth;
+
+            // `bun pm sbom` command options
+            self.sbom_format = cli.sbom_format;
+            self.sbom_outfile = cli.sbom_outfile;
         } else {
             self.log_level = if default_disable_progress_bar {
                 LogLevel::DefaultNoProgress

@@ -1136,7 +1136,12 @@ pub fn quote_for_json(
 ) -> Result<(), bun_core::Error> {
     // Zig: `comptime ascii_only: bool`. We now thread `ascii_only` at runtime so
     // the heavy escaper isn't monomorphized per ascii_only/quote-char combo.
-    bytes.grow_if_needed(estimate_length_for_utf8(text, ascii_only, b'"'))?;
+    //
+    // Heuristic reservation (~6% slack) instead of `estimate_length_for_utf8`,
+    // which would do a full SIMD scan + per-escape rune decode over `text` just
+    // to size the buffer — the same work `write_pre_quoted_string_inner` repeats
+    // immediately below. The writer grows on demand if this under-shoots.
+    bytes.grow_if_needed(text.len() + (text.len() >> 4) + 8)?;
     bytes.append_char(b'"')?;
     write_pre_quoted_string_inner::<_, { Encoding::Utf8 }>(text, bytes, b'"', ascii_only, true)?;
     bytes.append_char(b'"').expect("unreachable");

@@ -93,7 +93,7 @@ const arrayToSafePromiseIterable = (promises, mapFn) =>
         new Promise((a, b) => PromisePrototypeThen.$call(mapFn == null ? promise : mapFn(promise, i), a, b)),
     ),
   );
-const PromiseAll = Promise.all;
+const PromiseAll = Promise.all.bind(Promise);
 const PromiseResolve = Promise.$resolve.bind(Promise);
 const SafePromiseAll = (promises, mapFn) => PromiseAll(arrayToSafePromiseIterable(promises, mapFn));
 // Shared scheduler for SafePromiseAllReturnVoid/ReturnArrayLike: `returnVal`

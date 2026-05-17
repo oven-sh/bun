@@ -545,12 +545,11 @@ impl FileReader {
     /// GC-finalizer detach: must not run JS. Drops the `waiting_for_on_reader_done`
     /// self-ref so the JS-wrapper deref in `Source::finalize` can reach zero.
     fn finalize_detach(&self) -> bool {
-        // `done` ⇒ `on_cancel` ran; its sync close completion already released the ref.
-        // Both true would strand the ref again — catch that regression in debug.
-        debug_assert!(!(self.done.get() && self.waiting_for_on_reader_done.get()));
-        if self.done.get() || !self.waiting_for_on_reader_done.get() {
+        if !self.waiting_for_on_reader_done.get() {
             return false;
         }
+        // Drop the ref even when `done` (on_cancel ran but its close completion was
+        // deferred or a no-op): after finalize no callback will fire to release it.
         self.waiting_for_on_reader_done.set(false);
         self.done.set(true);
         true

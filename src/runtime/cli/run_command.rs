@@ -6,6 +6,21 @@
 //! bun-shell / system shell. PATH stitching, `node_modules/.bin` lookup,
 //! markdown rendering, and the Windows bunx fast-path are all handled here.
 
+/// Strip a leading `"--"` from a passthrough slice.
+///
+/// `ctx.passthrough` now preserves `"--"` (see #13984) so that `process.argv`
+/// matches Node.js for script files. However, when forwarding args to
+/// package-scripts (`bun run dev -- --port 3000`) or node_modules/.bin
+/// binaries, the leading `"--"` is an npm-style separator that should be
+/// consumed, matching `npm run` / `yarn run` behavior.
+pub(crate) fn strip_leading_double_dash(passthrough: &[Box<[u8]>]) -> &[Box<[u8]>] {
+    if passthrough.first().is_some_and(|first| &**first == b"--") {
+        &passthrough[1..]
+    } else {
+        passthrough
+    }
+}
+
 use ::core::ffi::{c_char, c_void};
 use ::core::sync::atomic::{AtomicBool, Ordering};
 use std::io::Write as _;
@@ -303,6 +318,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             // duration of `init_and_run_from_source` — single-threaded mini loop,
             // no aliasing `&mut` exists across this call.
             let mini = unsafe { &mut *mini };
+
+            // The Bun shell interpreter reads `$1`, `$2`, … from
+            // `ctx.passthrough` directly. Swap in the stripped version
+            // (without leading `--`) so positional expansion matches
+            // npm semantics. See: https://github.com/oven-sh/bun/issues/13984
+            let saved_passthrough =
+                std::mem::replace(&mut ctx.passthrough, passthrough.to_vec());
+
             let code = match crate::shell::Interpreter::init_and_run_from_source(
                 ctx,
                 mini,
@@ -310,8 +333,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 &copy_script,
                 Some(cwd),
             ) {
-                Ok(c) => c,
+                Ok(c) => {
+                    ctx.passthrough = saved_passthrough;
+                    c
+                }
                 Err(err) => {
+                    ctx.passthrough = saved_passthrough;
                     if !silent {
                         pretty_errorln!(
                             "<r><red>error<r>: Failed to run script <b>{}<r> due to error <b>{}<r>",
@@ -2138,6 +2165,10 @@ impl RunCommand {
     ) -> Result<::core::convert::Infallible, bun_core::Error> {
         use crate::api::bun_process::{Status as SpawnStatus, sync};
 
+        // Strip leading `--` (npm-style separator) before forwarding to
+        // the binary. See: https://github.com/oven-sh/bun/issues/13984
+        let passthrough = strip_leading_double_dash(passthrough);
+
         let mut argv: Vec<Box<[u8]>> = Vec::with_capacity(1 + passthrough.len());
         argv.push(executable.to_vec().into_boxed_slice());
         for p in passthrough {
@@ -2512,7 +2543,10 @@ impl RunCommand {
                         // PORT NOTE: borrowck reshape — `ctx.passthrough` is a
                         // field of `ctx` but `run_package_script_foreground`
                         // takes `&mut ContextData`; clone the slice up-front.
-                        let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();
+                        // Strip leading `--` (npm-style separator) before
+                        // forwarding to the shell command.
+                        let passthrough: Vec<Box<[u8]>> =
+                            strip_leading_double_dash(&ctx.passthrough).to_vec();
                         let silent = ctx.debug.silent;
                         let use_system_shell = ctx.debug.use_system_shell;
 
@@ -4054,8 +4088,13 @@ impl BunXFastPath {
             }
         };
 
+        // Strip leading `--` (npm-style separator) for the command line
+        // but preserve the full passthrough for `ctx.passthrough` → `vm.argv`.
+        // See: https://github.com/oven-sh/bun/issues/13984
+        let cmd_passthrough = strip_leading_double_dash(passthrough);
+
         let mut i: usize = 0;
-        for arg in passthrough {
+        for arg in cmd_passthrough {
             // Add space separator before each argument
             command_line[i] = b' ' as u16;
             i += 1;

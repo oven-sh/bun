@@ -938,21 +938,32 @@ impl NumberScope {
         // gate on that too and fall through to the full normalizer when it
         // would apply.
         let owned_name;
+        let normalized;
         let mut name: &[u8] = if is_simple_ascii_identifier(input_name)
             && !bun_ast::lexer_tables::is_strict_mode_reserved_word(input_name)
         {
+            normalized = false;
             input_name
         } else {
+            normalized = true;
             owned_name = MutableString::ensure_valid_identifier(input_name).expect("unreachable");
             &owned_name
         };
         // PORT NOTE: hoisted from inside the match arm so `name` (which may borrow
-        // it) stays valid through the trailing `eql_long`/dupe.
+        // it) stays valid through the trailing dupe.
         let mut mutable_name = MutableString::init_empty();
+        // True iff a "name2"/"name3" suffix was appended below (i.e. `name` was
+        // reassigned to `mutable_name.slice()`). `!collided && !normalized` is
+        // equivalent to the old `strings::eql_long(name, input_name, true)`
+        // check — `name` is only ever bytewise-equal to `input_name` when both
+        // are false — without re-comparing 5–20 identifier bytes per symbol on
+        // the hot no-collision path.
+        let mut collided = false;
 
         match NameUse::find(self, name) {
             NameUse::Unused => {}
             use_ => {
+                collided = true;
                 let mut tries: u32 = if matches!(use_, NameUse::Used) {
                     1
                 } else {
@@ -1018,12 +1029,14 @@ impl NumberScope {
 
         // Each name starts off with a count of 1 so that the first collision with
         // "name" is called "name2"
-        if strings::eql_long(name, input_name, true) {
+        if !collided && !normalized {
+            debug_assert!(strings::eql_long(name, input_name, true));
             self.name_counts
                 .put_no_clobber(input_name, 1)
                 .expect("unreachable");
             return UnusedName::NoCollision;
         }
+        debug_assert!(!strings::eql_long(name, input_name, true));
 
         // Zig: `allocator.dupe(u8, name)` — allocate into the renamer arena.
         let duped: &[u8] = arena.alloc_slice_copy(name);

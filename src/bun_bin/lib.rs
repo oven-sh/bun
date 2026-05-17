@@ -260,10 +260,6 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         // always followed by `<`, never `>`. `*` wildcard so the segmented
         // pattern match (`SmallList<` … `>::append`) actually fires.
         "leak:SmallList<*>::append\n",
-        // `SupportsCondition::deep_clone` `And`/`Or` collect into a global-heap
-        // `Vec` stored back into the `@supports` arena AST. See LEAK(arena)
-        // note in `css/rules/supports.rs`.
-        "leak:SupportsCondition>::deep_clone\n",
         // ── LSan-fires-before-final-GC-sweep ────────────────────────────────
         // These wrap a Rust allocation in a JSC GC cell (or leak it to JSC as
         // an external string). Ownership is correct — the cell finalizer /

@@ -3,21 +3,24 @@ use crate::css_rules::{CssRuleList, Location, MinifyContext};
 use crate::error::MinifyErr;
 use crate::properties::PropertyId;
 use crate::{PrintErr, Printer};
+use bun_alloc::ArenaPtr;
 
 /// A [`<supports-condition>`](https://drafts.csswg.org/css-conditional-3/#typedef-supports-condition),
 /// as used in the `@supports` and `@import` rules.
 // PORT NOTE: Zig threaded the parser-input lifetime (`[]const u8` slices borrow
 // the source). Phase A keeps `&'static [u8]` per PORTING.md §AST crates; Phase
 // B re-threads `'i` once `PropertyId<'i>` and the parser arena are real.
+// `Not`/`And`/`Or` carry `ArenaPtr` so their heap blocks live in the same arena
+// as the surrounding AST node (no Drop on bulk-free → would otherwise strand).
 pub enum SupportsCondition {
     /// A `not` expression.
-    Not(Box<SupportsCondition>),
+    Not(Box<SupportsCondition, ArenaPtr>),
 
     /// An `and` expression.
-    And(Vec<SupportsCondition>),
+    And(Vec<SupportsCondition, ArenaPtr>),
 
     /// An `or` expression.
-    Or(Vec<SupportsCondition>),
+    Or(Vec<SupportsCondition, ArenaPtr>),
 
     /// A declaration to evaluate.
     Declaration(Declaration),
@@ -77,17 +80,25 @@ impl SupportsCondition {
         // `#[derive(DeepClone)]` can't be used while `Selector`/`Unknown`
         // carry `&'static [u8]`; the blanket `&'bump [u8]` impl doesn't unify
         // with a fresh `'__bump`).
-        // LEAK(arena): `And`/`Or`/`Not` carry global-heap `Vec`/`Box` inside arena AST
-        // nodes (no `Drop` on bulk-free). Phase B re-threads `'i` to make these `bump`-backed.
-        // Suppressed in `bun_bin::__lsan_default_suppressions` until then.
+        let alloc = ArenaPtr::new(bump);
         match self {
-            Self::Not(c) => Self::Not(Box::new(c.deep_clone(bump))),
-            Self::And(v) => Self::And(v.iter().map(|c| c.deep_clone(bump)).collect()),
-            Self::Or(v) => Self::Or(v.iter().map(|c| c.deep_clone(bump)).collect()),
+            Self::Not(c) => Self::Not(Box::new_in(c.deep_clone(bump), alloc)),
+            Self::And(v) => Self::And(Self::clone_vec_in(v, bump, alloc)),
+            Self::Or(v) => Self::Or(Self::clone_vec_in(v, bump, alloc)),
             Self::Declaration(d) => Self::Declaration(d.deep_clone(bump)),
             Self::Selector(s) => Self::Selector(s),
             Self::Unknown(s) => Self::Unknown(s),
         }
+    }
+
+    fn clone_vec_in(
+        v: &[SupportsCondition],
+        bump: &bun_alloc::Arena,
+        alloc: ArenaPtr,
+    ) -> Vec<SupportsCondition, ArenaPtr> {
+        let mut out = Vec::with_capacity_in(v.len(), alloc);
+        out.extend(v.iter().map(|c| c.deep_clone(bump)));
+        out
     }
 }
 
@@ -264,13 +275,17 @@ impl SupportsCondition {
 
         if input.try_parse(|i| i.expect_ident_matching(b"not")).is_ok() {
             let in_parens = SupportsCondition::parse_in_parens(input)?;
-            return Ok(SupportsCondition::Not(Box::new(in_parens)));
+            return Ok(SupportsCondition::Not(Box::new_in(
+                in_parens,
+                ArenaPtr::new(input.arena()),
+            )));
         }
 
         let in_parens: SupportsCondition = SupportsCondition::parse_in_parens(input)?;
         let mut expected_type: Option<i32> = None;
-        // PERF(port): was arena-backed ArrayListUnmanaged — profile in Phase B
-        let mut conditions: Vec<SupportsCondition> = Vec::new();
+        // Arena-backed: result lands in arena AST nodes; bulk-free won't run Drop.
+        let mut conditions: Vec<SupportsCondition, ArenaPtr> =
+            Vec::new_in(ArenaPtr::new(input.arena()));
         // PORT NOTE: Zig used std.ArrayHashMap with an inline custom hash/eql context;
         // SeenDeclKey below carries equivalent Hash/Eq impls.
         let mut seen_declarations: ArrayHashMap<SeenDeclKey, usize> = ArrayHashMap::new();
@@ -303,7 +318,6 @@ impl SupportsCondition {
             match _condition {
                 Ok(condition) => {
                     if conditions.is_empty() {
-                        // PERF(port): was arena alloc via input.arena() — profile in Phase B
                         conditions.push(in_parens.deep_clone(input.arena()));
                         if let SupportsCondition::Declaration(decl) = &in_parens {
                             let property_id = &decl.property_id;

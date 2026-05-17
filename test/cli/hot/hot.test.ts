@@ -779,18 +779,24 @@ describe("should reuse the listening socket on hot reload", () => {
          hostname: "127.0.0.1",
          port: 0,
          socket: {
-           open(s) { s.write("v" + globalThis.reloadCount); s.flush(); },
+           open(s) { s.write("v" + globalThis.reloadCount + "\\n"); s.flush(); },
            data() {},
          },
        });`,
       async (port: number) => {
         const { promise, resolve, reject } = Promise.withResolvers<string>();
+        let text = "";
         const sock = await Bun.connect({
           hostname: "127.0.0.1",
           port,
           socket: {
             data(s, data) {
-              resolve(Buffer.from(data).toString());
+              // TCP is a byte stream; accumulate until the newline
+              // terminator instead of assuming a single-chunk delivery.
+              text += Buffer.from(data).toString();
+              const nl = text.indexOf("\n");
+              if (nl === -1) return;
+              resolve(text.slice(0, nl));
               s.end();
             },
             error: (_s, e) => reject(e),
@@ -890,8 +896,11 @@ console.log(JSON.stringify({ listening: true, port: server.port, reload: globalT
             responses.push(await extract(port));
             writeFileSync(entry, source(events.length + 1));
           }
-        } catch {
-          // runner.kill() from the stderr reader aborts this iterator.
+        } catch (e) {
+          // runner.kill() from the stderr reader aborts this iterator; only
+          // swallow that — let real errors from JSON.parse / extract /
+          // writeFileSync surface directly.
+          if (!runner.killed) throw e;
         }
 
         runner.kill();

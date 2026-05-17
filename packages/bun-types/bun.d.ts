@@ -6474,6 +6474,9 @@ declare module "bun" {
      * TLS Configuration with which to create the socket
      */
     tls?: TLSOptions | boolean;
+  }
+
+  interface UnixSocketListenOptions<Data = undefined> extends UnixSocketOptions<Data> {
     /**
      * Uniquely identify this listener for hot reloading.
      *
@@ -6523,7 +6526,7 @@ declare module "bun" {
    *
    * @category HTTP & Networking
    */
-  function listen<Data = undefined>(options: UnixSocketOptions<Data>): UnixSocketListener<Data>;
+  function listen<Data = undefined>(options: UnixSocketListenOptions<Data>): UnixSocketListener<Data>;
 
   /**
    * @category HTTP & Networking

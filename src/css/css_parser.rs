@@ -842,7 +842,6 @@ pub struct BundlerAtRuleParser<'a> {
     /// soundly under Stacked Borrows.
     pub import_records: *mut Vec<ImportRecord>,
     pub layer_names: Vec<LayerName>,
-    pub options: &'a ParserOptions<'a>,
     /// Having _named_ layers nested inside of an _anonymous_ layer has no
     /// effect. See: https://drafts.csswg.org/css-cascade-5/#example-787042b6
     pub anon_layer_count: u32,
@@ -3150,28 +3149,17 @@ mod stylesheet_impl {
             source_index: SrcIndex,
         ) -> Maybe<(Self, StylesheetExtra), Err<ParserError>> {
             // PORT NOTE: Zig aliased `import_records` into both `BundlerAtRuleParser`
-            // *and* the inner `Parser` (css_parser.zig:3245), and aliased `&options`
-            // into the at-rule parser while also passing `options` by value (struct
-            // copy) to `parseWith`. Rust forbids both overlaps directly:
+            // *and* the inner `Parser` (css_parser.zig:3245).
             // - `import_records`: derive a single raw `NonNull` from the unique
             //   borrow; both the at-rule parser and `Parser::new` store copies of
             //   that raw pointer (matching Zig's `?*Vec`). Neither holds a
             //   long-lived `&mut`, so interleaved writes from `on_import_rule` and
             //   `add_import_record`/`state`/`reset` each create a fresh short-lived
             //   `&mut` from the shared SharedRW provenance — sound under SB.
-            // - `options`: bitwise-duplicate via `ptr::read` (mirroring Zig's
-            //   by-value struct copy) and wrap the original in `ManuallyDrop` so
-            //   only the moved copy drops — `ParserOptions` transitively owns a
-            //   `SmallList` (via `css_modules::Config::pattern`) which has a real
-            //   `Drop`, so both copies must not run their destructors.
-            let options = core::mem::ManuallyDrop::new(options);
-            // SAFETY: original is `ManuallyDrop`; only `options_for_parse` drops.
-            let options_for_parse = unsafe { core::ptr::read(&raw const *options) };
             let import_records_ptr = core::ptr::NonNull::from(import_records);
             let mut at_rule_parser = BundlerAtRuleParser {
                 arena,
                 import_records: import_records_ptr.as_ptr(),
-                options: &options,
                 layer_names: Vec::new(),
                 anon_layer_count: 0,
                 enclosing_layer: LayerName::default(),
@@ -3179,7 +3167,7 @@ mod stylesheet_impl {
             Self::parse_with(
                 arena,
                 code,
-                options_for_parse,
+                options,
                 &mut at_rule_parser,
                 Some(import_records_ptr),
                 source_index,

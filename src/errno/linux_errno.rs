@@ -188,8 +188,9 @@ impl GetErrno for usize {
         } else {
             0
         };
-        // SAFETY: int is in [0, 4096); E is #[repr] over the kernel errno range
-        unsafe { core::mem::transmute::<u16, E>(int as u16) }
+        // Validate instead of transmuting: the raw syscall errno range is
+        // wider than the declared `SystemErrno` discriminants.
+        SystemErrno::init(int as i64).unwrap_or(SystemErrno::SUCCESS)
     }
 }
 

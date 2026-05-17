@@ -27,7 +27,7 @@ infrastructure.
 
 **One-paragraph summary:** This audit applied the
 `/rust-undefined-behavior-exorcist` skill to Bun's Rust runtime in Exhaustive
-mode. The run partitioned 108 workspace crates into 21 sections, seeded the
+mode. The run partitioned 108 `src/**/Cargo.toml` crates into 21 sections, seeded the
 search with the prior unsafe-code audit's 11,044-site inventory, and converged
 at round 123. The registry contains 70 `CONFIRMED_UB` entries with Miri,
 Tree-Borrows, loom, sanitizer, or source-faithful contract evidence against
@@ -183,7 +183,7 @@ bash .ub-exorcism/2026-05-15-exhaustive/scripts/audit/check-registry-drift.sh
 ├── experiments/EXP-NNN-bun-<crate>-crate/              ← direct-Bun-crate witnesses
 ├── ast_grep_rules/                                     ← detector YAML rules (13)
 ├── loom_models/                                        ← runnable loom models (3 new)
-├── layout_asserts/                                     ← paste-ready compile-asserts (3)
+├── layout_asserts/                                     ← paste-ready compile-asserts (4)
 ├── operator_walkthrough/EXP-004.md                     ← 5-operator walkthrough
 ├── rejected_artifacts/                                 ← work demoted by review
 ├── scripts/                                            ← META infrastructure (14 scripts)

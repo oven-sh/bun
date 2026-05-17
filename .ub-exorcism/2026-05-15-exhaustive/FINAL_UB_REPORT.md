@@ -537,7 +537,7 @@ None. EXP-061..EXP-071 are no longer `OPEN`; they are `DEFERRED` remediation-des
 
 ## Methodology Lineage
 
-The prior [`/rust-unsafe-code-exorcist` audit](https://github.com/oven-sh/bun/pull/30763) applied 5 passes against Bun and produced 6 ceiling-score supply-chain attack primitives + 40 T1/T1-equivalent findings + 5 Miri-backed UB witnesses, distilled from 11,044 unsafe sites across 108 workspace crates. It opened two PRs ([#30763](https://github.com/oven-sh/bun/pull/30763) audit artifacts, [#30765](https://github.com/oven-sh/bun/pull/30765) three highest-confidence fixes).
+The prior [`/rust-unsafe-code-exorcist` audit](https://github.com/oven-sh/bun/pull/30763) applied 5 passes against Bun and produced 6 ceiling-score supply-chain attack primitives + 40 T1/T1-equivalent findings + 5 Miri-backed UB witnesses, distilled from 11,044 unsafe sites across 108 `src/**/Cargo.toml` crates. It opened two PRs ([#30763](https://github.com/oven-sh/bun/pull/30763) audit artifacts, [#30765](https://github.com/oven-sh/bun/pull/30765) three highest-confidence fixes).
 
 This UB audit treats those findings as Phase-0 anchored witnesses (`phase0_run.json:known_ub_witnesses_to_anchor`) and re-verifies them under the pinned nightly + audited source. It then runs the broader UB taxonomy in `references/UB-TAXONOMY.md` (25 buckets) against the entire Rust workspace, surfacing new finding classes the unsafe-code pass did not target:
 

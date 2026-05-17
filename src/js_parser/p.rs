@@ -6731,13 +6731,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match expr.data {
             js_ast::ExprData::EDot(ex) => {
                 if parts.len() > 1 {
-                    if ex.optional_chain.is_some() {
-                        return false;
-                    }
                     // Intermediates must be dot expressions
                     let last = parts.len() - 1;
                     let is_tail_match = strings::eql(&parts[last], &ex.name);
                     return is_tail_match && self.is_dot_define_match(ex.target, &parts[..last]);
+                }
+
+                // Allow globalThis.X to match a define for X (e.g. globalThis.process.env.NODE_ENV)
+                if parts.len() == 1 && strings::eql(&parts[0], &ex.name) {
+                    return self.is_global_this(ex.target);
                 }
             }
             js_ast::ExprData::EImportMeta(_) => {
@@ -6748,16 +6750,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // we do, but only if it's a UTF8 string
             // the intent is to handle people using this form instead of E.Dot. So we really only want to do this if the accessor can also be an identifier
             js_ast::ExprData::EIndex(index) => {
-                if parts.len() > 1 {
-                    if let js_ast::ExprData::EString(mut s) = index.index.data {
-                        if s.is_utf8() {
-                            if index.optional_chain.is_some() {
-                                return false;
-                            }
+                if let js_ast::ExprData::EString(mut s) = index.index.data {
+                    if s.is_utf8() {
+                        if parts.len() > 1 {
                             let last = parts.len() - 1;
                             let is_tail_match = strings::eql(&parts[last], s.slice(self.arena));
                             return is_tail_match
                                 && self.is_dot_define_match(index.target, &parts[..last]);
+                        }
+
+                        // Allow globalThis["X"] to match a define for X
+                        if parts.len() == 1 && strings::eql(&parts[0], s.slice(self.arena)) {
+                            return self.is_global_this(index.target);
                         }
                     }
                 }
@@ -6790,6 +6794,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             _ => {}
         }
         false
+    }
+
+    /// Returns true if the expression is an unbound reference to `globalThis`.
+    fn is_global_this(&mut self, expr: Expr) -> bool {
+        let js_ast::ExprData::EIdentifier(ex) = expr.data else {
+            return false;
+        };
+        let name = self.load_name_from_ref(ex.ref_);
+        if name != b"globalThis" {
+            return false;
+        }
+        let Ok(result) = self.find_symbol_with_record_usage::<false>(expr.loc, name) else {
+            return false;
+        };
+        if result.is_inside_with_scope {
+            return false;
+        }
+        result.r#ref.is_empty()
+            || self.symbols[result.r#ref.inner_index() as usize].kind
+                == js_ast::symbol::Kind::Unbound
     }
 }
 

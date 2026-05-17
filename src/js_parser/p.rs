@@ -1768,12 +1768,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 debug_assert!(self.symbols.len() > ref_.inner_index() as usize);
             }
             self.symbols[ref_.inner_index() as usize].use_count_estimate += 1;
-            let result = self.symbol_uses.get_or_put(ref_).expect("unreachable");
-            if !result.found_existing {
-                *result.value_ptr = js_ast::symbol::Use { count_estimate: 1 };
-            } else {
-                result.value_ptr.count_estimate += 1;
-            }
+            // `get_or_put` zero-initializes the slot on insert (`Use::default()`),
+            // so the Zig `found_existing` branch is unnecessary here.
+            self.symbol_uses
+                .get_or_put(ref_)
+                .expect("unreachable")
+                .value_ptr
+                .count_estimate += 1;
         }
 
         // The correctness of TypeScript-to-JavaScript conversion relies on accurate

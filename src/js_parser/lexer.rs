@@ -2484,6 +2484,12 @@ lexer_impl_header! {
     }
 
     /// This scans a "// comment" in a single pass over the input.
+    ///
+    /// PERF: outlined for the same reason as `scan_multi_line_comment_body` —
+    /// keep the SIMD newline scan, arena allocation, and pragma scanning out of
+    /// `next()`'s hot ASCII arms. `#[inline(never)]` (not `#[cold]`) because
+    /// `//` comments are common enough that we don't want the branch pessimized.
+    #[inline(never)]
     fn scan_single_line_comment(&mut self) {
         // PERF: keep the source slice register-resident — see `next_codepoint_with`.
         let contents: &[u8] = self.contents;

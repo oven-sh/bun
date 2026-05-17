@@ -4881,8 +4881,11 @@ pub mod bv2_impl {
                     drop(q.take());
                 }
                 for t in self.linker.graph.files.items_line_offset_table_mut() {
-                    // `LineOffsetTable::List` is itself a `MultiArrayList`; its
-                    // own elements are POD-ish, so `Drop` (slab free) suffices.
+                    // `LineOffsetTable::List` is a `MultiArrayList` whose
+                    // `columns_for_non_ascii: Box<[i32]>` rows are heap-owning.
+                    // `MultiArrayList::Drop` is slab-only, so drain rows first
+                    // or every per-line non-ASCII column table leaks per call.
+                    t.drop_elements();
                     *t = Default::default();
                 }
 

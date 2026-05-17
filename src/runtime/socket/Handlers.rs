@@ -416,6 +416,17 @@ impl Handlers {
         self.cell.set_callbacks(global_object, &wrapped);
         self.binary_type.set(reloaded.binary_type);
     }
+
+    /// Overwrites this cell's callbacks and binary type from `source`. Used by
+    /// `--hot` reload reuse, where the entry module already produced a fresh
+    /// `Handlers` via `SocketConfig::from_js` and we want the existing
+    /// listener (and every socket sharing its cell) to pick those callbacks
+    /// up without re-binding. Runs no user JS.
+    pub fn copy_callbacks_from(&self, global_object: &JSGlobalObject, source: &Handlers) {
+        self.cell
+            .set_callbacks(global_object, &source.cell.callbacks());
+        self.binary_type.set(source.binary_type.get());
+    }
 }
 
 /// One in-flight dispatch into JS. Holds an `Rc` so the callbacks it is about

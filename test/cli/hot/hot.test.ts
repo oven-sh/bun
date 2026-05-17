@@ -1,7 +1,7 @@
 import { spawn } from "bun";
-import { beforeEach, expect, it } from "bun:test";
+import { beforeEach, describe, expect, it } from "bun:test";
 import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, tmpdirSync, waitForFileToExist } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -766,3 +766,144 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
   },
   longTimeout,
 );
+
+// https://github.com/oven-sh/bun/issues/26036
+// Under --hot, re-evaluating the entry module re-runs Bun.listen()/Bun.serve()
+// with the same address. The previous listener must be reused (handlers
+// swapped in place) rather than re-binding, which would fail EADDRINUSE.
+describe("should reuse the listening socket on hot reload", () => {
+  for (const [name, listen, extract] of [
+    [
+      "Bun.listen",
+      `const server = Bun.listen({
+         hostname: "127.0.0.1",
+         port: PORT,
+         socket: {
+           open(s) { s.write("v" + globalThis.reloadCount); s.flush(); },
+           data() {},
+         },
+       });`,
+      async (port: number) => {
+        const { promise, resolve, reject } = Promise.withResolvers<string>();
+        const sock = await Bun.connect({
+          hostname: "127.0.0.1",
+          port,
+          socket: {
+            data(s, data) {
+              resolve(Buffer.from(data).toString());
+              s.end();
+            },
+            error: (_s, e) => reject(e),
+            connectError: (_s, e) => reject(e),
+          },
+        });
+        const result = await promise;
+        sock.end();
+        return result;
+      },
+    ],
+    [
+      "Bun.serve",
+      `const server = Bun.serve({
+         hostname: "127.0.0.1",
+         port: PORT,
+         fetch() { return new Response("v" + globalThis.reloadCount); },
+       });`,
+      async (port: number) => {
+        const res = await fetch(`http://127.0.0.1:${port}/`);
+        return await res.text();
+      },
+    ],
+  ] as const) {
+    it(
+      name,
+      async () => {
+        const source = (n: number) => `
+globalThis.reloadCount = ${n};
+const PORT = Number(process.env.PORT);
+${listen}
+console.log(JSON.stringify({ listening: true, port: server.port, reload: globalThis.reloadCount }));
+`;
+        using dir = tempDir("hot-listen-reuse", {
+          "index.ts": source(1),
+        });
+        const entry = join(String(dir), "index.ts");
+
+        // Reserve a port so the fixture always requests the same one (the
+        // reuse path keys on the *requested* host:port).
+        const reserve = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: { data() {} },
+        });
+        const port = reserve.port;
+        reserve.stop(true);
+
+        await using runner = spawn({
+          cmd: [bunExe(), "--hot", "run", entry],
+          env: { ...bunEnv, PORT: String(port) },
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+          stdin: "ignore",
+        });
+
+        let stderr = "";
+        const stderrDone = (async () => {
+          for await (const chunk of runner.stderr) {
+            stderr += new TextDecoder().decode(chunk);
+            // Without the fix the second evaluation fails EADDRINUSE and
+            // stdout never produces another event; bail instead of hanging
+            // until the timeout.
+            if (stderr.includes("EADDRINUSE") || stderr.includes("Failed to")) {
+              runner.kill();
+            }
+          }
+        })();
+
+        const events: Array<{ listening: boolean; port: number; reload: number }> = [];
+        const responses: string[] = [];
+        let buf = "";
+        const target = 3;
+
+        for await (const chunk of runner.stdout) {
+          buf += new TextDecoder().decode(chunk);
+          const lines = buf.split("\n");
+          buf = lines.pop() ?? "";
+          let advanced = false;
+          for (const line of lines) {
+            if (!line.startsWith("{")) continue;
+            const ev = JSON.parse(line);
+            events.push(ev);
+            advanced = true;
+          }
+          if (!advanced) continue;
+          if (events.length >= target) {
+            responses.push(await extract(port));
+            runner.kill();
+            break;
+          }
+          // Verify the new handlers are actually wired up (not just that
+          // listen() didn't throw), then trigger the next reload.
+          responses.push(await extract(port));
+          writeFileSync(entry, source(events.length + 1));
+        }
+
+        runner.kill();
+        await runner.exited;
+        await stderrDone;
+
+        expect(stderr).not.toContain("EADDRINUSE");
+        expect(stderr).not.toContain("Failed to listen");
+        expect(stderr).not.toContain("Failed to start server");
+        expect(events).toEqual([
+          { listening: true, port, reload: 1 },
+          { listening: true, port, reload: 2 },
+          { listening: true, port, reload: 3 },
+        ]);
+        expect(responses).toEqual(["v1", "v2", "v3"]);
+      },
+      timeout,
+    );
+  }
+});

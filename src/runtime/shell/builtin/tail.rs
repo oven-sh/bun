@@ -13,6 +13,13 @@ use crate::shell::yield_::Yield;
 pub struct Tail {
     pub lines: usize,
     pub state: TailState,
+    /// Saved file-args context for resuming after async write.
+    pub file_args: Option<FileArgsCtx>,
+}
+
+pub struct FileArgsCtx {
+    pub args_start: usize,
+    pub idx: usize,
 }
 
 #[derive(Default)]
@@ -244,6 +251,16 @@ impl Tail {
     }
 
     fn write_output(interp: &Interpreter, cmd: NodeId, output: Vec<u8>) -> Yield {
+        // Save file-args context before transitioning state.
+        if let TailState::ExecFilepathArgs { args_start, idx, .. } =
+            &Self::state_mut(interp, cmd).state
+        {
+            Self::state_mut(interp, cmd).file_args = Some(FileArgsCtx {
+                args_start: *args_start,
+                idx: *idx,
+            });
+        }
+
         if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
             Self::state_mut(interp, cmd).state = TailState::WaitingWriteOut;
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
@@ -252,21 +269,16 @@ impl Tail {
                 .enqueue(child, &output, safeguard);
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &output);
-        Self::advance_or_done(interp, cmd)
-    }
 
-    fn advance_or_done(interp: &Interpreter, cmd: NodeId) -> Yield {
-        let is_file_args = matches!(
-            &Self::state_mut(interp, cmd).state,
-            TailState::ExecFilepathArgs { .. } | TailState::WaitingWriteOut
-        );
-        if is_file_args {
-            if let TailState::ExecFilepathArgs { collected, in_done, .. } =
-                &mut Self::state_mut(interp, cmd).state
-            {
-                collected.clear();
-                *in_done = false;
-            }
+        if Self::state_mut(interp, cmd).file_args.is_some() {
+            let ctx = Self::state_mut(interp, cmd).file_args.take().unwrap();
+            Self::state_mut(interp, cmd).state = TailState::ExecFilepathArgs {
+                args_start: ctx.args_start,
+                idx: ctx.idx,
+                reader: None,
+                collected: Vec::new(),
+                in_done: false,
+            };
             Self::next(interp, cmd)
         } else {
             Builtin::done(interp, cmd, 0)
@@ -284,7 +296,21 @@ impl Tail {
         }
         match &Self::state_mut(interp, cmd).state {
             TailState::WaitingWriteErr => Builtin::done(interp, cmd, 1),
-            TailState::WaitingWriteOut => Self::advance_or_done(interp, cmd),
+            TailState::WaitingWriteOut => {
+                if let Some(ctx) = Self::state_mut(interp, cmd).file_args.take() {
+                    Self::state_mut(interp, cmd).state = TailState::ExecFilepathArgs {
+                        args_start: ctx.args_start,
+                        idx: ctx.idx,
+                        reader: None,
+                        collected: Vec::new(),
+                        in_done: false,
+                    };
+                    Self::next(interp, cmd)
+                } else {
+                    Self::state_mut(interp, cmd).state = TailState::Done;
+                    Builtin::done(interp, cmd, 0)
+                }
+            }
             _ => Builtin::done(interp, cmd, 0),
         }
     }

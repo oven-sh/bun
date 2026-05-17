@@ -86,6 +86,8 @@ impl Realpath {
         }
 
         Self::state_mut(interp, cmd).state = State::Done;
+        // Stash exit_code so on_io_writer_chunk can recover it.
+        Builtin::of_mut(interp, cmd).exit_code = Some(exit_code);
         if let Some(safeguard) = stdout_needs_io {
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
             Self::state_mut(interp, cmd).buf = out;
@@ -114,7 +116,7 @@ impl Realpath {
             return Builtin::done(interp, cmd, 1);
         }
         let exit = match Self::state_mut(interp, cmd).state {
-            State::Done => 0,
+            State::Done => Builtin::of(interp, cmd).exit_code.unwrap_or(0),
             State::Err => 1,
             State::Idle => unreachable!("Realpath.onIOWriterChunk: idle"),
         };

@@ -13,6 +13,13 @@ use crate::shell::yield_::Yield;
 pub struct Head {
     pub lines: usize,
     pub state: HeadState,
+    /// Saved file-args context for resuming after async write.
+    pub file_args: Option<FileArgsCtx>,
+}
+
+pub struct FileArgsCtx {
+    pub args_start: usize,
+    pub idx: usize,
 }
 
 #[derive(Default)]
@@ -247,6 +254,17 @@ impl Head {
     }
 
     fn write_output(interp: &Interpreter, cmd: NodeId, output: Vec<u8>) -> Yield {
+        // Save file-args context before transitioning to WaitingWriteOut
+        // so on_io_writer_chunk can restore and advance to the next file.
+        if let HeadState::ExecFilepathArgs { args_start, idx, .. } =
+            &Self::state_mut(interp, cmd).state
+        {
+            Self::state_mut(interp, cmd).file_args = Some(FileArgsCtx {
+                args_start: *args_start,
+                idx: *idx,
+            });
+        }
+
         if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
             Self::state_mut(interp, cmd).state = HeadState::WaitingWriteOut;
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
@@ -255,24 +273,17 @@ impl Head {
                 .enqueue(child, &output, safeguard);
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &output);
-        // For multi-file mode, advance to the next file.
-        Self::advance_or_done(interp, cmd)
-    }
 
-    /// If processing file arguments, advance to the next file. Otherwise done.
-    fn advance_or_done(interp: &Interpreter, cmd: NodeId) -> Yield {
-        let is_file_args = matches!(
-            &Self::state_mut(interp, cmd).state,
-            HeadState::ExecFilepathArgs { .. } | HeadState::WaitingWriteOut
-        );
-        if is_file_args {
-            // Reset state for next file iteration.
-            if let HeadState::ExecFilepathArgs { collected, in_done, .. } =
-                &mut Self::state_mut(interp, cmd).state
-            {
-                collected.clear();
-                *in_done = false;
-            }
+        // For multi-file mode, advance to the next file.
+        if Self::state_mut(interp, cmd).file_args.is_some() {
+            let ctx = Self::state_mut(interp, cmd).file_args.take().unwrap();
+            Self::state_mut(interp, cmd).state = HeadState::ExecFilepathArgs {
+                args_start: ctx.args_start,
+                idx: ctx.idx,
+                reader: None,
+                collected: Vec::new(),
+                in_done: false,
+            };
             Self::next(interp, cmd)
         } else {
             Builtin::done(interp, cmd, 0)
@@ -290,7 +301,22 @@ impl Head {
         }
         match &Self::state_mut(interp, cmd).state {
             HeadState::WaitingWriteErr => Builtin::done(interp, cmd, 1),
-            HeadState::WaitingWriteOut => Self::advance_or_done(interp, cmd),
+            HeadState::WaitingWriteOut => {
+                // Restore file-args context and advance to next file.
+                if let Some(ctx) = Self::state_mut(interp, cmd).file_args.take() {
+                    Self::state_mut(interp, cmd).state = HeadState::ExecFilepathArgs {
+                        args_start: ctx.args_start,
+                        idx: ctx.idx,
+                        reader: None,
+                        collected: Vec::new(),
+                        in_done: false,
+                    };
+                    Self::next(interp, cmd)
+                } else {
+                    Self::state_mut(interp, cmd).state = HeadState::Done;
+                    Builtin::done(interp, cmd, 0)
+                }
+            }
             _ => Builtin::done(interp, cmd, 0),
         }
     }

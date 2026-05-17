@@ -1669,13 +1669,22 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
                 // SAFETY: same VM pointer; re-borrow after the earlier `vm` mut
                 // borrow was released by the `hot_map()` arm above.
                 if let Some(hot) = global_object.bun_vm().as_mut().hot_map() {
-                    hot.insert_raw(
-                        &server_ref.config.id,
-                        HotMapEntry {
-                            tag: $tag as u8,
-                            ptr: server.cast::<()>(),
-                        },
-                    );
+                    // `insert_raw` panics on a duplicate key. The lookup
+                    // above only early-returns on an `AnyServerTag` match,
+                    // so a foreign-tag entry (e.g. a `Bun.listen` with the
+                    // same user-supplied `id`) survives to here. Skip
+                    // registration rather than panicking; the tag check
+                    // keeps the entries from ever being mis-cast, and
+                    // `NewServer::stop` tolerates the id being absent.
+                    if hot.get_entry(&server_ref.config.id).is_none() {
+                        hot.insert_raw(
+                            &server_ref.config.id,
+                            HotMapEntry {
+                                tag: $tag as u8,
+                                ptr: server.cast::<()>(),
+                            },
+                        );
+                    }
                 }
             }
 

@@ -920,13 +920,13 @@ impl Listener {
         let this_ref = unsafe { &*this };
         let vm = this_ref.handlers.get().global_object.bun_vm().as_mut();
         let Some(hot) = vm.hot_map() else { return };
-        // A duplicate key would panic in `insert_raw`. The lookup in
-        // `listen()` returns early on a reusable entry, so reaching here with
-        // a collision means the previous listener was `unref()`'d (strong_self
-        // cleared) or the user is binding two listeners to the same address
-        // via `reusePort`. Either way, leave the existing entry alone — its
-        // owner's `do_stop`/`deinit` will remove it — and skip registration
-        // for this one rather than panicking.
+        // `insert_raw` panics on a duplicate key. The lookup in `listen()`
+        // either returns early (reusable same-tag entry) or `do_stop`s the
+        // stale one (unref'd listener), so a same-tag collision can't reach
+        // here. A *different* tag (e.g. a `Bun.serve` with the same
+        // user-supplied `id`) falls through the tag check and still holds
+        // the key — leave that entry alone and skip registration rather
+        // than panicking.
         if hot.get_entry(&hot_id).is_some() {
             return;
         }

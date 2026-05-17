@@ -523,7 +523,7 @@ it("MatchedRoute.params does not leak", async () => {
     console.error("RSS growth: " + growthMB.toFixed(2) + "MB");
     // ASAN's quarantine retains freed allocations (default 256 MB) so RSS
     // deltas run far higher under bun-asan; widen the threshold there.
-    if (growthMB > ${isASAN ? 200 : 20}) throw new Error("leaked " + growthMB.toFixed(2) + "MB");
+    if (growthMB > ${isASAN ? 400 : 20}) throw new Error("leaked " + growthMB.toFixed(2) + "MB");
   `;
 
   await using proc = Bun.spawn({

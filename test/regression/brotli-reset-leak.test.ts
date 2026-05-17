@@ -4,7 +4,7 @@ import { createBrotliCompress, createBrotliDecompress } from "zlib";
 
 // ASAN's quarantine retains freed allocations (default 256 MB) so RSS deltas
 // run far higher under bun-asan; widen the threshold there.
-const MEMORY_GROWTH_LIMIT_MB = isASAN ? 350 : 50;
+const MEMORY_GROWTH_LIMIT_MB = isASAN ? 400 : 50;
 
 // This test verifies that calling reset() on Brotli streams doesn't leak memory.
 // Before the fix, each reset() call would allocate a new Brotli encoder/decoder

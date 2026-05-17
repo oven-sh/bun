@@ -138,6 +138,8 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                                 loc: Location::dummy(),
                             }));
                     }
+                    // Fresh slab; `CssChunk::Drop` skips element drops, so record for dealloc.
+                    record_slab(&mut chunk.owned_css_rule_slabs, &mut rules);
                     let mut ast = BundlerStyleSheet {
                         rules,
                         sources: Default::default(),
@@ -223,6 +225,8 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                                     *import_rule.conditions_mut() =
                                         unsafe { core::ptr::read(entry.conditions.at(j)) };
                                     rules.v.push(BundlerCssRule::Import(import_rule));
+                                    // `ManuallyDrop` leaks this fresh slab; record it for dealloc.
+                                    record_slab(&mut chunk.owned_css_rule_slabs, &mut rules);
                                     break 'rules rules;
                                 },
                                 composes: Default::default(),
@@ -336,6 +340,8 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                         composes: Default::default(),
                         ..BundlerStyleSheet::empty()
                     };
+                    // Fresh slab; `CssChunk::Drop` skips element drops, so record for dealloc.
+                    record_slab(&mut chunk.owned_css_rule_slabs, &mut css_chunk.asts[i].rules);
                 }
                 CssImportOrderKind::SourceIndex(source_index) => {
                     let source_index = *source_index;
@@ -419,12 +425,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                             core::mem::forget(core::mem::replace(&mut ast.rules, new_rules));
                             // Record the fresh slab so `Chunk::Drop` frees it; its
                             // elements stay bitwise-aliased to the source AST.
-                            let cap = ast.rules.v.capacity();
-                            if cap != 0 {
-                                let ptr = core::ptr::NonNull::new(ast.rules.v.as_mut_ptr())
-                                    .expect("cap > 0 implies non-dangling");
-                                chunk.owned_css_rule_slabs.0.push((ptr, cap));
-                            }
+                            record_slab(&mut chunk.owned_css_rule_slabs, &mut ast.rules);
                         }
                     }
 
@@ -441,23 +442,23 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
     }
 }
 
+/// Records a fresh `Vec<BundlerCssRule>` slab so `OwnedCssRuleSlabs::drop` deallocs it;
+/// `CssChunk::drop` skips element destructors and would otherwise strand the buffer.
+fn record_slab(slabs: &mut crate::chunk::OwnedCssRuleSlabs, rules: &mut BundlerCssRuleList) {
+    let cap = rules.v.capacity();
+    if cap != 0 {
+        let ptr =
+            core::ptr::NonNull::new(rules.v.as_mut_ptr()).expect("cap > 0 implies non-dangling");
+        slabs.0.push((ptr, cap));
+    }
+}
+
 fn wrap_rules_with_conditions(
     ast: &mut BundlerStyleSheet,
     temp_bump: &Bump,
     conditions: &Vec<ImportConditions>,
     slabs: &mut crate::chunk::OwnedCssRuleSlabs,
 ) {
-    // Each wrap allocates a fresh `Vec<BundlerCssRule>` slab; `CssChunk::drop`
-    // skips element destructors, so record it for `OwnedCssRuleSlabs` to dealloc.
-    fn record_slab(slabs: &mut crate::chunk::OwnedCssRuleSlabs, rules: &mut BundlerCssRuleList) {
-        let cap = rules.v.capacity();
-        if cap != 0 {
-            let ptr = core::ptr::NonNull::new(rules.v.as_mut_ptr())
-                .expect("cap > 0 implies non-dangling");
-            slabs.0.push((ptr, cap));
-        }
-    }
-
     let mut dummy_import_records: Vec<ImportRecord> = Vec::new();
 
     let mut i: usize = conditions.len() as usize;

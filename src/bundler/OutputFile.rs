@@ -208,6 +208,18 @@ impl Value {
                 if bytes.is_empty() {
                     return BunString::EMPTY;
                 }
+                // Bundler output may contain raw UTF-8 bytes from tagged
+                // template literals or regex source with non-ASCII characters.
+                // `create_external` with `is_latin1=true` can't represent
+                // multi-byte UTF-8, so fall back to `clone_utf8` when non-ASCII
+                // is present. This function transfers ownership of `bytes` —
+                // the ASCII path hands it to `on_free`; the non-ASCII path must
+                // drop it explicitly.
+                if !bun_core::strings::is_all_ascii(&bytes) {
+                    let result = BunString::clone_utf8(&bytes);
+                    drop(bytes);
+                    return result;
+                }
                 // Use ExternalStringImpl to avoid cloning the string, at
                 // the cost of allocating space to remember the arena.
                 //
@@ -262,6 +274,14 @@ impl Value {
             Value::Buffer { bytes } => {
                 if bytes.is_empty() {
                     return BunString::EMPTY;
+                }
+                // Bundler output may contain raw UTF-8 bytes from tagged
+                // template literals or regex source with non-ASCII characters.
+                // `create_external` with `is_latin1=true` can't represent
+                // multi-byte UTF-8, so fall back to `clone_utf8` when non-ASCII
+                // is present. (Borrowing variant — bytes stay owned by caller.)
+                if !bun_core::strings::is_all_ascii(bytes) {
+                    return BunString::clone_utf8(bytes);
                 }
                 extern "C" fn noop(_: *mut c_void, _: *mut c_void, _: usize) {}
                 // latin1 = true (matches Zig).

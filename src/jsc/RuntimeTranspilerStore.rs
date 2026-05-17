@@ -1047,7 +1047,7 @@ impl TranspilerJob {
         if !matches!(parse_result.already_bundled, AlreadyBundled::None) {
             let bytecode_slice = parse_result.already_bundled.bytecode_slice();
             self.resolved_source = OwnedResolvedSource::new(ResolvedSource {
-                source_code: String::clone_latin1(&parse_result.source.contents),
+                source_code: String::clone_utf8(&parse_result.source.contents),
                 already_bundled: true,
                 bytecode_cache: if !bytecode_slice.is_empty() {
                     bytecode_slice.as_ptr().cast_mut()
@@ -1187,8 +1187,8 @@ impl TranspilerJob {
             let result = cache
                 .output_code
                 .take()
-                .map(|b| String::clone_latin1(&b))
-                .unwrap_or_else(|| String::clone_latin1(written));
+                .map(|b| String::clone_utf8(&b))
+                .unwrap_or_else(|| String::clone_utf8(written));
 
             // SAFETY: leaf scalar field read on `*vm`; see `vm` PORT NOTE above.
             if written.len() > 1024 * 1024 * 2 || unsafe { (*vm).smol } {

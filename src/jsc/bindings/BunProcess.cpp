@@ -3944,6 +3944,22 @@ static JSValue constructProcessNextTickFn(VM& vm, JSObject* processObject)
     return uncheckedDowncast<Process>(processObject)->constructNextTickFn(JSC::getVM(globalObject), globalObject);
 }
 
+static JSValue constructRawDebug(VM& vm, JSObject* processObject)
+{
+    auto* globalObject = processObject->globalObject();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSC::JSFunction* getRawDebug = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetRawDebugCodeGenerator(vm), globalObject);
+    JSC::MarkedArgumentBuffer args;
+    JSC::CallData callData = JSC::getCallData(getRawDebug);
+    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getRawDebug, callData, globalObject->globalThis(), args);
+    if (auto* exception = scope.exception()) {
+        (void)scope.tryClearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        return jsUndefined();
+    }
+    return result;
+}
+
 JSC_DEFINE_CUSTOM_GETTER(processNoDeprecation, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName name))
 {
     return JSValue::encode(jsBoolean(Bun__Node__ProcessNoDeprecation));
@@ -4271,7 +4287,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   _kill                            Process_functionReallyKill                          Function 2
   _linkedBinding                   Process_stubEmptyFunction                           Function 0
   _preload_modules                 Process_stubEmptyArray                              PropertyCallback
-  _rawDebug                        Process_stubEmptyFunction                           Function 0
+  _rawDebug                        constructRawDebug                                   PropertyCallback
   _startProfilerIdleNotifier       Process_stubEmptyFunction                           Function 0
   _stopProfilerIdleNotifier        Process_stubEmptyFunction                           Function 0
   _tickCallback                    Process_stubEmptyFunction                           Function 0

@@ -689,7 +689,6 @@ describe.concurrent(() => {
     "_debugProcess",
     "_fatalException",
     "_linkedBinding",
-    "_rawDebug",
     "_startProfilerIdleNotifier",
     "_stopProfilerIdleNotifier",
     "_tickCallback",
@@ -732,6 +731,65 @@ describe.concurrent(() => {
       expect(process[stub]).toHaveLength(0);
     });
   }
+
+  describe("process._rawDebug", () => {
+    it("writes util.format output + newline to stderr synchronously", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", `process._rawDebug('hi', {a: 1}, [1, 2]);`],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        proc.stdout.text(),
+        proc.stderr.text(),
+        proc.exited,
+      ]);
+      expect(stdout).toBe("");
+      expect(stderr).toBe("hi { a: 1 } [ 1, 2 ]\n");
+      expect(exitCode).toBe(0);
+    });
+
+    it("handles printf-style format specifiers via util.format", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process._rawDebug('val: %d', 42); process._rawDebug('%s: %j', 'key', {a: 1});`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe('val: 42\nkey: {"a":1}\n');
+      expect(exitCode).toBe(0);
+    });
+
+    it("fires from a beforeExit handler during normal shutdown (issue #30934)", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", `process.on('beforeExit', () => process._rawDebug('hi'));`],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("hi\n");
+      expect(exitCode).toBe(0);
+    });
+
+    it("prints an empty line when called with no args", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", `process._rawDebug();`],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("\n");
+      expect(exitCode).toBe(0);
+    });
+  });
 
   it("dlopen args parsing", () => {
     const notFound = join(tmpdirSync(), "not-found.so");

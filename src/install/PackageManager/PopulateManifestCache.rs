@@ -74,9 +74,10 @@ fn start_manifest_task(
     // TODO(port): lifetime — BACKREF.
     let manager_backref: *mut PackageManager = manager;
 
-    // Take the pool slot as a raw pointer so borrowck releases `manager` for the
-    // `enqueue_network_task` tail.
-    let net_ptr: *mut NetworkTask = run_tasks::get_network_task(manager);
+    // Take the pool slot as a sealed handle, then a raw pointer so borrowck
+    // releases `manager` for the `enqueue_network_task` tail.
+    let net_owned = run_tasks::get_network_task(manager);
+    let net_ptr: *mut NetworkTask = net_owned.as_ptr();
     // Zig: `task.* = .{ .package_manager = manager, .callback = undefined,
     //                   .task_id = task_id, .allocator = manager.allocator };`
     // — full struct overwrite that resets every other field to its struct

@@ -47,11 +47,11 @@ use crate::isolated_install::store as Store;
 // and branches on `@TypeOf(callbacks.onExtract) != void`, `Ctx == *PackageInstaller`,
 // etc. Rust models this as a single trait with associated consts gating the
 // optional hooks (default-unreachable bodies), plus associated-const tags for
-// the `Ctx` identity checks. Phase B should revisit whether the call sites can
+// the `Ctx` identity checks. TODO(refactor): revisit whether the call sites can
 // be split into 2–3 concrete impls instead of const-gated branches.
 //
 // TODO(port): callbacks trait — comptime duck-typing reshape; verify against
-// the three call sites (`PackageInstaller`, `Store.Installer`, void) in Phase B.
+// the three call sites (`PackageInstaller`, `Store.Installer`, void).
 pub trait RunTasksCallbacks {
     /// Mirrors `Ctx` (the `extract_ctx` value type).
     type Ctx;
@@ -346,11 +346,21 @@ pub fn run_tasks<C: RunTasksCallbacks>(
     let network_tasks_batch = manager.async_network_task_queue.pop_batch();
     let mut network_tasks_iter = network_tasks_batch.iterator();
     loop {
-        let task_ptr = network_tasks_iter.next();
-        if task_ptr.is_null() {
+        // SAFETY: the only producer for `async_network_task_queue` is
+        // `NetworkTask::notify` (HTTP-thread completion callback). Every node it
+        // pushes was vended from `manager.preallocated_network_tasks` at enqueue
+        // time and the `HiveOwned` token was relinquished at HTTP-schedule time;
+        // the slot stays claimed (not `put()`) until a later resolve-task pass.
+        // `next_owned()` re-seals exclusive ownership on the main thread.
+        let Some(task_owned) = (unsafe { network_tasks_iter.next_owned() }) else {
             break;
-        }
-        // SAFETY: `next()` returned non-null; node is exclusively owned by this batch.
+        };
+        // Raw alias for ergonomic field access while `task_owned` carries the
+        // ownership token. `HiveOwned` does not deref by itself, so `task` and
+        // `task_owned` are not Rust-level aliases; `task_owned` is moved into
+        // `Task.network` (or dropped, no-op) before the slot is touched again.
+        let task_ptr = task_owned.as_ptr();
+        // SAFETY: `task_owned` is the sole live handle to this pool slot.
         let task = unsafe { &mut *task_ptr };
         if cfg!(debug_assertions) {
             debug_assert!(manager.pending_task_count() > 0);
@@ -621,8 +631,14 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 .expect("unreachable");
                 // PORT NOTE: reshaped for borrowck — split the nested `&mut
                 // manager` borrows (`task_batch.push` vs. `enqueue_*`).
-                let queued =
-                    enqueue::enqueue_parse_npm_package(manager, task.task_id, name_tiny, task_ptr);
+                // `task_owned` carries pool-slot ownership from the queue
+                // drain into `Task.network` — see `next_owned()` at loop top.
+                let queued = enqueue::enqueue_parse_npm_package(
+                    manager,
+                    task.task_id,
+                    name_tiny,
+                    task_owned,
+                );
                 manager.task_batch.push(ThreadPoolBatch::from(queued));
             }
             NetworkTaskCallback::Extract(extract) => {
@@ -908,7 +924,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 }
 
                 // PORT NOTE: reshaped for borrowck — split nested `&mut manager`.
-                let queued = enqueue::enqueue_extract_npm_package(manager, &*extract, task_ptr);
+                // `task_owned` carries pool-slot ownership from the queue
+                // drain into `Task.network` — see `next_owned()` at loop top.
+                let queued = enqueue::enqueue_extract_npm_package(manager, &*extract, task_owned);
                 manager.task_batch.push(ThreadPoolBatch::from(queued));
             }
             _ => unreachable!(),
@@ -928,7 +946,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         // Zig: `defer manager.preallocated_resolve_tasks.put(task);`
         // PORT NOTE: raw-ptr capture — borrowck would reject overlapping `&mut`
         // with the loop body. Guard runs on every `continue`/`?`/fallthrough.
-        // Phase B: have the iterator yield a pool guard that puts back on Drop.
+        // TODO(refactor): have the iterator yield a pool guard that puts back on Drop.
         // SAFETY: `task_ptr` non-null per loop guard; node exclusively owned by this batch.
         let task = unsafe { &mut *task_ptr };
         // The per-iteration scopeguards capture the function-scope provenance
@@ -959,13 +977,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         match task.tag {
             Task::Tag::PackageManifest => {
                 // Zig: `defer manager.preallocated_network_tasks.put(task.request.package_manifest.network);`
-                // PORT NOTE: capture the `*mut NetworkTask` up front — the
-                // `&'a mut NetworkTask` field can't be moved out through
-                // `ManuallyDrop`'s immutable `Deref` inside the defer body.
-                let net_ptr: *mut NetworkTask = {
-                    let req = task.request_package_manifest_mut();
-                    &raw mut *req.network
-                };
+                // Capture the pool-slot pointer up front so the `defer!` body
+                // doesn't need to project through the union.
+                let net_ptr: *mut NetworkTask = task.request_package_manifest().network.as_ptr();
                 scopeguard::defer! {
                     // SAFETY: see the put-task `defer!` above — `manager_ptr` is the
                     // function-scope provenance root; `net_ptr` is the network task
@@ -990,8 +1004,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             extract_ctx,
                             name,
                             err,
-                            // SAFETY: same active-arm read as `req` above.
-                            unsafe { &(*req.network).url_buf },
+                            // SAFETY: same active-arm read as `req` above;
+                            // `network` is a live pool slot (see `defer!`).
+                            unsafe { &req.network.as_ref().url_buf },
                         );
                     } else {
                         bun_ast::add_error_pretty!(
@@ -1040,12 +1055,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
             }
             Task::Tag::Extract | Task::Tag::LocalTarball => {
                 // Zig: `defer { switch (task.tag) { .extract => preallocated_network_tasks.put(...), else => {} } }`
-                // PORT NOTE: capture the `*mut NetworkTask` up front (only for the
-                // Extract arm) so the defer body need not move the `&mut` out
-                // through `ManuallyDrop`'s immutable `Deref`.
+                // Capture the pool-slot pointer up front (only for the Extract
+                // arm) so the `defer!` body doesn't need to project through the union.
                 let net_ptr: *mut NetworkTask = if task.tag == Task::Tag::Extract {
-                    let req = task.request_extract_mut();
-                    &raw mut *req.network
+                    task.request_extract().network.as_ptr()
                 } else {
                     core::ptr::null_mut()
                 };
@@ -1094,7 +1107,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         // SAFETY: `task.tag` selects the active union arm.
                         let fail_url: &[u8] = match task.tag {
                             Task::Tag::Extract => unsafe {
-                                &(*task.request.extract.network).url_buf
+                                &task.request.extract.network.as_ref().url_buf
                             },
                             Task::Tag::LocalTarball => unsafe {
                                 task.request.local_tarball.tarball.url.slice()
@@ -1704,8 +1717,17 @@ pub fn drain_dependency_list(this: &mut PackageManager) {
     let _ = schedule_tasks(this);
 }
 
-pub fn get_network_task(this: &mut PackageManager) -> *mut NetworkTask {
-    this.preallocated_network_tasks.get()
+// Vends an *uninitialized* pool slot as a sealed [`HiveOwned`] handle. Callers
+// placement-init it via `NetworkTask::write_init(handle.as_ptr(), …)` before
+// any deref (args differ per caller, so the init cannot be hoisted here).
+// `into_owned` consumes the `HiveSlot` token so its `Drop` does not recycle the
+// slot — it stays claimed and is returned to the pool later via the existing
+// `NetworkTask` `put` path, exactly as before.
+pub fn get_network_task(this: &mut PackageManager) -> bun_collections::HiveOwned<NetworkTask> {
+    let slot = this.preallocated_network_tasks.claim();
+    // SAFETY: callers placement-init via `NetworkTask::write_init` before any
+    // call to `as_ref`/`as_mut` on the returned handle (see `into_owned` docs).
+    unsafe { slot.into_owned() }
 }
 
 pub fn alloc_github_url(this: &PackageManager, repository: &Repository) -> Vec<u8> {
@@ -1808,15 +1830,18 @@ pub fn generate_network_task_for_tarball<'a>(
     // back-pointer (TODO(port): lifetime — BACKREF).
     let this_backref: *mut PackageManager = this;
 
-    // Take the pool slot as a raw pointer so borrowck releases `this` for the
-    // streaming-setup tail. Reborrowed `&mut` per-statement below.
-    let net_ptr: *mut NetworkTask = get_network_task(this);
+    // Take the pool slot as a sealed handle, then a raw pointer so borrowck
+    // releases `this` for the streaming-setup tail. Reborrowed `&mut`
+    // per-statement below.
+    let net_owned = get_network_task(this);
+    let net_ptr: *mut NetworkTask = net_owned.as_ptr();
     // Zig: `network_task.* = .{ .task_id, .callback = undefined, .allocator,
     // .package_manager, .apply_patch_task }` — full struct overwrite that resets
     // every other field (`retried`, `response`, `streaming_committed`,
     // `tarball_stream`, `streaming_extract_task`, `next`, `url_buf`,
     // `signal_store`) to its struct default. The slot may be uninitialized
-    // (`HiveArrayFallback::get()` heap fallback) or stale (reused hive slot).
+    // (`HiveArrayFallback::claim()` heap-spilled a `Box::new_uninit()` slot
+    // when the inline hive was full) or stale (reused hive slot).
     // SAFETY: `net_ptr` is the unique handle to a freshly-vended pool slot; no
     // other alias exists until we return it.
     unsafe { NetworkTask::write_init(net_ptr, task_id, this_backref, apply_patch_task) };
@@ -1866,8 +1891,8 @@ pub fn generate_network_task_for_tarball<'a>(
         // every other `this` field these calls touch (resolve-task pool,
         // allocator, options) and the network-task pool is never reallocated
         // or `put()` here, so we reborrow `*net_ptr` per-statement alongside
-        // `this`. Phase B: have `get_network_task` return a pool index so this
-        // intrusive-pointer pattern goes away.
+        // `this`. TODO(refactor): have `get_network_task` return a pool index
+        // so this intrusive-pointer pattern goes away.
         // SAFETY: see disjointness note above.
         let tarball_ref = unsafe {
             let NetworkTaskCallback::Extract(t) = &(*net_ptr).callback else {
@@ -1875,7 +1900,12 @@ pub fn generate_network_task_for_tarball<'a>(
             };
             t
         };
-        let extract_task = enqueue::create_extract_task_for_streaming(this, tarball_ref, net_ptr);
+        // `create_extract_task_for_streaming` consumes the `HiveOwned` (it is
+        // moved into `Task.network`); the streaming-state writes below go
+        // through the `net_ptr` raw alias, which stays valid (the slot is not
+        // recycled here). This is the documented "secondary use through
+        // `as_ptr()`" pattern — exactly one `HiveOwned` exists.
+        let extract_task = enqueue::create_extract_task_for_streaming(this, tarball_ref, net_owned);
         unsafe {
             (*net_ptr).streaming_extract_task = extract_task;
             (*net_ptr).tarball_stream = Some(bun_core::heap::take(TarballStream::init(
@@ -1925,7 +1955,7 @@ impl PackageManager {
         is_network_task_required(self, task_id)
     }
     #[inline]
-    pub fn get_network_task(&mut self) -> *mut NetworkTask {
+    pub fn get_network_task(&mut self) -> bun_collections::HiveOwned<NetworkTask> {
         get_network_task(self)
     }
     #[inline]

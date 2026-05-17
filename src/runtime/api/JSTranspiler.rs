@@ -902,13 +902,14 @@ impl<'a> TransformTask<'a> {
     }
 }
 
-// `Drop for TransformTask` is implicit:
-//   log.deinit() → bun_ast::Log: Drop
-//   input_code → ThreadSafe<StringOrBuffer>: unprotect + Drop
-//   output_code.deref() → BunString: Drop
-//   tsconfig is owned by JSTranspiler, not by TransformTask — JSTranspiler::drop handles it.
-//   js_instance.deref() → IntrusiveRc::drop
-//   bun.destroy(this) → Box drop by owner
+// `js_instance: IntrusiveRc` (= `RefPtr`) has NO Drop impl; its strong ref must be
+// released explicitly or the `JSTranspiler` never reaches refcount 0.
+impl<'a> Drop for TransformTask<'a> {
+    fn drop(&mut self) {
+        // Release the +1 taken in `TransformTask::create` (Zig: `transpiler.deref()`).
+        bun_ptr::RefPtr::deref(&self.js_instance);
+    }
+}
 
 fn export_replacement_value(
     value: JSValue,

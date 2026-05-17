@@ -253,13 +253,11 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         // Pre-existing in Zig (same arena model). Phase B re-threads `'i` to
         // make these bump-backed.
         //
-        // `SmallList::append` heap spill once a node's list exceeds inline `N`
-        // (e.g. `LayerName.v`, `LayerStatementRule.names`). `SmallList<T, N>`
-        // is generic, so the demangled frame is
-        // `<bun_collections::SmallList<…, 1>>::append` — the type name is
-        // always followed by `<`, never `>`. `*` wildcard so the segmented
-        // pattern match (`SmallList<` … `>::append`) actually fires.
+        // `SmallList` heap spill past inline `N`. LSan matching is substring-based,
+        // so `>::append` also covers `append_assume_capacity` / `append_slice*`.
         "leak:SmallList<*>::append\n",
+        // Same arena model: `Clone::clone` heap-spills when an AST node is cloned past `N`.
+        "leak:SmallList<*>::clone\n",
         // ── LSan-fires-before-final-GC-sweep ────────────────────────────────
         // These wrap a Rust allocation in a JSC GC cell (or leak it to JSC as
         // an external string). Ownership is correct — the cell finalizer /
@@ -293,6 +291,15 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         // wrapper's ref, but the reader's `waiting_for_on_reader_done` `+1` is
         // never released because the event loop has stopped.
         "leak:file_reader::FileReader>::on_read_chunk\n",
+        // Entry-point load is process-lifetime (`Run::start` is `-> !`). Scoped to
+        // `reload_entry_point` (boot/hot-reload/worker/test-runner) not `Run::start`.
+        "leak:VirtualMachine>::reload_entry_point\n",
+        // `Subprocess` stdin `StaticPipeWriter` `Box`: GC finalizer skipped at
+        // `process.exit()` while a write is pending; `Writable::Buffer` ref strands.
+        "leak:StaticPipeWriter<*>::create\n",
+        // `Bun.spawnSync` memfd drain: `_buffer` strands if teardown happens
+        // while the parent `PipeReader` is still ref'd.
+        "leak:PosixBufferedReader>::final_buffer\n",
         "\0",
     )
     .as_ptr()

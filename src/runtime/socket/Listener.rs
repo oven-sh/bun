@@ -39,6 +39,8 @@ use bun_sys::windows::libuv as uv;
 
 bun_output::define_scoped_log!(log, Listener, visible);
 
+use crate::server::lsan_ignore_js_managed;
+
 /// Bridge to the per-VM digest-keyed weak `SSL_CTX*` cache. The
 /// `bun_jsc::rare_data::SSLContextCache` slot is an opaque cycle-break stub;
 /// the concrete cache lives on `crate::jsc_hooks::RuntimeState`.
@@ -1301,6 +1303,8 @@ impl Listener {
             .promise
             .with_mut(|p| p.set(global, promise_value));
         let handlers_ptr: *mut Handlers = bun_core::heap::into_raw(handlers_box);
+        // LSan: freed on socket close, which is skipped if the process exits first.
+        lsan_ignore_js_managed(handlers_ptr.cast_const());
 
         // Ownership of the SSL_CTX is about to move into the socket; disarm the errdefer.
         let owned_ssl_ctx = scopeguard::ScopeGuard::into_inner(ssl_ctx_guard);

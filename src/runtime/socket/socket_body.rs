@@ -34,6 +34,8 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys as sys;
 use bun_uws as uws;
 
+use crate::server::lsan_ignore_js_managed;
+
 // `uws::NewSocketHandler::from_duplex` is now inherent on the canonical
 // `bun_uws_sys::socket` impl; thin local wrapper that erases the concrete
 // `runtime::socket::UpgradedDuplex` to the opaque `bun_uws_sys::UpgradedDuplex`
@@ -414,7 +416,10 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     pub fn new(init: Self) -> *mut Self {
-        bun_core::heap::into_raw(Box::new(init))
+        let ptr = bun_core::heap::into_raw(Box::new(init));
+        // LSan: freed by the JS wrapper's GC finalizer, which `process.exit()` skips.
+        lsan_ignore_js_managed(ptr.cast_const());
+        ptr
     }
 
     pub fn memory_cost(&self) -> usize {

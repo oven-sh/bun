@@ -221,6 +221,8 @@ impl<T, const N: usize> Default for SmallList<T, N> {
 impl<T: Clone, const N: usize> Clone for SmallList<T, N> {
     #[inline]
     fn clone(&self) -> Self {
+        // LEAK(arena): same as `append` below — heap spill strands when the
+        // clone lives in a bump-allocated CSS AST node. Suppressed in `bun_bin`.
         Self(self.0.clone())
     }
 }

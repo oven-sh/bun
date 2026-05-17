@@ -52,6 +52,8 @@ impl Taskable for FetchTasklet {
 
 bun_output::declare_scope!(FetchTasklet, visible);
 
+use crate::server::lsan_ignore_js_managed;
+
 pub type ResumableSink = ResumableFetchSink;
 
 #[derive(bun_ptr::ThreadSafeRefCounted)]
@@ -2113,6 +2115,9 @@ impl FetchTasklet {
                         .scheduled_response_buffer
                         .write(task_ref.response_buffer.list.as_slice()),
                 );
+                // LSan: bytes move into a JS-managed Response/Blob whose finalizer never
+                // runs at `process.exit()`. Re-tagged per chunk: write() may realloc.
+                lsan_ignore_js_managed(task_ref.scheduled_response_buffer.list.as_ptr());
             }
             // reset for reuse
             task_ref.response_buffer.reset();

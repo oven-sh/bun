@@ -1671,10 +1671,13 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
                 if let Some(hot) = global_object.bun_vm().as_mut().hot_map() {
                     // `insert_raw` panics on a duplicate key. The lookup
                     // above only early-returns on an `AnyServerTag` match,
-                    // so a foreign-tag entry (e.g. a `Bun.listen` with the
-                    // same user-supplied `id`) survives to here. Skip
-                    // registration rather than panicking; the tag check
-                    // keeps the entries from ever being mis-cast.
+                    // so a foreign-tag entry would survive to here.
+                    // `Bun.listen` keys are namespaced
+                    // (`[tcp]-`/`[tls]-`/`[listen]-`) so this is
+                    // belt-and-suspenders for a contrived
+                    // `Bun.serve({id: "[listen]-…"})` — skip registration
+                    // rather than panicking; the tag check keeps the
+                    // entries from ever being mis-cast.
                     if hot.get_entry(&server_ref.config.id).is_none() {
                         hot.insert_raw(
                             &server_ref.config.id,

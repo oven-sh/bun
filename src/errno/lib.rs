@@ -481,6 +481,17 @@ mod errno_name_tests {
         let _ = SystemErrno::from_raw(SystemErrno::MAX as u16);
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[should_panic(expected = "invalid Linux raw syscall errno")]
+    fn linux_raw_syscall_errno_rejects_invalid_tag() {
+        use crate::GetErrno;
+
+        let invalid_errno = SystemErrno::MAX as isize;
+        let raw_syscall_ret = (-invalid_errno) as usize;
+        let _ = raw_syscall_ret.get_errno();
+    }
+
     #[cfg(windows)]
     #[test]
     #[should_panic(expected = "invalid E discriminant")]

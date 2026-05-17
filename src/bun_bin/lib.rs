@@ -117,8 +117,12 @@ pub extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
 #[unsafe(no_mangle)]
 pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
     // One rule per line. Substring match on any frame in the allocation stack.
-    // Keep this list 1:1 with the Zig-named entries in `test/leaksan.supp`;
-    // C/C++ symbol entries stay in that file (their names did not change).
+    // Most "ported Zig-named" entries below mirror `test/leaksan.supp` 1:1
+    // (their Zig spellings live there; C/C++ entries stay there unchanged). A
+    // few — e.g. `TimeoutObject>::init_with` — are conceptually pre-existing
+    // Zig leaks that mimalloc hid from LSAN, so they never needed a
+    // `leaksan.supp` entry until the Rust port switched the global allocator
+    // to `std::alloc::System` under ASAN. Per-entry comments call those out.
     concat!(
         // Rust std false positive — detached threads' Arc<thread::Inner>.
         "leak:std::thread::thread::Thread>::new\n",
@@ -189,6 +193,12 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         // `bun_jsc::Debugger` substring missed it (capital-D after `::`).
         "leak:bun_jsc::debugger::Debugger>::start_js_debugger_thread\n",
         "leak:bun_runtime::socket::udp_socket::UDPSocket\n",
+        // Armed `.unref()`'d timer at process exit: wrapper is pinned by
+        // `internals.this_value` (Strong) and the reschedule ref only drops on
+        // fire/cancel — neither path runs at exit. Reachable from per-VM
+        // `RuntimeState::timer` (process lifetime). Zig has the same leak but
+        // mimalloc hid it from LSAN, so `test/leaksan.supp` has no counterpart.
+        "leak:bun_runtime::timer::timeout_object::TimeoutObject>::init_with\n",
         // ── Rust-only process-lifetime allocations ──────────────────────────
         // No Zig analogue; first observed once the global allocator switched to
         // `std::alloc::System` under ASAN (mimalloc previously hid these from
@@ -236,6 +246,24 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         // strand when the `PackageManager` is `mem::forget`'d at process exit
         // (see `install/PackageManager/mod.rs`). Bounded; OS reclaims at exit.
         "leak:bun_install::package_manager_real::update_request::UpdateRequest\n",
+        // ── CSS AST arena: heap-backed members in arena-allocated nodes ─────
+        // The CSS parser bump-allocates AST nodes in `bun_alloc::Arena`; the
+        // arena bulk-frees without `Drop`. Members that own a global-heap
+        // allocation (`SmallList` heap spill, `Vec` from `deep_clone`) strand.
+        // Pre-existing in Zig (same arena model). Phase B re-threads `'i` to
+        // make these bump-backed.
+        //
+        // `SmallList::append` heap spill once a node's list exceeds inline `N`
+        // (e.g. `LayerName.v`, `LayerStatementRule.names`). `SmallList<T, N>`
+        // is generic, so the demangled frame is
+        // `<bun_collections::SmallList<…, 1>>::append` — the type name is
+        // always followed by `<`, never `>`. `*` wildcard so the segmented
+        // pattern match (`SmallList<` … `>::append`) actually fires.
+        "leak:SmallList<*>::append\n",
+        // `SupportsCondition::deep_clone` `And`/`Or` collect into a global-heap
+        // `Vec` stored back into the `@supports` arena AST. See LEAK(arena)
+        // note in `css/rules/supports.rs`.
+        "leak:SupportsCondition>::deep_clone\n",
         // ── LSan-fires-before-final-GC-sweep ────────────────────────────────
         // These wrap a Rust allocation in a JSC GC cell (or leak it to JSC as
         // an external string). Ownership is correct — the cell finalizer /
@@ -259,6 +287,11 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         // `Bun.Transpiler` default `BundleOptions` (e.g. `output_dir` `Box`)
         // owned by `JSTranspiler`; freed by `JsCell::Drop`.
         "leak:bun_bundler::options_impl::BundleOptions>::from_api\n",
+        // `Transpiler::init_in_place` clones `output_dir` into `result.outbase`
+        // (default `b"out"`, ~3 b). Freed by `Transpiler::deinit()` via the
+        // `JSTranspiler` finalizer — never reached when `process.exit()` skips
+        // the final sweep. Distinct frame from the `from_api` allocation above.
+        "leak:Transpiler>::init_in_place\n",
         // `Bun.file().stream()` — `FileReader::buffered` `Vec` strands when a
         // reader is in flight at exit: `Source::finalize()` releases the JS
         // wrapper's ref, but the reader's `waiting_for_on_reader_done` `+1` is

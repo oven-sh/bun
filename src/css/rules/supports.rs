@@ -79,6 +79,7 @@ impl SupportsCondition {
         // with a fresh `'__bump`).
         // LEAK(arena): `And`/`Or`/`Not` carry global-heap `Vec`/`Box` inside arena AST
         // nodes (no `Drop` on bulk-free). Phase B re-threads `'i` to make these `bump`-backed.
+        // Suppressed in `bun_bin::__lsan_default_suppressions` until then.
         match self {
             Self::Not(c) => Self::Not(Box::new(c.deep_clone(bump))),
             Self::And(v) => Self::And(v.iter().map(|c| c.deep_clone(bump)).collect()),

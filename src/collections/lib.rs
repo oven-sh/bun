@@ -368,6 +368,9 @@ impl<T, const N: usize> SmallList<T, N> {
     // ── mutation ───────────────────────────────────────────────────────────
     #[inline]
     pub fn append(&mut self, item: T) {
+        // LEAK(arena): the heap spill past `N` strands when `self` lives in a
+        // bump-allocated CSS AST node (no `Drop` on bulk-free). Suppressed in
+        // `bun_bin::__lsan_default_suppressions`; Phase B makes these bump-backed.
         self.0.push(item)
     }
     #[inline]

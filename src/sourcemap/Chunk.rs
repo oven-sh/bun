@@ -485,7 +485,17 @@ impl NewBuilder<VLQSourceMap> {
     #[inline]
     pub fn update_generated_line_and_column(&mut self, output: &[u8]) {
         let slice = &output[self.last_generated_update as usize..];
-        if strings::index_of_newline_or_non_ascii(slice, 0).is_none() {
+        // The window between consecutive mappings is usually a handful of bytes
+        // (one token, often less under --minify). Below the narrowest highway
+        // lane width the SIMD body never runs and the FFI dispatch is pure
+        // overhead, so scan inline. Predicate matches
+        // `IndexOfNewlineOrNonASCIIImpl`'s scalar tail (`> 127 || < 0x20`).
+        let pure_ascii = if slice.len() < 16 {
+            !slice.iter().any(|&b| b > 127 || b < 0x20)
+        } else {
+            strings::index_of_newline_or_non_ascii(slice, 0).is_none()
+        };
+        if pure_ascii {
             debug_assert!(slice.len() <= i32::MAX as usize);
             self.generated_column += slice.len() as i32;
             self.last_generated_update = output.len() as u32;

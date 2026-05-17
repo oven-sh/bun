@@ -7867,6 +7867,17 @@ pub fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
             i32::try_from(tree.approximate_newline_count).expect("int cast"),
         );
     }
+    // Pre-size the VLQ mappings buffer. With `--minify` we emit roughly one
+    // mapping per token; growing from 0 by doubling means ~16 reallocs and
+    // O(n) memmoves on a large module. The estimate is intentionally
+    // conservative — undershooting still saves the early small reallocs and
+    // the buffer doubles from there. Only the bundler/external path uses
+    // `data` directly; the prepend-count (Lazy) path writes through
+    // `internal` and would just waste the reservation.
+    if builder.source_map.ctx.internal.is_none() {
+        let hint = (source.contents.len() / 4).max(tree.approximate_newline_count.saturating_mul(4));
+        let _ = builder.source_map.ctx.data.grow_if_needed(hint);
+    }
     builder
 }
 

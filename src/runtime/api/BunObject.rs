@@ -1629,12 +1629,15 @@ pub fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
             }
             server_ref.js_value.set_strong(obj, global_object);
 
-            if config.allow_hot {
+            // `init` above `core::mem::take`s the caller's `config` into the
+            // server, so `config.{allow_hot,id}` here are the *defaults*, not
+            // what was computed above. Read through `server_ref.config`.
+            if server_ref.config.allow_hot {
                 // SAFETY: same VM pointer; re-borrow after the earlier `vm` mut
                 // borrow was released by the `hot_map()` arm above.
                 if let Some(hot) = global_object.bun_vm().as_mut().hot_map() {
                     hot.insert_raw(
-                        &config.id,
+                        &server_ref.config.id,
                         HotMapEntry {
                             tag: $tag as u8,
                             ptr: server.cast::<()>(),

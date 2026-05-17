@@ -1433,11 +1433,12 @@ impl VirtualMachine {
         if self.hot_reload != HOT_RELOAD_HOT {
             return None;
         }
-        // TODO(b2-cycle): spec lazy-inits via `RareData::hotMap(allocator)`;
-        // that accessor is gated in `rare_data.rs::_accessor_body`. Until it
-        // un-gates, return whatever the field already holds (callers that need
-        // the lazy-init path are themselves gated on `bun_runtime`).
-        self.rare_data.as_deref_mut()?.hot_map.as_mut()
+        // Spec VirtualMachine.zig:1004 — lazy-init via `RareData::hotMap()` so
+        // the first `Bun.serve`/`Bun.listen` under `--hot` can register itself.
+        // Returning `rare_data.hot_map.as_mut()` without the lazy-init meant
+        // the map was always `None` and hot-reload reuse never fired (issue
+        // #26036).
+        Some(self.rare_data().hot_map())
     }
 
     pub fn on_before_exit(&mut self) {

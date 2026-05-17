@@ -851,6 +851,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     }
     ohosCrossLibs = partial.ohosCrossLibs ?? resolve(cwd, "build", "ohos-cross-libs");
     ohosIcuDir = partial.ohosIcuDir ?? resolve(cwd, "build", "ohos-icu", "target");
+    // Populate generic cross-compile fields so downstream plumbing sees OHOS settings
+    sysroot = ohosSysroot;
+    crossTarget = partial.crossTarget ?? "aarch64-linux-ohos";
   }
 
   // ─── Versioning ───

@@ -174,6 +174,12 @@ export const globalFlags: Flag[] = [
     lang: "cxx",
     desc: "OHOS: match libc++ build config",
   },
+  // OHOS PIE (compile-time) — must be in globalFlags so compiler sees it; -pie stays in linkerFlags
+  {
+    flag: "-fPIE",
+    when: c => c.ohos,
+    desc: "OHOS PIE: position-independent executable (applied to C and C++ since OHOS requires PIE for all code)",
+  },
 
   // ─── CPU target ───
   ...cpuTargetFlags,
@@ -911,12 +917,6 @@ export const linkerFlags: Flag[] = [
     ],
     when: c => c.ohos,
     desc: "OHOS linker tuning: 8MB stack, compressed debug",
-  },
-  // ─── OHOS PIE ───
-  {
-    flag: "-fPIE",
-    when: c => c.ohos,
-    desc: "OHOS PIE: position-independent executable (applied to C and C++ since OHOS requires PIE for all code)",
   },
   {
     flag: ["-pie", "-Wl,-dynamic-linker=/system/lib/ld-musl-aarch64.so.1"],

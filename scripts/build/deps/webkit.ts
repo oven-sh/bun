@@ -394,6 +394,7 @@ export const webkit: Dependency = {
       if (ohosCrossLibs) {
         args.CMAKE_CXX_FLAGS = [
           optFlagStr, targetFlag, sysrootFlag, "-D__MUSL__",
+          "-mbranch-protection=none", "-mno-outline-atomics",
           `-nostdinc++ -I${ohosCrossLibs}/libcxx/include/v1`,
           `-I${ohosCrossLibs}/libcxxabi/include`,
           icuInclude,
@@ -402,6 +403,7 @@ export const webkit: Dependency = {
         ].filter(Boolean).join(" ");
         args.CMAKE_C_FLAGS = [
           optFlagStr, targetFlag, sysrootFlag, "-D__MUSL__",
+          "-mbranch-protection=none", "-mno-outline-atomics",
           icuInclude,
         ].filter(Boolean).join(" ");
         args.CMAKE_EXE_LINKER_FLAGS = `-L${ohosCrossLibs}/libcxx/lib -L${ohosCrossLibs}/libcxxabi/lib -L${ohosCrossLibs}/libunwind/lib -lc++ -lc++abi -lunwind`;

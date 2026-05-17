@@ -46,6 +46,7 @@ done
 MEM=$(free -m | awk '/^Mem:/{print $2}')
 [ "$MEM" -lt 8000 ] && warn "内存不足 8GB (${MEM}MB)，可能 OOM"
 info "环境检查通过 ✅ ($(nproc) cores, ${MEM}MB RAM)"
+info "SKIP_BUILD=${SKIP_BUILD}, SKIP_CROSS_LIBS=${SKIP_CROSS_LIBS}"
 
 # ─── 阶段2: 准备 cross-libs ──────────────────────────────────────────────
 if [ "$SKIP_CROSS_LIBS" != "true" ]; then
@@ -65,8 +66,8 @@ info "=== 阶段3: 拉取源码 ==="
 mkdir -p "$WORK_DIR"
 
 if [ -d "${BUILD_DIR}/.git" ]; then
-  cd "$BUILD_DIR" && git fetch origin "$BUN_BRANCH" 2>/dev/null || true
-  cd "$BUILD_DIR" && git checkout "$BUN_BRANCH" 2>/dev/null || true
+  cd "$BUILD_DIR" && git fetch origin "$BUN_BRANCH" || warn "git fetch failed, continuing with existing refs"
+  cd "$BUILD_DIR" && git checkout "$BUN_BRANCH" || error "Branch $BUN_BRANCH not found in $BUILD_DIR"
 else
   git clone "https://github.com/${BUN_REPO}" "$BUILD_DIR" --branch "$BUN_BRANCH" --depth 1
 fi
@@ -82,6 +83,7 @@ if [ ! -d "vendor/WebKit/.git" ]; then
 fi
 
 # ─── 阶段4: 配置 ──────────────────────────────────────────────────────────
+if [ "$SKIP_BUILD" != "true" ]; then
 info "=== 阶段4: 配置构建 ==="
 
 OHOS_SYSROOT="${OHOS_SDK_ROOT}/ohos/native/sysroot"
@@ -115,7 +117,7 @@ info "Bun 编译完成: ${BINARY_SIZE} ✅"
 # ─── 阶段7: 打包 ─────────────────────────────────────────────────────────
 info "=== 阶段7: 打包 ==="
 
-VERSION=$("$BINARY" --version 2>/dev/null || echo "1.3.14")
+VERSION=$(grep -m1 '"version"' package.json | sed 's/.*"version": *"\([^"]*\)".*/\1/' 2>/dev/null || echo "0.0.0")
 PKG_NAME="bun-ohos-aarch64-${VERSION}-${BUN_COMMIT}-${DATE_TAG}"
 PKG_DIR="/tmp/bun-release/${PKG_NAME}"
 mkdir -p "$PKG_DIR"
@@ -160,3 +162,4 @@ info "=== 全部完成 🎉 ==="
 echo "  解压: tar xzf ${PKG_NAME}.tar.gz"
 echo "  签名: binary-sign-tool sign -inFile bun -outFile bun-signed -selfSign \"1\""
 echo "  测试: ./bun-signed test_all_in_one.js"
+fi  # SKIP_BUILD

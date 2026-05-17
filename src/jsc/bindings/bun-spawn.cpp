@@ -162,6 +162,12 @@ extern "C" ssize_t posix_spawn_bun(
     }
 #else
     child = fork();
+#if defined(__OHOS__)
+    // OHOS uses fork() (vfork is blocked by seccomp). With fork(), child has
+    // its own memory — the volatile child_errno mechanism (used for vfork
+    // shared-memory semantics) is unreliable. Skip child_errno checks.
+    use_fork_fallback = true;
+#endif
 #endif
 
 #if OS(DARWIN) || OS(FREEBSD)

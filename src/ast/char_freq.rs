@@ -183,8 +183,9 @@ fn scan_big(out: &mut Buffer, text: &[u8], delta: i32) {
 }
 
 fn scan_small(out: &mut Buffer, text: &[u8], delta: i32) {
-    let mut freqs: [i32; CHAR_FREQ_COUNT] = *out;
-
+    // PORT NOTE: Zig copied `out.*` into a stack local to avoid unaligned (`align(1)`)
+    // RMWs in the loop. The Rust field is naturally aligned, so operate on `out` directly
+    // (same treatment as `scan_big`).
     for &c in text {
         let i: usize = match c {
             b'a'..=b'z' => c as usize - b'a' as usize,
@@ -194,10 +195,8 @@ fn scan_small(out: &mut Buffer, text: &[u8], delta: i32) {
             b'$' => 63,
             _ => continue,
         };
-        freqs[i] += delta;
+        out[i] += delta;
     }
-
-    *out = freqs;
 }
 
 // ported from: src/js_parser/ast/CharFreq.zig

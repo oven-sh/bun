@@ -187,10 +187,16 @@ fn scan_small(out: &mut Buffer, text: &[u8], delta: i32) {
     // RMWs in the loop. The Rust field is naturally aligned, so operate on `out` directly
     // (same treatment as `scan_big`).
     for &c in text {
+        // Indices follow `NameMinifier::DEFAULT_TAIL` order
+        // (`a-zA-Z0-9_$` → 0..63), matching `scan_big` which writes digits
+        // at `out[52 + i]`. The Zig original (`char_freq.zig:79`) used `53`,
+        // which shifted `'0'` to 53 and made `'9'` collide with `'_'` at 62,
+        // leaving slot 52 cold for `<32`-byte inputs and slightly skewing
+        // minified-name ranking when digits/underscores appear.
         let i: usize = match c {
             b'a'..=b'z' => c as usize - b'a' as usize,
             b'A'..=b'Z' => c as usize - (b'A' as usize - 26),
-            b'0'..=b'9' => c as usize + (53 - b'0' as usize),
+            b'0'..=b'9' => c as usize + (52 - b'0' as usize),
             b'_' => 62,
             b'$' => 63,
             _ => continue,

@@ -99,7 +99,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // the immediate initializer expression, not for any nested function
         // body's arithmetic — which runs at call time under the normal
         // size-aware gate.
-        let old_fold_numeric_constants_unconditionally = self.fold_numeric_constants_unconditionally;
+        let old_fold_numeric_constants_unconditionally =
+            self.fold_numeric_constants_unconditionally;
         self.fold_numeric_constants_unconditionally = false;
         self.fn_or_arrow_data_visit = FnOrArrowDataVisit {
             is_async: func.flags.contains(flags::Function::IsAsync),
@@ -320,7 +321,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && !self.vis_scope().is_after_const_local_prefix
                     && self.options.features.inlining
                     && matches!(decl.binding.data, BData::BIdentifier(_));
-                let prev_fold_numeric_constants_unconditionally = self.fold_numeric_constants_unconditionally;
+                let prev_fold_numeric_constants_unconditionally =
+                    self.fold_numeric_constants_unconditionally;
                 if want_unconditional_numeric_fold {
                     self.fold_numeric_constants_unconditionally = true;
                 }
@@ -331,7 +333,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ..Default::default()
                     },
                 );
-                self.fold_numeric_constants_unconditionally = prev_fold_numeric_constants_unconditionally;
+                self.fold_numeric_constants_unconditionally =
+                    prev_fold_numeric_constants_unconditionally;
                 decl.value = Some(val);
                 self.decorator_class_name = prev_decorator_class_name;
 
@@ -831,7 +834,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // for the enclosing decl would otherwise leak into any of those
         // contexts. `can_be_const_value` rejects `.e_class` anyway, so the
         // force-fold buys nothing here.
-        let old_fold_numeric_constants_unconditionally = self.fold_numeric_constants_unconditionally;
+        let old_fold_numeric_constants_unconditionally =
+            self.fold_numeric_constants_unconditionally;
         self.fold_numeric_constants_unconditionally = false;
 
         self.visit_ts_decorators(&mut class.ts_decorators);

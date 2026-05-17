@@ -37,7 +37,11 @@ fn should_fold_arithmetic<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
     if !p.options.features.minify_syntax {
         return true;
     }
-    let space_len: u32 = if p.options.features.minify_whitespace { 0 } else { 2 };
+    let space_len: u32 = if p.options.features.minify_whitespace {
+        0
+    } else {
+        2
+    };
     let folded_len = bun_core::fmt::len_of_js_number(folded_value);
     let source_len = bun_core::fmt::len_of_js_number(left)
         + op_len

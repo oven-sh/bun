@@ -1960,7 +1960,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Restored manually below.
             let old_should_fold_typescript_constant_expressions =
                 p.should_fold_typescript_constant_expressions;
-            let old_fold_numeric_constants_unconditionally = p.fold_numeric_constants_unconditionally;
+            let old_fold_numeric_constants_unconditionally =
+                p.fold_numeric_constants_unconditionally;
             let old_is_control_flow_dead = p.is_control_flow_dead;
 
             // We want to forcefully fold constants inside of

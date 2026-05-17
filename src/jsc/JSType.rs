@@ -596,23 +596,23 @@ impl JSType {
     /// Covers every `is_typed_array_or_array_buffer()` variant + `DataView`.
     /// The `_ => "TypedArray"` arm is unreachable for any real
     /// `ArrayBuffer.typed_array_type` (always one of the 14).
-    pub fn typed_array_name(self) -> &'static [u8] {
+    pub const fn typed_array_name(self) -> &'static str {
         match self {
-            JSType::ArrayBuffer => b"ArrayBuffer",
-            JSType::Int8Array => b"Int8Array",
-            JSType::Uint8Array => b"Uint8Array",
-            JSType::Uint8ClampedArray => b"Uint8ClampedArray",
-            JSType::Int16Array => b"Int16Array",
-            JSType::Uint16Array => b"Uint16Array",
-            JSType::Int32Array => b"Int32Array",
-            JSType::Uint32Array => b"Uint32Array",
-            JSType::Float16Array => b"Float16Array",
-            JSType::Float32Array => b"Float32Array",
-            JSType::Float64Array => b"Float64Array",
-            JSType::BigInt64Array => b"BigInt64Array",
-            JSType::BigUint64Array => b"BigUint64Array",
-            JSType::DataView => b"DataView",
-            _ => b"TypedArray",
+            JSType::ArrayBuffer => "ArrayBuffer",
+            JSType::Int8Array => "Int8Array",
+            JSType::Uint8Array => "Uint8Array",
+            JSType::Uint8ClampedArray => "Uint8ClampedArray",
+            JSType::Int16Array => "Int16Array",
+            JSType::Uint16Array => "Uint16Array",
+            JSType::Int32Array => "Int32Array",
+            JSType::Uint32Array => "Uint32Array",
+            JSType::Float16Array => "Float16Array",
+            JSType::Float32Array => "Float32Array",
+            JSType::Float64Array => "Float64Array",
+            JSType::BigInt64Array => "BigInt64Array",
+            JSType::BigUint64Array => "BigUint64Array",
+            JSType::DataView => "DataView",
+            _ => "TypedArray",
         }
     }
 

@@ -82,17 +82,17 @@ pub enum ToSpawnOptsError {
 }
 
 impl ToSpawnOptsError {
-    pub fn to_str(&self) -> &'static [u8] {
+    pub const fn to_str(&self) -> &'static str {
         match self {
-            Self::StdinUsedAsOut => b"Stdin cannot be used for stdout or stderr",
-            Self::OutUsedAsStdin => b"Stdout and stderr cannot be used for stdin",
-            Self::BlobUsedAsOut => b"Blobs are immutable, and cannot be used for stdout/stderr",
+            Self::StdinUsedAsOut => "Stdin cannot be used for stdout or stderr",
+            Self::OutUsedAsStdin => "Stdout and stderr cannot be used for stdin",
+            Self::BlobUsedAsOut => "Blobs are immutable, and cannot be used for stdout/stderr",
             Self::UvPipe(_) => panic!("TODO"),
         }
     }
 
     pub fn throw_js(&self, global: &JSGlobalObject) -> jsc::JsError {
-        global.throw(format_args!("{}", bstr::BStr::new(self.to_str())))
+        global.throw(format_args!("{}", self.to_str()))
     }
 }
 

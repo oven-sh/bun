@@ -1453,7 +1453,7 @@ impl Template {
         bump: &bun_alloc::Arena,
     ) -> Result<(), Error> {
         type Rope = bun_ast::E::Rope;
-        fields.name = self.name().to_vec();
+        fields.name = self.name().as_bytes().to_vec();
         // PORT NOTE: Zig `alloc.create(Rope)` against the default allocator and
         // never frees; allocate in the process-lifetime CLI arena instead.
         let key: &mut Rope = crate::cli::cli_arena().alloc(Rope {
@@ -1489,13 +1489,13 @@ impl Template {
         }
     }
 
-    pub fn name(self) -> &'static [u8] {
+    pub const fn name(self) -> &'static str {
         match self {
-            Template::Blank => b"bun-blank-template",
-            Template::TypescriptLibrary => b"bun-typescript-library-template",
-            Template::ReactBlank => b"bun-react-template",
-            Template::ReactTailwind => b"bun-react-tailwind-template",
-            Template::ReactTailwindShadcn => b"bun-react-tailwind-shadcn-template",
+            Template::Blank => "bun-blank-template",
+            Template::TypescriptLibrary => "bun-typescript-library-template",
+            Template::ReactBlank => "bun-react-template",
+            Template::ReactTailwind => "bun-react-tailwind-template",
+            Template::ReactTailwindShadcn => "bun-react-tailwind-shadcn-template",
         }
     }
 
@@ -1740,7 +1740,7 @@ impl Template {
                     b"README.md",
                     contents,
                     &[
-                        (b"name", self.name()),
+                        (b"name", self.name().as_bytes()),
                         (b"bunVersion", Environment::VERSION_STRING.as_bytes()),
                     ],
                 )

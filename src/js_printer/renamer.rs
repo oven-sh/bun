@@ -1047,11 +1047,10 @@ impl NumberScope {
         // it) stays valid through the trailing dupe.
         let mut mutable_name = MutableString::init_empty();
         // True iff a "name2"/"name3" suffix was appended below (i.e. `name` was
-        // reassigned to `mutable_name.slice()`). `!collided && !normalized` is
-        // equivalent to the old `strings::eql_long(name, input_name, true)`
-        // check — `name` is only ever bytewise-equal to `input_name` when both
-        // are false — without re-comparing 5–20 identifier bytes per symbol on
-        // the hot no-collision path.
+        // reassigned to `mutable_name.slice()`). On the hot ASCII path
+        // `!collided && !normalized` implies `name == input_name` so the tail
+        // check skips the byte compare; the rare `normalized` path still
+        // compares (see the comment at the tail).
         let mut collided = false;
 
         match NameUse::find(self, name) {

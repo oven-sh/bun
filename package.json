@@ -72,6 +72,7 @@
     "rust:check": "cargo check --workspace --keep-going",
     "rust:check-all": "bun scripts/rust-check-all.ts",
     "rust:clippy": "cargo clippy --workspace --keep-going",
+    "rust:miri": "bun scripts/rust-miri.ts",
     "codegen:string-maps": "for f in src/**/*.string-map.ts; do bun src/codegen/generate-string-map.ts \"$f\" \"${f%.string-map.ts}.generated.rs\"; done",
     "codegen:verify": "bun run codegen:string-maps && git diff --exit-code 'src/**/*.generated.rs' || (echo '\\n*.generated.rs is stale — run `bun run codegen:string-maps` and commit the result.' >&2; exit 1)",
     "clang-format": "./scripts/run-clang-format.sh format",

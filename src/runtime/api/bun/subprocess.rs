@@ -1275,22 +1275,6 @@ impl Subprocess<'_> {
         );
         this.finalize_streams();
 
-        // `Writable::finalize()` (reached via `finalize_streams` → `close_io(Stdin)`)
-        // releases the stdin `FileSink` but, unlike `Writable::on_close`, never calls
-        // `on_stdin_destroyed()`. The `subprocess.ref_()` taken in `Writable::init()`
-        // (guarded by `DEREF_ON_STDIN_DESTROYED`) is therefore still outstanding when
-        // the process is collected before the pipe's async close callback fires —
-        // e.g. `process.exit()` while a child with `stdio: "pipe"` is still running.
-        // Release it here so the Subprocess refcount can reach zero.
-        if this.flags.get().contains(Flags::DEREF_ON_STDIN_DESTROYED) {
-            this.update_flags(|f| {
-                f.remove(Flags::DEREF_ON_STDIN_DESTROYED);
-                f.insert(Flags::HAS_STDIN_DESTRUCTOR_CALLED);
-            });
-            this.weak_file_sink_stdin_ptr.set(None);
-            this.deref();
-        }
-
         // If the exit handler is still installed, `on_process_exit` never ran
         // (process still alive at GC) — release the stranded handler ref (#2 of 2).
         let exit_handler_pending = this.process().exit_handler.is_some();

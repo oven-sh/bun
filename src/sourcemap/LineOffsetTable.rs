@@ -304,7 +304,14 @@ impl LineOffsetTable {
             })?;
         }
 
-        if list.capacity() > list.len() {
+        // `shrink_and_free` has no realloc-in-place fast path — it always does a fresh
+        // aligned_alloc + full SoA row copy + free. `grow_capacity` overshoots a single
+        // bulk reservation by at most ~50%, so when the lexer's line-count hint was
+        // roughly right (the common case) the slack isn't worth a multi-MB memcpy.
+        // Only trim when capacity exceeds 1.5x length, which catches pathological
+        // mismatches (wrong loader, wildly off hint) while skipping the routine ~20%
+        // overshoot.
+        if list.capacity() > list.len() + (list.len() >> 1) {
             list.shrink_and_free(list.len());
         }
         Ok(list)

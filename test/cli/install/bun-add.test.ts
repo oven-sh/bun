@@ -2351,7 +2351,7 @@ it("should not add duplicate package.json entries when installing the same local
 
   // 1st run — clean, adds one entry keyed by the resolved package name.
   {
-    const { stderr, exited } = spawn({
+    const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "add", local_path],
       cwd: package_dir,
       stdout: "pipe",
@@ -2362,12 +2362,14 @@ it("should not add duplicate package.json entries when installing the same local
     const err = await stderr.text();
     expect(err).not.toContain("error:");
     expect(err).toContain("Saved lockfile");
+    const out = await stdout.text();
+    expect(out).toContain("installed myproject@");
     expect(await exited).toBe(0);
   }
 
   // 2nd run with the same path — must reuse the existing "myproject" key, not append a duplicate.
   {
-    const { stderr, exited } = spawn({
+    const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "add", local_path],
       cwd: package_dir,
       stdout: "pipe",
@@ -2377,6 +2379,8 @@ it("should not add duplicate package.json entries when installing the same local
     });
     const err = await stderr.text();
     expect(err).not.toContain("error:");
+    const out = await stdout.text();
+    expect(out).toContain("installed myproject@");
     expect(await exited).toBe(0);
   }
 
@@ -2411,7 +2415,7 @@ it("should not add duplicate package.json entries when installing the same tarba
 
   // First install — key should be the package name from the tarball ("baz").
   {
-    const { stderr, exited } = spawn({
+    const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "add", tarball_url],
       cwd: package_dir,
       stdout: "pipe",
@@ -2419,7 +2423,10 @@ it("should not add duplicate package.json entries when installing the same tarba
       stderr: "pipe",
       env,
     });
-    expect(await stderr.text()).toContain("Saved lockfile");
+    const err = await stderr.text();
+    expect(err).toContain("Saved lockfile");
+    const out = await stdout.text();
+    expect(out).toContain("installed baz@");
     expect(await exited).toBe(0);
   }
   expect(await file(join(package_dir, "package.json")).json()).toStrictEqual({
@@ -2432,7 +2439,7 @@ it("should not add duplicate package.json entries when installing the same tarba
 
   // Second install with the same URL — must not duplicate the "baz" key.
   {
-    const { stderr, exited } = spawn({
+    const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "add", tarball_url],
       cwd: package_dir,
       stdout: "pipe",
@@ -2442,6 +2449,8 @@ it("should not add duplicate package.json entries when installing the same tarba
     });
     const err = await stderr.text();
     expect(err).not.toContain("error:");
+    const out = await stdout.text();
+    expect(out).toContain("installed baz@");
     expect(await exited).toBe(0);
   }
 

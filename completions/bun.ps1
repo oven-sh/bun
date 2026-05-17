@@ -30,15 +30,39 @@ function _bun_get_bins {
     }
 }
 
-# Helper: complete JavaScript/TypeScript files
+# Helper: complete JavaScript/TypeScript files (supports subdirectory paths)
 function _bun_get_js_files {
     param([string]$wordToComplete)
-    Get-ChildItem -Path $PWD -Filter "*$wordToComplete*" -File -ErrorAction SilentlyContinue |
-        Where-Object { $_.Extension -match '\.(js|jsx|ts|tsx|mjs|mts|cjs|cts)$' } |
+    # Split into directory and filename parts to handle paths like src/index
+    $dirPart = Split-Path $wordToComplete -ErrorAction SilentlyContinue
+    $namePart = Split-Path $wordToComplete -Leaf -ErrorAction SilentlyContinue
+    if (-not $namePart) { $namePart = $wordToComplete }
+    $searchDir = if ($dirPart) { Join-Path $PWD $dirPart } else { $PWD }
+    if (-not (Test-Path $searchDir -PathType Container)) { return }
+    Get-ChildItem -Path $searchDir -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -like "$namePart*" -and $_.Extension -match '\.(js|jsx|ts|tsx|mjs|mts|cjs|cts)$' } |
         ForEach-Object {
             $rel = $_.FullName.Substring($PWD.Path.Length + 1).Replace('\', '/')
             [CompletionResult]::new($rel, $rel, 'ParameterValue', $_.Name)
         }
+}
+
+# Helper: get installed dependencies from package.json
+function _bun_get_dependencies {
+    param([string]$wordToComplete)
+    $packageJson = Join-Path $PWD 'package.json'
+    if (Test-Path $packageJson) {
+        try {
+            $pkg = Get-Content $packageJson -Raw | ConvertFrom-Json
+            @('dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies') | ForEach-Object {
+                if ($pkg.$_) {
+                    $pkg.$_.PSObject.Properties | Where-Object { $_.Name -like "$wordToComplete*" } | ForEach-Object {
+                        [CompletionResult]::new($_.Name, $_.Name, 'ParameterValue', $_.Value)
+                    }
+                }
+            }
+        } catch {}
+    }
 }
 
 Register-ArgumentCompleter -Native -CommandName bun, bunx -ScriptBlock {
@@ -109,21 +133,21 @@ Register-ArgumentCompleter -Native -CommandName bun, bunx -ScriptBlock {
     # Complete flags and args for known subcommands
     if ($currentToken.StartsWith('-')) {
         switch ($subcommand) {
-            'test'    { _bun_complete_test_flags $currentToken }
-            'install' { _bun_complete_install_flags $currentToken }
-            'add'     { _bun_complete_install_flags $currentToken }
-            'remove'  { _bun_complete_install_flags $currentToken }
-            'update'  { _bun_complete_install_flags $currentToken }
-            'build'   { _bun_complete_build_flags $currentToken }
-            'init'    { _bun_complete_init_flags $currentToken }
-            'publish' { _bun_complete_install_flags $currentToken }
+            'test'     { _bun_complete_test_flags $currentToken }
+            'install'  { _bun_complete_install_flags $currentToken }
+            'add'      { _bun_complete_install_flags $currentToken }
+            'remove'   { _bun_complete_install_flags $currentToken }
+            'update'   { _bun_complete_install_flags $currentToken }
+            'build'    { _bun_complete_build_flags $currentToken }
+            'init'     { _bun_complete_init_flags $currentToken }
+            'publish'  { _bun_complete_install_flags $currentToken; _bun_complete_publish_flags $currentToken }
             'outdated' { _bun_complete_install_flags $currentToken }
-            'link'    { _bun_complete_install_flags $currentToken }
-            'unlink'  { _bun_complete_install_flags $currentToken }
-            'patch'   { _bun_complete_install_flags $currentToken }
-            'info'    { _bun_complete_install_flags $currentToken }
-            'audit'   { _bun_complete_audit_flags $currentToken }
-            default   { _bun_complete_global_flags $currentToken }
+            'link'     { _bun_complete_install_flags $currentToken }
+            'unlink'   { _bun_complete_install_flags $currentToken }
+            'patch'    { _bun_complete_patch_flags $currentToken }
+            'info'     { _bun_complete_install_flags $currentToken }
+            'audit'    { _bun_complete_audit_flags $currentToken }
+            default    { _bun_complete_global_flags $currentToken }
         }
         return
     }
@@ -139,23 +163,12 @@ Register-ArgumentCompleter -Native -CommandName bun, bunx -ScriptBlock {
             _bun_get_js_files $currentToken
         }
         'remove' {
-            # Suggest installed dependencies
-            $packageJson = Join-Path $PWD 'package.json'
-            if (Test-Path $packageJson) {
-                try {
-                    $pkg = Get-Content $packageJson -Raw | ConvertFrom-Json
-                    @('dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies') | ForEach-Object {
-                        if ($pkg.$_) {
-                            $pkg.$_.PSObject.Properties | Where-Object { $_.Name -like "$currentToken*" } | ForEach-Object {
-                                [CompletionResult]::new($_.Name, $_.Name, 'ParameterValue', $_.Value)
-                            }
-                        }
-                    }
-                } catch {}
-            }
+            _bun_get_dependencies $currentToken
         }
         'pm' {
-            @('bin', 'ls', 'hash', 'hash-string', 'hash-print', 'cache', 'migrate', 'pack', 'default-trusted', 'untrusted', 'trust') |
+            @('bin', 'cache', 'default-trusted', 'hash', 'hash-print', 'hash-string',
+              'ls', 'migrate', 'pack', 'pkg', 'scan', 'trust', 'untrusted',
+              'version', 'view', 'who', 'whoami', 'why') |
                 Where-Object { $_ -like "$currentToken*" } |
                 ForEach-Object {
                     [CompletionResult]::new($_, $_, 'ParameterValue', "pm $_")
@@ -338,6 +351,31 @@ function _bun_complete_audit_flags {
     $flags = @(
         @{ Name = '--level'; Desc = 'Minimum severity level (info|low|moderate|high|critical)' }
         @{ Name = '--help';  Desc = 'Print help menu' }
+    )
+    $flags | Where-Object { $_.Name -like "$word*" } | ForEach-Object {
+        [CompletionResult]::new($_.Name, $_.Name, 'ParameterName', $_.Desc)
+    }
+}
+
+function _bun_complete_publish_flags {
+    param([string]$word)
+    $flags = @(
+        @{ Name = '--access';  Desc = 'Set package access level (public|restricted)' }
+        @{ Name = '--tag';     Desc = 'Publish with a specific dist-tag' }
+        @{ Name = '--otp';     Desc = 'One-time password for 2FA' }
+    )
+    $flags | Where-Object { $_.Name -like "$word*" } | ForEach-Object {
+        [CompletionResult]::new($_.Name, $_.Name, 'ParameterName', $_.Desc)
+    }
+}
+
+function _bun_complete_patch_flags {
+    param([string]$word)
+    $flags = @(
+        @{ Name = '--commit';       Desc = 'Apply the patch and commit changes' }
+        @{ Name = '--patches-dir';  Desc = 'Directory to store patch files' }
+        @{ Name = '--help';         Desc = 'Print help menu' }
+        @{ Name = '-h';             Desc = 'Print help' }
     )
     $flags | Where-Object { $_.Name -like "$word*" } | ForEach-Object {
         [CompletionResult]::new($_.Name, $_.Name, 'ParameterName', $_.Desc)

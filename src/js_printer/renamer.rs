@@ -722,8 +722,9 @@ impl NumberRenamer {
         // reserved-name keys can be duped into it: `root_names` owns its keys
         // as `Box<[u8]>` and is dropped at the end of this function, while
         // `NameKey` is a lifetime-erased borrow that must outlive `root`.
-        // Reserved names are a small fixed set (~50 keywords/globals), so this
-        // one-time copy is negligible.
+        // The set is bounded by the unique unbound/must-not-be-renamed globals
+        // across the chunk (typically a few hundred names), and this copy
+        // happens once per chunk vs. the millions of per-symbol ops below.
         let arena = Bump::new();
         let mut root = NumberScope::default();
         root.name_counts.reserve(root_names.len());

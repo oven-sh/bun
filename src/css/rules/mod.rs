@@ -49,7 +49,7 @@ pub mod viewport;
 macro_rules! css_rule_variants {
     ( $( $(#[$doc:meta])* $Variant:ident($Payload:ty) ),+ $(,)? ) => {
         /// A single CSS rule (at-rule or style rule).
-        pub enum CssRule<R> {
+        pub enum CssRule<'bump, R> {
             $( $(#[$doc])* $Variant($Payload), )+
             /// A placeholder for a rule that was removed.
             Ignored,
@@ -59,31 +59,11 @@ macro_rules! css_rule_variants {
             Custom(R),
         }
 
-        impl<R> CssRule<R> {
+        impl<R> CssRule<'_, R> {
             pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
                 match self {
                     $( CssRule::$Variant(x) => x.to_css(dest), )+
                     CssRule::Unknown(x) => x.to_css(dest),
-                    // Zig: `.custom => |x| x.toCss(dest) catch return dest.addFmtError()`.
-                    //
-                    // PORT NOTE (incomplete): the spec has TWO concrete `R` types —
-                    // `DefaultAtRule` (whose `toCss` errors unconditionally) and
-                    // `TailwindAtRule` (src/css/rules/tailwind.zig:14-19, used via
-                    // `BundlerAtRule` when `ENABLE_TAILWIND_PARSING`), whose `toCss`
-                    // SUCCEEDS and writes `@tailwind <name>;`. This arm therefore
-                    // diverges from the spec for `R = TailwindAtRule`: it fails
-                    // serialization where the spec round-trips.
-                    //
-                    // The correct port threads a `ToCss`-style bound (or per-`R`
-                    // vtable) so `Custom(x)` dispatches to `x.to_css(dest)` and only
-                    // maps the error path via `add_fmt_error()`. That bound cascades
-                    // through every nested `CssRuleList<R>` printer (media, supports,
-                    // layer, document, nesting, starting_style, style, scope,
-                    // container) — deferred to the patch that un-gates
-                    // `BundlerAtRule = TailwindAtRule`.
-                    // TODO(port): dispatch to `x.to_css(dest)` once `R: ToCss` (or
-                    // equivalent) is threaded; current behavior is only spec-correct
-                    // for `R = DefaultAtRule`.
                     CssRule::Custom(_x) => Err(dest.add_fmt_error()),
                     CssRule::Ignored => Ok(()),
                 }
@@ -94,9 +74,9 @@ macro_rules! css_rule_variants {
             /// `#[derive(DeepClone)]`) because the leaf payloads expose `deep_clone`
             /// as **inherent** methods rather than `DeepClone` trait impls;
             /// method-syntax dispatch here picks up either.
-            pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+            pub fn deep_clone<'b>(&self, bump: &'b bun_alloc::Arena) -> CssRule<'b, R>
             where
-                R: css::generics::DeepClone<'bump>,
+                R: css::generics::DeepClone<'b>,
             {
                 #[allow(unused_imports)]
                 use css::generics::DeepClone as _;
@@ -113,45 +93,45 @@ macro_rules! css_rule_variants {
 
 css_rule_variants! {
     /// A `@media` rule.
-    Media(media::MediaRule<R>),
+    Media(media::MediaRule<'bump, R>),
     /// An `@import` rule.
     Import(import::ImportRule),
     /// A style rule.
-    Style(style::StyleRule<R>),
+    Style(style::StyleRule<'bump, R>),
     /// A `@keyframes` rule.
-    Keyframes(keyframes::KeyframesRule),
+    Keyframes(keyframes::KeyframesRule<'bump>),
     /// A `@font-face` rule.
     FontFace(font_face::FontFaceRule),
     /// A `@font-palette-values` rule.
     FontPaletteValues(font_palette_values::FontPaletteValuesRule),
     /// A `@page` rule.
-    Page(page::PageRule),
+    Page(page::PageRule<'bump>),
     /// A `@supports` rule.
-    Supports(supports::SupportsRule<R>),
+    Supports(supports::SupportsRule<'bump, R>),
     /// A `@counter-style` rule.
-    CounterStyle(counter_style::CounterStyleRule),
+    CounterStyle(counter_style::CounterStyleRule<'bump>),
     /// A `@namespace` rule.
     Namespace(namespace::NamespaceRule),
     /// A `@-moz-document` rule.
-    MozDocument(document::MozDocumentRule<R>),
+    MozDocument(document::MozDocumentRule<'bump, R>),
     /// A `@nest` rule.
-    Nesting(nesting::NestingRule<R>),
+    Nesting(nesting::NestingRule<'bump, R>),
     /// A `@viewport` rule.
-    Viewport(viewport::ViewportRule),
+    Viewport(viewport::ViewportRule<'bump>),
     /// A `@custom-media` rule.
     CustomMedia(custom_media::CustomMediaRule),
     /// A `@layer` statement rule.
     LayerStatement(layer::LayerStatementRule),
     /// A `@layer` block rule.
-    LayerBlock(layer::LayerBlockRule<R>),
+    LayerBlock(layer::LayerBlockRule<'bump, R>),
     /// A `@property` rule.
     Property(property::PropertyRule),
     /// A `@container` rule.
-    Container(container::ContainerRule<R>),
+    Container(container::ContainerRule<'bump, R>),
     /// A `@scope` rule.
-    Scope(scope::ScopeRule<R>),
+    Scope(scope::ScopeRule<'bump, R>),
     /// A `@starting-style` rule.
-    StartingStyle(starting_style::StartingStyleRule<R>),
+    StartingStyle(starting_style::StartingStyleRule<'bump, R>),
 }
 
 // SAFETY: the CSS AST contains `SmallList<T, N>` (raw `*mut T`) and
@@ -161,20 +141,20 @@ css_rule_variants! {
 // shared read-only across the bundler thread pool (mirrors Zig, which freely
 // hands the arena-backed AST between threads). Thread-safety therefore follows
 // `R`'s auto-traits.
-unsafe impl<R: Send> Send for CssRule<R> {}
-unsafe impl<R: Sync> Sync for CssRule<R> {}
+unsafe impl<R: Send> Send for CssRule<'_, R> {}
+unsafe impl<R: Sync> Sync for CssRule<'_, R> {}
 
 /// Zig: pub fn CssRuleList(comptime AtRule: type) type { return struct { ... } }
-pub struct CssRuleList<R> {
+pub struct CssRuleList<'bump, R> {
     // PERF(port): was `bun_alloc::ArenaVec<'bump, CssRule<'bump, R>>`;
     // arena threading restored when leaf rules un-gate.
-    pub v: Vec<CssRule<R>>,
+    pub v: Vec<CssRule<'bump, R>>,
 }
 
 // `CssRuleList<R>` is auto-`Send`/`Sync` via `Vec<CssRule<R>>` and the
 // `CssRule<R>` impls above — no `unsafe impl` needed.
 
-impl<R> Default for CssRuleList<R> {
+impl<R> Default for CssRuleList<'_, R> {
     fn default() -> Self {
         Self { v: Vec::new() }
     }
@@ -219,7 +199,7 @@ pub(super) mod dc {
     /// re-threads the arena lifetime.
     #[inline]
     pub fn decl_block<'bump>(
-        this: &crate::DeclarationBlock<'bump>,
+        this: &crate::DeclarationBlock<'_>,
         bump: &'bump Arena,
     ) -> crate::DeclarationBlock<'bump> {
         crate::DeclarationBlock {
@@ -234,62 +214,6 @@ pub(super) mod dc {
                 bump,
             ),
         }
-    }
-
-    /// `'bump`-erasure for the arena reference.
-    ///
-    /// SAFETY: `DeclarationBlock<'static>` is the crate-wide `'bump`-erasure
-    /// placeholder until `CssRule<'bump, R>` re-threads the arena lifetime
-    /// (see `style.rs` struct PORT NOTE). `bumpalo::Vec` is invariant in
-    /// `'bump`, so any `DeclarationBlock<'static>` constructor must observe a
-    /// `&'static Arena`. The arena outlives every rule that borrows it (it
-    /// owns them); lifetimes re-thread together when the rule structs grow a
-    /// real `'bump` parameter — at which point this helper and both callers
-    /// below collapse to plain `decl_block` / `new_in`.
-    #[inline(always)]
-    unsafe fn arena_static(bump: &Arena) -> &'static Arena {
-        // SAFETY: see fn doc — `'bump`-erasure placeholder.
-        unsafe { &*core::ptr::from_ref(bump) }
-    }
-
-    /// `'bump`-erasure adaptor for [`decl_block`]. See [`arena_static`].
-    #[inline]
-    pub fn decl_block_static(
-        this: &crate::DeclarationBlock<'static>,
-        bump: &Arena,
-    ) -> crate::DeclarationBlock<'static> {
-        // SAFETY: `'bump`-erasure placeholder — see `arena_static`.
-        decl_block(this, unsafe { arena_static(bump) })
-    }
-
-    /// Empty `DeclarationBlock<'static>` — Zig spec writes `css.DeclarationBlock{}`.
-    ///
-    /// Exists so call-sites that need an empty block (rules.zig:363
-    /// `nested_rule.declarations = .{}`) route through ONE centralized
-    /// erasure helper. Delete with `decl_block_static` once
-    /// `CssRule<'bump, R>` re-threads the arena lifetime.
-    #[inline]
-    pub fn decl_block_empty_static(bump: &Arena) -> crate::DeclarationBlock<'static> {
-        // SAFETY: `'bump`-erasure placeholder — see `arena_static`.
-        crate::DeclarationBlock::new_in(unsafe { arena_static(bump) })
-    }
-
-    /// `'bump`-erasure adaptor for `&mut DeclarationHandler<'_>`.
-    ///
-    /// SAFETY: `DeclarationBlock<'static>` on `StyleRule` (see style.rs struct
-    /// PORT NOTE) forces `DeclarationBlock::minify` to expect
-    /// `DeclarationHandler<'static>`; the handlers in `MinifyContext` carry the
-    /// real `'bump`. Both reference the same arena. Centralized here so the
-    /// erasure lives in ONE place; collapses together with `decl_block_static`
-    /// when `CssRule<'bump, R>` lands.
-    #[inline]
-    pub fn decl_handler_static<'a>(
-        h: &'a mut crate::DeclarationHandler<'_>,
-    ) -> &'a mut crate::DeclarationHandler<'static> {
-        // Inner-lifetime variance cast via raw pointer — `DeclarationHandler<'_>`
-        // and `DeclarationHandler<'static>` share layout; only the borrowck tag
-        // on the arena handle differs. See SAFETY note above.
-        unsafe { &mut *core::ptr::from_mut(h).cast::<crate::DeclarationHandler<'static>>() }
     }
 
     /// `MediaList::deep_clone` — routes to the real arena-aware impl in
@@ -451,10 +375,10 @@ pub(super) fn dashed_ident_to_css(
 /// merely an optimization — omitting it diverges output (e.g. `@media not all
 /// { a{color:red} }` must be removed). `MediaList::never_matches` is un-gated,
 /// so call it here to match the spec (`media.zig:19-23`).
-impl<R> media::MediaRule<R> {
+impl<'bump, R> media::MediaRule<'bump, R> {
     pub fn minify(
         &mut self,
-        context: &mut MinifyContext<'_, '_>,
+        context: &mut MinifyContext<'_, 'bump>,
         parent_is_unused: bool,
     ) -> Result<bool, MinifyErr>
     where
@@ -467,7 +391,7 @@ impl<R> media::MediaRule<R> {
 
 // ─── CssRuleList::{to_css,minify,deep_clone} ──────────────────────────────
 
-impl<R> CssRuleList<R> {
+impl<'bump, R> CssRuleList<'bump, R> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         let mut first = true;
         let mut last_without_block = false;
@@ -528,7 +452,7 @@ impl<R> CssRuleList<R> {
 
     pub fn minify(
         &mut self,
-        context: &mut MinifyContext<'_, '_>,
+        context: &mut MinifyContext<'_, 'bump>,
         parent_is_unused: bool,
     ) -> Result<(), MinifyErr>
     where
@@ -540,7 +464,7 @@ impl<R> CssRuleList<R> {
         // DeclarationBlock::deep_clone — all `` in their leaves.
 
         let mut style_rules = StyleRuleKeyMap::default();
-        let mut rules: Vec<CssRule<R>> = Vec::new();
+        let mut rules: Vec<CssRule<'_, R>> = Vec::new();
 
         for rule in self.v.iter_mut() {
             // NOTE Anytime you push `rule` into `rules`, set `moved_rule = true`
@@ -655,11 +579,11 @@ impl<R> CssRuleList<R> {
     }
 
     /// Zig: `css.implementDeepClone(@This(), this, arena)`.
-    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+    pub fn deep_clone<'b>(&self, bump: &'b bun_alloc::Arena) -> CssRuleList<'b, R>
     where
-        R: css::generics::DeepClone<'bump>,
+        R: css::generics::DeepClone<'b>,
     {
-        Self {
+        CssRuleList {
             v: self.v.iter().map(|r| r.deep_clone(bump)).collect(),
         }
     }
@@ -668,11 +592,11 @@ impl<R> CssRuleList<R> {
 // ── `.style` arm body — preserved verbatim port, gated on StyleRule
 // behavior + selector helpers + DeclarationBlock::deep_clone. ──
 
-fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
-    rule: &mut CssRule<R>,
-    rules: &mut Vec<CssRule<R>>,
+fn minify_style_arm<'bump, R: for<'b> css::generics::DeepClone<'b>>(
+    rule: &mut CssRule<'bump, R>,
+    rules: &mut Vec<CssRule<'bump, R>>,
     style_rules: &mut StyleRuleKeyMap,
-    context: &mut MinifyContext<'_, '_>,
+    context: &mut MinifyContext<'_, 'bump>,
     parent_is_unused: bool,
 ) -> Result<(), MinifyErr> {
     use css::SmallList;
@@ -755,10 +679,10 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     let supps = context.handler_context.get_supports_rules::<R>(sty);
     let logical = context.handler_context.get_additional_rules::<R>(sty);
 
-    struct IncompatibleRuleEntry<R> {
-        rule: style::StyleRule<R>,
-        supports: Vec<CssRule<R>>,
-        logical: Vec<CssRule<R>>,
+    struct IncompatibleRuleEntry<'bump, R> {
+        rule: style::StyleRule<'bump, R>,
+        supports: Vec<CssRule<'bump, R>>,
+        logical: Vec<CssRule<'bump, R>>,
     }
     let mut incompatible_rules: SmallList<IncompatibleRuleEntry<R>, 1> =
         SmallList::init_capacity(incompatible.len());
@@ -767,10 +691,10 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         let list = SelectorList {
             v: SmallList::with_one(sel),
         };
-        let mut clone = style::StyleRule::<R> {
+        let mut clone = style::StyleRule {
             selectors: list,
             vendor_prefix: sty.vendor_prefix,
-            declarations: dc::decl_block_static(&sty.declarations, context.arena),
+            declarations: dc::decl_block(&sty.declarations, context.arena),
             rules: sty.rules.deep_clone(context.arena),
             loc: sty.loc,
         };
@@ -795,12 +719,11 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     {
         let mut rulesss = CssRuleList::<R>::default();
         core::mem::swap(&mut sty.rules, &mut rulesss);
-        // Zig: `.declarations = css.DeclarationBlock{}` — empty block. Route
-        // through the centralized `'bump`-erasure helper instead of fabricating
-        // `&'static Arena` here (PORTING.md §Forbidden).
+        // Zig: `.declarations = css.DeclarationBlock{}` — empty block.
+        // We now safely use `new_in` since `StyleRule` holds `'bump`.
         Some(style::StyleRule {
             selectors: sty.selectors.deep_clone(),
-            declarations: dc::decl_block_empty_static(context.arena),
+            declarations: crate::DeclarationBlock::new_in(context.arena),
             rules: rulesss,
             vendor_prefix: sty.vendor_prefix,
             loc: sty.loc,
@@ -879,7 +802,7 @@ pub struct StyleRuleKey {
 }
 
 impl StyleRuleKey {
-    pub fn new<R>(list: &[CssRule<R>], index: usize) -> Self {
+    pub fn new<R>(list: &[CssRule<'_, R>], index: usize) -> Self {
         let hash = match &list[index] {
             CssRule::Style(rule) => rule.hash_key(),
             _ => 0,
@@ -905,7 +828,7 @@ impl StyleRuleKeyMap {
     /// index whose rule `is_duplicate` of `rules[key.index]`.
     pub fn remove_duplicate<R>(
         &mut self,
-        rules: &[CssRule<R>],
+        rules: &[CssRule<'_, R>],
         key: &StyleRuleKey,
     ) -> Option<usize> {
         let bucket = self.buckets.get_mut(&key.hash)?;
@@ -937,10 +860,10 @@ impl StyleRuleKeyMap {
 
 /// Merge `sty` into `last_style_rule` if their selectors/declarations allow.
 /// Returns `true` if merged (caller should drop `sty`).
-pub fn merge_style_rules<R>(
-    sty: &mut style::StyleRule<R>,
-    last_style_rule: &mut style::StyleRule<R>,
-    context: &mut MinifyContext<'_, '_>,
+pub fn merge_style_rules<'bump, R>(
+    sty: &mut style::StyleRule<'bump, R>,
+    last_style_rule: &mut style::StyleRule<'bump, R>,
+    context: &mut MinifyContext<'_, 'bump>,
 ) -> bool {
     use css::VendorPrefix;
     // Merge declarations if the selectors are equivalent, and both are compatible with all targets.
@@ -961,8 +884,8 @@ pub fn merge_style_rules<R>(
             .important_declarations
             .extend(sty.declarations.important_declarations.drain(..));
         last_style_rule.declarations.minify(
-            dc::decl_handler_static(&mut *context.handler),
-            dc::decl_handler_static(&mut *context.important_handler),
+            &mut *context.handler,
+            &mut *context.important_handler,
             &mut context.handler_context,
         );
         return true;

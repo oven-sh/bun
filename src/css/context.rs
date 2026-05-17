@@ -105,33 +105,21 @@ impl<'a> PropertyHandlerContext<'a> {
 // minify path; un-gate alongside `rules/style.rs`.
 
 impl<'a> PropertyHandlerContext<'a> {
-    /// `'static`-erased arena handle for building `DeclarationBlock<'static>` /
-    /// `DeclarationList<'static>` (see rules/mod.rs `decl_block_static`).
-    ///
-    /// SAFETY: `StyleRule.declarations: DeclarationBlock<'static>` is a
-    /// crate-wide `'bump`-erasure placeholder until `CssRule<'bump, R>`
-    /// re-threads the arena lifetime. The arena outlives every rule built
-    /// from it; centralized here so call-sites below don't open-code the
-    /// lifetime erasure.
-    #[inline]
-    fn bump_static(&self) -> &'static Bump {
-        unsafe { bun_collections::detach_ref(self.arena) }
-    }
-
     /// Clone a std-Vec property list into a bump-allocated `DeclarationList`.
-    /// (`'static` per crate-wide `'bump`-erasure; see rules/mod.rs decl_block_static.)
     #[inline]
-    fn clone_decls(&self, list: &Vec<css::Property>) -> css::DeclarationList<'static> {
-        let bump: &'static Bump = self.bump_static();
-        bun_alloc::vec_from_iter_in(list.iter().map(|p| p.deep_clone(bump)), bump)
+    fn clone_decls(&self, list: &Vec<css::Property>) -> css::DeclarationList<'a> {
+        bun_alloc::vec_from_iter_in(list.iter().map(|p| p.deep_clone(self.arena)), self.arena)
     }
 
-    pub fn get_supports_rules<T>(&self, style_rule: &css::StyleRule<T>) -> Vec<css::CssRule<T>> {
+    pub fn get_supports_rules<T>(
+        &self,
+        style_rule: &css::StyleRule<'_, T>,
+    ) -> Vec<css::CssRule<'a, T>> {
         if self.supports.is_empty() {
             return Vec::new();
         }
 
-        let mut dest: Vec<css::CssRule<T>> = Vec::with_capacity(self.supports.len());
+        let mut dest: Vec<css::CssRule<'a, T>> = Vec::with_capacity(self.supports.len());
 
         for entry in &self.supports {
             // PERF(port): was appendAssumeCapacity
@@ -139,7 +127,7 @@ impl<'a> PropertyHandlerContext<'a> {
                 condition: entry.condition.deep_clone(self.arena),
                 rules: css::CssRuleList {
                     v: {
-                        let mut v: Vec<css::CssRule<T>> = Vec::with_capacity(1);
+                        let mut v: Vec<css::CssRule<'a, T>> = Vec::with_capacity(1);
 
                         // PERF(port): was appendAssumeCapacity
                         v.push(css::CssRule::Style(css::StyleRule {
@@ -164,9 +152,12 @@ impl<'a> PropertyHandlerContext<'a> {
         dest
     }
 
-    pub fn get_additional_rules<T>(&self, style_rule: &css::StyleRule<T>) -> Vec<css::CssRule<T>> {
+    pub fn get_additional_rules<T>(
+        &self,
+        style_rule: &css::StyleRule<'_, T>,
+    ) -> Vec<css::CssRule<'a, T>> {
         // TODO: :dir/:lang raises the specificity of the selector. Use :where to lower it?
-        let mut dest: Vec<css::CssRule<T>> = Vec::new();
+        let mut dest: Vec<css::CssRule<'a, T>> = Vec::new();
 
         if !self.ltr.is_empty() {
             self.get_additional_rules_helper(
@@ -212,16 +203,14 @@ impl<'a> PropertyHandlerContext<'a> {
                     },
                 },
                 rules: {
-                    let mut list: css::CssRuleList<T> = css::CssRuleList::default();
+                    let mut list: css::CssRuleList<'a, T> = css::CssRuleList::default();
 
                     list.v.push(css::CssRule::Style(css::StyleRule {
                         selectors: style_rule.selectors.deep_clone(),
                         vendor_prefix: css::VendorPrefix::NONE,
                         declarations: css::DeclarationBlock {
                             declarations: self.clone_decls(&self.dark),
-                            important_declarations: css::DeclarationList::new_in(
-                                self.bump_static(),
-                            ),
+                            important_declarations: css::DeclarationList::new_in(self.arena),
                         },
                         rules: css::CssRuleList::default(),
                         loc: style_rule.loc,
@@ -243,8 +232,8 @@ impl<'a> PropertyHandlerContext<'a> {
         &self,
         dir: css::selector::parser::Direction,
         decls: &Vec<css::Property>,
-        sty: &css::StyleRule<T>,
-        dest: &mut Vec<css::CssRule<T>>,
+        sty: &css::StyleRule<'_, T>,
+        dest: &mut Vec<css::CssRule<'a, T>>,
     ) {
         let mut selectors = sty.selectors.deep_clone();
         for selector in selectors.v.slice_mut() {
@@ -258,7 +247,7 @@ impl<'a> PropertyHandlerContext<'a> {
             vendor_prefix: css::VendorPrefix::NONE,
             declarations: css::DeclarationBlock {
                 declarations: self.clone_decls(decls),
-                important_declarations: css::DeclarationList::new_in(self.bump_static()),
+                important_declarations: css::DeclarationList::new_in(self.arena),
             },
             rules: css::CssRuleList::default(),
             loc: sty.loc,

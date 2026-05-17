@@ -513,7 +513,7 @@ fn parse_custom_at_rule_without_block<T: CustomAtRuleParser>(
     options: &ParserOptions,
     at_rule_parser: &mut T,
     is_nested: bool,
-) -> Maybe<CssRule<T::AtRule>, ()> {
+) -> Maybe<CssRule<'static, T::AtRule>, ()> {
     match T::rule_without_block(at_rule_parser, prelude, start, options, is_nested) {
         Ok(v) => Ok(CssRule::Custom(v)),
         Err(e) => Err(e),
@@ -1076,7 +1076,7 @@ pub struct TopLevelRuleParser<'a, AtRuleParserT: CustomAtRuleParser> {
     pub state: TopLevelState,
     pub at_rule_parser: &'a mut AtRuleParserT,
     // TODO: think about memory management
-    pub rules: &'a mut CssRuleList<AtRuleParserT::AtRule>,
+    pub rules: &'a mut CssRuleList<'static, AtRuleParserT::AtRule>,
     pub composes: &'a mut ComposesMap,
     pub composes_refs: SmallList<ast::Ref, 2>,
     pub local_properties: &'a mut LocalPropertyUsage,
@@ -1087,7 +1087,7 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> TopLevelRuleParser<'a, AtRuleParserT
         arena: &'a Bump,
         options: &'a ParserOptions<'a>,
         at_rule_parser: &'a mut AtRuleParserT,
-        rules: &'a mut CssRuleList<AtRuleParserT::AtRule>,
+        rules: &'a mut CssRuleList<'static, AtRuleParserT::AtRule>,
         composes: &'a mut ComposesMap,
         local_properties: &'a mut LocalPropertyUsage,
     ) -> Self {
@@ -1163,7 +1163,7 @@ pub struct NestedRuleParser<'a, T: CustomAtRuleParser> {
     // todo_stuff.think_mem_mgmt
     pub important_declarations: DeclarationList<'static>,
     // todo_stuff.think_mem_mgmt
-    pub rules: &'a mut CssRuleList<T::AtRule>,
+    pub rules: &'a mut CssRuleList<'static, T::AtRule>,
     pub is_in_style_rule: bool,
     pub allow_declarations: bool,
 
@@ -1549,7 +1549,7 @@ mod rule_parsers {
             &mut self,
             input: &mut Parser,
             is_style_rule: bool,
-        ) -> CssResult<(DeclarationBlock<'static>, CssRuleList<T::AtRule>)> {
+        ) -> CssResult<(DeclarationBlock<'static>, CssRuleList<'static, T::AtRule>)> {
             // TODO: think about memory management in error cases
             let mut rules = CssRuleList::<T::AtRule>::default();
             let composes_state = if self.is_in_style_rule
@@ -1632,7 +1632,7 @@ mod rule_parsers {
         pub fn parse_style_block(
             &mut self,
             input: &mut Parser,
-        ) -> CssResult<CssRuleList<T::AtRule>> {
+        ) -> CssResult<CssRuleList<'static, T::AtRule>> {
             let srcloc = input.current_source_location();
             let loc = Location {
                 source_index: self.options.source_index,
@@ -2335,11 +2335,11 @@ impl Default for MinifyOptions {
 }
 
 pub type BundlerStyleSheet = StyleSheet<BundlerAtRule>;
-pub type BundlerCssRuleList = CssRuleList<BundlerAtRule>;
-pub type BundlerCssRule = CssRule<BundlerAtRule>;
-pub type BundlerLayerBlockRule = css_rules::layer::LayerBlockRule<BundlerAtRule>;
-pub type BundlerSupportsRule = css_rules::supports::SupportsRule<BundlerAtRule>;
-pub type BundlerMediaRule = css_rules::media::MediaRule<BundlerAtRule>;
+pub type BundlerCssRuleList = CssRuleList<'static, BundlerAtRule>;
+pub type BundlerCssRule = CssRule<'static, BundlerAtRule>;
+pub type BundlerLayerBlockRule = css_rules::layer::LayerBlockRule<'static, BundlerAtRule>;
+pub type BundlerSupportsRule = css_rules::supports::SupportsRule<'static, BundlerAtRule>;
+pub type BundlerMediaRule = css_rules::media::MediaRule<'static, BundlerAtRule>;
 // blocked_on: printer.rs PrintResult<R> generic
 pub type BundlerPrintResult = PrintResult<BundlerAtRule>;
 
@@ -2519,7 +2519,7 @@ pub fn fill_property_bit_set(
 
 pub struct StyleSheet<AtRule> {
     /// A list of top-level rules within the style sheet.
-    pub rules: CssRuleList<AtRule>,
+    pub rules: CssRuleList<'static, AtRule>,
     // PERF(port): was arena bulk-free (sources / source_map_urls /
     // license_comments were ArrayList fed input.arena()) — profile if hot.
     pub sources: Vec<Box<[u8]>>,
@@ -2578,7 +2578,20 @@ mod stylesheet_impl {
         where
             AtRule: for<'b> generic::DeepClone<'b>,
         {
-            let ctx = PropertyHandlerContext::new(arena, options.targets, &options.unused_symbols);
+            // SAFETY: `self.rules` is `CssRuleList<'static, AtRule>` — the parser
+            // erased the arena lifetime to `'static`. The MinifyContext must carry
+            // the same `'static` tag. The arena outlives the stylesheet (caller
+            // invariant, same as parsing).
+            let arena: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(arena) };
+            // SAFETY: `MinifyContext<'a, 'static>` with invariant `&mut` ties
+            // `'a` to `'static` transitively. Cast the short-lived borrows to
+            // `'static` — they don't escape `minify` (it returns `Result<(), _>`).
+            let targets: &'static _ = unsafe { bun_ptr::detach_lifetime_ref(&options.targets) };
+            let unused_symbols: &'static _ =
+                unsafe { bun_ptr::detach_lifetime_ref(&options.unused_symbols) };
+            let extra: &'static _ = unsafe { bun_ptr::detach_lifetime_ref(extra) };
+
+            let ctx = PropertyHandlerContext::new(arena, *targets, unused_symbols);
             let mut handler = DeclarationHandler::new(arena);
             let mut important_handler = DeclarationHandler::new(arena);
 
@@ -2606,11 +2619,11 @@ mod stylesheet_impl {
 
             let mut minify_ctx = MinifyContext {
                 arena,
-                targets: &options.targets,
+                targets,
                 handler: &mut handler,
                 important_handler: &mut important_handler,
                 handler_context: ctx,
-                unused_symbols: &options.unused_symbols,
+                unused_symbols,
                 custom_media,
                 css_modules: self.options.css_modules.is_some(),
                 extra,
@@ -2923,7 +2936,7 @@ mod stylesheet_impl {
 
         pub fn new_from_tailwind_imports(
             options: ParserOptions<'static>,
-            imports_from_tailwind: CssRuleList<AtRule>,
+            imports_from_tailwind: CssRuleList<'static, AtRule>,
         ) -> Self {
             Self {
                 rules: imports_from_tailwind,
@@ -2945,7 +2958,7 @@ mod stylesheet_impl {
         /// separate rule list, replacing them with `.ignored` rules.
         pub fn pluck_imports(
             &mut self,
-            out: &mut CssRuleList<AtRule>,
+            out: &mut CssRuleList<'static, AtRule>,
             new_import_records: &mut Vec<ImportRecord>,
         ) {
             // PORT NOTE: the Zig fn takes `*const @This()` but writes

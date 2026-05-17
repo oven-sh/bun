@@ -20,6 +20,41 @@ use bun_ast::{
 //   Zig: CreateBinaryExpressionVisitor(TS, JSX, SCAN).BinaryExpressionVisitor
 //   Rust: BinaryExpressionVisitor<'arena, TS, J, SCAN>
 
+/// Should numeric arithmetic be folded given `folded_value = left op right`?
+///
+/// Always true inside TypeScript enum bodies (`tsc` computes enum values
+/// eagerly and subsequent members can depend on prior numeric members).
+/// Otherwise, when `minify_syntax` is on, only fold when the printed literal
+/// is no longer than the source expression — folding `1/3` into
+/// `0.3333333333333333` would inflate the output.
+///
+/// `op_len` is the byte length of the operator as printed (1 for `+`, `-`,
+/// `*`, `/`, `%`; 2 for `**`). When `minify_whitespace` is off the printer
+/// emits a space on either side of a binary operator, so we add 2 to the
+/// source-length model to match the actual output. Unary `-` on a negative
+/// operand is already folded into its `len_of_number`.
+fn should_fold_arithmetic<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
+    p: &P<'a, TYPESCRIPT, SCAN_ONLY>,
+    folded_value: f64,
+    left: f64,
+    right: f64,
+    op_len: u32,
+) -> bool {
+    if p.fold_numeric_constants_unconditionally {
+        return true;
+    }
+    if !p.options.features.minify_syntax {
+        return true;
+    }
+    let space_len: u32 = if p.options.features.minify_whitespace { 0 } else { 2 };
+    let folded_len = bun_core::fmt::len_of_js_number(folded_value);
+    let source_len = bun_core::fmt::len_of_js_number(left)
+        + op_len
+        + space_len
+        + bun_core::fmt::len_of_js_number(right);
+    folded_len <= source_len
+}
+
 /// Try to optimize "typeof x === 'undefined'" to "typeof x > 'u'" or similar
 /// Returns the optimized expression if successful, None otherwise
 fn try_optimize_typeof_undefined<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
@@ -432,12 +467,10 @@ impl BinaryExpressionVisitor {
                 if p.should_fold_typescript_constant_expressions {
                     if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
                     {
-                        return p.new_expr(
-                            E::Number {
-                                value: vals[0] + vals[1],
-                            },
-                            v.loc,
-                        );
+                        let folded = vals[0] + vals[1];
+                        if should_fold_arithmetic(p, folded, vals[0], vals[1], 1) {
+                            return p.new_expr(E::Number { value: folded }, v.loc);
+                        }
                     }
 
                     // "'abc' + 'xyz'" => "'abcxyz'"
@@ -476,12 +509,10 @@ impl BinaryExpressionVisitor {
                 if p.should_fold_typescript_constant_expressions {
                     if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
                     {
-                        return p.new_expr(
-                            E::Number {
-                                value: vals[0] - vals[1],
-                            },
-                            v.loc,
-                        );
+                        let folded = vals[0] - vals[1];
+                        if should_fold_arithmetic(p, folded, vals[0], vals[1], 1) {
+                            return p.new_expr(E::Number { value: folded }, v.loc);
+                        }
                     }
                 }
             }
@@ -489,12 +520,10 @@ impl BinaryExpressionVisitor {
                 if p.should_fold_typescript_constant_expressions {
                     if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
                     {
-                        return p.new_expr(
-                            E::Number {
-                                value: vals[0] * vals[1],
-                            },
-                            v.loc,
-                        );
+                        let folded = vals[0] * vals[1];
+                        if should_fold_arithmetic(p, folded, vals[0], vals[1], 1) {
+                            return p.new_expr(E::Number { value: folded }, v.loc);
+                        }
                     }
                 }
             }
@@ -502,12 +531,10 @@ impl BinaryExpressionVisitor {
                 if p.should_fold_typescript_constant_expressions {
                     if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
                     {
-                        return p.new_expr(
-                            E::Number {
-                                value: vals[0] / vals[1],
-                            },
-                            v.loc,
-                        );
+                        let folded = vals[0] / vals[1];
+                        if should_fold_arithmetic(p, folded, vals[0], vals[1], 1) {
+                            return p.new_expr(E::Number { value: folded }, v.loc);
+                        }
                     }
                 }
             }
@@ -520,15 +547,13 @@ impl BinaryExpressionVisitor {
                             // libc fmod is pure (value-type args, no errno, no pointers) → no caller preconditions.
                             safe fn fmod(x: f64, y: f64) -> f64;
                         }
-                        return p.new_expr(
-                            // Use libc fmod here to be consistent with what JavaScriptCore does
-                            // https://github.com/oven-sh/WebKit/blob/7a0b13626e5db69aa5a32d037431d381df5dfb61/Source/JavaScriptCore/runtime/MathCommon.cpp#L574-L597
-                            // PORT NOTE: Zig had a non-native fallback to std.math.mod; Rust targets are always native.
-                            E::Number {
-                                value: fmod(vals[0], vals[1]),
-                            },
-                            v.loc,
-                        );
+                        // Use libc fmod here to be consistent with what JavaScriptCore does
+                        // https://github.com/oven-sh/WebKit/blob/7a0b13626e5db69aa5a32d037431d381df5dfb61/Source/JavaScriptCore/runtime/MathCommon.cpp#L574-L597
+                        // PORT NOTE: Zig had a non-native fallback to std.math.mod; Rust targets are always native.
+                        let folded = fmod(vals[0], vals[1]);
+                        if should_fold_arithmetic(p, folded, vals[0], vals[1], 1) {
+                            return p.new_expr(E::Number { value: folded }, v.loc);
+                        }
                     }
                 }
             }
@@ -536,13 +561,11 @@ impl BinaryExpressionVisitor {
                 if p.should_fold_typescript_constant_expressions {
                     if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
                     {
-                        return p.new_expr(
-                            // TODO(port): math arrives from move-in (was bun_jsc::math → js_parser)
-                            E::Number {
-                                value: bun_ast::math::pow(vals[0], vals[1]),
-                            },
-                            v.loc,
-                        );
+                        // TODO(port): math arrives from move-in (was bun_jsc::math → js_parser)
+                        let folded = bun_ast::math::pow(vals[0], vals[1]);
+                        if should_fold_arithmetic(p, folded, vals[0], vals[1], 2) {
+                            return p.new_expr(E::Number { value: folded }, v.loc);
+                        }
                     }
                 }
             }

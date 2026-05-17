@@ -203,7 +203,7 @@ bash .ub-exorcism/2026-05-15-exhaustive/scripts/audit/check-registry-drift.sh
 │   └── ci/
 │       ├── compute-affected-exps.sh                    ← META-CI-SHARDING matrix
 │       └── registry-paths.sh                           ← changed-paths → EXPs
-└── CODEX_*.md                                          ← per-correction docs (24 docs)
+└── CODEX_*.md                                          ← per-correction docs (58 docs)
 ```
 
 ---

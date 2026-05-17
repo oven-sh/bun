@@ -397,6 +397,7 @@ pub mod api {
         yaml = 19,
         json5 = 20,
         md = 21,
+        xml = 22,
     }
 
     impl Loader {
@@ -427,6 +428,7 @@ pub mod api {
                 19 => Loader::yaml,
                 20 => Loader::json5,
                 21 => Loader::md,
+                22 => Loader::xml,
                 _ => Loader::_none,
             }
         }

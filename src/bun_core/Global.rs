@@ -306,7 +306,7 @@ pub mod features {
         TEXT_LOCKFILE, ISOLATED_BUN_INSTALL, HOISTED_BUN_INSTALL, MACROS, NO_AVX2, NO_AVX,
         SHELL, SPAWN, STANDALONE_EXECUTABLE, STANDALONE_SHELL, TODO_PANIC, TRANSPILER_CACHE,
         TSCONFIG, TSCONFIG_PATHS, VIRTUAL_MODULES, WORKERS_SPAWNED, WORKERS_TERMINATED,
-        NAPI_MODULE_REGISTER, EXITED, YAML_PARSE, YARN_MIGRATION, PNPM_MIGRATION,
+        NAPI_MODULE_REGISTER, EXITED, YAML_PARSE, XML_PARSE, YARN_MIGRATION, PNPM_MIGRATION,
         VALKEY,
     }
     /// dotenv crate calls `bun_core::analytics::Features::dotenv_inc()`.
@@ -328,6 +328,11 @@ pub mod features {
     #[inline]
     pub fn yaml_parse_inc() {
         YAML_PARSE.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    }
+    /// xml parser calls `bun_core::analytics::Features::xml_parse_inc()`.
+    #[inline]
+    pub fn xml_parse_inc() {
+        XML_PARSE.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     }
     /// install/yarn crate calls `bun_core::analytics::Features::yarn_migration_inc(1)`.
     #[inline]

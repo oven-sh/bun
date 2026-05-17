@@ -5662,7 +5662,7 @@ pub mod bv2_impl {
 
             // Then all the distinct CSS bundles (these are JS->CSS, not CSS->CSS)
             for entry_point in start.css_entry_points.keys() {
-                let order = crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(&mut self.linker, &self.graph.heap, &[*entry_point]);
+                let (order, owned_condition_slabs) = crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(&mut self.linker, &self.graph.heap, &[*entry_point]);
                 let order_len = order.len() as usize;
                 chunks.push(Chunk {
                     entry_point: chunk::EntryPoint::new(
@@ -5677,6 +5677,7 @@ pub mod bv2_impl {
                             .map(|_| bun_css::BundlerStyleSheet::empty())
                             .collect::<Vec<_>>()
                             .into_boxed_slice(),
+                        owned_condition_slabs,
                     }),
                     output_source_map: SourceMap::SourceMapPieces::init(),
                     ..Chunk::default()

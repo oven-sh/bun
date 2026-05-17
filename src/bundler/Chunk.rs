@@ -127,6 +127,40 @@ impl Drop for OwnedCssRuleSlabs {
 unsafe impl Send for OwnedCssRuleSlabs {}
 unsafe impl Sync for OwnedCssRuleSlabs {}
 
+/// Raw `(ptr, cap)` for `Vec<ImportConditions>` slabs allocated by
+/// `findImportedFilesInCSSOrder::deep_clone_conditions`. Each slab is
+/// bitwise-aliased into one or more `CssImportOrder.conditions` headers (and
+/// shuffled across `wip_order` during hoisting/dedup), so
+/// `CssImportOrder::Drop` `mem::forget`s `conditions` and the slab's ownership
+/// lives here instead. `Drop` only `dealloc`s the slab — element destructors
+/// are skipped: the per-element `MediaList`/`SupportsCondition` storage is
+/// arena-owned (no per-slot free), and skipping them mirrors
+/// `OwnedCssRuleSlabs`'s "no element destructors" rule rather than depending
+/// on the linker arena outliving the chunk.
+#[derive(Default)]
+pub struct OwnedCssConditionSlabs(
+    pub Vec<(core::ptr::NonNull<bun_css::ImportConditions>, usize)>,
+);
+
+impl Drop for OwnedCssConditionSlabs {
+    fn drop(&mut self) {
+        for (ptr, cap) in self.0.drain(..) {
+            // SAFETY: each entry is a uniquely-owned global-alloc
+            // `Vec<ImportConditions>` slab with cap > 0; dealloc raw without
+            // running element destructors (every aliasing header was forgotten).
+            unsafe {
+                let layout = core::alloc::Layout::array::<bun_css::ImportConditions>(cap)
+                    .expect("recorded from a live Vec");
+                std::alloc::dealloc(ptr.as_ptr().cast(), layout);
+            }
+        }
+    }
+}
+
+// SAFETY: holds uniquely-owned raw heap slabs; mirrors `Chunk`'s `Send`/`Sync`.
+unsafe impl Send for OwnedCssConditionSlabs {}
+unsafe impl Sync for OwnedCssConditionSlabs {}
+
 bitflags::bitflags! {
     #[derive(Clone, Copy, Default)]
     pub struct Flags: u8 {
@@ -1350,6 +1384,10 @@ pub struct CssChunk {
     /// When we go through the `prepareCssAstsForChunk()` step, each import will
     /// create a shallow copy of the file's AST (just dereferencing the pointer).
     pub asts: Box<[bun_css::BundlerStyleSheet]>,
+
+    /// Owns the `Vec<ImportConditions>` slabs aliased by
+    /// `imports_in_chunk_in_order[*].conditions` (see `OwnedCssConditionSlabs`).
+    pub owned_condition_slabs: OwnedCssConditionSlabs,
 }
 
 impl Drop for CssChunk {
@@ -1386,8 +1424,8 @@ impl Drop for CssImportOrder {
     fn drop(&mut self) {
         // `conditions`: bitwise-shared across multiple order entries by
         // `findImportedFilesInCSSOrder` (`bitwise_copy(wrapping_conditions)`);
-        // freeing here would double-free. Global-backed → leaks until the
-        // aliasing is replaced (PORTING.md §CSS-import-order).
+        // freeing here would double-free. The slab's real owner is
+        // `CssChunk.owned_condition_slabs`, which deallocs it once.
         core::mem::forget(core::mem::take(&mut self.conditions));
         // `condition_import_records`: every populated value is uniquely owned
         // (moved `all_import_records`) or an empty-Vec bitwise copy (cap == 0,

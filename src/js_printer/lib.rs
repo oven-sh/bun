@@ -1011,11 +1011,8 @@ where
                         strings::index_of_needs_escape_for_java_script_string(remain, quote_char)
                     {
                         let j = j as usize;
-                        let text_chunk = &text[i..i + clamped_width];
-                        writer.write_all(text_chunk)?;
-                        i += clamped_width;
-                        writer.write_all(&remain[..j])?;
-                        i += j;
+                        writer.write_all(&text[i..i + clamped_width + j])?;
+                        i += clamped_width + j;
                     } else {
                         writer.write_all(&text[i..])?;
                         i = n;

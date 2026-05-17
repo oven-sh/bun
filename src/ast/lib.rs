@@ -20,6 +20,9 @@
 #![warn(unreachable_pub)]
 use core::fmt;
 use std::borrow::Cow;
+use std::mem::transmute;
+use std::sync::atomic::AtomicI8;
+use std::sync::atomic::Ordering;
 
 // `bun_alloc::AllocError` removed — the `add_*` / `clone` family is now
 // infallible (`Vec::push` / `io::Write` on `Vec<u8>` cannot fail in Rust).
@@ -1600,8 +1603,6 @@ pub enum Level {
     Warn,    // 3
     Err,     // 4
 }
-// SAFETY: `#[repr(i8)]`, five variants, no payload — 1 byte, no padding.
-bun_core::unsafe_impl_atom!(Level);
 
 impl Level {
     pub fn at_least(self, other: Level) -> bool {
@@ -1634,11 +1635,17 @@ impl Level {
     // → deleted; lives in `bun_logger_jsc`.
 }
 
-// Zig: `pub var default_log_level = Level.warn;`
-// PORTING.md §Global mutable state: written by CLI startup, read by every
-// `Log::init()` (including from bundler worker threads). `AtomicCell<Level>`
-// — Acquire/Release, no `unsafe` at call sites.
-pub static DEFAULT_LOG_LEVEL: bun_core::AtomicCell<Level> = bun_core::AtomicCell::new(Level::Warn);
+//Variable storing log level (as i8 as per repr(i8) on log level)
+pub(self) static DEFAULT_LOG_LEVEL: AtomicI8 = AtomicI8::new(Level::Warn as i8);
+
+pub fn set_default_log_level(level: Level) {
+    DEFAULT_LOG_LEVEL.store(level as i8, Ordering::Release);
+}
+
+pub fn get_default_log_level() -> Level {
+    //SAFETY: This variable is private and all other methods guarantee that valid Level will be stored to it
+    unsafe { transmute(DEFAULT_LOG_LEVEL.load(Ordering::Acquire)) }
+}
 
 impl Log {
     pub fn memory_cost(&self) -> usize {
@@ -1680,7 +1687,11 @@ impl Log {
     }
 
     pub fn init() -> Log {
-        let level = DEFAULT_LOG_LEVEL.load();
+        let level = DEFAULT_LOG_LEVEL.load(Ordering::Acquire);
+
+        //SAFETY: the variable is pub(self) and as per its description it holds the log level as i8
+        let level = unsafe { transmute(level) };
+
         Log {
             msgs: Vec::new(),
             level,

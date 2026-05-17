@@ -1516,7 +1516,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
     }
 
     if let Some(log_level) = opts.log_level {
-        bun_ast::DEFAULT_LOG_LEVEL.store(match log_level {
+        bun_ast::set_default_log_level(match log_level {
             api::MessageLevel::Debug => bun_ast::Level::Debug,
             api::MessageLevel::Err => bun_ast::Level::Err,
             api::MessageLevel::Warn => bun_ast::Level::Warn,
@@ -1525,7 +1525,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         // SAFETY: `ctx.log` is the CLI log, owned by the caller and not yet
         // shared with another thread.
         unsafe {
-            (*ctx.log).level = bun_ast::DEFAULT_LOG_LEVEL.load();
+            (*ctx.log).level = bun_ast::get_default_log_level();
         }
     }
 

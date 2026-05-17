@@ -729,8 +729,7 @@ impl NumberRenamer {
         root.name_counts.reserve(root_names.len());
         for (key, &value) in root_names.iter() {
             let duped = arena.alloc_slice_copy(&**key);
-            root.name_counts
-                .insert(NameKey(NameStr::new(duped)), value);
+            root.name_counts.insert(NameKey(NameStr::new(duped)), value);
         }
 
         // TODO(b2-blocked): bun_core::env_var::BUN_DUMP_SYMBOLS — typed accessor

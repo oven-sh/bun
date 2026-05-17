@@ -821,6 +821,27 @@ it("should throw on empty unix path from truthy non-string value", () => {
   expect(() => Bun.connect({ unix: [] as any, socket })).toThrow("SocketOptions.unix must be a string");
 });
 
+it("should throw when socket handlers have no data or drain callback", () => {
+  // Handlers validation fails before protect() is called; Drop must not
+  // assert on an unprotected Handlers.
+  expect(() => Bun.listen({ hostname: "localhost", port: 0, socket: {} as any })).toThrow(
+    'Expected at least "data" or "drain" callback',
+  );
+  expect(() => Bun.connect({ hostname: "localhost", port: 0, socket: {} as any })).toThrow(
+    'Expected at least "data" or "drain" callback',
+  );
+});
+
+it("should throw when a socket handler is not a function", () => {
+  const socket = { open() {}, close: "not a function" } as any;
+  expect(() => Bun.listen({ hostname: "localhost", port: 0, socket })).toThrow(
+    'Expected "onClose" callback to be a function',
+  );
+  expect(() => Bun.connect({ hostname: "localhost", port: 0, socket })).toThrow(
+    'Expected "onClose" callback to be a function',
+  );
+});
+
 it("reading .listener on a closed client socket does not use-after-free handlers", async () => {
   // Client-mode Handlers is heap-allocated per-connect and freed in
   // markInactive once the socket closes. `socket.listener` read

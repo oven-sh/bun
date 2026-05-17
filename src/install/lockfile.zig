@@ -1563,7 +1563,13 @@ pub fn stringBuf(this: *Lockfile) String.Buf {
 
 pub const Scratch = struct {
     pub const DuplicateCheckerMap = std.HashMap(PackageNameHash, logger.Loc, IdentityContext(PackageNameHash), 80);
-    pub const DependencyQueue = bun.LinearFifo(DependencySlice, .Dynamic);
+
+    pub const DependencyListWithOwner = struct {
+        package_id: PackageID,
+        dependencies: DependencySlice,
+    };
+
+    pub const DependencyQueue = bun.LinearFifo(DependencyListWithOwner, .Dynamic);
 
     duplicate_checker_map: DuplicateCheckerMap = undefined,
     dependency_list_queue: DependencyQueue = undefined,

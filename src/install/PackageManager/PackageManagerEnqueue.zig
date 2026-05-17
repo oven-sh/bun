@@ -5,12 +5,14 @@ pub fn enqueueDependencyWithMain(
     dependency: *const Dependency,
     resolution: PackageID,
     install_peer: bool,
+    parent_package_id: ?PackageID,
 ) !void {
     return this.enqueueDependencyWithMainAndSuccessFn(
         id,
         dependency,
         resolution,
         install_peer,
+        parent_package_id,
         assignResolution,
         null,
     );
@@ -19,6 +21,7 @@ pub fn enqueueDependencyWithMain(
 pub fn enqueueDependencyList(
     this: *PackageManager,
     dependencies_list: Lockfile.DependencySlice,
+    parent_package_id: ?PackageID,
 ) void {
     this.task_queue.ensureUnusedCapacity(this.allocator, dependencies_list.len) catch unreachable;
     const lockfile = this.lockfile;
@@ -63,6 +66,7 @@ pub fn enqueueDependencyList(
             &dependency,
             resolution,
             false,
+            parent_package_id,
         ) catch |err| {
             const note = .{
                 .fmt = "error occurred while resolving {f}",
@@ -102,6 +106,7 @@ pub fn enqueueTarballForDownload(
 
     try task_queue.value_ptr.append(
         this.allocator,
+        null,
         task_context,
     );
 
@@ -140,6 +145,7 @@ pub fn enqueueTarballForReading(
 
     task_queue.value_ptr.append(
         this.allocator,
+        null,
         task_context,
     ) catch unreachable;
 
@@ -178,6 +184,7 @@ pub fn enqueueGitForCheckout(
 
     checkout_queue.value_ptr.append(
         this.allocator,
+        null,
         task_context,
     ) catch unreachable;
 
@@ -193,6 +200,7 @@ pub fn enqueueGitForCheckout(
 
         clone_queue.value_ptr.append(
             this.allocator,
+            null,
             .{ .dependency = dependency_id },
         ) catch unreachable;
 
@@ -252,6 +260,7 @@ pub fn enqueuePackageForDownload(
 
     try task_queue.value_ptr.append(
         this.allocator,
+        null,
         task_context,
     );
 
@@ -327,6 +336,7 @@ pub fn enqueueDependencyToRoot(
             &dependency,
             invalid_package_id,
             false,
+            null,
             assignRootResolution,
             failRootResolution,
         ) catch |err| {
@@ -448,6 +458,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
     dependency: *const Dependency,
     resolution: PackageID,
     install_peer: bool,
+    parent_package_id: ?PackageID,
     comptime successFn: SuccessFn,
     comptime failFn: ?FailFn,
 ) !void {
@@ -486,7 +497,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
         // allow overriding all dependencies unless the dependency is coming directly from an alias, "npm:<this dep>" or
         // if it's a workspaceOnly dependency
         if (!dependency.behavior.isWorkspace() and (dependency.version.tag != .npm or !dependency.version.value.npm.is_alias)) {
-            if (this.lockfile.overrides.get(name_hash)) |new| {
+            if (this.lockfile.overrides.get(this.lockfile, name_hash, parent_package_id)) |new| {
                 debug("override: {s} -> {s}", .{ this.lockfile.str(&dependency.version.literal), this.lockfile.str(&new.literal) });
 
                 name, name_hash = updateNameAndNameHashFromVersionReplacement(this.lockfile, name, name_hash, new);
@@ -694,7 +705,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                             }
                             // Resolve dependencies first
                             if (result.package.dependencies.len > 0) {
-                                try this.lockfile.scratch.dependency_list_queue.writeItem(result.package.dependencies);
+                                try this.lockfile.scratch.dependency_list_queue.writeItem(.{ .package_id = result.package.meta.id, .dependencies = result.package.dependencies });
                             }
                         }
 
@@ -835,7 +846,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                         }
 
                         const callback_tag = comptime if (successFn == assignRootResolution) "root_dependency" else "dependency";
-                        try manifest_entry_parse.value_ptr.append(this.allocator, @unionInit(TaskCallbackContext, callback_tag, id));
+                        try manifest_entry_parse.value_ptr.append(this.allocator, null, @unionInit(TaskCallbackContext, callback_tag, id));
                     }
                     return;
                 }
@@ -893,7 +904,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                 var entry = this.task_queue.getOrPutContext(this.allocator, checkout_id, .{}) catch unreachable;
                 if (!entry.found_existing) entry.value_ptr.* = .{};
                 if (this.lockfile.buffers.resolutions.items[id] == invalid_package_id) {
-                    try entry.value_ptr.append(this.allocator, ctx);
+                    try entry.value_ptr.append(this.allocator, null, ctx);
                 }
 
                 if (dependency.behavior.isPeer()) {
@@ -917,7 +928,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
             } else {
                 var entry = this.task_queue.getOrPutContext(this.allocator, clone_id, .{}) catch unreachable;
                 if (!entry.found_existing) entry.value_ptr.* = .{};
-                try entry.value_ptr.append(this.allocator, ctx);
+                try entry.value_ptr.append(this.allocator, null, ctx);
 
                 if (dependency.behavior.isPeer()) {
                     if (!install_peer) {
@@ -967,7 +978,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                 );
 
             const callback_tag = comptime if (successFn == assignRootResolution) "root_dependency" else "dependency";
-            try entry.value_ptr.append(this.allocator, @unionInit(TaskCallbackContext, callback_tag, id));
+            try entry.value_ptr.append(this.allocator, null, @unionInit(TaskCallbackContext, callback_tag, id));
 
             if (dependency.behavior.isPeer()) {
                 if (!install_peer) {
@@ -1044,7 +1055,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                     }
                     // We shouldn't see any dependencies
                     if (result.package.dependencies.len > 0) {
-                        try this.lockfile.scratch.dependency_list_queue.writeItem(result.package.dependencies);
+                        try this.lockfile.scratch.dependency_list_queue.writeItem(.{ .package_id = result.package.meta.id, .dependencies = result.package.dependencies });
                     }
                 }
 
@@ -1155,7 +1166,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                 );
 
             const callback_tag = comptime if (successFn == assignRootResolution) "root_dependency" else "dependency";
-            try entry.value_ptr.append(this.allocator, @unionInit(TaskCallbackContext, callback_tag, id));
+            try entry.value_ptr.append(this.allocator, null, @unionInit(TaskCallbackContext, callback_tag, id));
 
             if (dependency.behavior.isPeer()) {
                 if (!install_peer) {

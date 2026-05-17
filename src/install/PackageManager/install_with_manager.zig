@@ -235,24 +235,34 @@ pub fn installWithManager(
                     resolution_lists[0] = .{ .off = off, .len = len };
                     try builder.allocate();
 
+                    var all_name_hashes_orig_len: usize = 0;
                     const all_name_hashes: []PackageNameHash = brk: {
                         if (!manager.summary.overrides_changed) break :brk &.{};
-                        const hashes_len = manager.lockfile.overrides.map.entries.len + lockfile.overrides.map.entries.len;
-                        if (hashes_len == 0) break :brk &.{};
-                        var all_name_hashes = try bun.default_allocator.alloc(PackageNameHash, hashes_len);
-                        @memcpy(all_name_hashes[0..manager.lockfile.overrides.map.entries.len], manager.lockfile.overrides.map.keys());
-                        @memcpy(all_name_hashes[manager.lockfile.overrides.map.entries.len..], lockfile.overrides.map.keys());
-                        var i = manager.lockfile.overrides.map.entries.len;
-                        while (i < all_name_hashes.len) {
-                            if (std.mem.indexOfScalar(PackageNameHash, all_name_hashes[0..i], all_name_hashes[i]) != null) {
-                                all_name_hashes[i] = all_name_hashes[all_name_hashes.len - 1];
-                                all_name_hashes.len -= 1;
+                        const old_global_count = manager.lockfile.overrides.global.entries.len;
+                        const new_global_count = lockfile.overrides.global.entries.len;
+                        const old_scoped_count = manager.lockfile.overrides.scoped.entries.len;
+                        const new_scoped_count = lockfile.overrides.scoped.entries.len;
+                        const total = old_global_count + new_global_count + old_scoped_count + new_scoped_count;
+                        if (total == 0) break :brk &.{};
+                        all_name_hashes_orig_len = total;
+                        var result = try bun.default_allocator.alloc(PackageNameHash, total);
+                        var idx: usize = 0;
+                        for (manager.lockfile.overrides.global.keys()) |k| { result[idx] = k; idx += 1; }
+                        for (lockfile.overrides.global.keys()) |k| { result[idx] = k; idx += 1; }
+                        for (manager.lockfile.overrides.scoped.keys()) |k| { result[idx] = k.child_name_hash; idx += 1; }
+                        for (lockfile.overrides.scoped.keys()) |k| { result[idx] = k.child_name_hash; idx += 1; }
+                        var i: usize = 0;
+                        while (i < result.len) {
+                            if (std.mem.indexOfScalar(PackageNameHash, result[0..i], result[i]) != null) {
+                                result[i] = result[result.len - 1];
+                                result = result[0..result.len - 1];
                             } else {
                                 i += 1;
                             }
                         }
-                        break :brk all_name_hashes;
+                        break :brk result;
                     };
+                    defer if (all_name_hashes_orig_len > 0) bun.default_allocator.free(all_name_hashes.ptr[0..all_name_hashes_orig_len]);
 
                     manager.lockfile.overrides = try lockfile.overrides.clone(manager, &lockfile, manager.lockfile, builder);
                     manager.lockfile.catalogs = try lockfile.catalogs.clone(manager, &lockfile, manager.lockfile, builder);
@@ -367,20 +377,50 @@ pub fn installWithManager(
                     // ever reads through a pointer into the old backing storage.
                     if (manager.summary.overrides_changed and all_name_hashes.len > 0) {
                         const dependencies_len = manager.lockfile.buffers.dependencies.items.len;
-                        for (0..dependencies_len) |dependency_i| {
-                            const dependency = manager.lockfile.buffers.dependencies.items[dependency_i];
-                            if (std.mem.indexOfScalar(PackageNameHash, all_name_hashes, dependency.name_hash)) |_| {
-                                manager.lockfile.buffers.resolutions.items[dependency_i] = invalid_package_id;
-                                manager.enqueueDependencyWithMain(
-                                    @truncate(dependency_i),
-                                    &dependency,
-                                    invalid_package_id,
-                                    false,
-                                ) catch |err| {
-                                    addDependencyError(manager, &dependency, err);
-                                };
+                    // Resolve each affected dependency, using the correct parent context
+                    // so that scoped overrides are re-evaluated with their owning package.
+                    const owner_map = owner_map: {
+                        // Build a temporary DependencyID -> PackageID map so that when we
+                        // re-enqueue dependencies whose overrides changed, we can pass the
+                        // correct parent context to scoped override lookup.
+                        var map = try bun.default_allocator.alloc(?PackageID, dependencies_len);
+                        @memset(map, null);
+                        const packages_len = manager.lockfile.packages.len;
+                        for (0..packages_len) |pkg_id| {
+                            const dep_slice = manager.lockfile.packages.items(.dependencies)[pkg_id];
+                            const dep_off = dep_slice.off;
+                            const dep_len = dep_slice.len;
+                            if (dep_len == 0) continue;
+                            for (0..dep_len) |j| {
+                                const dep_id = dep_off + j;
+                                if (dep_id < dependencies_len) {
+                                    map[dep_id] = @truncate(pkg_id);
+                                }
                             }
                         }
+                        break :owner_map map;
+                    };
+                    defer bun.default_allocator.free(owner_map);
+
+                    for (0..dependencies_len) |dependency_i| {
+                        const dependency = manager.lockfile.buffers.dependencies.items[dependency_i];
+                        if (std.mem.indexOfScalar(PackageNameHash, all_name_hashes, dependency.name_hash)) |_| {
+                            manager.lockfile.buffers.resolutions.items[dependency_i] = invalid_package_id;
+                            // Use the owner map to recover the parent package context for
+                            // scoped override re-resolution. Falls back to null for orphaned
+                            // dependencies that are not declared by any known package.
+                            const parent_package_id = owner_map[dependency_i];
+                            manager.enqueueDependencyWithMain(
+                                @truncate(dependency_i),
+                                &dependency,
+                                invalid_package_id,
+                                false,
+                                parent_package_id,
+                            ) catch |err| {
+                                addDependencyError(manager, &dependency, err);
+                            };
+                        }
+                    }
                     }
 
                     if (manager.summary.catalogs_changed) {
@@ -396,6 +436,7 @@ pub fn installWithManager(
                                 &dep,
                                 invalid_package_id,
                                 false,
+                                null,
                             ) catch |err| {
                                 addDependencyError(manager, &dep, err);
                             };
@@ -419,6 +460,7 @@ pub fn installWithManager(
                                     &dependency,
                                     manager.lockfile.buffers.resolutions.items[dependency_i],
                                     false,
+                                    null,
                                 ) catch |err| {
                                     addDependencyError(manager, &dependency, err);
                                 };
@@ -491,7 +533,7 @@ pub fn installWithManager(
             var iter = manager.lockfile.patched_dependencies.iterator();
             while (iter.next()) |entry| manager.enqueuePatchTaskPre(PatchTask.newCalcPatchHash(manager, entry.key_ptr.*, null));
         }
-        manager.enqueueDependencyList(root.dependencies);
+        manager.enqueueDependencyList(root.dependencies, null);
     } else {
         {
             var iter = manager.lockfile.patched_dependencies.iterator();
@@ -522,7 +564,7 @@ pub fn installWithManager(
                     pub fn isDone(closure: *@This()) bool {
                         var this = closure.manager;
                         if (comptime check_peers)
-                            this.processPeerDependencyList() catch |err| {
+                            this.processPeerDependencyList(null) catch |err| {
                                 closure.err = err;
                                 return true;
                             };
@@ -600,7 +642,7 @@ pub fn installWithManager(
         // queue iteratively here — entering the event loop (`waitForPeers`)
         // with zero pending I/O would block forever.
         while (manager.peer_dependencies.readableLength() > 0) {
-            try manager.processPeerDependencyList();
+            try manager.processPeerDependencyList(null);
             manager.drainDependencyList();
         }
 

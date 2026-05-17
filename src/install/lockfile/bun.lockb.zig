@@ -8,6 +8,7 @@ const has_workspace_package_ids_tag: u64 = @bitCast(@as([8]u8, "wOrKsPaC".*));
 const has_trusted_dependencies_tag: u64 = @bitCast(@as([8]u8, "tRuStEDd".*));
 const has_empty_trusted_dependencies_tag: u64 = @bitCast(@as([8]u8, "eMpTrUsT".*));
 const has_overrides_tag: u64 = @bitCast(@as([8]u8, "oVeRriDs".*));
+const has_scoped_overrides_tag: u64 = @bitCast(@as([8]u8, "sCopedOs".*));
 const has_catalogs_tag: u64 = @bitCast(@as([8]u8, "cAtAlOgS".*));
 const has_config_version_tag: u64 = @bitCast(@as([8]u8, "cNfGvRsN".*));
 
@@ -128,7 +129,8 @@ pub fn save(this: *Lockfile, options: *const PackageManager.Options, bytes: *std
         }
     }
 
-    if (this.overrides.map.count() > 0) {
+    if (this.overrides.global.count() > 0) {
+        const global_n = this.overrides.global.count();
         try writer.writeAll(std.mem.asBytes(&has_overrides_tag));
 
         try Lockfile.Buffers.writeArray(
@@ -137,12 +139,12 @@ pub fn save(this: *Lockfile, options: *const PackageManager.Options, bytes: *std
             @TypeOf(writer),
             writer,
             []PackageNameHash,
-            this.overrides.map.keys(),
+            this.overrides.global.keys(),
         );
-        var external_overrides = try std.ArrayListUnmanaged(Dependency.External).initCapacity(z_allocator, this.overrides.map.count());
+        var external_overrides = try std.ArrayListUnmanaged(Dependency.External).initCapacity(z_allocator, global_n);
         defer external_overrides.deinit(z_allocator);
-        external_overrides.items.len = this.overrides.map.count();
-        for (external_overrides.items, this.overrides.map.values()) |*dest, src| {
+        external_overrides.items.len = global_n;
+        for (external_overrides.items, this.overrides.global.values()) |*dest, src| {
             dest.* = src.toExternal();
         }
 
@@ -153,6 +155,68 @@ pub fn save(this: *Lockfile, options: *const PackageManager.Options, bytes: *std
             writer,
             []Dependency.External,
             external_overrides.items,
+        );
+    }
+
+    if (this.overrides.scoped.count() > 0) {
+        const scoped_n = this.overrides.scoped.count();
+        try writer.writeAll(std.mem.asBytes(&has_scoped_overrides_tag));
+
+        var parent_hashes = try std.ArrayListUnmanaged(PackageNameHash).initCapacity(z_allocator, scoped_n);
+        defer parent_hashes.deinit(z_allocator);
+        parent_hashes.items.len = scoped_n;
+        var child_hashes = try std.ArrayListUnmanaged(PackageNameHash).initCapacity(z_allocator, scoped_n);
+        defer child_hashes.deinit(z_allocator);
+        child_hashes.items.len = scoped_n;
+        var parent_names = try std.ArrayListUnmanaged(String).initCapacity(z_allocator, scoped_n);
+        defer parent_names.deinit(z_allocator);
+        parent_names.items.len = scoped_n;
+
+        for (this.overrides.scoped.keys(), 0..) |key, i| {
+            parent_hashes.items[i] = key.parent_name_hash;
+            child_hashes.items[i] = key.child_name_hash;
+            parent_names.items[i] = key.parent_name;
+        }
+
+        try Lockfile.Buffers.writeArray(
+            StreamType,
+            stream,
+            @TypeOf(writer),
+            writer,
+            []PackageNameHash,
+            parent_hashes.items,
+        );
+        try Lockfile.Buffers.writeArray(
+            StreamType,
+            stream,
+            @TypeOf(writer),
+            writer,
+            []PackageNameHash,
+            child_hashes.items,
+        );
+        try Lockfile.Buffers.writeArray(
+            StreamType,
+            stream,
+            @TypeOf(writer),
+            writer,
+            []String,
+            parent_names.items,
+        );
+
+        var external_scoped = try std.ArrayListUnmanaged(Dependency.External).initCapacity(z_allocator, scoped_n);
+        defer external_scoped.deinit(z_allocator);
+        external_scoped.items.len = scoped_n;
+        for (external_scoped.items, this.overrides.scoped.values()) |*dest, src| {
+            dest.* = src.toExternal();
+        }
+
+        try Lockfile.Buffers.writeArray(
+            StreamType,
+            stream,
+            @TypeOf(writer),
+            writer,
+            []Dependency.External,
+            external_scoped.items,
         );
     }
 
@@ -451,15 +515,13 @@ pub fn load(
                 );
                 defer overrides_name_hashes.deinit(allocator);
 
-                var map = lockfile.overrides.map;
-                defer lockfile.overrides.map = map;
-
-                try map.ensureTotalCapacity(allocator, overrides_name_hashes.items.len);
-                const override_versions_external = try Lockfile.Buffers.readArray(
+                try lockfile.overrides.global.ensureTotalCapacity(allocator, overrides_name_hashes.items.len);
+                var override_versions_external = try Lockfile.Buffers.readArray(
                     stream,
                     allocator,
                     std.ArrayListUnmanaged(Dependency.External),
                 );
+                defer override_versions_external.deinit(allocator);
                 const context: Dependency.Context = .{
                     .allocator = allocator,
                     .log = log,
@@ -467,7 +529,60 @@ pub fn load(
                     .package_manager = manager,
                 };
                 for (overrides_name_hashes.items, override_versions_external.items) |name, value| {
-                    map.putAssumeCapacity(name, Dependency.toDependency(value, context));
+                    lockfile.overrides.global.putAssumeCapacity(name, Dependency.toDependency(value, context));
+                }
+            } else {
+                stream.pos -= 8;
+            }
+        }
+    }
+
+    {
+        const remaining_in_buffer = total_buffer_size -| stream.pos;
+
+        if (remaining_in_buffer > 8 and total_buffer_size <= stream.buffer.len) {
+            const next_num = try reader.readInt(u64, .little);
+            if (next_num == has_scoped_overrides_tag) {
+                var parent_hashes = try Lockfile.Buffers.readArray(
+                    stream,
+                    allocator,
+                    std.ArrayListUnmanaged(PackageNameHash),
+                );
+                defer parent_hashes.deinit(allocator);
+
+                var child_hashes = try Lockfile.Buffers.readArray(
+                    stream,
+                    allocator,
+                    std.ArrayListUnmanaged(PackageNameHash),
+                );
+                defer child_hashes.deinit(allocator);
+
+                var parent_names = try Lockfile.Buffers.readArray(
+                    stream,
+                    allocator,
+                    std.ArrayListUnmanaged(String),
+                );
+                defer parent_names.deinit(allocator);
+
+                var scoped_versions_external = try Lockfile.Buffers.readArray(
+                    stream,
+                    allocator,
+                    std.ArrayListUnmanaged(Dependency.External),
+                );
+                defer scoped_versions_external.deinit(allocator);
+
+                try lockfile.overrides.scoped.ensureTotalCapacity(allocator, parent_hashes.items.len);
+                const context: Dependency.Context = .{
+                    .allocator = allocator,
+                    .log = log,
+                    .buffer = lockfile.buffers.string_bytes.items,
+                    .package_manager = manager,
+                };
+                for (parent_hashes.items, child_hashes.items, parent_names.items, scoped_versions_external.items) |parent_hash, child_hash, parent_name, value| {
+                    lockfile.overrides.scoped.putAssumeCapacity(
+                        .{ .parent_name_hash = parent_hash, .child_name_hash = child_hash, .parent_name = parent_name },
+                        Dependency.toDependency(value, context),
+                    );
                 }
             } else {
                 stream.pos -= 8;

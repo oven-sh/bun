@@ -2,20 +2,52 @@ const OverrideMap = @This();
 
 const debug = Output.scoped(.OverrideMap, .visible);
 
-map: std.ArrayHashMapUnmanaged(PackageNameHash, Dependency, ArrayIdentityContext.U64, false) = .{},
+pub const ScopedOverrideKey = extern struct {
+    parent_name_hash: PackageNameHash,
+    child_name_hash: PackageNameHash,
+    parent_name: String = .{},
+};
 
-/// In the future, this `get` function should handle multi-level resolutions. This is difficult right
-/// now because given a Dependency ID, there is no fast way to trace it to its package.
+pub const ScopedOverrideContext = struct {
+    pub fn hash(self: @This(), key: ScopedOverrideKey) u32 {
+        _ = self;
+        return @truncate(@as(u64, key.parent_name_hash) *% 33 +% @as(u64, key.child_name_hash));
+    }
+
+    pub fn eql(self: @This(), a: ScopedOverrideKey, b: ScopedOverrideKey, b_index: usize) bool {
+        _ = self;
+        _ = b_index;
+        return a.parent_name_hash == b.parent_name_hash and a.child_name_hash == b.child_name_hash;
+    }
+};
+
+global: std.ArrayHashMapUnmanaged(PackageNameHash, Dependency, ArrayIdentityContext.U64, false) = .{},
+scoped: std.ArrayHashMapUnmanaged(ScopedOverrideKey, Dependency, ScopedOverrideContext, false) = .{},
+
+/// Lookup an override for a dependency, checking scoped overrides first (if a parent is known),
+/// then falling back to global overrides.
 ///
-/// A potential approach is to add another buffer to the lockfile that maps Dependency ID to Package ID,
-/// and from there `OverrideMap.map` can have a union as the value, where the union is between "override all"
-/// and "here is a list of overrides depending on the package that imported" similar to PackageIndex above.
-pub fn get(this: *const OverrideMap, name_hash: PackageNameHash) ?Dependency.Version {
-    debug("looking up override for {x}", .{name_hash});
-    if (this.map.count() == 0) {
+/// Lookup precedence:
+/// 1. If `parent_package_id` is provided and a scoped override exists for
+///    (parent_name_hash, name_hash), return the scoped override version.
+/// 2. If a global override exists for `name_hash`, return the global override version.
+/// 3. Otherwise, return null.
+pub fn get(this: *const OverrideMap, lockfile: *const Lockfile, name_hash: PackageNameHash, parent_package_id: ?PackageID) ?Dependency.Version {
+    if (this.global.count() == 0 and this.scoped.count() == 0) {
         return null;
     }
-    return if (this.map.get(name_hash)) |dep|
+
+    if (parent_package_id) |pid| {
+        if (pid < lockfile.packages.len) {
+            const parent_name_hash = lockfile.packages.items(.name_hash)[pid];
+            if (this.scoped.get(.{ .parent_name_hash = parent_name_hash, .child_name_hash = name_hash })) |dep| {
+                debug("scoped override: {x} under parent {x} -> {s}", .{ name_hash, parent_name_hash, lockfile.str(&dep.version.literal) });
+                return dep.version;
+            }
+        }
+    }
+
+    return if (this.global.get(name_hash)) |dep|
         dep.version
     else
         null;
@@ -38,29 +70,76 @@ pub fn sort(this: *OverrideMap, lockfile: *const Lockfile) void {
 
     const ctx: Ctx = .{
         .buf = lockfile.buffers.string_bytes.items,
-        .override_deps = this.map.values().ptr,
+        .override_deps = this.global.values().ptr,
     };
 
-    this.map.sort(&ctx);
+    this.global.sort(&ctx);
+
+    const ScopedCtx = struct {
+        buf: string,
+        scoped_keys: [*]const ScopedOverrideKey,
+        override_deps: [*]const Dependency,
+
+        pub fn lessThan(sorter: *const @This(), l: usize, r: usize) bool {
+            const keys = sorter.scoped_keys;
+            const l_key = keys[l];
+            const r_key = keys[r];
+            if (l_key.parent_name_hash != r_key.parent_name_hash) {
+                return l_key.parent_name_hash < r_key.parent_name_hash;
+            }
+            const deps = sorter.override_deps;
+            return deps[l].name.order(&deps[r].name, sorter.buf, sorter.buf) == .lt;
+        }
+    };
+
+    const scoped_ctx: ScopedCtx = .{
+        .buf = lockfile.buffers.string_bytes.items,
+        .scoped_keys = this.scoped.keys().ptr,
+        .override_deps = this.scoped.values().ptr,
+    };
+
+    this.scoped.sort(&scoped_ctx);
 }
 
 pub fn deinit(this: *OverrideMap, allocator: Allocator) void {
-    this.map.deinit(allocator);
+    this.global.deinit(allocator);
+    this.scoped.deinit(allocator);
 }
 
 pub fn count(this: *OverrideMap, lockfile: *Lockfile, builder: *Lockfile.StringBuilder) void {
-    for (this.map.values()) |dep| {
+    for (this.global.values()) |dep| {
         dep.count(lockfile.buffers.string_bytes.items, @TypeOf(builder), builder);
+    }
+    for (this.scoped.values()) |dep| {
+        dep.count(lockfile.buffers.string_bytes.items, @TypeOf(builder), builder);
+    }
+    for (this.scoped.keys()) |key| {
+        if (!key.parent_name.isEmpty()) {
+            builder.count(key.parent_name.slice(lockfile.buffers.string_bytes.items));
+        }
     }
 }
 
 pub fn clone(this: *OverrideMap, pm: *PackageManager, old_lockfile: *Lockfile, new_lockfile: *Lockfile, new_builder: *Lockfile.StringBuilder) !OverrideMap {
     var new = OverrideMap{};
-    try new.map.ensureTotalCapacity(new_lockfile.allocator, this.map.entries.len);
+    try new.global.ensureTotalCapacity(new_lockfile.allocator, this.global.entries.len);
 
-    for (this.map.keys(), this.map.values()) |k, v| {
-        new.map.putAssumeCapacity(
+    for (this.global.keys(), this.global.values()) |k, v| {
+        new.global.putAssumeCapacity(
             k,
+            try v.clone(pm, old_lockfile.buffers.string_bytes.items, @TypeOf(new_builder), new_builder),
+        );
+    }
+
+    try new.scoped.ensureTotalCapacity(new_lockfile.allocator, this.scoped.entries.len);
+    for (this.scoped.keys(), this.scoped.values()) |k, v| {
+        const new_parent_name = if (k.parent_name.isEmpty()) String.empty else new_builder.append(String, k.parent_name.slice(old_lockfile.buffers.string_bytes.items));
+        new.scoped.putAssumeCapacity(
+            .{
+                .parent_name_hash = k.parent_name_hash,
+                .child_name_hash = k.child_name_hash,
+                .parent_name = new_parent_name,
+            },
             try v.clone(pm, old_lockfile.buffers.string_bytes.items, @TypeOf(new_builder), new_builder),
         );
     }
@@ -92,6 +171,13 @@ pub fn parseCount(
                             builder.count(s);
                         }
                     }
+                    for (entry.value.?.data.e_object.properties.slice()) |child_prop| {
+                        const child_key = child_prop.key.?.asString(lockfile.allocator) orelse continue;
+                        if (strings.eqlComptime(child_key, ".")) continue;
+                        if (child_prop.value.?.data != .e_string) continue;
+                        builder.count(child_key);
+                        builder.count(child_prop.value.?.asString(lockfile.allocator).?);
+                    }
                 },
                 else => {},
             }
@@ -120,14 +206,15 @@ pub fn parseAppend(
     builder: *Lockfile.StringBuilder,
 ) !void {
     if (Environment.allow_assert) {
-        assert(this.map.entries.len == 0); // only call parse once
+        assert(this.global.entries.len == 0); // only call parse once
+        assert(this.scoped.entries.len == 0);
     }
     if (expr.asProperty("overrides")) |overrides| {
         try this.parseFromOverrides(pm, lockfile, root_package, json_source, log, overrides.expr, builder);
     } else if (expr.asProperty("resolutions")) |resolutions| {
         try this.parseFromResolutions(pm, lockfile, root_package, json_source, log, resolutions.expr, builder);
     }
-    debug("parsed {d} overrides", .{this.map.entries.len});
+    debug("parsed {d} global + {d} scoped overrides", .{ this.global.entries.len, this.scoped.entries.len });
 }
 
 /// https://docs.npmjs.com/cli/v9/configuring-npm/package-json#overrides
@@ -146,7 +233,19 @@ pub fn parseFromOverrides(
         return error.Invalid;
     }
 
-    try this.map.ensureUnusedCapacity(lockfile.allocator, expr.data.e_object.properties.len);
+    // Count total child entries to size the scoped map safely
+    var total_child_entries: usize = 0;
+    for (expr.data.e_object.properties.slice()) |prop| {
+        const val = prop.value.?;
+        if (val.data == .e_object) {
+            total_child_entries += val.data.e_object.properties.len;
+        } else {
+            total_child_entries += 1; // each entry gets at least one slot
+        }
+    }
+
+    try this.global.ensureUnusedCapacity(lockfile.allocator, expr.data.e_object.properties.len);
+    try this.scoped.ensureUnusedCapacity(lockfile.allocator, total_child_entries);
 
     for (expr.data.e_object.properties.slice()) |prop| {
         const key = prop.key.?;
@@ -158,51 +257,75 @@ pub fn parseFromOverrides(
 
         const name_hash = String.Builder.stringHash(k);
 
-        const value = value: {
-            // for one level deep, we will only support a string and  { ".": value }
+        // Handle global override: string value or { ".": "version" } inside nested object
+        const global_override = global_override: {
             const value_expr = prop.value.?;
             if (value_expr.data == .e_string) {
-                break :value value_expr;
+                break :global_override value_expr;
             } else if (value_expr.data == .e_object) {
                 if (value_expr.asProperty(".")) |dot| {
                     if (dot.expr.data == .e_string) {
-                        if (value_expr.data.e_object.properties.len > 1) {
-                            try log.addWarningFmt(source, value_expr.loc, lockfile.allocator, "Bun currently does not support nested \"overrides\"", .{});
-                        }
-                        break :value dot.expr;
-                    } else {
-                        try log.addWarningFmt(source, value_expr.loc, lockfile.allocator, "Invalid override value for \"{s}\"", .{k});
-                        continue;
+                        break :global_override dot.expr;
                     }
-                } else {
-                    try log.addWarningFmt(source, value_expr.loc, lockfile.allocator, "Bun currently does not support nested \"overrides\"", .{});
-                    continue;
                 }
             }
-            try log.addWarningFmt(source, value_expr.loc, lockfile.allocator, "Invalid override value for \"{s}\"", .{k});
-            continue;
+            break :global_override null;
         };
 
-        const version_str = value.data.e_string.slice(lockfile.allocator);
-        if (strings.hasPrefixComptime(version_str, "patch:")) {
-            // TODO(dylan-conway): apply .patch files to packages
-            try log.addWarningFmt(source, key.loc, lockfile.allocator, "Bun currently does not support patched package \"overrides\"", .{});
-            continue;
+        if (global_override) |value| {
+            const version_str = value.data.e_string.slice(lockfile.allocator);
+            if (strings.hasPrefixComptime(version_str, "patch:")) {
+                try log.addWarningFmt(source, key.loc, lockfile.allocator, "Bun currently does not support patched package \"overrides\"", .{});
+            } else if (try parseOverrideValue(
+                "override",
+                lockfile,
+                pm,
+                root_package,
+                source,
+                value.loc,
+                log,
+                k,
+                version_str,
+                builder,
+            )) |version| {
+                this.global.putAssumeCapacity(name_hash, version);
+            }
         }
 
-        if (try parseOverrideValue(
-            "override",
-            lockfile,
-            pm,
-            root_package,
-            source,
-            value.loc,
-            log,
-            k,
-            version_str,
-            builder,
-        )) |version| {
-            this.map.putAssumeCapacity(name_hash, version);
+        // Handle scoped override children in the object
+        if (prop.value.?.data == .e_object) {
+            for (prop.value.?.data.e_object.properties.slice()) |child_prop| {
+                const child_key_str = child_prop.key.?.asString(lockfile.allocator) orelse continue;
+                if (strings.eqlComptime(child_key_str, ".")) continue;
+                if (child_prop.value.?.data != .e_string) {
+                    try log.addWarningFmt(source, child_prop.value.?.loc, lockfile.allocator, "Bun currently does not support nested \"overrides\"", .{});
+                    continue;
+                }
+                const child_version_str = child_prop.value.?.data.e_string.slice(lockfile.allocator);
+                if (strings.hasPrefixComptime(child_version_str, "patch:")) {
+                    try log.addWarningFmt(source, child_prop.key.?.loc, lockfile.allocator, "Bun currently does not support patched package \"overrides\"", .{});
+                    continue;
+                }
+                if (try parseOverrideValue(
+                    "override",
+                    lockfile,
+                    pm,
+                    root_package,
+                    source,
+                    child_prop.value.?.loc,
+                    log,
+                    child_key_str,
+                    child_version_str,
+                    builder,
+                )) |child_dep| {
+                    const child_name_hash = String.Builder.stringHash(child_key_str);
+                    this.scoped.putAssumeCapacity(.{
+                        .parent_name_hash = name_hash,
+                        .child_name_hash = child_name_hash,
+                        .parent_name = builder.append(String, k),
+                    }, child_dep);
+                }
+            }
         }
     }
 }
@@ -223,7 +346,8 @@ pub fn parseFromResolutions(
         try log.addWarningFmt(source, expr.loc, lockfile.allocator, "\"resolutions\" must be an object with string values", .{});
         return;
     }
-    try this.map.ensureUnusedCapacity(lockfile.allocator, expr.data.e_object.properties.len);
+    try this.global.ensureUnusedCapacity(lockfile.allocator, expr.data.e_object.properties.len);
+    try this.scoped.ensureUnusedCapacity(lockfile.allocator, expr.data.e_object.properties.len);
     for (expr.data.e_object.properties.slice()) |prop| {
         const key = prop.key.?;
         var k = key.asString(lockfile.allocator).?;
@@ -238,29 +362,39 @@ pub fn parseFromResolutions(
             try log.addWarningFmt(source, key.loc, lockfile.allocator, "Expected string value for resolution \"{s}\"", .{k});
             continue;
         }
-        // currently we only support one level deep, so we should error if there are more than one
-        // - "foo/bar":
-        // - "@namespace/hello/world"
-        if (k[0] == '@') {
-            const first_slash = strings.indexOfChar(k, '/') orelse {
-                try log.addWarningFmt(source, key.loc, lockfile.allocator, "Invalid package name \"{s}\"", .{k});
-                continue;
-            };
-            if (strings.indexOfChar(k[first_slash + 1 ..], '/') != null) {
-                try log.addWarningFmt(source, key.loc, lockfile.allocator, "Bun currently does not support nested \"resolutions\"", .{});
-                continue;
-            }
-        } else if (strings.indexOfChar(k, '/') != null) {
-            try log.addWarningFmt(source, key.loc, lockfile.allocator, "Bun currently does not support nested \"resolutions\"", .{});
-            continue;
-        }
-
         const version_str = value.data.e_string.data;
         if (strings.hasPrefixComptime(version_str, "patch:")) {
-            // TODO(dylan-conway): apply .patch files to packages
             try log.addWarningFmt(source, key.loc, lockfile.allocator, "Bun currently does not support patched package \"resolutions\"", .{});
             continue;
         }
+
+        // Parse parent/child from resolution key for scoped override
+        const parent_child = parseParentChild: {
+            // Detect the last '/' that separates parent from child
+            // For scoped packages like @scope/parent/child, the first '/' belongs to the scope
+            var last_slash: ?usize = null;
+            if (k.len > 0 and k[0] == '@') {
+                // @scope/parent/child — first '/' belongs to the scope, take the NEXT '/' after it
+                const first_slash = strings.indexOfChar(k, '/') orelse {
+                    break :parseParentChild null;
+                };
+                if (first_slash < k.len - 1) {
+                    if (strings.indexOfChar(k[first_slash + 1 ..], '/')) |rel| {
+                        last_slash = first_slash + 1 + rel;
+                    }
+                }
+            } else {
+                last_slash = if (strings.indexOfChar(k, '/')) |idx| @as(usize, idx) else null;
+            }
+
+            break :parseParentChild if (last_slash) |sep| struct {
+                parent: []const u8,
+                child: []const u8,
+            }{
+                .parent = k[0..sep],
+                .child = k[sep + 1 ..],
+            } else null;
+        };
 
         if (try parseOverrideValue(
             "resolution",
@@ -270,12 +404,29 @@ pub fn parseFromResolutions(
             source,
             value.loc,
             log,
-            k,
+            if (parent_child) |pc| pc.child else k,
             version_str,
             builder,
-        )) |version| {
-            const name_hash = String.Builder.stringHash(k);
-            this.map.putAssumeCapacity(name_hash, version);
+        )) |dep| {
+            if (parent_child) |pc| {
+                // Scoped resolution: parent/child
+                if ((!strings.hasPrefixComptime(pc.parent, "@") and strings.containsChar(pc.parent, '/')) or
+                    (!strings.hasPrefixComptime(pc.child, "@") and strings.containsChar(pc.child, '/')))
+                {
+                    try log.addWarningFmt(source, key.loc, lockfile.allocator, "Deeply nested resolution \"{s}\" is not supported", .{k});
+                    continue;
+                }
+                const parent_name_hash = String.Builder.stringHash(pc.parent);
+                this.scoped.putAssumeCapacity(.{
+                    .parent_name_hash = parent_name_hash,
+                    .child_name_hash = dep.name_hash,
+                    .parent_name = builder.append(String, pc.parent),
+                }, dep);
+            } else {
+                // Global resolution
+                const name_hash = String.Builder.stringHash(k);
+                this.global.putAssumeCapacity(name_hash, dep);
+            }
         }
     }
 }
@@ -357,4 +508,5 @@ const String = bun.Semver.String;
 const Dependency = bun.install.Dependency;
 const Lockfile = bun.install.Lockfile;
 const PackageManager = bun.install.PackageManager;
+const PackageID = bun.install.PackageID;
 const PackageNameHash = bun.install.PackageNameHash;

@@ -252,14 +252,15 @@ impl Listener {
                             });
                             return Ok(this_value);
                         }
-                        // `strong_self` empty ⇒ the previous listener was
-                        // `unref()`'d. We can't mint a second JS wrapper for
-                        // the same `*mut Listener` (two wrappers → double
-                        // free on finalize), so close its listen socket to
-                        // release the port and fall through to a fresh bind.
-                        // `do_stop` also drops the hot-map entry so the
-                        // insert below won't collide. Accepted connections
-                        // on the old listener stay open (force_close=false).
+                        // `this_value` is gone ⇒ the previous listener's JS
+                        // wrapper was GC'd after an `unref()`. We can't mint
+                        // a second JS wrapper for the same `*mut Listener`
+                        // (two wrappers → double free on finalize), so close
+                        // its listen socket to release the port and fall
+                        // through to a fresh bind. `do_stop` also drops the
+                        // hot-map entry so the insert below won't collide.
+                        // Accepted connections on the old listener stay open
+                        // (force_close=false).
                         Listener::do_stop(existing, false);
                     }
                 }
@@ -885,7 +886,6 @@ impl Listener {
                     // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                     let fd = bun_opaque::opaque_deref_mut(socket).fd();
                     self.handlers
-                        .get()
                         .global_object
                         .bun_vm()
                         .as_mut()

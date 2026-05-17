@@ -120,9 +120,7 @@
           pkgs.gdk-pixbuf
         ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
           # macOS specific dependencies
-          pkgs.darwin.apple_sdk.frameworks.CoreFoundation
-          pkgs.darwin.apple_sdk.frameworks.CoreServices
-          pkgs.darwin.apple_sdk.frameworks.Security
+          pkgs.apple-sdk_15
         ];
 
       in

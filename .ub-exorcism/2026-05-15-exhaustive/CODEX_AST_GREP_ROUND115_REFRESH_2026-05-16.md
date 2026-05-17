@@ -13,7 +13,9 @@ owners instead of inflating the registry.
 ```
 
 **Raw output:** `phase2_raw/codex_ast_grep_ub_patterns_round115_2026-05-16.log`
-(84,757 lines).
+(84,757 lines, ~6 MB). **Dropped from the PR** to keep the diff
+reviewable; the triage table below preserves every actionable signal.
+To regenerate, rerun the command above against `origin/main@4d443e5402`.
 
 ## Pattern Counts
 

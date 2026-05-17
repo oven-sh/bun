@@ -4,8 +4,7 @@ Scope: fresh run of the skill's bundled ast-grep UB pattern suite against curren
 
 Raw output:
 
-- `phase2_raw/codex_ast_grep_ub_patterns_round82_2026-05-16.log`
-- 84,757 lines
+- `phase2_raw/codex_ast_grep_ub_patterns_round82_2026-05-16.log` — 84,757 lines, ~6 MB. **Dropped from the PR** to keep the diff reviewable; the triage below preserves every actionable signal. To regenerate, rerun the skill's ast-grep ruleset against `origin/main@4d443e5402` at round 82.
 
 ## Pattern Counts
 
@@ -80,7 +79,7 @@ No new EXP.
 ## Artifact Changes From This Triage
 
 - Added this triage document.
-- Added raw detector output at `phase2_raw/codex_ast_grep_ub_patterns_round82_2026-05-16.log`.
+- Ran the raw detector at `phase2_raw/codex_ast_grep_ub_patterns_round82_2026-05-16.log` (dropped from PR; see note above).
 - Corrected the Phase-4 header from `EXP-001..EXP-095` to `EXP-001..EXP-096`.
 - Corrected the final-report Phase-5 log count from 110 to 111 and included EXP-096 in the evidence-set sentence.
 

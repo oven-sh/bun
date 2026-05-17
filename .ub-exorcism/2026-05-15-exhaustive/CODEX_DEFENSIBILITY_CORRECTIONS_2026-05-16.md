@@ -1860,9 +1860,9 @@ EXP-109 root-graph demotion, and other verdict cleanups.
 
 114. **Fresh ast-grep round-82 triage**
     - Re-ran the skill's bundled ast-grep UB pattern suite against current
-      `src/` and retained raw output at
-      `phase2_raw/codex_ast_grep_ub_patterns_round82_2026-05-16.log`
-      (84,757 lines).
+      `src/`. Raw output (`phase2_raw/codex_ast_grep_ub_patterns_round82_2026-05-16.log`,
+      84,757 lines, ~6 MB) was later dropped from the PR to keep the diff
+      reviewable; regenerate by rerunning the suite against `origin/main@4d443e5402`.
     - Added `CODEX_AST_GREP_ROUND82_TRIAGE_2026-05-16.md` with per-pattern
       counts and high-signal spot checks.
     - Cross-checked the small/high-signal buckets (`from_ref`/const-to-mut
@@ -2445,10 +2445,10 @@ EXP-109 root-graph demotion, and other verdict cleanups.
       latest-main live count until every EXP is replayed.
 
 144. **Ast-grep round-115 refresh**
-    - Reran the UB skill's bundled ast-grep pack against `src/` and saved raw
-      output to
-      `phase2_raw/codex_ast_grep_ub_patterns_round115_2026-05-16.log`
-      (84,757 lines).
+    - Reran the UB skill's bundled ast-grep pack against `src/`. Raw output
+      (`phase2_raw/codex_ast_grep_ub_patterns_round115_2026-05-16.log`,
+      84,757 lines, ~6 MB) was later dropped from the PR to keep the diff
+      reviewable; regenerate by rerunning the pack against `origin/main@4d443e5402`.
     - Added `CODEX_AST_GREP_ROUND115_REFRESH_2026-05-16.md` to prevent raw
       detector counts from becoming public finding counts.
     - High-signal aliasing hits were unchanged from the prior ast-grep review:

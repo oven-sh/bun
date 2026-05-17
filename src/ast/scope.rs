@@ -93,26 +93,30 @@ impl Default for Scope {
 pub type NestedScopeMap = ArrayHashMap<u32, Vec<StoreRef<Scope>>>;
 
 impl Scope {
-    // PERF(port): the parser's hot path computes the wyhash once and reuses it
-    // for lookup+insert; `StringHashMap`'s current `std::HashMap` backing
-    // ignores the precomputed hash (see `get_adapted` doc), so the rehash
-    // avoidance is lost until that map moves onto a wyhash-backed table.
+    // Must agree with `StringHashMap`'s `BuildHasher` (`bun_wyhash::BuildHasher`,
+    // i.e. `BuildHasherDefault<OneShotHasher>`) so the precomputed hash can be
+    // fed to `get_hashed` without a rehash per scope level. If the map's hasher
+    // ever changes, this must change with it (the debug_assert below catches it).
     pub fn get_member_hash(name: &[u8]) -> u64 {
-        bun_collections::string_hash_map::hash(name)
+        bun_wyhash::auto_hash::<[u8]>(name)
     }
     pub fn get_member_with_hash(&self, name: &[u8], hash_value: u64) -> Option<Member> {
-        let hashed = bun_collections::string_hash_map::Prehashed {
-            value: hash_value,
-            input: name,
-        };
-        self.members.get_adapted(name, &hashed).copied()
+        debug_assert_eq!(
+            self.members.hash_key(name),
+            hash_value,
+            "Scope::get_member_hash diverged from StringHashMap's BuildHasher"
+        );
+        self.members.get_hashed(hash_value, name).copied()
     }
     pub fn get_or_put_member_with_hash(
         &mut self,
         name: &[u8],
         hash_value: u64,
     ) -> bun_collections::array_hash_map::StringHashMapGetOrPut<'_, Member> {
-        let _ = hash_value; // PERF(port): see `StringHashMap::get_adapted` note.
+        // PERF(port): `get_or_put_borrowed` doesn't accept a precomputed hash;
+        // this path is once-per-declared-symbol (not per-scope-per-identifier),
+        // so the redundant rehash is left as-is.
+        let _ = hash_value;
         // SAFETY: `name` is always a slice into either the source-file contents
         // or the lexer string-table (the only producers of identifier text in
         // the parser). Both outlive the `AstAlloc` arena that owns this

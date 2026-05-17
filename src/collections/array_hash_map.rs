@@ -1929,13 +1929,11 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
 
     /// Zig `getAdapted` — look up by `key` using `adapter` for hash/eql.
     ///
-    /// PERF(port): the underlying `std::HashMap` cannot be queried with an
-    /// external u64 hash (it uses its own `BuildHasher`), so the adapter's
-    /// precomputed hash is ignored and the lookup falls back to the normal
-    /// `get(key)` path. Correctness is preserved (`adapter.eql` is byte
-    /// equality for all current adapters); only the rehash-avoidance is lost.
-    /// Restore once `StringHashMap` is moved off `std::HashMap` onto a
-    /// wyhash-backed table that accepts a raw u64.
+    /// The adapter's precomputed hash is ignored; the lookup falls back to the
+    /// normal `get(key)` path (correctness is preserved — `adapter.eql` is byte
+    /// equality for all current adapters). Callers that already hold a hash
+    /// computed with [`hash_key`] should use [`get_hashed`] instead to skip the
+    /// rehash.
     #[inline]
     pub fn get_adapted<C>(&self, key: &[u8], _adapter: &C) -> Option<&V> {
         self.inner.get(key)

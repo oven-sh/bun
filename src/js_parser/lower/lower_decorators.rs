@@ -422,19 +422,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Bump-format `_{prefix}{n}` (or just `_{prefix}` when n is omitted).
-    fn bump_name(&self, prefix: &[u8], n: Option<usize>) -> &'a [u8] {
-        let mut v = BumpVec::<u8>::new_in(self.arena);
-        v.extend_from_slice(prefix);
-        if let Some(n) = n {
-            // PORT NOTE: bumpalo Vec<u8> doesn't impl io::Write; format into a
-            // bump String and copy the bytes.
-            let s = bun_alloc::arena_format!(in self.arena, "{}", n);
-            v.extend_from_slice(s.as_bytes());
-        }
-        v.into_bump_slice()
-    }
-
     fn bump_name2(&self, a: &[u8], b: &[u8]) -> &'a [u8] {
         let mut v = BumpVec::<u8>::new_in(self.arena);
         v.extend_from_slice(a);

@@ -781,6 +781,21 @@ describe.concurrent(() => {
       expect(stderr).toBe("\n");
       expect(exitCode).toBe(0);
     });
+
+    it("returns the same function across accesses (PropertyCallback cache)", async () => {
+      // The _rawDebug accessor is wired as a PropertyCallback that lazily
+      // constructs the function once and caches it on the process object.
+      // Matches Node: `process._rawDebug === process._rawDebug` is true.
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", `console.log(process._rawDebug === process._rawDebug);`],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("true\n");
+      expect(exitCode).toBe(0);
+    });
   });
 
   it("dlopen args parsing", () => {

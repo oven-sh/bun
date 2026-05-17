@@ -182,7 +182,9 @@ impl StringJoiner {
     }
 
     pub fn last_byte(&self) -> u8 {
-        let Some(tail) = self.nodes.last() else { return 0 };
+        let Some(tail) = self.nodes.last() else {
+            return 0;
+        };
         let slice = tail.slice();
         debug_assert!(!slice.is_empty());
         slice[slice.len() - 1]

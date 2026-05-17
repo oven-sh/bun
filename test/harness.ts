@@ -69,15 +69,8 @@ export const bunEnv: NodeJS.Dict<string> = {
 
 const ciEnv = { ...bunEnv };
 
-// The test runner (scripts/runner.node.mjs) opts the test-runner process into
-// LSan via `ASAN_OPTIONS=...:detect_leaks=1:abort_on_error=1`. That value is
-// inherited by `process.env`, so without an override every subprocess spawned
-// with `bunEnv` would also run the LSan exit pass — which launches
-// `llvm-symbolizer` and adds ~5s of wall time per process on a large debug
-// binary, blowing past 5s test timeouts. Leak-check the test-runner only and
-// rely on `__asan_default_options`'s `detect_leaks=0` for children.
-if (isASAN || process.env.ASAN_OPTIONS) {
-  bunEnv.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0";
+if (isASAN) {
+  bunEnv.ASAN_OPTIONS ??= "allow_user_segv_handler=1:disable_coredump=0";
 }
 
 if (isWindows) {

@@ -1577,6 +1577,21 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                         destination_blob.detach();
                         return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
                     }
+
+                    // If the body is backed by a ReadableStream, pipe it to the file.
+                    // Without this, we'd only install an `onReceiveValue` callback and
+                    // never actually read from the stream, so the promise would never
+                    // settle (e.g. `Bun.write(path, new Response(req.body))`).
+                    // https://github.com/oven-sh/bun/issues/13237
+                    if (response.getBodyReadableStream(globalThis) orelse bodyValue.Locked.readable.get(globalThis)) |readable| {
+                        if (readable.isDisturbed(globalThis)) {
+                            destination_blob.detach();
+                            return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
+                        }
+                        defer destination_blob.detach();
+                        return destination_blob.pipeReadableStreamToBlob(globalThis, readable, options.extra_options);
+                    }
+
                     var task = bun.new(WriteFileWaitFromLockedValueTask, .{
                         .globalThis = globalThis,
                         .file_blob = destination_blob,
@@ -1640,6 +1655,21 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                         destination_blob.detach();
                         return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
                     }
+
+                    // If the body is backed by a ReadableStream, pipe it to the file.
+                    // Without this, we'd only install an `onReceiveValue` callback and
+                    // never actually read from the stream, so the promise would never
+                    // settle (e.g. `Bun.write(path, req)` after accessing `req.body`).
+                    // https://github.com/oven-sh/bun/issues/13237
+                    if (request.getBodyReadableStream(globalThis) orelse locked.readable.get(globalThis)) |readable| {
+                        if (readable.isDisturbed(globalThis)) {
+                            destination_blob.detach();
+                            return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
+                        }
+                        defer destination_blob.detach();
+                        return destination_blob.pipeReadableStreamToBlob(globalThis, readable, options.extra_options);
+                    }
+
                     var task = bun.new(WriteFileWaitFromLockedValueTask, .{
                         .globalThis = globalThis,
                         .file_blob = destination_blob,
@@ -2551,20 +2581,21 @@ pub fn onFileStreamResolveRequestStream(globalThis: *jsc.JSGlobalObject, callfra
     var args = callframe.arguments_old(2);
     var this = args.ptr[args.len - 1].asPromisePtr(FileStreamWrapper);
     defer this.deinit();
+    const written = this.sink.written;
     var strong = this.readable_stream_ref;
     defer strong.deinit();
     this.readable_stream_ref = .{};
     if (strong.get(globalThis)) |stream| {
         stream.done(globalThis);
     }
-    try this.promise.resolve(globalThis, jsc.JSValue.jsNumber(0));
+    try this.promise.resolve(globalThis, jsc.JSValue.jsNumber(written));
     return .js_undefined;
 }
 
 pub fn onFileStreamRejectRequestStream(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const args = callframe.arguments_old(2);
     var this = args.ptr[args.len - 1].asPromisePtr(FileStreamWrapper);
-    defer this.sink.deref();
+    defer this.deinit();
     const err = args.ptr[0];
 
     var strong = this.readable_stream_ref;
@@ -2631,11 +2662,14 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
                 const path = pathlike.path.sliceZ(&file_path);
                 switch (bun.sys.open(
                     path,
-                    bun.O.WRONLY | bun.O.CREAT | bun.O.NONBLOCK,
+                    bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC | bun.O.NONBLOCK,
                     write_permissions,
                 )) {
-                    .result => |result| {
-                        break :brk result;
+                    .result => |result| switch (result.makeLibUVOwnedForSyscall(.open, .close_on_fail)) {
+                        .result => |uv_fd| break :brk uv_fd,
+                        .err => |err| {
+                            return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, try err.withPath(path).toJS(globalThis));
+                        },
                     },
                     .err => |err| {
                         return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, try err.withPath(path).toJS(globalThis));
@@ -2737,8 +2771,10 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
 
     assignment_result.ensureStillAlive();
 
-    // assert that it was updated
-    bun.assert(!signal.isDead());
+    // Note: signal may still be dead if readStreamIntoSink completed
+    // synchronously (readMany() returned done:true without awaiting).
+    // In that case $startDirectStream is never called, which is fine
+    // because the stream has already been fully consumed via sink.end().
 
     if (assignment_result.toError()) |err| {
         file_sink.deref();
@@ -2769,9 +2805,10 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
                     return promise_value;
                 },
                 .fulfilled => {
+                    const written = file_sink.written;
                     file_sink.deref();
                     readable_stream.done(globalThis);
-                    return jsc.JSPromise.resolvedPromiseValue(globalThis, jsc.JSValue.jsNumber(0));
+                    return jsc.JSPromise.resolvedPromiseValue(globalThis, jsc.JSValue.jsNumber(written));
                 },
                 .rejected => {
                     file_sink.deref();
@@ -2789,9 +2826,10 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
             return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, assignment_result);
         }
     }
+    const written = file_sink.written;
     file_sink.deref();
 
-    return jsc.JSPromise.resolvedPromiseValue(globalThis, jsc.JSValue.jsNumber(0));
+    return jsc.JSPromise.resolvedPromiseValue(globalThis, jsc.JSValue.jsNumber(written));
 }
 
 pub fn getWriter(

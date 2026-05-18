@@ -319,6 +319,7 @@ struct AuditRegistry {
     href: Box<[u8]>,
     url_hash: u64,
     authorization: Option<Vec<u8>>,
+    tls_props: Option<http::ssl_config::SharedPtr>,
     is_default: bool,
 }
 
@@ -328,6 +329,7 @@ impl AuditRegistry {
             href: Box::<[u8]>::from(strings::without_trailing_slash(scope.url.href())),
             url_hash: scope.url_hash,
             authorization: scope.authorization(&scope.url.url()),
+            tls_props: bun_install::npm::registry::registry_tls_config(scope),
             is_default,
         }
     }
@@ -674,6 +676,7 @@ fn send_audit_request(
         headers.entries,
         headers.content.written_slice(),
         &compressed_body,
+        registry.tls_props.clone(),
     );
     // A registry URL that is not http(s) is a configuration error, not a registry without an audit endpoint.
     let mut is_fatal = registry.is_default;

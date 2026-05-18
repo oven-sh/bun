@@ -24,6 +24,7 @@ use bun_jsc::{
     self as jsc, CallFrame, EventLoopHandle, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
     MarkedArrayBuffer, SysErrorJsc, ZigStringSlice,
 };
+use bun_ptr::AsCtxPtr;
 use bun_sys::{self as sys, Fd, FdExt};
 
 #[cfg(windows)]
@@ -363,18 +364,8 @@ impl Terminal {
         self.flags.set(v);
     }
 
-    /// `self`'s address as `*mut Self` for intrusive backref / refcount slots.
-    /// Callers deref it as `&*const` (shared) — see the `BufferedReaderParent`
-    /// / `*StreamingWriterParent` thunks below — so no write provenance is
-    /// required; the `*mut` spelling is purely to match the C-shaped vtable
-    /// signatures. All field mutation routes through `Cell`/`JsCell`.
-    #[inline]
-    fn as_ctx_ptr(&self) -> *mut Self {
-        (self as *const Self).cast_mut()
-    }
-
     /// Recover `&Terminal` from the parent back-pointer stashed via
-    /// [`as_ctx_ptr`](Self::as_ctx_ptr) in `init_terminal` (handed to
+    /// [`AsCtxPtr::as_ctx_ptr`] in `init_terminal` (handed to
     /// `reader.set_parent` / `writer.parent`). Centralises the set-once
     /// `*mut Self → &Self` deref so the I/O-vtable trampolines below stay
     /// safe at the call site (one `unsafe` here, N safe callers).

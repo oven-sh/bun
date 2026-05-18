@@ -887,7 +887,7 @@ impl Interpreter {
     /// `*mut Box<Interpreter>`.
     #[inline]
     pub fn as_ctx_ptr(&self) -> *mut Self {
-        (self as *const Self).cast_mut()
+        core::ptr::from_ref::<Self>(self).cast_mut()
     }
 
     /// Read-modify-write the packed `Cell<InterpreterFlags>` through `&self`.

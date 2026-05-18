@@ -33,6 +33,7 @@ use bun_resolver::tsconfig_json::TSConfigJSON;
 use bun_collections::ArrayHashMapExt;
 use bun_core::{String as BunString, ZigString};
 use bun_options_types::schema::api;
+use bun_ptr::AsCtxPtr;
 
 // TODO(port): `pub const js = jsc.Codegen.JSTranspiler;` and the toJS/fromJS/fromJSDirect
 // aliases are wired by `#[bun_jsc::JsClass]` codegen — see PORTING.md §JSC types.
@@ -1180,15 +1181,6 @@ impl Drop for TranspilerStateGuard {
 
 impl JSTranspiler {
     // ─── R-2 interior-mutability helpers ─────────────────────────────────────
-
-    /// `self`'s address as `*mut Self` for `IntrusiveRc::init_ref` and similar
-    /// FFI ctx slots that spell the parameter `*mut`. The only mutation through
-    /// this pointer goes to `ref_count` (`Cell<u32>`-backed) or `JsCell` fields,
-    /// so no write provenance on the outer `JSTranspiler` is required.
-    #[inline]
-    fn as_ctx_ptr(&self) -> *mut Self {
-        (self as *const Self).cast_mut()
-    }
 
     /// `*mut Log` to the resting-state `config.log`, projected through the
     /// `JsCell<Config>` (UnsafeCell-backed, so the write provenance is sound).

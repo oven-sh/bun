@@ -1433,10 +1433,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     pub fn active_sockets_count(&self) -> u32 {
-        self.config
-            .websocket
-            .as_ref()
-            .map_or(0, |ws| ws.handler.active_connections as u32)
+        self.config.websocket.as_ref().map_or(0, |ws| {
+            ws.handler.active_connections.load(Ordering::Relaxed) as u32
+        })
     }
 
     pub fn has_active_web_sockets(&self) -> bool {

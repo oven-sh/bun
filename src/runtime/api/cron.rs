@@ -41,6 +41,7 @@ use bun_sys::FdDirExt as _;
 // Owned NUL-terminated string (Zig `[:0]u8` allocation) — `bun_str` exposes the
 // borrowed `ZStr` only; the heap-backed counterpart is `bun_core::ZBox`.
 use bun_core::ZBox as ZString;
+use bun_ptr::AsCtxPtr;
 use bun_sys::{self as sys, Fd, File};
 
 // ─── local shims (upstream-crate gaps; see PORTING.md §extension traits) ────
@@ -1390,17 +1391,6 @@ impl CronJob {
         )))
     }
 
-    /// `self`'s address as `*mut Self` for raw-ptr-receiver helpers (e.g.
-    /// `self_stop`, `schedule_next`). The callees deref it as `&*` (shared) —
-    /// all mutation is `UnsafeCell`-backed — so no write provenance is
-    /// required; the `*mut` spelling is purely to match the existing
-    /// raw-ptr-receiver signature (which also stands for "callee may free
-    /// the allocation").
-    #[inline]
-    fn as_ctx_ptr(&self) -> *mut Self {
-        (self as *const Self).cast_mut()
-    }
-
     /// Recover `&CronJob` from a raw-ptr receiver. Centralises the set-once
     /// `*mut Self → &Self` deref so the raw-ptr-receiver helpers
     /// (`release_pending_ref`, `self_stop`, `schedule_next`, `on_timer_fire`,
@@ -1414,7 +1404,7 @@ impl CronJob {
     #[inline]
     fn from_ctx_ptr<'a>(this: *mut Self) -> &'a Self {
         // SAFETY: every call site (private to this module) passes the
-        // intrusively-refcounted heap allocation produced by [`as_ctx_ptr`] /
+        // intrusively-refcounted heap allocation produced by [`AsCtxPtr::as_ctx_ptr`] /
         // `as_promise_ptr` / `from_timer_ptr`, with refcount > 0 for the
         // returned borrow's duration. All mutation is interior, so a shared
         // `&Self` is sound even across JS re-entry.

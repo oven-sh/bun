@@ -9,7 +9,7 @@ use core::ptr::{self, NonNull};
 use bun_boringssl as boringssl;
 use bun_io::KeepAlive;
 use bun_jsc::JsCell;
-use bun_ptr::IntrusiveRc;
+use bun_ptr::{AsCtxPtr, IntrusiveRc};
 // PORT NOTE: do NOT `use bun_boringssl_sys::SSL` here — it shadows the
 // `const SSL: bool` generic param in `NewSocket<SSL>` below, making rustc
 // resolve `<SSL>` as a type arg (E0747). Use the qualified path instead.
@@ -337,14 +337,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         let mut v = self.flags.get();
         f(&mut v);
         self.flags.set(v);
-    }
-
-    /// `self`'s address as `*mut Self` for uSockets ext slots / refcount FFI.
-    /// All mutated fields are `UnsafeCell`-backed, so the `*mut` spelling is
-    /// purely to match C signatures; callbacks deref it as `&*const` (shared).
-    #[inline]
-    pub fn as_ctx_ptr(&self) -> *mut Self {
-        (self as *const Self).cast_mut()
     }
 
     // ─────────────────────────────────────────────────────────────────────────

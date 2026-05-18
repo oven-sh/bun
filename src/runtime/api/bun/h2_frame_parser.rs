@@ -28,7 +28,7 @@ use bun_jsc::{
     CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsClass, JsRef, JsResult, Strong,
     StrongOptional,
 };
-use bun_ptr::IntrusiveRc;
+use bun_ptr::{AsCtxPtr, IntrusiveRc};
 
 bun_output::declare_scope!(H2FrameParser, visible);
 
@@ -1329,15 +1329,6 @@ impl H2FrameParser {
     #[inline]
     fn global(&self) -> GlobalRef {
         self.global_this
-    }
-
-    /// `self`'s address as `*mut Self` for uSockets / deferred-task ctx slots.
-    /// The callbacks deref it as `&*const` (shared) — see `on_auto_flush_trampoline`
-    /// — so no write provenance is required; the `*mut` spelling is purely to
-    /// match the C signature. All mutation goes through `Cell`/`JsCell` fields.
-    #[inline]
-    fn as_ctx_ptr(&self) -> *mut Self {
-        (self as *const Self).cast_mut()
     }
 
     pub fn ref_(&self) {

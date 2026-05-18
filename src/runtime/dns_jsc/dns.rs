@@ -24,6 +24,7 @@ use bun_jsc::{
     SystemError, host_fn,
 };
 use bun_paths::{MAX_PATH_BYTES, PathBuffer};
+use bun_ptr::AsCtxPtr;
 #[cfg(windows)]
 use bun_sys::windows::libuv;
 use bun_sys::{self as sys};
@@ -4007,16 +4008,6 @@ impl Resolver {
     }
 
     // ─── R-2 interior-mutability helpers ────────────────────────────────────
-
-    /// `self`'s address as `*mut Self` for c-ares / `FilePoll` / `IntrusiveRc`
-    /// ctx slots and `Self::deref`. Callbacks deref it as `&*const` (shared) —
-    /// see `on_dns_poll`, `on_cares_complete` — so no write provenance is
-    /// required; the `*mut` spelling is purely to match the C signature. All
-    /// mutation routes through `Cell` / `JsCell` (UnsafeCell-backed).
-    #[inline]
-    pub fn as_ctx_ptr(&self) -> *mut Self {
-        (self as *const Self).cast_mut()
-    }
 
     // ───────────── timer / pending bookkeeping ─────────────
 

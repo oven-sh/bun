@@ -2526,6 +2526,22 @@ impl<const SSL: bool> NewSocket<SSL> {
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
+        let socket = this.socket.get();
+        // An in-flight `connect()` whose `on_open` has not fired yet is a
+        // SEMI_SOCKET — `us_socket_close` skips dispatch for those (firing
+        // `on_close` without a prior `on_open` is wrong, and the natural
+        // failure path delivers `on_connect_error` from the loop instead).
+        // Closing one here therefore runs *no* terminal callback, stranding
+        // the +1 `connect_finish` took on `this` (whose matching `deref()`
+        // lives in `on_close`/`handle_connect_error`) and the Strong
+        // `this_value` upgrade. node:net reaches this for every aborted /
+        // `autoSelectFamily`-timed-out attempt via `_handle.close()`.
+        //
+        // `socket.socket.get().is_some()` is `true` only for the
+        // `Connected(us_socket_t)` arm — the `Connecting` arm fires
+        // `on_connecting_error` synchronously inside `close()` and so does
+        // its own `deref()`; double-releasing it would underflow.
+        let is_semi_connect = socket.socket.get().is_some() && !socket.is_established();
         // `_handle.close()` is the net.Socket `_destroy()` path — Node emits close_notify
         // once and closes the fd without waiting for the peer's reply. `.fast_shutdown`
         // makes `ssl_handle_shutdown` take the fast branch so the raw close runs
@@ -2533,7 +2549,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // detach + unref immediately below, orphaning the `us_socket_t`). NOT `.failure`:
         // that arms SO_LINGER{1,0} → RST and drops any data still in the kernel send
         // buffer, which `destroy()` after `write()` must not do.
-        this.socket.get().close(uws::CloseCode::FastShutdown);
+        socket.close(uws::CloseCode::FastShutdown);
         this.socket.set(SocketHandler::<SSL>::DETACHED);
         let _ = global;
         this.poll_ref.with_mut(|p| {
@@ -2541,6 +2557,15 @@ impl<const SSL: bool> NewSocket<SSL> {
                 bun_io::AllocatorType::Js,
             ))
         });
+        if is_semi_connect {
+            if !matches!(this.this_value.get(), JsRef::Finalized) {
+                this.this_value.with_mut(|r| r.downgrade());
+            }
+            // Balance `connect_finish`'s `socket_ref.ref_()`. The JS wrapper
+            // we were called through holds the remaining +1, so refcount
+            // stays ≥ 1 across this call.
+            this.deref();
+        }
         Ok(JSValue::UNDEFINED)
     }
 

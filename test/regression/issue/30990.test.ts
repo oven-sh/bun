@@ -18,9 +18,13 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir, tls } from "harness";
 
-// Mirror bun's `Version::ZIP_FILENAME` — the stable upgrade loop rejects any
-// asset whose name doesn't match this, so we have to produce the same string.
-function triplet(): string {
+// Bun's stable-upgrade loop requires an asset whose `name` matches its own
+// `Version::ZIP_FILENAME` byte-for-byte — that filename includes `-musl`,
+// `-baseline`, `-android` suffixes depending on how this bun was built.
+// The test runs on many build flavours in CI (glibc / musl / baseline /
+// musl-baseline / android / macOS), so rather than reproduce every rule in
+// JS we advertise every plausible variant and let bun pick its own match.
+function assetBaseName(): string {
   const arch = process.arch === "arm64" ? "aarch64" : "x64";
   const os =
     process.platform === "linux"
@@ -30,11 +34,12 @@ function triplet(): string {
         : process.platform === "win32"
           ? "windows"
           : "unknown";
-  return `bun-${os}-${arch}.zip`;
+  return `bun-${os}-${arch}`;
 }
 
 async function runUpgradeAgainstMock(opts: { zipSize: number; advertiseSize: boolean }) {
-  const zipName = triplet();
+  const base = assetBaseName();
+  const variants = ["", "-musl", "-android", "-baseline", "-musl-baseline", "-android-baseline"];
 
   await using server = Bun.serve({
     port: 0,
@@ -44,18 +49,22 @@ async function runUpgradeAgainstMock(opts: { zipSize: number; advertiseSize: boo
 
       // `bun upgrade --stable` hits `Jarred-Sumner/bun-releases-for-updater`.
       if (url.pathname.endsWith("/releases/latest")) {
-        const asset: Record<string, unknown> = {
-          name: zipName,
-          content_type: "application/zip",
-          browser_download_url: `https://localhost:${server.port}/bun.zip`,
-        };
-        // Omitting `size` makes `version.size == 0` on the bun side, which
-        // drives the one-sided `[{current}]` progress arm (same as canary).
-        if (opts.advertiseSize) asset.size = opts.zipSize;
+        const assets = variants.map(suffix => {
+          const asset: Record<string, unknown> = {
+            name: `${base}${suffix}.zip`,
+            content_type: "application/zip",
+            browser_download_url: `https://localhost:${server.port}/bun.zip`,
+          };
+          // Omitting `size` makes `version.size == 0` on the bun side,
+          // which drives the one-sided `[{current}]` progress arm (the
+          // same shape the canary path produces).
+          if (opts.advertiseSize) asset.size = opts.zipSize;
+          return asset;
+        });
         return Response.json({
           tag_name: "bun-v99.0.0",
           name: "Bun v99.0.0",
-          assets: [asset],
+          assets,
         });
       }
 

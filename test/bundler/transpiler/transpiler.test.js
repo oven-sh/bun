@@ -1560,9 +1560,7 @@ console.log(<div {...obj} key="after" />);`),
     // lands as a negative CodePoint that must be rejected before it reaches
     // the u32 cast in push_codepoint_utf16.
     it.each(["&#7777707;", "&#x110000;", "&#2147483647;", "&#-1;"])("%s is rejected", entity => {
-      expect(() => bun.transformSync(`export var x = <div>${entity}</div>`)).toThrow(
-        /JSX entity escape is too big/,
-      );
+      expect(() => bun.transformSync(`export var x = <div>${entity}</div>`)).toThrow(/JSX entity escape is too big/);
     });
 
     // Boundary: 0x10FFFF is the maximum valid code point and must still work.

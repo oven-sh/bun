@@ -850,33 +850,9 @@ impl FileSink {
     pub fn start(&self, stream_start: streams::Start) -> sys::Result<()> {
         match stream_start {
             streams::Start::FileSink(ref file)
-                if !matches!(
-                    file.input_path,
-                    crate::webcore::PathOrFileDescriptor::Fd(Fd::INVALID)
-                ) =>
+                if !matches!(file.input_path, PathOrFileDescriptor::Fd(Fd::INVALID)) =>
             {
-                // PORT NOTE: `streams::FileSinkOptions` mirrors `file_sink::Options`
-                // but is a distinct draft type; bridge by-field until streams.rs
-                // aliases to this module's `Options`.
-                let opts = Options {
-                    chunk_size: file.chunk_size as webcore::BlobSizeType,
-                    input_path: match &file.input_path {
-                        crate::webcore::PathOrFileDescriptor::Fd(fd) => {
-                            PathOrFileDescriptor::Fd(*fd)
-                        }
-                        crate::webcore::PathOrFileDescriptor::Path(p) => {
-                            // `ZigStringSlice` is non-`Clone` (owns/WTF-refs its
-                            // bytes); borrow the bytes for the duration of
-                            // `setup(&opts)` — `stream_start` (and thus `p`)
-                            // outlives `opts` within this match arm.
-                            PathOrFileDescriptor::Path(
-                                bun_core::zig_string::Slice::from_utf8_never_free(p.slice()),
-                            )
-                        }
-                    },
-                    ..Options::default()
-                };
-                match self.setup(&opts) {
+                match self.setup(file) {
                     sys::Result::Err(err) => {
                         return sys::Result::Err(err);
                     }

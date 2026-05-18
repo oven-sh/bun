@@ -1437,6 +1437,12 @@ fn connect_finish<const IS_SSL: bool>(
             }
         }
         prev.handlers.set(NonNull::new(handlers_ptr));
+        // `handlers_ptr` is a fresh `heap::alloc` box from `connect_inner`;
+        // this socket now owns it. Without the flag, `deinit_and_destroy` and
+        // `mark_inactive`'s shutdown gate skip the free and the box leaks
+        // (`node:net`'s `new_detached_socket` creates `prev` with default
+        // flags and no handlers).
+        prev.flags.set(prev.flags.get() | SocketFlags::OWNS_HANDLERS);
         debug_assert!(prev.socket.get().is_detached());
         // Free old resources before reassignment to prevent memory leaks
         // when sockets are reused for reconnection (common with MongoDB driver)

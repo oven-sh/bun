@@ -84,6 +84,10 @@ pub struct RuntimeState {
     pub ssl_ctx_cache: crate::api::SSLContextCache::SSLContextCache,
     /// `RareData.editor_context` — `bun_jsc` cannot name `crate::cli::open`.
     pub editor_context: crate::cli::open::EditorContext,
+    /// `RareData.global_dns_data` — per-VM resolver + c-ares channel.
+    /// Lazy-init by [`crate::dns_jsc::global_resolver`]; freed when this box
+    /// drops in [`deinit_runtime_state`].
+    pub global_dns_data: core::cell::OnceCell<Box<crate::dns_jsc::GlobalData>>,
     /// Synthetic `bun:main` wrapper source.
     pub entry_point: ServerEntryPoint,
     /// Backing arena for `vm.transpiler` (spec passes `bun.default_allocator`;
@@ -155,6 +159,19 @@ pub fn timer_all_mut() -> &'static mut timer::All {
     // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
     // single JS thread so no concurrent `&mut`.
     unsafe { &mut (*state).timer }
+}
+
+/// Per-VM lazy DNS resolver storage. Shared borrow only — c-ares callbacks
+/// re-enter [`crate::dns_jsc::global_resolver`] while a `&Resolver` derived
+/// from this cell is live, so a `&mut` accessor would alias.
+#[inline]
+pub fn global_dns_data() -> &'static core::cell::OnceCell<Box<crate::dns_jsc::GlobalData>> {
+    let state = runtime_state();
+    debug_assert!(!state.is_null(), "global_dns_data before init_runtime_state");
+    // SAFETY: `state` is the live per-thread `RuntimeState` box; the field
+    // address is stable for the VM's lifetime and only read (interior
+    // mutability via `OnceCell`).
+    unsafe { &(*state).global_dns_data }
 }
 
 /// Recover the [`RuntimeState`] owned by a specific `vm` (not the calling
@@ -280,6 +297,7 @@ unsafe fn init_runtime_state(
         },
         ssl_ctx_cache: Default::default(),
         editor_context: Default::default(),
+        global_dns_data: core::cell::OnceCell::new(),
         entry_point: ServerEntryPoint::default(),
         // Zig parity: spec VirtualMachine.zig:1241 threads
         // `bun.default_allocator` (= global mimalloc) into `Transpiler.init`.

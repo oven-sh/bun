@@ -5408,7 +5408,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         &mut self.import_records_for_current_part,
                         BumpVec::new_in(self.arena),
                     );
-                    v.as_slice().to_vec()
+                    js_ast::PartImportRecordIndices::from_slice(v.as_slice())
                 },
                 // SAFETY: fresh bump allocation, uniquely owned by the new Part.
                 scopes: bun_ast::StoreSlice::new_mut(

@@ -1136,7 +1136,7 @@ pub struct Part {
     pub tag: PartTag,
 }
 
-pub type PartImportRecordIndices = Vec<u32>;
+pub type PartImportRecordIndices = Vec<u32, bun_alloc::AstAlloc>;
 pub type PartList = Vec<Part>;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -1163,7 +1163,7 @@ impl Default for Part {
         Self {
             stmts: StoreSlice::EMPTY,
             scopes: StoreSlice::EMPTY,
-            import_record_indices: PartImportRecordIndices::default(),
+            import_record_indices: PartImportRecordIndices::new_in(bun_alloc::AstAlloc),
             declared_symbols: DeclaredSymbolList::default(),
             symbol_uses: PartSymbolUseMap::default(),
             import_symbol_property_uses: PartSymbolPropertyUseMap::default(),

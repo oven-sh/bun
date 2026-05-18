@@ -1146,6 +1146,7 @@ impl All {
         vm: *mut crate::jsc::virtual_machine::VirtualMachine,
     ) {
         let mut to_cancel: Vec<*const TimerObjectInternals> = Vec::new();
+        let mut signal_timeouts: Vec<*mut AbortSignalTimeout> = Vec::new();
         let mut stack: Vec<*mut EventLoopTimer> = Vec::new();
 
         // SAFETY: `this` is the live per-thread `All`; `lock` guards both heap
@@ -1182,6 +1183,11 @@ impl All {
                     let parent = unsafe { ImmediateObject::from_timer_ptr(node) };
                     to_cancel.push(unsafe { core::ptr::addr_of!((*parent).internals) });
                 }
+                EventLoopTimerTag::AbortSignalTimeout => {
+                    // SAFETY: tag invariant — `node` IS the `event_loop_timer`
+                    // field of a live boxed `abort_signal::Timeout`.
+                    signal_timeouts.push(unsafe { AbortSignalTimeout::from_timer_ptr(node) });
+                }
                 _ => {}
             }
         }
@@ -1195,6 +1201,31 @@ impl All {
             // exactly the one keeping it pinned). `cancel()` may free the
             // parent on the final deref — never touched again.
             unsafe { (*internals).cancel(vm) };
+        }
+
+        // `AbortSignal.timeout()` boxes form a refcount cycle: the C++
+        // `AbortSignal` owns `m_timeout` (raw `*mut Timeout`) and the Timeout
+        // holds a `+1` on the signal. Neither can release first, so a pending
+        // timeout at exit leaks both. Unlink the timer (so the eventual
+        // `~AbortSignal` → `cancelTimer` → `Timeout::deinit` re-cancel is a
+        // no-op against the already-destroyed heap) and release the `+1`; the
+        // box itself is freed via `cancelTimer()` either now (if this was the
+        // last ref) or at `lastChanceToFinalize` when the JS wrapper is
+        // collected.
+        for t in signal_timeouts {
+            // SAFETY: each `t` was collected from the live heap above; the
+            // `+1` we release here is the one keeping the signal (and thus
+            // the box, via `m_timeout`) pinned. JS thread.
+            unsafe {
+                if (*t).event_loop_timer.state == EventLoopTimerState::ACTIVE {
+                    (*this).remove(core::ptr::addr_of_mut!((*t).event_loop_timer));
+                }
+                let signal = (*t).signal;
+                (*t).signal = core::ptr::null_mut();
+                if !signal.is_null() {
+                    crate::jsc::abort_signal::AbortSignal::opaque_ref(signal).unref();
+                }
+            }
         }
     }
 }

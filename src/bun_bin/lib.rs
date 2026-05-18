@@ -117,7 +117,6 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         // Rust std false positive — detached threads' Arc<thread::Inner>.
         "leak:std::thread::thread::Thread>::new\n",
         // ── ported Zig-named entries ────────────────────────────────────────
-        "leak:bun_js_printer::print_ast\n",
         "leak:bun_runtime::node::fs_events::init_core_foundation\n",
         "leak:bun_runtime::node::fs_events::init_core_services\n",
         "leak:bun_runtime::node::fs_events::FSEventsLoop\n",
@@ -127,7 +126,6 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         "leak:bun_tcc_sys::tcc::State>::init\n",
         "leak:bun_runtime::api::bun::dynamic_library\n",
         "leak:bun_patch::patch::PatchFile>::apply\n",
-        "leak:bun_jsc::runtime_transpiler_store::TranspilerJob\n",
         "leak:bun_runtime::webcore::blob::Store>::init_s3\n",
         "leak:bun_runtime::webcore::s3::list_objects\n",
         "leak:bun_runtime::webcore::S3Client\n",

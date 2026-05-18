@@ -1700,7 +1700,7 @@ impl PackageJSON {
                     // Zig returns null when the FILTERED map is empty
                     // (expr.zig: `if (count == 0) return null;`), not just when
                     // the raw object had no properties.
-                    if map.len() == 0 {
+                    if map.is_empty() {
                         return None;
                     }
                     Some(Box::new(map))

@@ -2923,6 +2923,8 @@ pub mod ffi {
     unsafe impl Zeroable for libc::sockaddr_storage {}
     #[cfg(unix)]
     unsafe impl Zeroable for libc::addrinfo {}
+    #[cfg(unix)]
+    unsafe impl Zeroable for libc::iovec {}
     #[cfg(any(target_os = "linux", target_os = "android"))]
     unsafe impl Zeroable for libc::sysinfo {}
     #[cfg(any(target_os = "linux", target_os = "android"))]

@@ -35,11 +35,7 @@ for (const source of ["[{static{}", "({static{}})", "({static{};})", "({static{}
       // a clean `signalCode` rather than a bun-test runner timeout.
       timeout: 10_000,
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     // Before the fix, the debug build aborted with SIGILL inside the
     // parser and never reached the syntax-error reporter — stderr carried

@@ -119,7 +119,6 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         // ── ported Zig-named entries ────────────────────────────────────────
         "leak:bun_runtime::api::server::ServerAllConnectionsClosedTask\n",
         "leak:bun_cli::bunfig::Bunfig>::parse\n",
-        "leak:Resolver>::parse_package_json\n",
         "leak:bun_resolver::package_json::PackageJSON>::parse\n",
         "leak:Resolver>::dir_info_cached_maybe_log\n",
         "leak:bun_resolver::fs::RealFS>::read_directory\n",

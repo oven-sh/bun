@@ -1153,16 +1153,16 @@ pub fn __bun_tick_queue_with_count(
 // had no callers; `__bun_tick_queue_with_count` above is the sole entry point.)
 
 /// `__bun_release_task_at_shutdown` body — declared `extern "Rust"` in
-/// `bun_jsc::event_loop`. Called from `EventLoop::deinit` for every queued
-/// task that will never be dispatched (the JS thread is past `global_exit`'s
-/// `is_shutting_down` flip and the loop will not tick again). Releases the
-/// per-tag refs the run path would have dropped, without calling into JSC.
-/// Tags not listed are no-ops — either their payload is field-embedded in a
-/// box reclaimed elsewhere, or their owner is process-lifetime.
+/// `bun_jsc::event_loop`. Called from `release_queued_tasks_for_shutdown` on
+/// the JS thread for every queued task that will never be dispatched (the JS
+/// thread is past `global_exit`'s `is_shutting_down` flip and the loop will
+/// not tick again), after the HTTP daemon has parked and before
+/// `destructOnExit`. Releases the boxes and JSC handles the dispatch path
+/// would have dropped. Tags not yet listed leak their box at exit; add them
+/// as LSan surfaces them.
 #[unsafe(no_mangle)]
 pub fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) {
     use bun_event_loop::task_tag;
-    #[allow(clippy::single_match)]
     match task.tag {
         // `callback` (HTTP thread) won the `has_schedule_callback` CAS and
         // posted this entry, then deref'd its own +1 if final; the JS-side
@@ -1173,6 +1173,31 @@ pub fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) {
         // `Box<AsyncHTTP>` and any `metadata` it owns are exclusively ours.
         task_tag::FetchTasklet => {
             FetchTasklet::deref(task.ptr.cast::<FetchTasklet>());
+        }
+        // `AsyncFSTask`s are `Box::leak`'d in `create()` and freed by
+        // `destroy()` (called from `run_from_js_thread`'s scopeguard).
+        // `destroy()` resets `JSPromiseStrong` (touches the JSC HandleSet)
+        // and unrefs the loop `KeepAlive`, both of which are still valid
+        // here — we're before `destructOnExit`. Before
+        // `release_queued_tasks_for_shutdown` existed these boxes stayed
+        // reachable via `concurrent_tasks` (rooted by the static `VMHolder`),
+        // so LSan didn't flag them; the drain unhooks that root and surfaces
+        // the real leak.
+        for_each_fs_async_op!(__fs_pat) => {
+            macro_rules! __fs_destroy {
+                ($($tag:ident $ty:ident;)*) => { match task.tag {
+                    $(task_tag::$tag => {
+                        // SAFETY: tag identifies pointee; `Box::leak`'d in
+                        // `AsyncFSTask::create`. The work-pool callback ran
+                        // (it posted this entry) so the threadpool no longer
+                        // holds the embedded `task` field.
+                        unsafe { fs_async::$ty::destroy(task.ptr.cast::<fs_async::$ty>()) };
+                    })*
+                    // SAFETY: outer arm guard proves one of the table tags matched.
+                    _ => unsafe { core::hint::unreachable_unchecked() },
+                }};
+            }
+            for_each_fs_async_op!(__fs_destroy);
         }
         _ => {}
     }

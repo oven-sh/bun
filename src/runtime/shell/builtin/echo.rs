@@ -75,7 +75,9 @@ impl Echo {
                     // open-coded loop here floored the kept length at 1, so a
                     // pure-newline arg lost one '\n'; the faithful port of
                     // Zig's `trimSubsequentLeadingChars` keeps two.
-                    out.extend_from_slice(bun_core::strings::trim_subsequent_leading_chars(thearg, b'\n'));
+                    out.extend_from_slice(bun_core::strings::trim_subsequent_leading_chars(
+                        thearg, b'\n',
+                    ));
                 } else {
                     out.extend_from_slice(thearg);
                 }

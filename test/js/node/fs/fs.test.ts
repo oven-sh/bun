@@ -4044,7 +4044,8 @@ describe.skipIf(isWindows)("readFileSync on a FIFO larger than the stat size", (
     // Pre-fix this never returns (RawVec doubling balloons RSS to multiple GB);
     // the per-test timeout would fire. Fixed: completes promptly with the full
     // 400 KB of content intact.
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
     expect(stdout).toBe("len=409600 allA=true");
     expect(exitCode).toBe(0);
   });

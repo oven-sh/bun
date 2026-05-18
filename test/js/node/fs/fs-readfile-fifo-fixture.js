@@ -15,7 +15,7 @@ try {
 cp.spawnSync("mkfifo", [fifo]);
 
 const SIZE = 400 * 1024;
-const writer = cp.spawn(
+cp.spawn(
   process.execPath,
   [
     "-e",
@@ -28,5 +28,4 @@ const writer = cp.spawn(
 );
 
 const data = fs.readFileSync(fifo);
-writer.on("exit", () => {});
 process.stdout.write(`len=${data.length} allA=${data.every(x => x === 0x61)}`);

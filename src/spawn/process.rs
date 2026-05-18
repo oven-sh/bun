@@ -3258,6 +3258,7 @@ mod spawn_process_body {
                     let r: Option<Maybe<Status>> = wait_linux_signalfd(
                         process.pid,
                         ppid,
+                        no_orphans,
                         &*jc,
                         &mut out,
                         &mut out_fds_to_wait_for,
@@ -3648,6 +3649,7 @@ mod spawn_process_body {
         fn wait_linux_signalfd(
             child: libc::pid_t,
             ppid: libc::pid_t,
+            drain_orphans: bool,
             jc: &JobControl,
             out: &mut [Vec<u8>; 2],
             out_fds_to_wait_for: &mut [Fd; 2],
@@ -3762,17 +3764,24 @@ mod spawn_process_body {
                 // sigprocmask above, in which case the kernel discarded SIGCHLD
                 // (default disposition is ignore) and signalfd will never wake;
                 // (b) the no-signalfd fallback; (c) subreaper-adopted orphans that
-                // would otherwise re-fire SIGCHLD forever. `wait4(-1)` is safe
-                // here: spawnSync callers (`bun run`, `bunx`, CLI subcommands)
-                // have no JS event loop and no other `Process` watchers — every
-                // pid we see is either `child` or a subreaper-adopted orphan.
+                // would otherwise re-fire SIGCHLD forever.
+                //
+                // The `wait4(-1)` orphan drain is only valid when `drain_orphans`
+                // (i.e. on the watchdog-arming thread, where subreaper is armed
+                // and there is exactly one wait loop in the process). Off-thread
+                // callers — install's threadpool `git` clones — run several wait
+                // loops concurrently with no subreaper; a `wait4(-1)` there would
+                // reap a sibling thread's `git` child, discard its status as an
+                // "orphan", and leave that sibling busy-polling a permanently-
+                // readable pidfd. Target `child` directly in that case.
                 //
                 // WUNTRACED only on a TTY: bridges Ctrl-Z via `JobControl`.
                 // Non-TTY callers never see stops, matching plain `bun run`.
                 let wopts: u32 =
                     (libc::WNOHANG | if jc.is_active() { libc::WUNTRACED } else { 0 }) as u32;
+                let wait_target: libc::pid_t = if drain_orphans { -1 } else { child };
                 loop {
-                    let r = posix_spawn::wait4(-1, wopts, None);
+                    let r = posix_spawn::wait4(wait_target, wopts, None);
                     let w = match &r {
                         Err(_) => break,
                         Ok(w) => *w,

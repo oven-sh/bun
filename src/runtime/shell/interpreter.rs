@@ -3206,7 +3206,8 @@ pub fn create_shell_interpreter(
 
     let (shargs, jsobjs, quiet, cwd, export_env) = parsed_shell_script.take(global);
 
-    let cwd_slice = cwd.as_ref().map(|c| c.to_utf8());
+    let cwd = cwd.map(bun_core::OwnedString::new);
+    let cwd_slice = cwd.as_deref().map(|c| c.to_utf8());
 
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global;
     // dereferencing for `event_loop()` is sound on the mutator thread.

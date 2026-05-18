@@ -113,17 +113,27 @@ pub extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
 #[unsafe(no_mangle)]
 pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
     // One rule per line. Substring match on any frame in the allocation stack.
+    //
+    // Every entry below is a structural / process-lifetime allocation that has
+    // been investigated and is intentionally suppressed — not a leak. New
+    // entries here require a comment naming the owner and why it cannot be
+    // freed before exit. Do NOT add a suppression to silence a CI flake; fix
+    // the lifecycle instead.
     concat!(
-        // Rust std false positive — detached threads' Arc<thread::Inner>.
+        // Rust std false positive — a detached thread's `Arc<thread::Inner>`
+        // is held by the OS thread's TLS, which LSan does not scan as a root.
         "leak:std::thread::thread::Thread>::new\n",
-        // ── ported Zig-named entries ────────────────────────────────────────
+        // macOS-only `dlopen("CoreFoundation")` / `dlopen("CoreServices")`
+        // and the per-process `FSEventStream` / `CFRunLoop` they require.
+        // These are platform singletons by design (CF objects are not safely
+        // disposable while the dylib remains loaded).
         "leak:bun_runtime::node::fs_events::init_core_foundation\n",
         "leak:bun_runtime::node::fs_events::init_core_services\n",
         "leak:bun_runtime::node::fs_events::FSEventsLoop\n",
-        // Zig `jsc.Debugger.startJSDebuggerThread` — the Rust module is
-        // lowercase (`#[path = "Debugger.rs"] pub mod debugger;`), so the
-        // demangled frame is `<bun_jsc::debugger::Debugger>::…`; the previous
-        // `bun_jsc::Debugger` substring missed it (capital-D after `::`).
+        // Process-lifetime inspector thread. The debugger handles SIGINT and
+        // serves the WebSocket protocol up to (and during) `process.exit()`;
+        // joining it from `global_exit` would deadlock when the user is
+        // mid-breakpoint. The thread's stack/Arc are reclaimed by the OS.
         "leak:bun_jsc::debugger::Debugger>::start_js_debugger_thread\n",
         "\0",
     )

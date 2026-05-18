@@ -1565,6 +1565,7 @@ impl BlobExt for Blob {
                 let stream_start = streams::Start::FileSink(streams::FileSinkOptions {
                     input_path,
                     chunk_size: 0,
+                    ..Default::default()
                 });
 
                 // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink.
@@ -1928,6 +1929,7 @@ impl BlobExt for Blob {
                 streams::Start::FileSink(streams::FileSinkOptions {
                     chunk_size: 0,
                     input_path: webcore::PathOrFileDescriptor::Fd(Fd::INVALID),
+                    ..Default::default()
                 })
             };
             if let streams::Start::FileSink(ref mut opts) = stream_start {
@@ -1936,6 +1938,7 @@ impl BlobExt for Blob {
                 stream_start = streams::Start::FileSink(streams::FileSinkOptions {
                     chunk_size: 0,
                     input_path,
+                    ..Default::default()
                 });
             }
 

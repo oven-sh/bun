@@ -3047,7 +3047,16 @@ mod spawn_process_body {
             // run the wait loop or the cleanup defers. Callers
             // (`runBinaryWithoutBunxPath`, `bunx`) set the flag unconditionally;
             // on Linux it's a spawn-side no-op so no-orphans must stay armed there.
+            //
+            // Also disabled off the watchdog-arming (main) thread: the subreaper
+            // toggle is process-wide and `wait4(-1)` reaps *any* child, so
+            // concurrent calls from a worker pool (install's `repository::exec`
+            // git clones) would race the subreaper flag and steal each other's
+            // exit statuses. Those callers fall through to the plain
+            // `reap_child(pid)` path below; the inherited PDEATHSIG on the main
+            // thread still tears the whole process down if our parent dies.
             let no_orphans = ParentDeathWatchdog::is_enabled()
+                && bun_spawn_sys::pdeathsig::is_arming_thread()
                 && !(cfg!(target_os = "macos") && options.use_execve_on_macos);
 
             // Snapshot pre-existing direct children so the disarm defer can tell
@@ -3687,6 +3696,19 @@ mod spawn_process_body {
             // preserved (close signalfd, then restore the signal mask).
             let chld_fd = AutoCloseFd::new(chld_fd);
 
+            // Child-exit, take 2: pidfd. signalfd only fires if SIGCHLD stays
+            // pending — i.e. is blocked on *every* thread. PackageManager / HTTP
+            // client threads created before we got here don't block it, so the
+            // kernel can hand the signal to one of them and the signalfd never
+            // wakes. A pidfd becomes readable on child exit regardless of signal
+            // masking, so poll it too. Keep the signalfd for the subreaper-adopted
+            // orphans (whose pidfds we don't have) and as the gVisor / pre-5.3
+            // fallback when pidfd_open is unavailable.
+            let child_pidfd = match bun_sys::pidfd_open(child, 0) {
+                Ok(fd) => AutoCloseFd::new(fd),
+                Err(_) => AutoCloseFd::invalid(),
+            };
+
             // Parent-death: pidfd when available (instant wake). When not
             // (gVisor, sandboxes, pre-5.3): bound the poll at 100ms and recheck
             // `getppid()`.
@@ -3724,7 +3746,10 @@ mod spawn_process_body {
             }
 
             let need_ppid_fallback = ppid > 1 && ppid_fd.fd() == Fd::INVALID;
-            let timeout_ms: i32 = if need_ppid_fallback || chld_fd.fd() == Fd::INVALID {
+            // Only block forever when we have a wake source for *both* events we
+            // care about. signalfd alone is not a reliable child-exit wake (see
+            // the `child_pidfd` comment above), so require the pidfd for `-1`.
+            let timeout_ms: i32 = if need_ppid_fallback || child_pidfd.fd() == Fd::INVALID {
                 100
             } else {
                 -1
@@ -3777,9 +3802,9 @@ mod spawn_process_body {
                 }
 
                 // SAFETY: zeroed pollfd is valid
-                let mut buf: [libc::pollfd; 4] = bun_core::ffi::zeroed();
+                let mut buf: [libc::pollfd; 5] = bun_core::ffi::zeroed();
                 let mut pfds_len: usize = 0;
-                let push = |l: &mut [libc::pollfd; 4], len: &mut usize, fd: Fd| {
+                let push = |l: &mut [libc::pollfd; 5], len: &mut usize, fd: Fd| {
                     l[*len] = libc::pollfd {
                         fd: fd.native(),
                         events: libc::POLLIN | libc::POLLERR | libc::POLLHUP,
@@ -3799,6 +3824,9 @@ mod spawn_process_body {
                 let chld_idx = pfds_len;
                 if chld_fd.fd() != Fd::INVALID {
                     push(&mut buf, &mut pfds_len, chld_fd.fd());
+                }
+                if child_pidfd.fd() != Fd::INVALID {
+                    push(&mut buf, &mut pfds_len, child_pidfd.fd());
                 }
 
                 // SAFETY: valid pollfd array

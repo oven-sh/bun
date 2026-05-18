@@ -224,6 +224,9 @@ pub fn installWithManager(
                     lockfile.overrides.count(&lockfile, builder);
                     lockfile.catalogs.count(&lockfile, builder);
                     maybe_root.scripts.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
+                    if (manager.summary.root_name_changed) {
+                        builder.count(maybe_root.name.slice(lockfile.buffers.string_bytes.items));
+                    }
 
                     const off = @as(u32, @truncate(manager.lockfile.buffers.dependencies.items.len));
                     const len = @as(u32, @truncate(new_dependencies.len));
@@ -289,6 +292,12 @@ pub fn installWithManager(
                         *Lockfile.StringBuilder,
                         builder,
                     );
+
+                    if (manager.summary.root_name_changed) {
+                        const new_name = maybe_root.name.slice(lockfile.buffers.string_bytes.items);
+                        manager.lockfile.packages.items(.name)[0] = builder.append(String, new_name);
+                        manager.lockfile.packages.items(.name_hash)[0] = maybe_root.name_hash;
+                    }
 
                     // Update workspace paths
                     try manager.lockfile.workspace_paths.ensureTotalCapacity(manager.lockfile.allocator, lockfile.workspace_paths.entries.len);
@@ -770,7 +779,10 @@ pub fn installWithManager(
     const packages_len_before_install = manager.lockfile.packages.len;
 
     if (manager.options.enable.frozen_lockfile and load_result != .not_found) frozen_lockfile: {
-        if (load_result.loadedFromTextLockfile()) {
+        if (manager.summary.root_name_changed) {
+            // root name changes are invisible to eql() and hasMetaHashChanged()
+            // because both skip the root package (index 0)
+        } else if (load_result.loadedFromTextLockfile()) {
             if (bun.handleOom(manager.lockfile.eql(lockfile_before_clean, packages_len_before_install, manager.allocator))) {
                 break :frozen_lockfile;
             }

@@ -29,12 +29,19 @@ describe("Intl.DateTimeFormat timeZone option", () => {
     expect(new Intl.DateTimeFormat("en-US", { timeZone: "pst8pdt" }).resolvedOptions().timeZone).toBe("PST8PDT");
   });
 
-  test("Intl.supportedValuesOf('timeZone') lists the legacy primary zones", () => {
-    const supported = new Set(Intl.supportedValuesOf("timeZone"));
-    for (const zone of legacyPrimaryZones) {
-      expect(supported.has(zone)).toBe(true);
-    }
-  });
+  // macOS links against system libicucore, whose canonical-zone table does
+  // not list these 8 legacy zones as primaries — they're only reachable as
+  // accepted inputs, not enumerated outputs. The expansion lives in the
+  // bundled ICU that ships on Linux/Windows.
+  test.skipIf(process.platform === "darwin")(
+    "Intl.supportedValuesOf('timeZone') lists the legacy primary zones",
+    () => {
+      const supported = new Set(Intl.supportedValuesOf("timeZone"));
+      for (const zone of legacyPrimaryZones) {
+        expect(supported.has(zone)).toBe(true);
+      }
+    },
+  );
 
   test("legacy primary zones apply the expected offset + DST", () => {
     // 2024-06-15T12:00Z is in summer, so CET-observing zones are at +02:00,

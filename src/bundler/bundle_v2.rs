@@ -3821,7 +3821,8 @@ pub mod bv2_impl {
             let import_records = self.graph.ast.items_import_records();
 
             for source_index in reachable_files {
-                let records: &[ImportRecord] = import_records[source_index.get() as usize].as_slice();
+                let records: &[ImportRecord] =
+                    import_records[source_index.get() as usize].as_slice();
                 for record in records {
                     if !record.source_index.is_valid()
                         && record.tag == bun_ast::ImportRecordTag::None
@@ -4013,15 +4014,7 @@ pub mod bv2_impl {
             event_loop: EventLoop,
             entry_points: &[&[u8]],
         ) -> Result<Box<BundleV2<'a>>, Error> {
-            let mut this = BundleV2::init(
-                transpiler,
-                None,
-                alloc,
-                event_loop,
-                false,
-                None,
-                alloc,
-            )?;
+            let mut this = BundleV2::init(transpiler, None, alloc, event_loop, false, None, alloc)?;
             this.unique_key = generate_unique_key();
 
             if this.transpiler.log().has_errors() {
@@ -6027,8 +6020,7 @@ pub mod bv2_impl {
 
             let mut last_error: Option<Error> = None;
 
-            'outer: for (i, import_record) in ctx.import_records.iter_mut().enumerate()
-            {
+            'outer: for (i, import_record) in ctx.import_records.iter_mut().enumerate() {
                 // Preserve original import specifier before resolution modifies path
                 if import_record.original_path.is_empty() {
                     import_record.original_path = import_record.path.text;

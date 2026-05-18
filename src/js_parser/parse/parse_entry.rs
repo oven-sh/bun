@@ -1420,9 +1420,7 @@ impl<'a> Parser<'a> {
                                 if let Some(id) = redirect_import_record_index {
                                     part.symbol_uses = Default::default();
                                     return Ok(crate::Result::Ast(Box::new(js_ast::Ast {
-                                        import_records: p
-                                            .import_records
-                                            .move_to_baby_list(p.arena),
+                                        import_records: p.import_records.move_to_baby_list(p.arena),
                                         redirect_import_record_index: Some(id),
                                         named_imports: core::mem::take(&mut *p.named_imports),
                                         named_exports: core::mem::take(&mut p.named_exports),

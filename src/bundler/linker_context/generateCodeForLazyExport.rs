@@ -207,8 +207,7 @@ pub fn generate_code_for_lazy_export(
                             match &compose.from {
                                 // it is imported
                                 Some(CssSpecifier::ImportRecordIndex(import_record_idx)) => {
-                                    let import_records =
-                                        &self.all_import_records[idx as usize];
+                                    let import_records = &self.all_import_records[idx as usize];
                                     let import_record =
                                         &import_records[*import_record_idx as usize];
                                     if import_record.source_index.is_valid() {
@@ -499,7 +498,8 @@ pub fn generate_code_for_lazy_export(
                             key.loc,
                         )));
                     // PORT NOTE: `parts.ptr[generated[1]]` — re-borrow `parts` here for borrowck.
-                    let parts = this.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice();
+                    let parts =
+                        this.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice();
                     parts[generated.1 as usize].stmts = bun_ast::StoreSlice::new_mut(new_stmts);
                 }
             }

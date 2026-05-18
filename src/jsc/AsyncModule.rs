@@ -1292,8 +1292,7 @@ impl AsyncModule {
             || self.parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
         let input_fd = self.parse_result.input_fd;
         let arena = *self.parse_result.ast.parts.allocator();
-        let parse_result =
-            core::mem::replace(&mut self.parse_result, ParseResult::empty(arena));
+        let parse_result = core::mem::replace(&mut self.parse_result, ParseResult::empty(arena));
 
         // PORT NOTE: `VirtualMachine.source_code_printer` is a thread-local
         // `?*BufferPrinter` (see `SOURCE_CODE_PRINTER`); Zig dereferenced to

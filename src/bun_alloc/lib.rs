@@ -297,7 +297,6 @@ pub fn transfer_arena<'a, T>(v: &mut ArenaVec<'a, T>, dst: &'a MimallocArena) {
     *v = unsafe { Vec::from_raw_parts_in(ptr, len, cap, dst) };
 }
 
-
 /// `bumpalo::format!` parity — `arena_format!(in arena, "...", ..)` →
 /// [`ArenaString`].
 #[macro_export]

@@ -745,9 +745,7 @@ impl<'a> LinkerContext<'a> {
                 // `.unwrap()` mirrors Zig's untagged-union field reads (panic
                 // on shape mismatch).
                 let original_ref = unsafe {
-                    (*self.graph.ast.items_parts()[html_import as usize]
-                        [1]
-                        .stmts)[0]
+                    (*self.graph.ast.items_parts()[html_import as usize][1].stmts)[0]
                         .data
                         .s_lazy_export()
                         .unwrap()

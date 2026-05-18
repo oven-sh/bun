@@ -702,7 +702,6 @@ impl Worker {
     }
 
     pub fn unget(&mut self) {
-
         self.ast_memory_store.pop();
     }
 

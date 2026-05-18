@@ -1001,7 +1001,8 @@ pub fn scan_imports_and_exports(
                             && other_export_kind == ExportsKind::Cjs
                             && output_format != Format::InternalBakeDev
                         {
-                            col!(import_records_list)[id].as_mut_slice()[import_record_index as usize]
+                            col!(import_records_list)[id].as_mut_slice()
+                                [import_record_index as usize]
                                 .flags
                                 .insert(ImportRecordFlags::WRAP_WITH_TO_ESM);
                             to_esm_uses += 1;

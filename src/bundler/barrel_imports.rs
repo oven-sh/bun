@@ -191,7 +191,10 @@ fn apply_barrel_optimization_impl(
 
         for rec_idx in needed_records.keys() {
             if (*rec_idx as usize) < ast.import_records.len() {
-                needed_paths.put(ast.import_records.as_slice()[*rec_idx as usize].path.text, ())?;
+                needed_paths.put(
+                    ast.import_records.as_slice()[*rec_idx as usize].path.text,
+                    (),
+                )?;
             }
         }
 

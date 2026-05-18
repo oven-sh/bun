@@ -799,8 +799,10 @@ impl<'a> TransformTask<'a> {
         // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
         // Transpiler<'static> forces the borrow to 'static, so launder through a raw ptr.
         let arena_ref: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
-        let source: &bun_ast::Source =
-            arena_ref.alloc(bun_ast::Source::init_path_string(name, self.input_code.slice()));
+        let source: &bun_ast::Source = arena_ref.alloc(bun_ast::Source::init_path_string(
+            name,
+            self.input_code.slice(),
+        ));
         self.transpiler.set_arena(arena_ref);
         self.transpiler.set_log(&raw mut self.log);
         // self.log.msgs.allocator = bun.default_allocator → no-op

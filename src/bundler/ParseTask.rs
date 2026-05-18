@@ -1161,8 +1161,7 @@ pub mod parse_worker {
                     b"",
                 )?
                 .unwrap();
-                ast.import_records =
-                    bun_alloc::vec_from_iter_in(import_records.into_iter(), bump);
+                ast.import_records = bun_alloc::vec_from_iter_in(import_records.into_iter(), bump);
 
                 // We're banning import default of html loader files for now.
                 //
@@ -1290,8 +1289,7 @@ pub mod parse_worker {
                 let mut ast = JSAst::init(lazy?.unwrap());
                 let css_ast_heap = crate::bundled_ast::CssAstRef::from_bump(bump.alloc(css_ast));
                 ast.css = Some(css_ast_heap);
-                ast.import_records =
-                    bun_alloc::vec_from_iter_in(import_records.into_iter(), bump);
+                ast.import_records = bun_alloc::vec_from_iter_in(import_records.into_iter(), bump);
                 return Ok(ast);
             }
             // TODO:

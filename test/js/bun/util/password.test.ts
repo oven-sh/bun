@@ -21,7 +21,7 @@ describe("does not leak", () => {
 
   test("hashSync", async () => {
     await run(/* js */ `
-        const opts = { algorithm: "argon2id", memoryCost: 4, timeCost: 1 };
+        const opts = { algorithm: "argon2id", memoryCost: 8, timeCost: 1 };
         // Large warm-up so the JSC heap and allocator arenas reach steady state
         // before we start measuring (debug/ASAN builds especially need this).
         for (let i = 0; i < 60000; i++) Bun.password.hashSync("hey", opts);
@@ -36,7 +36,7 @@ describe("does not leak", () => {
 
   test("hash", async () => {
     await run(/* js */ `
-        const opts = { algorithm: "argon2id", memoryCost: 4, timeCost: 1 };
+        const opts = { algorithm: "argon2id", memoryCost: 8, timeCost: 1 };
         async function batch(n) {
           const promises = [];
           for (let i = 0; i < n; i++) promises.push(Bun.password.hash("hey", opts));
@@ -100,6 +100,18 @@ describe("hash", () => {
             memoryCost: -1,
           }),
         ).toThrow();
+
+        // argon2 requires `memoryCost >= 8 * parallelism`; Bun hard-codes
+        // `parallelism = 1`, so anything below 8 must throw rather than be
+        // silently clamped (regression coverage for #30960).
+        for (const invalid of [1, 3, 7]) {
+          expect(() =>
+            hash(placeholder, {
+              algorithm: "argon2id",
+              memoryCost: invalid,
+            }),
+          ).toThrow("Memory cost must be at least 8");
+        }
 
         expect(() =>
           hash(placeholder, {
@@ -239,6 +251,19 @@ test("bcrypt pre-hashing does not break compatibility across Bun versions", asyn
   const hash = "$2b$10$PsJ3/W82mzNJoP0rSblfvet2ab9jZg2aH7tIxr1B8uFLJwuWk/jTi";
   const secret = "hello".repeat(100);
   expect(await password.verify(secret, hash)).toBeTrue();
+});
+
+test("argon2 memoryCost at the 8 minimum is encoded faithfully (regression for #30960)", async () => {
+  const hashed = await password.hash("test", {
+    algorithm: "argon2id",
+    memoryCost: 8,
+    timeCost: 1,
+  });
+  // The encoded PHC string must reflect the user-provided memoryCost, not a
+  // silently clamped value. Before the fix, values below 8 were rounded up
+  // while still reporting `m=8`; this pins the minimum at 8 as advertised.
+  expect(hashed).toContain("m=8,t=1,p=1");
+  expect(await password.verify("test", hashed)).toBeTrue();
 });
 
 const defaultAlgorithm = "argon2id";

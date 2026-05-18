@@ -1146,10 +1146,9 @@ impl All {
         }
         let mut anchored: Vec<usize> = Vec::new();
         // SAFETY: `this` is live per fn contract; `root` may be null.
-        let mut stack: Vec<*mut EventLoopTimer> = vec![
-            unsafe { (*this).timers.0.root },
-            unsafe { (*this).fake_timers.timers.0.root },
-        ];
+        let mut stack: Vec<*mut EventLoopTimer> = vec![unsafe { (*this).timers.0.root }, unsafe {
+            (*this).fake_timers.timers.0.root
+        }];
         while let Some(node) = stack.pop() {
             if node.is_null() {
                 continue;
@@ -1181,8 +1180,7 @@ impl All {
 /// LSan can still trace them. Populated only by
 /// [`All::keep_pending_timers_lsan_reachable`] under `cfg(bun_asan)`; never
 /// read.
-static LSAN_PENDING_TIMER_ANCHOR: std::sync::Mutex<Vec<usize>> =
-    std::sync::Mutex::new(Vec::new());
+static LSAN_PENDING_TIMER_ANCHOR: std::sync::Mutex<Vec<usize>> = std::sync::Mutex::new(Vec::new());
 
 // ─── JS-facing surface (gated on bun_jsc) ────────────────────────────────────
 // `set_timeout`/`set_interval`/`set_immediate`/`sleep`/`clear_*` and the

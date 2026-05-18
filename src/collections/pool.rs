@@ -138,6 +138,26 @@ impl<T> Default for SinglyLinkedList<T> {
     }
 }
 
+impl<T> Drop for SinglyLinkedList<T> {
+    fn drop(&mut self) {
+        // The free list owns its nodes (each `release()` hands ownership back).
+        // Without this, the TLS-backed pool's `DataStruct` strands every cached
+        // node when the thread exits.
+        let mut next = core::mem::replace(&mut self.first, ptr::null_mut());
+        while !next.is_null() {
+            let node = next;
+            next = Node::next_of(node);
+            // SAFETY: free-list nodes always carry initialized `data`
+            // (`release()` only stores nodes that were used) and are
+            // exclusively owned by the list.
+            unsafe {
+                (*node).data.assume_init_drop();
+                drop(bun_core::heap::take(node));
+            }
+        }
+    }
+}
+
 impl<T> SinglyLinkedList<T> {
     /// Insert a new node at the head.
     ///

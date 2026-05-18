@@ -1161,7 +1161,7 @@ pub fn __bun_tick_queue_with_count(
 /// would have dropped. Tags not yet listed leak their box at exit; add them
 /// as LSan surfaces them.
 #[unsafe(no_mangle)]
-pub fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) {
+pub fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
     use bun_event_loop::task_tag;
     match task.tag {
         // `callback` (HTTP thread) won the `has_schedule_callback` CAS and
@@ -1173,6 +1173,7 @@ pub fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) {
         // `Box<AsyncHTTP>` and any `metadata` it owns are exclusively ours.
         task_tag::FetchTasklet => {
             FetchTasklet::deref(task.ptr.cast::<FetchTasklet>());
+            true
         }
         // `AsyncFSTask`s are `Box::leak`'d in `create()` and freed by
         // `destroy()` (called from `run_from_js_thread`'s scopeguard).
@@ -1198,8 +1199,13 @@ pub fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) {
                 }};
             }
             for_each_fs_async_op!(__fs_destroy);
+            true
         }
-        _ => {}
+        // Re-queued by the caller; the box stays reachable from the
+        // static-rooted VM. Dispatching the type-erased `AnyTask` callback
+        // is not generally safe at shutdown (e.g. `AsyncModule::on_done`,
+        // `dns::Holder::run` call straight into JS).
+        _ => false,
     }
 }
 

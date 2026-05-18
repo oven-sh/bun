@@ -1478,7 +1478,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // `import defer, {x} from 'y'`) it is an ordinary default
                 // binding named `defer`. Compare the raw token so
                 // `def\u0065r` is not treated as the phase keyword.
-                if default_name_raw == b"defer" && p.lexer.token == T::TAsterisk {
+                //
+                // `opts.is_export` rules out `export import defer * as ...`
+                // (only reachable via the TypeScript `export import foo = bar`
+                // re-entry) so it falls through to the import-equals handler
+                // and errors there.
+                if default_name_raw == b"defer" && p.lexer.token == T::TAsterisk && !opts.is_export
+                {
                     // Same scope restriction as `import * as ns from 'path'`:
                     // ESM import declarations are only valid at module scope
                     // (or inside a TypeScript `declare namespace`).

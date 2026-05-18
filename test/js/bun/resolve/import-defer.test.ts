@@ -365,5 +365,20 @@ describe.concurrent("import defer", () => {
       expect(exitCode).not.toBe(0);
       expect(stderr.toLowerCase()).toContain("error");
     });
+
+    test("'export import defer * as ns' is a syntax error", async () => {
+      // `export import` in TypeScript is the import-equals form
+      // (`export import X = ...`); `export import defer * as` matches no
+      // grammar production in either language.
+      const { exitCode, stderr } = await run(
+        {
+          "main.ts": `export import defer * as ns from "./dep.js"; console.log(ns);`,
+          "dep.js": `export const x = 1;`,
+        },
+        "main.ts",
+      );
+      expect(exitCode).not.toBe(0);
+      expect(stderr.toLowerCase()).toContain("error");
+    });
   });
 });

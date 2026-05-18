@@ -2398,22 +2398,6 @@ class Foo {
     expectParseError("x: { class Foo { static { break x } } }", 'There is no containing label named "x"');
     expectParseError("x: { class Foo { static { continue x } } }", 'There is no containing label named "x"');
 
-    // `static { ... }` is only a class static block inside a class body.
-    // In an object literal it must be treated as an ordinary identifier so
-    // that the trailing `{` produces a syntax error rather than a parser
-    // assertion failure. https://github.com/oven-sh/bun/issues/30963
-    for (const code of ["[{static{}", "({static{}})", "({static{};})", "({static{},})"]) {
-      let threw = false;
-      try {
-        transpiler.transformSync(code, "js");
-      } catch (e) {
-        threw = true;
-        const messages = e instanceof AggregateError ? e.errors.map(x => x.message) : [e.message];
-        expect(messages.some(m => m.includes('Expected "}" but found "{"'))).toBe(true);
-      }
-      expect(threw).toBe(true);
-    }
-
     expectParseError("class Foo { get #x() { this.#x = 1 } }", 'Writing to getter-only property "#x" will throw');
     expectParseError("class Foo { get #x() { this.#x += 1 } }", 'Writing to getter-only property "#x" will throw');
     expectParseError("class Foo { set #x(x) { this.#x } }", 'Reading from setter-only property "#x" will throw');

@@ -722,7 +722,11 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
     let mut token = Token::default();
     let mut prev_token = Token::default();
 
-    let mut count: u8 = 0;
+    // u32, not u8: a range with >=256 `||`/whitespace comparators overflows a
+    // u8 on the 256th increment. Zig's ReleaseFast wrapped (256 -> 0) silently;
+    // Rust's debug profile has overflow-checks and would panic+abort. `count`
+    // is only ever compared `== 0`, so the wider type is strictly more correct.
+    let mut count: u32 = 0;
     let mut skip_round;
     let mut is_or = false;
 

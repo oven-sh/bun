@@ -14,6 +14,7 @@
 // ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
 // IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
+import { bunEnv, bunExe } from "harness";
 import { unsortedPrereleases } from "./semver-fixture.js";
 const { satisfies, order } = Bun.semver;
 
@@ -737,4 +738,19 @@ describe("Bun.semver.satisfies()", () => {
   test("pre-release snapshot", () => {
     expect(unsortedPrereleases.sort(Bun.semver.order)).toMatchSnapshot();
   });
+});
+
+test("a version range with >=256 || comparators does not abort", async () => {
+  const range = Array(300).fill("1.0.0").join(" || ");
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `process.stdout.write(String(Bun.semver.satisfies("1.0.0", ${JSON.stringify(range)})))`],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  // The 256th comparator overflowed a u8 counter -> panic+abort (exit 133) in
+  // debug builds. Fixed: a wider counter parses it fine, like released Bun.
+  expect(stdout).toBe("true");
+  expect(exitCode).toBe(0);
 });

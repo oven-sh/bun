@@ -1,5 +1,5 @@
 import { $, ShellOutput } from "bun";
-import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
 
@@ -7,9 +7,7 @@ const expectNoError = (o: ShellOutput) => expect(o.stderr.toString()).not.toCont
 // const platformPath = (path: string) => (process.platform === "win32" ? path.replaceAll("/", sep) : path);
 const platformPath = (path: string) => path;
 
-beforeAll(() => {
-  setDefaultTimeout(1000 * 60 * 5);
-});
+setDefaultTimeout(1000 * 60 * 5);
 
 describe("bun patch <pkg>", async () => {
   describe("workspace interactions", async () => {

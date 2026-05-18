@@ -1,14 +1,12 @@
 import { spawn } from "bun";
 import { upgrade_test_helpers } from "bun:internal-for-testing";
-import { beforeAll, describe, expect, it, setDefaultTimeout } from "bun:test";
+import { describe, expect, it, setDefaultTimeout } from "bun:test";
 import { bunExe, bunEnv as env, tls, tmpdirSync } from "harness";
 import { copyFile } from "node:fs/promises";
 import { basename, join } from "path";
 const { openTempDirWithoutSharingDelete, closeTempDirHandle } = upgrade_test_helpers;
 
-beforeAll(() => {
-  setDefaultTimeout(1000 * 60 * 5);
-});
+setDefaultTimeout(1000 * 60 * 5);
 
 describe.concurrent(() => {
   it("two invalid arguments, should display error message and suggest command", async () => {

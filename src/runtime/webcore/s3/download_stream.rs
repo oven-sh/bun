@@ -364,7 +364,13 @@ impl Drop for S3HttpDownloadStreamingTask {
         // response_buffer, reported_response_buffer, headers, sign_result, range, proxy_url:
         // dropped automatically (Box/Vec-backed fields).
         // SAFETY: `http` is always initialised before the task is scheduled / dropped.
-        unsafe { self.http.assume_init_mut() }.clear_data();
+        let http = unsafe { self.http.assume_init_mut() };
+        http.clear_data();
+        // Zig shared one EntryList allocation between task.headers / request_headers /
+        // client.header_entries; Rust `init` clones, so free the two copies clear_data() skips.
+        // (Same fix as `S3HttpSimpleTask::drop` in simple_request.rs.)
+        http.request_headers = Default::default();
+        http.client.header_entries = Default::default();
     }
 }
 

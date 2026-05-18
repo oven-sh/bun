@@ -26,8 +26,9 @@ expect.extend({
 
 let port: string;
 let add_dir: string;
+setDefaultTimeout(1000 * 60 * 5);
+
 beforeAll(() => {
-  setDefaultTimeout(1000 * 60 * 5);
   port = new URL(root_url).port;
 });
 

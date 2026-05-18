@@ -3641,8 +3641,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if cfg!(debug_assertions) {
             // Enforce that scope locations are strictly increasing to help catch bugs
-            // where the pushed scopes are mismatched between the first and second passes
-            if !self.scopes_in_order.is_empty() {
+            // where the pushed scopes are mismatched between the first and second passes.
+            // Skip this check after an error has been logged: error recovery can legitimately
+            // cause `next()` to return a token at a position that was already consumed (e.g. a
+            // zero-length token produced after `TSyntaxError`), which makes the parser push
+            // multiple scopes at the same source offset. Release builds just report the error
+            // and recover, so the debug assertion should not be stricter than release.
+            if !self.log().has_errors() && !self.scopes_in_order.is_empty() {
                 let mut last_i = self.scopes_in_order.len() - 1;
                 while self.scopes_in_order[last_i].is_none() && last_i > 0 {
                     last_i -= 1;

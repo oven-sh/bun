@@ -148,7 +148,7 @@ pub fn compute_chunks(
         if css_asts[source_index as usize].is_some() {
             // SAFETY: see `this_ptr` PORT NOTE above — the helper only reads from
             // `this.graph` columns disjoint from the slices we hold here.
-            let (order, owned_condition_slabs) = find_imported_files_in_css_order(
+            let order = find_imported_files_in_css_order(
                 unsafe { &mut *this_ptr },
                 temp,
                 &[Index::init(source_index)],
@@ -180,7 +180,6 @@ pub fn compute_chunks(
                             .map(|_| bun_css::BundlerStyleSheet::empty())
                             .collect::<Vec<_>>()
                             .into_boxed_slice(),
-                        owned_condition_slabs,
                     }),
                     output_source_map: SourceMapPieces::init(),
                     flags: make_flags(
@@ -224,7 +223,7 @@ pub fn compute_chunks(
                 find_imported_css_files_in_js_order(this, temp, Index::init(source_index));
             if css_source_indices.len() > 0 {
                 // SAFETY: see `this_ptr` PORT NOTE above.
-                let (order, owned_condition_slabs) = find_imported_files_in_css_order(
+                let order = find_imported_files_in_css_order(
                     unsafe { &mut *this_ptr },
                     temp,
                     css_source_indices.slice(),
@@ -272,7 +271,6 @@ pub fn compute_chunks(
                                 .map(|_| bun_css::BundlerStyleSheet::empty())
                                 .collect::<Vec<_>>()
                                 .into_boxed_slice(),
-                            owned_condition_slabs,
                         }),
                         files_with_parts_in_chunk: css_files_with_parts_in_chunk,
                         output_source_map: SourceMapPieces::init(),

@@ -90,63 +90,10 @@ pub struct Chunk {
     /// PORT NOTE: owned `Box<[u8]>` (was arena-owned `[]const u8` in Zig).
     pub metafile_chunk_json: Box<[u8]>,
 
-    pub owned_css_rule_slabs: OwnedCssRuleSlabs,
-
     /// Pack boolean flags to reduce padding overhead.
     /// Previously 3 separate bool fields caused ~21 bytes of padding waste.
     pub flags: Flags,
 }
-
-/// Raw `(ptr, cap)` for `Vec<BundlerCssRule>` slabs from `prepareCssAstsForChunk`.
-/// Elements alias the source AST, so `Drop` only deallocs the slab.
-#[derive(Default)]
-pub struct OwnedCssRuleSlabs(
-    pub  Vec<(
-        core::ptr::NonNull<bun_css::css_parser::BundlerCssRule>,
-        usize,
-    )>,
-);
-
-impl Drop for OwnedCssRuleSlabs {
-    fn drop(&mut self) {
-        for (ptr, cap) in self.0.drain(..) {
-            // SAFETY: uniquely-owned global-alloc slab with cap > 0; dealloc without running destructors.
-            unsafe {
-                let layout = core::alloc::Layout::array::<bun_css::css_parser::BundlerCssRule>(cap)
-                    .expect("recorded from a live Vec");
-                std::alloc::dealloc(ptr.as_ptr().cast(), layout);
-            }
-        }
-    }
-}
-
-// SAFETY: holds uniquely-owned raw heap slabs; mirrors `Chunk`'s `Send`/`Sync`.
-unsafe impl Send for OwnedCssRuleSlabs {}
-unsafe impl Sync for OwnedCssRuleSlabs {}
-
-/// Raw `(ptr, cap)` for `Vec<ImportConditions>` slabs from `deep_clone_conditions`.
-/// Each slab is bitwise-aliased into one or more `CssImportOrder.conditions`
-/// headers, so `CssImportOrder::Drop` forgets `conditions` and ownership lives
-/// here. `Drop` only deallocs the slab; element storage is arena-owned.
-#[derive(Default)]
-pub struct OwnedCssConditionSlabs(pub Vec<(core::ptr::NonNull<bun_css::ImportConditions>, usize)>);
-
-impl Drop for OwnedCssConditionSlabs {
-    fn drop(&mut self) {
-        for (ptr, cap) in self.0.drain(..) {
-            // SAFETY: uniquely-owned global-alloc slab with cap > 0; dealloc without running destructors.
-            unsafe {
-                let layout = core::alloc::Layout::array::<bun_css::ImportConditions>(cap)
-                    .expect("recorded from a live Vec");
-                std::alloc::dealloc(ptr.as_ptr().cast(), layout);
-            }
-        }
-    }
-}
-
-// SAFETY: holds uniquely-owned raw heap slabs; mirrors `Chunk`'s `Send`/`Sync`.
-unsafe impl Send for OwnedCssConditionSlabs {}
-unsafe impl Sync for OwnedCssConditionSlabs {}
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, Default)]
@@ -256,7 +203,6 @@ impl Default for Chunk {
             renamer: bun_renamer::ChunkRenamer::default(),
             compile_results_for_chunk: CompileResultSlots::default(),
             metafile_chunk_json: Box::default(),
-            owned_css_rule_slabs: OwnedCssRuleSlabs::default(),
             flags: Flags::default(),
         }
     }
@@ -1371,9 +1317,6 @@ pub struct CssChunk {
     /// When we go through the `prepareCssAstsForChunk()` step, each import will
     /// create a shallow copy of the file's AST (just dereferencing the pointer).
     pub asts: Box<[bun_css::BundlerStyleSheet]>,
-
-    /// Owns the slabs aliased by `imports_in_chunk_in_order[*].conditions`.
-    pub owned_condition_slabs: OwnedCssConditionSlabs,
 }
 
 impl Drop for CssChunk {
@@ -1405,8 +1348,8 @@ impl Drop for CssImportOrder {
     fn drop(&mut self) {
         // `conditions`: bitwise-shared across multiple order entries by
         // `findImportedFilesInCSSOrder` (`bitwise_copy(wrapping_conditions)`);
-        // freeing here would double-free. The slab's real owner is
-        // `CssChunk.owned_condition_slabs`, which deallocs it once.
+        // freeing here would double-free. The slab is allocated from the
+        // `LinkerGraph` arena and is bulk-freed with it.
         core::mem::forget(core::mem::take(&mut self.conditions));
         // `condition_import_records`: every populated value is uniquely owned
         // (moved `all_import_records`) or an empty-Vec bitwise copy (cap == 0,

@@ -1450,20 +1450,13 @@ pub mod parse_worker {
                     }
                 }
 
-                // TODO: this arena may be wrong for native plugins
-                //
-                // Zig (`ParseTask.zig:707-711`): pass `bun.default_allocator`
-                // when the loader copies its contents into the `OutputFile`
-                // (that memory must outlive the per-file worker arena), else the
-                // worker arena. Routing the non-copy case through `bump` keeps
-                // the source bytes in the bulk-reset worker arena instead of
-                // churning the global allocator's large-object free list one
-                // `Vec<u8>` per file.
-                let read_arena: Option<&Bump> = if loader.should_copy_for_bundling() {
-                    None
-                } else {
-                    Some(bump)
-                };
+                // Always read into the worker arena: it is pinned for the
+                // entire bundle pass (freed only via `pool.deinit()` inside
+                // `deinit_without_freeing_arena`, after `process_files_to_copy`
+                // has already deep-copied every additional-file body into its
+                // `OutputFile`). This avoids churning the global allocator with
+                // one `Vec<u8>` per file.
+                let read_arena: Option<&Bump> = Some(bump);
                 // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`;
                 // `(*transpiler).fs` is a live `*mut FileSystem` BACKREF.
                 let fs_ref = unsafe { &mut *(*transpiler).fs };

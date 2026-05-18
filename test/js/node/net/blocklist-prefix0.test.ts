@@ -6,7 +6,7 @@ import { bunEnv, bunExe } from "harness";
 // (uncatchable) — on every `check()`, including the per-connection hot path
 // (`net.createServer({ blockList })`). A `/0` mask is 0, so every address
 // matches. Run in a subprocess since the failure was a hard abort.
-test("BlockList /0 subnet matches all addresses without aborting", async () => {
+test.concurrent("BlockList /0 subnet matches all addresses without aborting", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -32,7 +32,7 @@ test("BlockList /0 subnet matches all addresses without aborting", async () => {
   expect(cleanedStderr).toBe("");
   expect(stdout).toBe("[true,true,true]");
   expect(exitCode).toBe(0);
-}, 30_000);
+});
 
 // `as_v4()` extracts the low 32 bits of an IPv4-mapped IPv6 network
 // (`::ffff:a.b.c.d`), but its `prefix` was validated against [0,128] for the
@@ -40,7 +40,7 @@ test("BlockList /0 subnet matches all addresses without aborting", async () => {
 // same shift-left / subtract overflow abort in debug (and a garbage mask in
 // release). The prefix must be translated (`saturating_sub(96)`) so `/104`
 // behaves as IPv4 `/8` like Node.
-test("BlockList IPv4-mapped IPv6 subnet translates prefix without aborting", async () => {
+test.concurrent("BlockList IPv4-mapped IPv6 subnet translates prefix without aborting", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -67,4 +67,4 @@ test("BlockList IPv4-mapped IPv6 subnet translates prefix without aborting", asy
   expect(cleanedStderr).toBe("");
   expect(stdout).toBe("[true,false,true,false]");
   expect(exitCode).toBe(0);
-}, 30_000);
+});

@@ -1303,6 +1303,29 @@ impl WebWorker {
             // SAFETY: vm_ptr valid; sole owner. `destroy()` is the port of
             // Zig `vm.deinit()`.
             unsafe { (*vm_ptr).destroy() };
+            // Reclaim the boxes that Zig bulk-freed via `arena.deinit()`
+            // (web_worker.zig:515) but the Rust port allocated on the global
+            // heap in `VirtualMachine::init` — `destroy()` only deinits the
+            // fields, not the box storage. Worker `init_worker` always passes
+            // `log: None`, so the log box is VM-owned here.
+            // SAFETY: sole owner; nothing past this point dereferences the VM.
+            unsafe {
+                let console = core::mem::replace(&mut (*vm_ptr).console, core::ptr::null_mut());
+                if !console.is_null() {
+                    bun_core::heap::destroy(console);
+                }
+                if let Some(log) = (*vm_ptr).log.take() {
+                    bun_core::heap::destroy(log.as_ptr());
+                }
+                virtual_machine::VMHolder::set_vm(None);
+                // The VM was `alloc_zeroed(Layout::<VirtualMachine>())` in
+                // `init`, NOT `Box::new` — dealloc the raw storage directly so
+                // field `Drop`s do not re-run on already-`deinit`'d state.
+                std::alloc::dealloc(
+                    vm_ptr.cast::<u8>(),
+                    core::alloc::Layout::new::<VirtualMachine>(),
+                );
+            }
         }
         // Reclaim the cloned env (loader borrows `*map` — drop loader first).
         // In Zig both lived on the worker arena and were bulk-freed below;
@@ -1317,6 +1340,14 @@ impl WebWorker {
             drop(unsafe { bun_core::heap::take(env_map) });
         }
         bun_core::delete_all_pools_for_thread_exit();
+        // Free this thread's lazily-created uWS loop and its 512 KiB recv
+        // buffer. Zig reached this via the `pthread_exit`-driven C++
+        // thread_local `~LoopCleaner`, but the Rust port returns normally and
+        // unwinding never crosses the `extern "C"` frame, so the destructor is
+        // skipped on glibc; under BUN_DESTRUCT_VM_ON_EXIT it would also gate
+        // on `!bun_is_exiting()`. Everything that registers polls on the loop
+        // (gc_controller, sockets, timers) has been deinit'd above.
+        bun_uws::on_thread_exit();
         drop(arena.take());
 
         // PORT NOTE: Zig calls `bun.exitThread()` (`pthread_exit`) here. In

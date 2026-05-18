@@ -514,7 +514,7 @@ pub const Repository = extern struct {
             _ = exec(
                 allocator,
                 env,
-                &[_]string{ "git", "-C", path, "fetch", "--quiet" },
+                &[_]string{ "git", "-C", path, "fetch", "--quiet", "--tags" },
             ) catch |err| {
                 log.addErrorFmt(
                     null,

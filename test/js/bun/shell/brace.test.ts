@@ -1,5 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
 
 describe("$.braces", () => {
   test("no-op", () => {
@@ -75,5 +76,33 @@ describe("$.braces", () => {
   test("unicode", () => {
     const result = $.braces(`lol {😂,🫵,🤣}`);
     expect(result).toEqual(["lol 😂", "lol 🫵", "lol 🤣"]);
+  });
+});
+
+// A shell word combining brace + glob (`src/*.{ts,tsx}`, `{src,lib}/*.ts`) was
+// brace-expanded but the resulting `*` patterns were never globbed (the
+// brace-expand state always transitioned to Done instead of re-entering glob).
+describe("brace + glob composition", () => {
+  test("src/*.{ts,tsx} globs after brace expansion", async () => {
+    using dir = tempDir("shell-brace-glob", {
+      "src/app.ts": "",
+      "src/util.tsx": "",
+    });
+    const out = (await $`echo src/*.{ts,tsx}`.cwd(String(dir)).text()).trim();
+    // Zig composes both the literal brace variants and the glob matches.
+    expect(out).toContain("src/app.ts");
+    expect(out).toContain("src/util.tsx");
+    expect(out).toContain("src/*.ts");
+    expect(out).toContain("src/*.tsx");
+  });
+
+  test("{src,lib}/*.ts composes a brace prefix with a glob", async () => {
+    using dir = tempDir("shell-brace-glob2", {
+      "src/a.ts": "",
+      "lib/b.ts": "",
+    });
+    const out = (await $`echo {src,lib}/*.ts`.cwd(String(dir)).text()).trim();
+    expect(out).toContain("src/a.ts");
+    expect(out).toContain("lib/b.ts");
   });
 });

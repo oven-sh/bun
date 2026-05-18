@@ -339,10 +339,7 @@ fn filter_audit_response(
 
 /// Pretty-print an audit response (`{"pkg":[...]}`) back to JSON bytes using
 /// the shared printer. Two-space indent matches npm's `npm audit --json` shape.
-fn serialize_audit_json(
-    expr: Expr,
-    source: &bun_ast::Source,
-) -> Result<Vec<u8>, bun_core::Error> {
+fn serialize_audit_json(expr: Expr, source: &bun_ast::Source) -> Result<Vec<u8>, bun_core::Error> {
     let buffer_writer = js_printer::BufferWriter::init();
     let mut printer = js_printer::BufferPrinter::init(buffer_writer);
 

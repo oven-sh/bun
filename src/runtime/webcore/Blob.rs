@@ -2304,7 +2304,7 @@ impl BlobExt for Blob {
                 if let store::Data::File(file) =
                     &self.store().expect("infallible: store present").data
                 {
-                    if file.seekable.unwrap_or(true) == false && file.max_size == MAX_SIZE {
+                    if !file.seekable.unwrap_or(true) && file.max_size == MAX_SIZE {
                         return JSValue::js_number(f64::INFINITY);
                     }
                 }

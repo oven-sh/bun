@@ -1454,7 +1454,7 @@ fn get_bundled_deps(
                 let Some(b) = bundled_deps.as_bool() else {
                     return Ok(Some(Vec::new()));
                 };
-                if !b == true {
+                if !b {
                     return Ok(Some(Vec::new()));
                 }
 

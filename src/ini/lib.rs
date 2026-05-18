@@ -1673,22 +1673,6 @@ mod draft {
                     //
                     // Scoped registries are set like this:
                     // - @myorg:registry=https://somewhere-else.com/myorg
-                    let conf_item: &ConfigItem = &conf_item_;
-                    match conf_item.optname {
-                        ConfigOpt::Certfile | ConfigOpt::Keyfile => {
-                            iter.log.add_warning_fmt(
-                            Some(source),
-                            iter.config.properties.at(iter.prop_idx - 1).key.as_ref().unwrap().loc,
-                            format_args!(
-                                "The following .npmrc registry option was not applied:\n\n  <b>{}<r>\n\nBecause we currently don't support the <b>{}<r> option.",
-                                conf_item,
-                                <&'static str>::from(conf_item.optname),
-                            ),
-                        );
-                            continue;
-                        }
-                        _ => {}
-                    }
                     if let Some(x) = conf_item_.dupe()? {
                         configs.push(x);
                     }
@@ -1717,6 +1701,8 @@ mod draft {
                                     .as_bytes(),
                             ),
                             email: Box::default(),
+                            certfile: Box::default(),
+                            keyfile: Box::default(),
                         });
                         install.default_registry.as_mut().unwrap()
                     };
@@ -1745,7 +1731,16 @@ mod draft {
                                 v.email = x;
                             }
                         }
-                        ConfigOpt::Certfile | ConfigOpt::Keyfile => unreachable!(),
+                        ConfigOpt::Certfile => {
+                            if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
+                                v.certfile = x;
+                            }
+                        }
+                        ConfigOpt::Keyfile => {
+                            if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
+                                v.keyfile = x;
+                            }
+                        }
                     }
                 }
 
@@ -1797,7 +1792,16 @@ mod draft {
                                     v.email = x;
                                 }
                             }
-                            ConfigOpt::Certfile | ConfigOpt::Keyfile => unreachable!(),
+                            ConfigOpt::Certfile => {
+                                if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
+                                    v.certfile = x;
+                                }
+                            }
+                            ConfigOpt::Keyfile => {
+                                if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
+                                    v.keyfile = x;
+                                }
+                            }
                         }
                         // We have to keep going as it could match multiple scopes
                         continue;

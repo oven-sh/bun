@@ -283,6 +283,7 @@ impl UpgradeCommand {
             http_proxy,
             None,
             HTTP::FetchRedirect::Follow,
+            None,
         ));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
@@ -682,6 +683,7 @@ impl UpgradeCommand {
                 http_proxy,
                 None,
                 HTTP::FetchRedirect::Follow,
+                None,
             ));
             // `progress` is leaked; AsyncHTTP holds a NonNull into it.
             async_http.client.progress_node =

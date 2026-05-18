@@ -8,7 +8,7 @@ use bun_core::{Global, Output, prettyln};
 use bun_http as http;
 use bun_install::PackageManager;
 use bun_install::dependency;
-use bun_install::npm::{self, PackageManifest};
+use bun_install::npm::{self, registry::registry_tls_config, PackageManifest};
 use bun_js_parser as ast;
 use bun_js_printer as JSPrinter;
 use bun_parsers::json as JSON;
@@ -123,6 +123,7 @@ pub(crate) fn view(
     let mut response_buf = MutableString::init(2048)?;
     let header_buf: &[u8] = headers.content.written_slice();
     let http_proxy = manager.http_proxy(&url);
+    let tls_props = registry_tls_config(&scope);
     let mut req = http::AsyncHTTP::init_sync(
         http::Method::GET,
         url,
@@ -133,6 +134,7 @@ pub(crate) fn view(
         http_proxy,
         None,
         http::FetchRedirect::Follow,
+        tls_props,
     );
     req.client.flags.reject_unauthorized = manager.tls_reject_unauthorized();
 

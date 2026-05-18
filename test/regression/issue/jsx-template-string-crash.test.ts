@@ -29,7 +29,7 @@ test("JSX lexer should not crash with slice bounds issues", async () => {
   expect(normalizeBunSnapshot(stdout.toString())).toMatchInlineSnapshot(`""`);
 });
 
-test("#30959 JSX attribute with invalid '(' value parses cleanly in debug builds", async () => {
+test.concurrent("#30959 JSX attribute with invalid '(' value parses cleanly in debug builds", async () => {
   // Previously, parsing `<r L=((` in a debug build panicked with
   // `Scope location must be greater than previous 6 must be greater than 6`
   // in push_scope_for_parse_pass. The recovery path after

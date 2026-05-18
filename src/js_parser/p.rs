@@ -457,6 +457,14 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // symbols to handle declaring a hoisted "var" symbol in a nested scope and
     // binding a name to it in a parent or sibling scope.
     pub scopes_in_order: ScopeOrderList<'a>,
+    // Error count on the shared `Log` at the time this `P` was constructed.
+    // The log may already carry errors from earlier files in the same parse
+    // session, so the parse-pass "did this file log anything?" question has
+    // to be phrased relative to this baseline — matches the
+    // `orig_error_count` pattern at `parse_entry.rs:762` that gates the
+    // visit-pass bailout. Currently read only by the debug-only
+    // strictly-increasing scope-location check in `push_scope_for_parse_pass`.
+    pub orig_error_count: u32,
     // Shared slice: the visit pass only ever *reads* `ScopeOrder` (which is
     // `Copy`) and advances/reslices the cursor. A `&'a mut [_]` here forced
     // raw-ptr round-trips at the enum-preprocess save/restore sites and
@@ -3642,12 +3650,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if cfg!(debug_assertions) {
             // Enforce that scope locations are strictly increasing to help catch bugs
             // where the pushed scopes are mismatched between the first and second passes.
-            // Skip this check after an error has been logged: error recovery can legitimately
-            // cause `next()` to return a token at a position that was already consumed (e.g. a
-            // zero-length token produced after `TSyntaxError`), which makes the parser push
-            // multiple scopes at the same source offset. Release builds just report the error
-            // and recover, so the debug assertion should not be stricter than release.
-            if !self.log().has_errors() && !self.scopes_in_order.is_empty() {
+            // Skip this check after *this file* has logged an error: error recovery can
+            // legitimately cause `next()` to return a token at a position that was
+            // already consumed (e.g. a zero-length token produced after `TSyntaxError`),
+            // which makes the parser push multiple scopes at the same source offset.
+            // Release builds just report the error and recover; the debug assertion
+            // should not be stricter than release. Compare against `orig_error_count`
+            // so an unrelated error from an earlier file in the same session doesn't
+            // silently disable this invariant for a file that parses cleanly — mirrors
+            // the visit-pass bailout at `parse_entry.rs:876`.
+            let file_has_errors = self.log().errors > self.orig_error_count;
+            if !file_has_errors && !self.scopes_in_order.is_empty() {
                 let mut last_i = self.scopes_in_order.len() - 1;
                 while self.scopes_in_order[last_i].is_none() && last_i > 0 {
                     last_i -= 1;
@@ -9195,6 +9208,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             current_scope: scope,
             module_scope: scope,
             scopes_in_order: scope_order,
+            // SAFETY: `log` is a `NonNull<Log>` whose pointee outlives `'a`
+            // (enforced by `Parser::init`); reading the `errors` scalar here
+            // mirrors `parse_entry.rs:762` which reads it through the lexer
+            // alias at the same point in the pipeline.
+            orig_error_count: unsafe { log.as_ref() }.errors,
             needs_jsx_import: false, // Zig: `if (scan_only) false else void` — NeedsJSXType collapsed to `bool`
             lexer,
 

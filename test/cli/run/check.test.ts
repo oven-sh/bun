@@ -57,8 +57,8 @@ describe.concurrent("bun --check", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toBe("");
-    expect(exitCode).toBe(0);
     expect(await Bun.file(`${dir}/ran.txt`).exists()).toBe(false);
+    expect(exitCode).toBe(0);
   });
 
   test("accepts TypeScript syntax in .ts files", async () => {
@@ -158,19 +158,17 @@ describe.concurrent("bun --check", () => {
     expect(exitCode).not.toBe(0);
   });
 
-  test("rejects combining --check with --eval or --print", async () => {
-    for (const flag of ["-e", "--eval", "-p", "--print"]) {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "--check", flag, "1 + 1"],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr.toLowerCase()).toContain("either --check or --eval");
-      expect(stdout).toBe("");
-      expect(exitCode).not.toBe(0);
-    }
+  test.each(["-e", "--eval", "-p", "--print"])("rejects combining --check with %s", async flag => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--check", flag, "1 + 1"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr.toLowerCase()).toContain("either --check or --eval");
+    expect(stdout).toBe("");
+    expect(exitCode).not.toBe(0);
   });
 
   test("works via `bun run --check <file>`", async () => {

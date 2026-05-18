@@ -10,11 +10,10 @@ use bun_ptr::{ExternalShared, ExternalSharedDescriptor, ExternalSharedOptional};
 // `BindgenArray::convert_from_extern` reuses C++-allocated buffers by adopting
 // them into `Vec<ZigType>` even when `align_of::<ZigType>() != align_of::<ExternType>()`.
 // That is only sound because mimalloc's `mi_free` ignores the allocation layout;
-// the Rust `GlobalAlloc::dealloc` contract would otherwise be violated, and the
-// C++ side (`ExternVectorTraits.h`) always allocates with `MimallocMalloc::malloc`
-// (`mi_malloc`). When the global allocator is *not* mimalloc (ASAN installs
-// `std::alloc::System`), the runtime `bun_alloc::USE_MIMALLOC` check below skips
-// the reuse paths and the fallback frees the C++ buffer with `mi_free` directly.
+// the Rust `GlobalAlloc::dealloc` contract would otherwise be violated. The C++ side
+// (`ExternVectorTraits.h`) always allocates with `mi_malloc`, so when the global
+// allocator is not mimalloc the reuse path is skipped and the fallback frees the
+// C++ buffer with `mi_free` directly.
 
 // ──────────────────────────────────────────────────────────────────────────
 // The Zig file defines a family of "Bindgen*" comptime structs that all share
@@ -353,22 +352,18 @@ impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
             return Self::ZigType::from_unmanaged(new_unmanaged);
         }
 
-        // Fallback: allocate fresh, convert, free old. `data` was `mi_malloc`'d by
-        // the C++ side regardless of the Rust global allocator, so free it with
-        // `mi_free` directly instead of letting `Vec::drop` route through the
-        // global allocator (which is `std::alloc::System` under ASAN, not mimalloc).
+        // Fallback: allocate fresh, convert, free old. `data` was `mi_malloc`'d
+        // by the C++ side regardless of the Rust global allocator, so free it
+        // with `mi_free` directly instead of `Vec::drop`.
         let mut result = bun_core::handle_oom(Self::ZigType::init_capacity(length));
         let mut unmanaged = ManuallyDrop::new(unmanaged);
         for item in unmanaged.iter_mut() {
-            // SAFETY: each slot `i < length` holds a C++-initialized `ExternType`;
-            // `ManuallyDrop` ensures it isn't read twice.
+            // SAFETY: each slot holds a C++-initialized `ExternType`; `ManuallyDrop` ensures it isn't read twice.
             result.append_assume_capacity(Child::convert_from_extern(unsafe {
                 core::ptr::read(item)
             }));
         }
-        // SAFETY: `data` is the live `mi_malloc`'d block handed over by C++
-        // `ExternVectorTraits::convertToExtern` (it never returns a null `data`
-        // here — the null case is handled at the top of this function).
+        // SAFETY: `data` is the live `mi_malloc`'d block from `ExternVectorTraits::convertToExtern`.
         unsafe { bun_alloc::mimalloc::mi_free(data.cast()) };
         result
     }

@@ -70,14 +70,6 @@ impl<'a> HTMLScanner<'a> {
             input_path
         };
 
-        // Zig: `try this.arena.dupeZ(u8, path_to_use)` — duplicate into the
-        // worker's AST arena. `AstAlloc` routes to the `mi_heap_t` set by
-        // `ASTMemoryAllocator::push` for the duration of this `ParseTask`, and
-        // its `deallocate` is a no-op, so `Box::leak` is sound and the bytes
-        // are reclaimed by `mi_heap_destroy` on the worker's `arena.reset()` —
-        // matching the Zig arena lifetime. (The previous global-heap
-        // `Vec::leak()` stranded one slice per HTML import for the process
-        // lifetime; LSan flags that under `bun_asan`.)
         let owned: &'static [u8] =
             Box::leak(AstAlloc::vec_from_slice(path_to_use).into_boxed_slice());
         let record = ImportRecord {

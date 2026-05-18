@@ -1286,14 +1286,6 @@ pub mod parse_worker {
                 );
                 let _ = temp_log.append_to_maybe_recycled(log, source);
                 let mut ast = JSAst::init(lazy?.unwrap());
-                // Move `css_ast` into the worker arena only once we know we'll
-                // hand it back via `ast.css`. The arena bulk-free does not run
-                // `Drop`, so a `bump.alloc(css_ast)` that is *not* registered in
-                // `ast.css` (and thus never reached by `take_ast_cols!` /
-                // `drop_in_place` in `bundle_v2::deinit_without_freeing_arena`)
-                // would strand its global-heap fields (`rules`, `sources`,
-                // `local_scope`, `composes`, …). Keep it on the stack across the
-                // fallible `lazy?` above so the error path drops it normally.
                 let css_ast_heap = crate::bundled_ast::CssAstRef::from_bump(bump.alloc(css_ast));
                 ast.css = Some(css_ast_heap);
                 ast.import_records = import_records;
@@ -2543,8 +2535,7 @@ pub mod parse_worker {
         // reads (Parser.zig:1415,1433) into the parser-side mirror and bump-alloc
         // so `opts` can borrow it.
         opts.framework = topts.framework.map(|f| {
-            // `Framework` is bump-allocated below, so `Drop` never runs —
-            // use arena-owned `Cow::Borrowed` slices, not `Cow::Owned(Vec)`.
+            // `Framework` is bump-allocated below, so `Drop` never runs — use arena-owned slices.
             let projected = js_parser::options::Framework {
                 is_built_in_react: f.is_built_in_react,
                 server_components: f.server_components.as_ref().map(|sc| {
@@ -2823,15 +2814,7 @@ pub mod parse_worker {
         });
         let result = bun_core::heap::into_raw(result);
 
-        // The `ParseTask` is arena-owned (`arena.create(ParseTask)` in
-        // `bundle_v2.rs`); the arena bulk-free never runs `Drop`, so any
-        // heap-owning field that survives this function strands. `jsx` is a
-        // `Pragma` cloned from `resolve_result.jsx` (`ParseTask::init`, line
-        // 263) — when the resolver read tsconfig it carries owned `MemberList`
-        // / `Cow::Owned` slices. It is only consumed during parsing
-        // (`run_with_source_code`); the result enqueued above does not
-        // reference it, so reset it to the all-static `Default` here. This
-        // mirrors Zig, where `jsx` was arena-backed (no per-field free).
+        // `ParseTask` is arena-owned (no Drop); `jsx` may hold owned slices from tsconfig.
         drop(core::mem::take(&mut this.jsx));
 
         // Zig matched `worker.ctx.loop().*` on `AnyEventLoop::{js, mini}`.
@@ -2869,23 +2852,8 @@ pub mod parse_worker {
         worker.unget();
     }
 
-    /// Free the heap-owning fields of `Result` that `on_parse_task_complete`
-    /// leaves behind, *without* dropping `Result` itself.
-    ///
-    /// `on_parse_task_complete` `mem::replace`s `Success.ast` with
-    /// `JSAst::empty()` and `mem::swap`s `Success.source` with the graph
-    /// placeholder, so dropping those is unsound (the swapped-in placeholder's
-    /// `Cow::Borrowed` may alias plugin-/loader-provided bytes the graph's
-    /// swapped-out `Source` still references — see the SAFETY note at the
-    /// `dealloc` call sites). But it only *clones* `Success.log` /
-    /// `ResultError.log` into `transpiler.log` (`clone_to_with_recycled`), so
-    /// `result.value`'s own `Log` (`msgs: Vec<Msg>`,
-    /// `owned_strings: Vec<Box<[u8]>>`) survives. Zig stored these in the
-    /// arena so a struct-only `destroy` was leak-free; the Rust port's `Log`
-    /// is global-heap, so reset it to the empty `Default` here. All other
-    /// `Result` / `Success` / `ResultError` fields are either moved out by
-    /// `on_parse_task_complete`, `Copy`, or pointer-only (`StoreStr`, `Fd`,
-    /// `ParentRef`).
+    // The struct-only `dealloc` below skips field Drop; the `Log` is the only
+    // heap-owning field `on_parse_task_complete` doesn't move out, so take it here.
     fn drop_result_owned_fields(result: &mut Result) {
         match &mut result.value {
             ResultValue::Success(s) => drop(core::mem::take(&mut s.log)),
@@ -2898,8 +2866,7 @@ pub mod parse_worker {
         // SAFETY: callback contract — `result` was heap-allocated above; `ctx` is
         // the BACKREF stashed in `result.ctx` (Zig passed `BundleV2` as ParentContext).
         BundleV2::on_parse_task_complete(unsafe { &mut *result }, unsafe { &mut *ctx });
-        // SAFETY: `result` is uniquely owned (callback contract); reborrow to
-        // free the `Log` stranded by the struct-only dealloc below.
+        // SAFETY: `result` is uniquely owned (callback contract).
         drop_result_owned_fields(unsafe { &mut *result });
         // Zig: `defer bun.default_allocator.destroy(parse_result)` (bundle_v2.zig).
         // Zig's `destroy` is *struct-only* (no field deinit). 954e9ccb mapped this

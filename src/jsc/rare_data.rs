@@ -1020,8 +1020,6 @@ impl RareData {
 // ──────────────────────────────────────────────────────────────────────────
 
 unsafe extern "Rust" {
-    /// Releases a stdio `Store` minted by `__bun_stdio_blob_store_new` (balances
-    /// the ctor's +2). Defined in `bun_runtime::jsc_hooks`; no-ops on null.
     safe fn __bun_stdio_blob_store_deinit(ptr: *mut ());
 }
 
@@ -1201,8 +1199,6 @@ impl Drop for RareData {
         // After the default-ctx free so the tombstone callback still finds a live
         // map; ssl_ctx_cache itself lives in `RuntimeState` and is dropped there.
 
-        // Release the +2 from `stdio_ctor` so the `Box<Store>` drops once any
-        // outstanding retained `StoreRef`s go.
         for store in [
             self.stderr_store.take(),
             self.stdout_store.take(),

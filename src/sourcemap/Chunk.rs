@@ -46,17 +46,10 @@ impl Chunk {
     // `pub fn deinit` dropped — body only freed `self.buffer`, which `Drop` on
     // `MutableString` handles automatically.
 
-    /// Bitwise copy that **aliases** `self.buffer.list`'s heap allocation
-    /// instead of cloning it (Zig struct-copy semantics).
-    ///
     /// # Safety
-    /// The returned `Chunk` shares `self.buffer.list`'s allocation. The caller
-    /// must guarantee that **at most one** of `self` / the alias is dropped
-    /// (the other must be in a non-Drop container or be `mem::forget`-ed), and
-    /// that every read of the alias happens-before whichever one *is* dropped.
+    /// The returned `Chunk` aliases `self.buffer`'s allocation; at most one may be dropped.
     #[inline]
     pub unsafe fn alias(&self) -> Chunk {
-        // SAFETY: bitwise read; caller upholds the no-double-drop contract.
         unsafe { core::ptr::read(self) }
     }
 

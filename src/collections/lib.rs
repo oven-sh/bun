@@ -219,8 +219,6 @@ impl<T, const N: usize> Default for SmallList<T, N> {
     }
 }
 impl<T: Clone, const N: usize> Clone for SmallList<T, N> {
-    // LEAK(arena): heap spill strands when the clone lives in a bump-allocated
-    // CSS AST node. Outlined under ASAN so `leak:SmallList<*>::clone` matches.
     #[cfg_attr(bun_asan, inline(never))]
     #[cfg_attr(not(bun_asan), inline)]
     fn clone(&self) -> Self {
@@ -372,9 +370,6 @@ impl<T, const N: usize> SmallList<T, N> {
     }
 
     // ── mutation ───────────────────────────────────────────────────────────
-    // LEAK(arena): the heap spill past `N` strands when `self` lives in a
-    // bump-allocated CSS AST node (no `Drop` on bulk-free). Outlined under
-    // ASAN so `leak:SmallList<*>::append` matches the v0-demangled symbol.
     #[cfg_attr(bun_asan, inline(never))]
     #[cfg_attr(not(bun_asan), inline)]
     pub fn append(&mut self, item: T) {

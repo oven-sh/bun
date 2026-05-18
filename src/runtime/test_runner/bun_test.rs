@@ -432,22 +432,9 @@ pub struct BunTestRoot {
     // gpa dropped — global mimalloc
     pub active_file: BunTestPtrOptional,
     pub hook_scope: Box<DescribeScope>,
-    /// Outstanding `RefData` pointers handed to `Promise.then()` as raw-pointer
-    /// closure context (see `run_test_callback`). The `+1` taken by
-    /// `IntrusiveRc::into_raw()` is released only when the matching
-    /// `bun_test_then_or_catch` runs — but a test promise that never settles
-    /// (timeout, hung `await`) never queues that reaction, so the `RefData`
-    /// (and the `RcBox<BunTestCell>` reachable through its `Weak`) would be
-    /// reachable only through a NaN-boxed `JSValue` LSan can't trace.
-    ///
-    /// `BunTestRoot` lives for the lifetime of `test_command::exec()` (which
-    /// only exits via process-exit), so this `Vec` is a process-lifetime
-    /// owner: LSan sees the `*const RefData` here and stops reporting the
-    /// allocation. Entries are removed in `bun_test_then_or_catch` when the
-    /// promise settles. We deliberately do **not** free orphaned entries —
-    /// a never-settled promise reaction may still be queued while a later
-    /// file's microtasks run, and `from_raw()` on a freed pointer would be
-    /// a use-after-free worse than the leak.
+    /// `RefData` pointers handed to `Promise.then()`. Tracked here (process-lifetime)
+    /// so a never-settled promise's `+1` stays reachable; do not free orphans —
+    /// a queued reaction may still consume them.
     pub pending_then_refs: std::cell::RefCell<Vec<*const RefData>>,
 }
 
@@ -634,14 +621,8 @@ pub struct BunTest {
     pub default_concurrent: bool,
     pub first_last: FirstLast,
     pub extra_execution_entries: Vec<*mut ExecutionEntry>,
-    /// Heap-boxed bitwise *clones* of `before_each`/`after_each` entries created
-    /// by `Order::generate_order_test` (Zig allocated them in the test arena and
-    /// bulk-freed; the Rust port `Box`es them — see the `LEAK(LSan)` note in
-    /// `Order.rs`). They are linked into `Execution::sequences` for the whole
-    /// run, so they can only be reclaimed at `BunTest::Drop`. Because each is a
-    /// `ptr::read` bitwise copy of a `DescribeScope`-owned entry, only the Box
-    /// header may be freed — running `ExecutionEntry::Drop` would double-free
-    /// the original's `Strong`/`Box` fields.
+    /// Heap-boxed bitwise clones of hook entries from `Order::generate_order_test`.
+    /// Only the Box header may be freed in `Drop` — fields alias `DescribeScope` originals.
     pub cloned_hook_entries: Vec<*mut ExecutionEntry>,
     pub wants_wakeup: bool,
 
@@ -753,9 +734,7 @@ impl BunTest {
         // SAFETY: this_ptr was created by wrapping a RefDataPtr via asPromisePtr; we adopt the +1 it carried
         let raw_ref: *mut RefData = this_ptr.as_promise_ptr::<RefData>();
         let refdata: RefDataPtr = unsafe { bun_ptr::IntrusiveRc::from_raw(raw_ref) };
-        // The promise has settled — drop the process-lifetime tracking entry
-        // pushed in `run_test_callback`. Done before the `deref()` below so a
-        // freed `RefData` never lingers in the registry.
+        // Remove the pending_then_refs entry before `deref()` so a freed `RefData` never lingers.
         if let Some(runner) = Jest::runner() {
             let mut pending = runner.bun_test_root.pending_then_refs.borrow_mut();
             if let Some(pos) = pending.iter().position(|p| *p == raw_ref.cast_const()) {
@@ -1085,37 +1064,12 @@ impl BunTest {
                     Order::AllOrderResult::EMPTY
                 };
                 let describe_seq_start = order.sequences.len();
-                // KNOWN RESIDUAL: if `generate_order_describe` errors after it
-                // has already `Box`'d some hook clones, `?` returns before the
-                // walk below registers them and they strand exactly as before
-                // this fix. Only the happy path is leak-free; the error path
-                // would need `generate_order_test` to track its own clones.
                 order.generate_order_describe(&mut self.collection.root_scope)?;
                 let describe_seq_end = order.sequences.len();
-                // Collect the heap-boxed `before_each`/`after_each` clones that
-                // `Order::generate_order_test` `Box`'d and `into_raw`'d into
-                // `ExecutionSequence` linked lists (Zig: arena-allocated and
-                // bulk-freed). The originals live in `DescribeScope.before_each`
-                // / `.after_each`; the clones strand once `Execution::sequences`
-                // is dropped without a walk. Capture them now — before
-                // `Phase::Execution` splices `extra_execution_entries` into the
-                // same lists — so `BunTest::Drop` can reclaim the Box headers
-                // (LSan: `bun_test.rs:_advance`).
-                //
-                // Sequences from `generate_all_order` (per-describe and root
-                // `before_all`/`after_all`) have `test_entry == None` and only
-                // contain pointers into `DescribeScope`/`hook_scope` Boxes —
-                // skip them. Sequences from `generate_order_test` always set
-                // `test_entry` to the original test entry; every other node in
-                // its `first_entry` chain is a clone.
-                //
-                // The walk depends on the invariant that nothing has spliced
-                // `extra_execution_entries` nodes into these chains yet —
-                // `add_extra_entry` runs only during `Phase::Execution`
-                // (`generic_hook` is unreachable from `Collection`). Assert it
-                // so a future change that lets a hook fire during collection
-                // trips here instead of double-freeing a `DescribeScope` entry
-                // in `BunTest::Drop`.
+                // Collect hook-entry clones boxed by `generate_order_test` so `Drop` can
+                // reclaim the Box headers. Must run before `extra_execution_entries` are
+                // spliced into the same chains, or the walk would double-free `DescribeScope`
+                // entries.
                 debug_assert!(
                     self.extra_execution_entries.is_empty(),
                     "extra_execution_entries must be spliced after the cloned-hook walk"
@@ -1127,9 +1081,7 @@ impl BunTest {
                         if p != test_entry {
                             self.cloned_hook_entries.push(p.as_ptr());
                         }
-                        // SAFETY: linked list nodes are live `ExecutionEntry`s
-                        // built by `generate_order_test`; traversal terminates
-                        // at `next == None`.
+                        // SAFETY: live linked-list nodes built by `generate_order_test`.
                         cur = unsafe { p.as_ref() }.next.and_then(NonNull::new);
                     }
                 }
@@ -1278,12 +1230,7 @@ impl BunTest {
                         } else {
                             Self::ref_(&this_strong, cfg_data.clone())
                         };
-                        // The `+1` handed to `Promise.then()` below lives only
-                        // inside a NaN-boxed `JSValue` — invisible to LSan and
-                        // never released if the promise never settles (e.g.
-                        // test timeout). Track the raw pointer in the
-                        // process-lifetime `BunTestRoot` so it stays reachable;
-                        // `bun_test_then_or_catch` removes it once consumed.
+                        // Track the `+1` handed to `Promise.then()` in case the promise never settles.
                         let raw_ref: *mut RefData = bun_ptr::IntrusiveRc::into_raw(this_ref);
                         this_strong
                             .bun_test_root
@@ -1401,14 +1348,8 @@ impl Drop for BunTest {
             unsafe { drop(bun_core::heap::take(entry)); }
         }
         for entry in self.cloned_hook_entries.drain(..) {
-            // Reclaim only the Box header: each entry is a `ptr::read` bitwise
-            // copy of a `DescribeScope`-owned `before_each`/`after_each` entry
-            // (see `Order::generate_order_test`), so its `Strong`/`Box` fields
-            // are aliased with the original and must not be dropped here.
-            // SAFETY: heap-boxed by `Order::generate_order_test` via
-            // `heap::into_raw(Box::new(ptr::read(..)))`; same `Layout` as the
-            // `ManuallyDrop` newtype; nothing dereferences these pointers
-            // after `BunTest` Drop begins.
+            // Reclaim only the Box header — fields alias the `DescribeScope` originals.
+            // SAFETY: heap-boxed by `Order::generate_order_test`; same layout as `ManuallyDrop`.
             let _ = unsafe { Box::from_raw(entry.cast::<core::mem::ManuallyDrop<ExecutionEntry>>()) };
         }
         // execution, collection, result_queue: dropped automatically

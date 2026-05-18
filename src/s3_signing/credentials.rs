@@ -627,8 +627,6 @@ impl S3Credentials {
 
                 // Build query parameters in alphabetical order for AWS Signature V4 canonical request
                 let canonical: &[u8] = 'brk_canonical: {
-                    // PERF(port): was stack-fallback alloc; `Vec` so each part is
-                    // unconditionally freed at scope exit (LSan-clean under release-asan).
                     let mut query_parts: Vec<Vec<u8>> = Vec::with_capacity(13);
 
                     // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-SignedHeaders, response-content-disposition, response-content-type, x-amz-request-payer, x-amz-storage-class
@@ -720,8 +718,6 @@ impl S3Credentials {
                 .ok_or(SignError::FailedToGenerateSignature)?;
 
                 // Build final URL with query parameters in alphabetical order to match canonical request
-                // PERF(port): was stack-fallback alloc; `Vec` so each part is
-                // unconditionally freed at scope exit (LSan-clean under release-asan).
                 let mut url_query_parts: Vec<Vec<u8>> = Vec::with_capacity(14);
 
                 // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-Signature, X-Amz-SignedHeaders, response-content-disposition, response-content-type, x-amz-request-payer, x-amz-storage-class

@@ -75,8 +75,7 @@ impl OutputFile {
 impl Clone for OutputFile {
     fn clone(&self) -> Self {
         let owned_src_path_text = self.owned_src_path_text.clone();
-        // SAFETY: `owned_src_path_text` is a sibling field of `src_path`
-        // (lives exactly as long); `Box<[u8]>`'s heap buffer never moves.
+        // SAFETY: `owned_src_path_text` is a sibling field that outlives `src_path`; the boxed buffer never moves.
         let text: &'static [u8] =
             unsafe { core::mem::transmute::<&[u8], &'static [u8]>(&owned_src_path_text) };
         let src_path = if !self.owned_src_path_text.is_empty() {
@@ -421,8 +420,7 @@ impl OutputFile {
             OptionsData::Saved(_) => 0,
         });
         let owned_src_path_text: Box<[u8]> = options.input_path;
-        // SAFETY: `owned_src_path_text` is a sibling field that outlives `src_path`;
-        // the `Box`'s heap buffer never moves, so `&'static` erasure is sound.
+        // SAFETY: `owned_src_path_text` is a sibling field that outlives `src_path`; the boxed buffer never moves.
         let input_path: &'static [u8] =
             unsafe { core::mem::transmute::<&[u8], &'static [u8]>(&owned_src_path_text) };
         OutputFile {

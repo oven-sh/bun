@@ -215,8 +215,6 @@ pub struct MinifyRenamer {
     pub reserved_names: StringHashMap<u32>,
     pub slots: SymbolSlotList,
     pub top_level_symbol_to_slot: TopLevelSymbolSlotMap,
-    // Bundler passes a borrowed view (must not drop); transpiler `print_ast`
-    // passes an owned Map and sets `owns_symbols` so `Drop` frees it.
     pub symbols: ManuallyDrop<symbol::Map>,
     pub owns_symbols: bool,
     /// Backs `TinyString::String` slot-name allocations (Zig: `this.allocator`).
@@ -226,8 +224,7 @@ pub struct MinifyRenamer {
 impl Drop for MinifyRenamer {
     fn drop(&mut self) {
         if self.owns_symbols {
-            // SAFETY: dropped exactly once; `owns_symbols` is only set on the
-            // owned-Map (transpiler) path where no other owner exists.
+            // SAFETY: `owns_symbols` is only set on the owned-Map path; dropped exactly once.
             unsafe { ManuallyDrop::drop(&mut self.symbols) };
         }
     }

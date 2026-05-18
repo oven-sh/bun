@@ -313,9 +313,6 @@ impl DependencyExt for Dependency {
     }
 }
 
-// PORT NOTE: the `Semver::query::Group` chain under `Version.value.npm` is
-// `Box`-owned and freed by `DependencyVersion::Drop`; `Clone` deep-copies it.
-
 // `comptime StringBuilder: type` param maps onto `bun_semver::StringBuilder`
 // (count / append<T> / append_string). The only extra method needed here is
 // access to the FULL backing buffer (Zig: `builder.lockfile.buffers
@@ -755,9 +752,6 @@ impl VersionExt for Version {
     }
 }
 
-// PORT NOTE: `Version` (`bun_install_types::DependencyVersion`) has tag-aware
-// `Drop`/`Clone` impls — the `.npm` `Group` chain is `Box`-owned and freed there.
-
 // ──────────────────────────────────────────────────────────────────────────
 // Version::Tag
 // ──────────────────────────────────────────────────────────────────────────
@@ -1177,14 +1171,12 @@ impl ValueExt for Value {
         _buf: &[u8],
         _builder: &mut SB,
     ) -> Result<Value, bun_core::Error> {
-        // Tag-aware deep clone: only `npm` owns heap (`Group` Box chain).
         Ok(match tag {
             // SAFETY: `tag == Npm` selects the `npm` union arm.
             Tag::Npm => Value {
                 npm: ManuallyDrop::new(unsafe { (*self.npm).clone() }),
             },
-            // SAFETY: every other arm is `Copy` (no heap), so a bitwise read
-            // is a true clone.
+            // SAFETY: every other arm is `Copy` (no heap), so a bitwise read is a true clone.
             _ => unsafe { core::ptr::read(self) },
         })
     }

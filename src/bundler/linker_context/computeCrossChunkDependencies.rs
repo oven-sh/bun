@@ -468,11 +468,6 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
             match c.options.output_format {
                 OutputFormat::Esm => {
                     c.sorted_cross_chunk_export_items(&chunk_meta.exports, &mut stable_ref_list);
-                    // Arena-backed: the buffer is leaked into the AST as a raw fat
-                    // pointer (`S.ExportClause.items`, `into_bump_slice_mut` below)
-                    // and read back in `postProcessJSChunk`. A global-heap
-                    // `Vec` + `mem::forget` strands the allocation at process exit
-                    // (LSan); `c.arena()` is bulk-reclaimed with the link pass.
                     let mut clause_items =
                         bun_alloc::ArenaVec::<bun_ast::ClauseItem>::with_capacity_in(
                             stable_ref_list.len(),
@@ -526,9 +521,6 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
 
                     if clause_items.len() > 0 {
                         let mut stmts = Vec::<bun_ast::Stmt>::init_capacity(1);
-                        // PORT NOTE: `S.ExportClause.items` is `*mut [ClauseItem]`; the
-                        // arena-backed buffer is handed off as a raw fat ptr (no per-Vec
-                        // free — reclaimed when `c.arena()` resets).
                         let items_ptr =
                             bun_ast::StoreSlice::new_mut(clause_items.into_bump_slice_mut());
                         // Zig: `c.allocator().create(S.ExportClause)` + struct literal —

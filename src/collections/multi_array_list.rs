@@ -853,13 +853,8 @@ impl<T> Slice<T> {
         }
     }
 
-    /// Frees the slab backing a `Slice` returned by
-    /// [`MultiArrayList::to_owned_slice`]. Slab-only — per-element destructors do not run.
-    ///
-    /// **Contract** (not enforceable; `Slice<T>` is `Copy`):
-    /// * `self` came from `to_owned_slice()` on a `MultiArrayList<T, Global>`.
-    /// * Call exactly once. Calling on a copy too is a double free; reading any
-    ///   column after the call is a use-after-free.
+    /// Frees the slab backing a `Slice` from [`MultiArrayList::to_owned_slice`].
+    /// Per-element destructors do not run. `Slice` is `Copy`: call exactly once.
     pub fn deinit_owned(self) {
         drop(self.to_multi_array_list());
     }
@@ -914,10 +909,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
 
     /// The caller owns the returned memory. Empties this MultiArrayList.
     /// Only available with the global allocator (the returned `Slice` carries
-    /// no allocator handle).
-    ///
-    /// `Slice<T>` has no `Drop` — call [`Slice::deinit_owned`] when you are
-    /// done with the columns or the slab leaks.
+    /// no allocator handle). `Slice` has no `Drop`; call [`Slice::deinit_owned`].
     pub fn to_owned_slice(&mut self) -> Slice<T>
     where
         A: Default,

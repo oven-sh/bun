@@ -598,19 +598,14 @@ impl Process {
             // Route the `Fd` arm through the centralized `fd_poll_mut()`
             // accessor instead of open-coding `(*poll.as_ptr()).deinit()`.
             if let Some(poll) = self.poller.fd_poll_mut() {
-                // `watch()`'s +1 is normally released by the FilePoll callback's ScopedRef::adopt;
-                // deinit'ing a still-registered poll means it never fires — balance it below.
                 stranded_watch_ref = poll.is_registered();
                 poll.deinit();
             } else if let Poller::WaiterThread(waiter) = &mut self.poller {
                 waiter.disable();
             }
             self.poller = Poller::Detached;
-            // `has_exited()` skips the exit path: `on_exit()` sets status before `detach()->close()`,
-            // and the FilePoll callback's ScopedRef has already balanced its +1 there.
             if stranded_watch_ref && !self.has_exited() {
-                // SAFETY: callers (Subprocess/ShellSubprocess/SpawnResult/ScopedRef) hold their own
-                // +1, so this never drops to zero — `self` stays valid past this call.
+                // SAFETY: callers hold their own +1, so this never drops to zero.
                 unsafe { Self::deref(std::ptr::from_mut(self)) };
             }
         }

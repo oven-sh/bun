@@ -1671,8 +1671,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // scheduleDeinit can be called inside a finalizer.
             // Therefore, we split it into two tasks.
             self.flags.insert(ServerFlags::TERMINATED);
-            // PORT NOTE: Zig `AnyTask.New(App, App.close).init(app)`. Use ManagedTask
-            // (not Box<AnyTask>) so the box is freed after run and drained on VM teardown.
             let app = self.app.unwrap();
             vm.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(app, |app| {
                 // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
@@ -1681,9 +1679,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }));
         }
 
-        // ManagedTask: box freed after run, and `EventLoop::deinit` frees stranded
-        // boxes if the VM tears down before the next tick (Zig had the same two-task
-        // split; sync `Self::deinit(self)` would UAF a re-entrant finalizer's `&mut`).
         vm.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(
             std::ptr::from_mut::<Self>(self),
             |this| {

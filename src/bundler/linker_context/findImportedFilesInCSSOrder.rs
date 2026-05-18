@@ -95,19 +95,12 @@ pub fn find_imported_files_in_css_order<'a>(
         has_external_import: bool,
         visited: Vec<Index>,
         order: Vec<CssImportOrder>,
-        /// Raw `(ptr, cap)` of every Global-backed `Vec<ImportConditions>`
-        /// slab created by `deep_clone_conditions`. Ownership transfers into
-        /// `CssChunk.owned_condition_slabs`; aliasing `CssImportOrder.conditions`
-        /// headers `mem::forget` themselves on drop. See `OwnedCssConditionSlabs`.
         owned_slabs: Vec<(core::ptr::NonNull<ImportConditions>, usize)>,
     }
 
     impl Visitor<'_> {
-        /// Record a `deep_clone_conditions` slab so `OwnedCssConditionSlabs`
-        /// can dealloc it after every aliasing header is forgotten. Must be
-        /// called before the buffer can be reallocated (it never is — its cap
-        /// is fixed at `len + 1` and exactly one `append_assume_capacity`
-        /// fills the spare slot) and before ownership is forgotten/moved.
+        /// Must be called before the buffer is forgotten/moved and before it
+        /// can reallocate (cap is fixed at `len + 1`; one `append_assume_capacity` fills it).
         #[inline]
         fn record_condition_slab(&mut self, v: &Vec<ImportConditions>) {
             if v.capacity() != 0 {
@@ -198,10 +191,6 @@ pub fn find_imported_files_in_css_order<'a>(
                             // Fork our state
                             let mut nested_conditions =
                                 deep_clone_conditions(wrapping_conditions, self.arena);
-                            // Track the slab now: it never reallocates (cap is
-                            // exactly len + 1; the single `append_assume_capacity`
-                            // below fills the spare slot), and we forget the
-                            // local header after `visit()` aliases it.
                             self.record_condition_slab(&nested_conditions);
                             let mut nested_import_records =
                                 shallow_clone_records(wrapping_import_records);
@@ -219,11 +208,8 @@ pub fn find_imported_files_in_css_order<'a>(
                                 wrapping_import_records,
                             );
                             // `visit` stores a bitwise copy of `nested_conditions` into
-                            // `self.order` (one alias per pushed entry), so the buffer
-                            // must outlive this scope. The slab is Global-backed
-                            // (`init_capacity_in` ignores the arena) and is owned by
-                            // `self.owned_slabs` (recorded above) — forget the local
-                            // header so the dealloc happens exactly once.
+                            // `self.order`; the slab is owned by `self.owned_slabs`,
+                            // so forget the local header to avoid a double-free.
                             core::mem::forget(nested_conditions);
                             // `nested_import_records` is *not* passed to `visit` (the
                             // outer `wrapping_import_records` is), so it is uniquely
@@ -249,17 +235,8 @@ pub fn find_imported_files_in_css_order<'a>(
                         // merged. When this happens we need to generate a nested imported
                         // CSS file using a data URL.
                         if import_rule.has_conditions() {
-                            // Only allocate the deep clones when conditions are
-                            // actually present (Zig allocated unconditionally
-                            // because arena leak-on-scope-exit is free; in Rust
-                            // it was just a wasted round trip in the else arm).
                             let mut all_conditions =
                                 deep_clone_conditions(wrapping_conditions, self.arena);
-                            // Track the slab now (it never reallocates; see
-                            // `record_condition_slab` doc). Ownership of the
-                            // header moves into `CssImportOrder` below, whose
-                            // `Drop` forgets `conditions` — so the dealloc still
-                            // happens exactly once via `owned_slabs`.
                             self.record_condition_slab(&all_conditions);
                             let mut all_import_records =
                                 shallow_clone_records(wrapping_import_records);

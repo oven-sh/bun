@@ -216,8 +216,7 @@ impl Framework {
     /// version operates on the keystone `BuildConfigSubset` (which omits
     /// `conditions`/`env`/`define`/`drop` until the schema types are
     /// const-constructible — those paths default).
-    /// Returns the arena slot holding the `bake_types::Framework` projection so
-    /// the caller can `drop_in_place` it on teardown (see `DevServer::Drop`).
+    /// Returns the arena slot for the `bake_types::Framework` projection; caller must `drop_in_place` it.
     pub fn init_transpiler<'a>(
         &mut self,
         arena: &'a bun_alloc::Arena,
@@ -294,8 +293,6 @@ impl Framework {
         // `*bake.Framework`. The bundler crate (lower tier) carries a TYPE_ONLY
         // projection (`bake_types::Framework`); construct it here and give it
         // arena lifetime so `BundleOptions<'a>` can borrow it for the bundle pass.
-        // The arena bulk-frees without running `Drop`; the slot's interior
-        // `Box`/`StringArrayHashMap` heap is reclaimed via the returned ptr.
         let framework_view: *mut bun_bundler::bake_types::Framework =
             arena.alloc(self.as_bundler_view());
         out.options.framework = Some(unsafe { &*framework_view });

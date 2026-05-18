@@ -4538,10 +4538,7 @@ pub fn needs_escape_utf8_ascii_latin1(str: &[u8]) -> bool {
 
 // ───────────────────────────── SmolList ─────────────────────────────
 
-/// `Allocator` shim routing `SmolList::Heap`'s `Vec` through the parser arena
-/// (no lifetime param, so re-export consumers don't change). `Heap` lives in
-/// arena AST nodes where `Drop` never runs; the buffer must come from the same
-/// arena to be reclaimed on `arena.reset()`. Must not outlive the arena.
+/// `Allocator` routing `SmolList::Heap` through the parser arena. Must not outlive the arena.
 #[derive(Clone, Copy)]
 pub struct SmolListAlloc(core::ptr::NonNull<Bump>);
 
@@ -4556,7 +4553,7 @@ impl SmolListAlloc {
     }
     #[inline]
     fn arena(&self) -> &Bump {
-        // SAFETY: see the type-level contract — the arena outlives `self`.
+        // SAFETY: the arena outlives `self`.
         unsafe { self.0.as_ref() }
     }
 }
@@ -4593,8 +4590,6 @@ unsafe impl core::alloc::Allocator for SmolListAlloc {
     }
 }
 
-/// Heap storage for a promoted [`SmolList`] — a `Vec` backed by the parser's
-/// arena via [`SmolListAlloc`].
 pub type SmolListHeap<T> = Vec<T, SmolListAlloc>;
 
 /// A list that can store its items inlined, and promote itself to an
@@ -4637,11 +4632,7 @@ impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
         &self.items
     }
 
-    // Backing buffer comes from the parser's arena so it is reclaimed on
-    // `arena.reset()` even though the owning `SmolList` lives in arena memory
-    // where `Drop` never runs.
     pub fn promote(&mut self, n: usize, new: T, bump: &Bump) -> SmolListHeap<T> {
-        // `+ 1` covers `new` so the trailing `push` never reallocates.
         let mut list = Vec::with_capacity_in(n + 1, SmolListAlloc::new(bump));
         for i in 0..INLINED_MAX {
             // SAFETY: all INLINED_MAX slots are initialized when promote is called (len == INLINED_MAX)

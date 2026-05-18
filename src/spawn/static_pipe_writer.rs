@@ -46,8 +46,7 @@ pub struct StaticPipeWriter<P: StaticPipeWriterProcess> {
     /// BACKREF: parent process is notified on close; never owned/destroyed here.
     pub process: *mut P,
     pub event_loop: EventLoopHandle,
-    /// True once `start()` succeeded (and took its +1 ref). The owner uses this
-    /// to know whether the start ref is still outstanding.
+    /// True while `start()`'s `+1` ref is outstanding.
     pub started: bool,
     /// Slice into `self.source`'s storage, advanced as bytes are written.
     // TODO(refactor): self-borrow into `self.source`; consider storing an
@@ -179,9 +178,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             "StaticPipeWriter(0x{:x}) start()",
             std::ptr::from_ref(self) as usize
         );
-        // Zig `this.ref()`. Released by exactly ONE site, gated on `started`:
-        // `on_write` (Drained-empty), subprocess.rs `take_pending_start_writer`,
-        // or `security_scanner::finish_spawn` (derefs + clears `started`).
+        // Zig `this.ref()` — intrusive-refcount increment.
         // SAFETY: `self` is a live `Self` (created via `create()`/`heap::alloc`).
         unsafe { RefCount::<Self>::ref_(std::ptr::from_mut::<Self>(self)) };
         // TODO(port): self-borrow — see `buffer` field note.
@@ -189,8 +186,6 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         #[cfg(windows)]
         {
             let r = self.writer.start_with_current_pipe();
-            // Only set on success: a half-initialized handle must not be driven
-            // to `close()` via the start-ref teardown path.
             self.started = r.is_ok();
             return r;
         }
@@ -232,8 +227,6 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         let len = self.buffer.len();
         self.buffer = RawSlice::new(&self.buffer.slice()[amount.min(len)..]);
         if status == WriteStatus::EndOfFile || self.buffer.is_empty() {
-            // POSIX Drained path: `_on_write` won't touch `self.writer` after
-            // we return, so balance start()'s +1 here once close() runs.
             #[cfg(not(windows))]
             let release_start_ref = self.started && status != WriteStatus::EndOfFile;
             #[cfg(not(windows))]
@@ -243,8 +236,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             self.writer.close();
             #[cfg(not(windows))]
             if release_start_ref {
-                // SAFETY: `started` ⇒ start +1 was still outstanding entering;
-                // we cleared `started` above so no other site re-derefs it.
+                // SAFETY: start()'s +1 was still outstanding; `started` cleared above so no other site re-derefs.
                 unsafe { RefCount::<Self>::deref(std::ptr::from_mut::<Self>(self)) };
             }
         }
@@ -258,8 +250,8 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             err
         );
         self.source.detach();
-        // NOTE: can't release start()'s +1 here — `drain_buffered_data` calls
-        // on_error() then Parent::on_write() (drained > 0); that would UAF.
+        // Can't release start()'s +1 here: `drain_buffered_data` calls on_error() then
+        // Parent::on_write(); freeing here would UAF.
     }
 
     pub fn on_close(&mut self) {

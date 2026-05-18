@@ -8,10 +8,8 @@ use bun_alloc::ArenaPtr;
 /// A [`<supports-condition>`](https://drafts.csswg.org/css-conditional-3/#typedef-supports-condition),
 /// as used in the `@supports` and `@import` rules.
 // PORT NOTE: Zig threaded the parser-input lifetime (`[]const u8` slices borrow
-// the source). Phase A keeps `&'static [u8]` per PORTING.md §AST crates; Phase
-// B re-threads `'i` once `PropertyId<'i>` and the parser arena are real.
-// `Not`/`And`/`Or` carry `ArenaPtr` so their heap blocks live in the same arena
-// as the surrounding AST node (no Drop on bulk-free → would otherwise strand).
+// the source). Currently uses `&'static [u8]` per PORTING.md §AST crates;
+// TODO(refactor): re-thread `'i` once `PropertyId<'i>` and the parser arena are real.
 pub enum SupportsCondition {
     /// A `not` expression.
     Not(Box<SupportsCondition, ArenaPtr>),
@@ -283,7 +281,6 @@ impl SupportsCondition {
 
         let in_parens: SupportsCondition = SupportsCondition::parse_in_parens(input)?;
         let mut expected_type: Option<i32> = None;
-        // Arena-backed: result lands in arena AST nodes; bulk-free won't run Drop.
         let mut conditions: Vec<SupportsCondition, ArenaPtr> =
             Vec::new_in(ArenaPtr::new(input.arena()));
         // PORT NOTE: Zig used std.ArrayHashMap with an inline custom hash/eql context;

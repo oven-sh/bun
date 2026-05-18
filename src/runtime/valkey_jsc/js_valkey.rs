@@ -1170,8 +1170,7 @@ impl JSValkeyClient {
         // Increment ref to ensure 'self' stays alive throughout the function
         self.ref_();
         let _d = deref_guard(self);
-        // Timer is now unlinked from the heap; release the keep-alive ref taken
-        // in `add_timer()` (remove_timer/stop_timers skip FIRED timers).
+        // Release the keep-alive ref from add_timer; remove_timer/stop_timers skip FIRED timers.
         unsafe { JSValkeyClient::deref(std::ptr::from_ref(self).cast_mut()) };
         if self.client.get().flags.failed {
             return;
@@ -1227,8 +1226,7 @@ impl JSValkeyClient {
         // Increment ref to ensure 'self' stays alive throughout the function
         self.ref_();
         let _d = deref_guard(self);
-        // Timer is now unlinked from the heap; release the keep-alive ref taken
-        // in `add_timer()` (remove_timer/stop_timers skip FIRED timers).
+        // Release the keep-alive ref from add_timer; remove_timer/stop_timers skip FIRED timers.
         unsafe { JSValkeyClient::deref(std::ptr::from_ref(self).cast_mut()) };
 
         // Execute reconnection logic
@@ -1491,11 +1489,8 @@ impl JSValkeyClient {
             return;
         }
 
-        // Once the VM is shutting down the event loop won't tick again, so the
-        // deferred task — and its matching `deref()` — would never run, leaking
-        // the `Holder` and stranding the `JSValkeyClient`'s refcount.  At that
-        // point `flags.finalized` is set and `this_value` has been cleared, so
-        // `on_valkey_close` can't re-enter JS — closing inline is safe.
+        // During VM shutdown the event loop won't tick, so the deferred task below
+        // would never run; close inline (this_value is cleared, no JS re-entry).
         if self.vm().is_shutting_down() {
             bun_core::hint::cold();
             self.client_mut().close();

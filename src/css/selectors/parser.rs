@@ -585,7 +585,6 @@ fn parse_selector<Impl: BunSelectorImpl>(
         input.reset(&parser_state);
     }
 
-    // Arena-backed: result lands in arena AST nodes; bulk-free won't run Drop.
     let mut builder = SelectorBuilder::<Impl>::init_in(ArenaPtr::new(input.arena()));
 
     'outer_loop: loop {
@@ -1939,8 +1938,6 @@ impl<Impl: BunSelectorImpl> CssHash for GenericSelectorList<Impl> {
 ///
 /// This reordering doesn't change the semantics of selector matching, and we
 /// handle it in to_css to make it invisible to serialization.
-// `components` is `ArenaPtr`-backed so the buffer lives in the same arena as
-// the AST node holding this selector (no Drop on bulk-free → would otherwise strand).
 #[derive(Clone)]
 pub struct GenericSelector<Impl: SelectorImpl> {
     pub specificity_and_flags: SpecificityAndFlags,
@@ -1996,7 +1993,6 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
     }
 
     pub fn deep_clone(&self) -> Self {
-        // Re-derive the source allocator so the clone shares its arena lifetime.
         let alloc = *self.components.allocator();
         let mut components = Vec::with_capacity_in(self.components.len(), alloc);
         components.extend(self.components.iter().map(|c| c.deep_clone()));
@@ -2040,8 +2036,6 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
         Self::from_component_in(component, ArenaPtr::global())
     }
 
-    /// Like `from_component`, but arena-backs `components` so the result can
-    /// live in arena-stored AST without stranding the buffer on bulk-free.
     pub fn from_component_in(component: GenericComponent<Impl>, alloc: ArenaPtr) -> Self {
         let mut builder = SelectorBuilder::<Impl>::init_in(alloc);
         if let Some(combinator) = component.as_combinator() {

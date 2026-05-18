@@ -819,8 +819,6 @@ mod holder {
     pub static RAW_PTR: core::sync::atomic::AtomicPtr<PackageManager> =
         core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
-    /// Set after the `wr!()` block fully writes `*RAW_PTR`; gates
-    /// `deinit_caches_at_exit` so it never `Drop`s uninit fields.
     pub static INITIALIZED: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(false);
 
@@ -868,8 +866,6 @@ impl PackageManager {
         self.root_package_id.id = None;
     }
 
-    /// Drop heap-owning, main-thread-only caches before process exit so LSan
-    /// stays quiet; the singleton struct itself stays leaked (`holder::RAW_PTR`).
     pub fn deinit_caches(&mut self) {
         self.workspace_package_json_cache = WorkspacePackageJSONCache::default();
         self.update_requests = Box::default();
@@ -1423,23 +1419,18 @@ pub fn allocate_package_manager() {
         }
         holder::RAW_PTR.store(ptr, core::sync::atomic::Ordering::Release);
     }
-    // Drain main-thread-only caches at exit so LSan stays quiet; gated on
-    // `holder::INITIALIZED` (set after `wr!()`s).
     bun_core::add_exit_callback(deinit_caches_at_exit);
 }
 
-/// `Bun__onExit` callback: free `PackageManager`'s main-thread-owned caches.
-/// The singleton struct stays allocated (worker threads hold raw backrefs).
 extern "C" fn deinit_caches_at_exit() {
     if !holder::INITIALIZED.load(core::sync::atomic::Ordering::Acquire) {
-        return; // allocate→init window: fields are uninit.
+        return;
     }
     let ptr = get();
     if ptr.is_null() {
         return;
     }
-    // SAFETY: `deinit_caches()` only touches fields exclusive to the install
-    // command's synchronous main-thread call tree, which has returned by now.
+    // SAFETY: `deinit_caches()` only touches main-thread-owned fields.
     unsafe { (*ptr).deinit_caches() };
 }
 
@@ -2134,7 +2125,6 @@ pub fn init(
         wr!(last_reported_slow_lifecycle_script_at, 0);
         wr!(cached_tick_for_slow_lifecycle_script_logging, 0);
     }
-    // Struct is now fully written; arm the at-exit cache teardown.
     holder::INITIALIZED.store(true, core::sync::atomic::Ordering::Release);
     // The per-field placement above fully initialized the singleton; the
     // `&mut PackageManager` validity invariant now holds (Zig PackageManager.zig:850
@@ -2594,7 +2584,6 @@ pub fn init_with_runtime_once(
         wr!(last_reported_slow_lifecycle_script_at, 0);
         wr!(cached_tick_for_slow_lifecycle_script_logging, 0);
     }
-    // Struct is now fully written; arm the at-exit cache teardown.
     holder::INITIALIZED.store(true, core::sync::atomic::Ordering::Release);
     // SAFETY: per-field placement above fully initialized the PackageManager;
     // the `&mut PackageManager` validity invariant now holds for the post-init

@@ -425,22 +425,13 @@ impl TimerObjectInternals {
         exception_thrown
     }
 
-    /// VM-teardown only: release the event loop's `+1` ref on a still-queued
-    /// immediate without running its callback (the `cleared` branch of
-    /// [`Self::run_immediate_task`]). Reached from `EventLoop::deinit()` via
-    /// `__bun_cancel_pending_immediate`.
-    ///
     /// # Safety
-    /// `this` is the live `internals` of a queued `ImmediateObject` that was
-    /// passed to `enqueue_immediate_task`; `vm` is the per-thread VM and the
-    /// per-thread `RuntimeState` is still installed.
+    /// `this` must be the live `internals` of a queued `ImmediateObject`.
     pub unsafe fn cancel_pending_immediate(this: *mut Self, vm: *mut VirtualMachine) {
-        // SAFETY: per fn contract — `this` live; `&Self` is sound (Cell fields).
+        // SAFETY: per fn contract.
         let s = unsafe { &*this };
         s.set_enable_keeping_event_loop_alive(vm, false);
-        // No-op when `finalize()` already ran (`JsRef::Finalized`).
         s.this_value.with_mut(|r| r.downgrade());
-        // Releases the event-loop ref; `*this` may be freed after this.
         s.deref();
     }
 

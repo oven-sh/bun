@@ -1757,13 +1757,9 @@ impl ZigString {
         }
     }
 
-    /// `ZigString.deinitGlobal` — free the underlying buffer via the default
-    /// allocator. Only valid when `is_globally_allocated()`.
     #[inline]
     pub fn deinit_global(&self) {
-        // SAFETY: caller contract — `slice()` was allocated by the default
-        // (global) allocator. `default_alloc::free` agrees with the
-        // `#[global_allocator]` (`mi_free` normally; libc free under ASAN).
+        // SAFETY: caller guarantees `slice()` was allocated by the default (global) allocator.
         unsafe {
             bun_alloc::default_alloc::free(
                 self.slice().as_ptr().cast_mut().cast::<core::ffi::c_void>(),

@@ -1474,23 +1474,8 @@ impl Interpreter {
 
         match this.cleanup_state.get() {
             CleanupState::NeedsFullCleanup => {
-                // The interpreter never finished normally (e.g. early error,
-                // never started, or abandoned mid-pipeline by a timed-out
-                // test). The state-machine tree may still be live in `nodes`,
-                // and `Base::shell` is a raw `*mut ShellExecEnv` so dropping
-                // the `Vec<Node>` would silently leak any duped env still
-                // attached to a pipeline child / subshell / cmd-subst Script.
-                // Sweep the arena and free the owned dupes before the rest of
-                // the teardown.
-                //
-                // Ownership rule (mirrors the per-node `deinit` impls and
-                // `Pipeline::deinit_child_duped_env`): a node owns
-                // `base.shell` iff it was created via `dupe_for_subshell`,
-                // which is exactly when its `base.shell` differs from its
-                // parent's — pipeline children, subshells, and command-
-                // substitution Scripts dup; everything else borrows the
-                // parent's pointer unchanged. The root Script borrows the
-                // interpreter's embedded `root_shell`.
+                // A node owns `base.shell` iff it was created via `dupe_for_subshell`,
+                // i.e. its `base.shell` differs from its parent's.
                 {
                     let root_shell_ptr: *mut ShellExecEnv = this.root_shell.as_ptr();
                     let nodes = this.nodes.get();

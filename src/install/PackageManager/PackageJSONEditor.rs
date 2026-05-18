@@ -30,16 +30,6 @@ pub struct EditOptions {
     pub before_install: bool,
 }
 
-/// Copy `bytes` into the process-lifetime AST arena (`PackageManager.ast_arena`)
-/// for storage in `E::EString.data`. Zig's equivalent (`allocator.dupe(u8, ...)`)
-/// used `manager.allocator`, a process-lifetime arena that is never reset during
-/// a `bun pm pkg`/`bun add` invocation — `manager.ast_arena` is the Rust port's
-/// stand-in for that allocator and has the same lifetime, so ownership is parked
-/// there for the rest of the command and reclaimed when the arena (or the
-/// process) tears down.
-///
-/// Previously `Box::leak`'d through the global allocator, which LSan flagged
-/// once the global allocator switched to `std::alloc::System` under ASAN.
 #[inline]
 fn arena_str<'a>(arena: &'a bun_alloc::Arena, bytes: Vec<u8>) -> &'a [u8] {
     arena.alloc_slice_copy(&bytes)
@@ -69,9 +59,6 @@ pub fn edit_patched_dependencies(
     patch_key: &[u8],
     patchfile_path: &[u8],
 ) -> Result<(), bun_alloc::AllocError> {
-    // Zig: `manager.allocator` — process-lifetime arena. The `EString.data`
-    // slices stored below are read by `print_json` after this returns, so they
-    // must outlive this frame; `manager.ast_arena` is the matching lifetime.
     let arena = &manager.ast_arena;
     // const pkg_to_patch = manager.
     let mut patched_dependencies = E::Object::default();
@@ -166,11 +153,6 @@ pub fn edit_trusted_dependencies(
             while i > 0 {
                 i -= 1;
                 if matches!(deps[i].data, bun_ast::ExprData::EMissing(_)) {
-                    // Zig: `E.String{ .data = name }` — borrows `name` directly,
-                    // no `dupe`. `names_to_add` is owned by the caller
-                    // (`pm_trusted_command.rs::package_names_to_add`) and stays
-                    // alive past `print_json`, satisfying `StoreStr`'s
-                    // callers-must-not-outlive-the-owner contract.
                     deps[i] = Expr::init(E::EString::init(name), bun_ast::Loc::EMPTY);
                     break;
                 }

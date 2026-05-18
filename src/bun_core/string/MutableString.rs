@@ -27,12 +27,6 @@ pub struct SocketBuffer {
 /// A growable byte buffer. In Zig this paired an `Allocator` with an
 /// `ArrayListUnmanaged(u8)`; in Rust the global mimalloc allocator is implicit,
 /// so this is a thin wrapper over `Vec<u8>`.
-///
-/// The derived `Clone` deep-copies `list`. Don't clone into containers whose
-/// `Drop` is slab-only (no per-element destructors, e.g. `MultiArrayList`) or
-/// into an arena — the copy strands. See the LEAK NOTE on
-/// `bun_sourcemap::Chunk` for the canonical case and the `Chunk::alias`
-/// alternative.
 #[derive(Default, Clone)]
 pub struct MutableString {
     // Zig field `std.mem.Allocator` param — deleted (global mimalloc).

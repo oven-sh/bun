@@ -35,8 +35,6 @@ use crate::selector::parser::{
 /// (from left to right). Once the process is complete, callers should invoke
 /// build(), which transforms the contents of the SelectorBuilder into a heap-
 /// allocated Selector and leaves the builder in a drained state.
-// `BuildResult.components` is `ArenaPtr`-backed: it lands in arena-stored AST
-// nodes (`GenericSelector.components`), and arena bulk-free never runs `Drop`.
 pub struct SelectorBuilder<Impl: ValidSelectorImpl> {
     /// The entire sequence of simple selectors, from left to right, without combinators.
     ///
@@ -52,8 +50,6 @@ pub struct SelectorBuilder<Impl: ValidSelectorImpl> {
     /// The length of the current compound selector.
     current_len: usize,
 
-    /// Allocator for the produced `components` Vec; arena during parsing,
-    /// global heap for `from_component`-style synthesis.
     alloc: ArenaPtr,
 }
 
@@ -75,7 +71,6 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
         Self::default()
     }
 
-    /// Construct a builder whose `BuildResult.components` allocates from `alloc`.
     #[inline]
     pub fn init_in(alloc: ArenaPtr) -> Self {
         Self {

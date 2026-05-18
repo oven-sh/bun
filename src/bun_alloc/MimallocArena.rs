@@ -778,14 +778,10 @@ unsafe fn global_vtable_alloc(
     a: crate::Alignment,
     _ra: usize,
 ) -> *mut u8 {
-    // Routes through `default_alloc` so it stays in agreement with the
-    // `#[global_allocator]` (mi_malloc normally; libc malloc under ASAN).
     crate::default_alloc::malloc_aligned(len, a.to_byte_units()).cast()
 }
 
-/// Zig: `global_mimalloc_vtable`. Despite the name this is the **default
-/// allocator** vtable (process-wide), so it must agree with the
-/// `#[global_allocator]` — every slot routes through [`crate::default_alloc`].
+/// Zig: `global_mimalloc_vtable`.
 pub static GLOBAL_MIMALLOC_VTABLE: crate::AllocatorVTable = crate::AllocatorVTable {
     alloc: global_vtable_alloc,
     resize: crate::basic::MimallocAllocator::resize_with_default_allocator,

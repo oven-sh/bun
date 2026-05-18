@@ -150,9 +150,8 @@ pub struct BundleV2<'a> {
     /// deduplication is free.
     pub requested_exports: ArrayHashMap<u32, RequestedExports>,
 
-    /// Every arena-allocated `ParseTask`. The arena bulk-free never runs `Drop`,
-    /// so `ParseTaskStage::NeedsParse(entry)`'s `Contents::Owned(Vec<u8>)` would
-    /// strand; `deinit_without_freeing_arena` drains this and resets each `stage`.
+    /// Arena-allocated `ParseTask`s; `deinit_without_freeing_arena` drains this
+    /// to free heap-owning `stage` fields the arena bulk-free would strand.
     pub parse_tasks: Vec<*mut ParseTask>,
 }
 
@@ -2969,8 +2968,6 @@ pub mod bv2_impl {
             unsafe { bun_ptr::detach_lifetime_mut(self.arena().alloc(value)) }
         }
 
-        /// Allocate a `ParseTask` in the arena AND record it in `parse_tasks` so
-        /// `deinit_without_freeing_arena` can free its global-heap-owning `stage`.
         #[inline]
         fn arena_create_parse_task<'r>(&mut self, value: ParseTask) -> &'r mut ParseTask {
             let task: &'r mut ParseTask = self.arena_create(value);
@@ -3889,13 +3886,7 @@ pub mod bv2_impl {
             )?;
             this.unique_key = generate_unique_key();
 
-            // Wrap the body so every exit path (error returns, `?`, fetcher
-            // early-return) hits the cleanup below — mirrors how the JS API
-            // path wraps `run_from_js_in_new_thread` in
-            // `js_bundle_completion_task.rs`. Without this, `?` after
-            // `wait_for_parse()` strands the global-heap `Vec`s parked in
-            // `graph.ast` (symbols/parts/import_records) because
-            // `MultiArrayList::drop` is slab-only.
+            // Wrap so every exit path (incl. `?`) hits the cleanup below.
             let result = (|| -> Result<BuildResult, Error> {
                 if this.transpiler.log().has_errors() {
                     return Err(bun_core::err!("BuildFailed"));
@@ -4003,21 +3994,14 @@ pub mod bv2_impl {
             })();
 
             // Under `--watch` the watcher thread holds `*mut BundleV2` (via the
-            // reloader's `ctx`, installed in `BundleV2::init`) and dereferences it
-            // in `on_file_update` after this function returns — even when the build
-            // failed, since `exit_or_watch` parks waiting for the watcher. In Zig
-            // the `BundleV2` is arena-allocated and the arena is never freed; in
+            // reloader's `ctx`) and dereferences it in `on_file_update` after this
+            // function returns. In Zig the `BundleV2` is arena-allocated and the
+            // arena is never freed (the caller diverges into `exitOrWatch`); in
             // Rust it's `Box`-allocated, so leak it here to match the spec lifetime.
             // Bounded leak: the next file change `execve()`s the process anyway.
             if enable_reloading {
                 core::mem::forget(this);
             } else {
-                // Otherwise free the global-heap columns owned by the graph
-                // (`graph.ast` parts/symbols/import_records, `linker.graph.meta`,
-                // …). `MultiArrayList::drop` is slab-only and never runs element
-                // destructors, so without this every CLI `bun build` strands the
-                // parsed AST `Vec`s — same fix the `Bun.build()` runtime path
-                // already takes (`js_bundle_completion_task.rs`).
                 this.deinit_without_freeing_arena();
             }
 
@@ -4093,16 +4077,8 @@ pub mod bv2_impl {
             )?;
             this.unique_key = generate_unique_key();
 
-            // Wrap the body so every exit path (`?`, `BuildFailed`, empty-chunks
-            // early-return) hits the cleanup below — same pattern as
-            // `generate_from_cli`. Without it, the parse-side `BundlerStyleSheet`s
-            // (`bump.alloc()`'d in worker arenas, see `ParseTask.rs`) and the
-            // global-heap `Vec`s parked in `graph.ast` / `linker.graph.meta`
-            // strand when `this` drops, because `MultiArrayList::drop` is
-            // slab-only and arena bulk-free skips `Drop`. `chunks` is local to
-            // the closure so `CssChunk::Drop` (which `set_len(0)`s its bitwise
-            // `asts` aliases of those stylesheets) runs *before*
-            // `deinit_without_freeing_arena()` `drop_in_place`s the originals.
+            // Wrap so every exit path hits the cleanup below; `chunks` must drop
+            // inside the closure, before `deinit_without_freeing_arena()`.
             let result = (|| -> Result<Vec<options::OutputFile>, Error> {
                 if this.transpiler.log().has_errors() {
                     return Err(bun_core::err!("BuildFailed"));
@@ -4158,11 +4134,6 @@ pub mod bv2_impl {
                 )
             })();
 
-            // Free global-heap columns parked in the graph (parse-side
-            // `BundlerStyleSheet`s, AST `Vec`s, `linker.graph.meta`, …). This
-            // bake-production path was the only bundler entry point that
-            // returned without it, leaking `StyleSheet::sources` /
-            // `source_map_urls` and friends on every `bun build --app`.
             this.deinit_without_freeing_arena();
 
             result
@@ -4423,14 +4394,11 @@ pub mod bv2_impl {
     impl<'a> BundleV2<'a> {
         #[cold]
         pub fn on_load(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
-            // Mirror Zig's `defer load.deinit()`. `Load` is arena-allocated, so
-            // `Drop` never runs when the arena resets — free the owned heap
-            // fields on every exit path (including the early `return` arms).
+            // `Load` is arena-allocated (no Drop); free its owned heap fields on every exit path.
             struct LoadDeinitGuard(*mut jsc_api::JSBundler::Load);
             impl Drop for LoadDeinitGuard {
                 fn drop(&mut self) {
-                    // SAFETY: `self.0` is the live `&mut Load` borrowed by
-                    // `on_load`; the guard drops before that borrow ends.
+                    // SAFETY: `self.0` is the live `&mut Load`; the guard drops before that borrow ends.
                     unsafe {
                         let l = &mut *self.0;
                         drop(core::mem::take(&mut l.path));
@@ -4611,7 +4579,6 @@ pub mod bv2_impl {
                 jsc_api::JSBundler::LoadValue::Pending
                 | jsc_api::JSBundler::LoadValue::Consumed => unreachable!(),
             }
-            // `_load_deinit` drops here (Zig: `defer load.deinit()`).
         }
     }
 
@@ -4637,19 +4604,11 @@ pub mod bv2_impl {
             // Zig: `defer this.decrementScanCounter()`. RAII guard captures `this`
             // as a raw pointer so it does not hold a unique borrow across the body.
             let _dec_guard = this.decrement_scan_counter_on_drop();
-            // Mirror Zig's `defer resolve.deinit()`. `Resolve` is arena-allocated
-            // (`arena_create` in `enqueue_*_on_resolve_plugin_if_needed`), so its
-            // `Drop` never runs when the arena resets. The owned `Box<[u8]>` fields
-            // of `import_record` (`source_file` / `namespace` / `specifier`) and any
-            // unconsumed `value` would strand. Take them on every exit path
-            // (including the early `return`s in the `NoMatch` arm) via a raw-pointer
-            // guard, following the `ScanCounterGuard` pattern.
+            // `Resolve` is arena-allocated (no Drop); free its owned heap fields on every exit path.
             struct ResolveDeinitGuard(*mut jsc_api::JSBundler::Resolve);
             impl Drop for ResolveDeinitGuard {
                 fn drop(&mut self) {
-                    // SAFETY: `self.0` is constructed from the live `&mut Resolve`
-                    // borrowed by `on_resolve`; the guard is a local that drops
-                    // before that borrow ends, so the pointee is valid and unique.
+                    // SAFETY: `self.0` is the live `&mut Resolve`; the guard drops before that borrow ends.
                     unsafe {
                         let r = &mut *self.0;
                         drop(core::mem::take(&mut r.import_record));
@@ -4979,15 +4938,6 @@ pub mod bv2_impl {
                     // from `read_file_with_allocator` actually frees here.
                     s.contents = std::borrow::Cow::Borrowed(&b""[..]);
                 }
-                // The remaining heap-owning `InputFile` columns. `MultiArrayList::drop`
-                // is slab-only (matches Zig), so these `Box`/`Vec` payloads strand
-                // unless taken explicitly:
-                //  - `secondary_path: Box<[u8]>` (set in `enqueue_item` for HTML
-                //    secondary outputs)
-                //  - `additional_files: Vec<AdditionalFile>` (pushed throughout
-                //    `process_resolve_queue` / `on_parse_task_complete`)
-                //  - `unique_key_for_additional_file: Box<[u8]>` (cloned from the
-                //    parse result in `on_parse_task_complete`)
                 for v in self.graph.input_files.items_secondary_path_mut() {
                     drop(core::mem::take(v));
                 }
@@ -5005,8 +4955,6 @@ pub mod bv2_impl {
                     drop(q.take());
                 }
                 for t in self.linker.graph.files.items_line_offset_table_mut() {
-                    // `LineOffsetTable.columns_for_non_ascii: Vec<i32>` is
-                    // global-heap; `MultiArrayList::drop` is slab-only.
                     t.drop_elements();
                     *t = Default::default();
                 }
@@ -5061,27 +5009,12 @@ pub mod bv2_impl {
                         for v in ast.items_ts_enums_mut() {
                             drop(core::mem::take(v));
                         }
-                        // `css: Option<StoreRef<BundlerStyleSheet>>` — the
-                        // `StyleSheet` is `bump.alloc()`'d in the worker arena
-                        // (`ParseTask.rs`), so the arena bulk-free won't run
-                        // its `Drop`. Its `sources: Vec<Box<[u8]>>`,
-                        // `source_map_urls`, `layer_names`, `local_scope`,
-                        // `composes`, `rules`, etc. are global-heap and
-                        // strand. `drop_in_place` while the arena pointer is
-                        // still live; the parse-side `graph.ast.css` row is a
-                        // bitwise alias of the linker-side row, and the macro
-                        // takes only one (linker if non-empty else parse), so
-                        // this is the unique drop. `CssChunk::asts` holds
-                        // shallow aliases of these stylesheets and `forget()`s
-                        // them in `Drop` (`Chunk.rs`), so no double-free there.
+                        // The arena-allocated `StyleSheet` never runs Drop; free its
+                        // global-heap fields. The macro takes only one side, and
+                        // `CssChunk::asts` `forget()`s its aliases, so this is the unique drop.
                         for v in ast.items_css_mut() {
                             if let Some(css_ref) = v.take() {
-                                // SAFETY: `css_ref` is a live arena pointer
-                                // (the worker arena outlives this teardown);
-                                // dropped exactly once — the macro takes only
-                                // one side (linker if non-empty else parse),
-                                // and the un-taken side's `MultiArrayList::Drop`
-                                // is slab-only (never runs element destructors).
+                                // SAFETY: live arena pointer; dropped exactly once.
                                 unsafe { core::ptr::drop_in_place(css_ref.as_ptr()) };
                             }
                         }
@@ -5141,11 +5074,8 @@ pub mod bv2_impl {
                 drop(free);
             }
 
-            // Free the `Contents::Owned(Vec<u8>)` parked in each arena `ParseTask.stage`
-            // (arena bulk-free skips `Drop`); all `Cow::Borrowed` aliases were cleared above.
             for task in self.parse_tasks.drain(..) {
-                // SAFETY: arena chunks outlive this fn (caller drops heap later);
-                // pool is deinit'd, so no worker still touches `task.stage`.
+                // SAFETY: arena chunks outlive this fn; pool is deinit'd, no worker touches `stage`.
                 drop(core::mem::replace(
                     unsafe { &mut (*task).stage },
                     parse_task::ParseTaskStage::NeedsSourceCode,
@@ -6030,17 +5960,8 @@ pub mod bv2_impl {
                 this.graph.ast.items_import_records_mut()[source_index.0 as usize] =
                     core::mem::take(&mut result.ast.import_records);
 
-                // Same idea for the CSS stylesheet pointer: `BundlerStyleSheet`
-                // is `bump.alloc()`'d into the worker arena (`ParseTask.rs`),
-                // so its global-heap fields (`sources`, `source_map_urls`,
-                // `rules`, …) only get freed by the explicit `drop_in_place`
-                // loop in `deinit_without_freeing_arena`'s `take_ast_cols!`.
-                // That loop walks `graph.ast.items_css()`. Once we overwrite
-                // `parse_result.value` with `Err` below, the `Success` arm of
-                // the match in `on_parse_task_complete` never runs, so
-                // `graph.ast.set(...)` never happens and the stylesheet would
-                // be unreachable from the graph. Move it onto the row here so
-                // teardown can find and drop it.
+                // Move the CSS stylesheet onto the graph row so teardown can find
+                // and drop it — the `Success` arm that would normally do this is skipped.
                 this.graph.ast.items_css_mut()[source_index.0 as usize] = result.ast.css.take();
 
                 parse_result.value = parse_task::ResultValue::Err(parse_task::ResultError {
@@ -6816,8 +6737,6 @@ pub mod bv2_impl {
 
                 if !found_existing {
                     let new_task: &mut ParseTask = value;
-                    // Track for stage cleanup in `deinit_without_freeing_arena`;
-                    // the `found_existing` branch `drop_in_place`s the task instead.
                     self.parse_tasks.push(std::ptr::from_mut(&mut *new_task));
                     let mut new_input_file = crate::Graph::InputFile {
                         source: bun_ast::Source::init_empty_file(&new_task.path.text[..]),

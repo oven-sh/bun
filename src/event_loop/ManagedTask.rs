@@ -10,7 +10,6 @@ pub struct ManagedTask {
     // TODO(port): lifetime — opaque userdata pointer round-tripped through `new`/`run`
     pub ctx: Option<NonNull<c_void>>,
     pub callback: fn(*mut c_void) -> JsResult<()>,
-    /// Frees `ctx` when the task is dropped without ever running (e.g. event-loop teardown).
     pub cleanup: Option<fn(*mut c_void)>,
 }
 
@@ -66,8 +65,6 @@ impl ManagedTask {
         ManagedTask::task(managed)
     }
 
-    /// Like `new`, but `ctx` is a `Box<T>` raw pointer the callback owns; if the
-    /// task is dropped unrun (event-loop teardown), `ctx` is freed via `cleanup`.
     pub fn new_owned<T>(ctx: *mut T, callback: fn(*mut T) -> JsResult<()>) -> Task {
         fn drop_ctx<T>(p: *mut c_void) {
             // SAFETY: `p` is the `heap::into_raw(Box<T>)` stored in `ctx` by `new_owned`.

@@ -599,19 +599,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// associated with that namespace or namespace member: "ref_to_ts_namespace_member".
     /// This gives enough info to be able to resolve queries into the namespace.
     pub ref_to_ts_namespace_member: HashMap<Ref, js_ast::ts::Data>,
-    /// Every `TSNamespaceScope` `arena.alloc()`'d by
-    /// `get_or_create_exported_namespace_members`. Each holds a global-heap
-    /// `StringArrayHashMap` (`property_accesses`) and a `StoreRef` to a
-    /// `TSNamespaceMemberMap` (also a global-heap `StringArrayHashMap`). The
-    /// arena bulk-frees their *struct* bytes on reset without running `Drop`,
-    /// stranding the hash maps' `Vec`/`Box<HashTable>` allocations. `to_ast`
-    /// `mem::take`s those fields before the parser arena tears down. (Zig
-    /// passed `p.allocator` — the same arena — to the map's `init`, so it had
-    /// no out-of-arena allocation to lose.)
+    /// Arena-allocated `TSNamespaceScope`s; their global-heap maps are freed in `Drop`.
     pub ts_namespace_scopes: Vec<js_ast::StoreRef<js_ast::TSNamespaceScope>>,
-    /// Companion list: each newly-allocated `TSNamespaceMemberMap` (sibling
-    /// scopes share one via `exported_members`, so the scope list above
-    /// can't free the map without double-freeing).
+    /// Companion list (sibling scopes share a map, so the scope list can't free it).
     pub ts_namespace_member_maps: Vec<js_ast::StoreRef<js_ast::TSNamespaceMemberMap>>,
     /// When visiting expressions, namespace metadata is associated with the most
     /// recently visited node. If namespace metadata is present, "tsNamespaceTarget"
@@ -734,12 +724,7 @@ pub type Binding2ExprWrapperHoisted = bun_ast::binding::ToExprWrapper;
 // ═══════════════════════════════════════════════════════════════════════════
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> Drop for P<'a, TYPESCRIPT, SCAN_ONLY> {
     fn drop(&mut self) {
-        // `TSNamespaceScope`/`TSNamespaceMemberMap` are arena-allocated (see
-        // `get_or_create_exported_namespace_members`) but hold global-heap
-        // `StringArrayHashMap`s; the arena bulk-frees the structs without
-        // running `Drop`, stranding the maps' `Vec`/`Box<HashTable>`. They are
-        // parse-internal (never escape into `Ast`), so drop their global-heap
-        // fields here while the `&'a Arena` (which outlives `P`) is still live.
+        // Arena-allocated structs never run Drop; free their global-heap maps here.
         for mut scope in self.ts_namespace_scopes.drain(..) {
             drop(core::mem::take(&mut scope.property_accesses));
         }
@@ -749,7 +734,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> Drop for P<'a, TYPESCRIP
     }
 }
 
-// Round-C: associated consts kept live (cheap, used by ParserLike + Parser.rs).
+// Associated consts kept live (cheap, used by ParserLike + Parser.rs).
 // The full method-body impl block below is gated wholesale — 600+ type errors
 // from method bodies referencing not-yet-real Expr/Symbol/Log surface; un-gate
 // method-groups (scope mgmt → allocate → error reporting → predicates) as
@@ -8535,21 +8520,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .append_slice(self.import_records_for_current_part.as_slice());
                         }
 
-                        // Clear the heap-backed map fields in the *source* slot
-                        // before compacting `part` into `parts[parts_end]`. The
-                        // multi-pass loop restarts at `begin = parts_end`, so
-                        // when `parts_end < idx` the abandoned source slot at
-                        // `idx` is re-scanned on the next pass — still holding
-                        // bitwise aliases of the maps now owned by the compacted
-                        // survivor at `parts_end`. If that re-scan filters the
-                        // slot, the filtered branch below would drop the aliased
-                        // maps and the survivor would dangle. Wiping them here
-                        // guarantees the compacted slot is the sole owner. When
-                        // `parts_end == idx` this is a no-op: the whole-`Part`
-                        // `ptr::write` immediately below restores them from
-                        // `part`.
-                        // SAFETY: `idx < parts.len()`. Field-only `ptr::write`
-                        // (no `Drop` of the old slot bits — `part` owns them).
+                        // Wipe the source slot's heap-backed maps so a multi-pass
+                        // re-scan of `idx` never aliases the compacted survivor.
+                        // SAFETY: `idx < parts.len()`; field-only write, `part` owns the old bits.
                         unsafe {
                             let src = parts.as_mut_ptr().add(idx);
                             core::ptr::write(&raw mut (*src).symbol_uses, Default::default());
@@ -8564,21 +8537,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         unsafe { core::ptr::write(parts.as_mut_ptr().add(parts_end), part) };
                         parts_end += 1;
                     } else {
-                        // Drop path: this part is filtered out and abandoned
-                        // by `set_len(parts_end)` (no Drop). Arena-backed
-                        // fields are fine to abandon, but `symbol_uses` /
-                        // `import_symbol_property_uses` are global-heap maps
-                        // — free them via the duplicate, then clear the alias
-                        // in `parts[idx]` so the multi-pass re-scan and final
-                        // `set_len` never observe freed handles. The kept
-                        // branch above wipes its source slot's map fields, so
-                        // a slot reaching here cannot alias any compacted
-                        // survivor's maps from a prior pass.
+                        // Filtered out; free the global-heap maps and clear the
+                        // alias in `parts[idx]` so a re-scan never sees freed handles.
                         drop(core::mem::take(&mut part.symbol_uses));
                         drop(core::mem::take(&mut part.import_symbol_property_uses));
-                        // SAFETY: `idx < parts.len()`. Field-only `ptr::write`
-                        // (no `Drop` of the old slot bits — those just-freed
-                        // handles must not run `Drop` again).
+                        // SAFETY: `idx < parts.len()`; field-only write, old bits just freed above.
                         unsafe {
                             let slot = parts.as_mut_ptr().add(idx);
                             core::ptr::write(&raw mut (*slot).symbol_uses, Default::default());

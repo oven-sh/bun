@@ -528,11 +528,6 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 
         debug_assert_eq!(trees.len(), dependencies.len());
         for (tree, child) in trees.iter_mut().zip(dependencies.iter_mut()) {
-            // Move the per-tree dependency Vec out of the SoA column so it
-            // drops at the end of this iteration. `slice.deinit_owned()` below
-            // frees the slab bitwise (column element destructors don't run —
-            // see `MultiArrayList`'s `Drop`), so leaving the Vec in place
-            // leaks its heap buffer.
             let child = core::mem::take(child);
 
             // PERF(port): `dep_ids` is pre-reserved to `total` (sum of all
@@ -558,10 +553,6 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         // queue / sort_buf / pending_optional_peers freed by Drop; explicit deinit removed.
         // TODO(port): if Builder outlives clean(), explicitly clear these fields here.
 
-        // `to_owned_slice` transferred slab ownership to us; `Slice` has no
-        // `Drop`, so free it explicitly. The per-element `Vec`s in the
-        // `dependencies` column were drained above. `trees` was copied out
-        // (`to_vec()`), so it is unaffected.
         slice.deinit_owned();
 
         Ok(CleanResult { trees, dep_ids })

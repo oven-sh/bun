@@ -368,13 +368,6 @@ impl TargetExt for Target {
             b".js", b".cjs", b".mts", b".cts", b".ts", b".tsx", b".jsx", b".json",
         ];
 
-        // Keys were `&'static` in Zig; mirror that with `put_static_key` so the
-        // map borrows the literals instead of `Box`-copying each one. Beyond
-        // matching Zig's zero-copy cost model, this also avoids stranding ~9
-        // small `Box<[u8]>`s when the holding `BundleOptions` lives inside an
-        // arena-allocated `Transpiler` (CLI path) whose `Drop` never runs —
-        // LSan flags those under `bun_asan`. The hashbrown table backing
-        // buffer is the only remaining heap allocation here.
         if self == Target::Node {
             exts.ensure_total_capacity(OUT_EXTENSIONS_LIST.len() * 2)
                 .expect("OOM");
@@ -1771,8 +1764,6 @@ impl<'a> BundleOptions<'a> {
         self.loaders.get(ext).copied().unwrap_or(Loader::File)
     }
 
-    // LIFECYCLE: `Box<[u8]>` config strings here are owned by the returned `BundleOptions`; CLI
-    // callers park it in the process-lifetime `Transpiler` (LSan root region in build_command.rs).
     pub fn from_api(
         fs: &mut Fs::FileSystem,
         log: *mut bun_ast::Log,

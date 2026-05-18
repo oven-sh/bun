@@ -483,16 +483,8 @@ impl ArrayBuffer {
         }
 
         // If it's not a mimalloc heap buffer, we're not going to call a deallocator.
-        //
-        // This check only makes sense when mimalloc is the global allocator: it
-        // distinguishes Rust-owned heap buffers (which `MarkedArrayBuffer_deallocator`
-        // can free via `mi_free`) from foreign/static memory we must not free. Under
-        // ASAN the global allocator is `std::alloc::System`, so *every* `Vec<u8>` lives
-        // outside the mimalloc heap and this branch would silently drop the deallocator
-        // for buffers we do own — leaking them. `MarkedArrayBuffer_deallocator` already
-        // routes through `bun_alloc::raw::free`, which dispatches to `libc::free` under
-        // ASAN, so it is safe to install for system-allocated buffers.
-        //
+        // Only meaningful when mimalloc is the global allocator; otherwise the
+        // probe always returns false and we'd drop the deallocator for buffers we own.
         // SAFETY: `mi_is_in_heap_region` accepts any pointer value (incl. null/non-mimalloc).
         if self.len > 0
             && bun_alloc::USE_MIMALLOC
@@ -980,9 +972,7 @@ impl MarkedArrayBuffer {
     pub fn destroy(&mut self) {
         if self.owns_buffer {
             self.owns_buffer = false;
-            // SAFETY: buffer.ptr was allocated by the default (global)
-            // allocator (heap::alloc / allocator.dupe). `default_alloc::free`
-            // agrees with the `#[global_allocator]`.
+            // SAFETY: buffer.ptr was allocated by the global allocator (heap::alloc / allocator.dupe).
             unsafe { bun_alloc::default_alloc::free(self.buffer.ptr.cast()) };
         }
     }

@@ -943,10 +943,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
             // SAFETY: `manager_ptr` is the provenance root for every body access
             // to `manager`; `task_ptr` is the sole live handle to this pool slot.
             unsafe {
-                // Drop the active request/data union arms before re-pooling so
-                // heap-owned payloads (ExtractData, PackageManifest, …) don't
-                // strand. Body code that moves out an arm restores a Default
-                // placeholder per the `deinit_payload` contract.
                 (*task_ptr).deinit_payload();
                 (*manager_ptr).preallocated_resolve_tasks.put(task_ptr);
             }
@@ -1016,19 +1012,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                     continue;
                 }
-                // PORT NOTE: Zig copies the manifest into the cache and leaves
-                // the original in `task.data.package_manifest`, where the
-                // resolve-task pool reclaims the slot without running drop —
-                // a deliberate leak (see the no-`Drop` note on `Task`). Rust
-                // moves it out instead so the boxed slices inside
-                // `PackageManifest` are owned by the long-lived cache and the
-                // pool slot is left holding an empty placeholder, avoiding both
-                // the leak and a redundant ~hundreds-of-KB deep clone.
                 debug_assert!(task.tag == Task::Tag::PackageManifest);
-                // SAFETY: tag-guarded read of the active union arm. `take`
-                // leaves the storage logically uninitialized; immediately write
-                // a default `PackageManifest` back so the slot stays well-formed
-                // for `HiveArray::put`'s `drop_in_place::<Task>` and reuse.
+                // SAFETY: tag-guarded read of the active union arm; default placeholder restored immediately.
                 let manifest: npm::PackageManifest = unsafe {
                     let m = core::mem::ManuallyDrop::take(&mut task.data.package_manifest);
                     task.data.package_manifest =
@@ -1036,8 +1021,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     m
                 };
                 let name_hash = manifest.pkg.name.hash;
-                // Capture the display name before `manifest` moves into the
-                // cache; only needed for the progress node below.
                 let progress_name: Option<Vec<u8>> = (!C::MANIFESTS_ONLY
                     && log_level.show_progress()
                     && !has_updated_this_run.get())

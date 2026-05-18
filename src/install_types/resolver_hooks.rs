@@ -367,7 +367,6 @@ impl Clone for NpmInfo {
     fn clone(&self) -> Self {
         Self {
             name: self.name,
-            // Deep clone — `Group` owns a `Box` linked list.
             version: self.version.clone(),
             is_alias: self.is_alias,
         }
@@ -445,8 +444,7 @@ impl Default for DependencyVersionValue {
     }
 }
 
-// No `Clone for DependencyVersionValue`: a tag-blind bitwise clone would alias
-// the `npm` Box chain and double-free. Clone via `DependencyVersion::clone`.
+// No `Clone for DependencyVersionValue`: a tag-blind bitwise clone would double-free `npm`.
 
 /// Port of `install/dependency.zig` `Version`.
 #[repr(C)]
@@ -468,15 +466,12 @@ impl Default for DependencyVersion {
 
 impl Clone for DependencyVersion {
     fn clone(&self) -> Self {
-        // Dispatch on `tag` to clone the active union arm. Only `npm` holds
-        // heap (`Group` linked list); every other arm is `Copy`-equivalent.
         let value = match self.tag {
             DependencyVersionTag::Npm => DependencyVersionValue {
                 // SAFETY: tag == Npm, so `npm` is the active arm.
                 npm: ManuallyDrop::new(unsafe { (*self.value.npm).clone() }),
             },
-            // SAFETY: tag selects the active arm; all remaining arms are
-            // `Copy` (no heap), so a bitwise read is a true clone.
+            // SAFETY: all non-`npm` arms hold no heap; a bitwise read is a true clone.
             _ => unsafe { core::ptr::read(&self.value) },
         };
         Self {
@@ -489,8 +484,6 @@ impl Clone for DependencyVersion {
 
 impl Drop for DependencyVersion {
     fn drop(&mut self) {
-        // Only `npm` (`NpmInfo` → `Group` Box chain) owns heap; other arms are
-        // `Copy`/handle types with no allocation.
         if self.tag == DependencyVersionTag::Npm {
             // SAFETY: tag == Npm, so `npm` is the active arm.
             unsafe { ManuallyDrop::drop(&mut self.value.npm) };

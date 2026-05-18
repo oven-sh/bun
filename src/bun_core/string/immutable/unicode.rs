@@ -1236,19 +1236,6 @@ pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: b
                 break 'output Vec::new();
             }
 
-            // LSan(bun_asan): false positive. The `Vec<u16>` allocated here is
-            // returned to the caller; the currently-only caller
-            // (`TextDecoder::decode_slice`) does `decoded.leak()` and hands
-            // the pointer to JSC as an external string via
-            // `zig_string::to_external_u16` → `ZigString__toExternalU16`. On
-            // the success path ownership transfers to the JS heap and the
-            // external-string finalizer (`ZigString__free`) frees the buffer
-            // on GC sweep — LSan checks at process exit *before* the final
-            // sweep, so any not-yet-collected `TextDecoder.decode()` result
-            // reports here. (`to_external_u16`'s too-long branch frees the
-            // buffer immediately and returns `JSValue::ZERO`, so that path is
-            // also leak-free.) New `pub` callers must keep this invariant or
-            // own the `Vec` normally.
             let mut out = vec![0u16; out_length];
 
             let res = simdutf::convert::utf8::to::utf16::with_errors::le(bytes, &mut out);

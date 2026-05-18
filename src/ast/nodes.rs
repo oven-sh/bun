@@ -936,8 +936,6 @@ pub struct DeclaredSymbol {
 }
 
 pub struct DeclaredSymbolList {
-    // SoA slab is `AstAlloc`-backed (like `Scope::members`, `G::DeclList`) so it's
-    // reclaimed on arena reset; a global slab strands when the owning `Part` is forgotten.
     pub entries: MultiArrayList<DeclaredSymbol, bun_alloc::AstAlloc>,
 }
 
@@ -1036,8 +1034,6 @@ impl DeclaredSymbolList {
         Ok(this)
     }
 }
-// Arena threading: the SoA slab is `AstAlloc`-backed (thread-local AST mi_heap),
-// matching Zig's allocator-threaded `MultiArrayList` and the other AST collections.
 
 impl DeclaredSymbol {
     fn for_each_top_level_symbol_with_type<C>(

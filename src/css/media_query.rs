@@ -54,8 +54,7 @@ pub trait QueryCondition: Sized + ToCss {
     ) -> Result<Self> {
         Self::parse_feature(input)
     }
-    // Mutually-defaulting pairs (override exactly one of each). `_in` carries the
-    // parser arena so arena-resident impls don't strand global-heap Box/Vec.
+    // Mutually-defaulting pairs: override exactly one of each.
     fn create_negation(condition: Box<Self>) -> Self {
         Self::create_negation_in(*condition, ArenaPtr::global())
     }
@@ -129,8 +128,6 @@ pub use crate::generics::ToCss;
 // ───────────────────────── MediaList / MediaQuery ─────────────────────────
 
 /// A [media query list](https://drafts.csswg.org/mediaqueries/#mq-list).
-// `media_queries` is `ArenaPtr`-backed so the buffer lives in the same arena as
-// the AST node holding this `MediaList` (no Drop on bulk-free → would otherwise strand).
 #[derive(Debug, Clone, PartialEq)]
 pub struct MediaList {
     /// The list of media queries.
@@ -228,8 +225,6 @@ impl QueryConditionFlags {
 // ───────────────────────── MediaCondition ─────────────────────────
 
 /// Represents a media condition. Implements `QueryCondition`.
-// `Not`/`Operation` carry `ArenaPtr` for the same reason as `MediaList`:
-// arena-resident AST nodes never run Drop, so global-heap Box/Vec would strand.
 #[derive(Debug, Clone, PartialEq)]
 pub enum MediaCondition {
     Feature(MediaFeature),
@@ -1277,7 +1272,6 @@ fn write_min_max<FeatureId: FeatureIdTrait>(
 impl MediaList {
     /// Zig: `MediaList.deepClone` — element-wise clone of `media_queries`.
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // Arena-backed: result lands in arena AST nodes; bulk-free won't run Drop.
         let mut media_queries =
             Vec::with_capacity_in(self.media_queries.len(), ArenaPtr::new(bump));
         media_queries.extend(self.media_queries.iter().map(|q| q.deep_clone(bump)));
@@ -1451,7 +1445,6 @@ impl MediaType {
 impl MediaList {
     /// Parse a media query list from CSS.
     pub fn parse(input: &mut Parser, options: &css::ParserOptions) -> Result<MediaList> {
-        // Arena-backed: result lands in arena AST nodes; bulk-free won't run Drop.
         let mut media_queries: Vec<MediaQuery, ArenaPtr> =
             Vec::new_in(ArenaPtr::new(input.arena()));
         loop {
@@ -1577,8 +1570,6 @@ pub fn parse_query_condition_with_options<C: QueryCondition>(
         return Err(location.new_unexpected_token_error(tok));
     };
 
-    // Arena allocator for `Not`/`Operation` payloads — keeps them in the same
-    // arena as the surrounding AST node (no Drop on bulk-free).
     let alloc = ArenaPtr::new(input.arena());
 
     // (is_negation, is_style)

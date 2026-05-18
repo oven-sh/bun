@@ -52,11 +52,7 @@ use bun_core::output;
 #[global_allocator]
 static ALLOC: bun_alloc::Mimalloc = bun_alloc::Mimalloc;
 
-/// Under ASAN, route the global allocator through the system allocator (libc
-/// malloc) so the ASAN interceptor sees every allocation directly — redzones,
-/// free quarantine, heap-origin tracking. Mirrors the Zig build's
-/// `use_mimalloc = false` + `fallback.zig` (`std.heap.c_allocator`) path.
-/// `MimallocArena` (the parser/AST bump arena) stays on mimalloc.
+/// Under ASAN, use the system allocator so the interceptor sees every allocation.
 #[cfg(bun_asan)]
 #[global_allocator]
 static ALLOC: std::alloc::System = std::alloc::System;
@@ -174,7 +170,6 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         "leak:bun_jsc::debugger::Debugger>::start_js_debugger_thread\n",
         "leak:bun_runtime::socket::udp_socket::UDPSocket\n",
         "leak:bun_runtime::timer::timeout_object::TimeoutObject>::init_with\n",
-        // ── Rust-only process-lifetime allocations ──────────────────────────
         "leak:bun_runtime::cli::test::scanner::Scanner\n",
         "leak:bun_bundler::transpiler::resolver_bundle_options_subset\n",
         "leak:Transpiler>::sync_resolver_opts\n",
@@ -186,16 +181,12 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         "leak:bun_jsc::top_exception_scope::intern_location_file\n",
         "leak:bun_event_loop::MiniEventLoop\n",
         "leak:bun_js_parser::parser::Runtime::Features::init_bundler_feature_flags\n",
-        // TODO(leak): `UpdateRequest.name: &'static [u8]` is a CLI positional
-        // leaked separately from the `PackageManager` singleton. Bounded.
         "leak:bun_install::package_manager_real::update_request::UpdateRequest\n",
-        // ── CSS AST arena: heap-backed members in arena-allocated nodes ─────
         "leak:SmallList<*>::append\n",
         "leak:SmallList<*>::clone\n",
         "leak:SmallList<*>::extend\n",
         "leak:SmallList<*>::from_iter\n",
         "leak:SmallList<*>::init_capacity\n",
-        // ── LSan-fires-before-final-GC-sweep ────────────────────────────────
         "leak:BuildMessage>::create\n",
         "leak:ResolveMessage>::create\n",
         "leak:TextDecoder>::decode_slice\n",

@@ -487,11 +487,8 @@ impl<'a> Coordinator<'a> {
             }
         }
 
-        // Release the +1 from `to_process()` in Worker::start; the worker has
-        // exited so the box is otherwise leaked once we drop the raw pointer.
         if let Some(p) = w.process.take() {
-            // SAFETY: `p` is the live intrusive-refcounted *mut Process
-            // produced by `to_process`; sole owner now that the child reaped.
+            // SAFETY: `p` is the live `*mut Process` from `to_process`; sole owner now.
             unsafe {
                 (*p).detach();
                 Process::deref(p);

@@ -4411,8 +4411,6 @@ impl H2FrameParser {
     }
 
     /// Returned *Stream is heap-allocated and stable for the lifetime of this H2FrameParser.
-    /// Freed in `deinit()` (every `streams` entry is `heap::take`'d) once `finalize()` →
-    /// `rc_deref()` drops the JS wrapper's last ref. Lives only as long as the parser.
     fn handle_received_stream_id(&self, stream_identifier: u32) -> Option<*mut Stream> {
         // connection stream
         if stream_identifier == 0 {
@@ -7284,8 +7282,7 @@ impl H2FrameParser {
                 BunSocket::Tcp(bun_ptr::BackRef::from(socket_nn.cast::<TCPSocket>()))
             }
         } else {
-            // attach_native_callback dropped the IntrusiveRc without releasing the
-            // init_ref above (no Drop impl); balance it here. Zig refs only on success.
+            // attach_native_callback failed: balance the init_ref taken above.
             self.deref();
             socket_ref.ref_();
             if SSL {
@@ -7605,16 +7602,13 @@ impl H2FrameParser {
         // PORT NOTE: JsRef::deinit() dropped — overwrite with empty(); Drop releases the Strong slot.
         bun_ptr::finalize_js_box(self, |this| {
             this.strong_this.set(JsRef::empty());
-            // process.exit() never unwinds, so a stack-rooted ref (e.g. on_native_read's
-            // self.ref_()) can be permanently stranded and deinit() never runs. Free the
-            // streams here so they don't leak under BUN_DESTRUCT_VM_ON_EXIT; deinit()'s own
-            // stream loop sees an empty map afterwards, so this never double-frees.
+            // process.exit() never unwinds, so a stack-rooted ref can strand and deinit()
+            // never runs; free streams here. The map is emptied so deinit() won't double-free.
             if VirtualMachine::get().is_shutting_down() {
                 let streams = this.streams.replace(BunHashMap::default());
                 for (_, item) in streams.iter() {
                     let stream = *item;
-                    // SAFETY: `stream` came from `this.streams`; the map has been emptied so
-                    // each entry is freed exactly once.
+                    // SAFETY: map has been emptied; each entry is freed exactly once.
                     unsafe {
                         (*stream).free_resources::<true>(this);
                         drop(bun_core::heap::take(stream));

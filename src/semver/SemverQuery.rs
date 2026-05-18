@@ -133,8 +133,6 @@ unsafe impl Sync for List {}
 
 impl Clone for List {
     fn clone(&self) -> Self {
-        // Deep-clone the owned chains, then re-derive `tail` against the
-        // *cloned* `head.next` chain (never bitwise-copy the old backref).
         let mut out = List {
             head: self.head.clone(),
             tail: None,
@@ -142,8 +140,7 @@ impl Clone for List {
         };
         if out.head.next.is_some() {
             let mut tail = NonNull::from(&mut out.head);
-            // SAFETY: `tail` walks `out.head`'s exclusively-owned Box chain;
-            // raw NonNull sidesteps NLL on returning the last `&mut` link.
+            // SAFETY: `tail` walks `out.head`'s exclusively-owned Box chain.
             while let Some(next) = unsafe { tail.as_mut() }.next.as_deref_mut() {
                 tail = NonNull::from(next);
             }
@@ -285,8 +282,6 @@ unsafe impl Sync for Group {}
 
 impl Clone for Group {
     fn clone(&self) -> Self {
-        // Deep-clone the owned `head` chain, then re-derive `tail` against the
-        // *cloned* chain (never bitwise-copy the old backref).
         let mut out = Group {
             head: self.head.clone(),
             tail: None,
@@ -295,8 +290,7 @@ impl Clone for Group {
         };
         if out.head.next.is_some() {
             let mut tail = NonNull::from(&mut out.head);
-            // SAFETY: `tail` walks `out.head`'s exclusively-owned Box chain;
-            // raw NonNull sidesteps NLL on returning the last `&mut` link.
+            // SAFETY: `tail` walks `out.head`'s exclusively-owned Box chain.
             while let Some(next) = unsafe { tail.as_mut() }.next.as_deref_mut() {
                 tail = NonNull::from(next);
             }

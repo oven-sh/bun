@@ -4146,11 +4146,6 @@ pub use bun_alloc::secure_zero;
 // `.iter()`, `.len()`, `.as_slice()`) and as an `IntoIterator<Item = &[u8]>`
 // for `for arg in argv()`.
 static ARGV_STORAGE: Once<Vec<ZBox>> = Once::new();
-// The lazily-built `&ZStr` view over `ARGV_STORAGE` (plus any BUN_OPTIONS
-// splices). Kept in its own `Once` so it remains reachable from a static
-// root for the process lifetime even after `set_argv` repoints `ARGV` at a
-// different slice (the `--compile` exec-argv path) — otherwise LSan reports
-// the orphaned heap buffer as a direct leak.
 static ARGV_VIEW: Once<Vec<&'static ZStr>> = Once::new();
 static ARGV: RacyCell<&'static [&'static ZStr]> = RacyCell::new(&[]);
 static ARGV_INIT: std::sync::Once = std::sync::Once::new();
@@ -4269,8 +4264,6 @@ fn argv_view_init() {
         append_options_env::<&'static ZStr>(opts, &mut view);
         set_bun_options_argc(view.len() - original_len);
     }
-    // Park the view in `ARGV_VIEW` (a static root) rather than `Vec::leak` so
-    // it stays reachable after `set_argv` repoints `ARGV` elsewhere.
     let view: &'static [&'static ZStr] = ARGV_VIEW.get_or_init(move || view);
     // SAFETY: single-threaded lazy init guarded by Once.
     unsafe { ARGV.write(view) };

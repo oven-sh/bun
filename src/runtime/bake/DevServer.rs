@@ -1188,8 +1188,7 @@ impl Drop for DevServer {
             .server_components
             .as_ref()
             .is_some_and(|sc| sc.separate_ssr_graph);
-        // SAFETY: all three written exactly once in `init()`; `ssr_transpiler`
-        // is only an independent allocation when `separate_ssr_graph`.
+        // SAFETY: each transpiler is initialized exactly once in `init()`.
         unsafe {
             self.server_transpiler.assume_init_drop();
             self.client_transpiler.assume_init_drop();

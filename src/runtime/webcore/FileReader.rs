@@ -432,8 +432,7 @@ impl FileReader {
             if let Err(e) = start_result {
                 self.waiting_for_on_reader_done.set(false);
                 let parent = self.parent();
-                // SAFETY: `parent()` is the live Source owning `self`; the JS
-                // finalizer still holds its own ref, so this cannot free it.
+                // SAFETY: see `parent()`; JS finalizer still holds a ref so this cannot free it.
                 let _ = unsafe { Source::decrement_count(parent) };
                 return streams::Start::Err(e);
             }
@@ -1019,8 +1018,7 @@ impl FileReader {
         if self.waiting_for_on_reader_done.get() && !self.done.get() {
             self.waiting_for_on_reader_done.set(false);
             let parent = self.parent();
-            // SAFETY: `parent` from `Source::new` (`Box::into_raw`); tail position
-            // — `self` (a field of `*parent`) is not accessed after this call.
+            // SAFETY: see `parent()`; tail call, `self` is not accessed after.
             let _ = unsafe { Source::decrement_count(parent) };
         }
     }

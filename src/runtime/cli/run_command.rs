@@ -1252,8 +1252,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             // SAFETY: `ctx` is `&mut RUN` passed through `holdAPILock`'s
             // opaque slot; the API lock is held for the full call.
             let this = unsafe { &mut *ctx.cast::<Run>() };
-            // LEAK(intentional): `start()` is `-> !`; allocations made there are
-            // process-lifetime by construction (`Global::exit` ends the process).
             this.start();
         }
         // SAFETY: `vm.global` set in `init`; `vm()` borrows the JSC VM for
@@ -2426,14 +2424,6 @@ impl RunCommand {
         // transpiler — so the bundler-linker / `tsconfig.json` / JSX-runtime
         // setup would be dead weight (and the largest block of bundler code
         // otherwise faulted in for a plain `bun run <script>`).
-        //
-        // Park the slot in the process-lifetime CLI arena (Zig: process-arena
-        // `var this_transpiler` with no defer). A stack `MaybeUninit` would
-        // never run `Drop`, so the global-heap `BundleOptions`/`Define`/env
-        // allocations inside the Transpiler would read as direct leaks under
-        // ASAN+LSan on every code path that returns from this function (e.g.
-        // `--if-present` with a missing script). Same pattern as
-        // `BuildCommand::exec` (build_command.rs:130-139).
         let this_transpiler: &'static mut ::core::mem::MaybeUninit<Transpiler<'static>> =
             runner_arena().alloc(::core::mem::MaybeUninit::<Transpiler<'static>>::uninit());
         let root_dir_info = Self::configure_env_for_run_without_linker(
@@ -2446,10 +2436,6 @@ impl RunCommand {
         // SAFETY: `configure_env_for_run_without_linker` returned `Ok`, so the
         // slot is fully initialized via `MaybeUninit::write`.
         let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
-        // The arena is a mimalloc heap LSan never scans, so the global-heap
-        // strings reachable only through this struct read as false-positive
-        // leaks at exit. Register the parked slot as a root region so LSan
-        // can follow the pointers it holds.
         bun_core::asan::register_root_region(
             std::ptr::from_ref::<Transpiler>(this_transpiler).cast(),
             ::core::mem::size_of::<Transpiler>(),
@@ -3914,8 +3900,6 @@ impl RunCommand {
         // Park the owning maps in the runner arena (process-lifetime) so the
         // `'static` slices above remain valid without leaking/forgetting.
         let parked = runner_arena().alloc(results);
-        // Mimalloc arena pages are LSan-opaque — register the parked slot as a
-        // root so its global-heap Vec/key boxes aren't false-positive leaks.
         bun_core::asan::register_root_region(
             std::ptr::from_ref::<ResultList>(parked).cast(),
             ::core::mem::size_of::<ResultList>(),

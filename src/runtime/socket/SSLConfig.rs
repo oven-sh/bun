@@ -61,10 +61,7 @@ impl From<JsError> for ReadFromBlobError {
 // via `CString::into_raw`).
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Re-allocate a `ZBox` into a fresh `dupe_z` (mimalloc) buffer so it can be
-/// freed by `bun_core::free_sensitive` (= `mi_free`) in `SSLConfig::deinit`.
-/// `ZBox` is a `Box<[u8]>` from the *global* allocator — under ASAN that's
-/// `libc::malloc`, and `mi_free` on a libc pointer SEGVs in the page-map walk.
+/// `ZBox` is global-allocator memory; re-allocate via `dupe_z` so `mi_free` can free it.
 #[inline]
 fn zbox_into_raw(z: bun_core::ZBox) -> *const c_char {
     bun_core::dupe_z(z.as_bytes())

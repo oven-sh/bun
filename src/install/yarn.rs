@@ -654,13 +654,11 @@ fn process_deps(
             }
 
             if let Some(pkg_id) = found_package_id {
-                // SAFETY: `deps_buf` is uninitialized spare capacity (see
-                // `slice_mut` at the call site); `ptr::write` skips Drop.
+                // SAFETY: `deps_buf` is uninitialized spare capacity; `ptr::write` skips Drop.
                 unsafe { core::ptr::write(deps_buf.as_mut_ptr().add(count), dep) };
                 res_buf[count] = pkg_id;
                 count += 1;
             }
-            // else: `dep` drops here, freeing any parsed Group chain.
         }
     }
     Ok(count)
@@ -1274,8 +1272,7 @@ pub fn migrate_yarn_lockfile<'a>(
                 let dep_name_string = sbuf!().append_with_hash(&dep.name, name_hash)?;
                 let version_string = sbuf!().append(&dep.version)?;
 
-                // SAFETY: `dependencies_buf` is uninitialized spare capacity
-                // (see `slice_mut` above); `ptr::write` skips Drop.
+                // SAFETY: `dependencies_buf` is uninitialized spare capacity; `ptr::write` skips Drop.
                 unsafe {
                     core::ptr::write(
                         dependencies_buf

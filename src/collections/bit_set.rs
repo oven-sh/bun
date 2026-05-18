@@ -1347,9 +1347,7 @@ impl DynamicBitSetList {
     /// not reallocated — impossible today, no resize API) while the view is
     /// live. All current callers (`hoisted_install`, `isolated_install`,
     /// `PackageInstaller::can_run_scripts`) satisfy this by keeping the list
-    /// alive for the view's entire use. The view must not be `deinit`ed —
-    /// `ManuallyDrop` suppresses `Drop`, since `masks` is interior to `self.buf`
-    /// and not a freeable allocation start.
+    /// alive for the view's entire use. The view must not be `deinit`ed.
     pub fn at(&self, i: usize) -> core::mem::ManuallyDrop<DynamicBitSetUnmanaged> {
         debug_assert!(i < self.n, "DynamicBitSetList::at index out of bounds");
         let num_masks = DynamicBitSetUnmanaged::num_masks(self.bit_length);

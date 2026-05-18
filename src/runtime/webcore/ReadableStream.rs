@@ -625,8 +625,6 @@ pub trait SourceContext: Sized {
     /// here would deallocate the storage backing the live `&mut self` borrow (UAF).
     fn deinit_fn(&mut self);
 
-    /// GC-finalizer hook (must NOT run JS). Return `true` if a context-held
-    /// self-ref on `NewSource` was dropped (caller balances via `decrement_count`).
     fn finalize_detach(&mut self) -> bool {
         false
     }
@@ -1209,7 +1207,6 @@ impl<C: SourceContext> NewSource<C> {
         let this = Box::into_raw(self);
         // SAFETY: `this` is live — just unwrapped from `Box`.
         unsafe { (*this).this_jsvalue = JSValue::ZERO };
-        // Drop any context-held self-ref so the wrapper deref below can reach 0.
         // SAFETY: `this` is live; the JS-wrapper ref below still pins the count.
         if unsafe { (*this).context.finalize_detach() } {
             let _ = unsafe { Self::decrement_count(this) };

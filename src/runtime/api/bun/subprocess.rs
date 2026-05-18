@@ -212,9 +212,6 @@ const _: () = {
 };
 
 impl<'a> Subprocess<'a> {
-    /// Capture a still-pending `StaticPipeWriter` (still `Writable::Buffer`,
-    /// already `start()`ed) so the caller can release the start ref after the
-    /// close chain unwinds — outside the writer's `_on_write` frame.
     fn take_pending_start_writer(&self) -> Option<*mut StaticPipeWriter<'a>> {
         match self.stdin.get() {
             Writable::Buffer(buffer) if Writable::buffer_writer_mut(buffer).started => {
@@ -508,8 +505,6 @@ impl Subprocess<'_> {
                     Writable::pipe_release(pipe);
                 }
                 Writable::Buffer(_) => {
-                    // RefPtr has no Drop — move it out before reassigning so the
-                    // create ref is actually released (mirrors Zig `buffer.deref()`).
                     let Writable::Buffer(buffer) = core::mem::replace(stdin, Writable::Ignore)
                     else {
                         unreachable!()
@@ -978,9 +973,7 @@ impl Subprocess<'_> {
             }
         }
 
-        // We won't be sending any more data. `close()` drives `on_close_io`
-        // (drops the create ref + sets stdin to Ignore); release the start ref
-        // afterwards so the writer isn't freed inside its own callback chain.
+        // We won't be sending any more data.
         let pending_start = self.take_pending_start_writer();
         if let Writable::Buffer(buffer) = self.stdin.get() {
             Writable::buffer_writer_mut(buffer).close();
@@ -1178,12 +1171,9 @@ impl Subprocess<'_> {
 
         match io {
             StdioKind::Stdin => {
-                // Catch-all for the start ref (spawn-error / early-GC teardown).
-                // The common path releases it in `on_process_exit`.
                 let pending_start = self.take_pending_start_writer();
                 if let Some(writer) = pending_start {
-                    // SAFETY: live StaticPipeWriter with >= 2 refs; close() is
-                    // a no-op if the FD is already closed.
+                    // SAFETY: live StaticPipeWriter with >= 2 refs.
                     unsafe { (*writer).close() };
                 }
                 if !called {
@@ -1275,8 +1265,6 @@ impl Subprocess<'_> {
         );
         this.finalize_streams();
 
-        // If the exit handler is still installed, `on_process_exit` never ran
-        // (process still alive at GC) — release the stranded handler ref (#2 of 2).
         let exit_handler_pending = this.process().exit_handler.is_some();
         this.process_mut().detach();
         if exit_handler_pending {

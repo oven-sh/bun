@@ -2541,21 +2541,6 @@ fn finish_arena_contents(
     (ptr, total)
 }
 
-/// LEAK NOTE (LSan/ASAN): on the `!USE_SHARED_BUFFER` path this allocates a
-/// fresh `Vec<u8>` for the file contents and returns it as `Cow::Owned` — the
-/// Vec drops normally if the caller drops the `PathContentsPair`. Many callers
-/// intentionally do *not* drop it: the resolver/module-loader feed these bytes
-/// into process-lifetime caches, mirroring Zig (which read with
-/// `bun.default_allocator` and never freed):
-///   • `Resolver::parse_tsconfig`   → `intern_tsconfig_contents` → `bun_ptr::Interned::leak`
-///   • `Resolver::parse_package_json` / `dir_info_cached_maybe_log` → DirInfo arena
-///   • `RuntimeTranspilerStore::TranspilerJob` → per-VM source cache (freed on VM teardown)
-/// All of those frames are already in the LSan suppression list
-/// (`__lsan_default_suppressions` in `src/bun_bin/lib.rs` + `test/leaksan.supp`).
-/// If LSan attributes a leak to *this* line without one of those suppressed
-/// frames in the stack, the bug is a caller `mem::forget`-ing or `into_raw`-ing
-/// `PathContentsPair::contents` without a matching free; a plain drop frees the
-/// `Cow::Owned` Vec normally — not an issue in this function.
 pub fn read_file_with_handle_impl<'p, 'buf, const USE_SHARED_BUFFER: bool, const STREAM: bool>(
     path: &'p [u8],
     size_hint: Option<usize>,

@@ -262,8 +262,8 @@ unsafe extern "Rust" {
     /// `*mut bun_runtime::timer::ImmediateObject`; returns whether the callback
     /// threw. Defined in `bun_runtime::dispatch`. Link-time resolved.
     fn __bun_run_immediate_task(task: *mut (), vm: *mut VirtualMachine) -> bool;
-    /// VM-teardown only: release the event loop's `+1` ref on a still-queued
-    /// `ImmediateObject` without running it. Defined in `bun_runtime::dispatch`.
+    /// Release the event loop's `+1` ref on a still-queued `ImmediateObject`
+    /// without running it. Defined in `bun_runtime::dispatch`.
     fn __bun_cancel_pending_immediate(task: *mut (), vm: *mut VirtualMachine);
     /// `WTFTimer::run` — `timer` is an erased `*mut bun_runtime::timer::WTFTimer`.
     /// Defined in `bun_runtime::dispatch`. Link-time resolved.
@@ -748,14 +748,11 @@ impl EventLoop {
     }
 
     pub fn deinit(&mut self) {
-        // Free (don't run — running could re-enter the dying VM) queued ManagedTask
-        // boxes so `BUN_DESTRUCT_VM_ON_EXIT=1` doesn't strand them. Other tags'
-        // pointers may be interior/borrowed and can't be safely freed by tag.
+        // Free (don't run — running could re-enter the dying VM) queued ManagedTask boxes.
         while let Some(task) = self.tasks.read_item() {
             if task.tag == bun_event_loop::task_tag::ManagedTask {
                 // SAFETY: every ManagedTask is heap_owned (ManagedTask::new -> heap::into_raw).
                 let managed = unsafe { bun_core::heap::take(task.ptr.cast::<ManagedTask::ManagedTask>()) };
-                // Free the heap-owned ctx the never-run callback would have reclaimed.
                 if let (Some(cleanup), Some(ctx)) = (managed.cleanup, managed.ctx) {
                     cleanup(ctx.as_ptr());
                 }
@@ -765,17 +762,12 @@ impl EventLoop {
         // PORT NOTE: Zig's `tasks.deinit()` / `clearAndFree()` map to dropping
         // the owned buffers; reassigning a fresh value drops the old in place.
         self.tasks = Queue::init();
-        // Each pending immediate holds a +1 ref on its `ImmediateObject` (taken
-        // in `TimerObjectInternals::init`); release it or the box leaks at exit.
         let pending = core::mem::take(&mut self.immediate_tasks);
         let next = core::mem::take(&mut self.next_immediate_tasks);
         if !pending.is_empty() || !next.is_empty() {
-            // Non-empty ⇒ `enqueue_immediate_task` ran ⇒ `virtual_machine` is set.
             let vm = self.vm();
             for task in pending.into_iter().chain(next) {
-                // SAFETY: `task` was produced by `enqueue_immediate_task`; `vm`
-                // is the live per-thread VM (RuntimeState is still installed —
-                // `deinit_runtime_state` runs after `EventLoop::deinit()`).
+                // SAFETY: `task` came from `enqueue_immediate_task`; `vm` is the live per-thread VM.
                 unsafe { __bun_cancel_pending_immediate(task, vm) };
             }
         }

@@ -17,7 +17,7 @@ async function run(files: Record<string, string>, entry = "main.js") {
   return { stdout, stderr, exitCode };
 }
 
-describe("import defer", () => {
+describe.concurrent("import defer", () => {
   test("defers module evaluation until a property is accessed", async () => {
     const { stdout, stderr, exitCode } = await run({
       "main.js": `
@@ -237,6 +237,33 @@ describe("import defer", () => {
     );
     expect(stderr).toBe("");
     expect(stdout.split("\n").filter(Boolean)).toEqual(["before", "dep evaluated", "9"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("namespace only referenced in dead code keeps the deferred binding", async () => {
+    // TS unused-import trimming would normally strip the `* as ns` binding
+    // when the namespace is only referenced in a dead branch, leaving a bare
+    // side-effect import. For `import defer` that is (a) syntactically
+    // invalid (`import defer"./x"`) and (b) semantically wrong — it would
+    // eagerly evaluate a module the user asked to defer. The binding must be
+    // preserved; since nothing touches it at runtime, the module is linked
+    // but never evaluated.
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "main.ts": `
+          import defer * as ns from "./dep.ts";
+          if (false) { console.log(ns.value); }
+          console.log("main");
+        `,
+        "dep.ts": `
+          console.log("dep evaluated");
+          export const value = 1;
+        `,
+      },
+      "main.ts",
+    );
+    expect(stderr).toBe("");
+    expect(stdout.split("\n").filter(Boolean)).toEqual(["main"]);
     expect(exitCode).toBe(0);
   });
 

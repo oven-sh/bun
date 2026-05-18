@@ -358,7 +358,7 @@ pub mod analyze_transpiled_module {
             let record_kinds_len = eat_u32!();
             let (rk_off, rk_len) = eat!(record_kinds_len * core::mem::size_of::<RecordKind>());
             // Validate + decode every record-kind byte into an owned `Box<[RecordKind]>`.
-            // `RecordKind` is a `#[repr(u8)]` enum, so any byte outside 0..=8 is invalid;
+            // `RecordKind` is a `#[repr(u8)]` enum, so out-of-range bytes are invalid;
             // `source` may come from an on-disk cache (`create_from_cached_record`), so it
             // is untrusted. Decoding once here lets `as_ref()` hand out `&[RecordKind]`
             // without an `unsafe` reinterpret.
@@ -6084,7 +6084,16 @@ pub mod __gated_printer {
 
                     self.print(b"import");
 
-                    let phase_defer = record.flags.contains(ImportRecordFlags::PHASE_DEFER);
+                    // `import defer` grammatically requires `* as ns`; if a
+                    // later pass stripped the star binding (or disabled it on
+                    // the record) the statement can no longer be printed as a
+                    // phase import, so drop the `defer` token rather than emit
+                    // `import defer"./x";`. scan_imports preserves the binding
+                    // for `phase_defer` imports, so this is belt-and-suspenders.
+                    let phase_defer = record.flags.contains(ImportRecordFlags::PHASE_DEFER)
+                        && record
+                            .flags
+                            .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR);
                     if phase_defer {
                         self.print(b" defer");
                     }

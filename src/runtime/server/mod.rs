@@ -226,6 +226,12 @@ bitflags::bitflags! {
         const DEINIT_SCHEDULED            = 1 << 0;
         const TERMINATED                  = 1 << 1;
         const HAS_HANDLED_ALL_CLOSED_PROMISE = 1 << 2;
+        /// Set by `finalize()` immediately before its `deinit_if_we_can()` so
+        /// `schedule_deinit` knows the call is on the GC-finalizer path (and
+        /// not, e.g., `on_request_complete()` re-entered from
+        /// `close_all_socket_groups`, where an inline `App::destroy` would
+        /// free the `HttpContext` whose embedded `group` is being iterated).
+        const FROM_FINALIZE               = 1 << 3;
     }
 }
 
@@ -1683,7 +1689,18 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // strand the server box and its uWS app. Tear down inline; we skip
         // `App::close()` (which can re-enter finalizers) and let `deinit`'s
         // `App::destroy` free the C++ state directly.
-        if vm.is_shutting_down() {
+        //
+        // Gated on `FROM_FINALIZE`: `is_shutting_down` alone is not enough.
+        // `close_all_socket_groups` (which precedes `lastChanceToFinalize` in
+        // `global_exit`) re-enters here via `on_abort` → `on_request_complete`
+        // when the wrapper was already weakly-finalized while
+        // `pending_requests > 0`; an inline `deinit` there would `App::destroy`
+        // — and free — the `HttpContext` whose embedded `group` the C-side
+        // `us_socket_group_close_all_ex` is mid-iteration on. That re-entrant
+        // path falls through to the enqueue arm; the queued tasks leak the box
+        // (cleanup is `None`), which is the pre-existing behaviour and
+        // strictly safer than the UAF.
+        if vm.is_shutting_down() && self.flags.contains(ServerFlags::FROM_FINALIZE) {
             self.flags.insert(ServerFlags::TERMINATED);
             return Self::deinit(std::ptr::from_mut::<Self>(self));
         }

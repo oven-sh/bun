@@ -1592,11 +1592,25 @@ impl FromJsEnum for bun_sys::SignalCode {
         s.deref();
         match hit {
             Some(code) => Ok(code),
-            // Zig builds the `'SIGHUP', 'SIGINT' or ...` list at comptime; at
-            // 31 variants the runtime port keeps the message terse.
-            None => Err(global.throw_invalid_arguments(format_args!(
-                "{property_name} must be one of the SignalCode names"
-            ))),
+            None => {
+                // Mirror Zig's comptime `toEnumFromMap` list
+                // (`'SIGHUP', 'SIGINT', … or 'SIGSYS'`), built from the
+                // canonical signal X-macro so names are never re-spelled.
+                let names = &bun_core::SIGNAL_NAMES[1..];
+                let mut one_of = std::string::String::from("'");
+                for (i, entry) in names.iter().enumerate() {
+                    one_of.push_str(entry);
+                    one_of.push('\'');
+                    if i < names.len() - 2 {
+                        one_of.push_str(", '");
+                    } else if i == names.len() - 2 {
+                        one_of.push_str(" or '");
+                    }
+                }
+                Err(global.throw_invalid_arguments(format_args!(
+                    "{property_name} must be one of {one_of}"
+                )))
+            }
         }
     }
 }

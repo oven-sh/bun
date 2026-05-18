@@ -80,6 +80,7 @@ const eventIds = {
   error: 4,
   ping: 5,
   pong: 6,
+  upgrade: 7,
 };
 
 const emittedWarnings = new Set();
@@ -271,7 +272,7 @@ class BunWebSocket extends EventEmitter {
   }
 
   #onOrOnce(event, listener, once) {
-    if (event === "unexpected-response" || event === "upgrade" || event === "redirect") {
+    if (event === "redirect") {
       emitWarning(event, "ws.WebSocket '" + event + "' event is not implemented in bun");
     }
     const mask = 1 << eventIds[event];
@@ -281,18 +282,44 @@ class BunWebSocket extends EventEmitter {
     // 2. For `once()`: no persistent `on()` listener exists (otherwise the persistent one forwards events)
     //    If only `once()` listeners exist, each needs its own native listener since they auto-remove
     if (mask && !hasPersistentListener) {
-      // Only set the eventId bit for persistent `on` listeners, not for `once`
-      if (!once) {
-        this.#eventId |= mask;
-      }
-      if (event === "open") {
-        this.#ws.addEventListener(
-          "open",
-          () => {
-            this.emit("open");
-          },
-          once,
-        );
+      if (event === "upgrade" || event === "open") {
+        // Both 'upgrade' and 'open' are driven by the native 'open' event.
+        // We always emit 'upgrade' before 'open' to match Node.js ws semantics.
+        // Only register one native listener (keyed off the 'open' eventId bit).
+        const openMask = 1 << eventIds["open"];
+        if (!(this.#eventId & openMask)) {
+          this.#eventId |= openMask;
+          this.#ws.addEventListener(
+            "open",
+            () => {
+              // Emit 'upgrade' before 'open' — Bun's native WebSocket
+              // handles the HTTP upgrade internally, so we build a minimal
+              // response object from what we know.
+              if (this.listenerCount("upgrade") > 0) {
+                const ws = this.#ws;
+                const rawHeaders = ["Upgrade", "websocket", "Connection", "Upgrade"];
+                if (ws.protocol) {
+                  rawHeaders.push("Sec-WebSocket-Protocol", ws.protocol);
+                }
+                if (ws.extensions) {
+                  rawHeaders.push("Sec-WebSocket-Extensions", ws.extensions);
+                }
+                const headers = {};
+                for (let i = 0; i < rawHeaders.length; i += 2) {
+                  headers[rawHeaders[i].toLowerCase()] = rawHeaders[i + 1];
+                }
+                this.emit("upgrade", {
+                  statusCode: 101,
+                  statusMessage: "Switching Protocols",
+                  headers,
+                  rawHeaders,
+                });
+              }
+              this.emit("open");
+            },
+            onceObject,
+          );
+        }
       } else if (event === "close") {
         this.#ws.addEventListener(
           "close",
@@ -342,6 +369,12 @@ class BunWebSocket extends EventEmitter {
           },
           once,
         );
+      }
+      // Set the persistent bit AFTER the event-specific checks above.
+      // This must come after the openMask guard in the upgrade/open branch,
+      // otherwise on("open") would set its own bit before checking openMask.
+      if (!once) {
+        this.#eventId |= mask;
       }
     }
     return once ? super.once(event, listener) : super.on(event, listener);

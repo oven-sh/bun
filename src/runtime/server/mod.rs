@@ -1678,6 +1678,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // for the server's lifetime); single-threaded JS context, no aliasing `&mut`.
         let vm = unsafe { &mut *self.vm_mut() };
 
+        // When this is reached from `finalize()` during `lastChanceToFinalize`
+        // the event loop will never tick again, so an enqueued task would
+        // strand the server box and its uWS app. Tear down inline; we skip
+        // `App::close()` (which can re-enter finalizers) and let `deinit`'s
+        // `App::destroy` free the C++ state directly.
+        if vm.is_shutting_down() {
+            self.flags.insert(ServerFlags::TERMINATED);
+            return Self::deinit(std::ptr::from_mut::<Self>(self));
+        }
+
         if !self.flags.contains(ServerFlags::TERMINATED) {
             // App.close can cause finalizers to run.
             // scheduleDeinit can be called inside a finalizer.

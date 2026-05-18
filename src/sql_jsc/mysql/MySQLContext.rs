@@ -8,7 +8,7 @@ pub struct MySQLContext {
     pub on_query_reject_fn: StrongOptional,
 }
 
-// TODO(b2-blocked): bun_jsc::host_fn proc-macro
+// TODO(port): bun_jsc::host_fn proc-macro
 // (Zig: `@export(&JSC.toJSHostFn(init), .{ .name = "MySQLContext__init" })`).
 pub fn init(global: &JSGlobalObject, frame: &CallFrame) -> JSValue {
     // `bun_vm()` → `&'static VirtualMachine` (per-thread singleton); `as_mut()`

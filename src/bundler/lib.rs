@@ -9,14 +9,9 @@
     clippy::all
 )]
 #![warn(unused_must_use)]
-// AUTOGEN: mod declarations only — real exports added in B-1.
-//
-// B-1 gate-and-stub: all Phase-A draft modules are gated behind ``
-// so the crate compiles. Draft bodies are preserved on disk; un-gating happens
-// in B-2 as lower-tier crate surfaces solidify.
 
-// B-2 un-gate support: shared value types + crate-name shims for the
-// freshly un-gated `Chunk` / `LinkerContext` / `ParseTask` modules.
+// Shared value types + crate-name shims for the `Chunk` / `LinkerContext` /
+// `ParseTask` modules.
 pub mod ungate_support;
 pub use ungate_support::*;
 
@@ -60,7 +55,6 @@ pub mod barrel_imports;
 pub mod chunk;
 pub mod defines;
 pub mod linker;
-/// Real `LinkerGraph` (un-gated B-2).
 #[path = "LinkerGraph.rs"]
 pub mod linker_graph;
 // Moved down to `bun_js_parser::defines_table` so the parser reads its own
@@ -75,19 +69,13 @@ pub mod options_impl;
 pub mod parse_task;
 pub mod transpiler;
 
-/// `linker_context/` submodule directory. Un-gated B-2: only
-/// `scanImportsAndExports.rs` so far; remaining files un-gate as their
-/// `LinkerGraph` SoA accessors land. Declared inline (no `mod.rs`) so paths
-/// stay 1:1 with the Zig directory.
+/// `linker_context/` submodule directory. Declared inline (no `mod.rs`) so
+/// paths stay 1:1 with the Zig directory.
 pub mod linker_context {
     #[path = "scanImportsAndExports.rs"]
     pub mod scan_imports_and_exports;
 
-    // ── Gated drafts (B-1). Each maps 1:1 to a `.zig` of the same basename.
-    //    Un-gate per-file as the crate-root surface they import (Fs / JSMeta /
-    //    ImportData / GenerateChunkCtx / thread_pool::Worker / …) lands.
-    //    Re-exports from these into `linker_context::*` stay blocked until
-    //    un-gate; downstream callers go through `LinkerContext` methods.
+    // Each module maps 1:1 to a `.zig` of the same basename.
 
     #[path = "computeChunks.rs"]
     pub mod compute_chunks;
@@ -174,35 +162,34 @@ pub mod linker_context {
 
 // ---------------------------------------------------------------------------
 // Public surface for downstream crates. Re-exports the real types from the
-// modules above (formerly opaque newtypes during the B-1 staging phase).
+// modules above.
 // ---------------------------------------------------------------------------
 
 pub use Graph::Graph as GraphStruct;
-/// Real `BundleV2` (un-gated B-2). See `bundle_v2`.
+/// See `bundle_v2`.
 pub use bundle_v2::BundleV2;
-/// Real `Chunk` (un-gated B-2). See `chunk` module.
+/// See `chunk` module.
 pub use chunk::Chunk;
 pub use defines::{Define, DefineDataExt, DefineExt};
-/// Real `Linker` (un-gated B-2). See `linker` module.
+/// See `linker` module.
 pub use linker::Linker;
-/// Real `LinkerContext` (un-gated B-2). See `linker_context_mod` module.
+/// See `linker_context_mod` module.
 pub use linker_context_mod::LinkerContext;
-/// Real `LinkerGraph` (un-gated B-2). See `linker_graph` module.
+/// See `linker_graph` module.
 pub use linker_graph::LinkerGraph;
-/// Real `BundleOptions` (un-gated B-2). See `options_impl`.
+/// See `options_impl`.
 pub use options_impl::BundleOptions;
 pub use output_file::OutputFile;
-/// Real `ParseTask` (un-gated B-2). See `parse_task` module.
+/// See `parse_task` module.
 pub use parse_task::ParseTask;
-/// Real `ThreadPool` (un-gated B-2). See `thread_pool` module.
+/// See `thread_pool` module.
 pub use thread_pool::{ThreadPool, Worker};
-/// Real `Transpiler` (un-gated B-2). See `transpiler`.
+/// See `transpiler`.
 pub use transpiler::Transpiler;
-/// Real `EntryPoint` struct (un-gated B-2). `EntryPoint::Kind` is an inherent
-/// associated type on the struct (not a sibling module — that would collide
-/// with this re-export).
+/// `EntryPoint::Kind` is an inherent associated type on the struct (not a
+/// sibling module — that would collide with this re-export).
 pub use ungate_support::entry_point::EntryPoint;
-/// Stub: defined in gated `bundle_v2` module (`bundle_v2.zig:AdditionalFile`).
+/// `bundle_v2.zig:AdditionalFile`.
 pub enum AdditionalFile {
     SourceIndex(u32),
     OutputFile(u32),
@@ -212,10 +199,10 @@ pub enum AdditionalFile {
 /// `*.zig` in this crate aliases it as `pub const Index = bun.ast.Index`.
 pub(crate) use bun_ast::{Index, IndexInt};
 
-// Re-export the real `options` module (un-gated B-2). `Loader`/`Target` were
-// MOVE_DOWN'd to `bun_options_types::bundle_enums` in B-3 — `options_impl`
-// re-exports the canonical defs, so there is exactly ONE nominal type for each
-// across bundler/resolver/js_parser. Bundler-only behaviour hangs off
+// Re-export the `options` module. `Loader`/`Target` live in
+// `bun_options_types::bundle_enums` — `options_impl` re-exports the canonical
+// defs, so there is exactly ONE nominal type for each across
+// bundler/resolver/js_parser. Bundler-only behaviour hangs off
 // `TargetExt`/`LoaderExt` extension traits in `options_impl`.
 pub mod options {
     pub use super::OutputFile;
@@ -297,9 +284,9 @@ pub mod options {
 }
 
 /// Re-export so `crate::RuntimeTranspilerCache` resolves for `transpiler::ParseOptions`
-/// and downstream callers (`jsc_hooks` / `RuntimeTranspilerStore`). B-3: the
-/// struct is canonical in `bun_js_parser`; the bundler-tier `disabled`/
-/// `set_disabled` live on `RuntimeTranspilerCacheExt`.
+/// and downstream callers (`jsc_hooks` / `RuntimeTranspilerStore`). The struct
+/// is canonical in `bun_js_parser`; the bundler-tier `disabled`/`set_disabled`
+/// live on `RuntimeTranspilerCacheExt`.
 pub use cache::RuntimeTranspilerCacheExt;
 pub use cache::Set as Cache;
 

@@ -36,7 +36,7 @@ pub fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     // See https://github.com/ziglang/zig/issues/21879
     // PORT NOTE: Zig used `useAllFields(DevServer, .{...})` to compile-time-assert that
     // every DevServer field is accounted for below. Rust has no equivalent; the field
-    // list is preserved as comments so Phase B can wire a proc-macro or static-assert.
+    // list is preserved as comments. A proc-macro or static-assert could re-add the check.
     // TODO(port): exhaustiveness check for DevServer fields (was bun.meta.useAllFields)
 
     // does not contain pointers

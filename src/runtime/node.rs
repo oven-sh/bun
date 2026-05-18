@@ -18,7 +18,6 @@ pub mod assert {
     pub use super::myers_diff_impl as myers_diff;
 }
 
-// ─── un-gated in B-2 round (type defs real; JSC bodies re-gated inside) ───
 #[path = "node/types.rs"]
 pub mod types;
 pub use types::{
@@ -50,7 +49,6 @@ pub mod fs_events;
 #[allow(non_snake_case)]
 pub use fs_events as FSEvents;
 
-// ─── un-gated in B-2 round 2 (node_fs sync paths live; async re-gated inside) ───
 // Sibling modules node_fs.rs imports by `super::` path. Stat/StatFS/time_like
 // are type-only at the surface; their JSC method bodies are re-gated inside
 // each file. dir_iterator + node_fs_constant are JSC-free.
@@ -123,7 +121,6 @@ pub mod node_fs_watcher;
 #[path = "node/uv_signal_handle_windows.rs"]
 pub mod uv_signal_handle_windows;
 
-// ─── un-gated in B-2 round 3 (net/zlib/buffer; JSC bodies re-gated inside) ───
 // Type defs + non-JSC FFI bodies are live; every `#[bun_jsc::host_fn]` /
 // `#[bun_jsc::JsClass]` item is wrapped in ` mod _impl` inside
 // each file. dgram/tls/tty have no `.rs` ports yet — nothing to wire.
@@ -181,10 +178,6 @@ pub mod zlib {
 }
 
 // ─── submodule re-exports ─────────────────────────────────────────────────
-// PORT NOTE: the phase-A `_gated_submods` scaffold was removed once every
-// re-export it held (fs/path/crypto/os/process/validators/ErrorCode/Buffer/
-// types::*/FSEvents/Stats*/StatFS*/time_like*) was promoted to a real
-// top-level `pub mod`/`pub use` above. Nothing referenced the private mod.
 
 #[cfg(unix)]
 pub type uid_t = libc::uid_t;

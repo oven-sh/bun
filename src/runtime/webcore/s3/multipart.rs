@@ -151,7 +151,7 @@ pub struct MultiPartUpload {
     pub content_encoding: Option<Box<[u8]>>,
     // PORT NOTE: in Zig this is a self-referential slice into `uploadid_buffer`.
     // Duped into an owned Box here to avoid self-referential struct.
-    // PERF(port): was zero-copy slice into uploadid_buffer — profile in Phase B
+    // PERF(port): was zero-copy slice into uploadid_buffer — profile if hot.
     pub upload_id: Box<[u8]>,
     pub uploadid_buffer: MutableString,
 

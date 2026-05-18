@@ -66,7 +66,7 @@ impl ReplCommand {
         // TODO(port): arena is threaded into VirtualMachine (vm.arena / vm.allocator). Non-AST
         // crate would normally drop MimallocArena, but VM init protocol requires it. Note
         // `bun_alloc::Arena` is bumpalo-backed and NOT semantically `bun.allocators.MimallocArena`
-        // (mi_heap wrapper) — Phase B should either have bun_jsc::VirtualMachine own its arena
+        // (mi_heap wrapper) — TODO(refactor): either have bun_jsc::VirtualMachine own its arena
         // internally (drop the param) or expose a distinct `bun_alloc::MimallocArena` type.
         let arena = Arena::new();
 
@@ -109,10 +109,7 @@ impl ReplCommand {
         // lifetime-extension cast is needed.
         let install_ptr = ctx.install.as_deref().map(core::ptr::NonNull::from);
         b.options.install = install_ptr;
-        // resolver's `BundleOptions.install` is the FORWARD_DECL `*const ()`
-        // (breaks the bun_install dep cycle) — erase the type.
-        b.resolver.opts.install =
-            install_ptr.map_or(core::ptr::null(), |p| p.as_ptr() as *const ());
+        b.resolver.opts.install = install_ptr;
         b.resolver.opts.global_cache = ctx.debug.global_cache;
         b.resolver.opts.prefer_offline_install = ctx
             .debug
@@ -167,7 +164,7 @@ impl ReplCommand {
         // TODO(port): @constCast(&arena) — vm.arena stores a *mut Arena pointing at runner.arena;
         // lifetime is the holdAPILock scope (globalExit() never returns so the frame never unwinds).
         // Assigned AFTER moving `arena` into `runner` — assigning from the pre-move local would
-        // dangle. Model as raw ptr until VM arena ownership is decided in Phase B.
+        // dangle. Model as raw ptr until VM arena ownership is decided.
         unsafe { (*vm).arena = NonNull::new(&raw mut runner.arena) };
 
         // PORT NOTE: jsc.OpaqueWrap(ReplRunner, ReplRunner.start) — comptime fn-ptr wrapper that

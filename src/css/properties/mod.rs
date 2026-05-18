@@ -6,13 +6,9 @@
 #![warn(unused_must_use)]
 use crate as css;
 
-// ─── B-2 round 7 status ────────────────────────────────────────────────────
-// `properties_generated.rs` is now un-gated: the 249-variant `Property` /
-// `PropertyId` / `PropertyIdTag` enums are real types referenced by
-// `declaration.rs`, `context.rs`, and `rules/`. The leaf property modules
-// (`align`, `background`, …) remain ``-gated — their handler
-// bodies and parse/to_css impls bottom out on Parser/Printer surface that
-// is still in flux — but every *value type* the `Property` enum names is
+// `properties_generated.rs` carries the 249-variant `Property` /
+// `PropertyId` / `PropertyIdTag` enums referenced by `declaration.rs`,
+// `context.rs`, and `rules/`. Every *value type* the `Property` enum names is
 // re-exposed below via `pub mod $name`. When a leaf .rs file un-gates, its
 // real type replaces the stub transparently (same path, same name).
 //
@@ -173,12 +169,6 @@ macro_rules! impl_size_shorthand {
 // ─── Submodule declarations ────────────────────────────────────────────────
 // (Zig: `pub const X = @import("./X.zig");`)
 //
-// B-2 round 8: the leaf property modules below are un-gated — their value
-// *types* (and handler ZSTs) compile for real and replace the former
-// `handler_stub!` placeholders. Heavy parse/to_css/
-// handle_property *bodies* that bottom out on still-unported Parser/
-// PropertyHandlerContext surface remain internally ``-gated
-// inside each leaf file (same pattern as `font.rs`).
 pub mod align;
 // `animation`: un-gated — real AnimationName / Animation / AnimationIterationCount /
 // AnimationDirection / AnimationPlayState / AnimationFillMode / AnimationTimeline /

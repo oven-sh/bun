@@ -199,9 +199,9 @@ pub fn downlevel_component<'bump>(
             // https://drafts.csswg.org/selectors/#specificity-rules
             if selectors.len() > 1 && targets.should_compile_same(Feature::NotSelectorList) {
                 let is: Selector = Selector::from_component(Component::Is({
-                    // PERF(port): was arena bulk-alloc — profile in Phase B.
-                    // `Component::Is` carries `Box<[Selector]>` (heap, not arena)
-                    // in Phase A; Phase B re-threads `&'bump [Selector]`.
+                    // PERF(port): was arena bulk-alloc — profile if hot.
+                    // `Component::Is` carries `Box<[Selector]>` (heap, not arena);
+                    // could re-thread `&'bump [Selector]` once the arena lifetime is plumbed.
                     let mut new_selectors: Vec<Selector> = Vec::with_capacity(selectors.len());
                     for sel in selectors.iter() {
                         new_selectors.push(sel.deep_clone());
@@ -238,7 +238,7 @@ fn downlevel_dir<'bump>(bump: &'bump Bump, dir: parser::Direction, targets: Targ
     // otherwise, use :is/:not, which may be further downleveled to e.g. :-webkit-any.
     if !targets.should_compile_same(Feature::LangSelectorList) {
         let c = Component::NonTsPseudoClass(PseudoClass::Lang {
-            // PERF(port): was appendSliceAssumeCapacity (arena) — Phase B re-threads bump.
+            // PERF(port): was appendSliceAssumeCapacity (arena) — could re-thread bump.
             languages: RTL_LANGS.to_vec(),
         });
         if dir == parser::Direction::Ltr {
@@ -254,8 +254,8 @@ fn downlevel_dir<'bump>(bump: &'bump Bump, dir: parser::Direction, targets: Targ
 }
 
 fn lang_list_to_selectors<'bump>(_bump: &'bump Bump, langs: &[&'static [u8]]) -> Box<[Selector]> {
-    // PORT NOTE: Zig returned `[]Selector` (mutable arena slice). Phase A:
-    // `Component::Is`/`Negation` carry `Box<[Selector]>`; Phase B re-threads
+    // PORT NOTE: Zig returned `[]Selector` (mutable arena slice). Here
+    // `Component::Is`/`Negation` carry `Box<[Selector]>`; could re-thread
     // `&'bump [Selector]` once the arena lifetime is plumbed.
     let mut selectors: Vec<Selector> = Vec::with_capacity(langs.len());
     for lang in langs {
@@ -576,7 +576,7 @@ fn is_selector_unused(
                 // `Parser::add_symbol_for_name` un-gates (see
                 // `SelectorParser::new_local_identifier`).
                 let actual_ident: &[u8] = match (*ident).as_ident() {
-                    // SAFETY: arena-owned slice (Phase-A `'static` placeholder).
+                    // SAFETY: arena-owned slice (`'static` placeholder for the arena lifetime).
                     Some(i) => unsafe { crate::arena_str(i.v) },
                     None => {
                         let _ = symbols;

@@ -70,8 +70,8 @@ pub mod ssl_config;
 pub use ssl_config::{SSLConfig, SSLConfigFromJs};
 
 // ─── canonical type surface ──────────────────────────────────────────────────
-// These were previously stub-defined inline here for the B-2 struct/state
-// un-gate; now that the real submodules compile, re-export instead so
+// These were previously stub-defined inline here; now that the real
+// submodules compile, re-export instead so
 // `socket_body`/`tls_socket_functions`/`uws_handlers` all agree on one type.
 
 pub use handlers::{Handlers, SocketConfig};
@@ -87,7 +87,7 @@ pub use windows_named_pipe_context::WindowsNamedPipeContext;
 pub type WindowsNamedPipeContext = ();
 
 /// LAYERING: `udp_socket.rs` is the canonical body. It is mounted as
-/// `udp_socket_draft` above (Phase-B name retained for existing callers); the
+/// `udp_socket_draft` above (legacy name retained for existing callers); the
 /// public `udp_socket` module below is a thin re-export façade so both
 /// `generated_classes.rs` (`crate::socket::udp_socket::UDPSocket`) and
 /// `generated_js2native.rs` (`crate::socket::udp_socket::udp_socket::js_connect`)

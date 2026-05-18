@@ -104,8 +104,8 @@ impl RunCommand {
     pub fn print_help(package_json: Option<&PackageJSON>) {
         // PORT NOTE: templates are passed as *string literals* so the
         // `pretty_fmt!` proc-macro rewrites the `<tag>` color markup at compile
-        // time. Routing them through a `const &str` + `{}` (as the original
-        // Phase-A draft did) prints the raw `<b>`/`<r>` tags verbatim.
+        // time. Routing them through a `const &str` + `{}` prints the raw
+        // `<b>`/`<r>` tags verbatim.
         pretty!("<b>Usage<r>: <b><green>bun run<r> <cyan>[flags]<r> \\<file or script\\>\n\n");
         pretty!("<b>Flags:<r>");
         bun_clap::simple_help(crate::cli::arguments::RUN_PARAMS);
@@ -779,10 +779,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // `NonNull::from` converts without the lifetime tie.
         let install_ptr = ctx.install.as_deref().map(::core::ptr::NonNull::from);
         b.options.install = install_ptr;
-        // resolver's `BundleOptions.install` is the FORWARD_DECL `*const ()`
-        // (breaks the bun_install dep cycle) — erase the type.
-        b.resolver.opts.install =
-            install_ptr.map_or(::core::ptr::null(), |p| p.as_ptr().cast::<()>());
+        b.resolver.opts.install = install_ptr;
         b.resolver.opts.global_cache = ctx.debug.global_cache;
         let offline = ctx
             .debug
@@ -1541,8 +1538,8 @@ impl Run {
             vm.global().vm().release_weak_refs();
             // PERF(port): `vm.arena.gc()` — Zig's `MimallocArena.gc()` is
             // `mi_heap_collect`; `bun_alloc::Arena = bumpalo::Bump` has no
-            // per-heap collect, so this is a no-op until Phase B swaps the
-            // arena type. Semantically a memory-usage hint, not correctness.
+            // per-heap collect, so this is a no-op unless the arena type
+            // changes. Semantically a memory-usage hint, not correctness.
             let _ = vm.global().vm().run_gc(false);
             vm.tick();
         }
@@ -2906,7 +2903,7 @@ impl RunCommand {
         bun_core::scoped_log!(RUN_LOG, "Executing from stdin");
 
         // read from stdin
-        // PERF(port): Zig `stackFallback(2048, …)` — Phase B can swap to
+        // PERF(port): Zig `stackFallback(2048, …)` — could swap to
         // `SmallVec<[u8; 2048]>` if profiled hot; cold CLI path here.
         // PORT NOTE: `read_to_end_into` is the cursor-relative streaming reader
         // (stdin is a pipe/tty, not seekable; `read_to_end` would `pread(0)`).

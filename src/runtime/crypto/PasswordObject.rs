@@ -314,7 +314,7 @@ impl Algorithm {
 }
 
 /// Zig: `pub const HashError = pwhash.Error || error{UnsupportedAlgorithm};`
-/// Phase A: collapse into bun_core::Error (NonZeroU16 tag). The pwhash shim
+/// Collapsed into bun_core::Error (NonZeroU16 tag). The pwhash shim
 /// must `impl From<pwhash::Error> for bun_core::Error`.
 pub type HashError = bun_core::Error;
 

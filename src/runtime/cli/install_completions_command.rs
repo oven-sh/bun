@@ -121,7 +121,7 @@ impl InstallCompletionsCommand {
         let mut bunx_path_buf = WPathBuffer::uninit();
 
         // TODO(port): bun.strings.literal(u16, BUNX_NAME ++ ".cmd") — w!() needs a literal,
-        // but BUNX_NAME is cfg-dependent. Phase B: const-concat or two cfg'd literals.
+        // but BUNX_NAME is cfg-dependent. Const-concat or two cfg'd literals.
         let cmd_suffix: &[u16] = if cfg!(debug_assertions) {
             w!("bunx-debug.cmd")
         } else {

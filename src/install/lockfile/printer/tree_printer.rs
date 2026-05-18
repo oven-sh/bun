@@ -160,9 +160,9 @@ where
     Ok(())
 }
 
-// TODO(port): lifetime — `version_buf` borrows from `PackageManager.updating_packages` entry;
-// this struct is a transient return value. PORTING.md says no struct lifetimes in Phase A,
-// but raw `*const [u8]` here would be strictly worse. Revisit in Phase B.
+// `version_buf` borrows from the `PackageManager.updating_packages` entry;
+// this struct is a transient return value, so the explicit `'a` lifetime is
+// fine (a raw `*const [u8]` would be strictly worse).
 struct PackageUpdatePrintInfo<'a> {
     version: semver::Version,
     version_buf: &'a [u8],

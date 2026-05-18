@@ -16,9 +16,9 @@ impl ResultSetHeader {
         Ok(())
     }
 
-    // TODO(port): `decoderWrap(ResultSetHeader, decodeInternal).decode` is a Zig comptime
-    // type-function that wraps `decode_internal` over an anyopaque-backed reader. Phase B
-    // should replace this with the trait/impl that `new_reader::decoder_wrap` exposes.
+    // TODO(refactor): `decoderWrap(ResultSetHeader, decodeInternal).decode` is a Zig comptime
+    // type-function that wraps `decode_internal` over an anyopaque-backed reader. Consider
+    // replacing this with the trait/impl that `new_reader::decoder_wrap` exposes.
     pub fn decode<Context: ReaderContext>(
         &mut self,
         context: Context,

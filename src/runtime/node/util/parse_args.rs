@@ -980,7 +980,7 @@ pub fn parse_args(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
 
     // Phase 0.C: Parse the options definitions
 
-    // PERF(port): was stack-fallback (std.heap.stackFallback(2048, ...)) — profile in Phase B
+    // PERF(port): was stack-fallback (std.heap.stackFallback(2048, ...)) — profile if hot.
     let mut option_defs: Vec<OptionDefinition> = Vec::new();
 
     if !config_options.is_undefined_or_null() {

@@ -18,7 +18,13 @@ use smallvec::SmallVec;
 /// as an optimization.
 #[derive(Default)]
 pub struct LineOffsetTable {
-    pub columns_for_non_ascii: Vec<i32>,
+    pub columns_for_non_ascii: Box<[i32]>,
+    /// Byte offset of the first non-ASCII byte on this line, or `i32::MAX as u32`
+    /// when the line is entirely ASCII (so no `columns_for_non_ascii` table exists).
+    /// The sentinel can't be `0` because a line can legitimately start with a
+    /// non-ASCII byte at offset 0. `i32::MAX` lets `add_source_mapping` skip the
+    /// `columns_for_non_ascii` SoA load on the (overwhelmingly common) ASCII path
+    /// with a single column comparison.
     pub byte_offset_to_first_non_ascii: u32,
     pub byte_offset_to_start_of_line: u32,
 }
@@ -150,7 +156,7 @@ impl LineOffsetTable {
         // Preallocate the top-level table using the approximate line count from the lexer
         list.ensure_unused_capacity(approximate_line_count.max(1) as usize)?;
         let mut column: i32 = 0;
-        let mut byte_offset_to_first_non_ascii: u32 = 0;
+        let mut byte_offset_to_first_non_ascii: u32 = i32::MAX as u32;
         let mut column_byte_offset: u32 = 0;
         let mut line_byte_offset: u32 = 0;
 
@@ -246,13 +252,13 @@ impl LineOffsetTable {
                     // Zig used a stack-fallback allocator and duped onto `allocator` only when
                     // stack-owned, then reset the fixed buffer. `SmallVec::into_vec()` is the
                     // exact equivalent: inline → one alloc sized to content (Zig's `dupe`),
-                    // spilled → moves the heap buffer (no alloc). `mem::take` re-primes a fresh
-                    // inline scratch with zero allocation. ASCII-only lines (almost all of them)
-                    // store an inline `Vec::new()` and keep the scratch untouched.
-                    let owned = if columns_for_non_ascii.is_empty() {
-                        Vec::new()
+                    // spilled → `into_boxed_slice()` shrink-reallocs when cap > len. `mem::take`
+                    // re-primes a fresh inline scratch with zero allocation. ASCII-only lines
+                    // (almost all of them) store `Box::default()` and keep the scratch untouched.
+                    let owned: Box<[i32]> = if columns_for_non_ascii.is_empty() {
+                        Box::default()
                     } else {
-                        mem::take(&mut columns_for_non_ascii).into_vec()
+                        mem::take(&mut columns_for_non_ascii).into_vec().into_boxed_slice()
                     };
 
                     list.append(LineOffsetTable {
@@ -262,7 +268,7 @@ impl LineOffsetTable {
                     })?;
 
                     column = 0;
-                    byte_offset_to_first_non_ascii = 0;
+                    byte_offset_to_first_non_ascii = i32::MAX as u32;
                     column_byte_offset = 0;
                     line_byte_offset = 0;
                 }
@@ -286,10 +292,10 @@ impl LineOffsetTable {
             columns_for_non_ascii.extend(core::iter::repeat_n(column, need));
         }
         {
-            let owned = if columns_for_non_ascii.is_empty() {
-                Vec::new()
+            let owned: Box<[i32]> = if columns_for_non_ascii.is_empty() {
+                Box::default()
             } else {
-                columns_for_non_ascii.into_vec()
+                columns_for_non_ascii.into_vec().into_boxed_slice()
             };
             list.append(LineOffsetTable {
                 byte_offset_to_start_of_line: line_byte_offset,
@@ -298,7 +304,14 @@ impl LineOffsetTable {
             })?;
         }
 
-        if list.capacity() > list.len() {
+        // `shrink_and_free` has no realloc-in-place fast path — it always does a fresh
+        // aligned_alloc + full SoA row copy + free. `grow_capacity` overshoots a single
+        // bulk reservation by at most ~50%, so when the lexer's line-count hint was
+        // roughly right (the common case) the slack isn't worth a multi-MB memcpy.
+        // Only trim when capacity exceeds 1.5x length, which catches pathological
+        // mismatches (wrong loader, wildly off hint) while skipping the routine ~20%
+        // overshoot.
+        if list.capacity() > list.len() + (list.len() >> 1) {
             list.shrink_and_free(list.len());
         }
         Ok(list)

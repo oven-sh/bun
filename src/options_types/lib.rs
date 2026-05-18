@@ -7,7 +7,6 @@
     clippy::all
 )]
 #![warn(unused_must_use)]
-// AUTOGEN: mod declarations only — real exports added in B-1.
 #![warn(unreachable_pub)]
 pub mod bundle_enums;
 pub mod code_coverage_options;
@@ -21,7 +20,7 @@ pub mod schema;
 
 pub use jsx as JSX;
 
-// ─── B-2 Track A: crate-root re-exports for dependents ───────────────────
+// ─── crate-root re-exports for dependents ────────────────────────────────
 // `ImportKind` / `ImportRecord` / `Loader` / `Target` / `Index` / `SideEffects`
 // are now canonical in `bun_ast` — callers import from there directly.
 // Only the `schema::api`-coupled extension traits and option-only types

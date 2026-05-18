@@ -6,24 +6,17 @@
     clippy::all
 )]
 #![warn(unused_must_use)]
-//! `bun_sourcemap` — B-2 un-gated.
+//! `bun_sourcemap` — source map parsing, encoding, and lookup.
 //!
-//! All sibling modules (`Chunk.rs`, `InternalSourceMap.rs`, `LineOffsetTable.rs`,
-//! `Mapping.rs`, `ParsedSourceMap.rs`, `VLQ.rs`) compile with no ``
-//! gates. `SerializedSourceMap`, `SourceMapPieces::finalize`,
-//! `append_source_mapping_url_remote`, `Chunk::print_source_map_contents*`,
-//! `ParsedSourceMap::write_vlqs`/`format_vlqs`, and `VLQ::write_to` are live.
-//! `get_source_map_impl`, `find_source_mapping_url_{u8,u16}`, `parse_json`,
-//! and the `SourceProvider` impls for `SourceProviderMap` /
-//! `DevServerSourceProvider` are now live.
+//! Sibling modules: `Chunk.rs`, `InternalSourceMap.rs`, `LineOffsetTable.rs`,
+//! `Mapping.rs`, `ParsedSourceMap.rs`, `VLQ.rs`.
 
 // ── crate aliases ─────────────────────────────────────────────────────────
-// TODO(b1): Phase-A draft used `bun_str`; the workspace crate is `bun_string`.
 #![warn(unreachable_pub)]
 extern crate bun_core as bun_str;
 use bun_collections::VecExt;
 
-// ── B-2 un-gated sibling modules ──────────────────────────────────────────
+// ── sibling modules ───────────────────────────────────────────────────────
 #[path = "Chunk.rs"]
 pub mod chunk;
 #[path = "InternalSourceMap.rs"]
@@ -777,7 +770,7 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
     Some(parsed)
 }
 
-// ── SavedSourceMap leaf state (compiles today; see Phase-A note) ──────────
+// ── SavedSourceMap leaf state ─────────────────────────────────────────────
 #[allow(non_snake_case)]
 pub mod SavedSourceMap {
     pub mod MissingSourceMapNoteInfo {
@@ -816,7 +809,7 @@ pub mod SavedSourceMap {
     }
 }
 
-// ── SerializedSourceMap (lifted from the gated draft block (now dissolved)) ──────────────────────
+// ── SerializedSourceMap ──────────────────────────────────────────────────
 //
 // Source-map serialization for `bun build --compile` standalone executables.
 // The bundler writes this blob; the runtime mmaps it and hands a
@@ -954,7 +947,7 @@ pub mod SerializedSourceMap {
     }
 }
 
-// ── SourceMapPieces impl (lifted from the gated draft block (now dissolved)) ─────────────────────
+// ── SourceMapPieces impl ─────────────────────────────────────────────────
 
 impl SourceMapPieces {
     pub fn init() -> SourceMapPieces {
@@ -969,6 +962,13 @@ impl SourceMapPieces {
         &mut self,
         shifts_: &[SourceMapShifts],
     ) -> Result<Box<[u8]>, bun_alloc::AllocError> {
+        // Nothing to splice: avoid re-joining (and re-allocating) the entire
+        // source-map JSON when there are no mappings or suffix to merge in.
+        if self.mappings.is_empty() && self.suffix.is_empty() {
+            debug_assert!(self.prefix.first() == Some(&b'{')); // invalid json
+            return Ok(core::mem::take(&mut self.prefix).into_boxed_slice());
+        }
+
         let mut shifts = shifts_;
         let mut start_of_run: usize = 0;
         let mut current: usize = 0;
@@ -1252,8 +1252,8 @@ pub fn parse_json(
 
         let mut psm = map_data;
         psm.external_source_names = source_paths_slice.unwrap();
-        // TODO(port): ParsedSourceMap is ThreadSafeRefCount in Zig; LIFETIMES.tsv
-        // says Arc. Phase B: confirm whether intrusive Arc is required for FFI.
+        // TODO(port): ParsedSourceMap was ThreadSafeRefCount in Zig; ported as `Arc`.
+        // Confirm whether an intrusive Arc is required for FFI.
         Some(Arc::new(psm))
     } else {
         None

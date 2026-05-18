@@ -18,18 +18,13 @@
 //! are integer indices, and the only `&mut` is the single `&Interpreter`
 //! threaded through the trampoline.
 
-// ─── gated Phase-A drafts (preserved, not compiled) ──────────────────────────
-// The full lexer/parser/AST draft (5574 lines) depends on `bun_jsc` method
-// surface, `bun_glob::GlobWalker`, `bun_output` macros, and
-// `bun_collections::IntegerBitSet`.
-
 #[path = "shell_body.rs"]
 pub mod shell_body;
 // Codegen (`generated_js2native.rs`) addresses this as `crate::shell::shell::*`
 // (Zig path `src/runtime/shell/shell.zig`).
 pub use shell_body as shell;
 
-// ─── compiling submodules ────────────────────────────────────────────────────
+// ─── submodules ──────────────────────────────────────────────────────────────
 #[path = "EnvMap.rs"]
 pub mod env_map;
 #[path = "EnvStr.rs"]

@@ -52,7 +52,7 @@ bitflags::bitflags! {
 
 // JS callback bodies — gated until bun_jsc method surface (JSValue::call,
 // get_truthy, protect, JSGlobalObject::throw_*) is available.
-// TODO(b2-blocked): bun_jsc::{JSValue, JSGlobalObject} methods.
+// TODO(port): bun_jsc::{JSValue, JSGlobalObject} methods.
 
 impl Handler {
     /// Deref the raw `global_object` pointer.
@@ -258,8 +258,8 @@ static DECOMPRESS_TABLE: phf::Map<&'static [u8], i32> = phf::phf_map! {
 
 // TODO(port): phf custom hasher — Zig used `.getWithEql(zig_string, ZigString.eqlComptime)`,
 // which compares a ZigString (possibly UTF-16) against the literal keys. Here we go through
-// `ZigString::as_bytes_if_latin1()` (or equivalent) and look up in the phf map; Phase B should
-// verify UTF-16-backed ZigStrings still match.
+// `ZigString::as_bytes_if_latin1()` (or equivalent) and look up in the phf map; verify
+// UTF-16-backed ZigStrings still match.
 fn lookup_zig_string(
     table: &phf::Map<&'static [u8], i32>,
     key: &bun_core::ZigString,
@@ -267,7 +267,7 @@ fn lookup_zig_string(
     table.get(key.slice()).copied()
 }
 
-// TODO(b2-blocked): bun_jsc::JSValue::{get, get_truthy, to_boolean, is_string,
+// TODO(port): bun_jsc::JSValue::{get, get_truthy, to_boolean, is_string,
 // get_zig_string, to_int64, is_any_int}.
 
 pub fn on_create(

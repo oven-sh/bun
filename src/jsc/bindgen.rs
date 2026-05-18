@@ -361,7 +361,7 @@ impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
         // `Vec` is correct.
         let mut result = bun_core::handle_oom(Self::ZigType::init_capacity(length));
         for item in unmanaged {
-            // PERF(port): was appendAssumeCapacity — profile in Phase B
+            // PERF(port): was appendAssumeCapacity — profile if hot.
             result.append_assume_capacity(Child::convert_from_extern(item));
         }
         result

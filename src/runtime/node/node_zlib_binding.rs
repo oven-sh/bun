@@ -26,8 +26,8 @@ bun_output::declare_scope!(zlib, hidden);
 /// (write_in_progress, pending_close, pending_reset, closed, stream, this_value,
 /// write_result, task, poll_ref, globalThis) plus `T.js.*` codegen accessors and
 /// `T.ref()/deref()`.
-// PORT NOTE: Phase D — expressed as a marker struct + trait bound. Field
-// accesses on `T` go through the [`CompressionStreamImpl`] trait below.
+// PORT NOTE: expressed as a marker struct + trait bound. Field accesses on
+// `T` go through the [`CompressionStreamImpl`] trait below.
 pub struct CompressionStream<T>(PhantomData<T>);
 
 #[derive(Default)]
@@ -213,11 +213,9 @@ pub trait CompressionContext {
     fn update_write_result(&mut self, avail_in: &mut u32, avail_out: &mut u32);
 }
 
-// R-2 Phase 2: every JS-exposed mixin method takes `&T`; per-field interior
-// mutability via `Cell` (Copy) / `JsCell` (non-Copy). Accessors return the
+// R-2 (host-fn re-entrancy): every JS-exposed mixin method takes `&T`; per-field
+// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). Accessors return the
 // cell wrapper so the mixin can `.get()`/`.set()`/`.with_mut()` as needed.
-// The codegen `host_fn_this` shim still passes `&mut T` until Phase 1 lands —
-// `&mut T` auto-reborrows to `&T` so the impls below compile against either.
 pub trait CompressionStreamImpl: Sized + Taskable + 'static {
     type Stream: CompressionContext;
 
@@ -853,8 +851,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 macro_rules! __compression_stream_mixin_reexports {
     ($native:ty) => {
         impl $native {
-            // R-2: `this: &Self` — the codegen `host_fn_this` shim still
-            // passes `&mut Self` until Phase 1 lands; auto-reborrows to `&Self`.
+            // R-2: `this: &Self` — see CompressionStreamImpl note above.
             #[inline]
             pub fn write(
                 this: &Self,

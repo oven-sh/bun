@@ -149,7 +149,7 @@ impl HmrSocket {
                                             dev.memory_visualizer_timer.state
                                                 != EventLoopTimerState::ACTIVE
                                         );
-                                        // PORT NOTE (b2-cycle): `vm.timer` is `()` on the
+                                        // PORT NOTE (jsc/runtime crate cycle): `vm.timer` is `()` on the
                                         // low-tier `VirtualMachine`; the real `timer::All`
                                         // lives in `RuntimeState` (see jsc_hooks.rs).
                                         let state = crate::jsc_hooks::runtime_state();
@@ -338,7 +338,7 @@ impl HmrSocket {
                 if dev.emit_incremental_visualizer_events == 0
                     && dev.memory_visualizer_timer.state == EventLoopTimerState::ACTIVE
                 {
-                    // PORT NOTE (b2-cycle): `vm.timer` is `()` on the low-tier
+                    // PORT NOTE (jsc/runtime crate cycle): `vm.timer` is `()` on the low-tier
                     // `VirtualMachine`; the real `timer::All` lives in `RuntimeState`.
                     let state = crate::jsc_hooks::runtime_state();
                     // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;

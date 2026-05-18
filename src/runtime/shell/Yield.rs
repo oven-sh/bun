@@ -29,7 +29,7 @@ pub enum Yield {
     OnIoWriterChunk {
         child: crate::shell::io_writer::ChildPtr,
         written: usize,
-        // TODO(b2-blocked): bun_jsc::SystemError — opaque until jsc compiles.
+        // TODO(port): bun_jsc::SystemError — opaque until jsc compiles.
         err: Option<bun_sys::SystemError>,
     },
     /// Execution is waiting on async IO (epoll/kqueue/uv). The caller's task
@@ -105,7 +105,7 @@ impl Yield {
         // We start cmd1, return to the pipeline, start cmd2, etc. — so we keep
         // a small stack of pipeline NodeIds to resume.
         //
-        // PERF(port): was stack-fallback alloc (4 inline) — profile in Phase B;
+        // PERF(port): was stack-fallback alloc (4 inline) — profile if hot;
         // smallvec::SmallVec<[NodeId; 4]> is the right shape.
         let mut pipeline_stack: Vec<NodeId> = Vec::with_capacity(4);
 

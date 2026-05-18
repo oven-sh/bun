@@ -192,7 +192,7 @@ impl<'a> DataURL<'a> {
         }
 
         // TODO(port): Zig source's `bufPrint` writes `text` raw with `{s}` here, not the
-        // base64-encoded form — ported faithfully; verify upstream intent in Phase B.
+        // base64-encoded form — ported faithfully; verify upstream intent.
         let mut base64buf = Vec::with_capacity(total_base64_encode_len);
         base64buf.extend_from_slice(b"data:");
         base64buf.extend_from_slice(mime_type);

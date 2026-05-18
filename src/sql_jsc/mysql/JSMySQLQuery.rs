@@ -25,15 +25,15 @@ use super::my_sql_statement::MySQLStatement;
 
 bun_core::define_scoped_log!(debug, MySQLQuery);
 
-// TODO(b2-blocked): #[bun_jsc::JsClass] — proc-macro emits shims typed against
+// TODO(port): #[bun_jsc::JsClass] — proc-macro emits shims typed against
 // `bun_jsc::{JSGlobalObject, CallFrame, JSValue, JsError}`, which are distinct
 // from this crate's local `crate::jsc::*` mirror types until `crate::jsc`
 // becomes `pub use bun_jsc as jsc;` (see lib.rs TODO). Re-enable then.
 //
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
-// shim still emits `this: &mut JSMySQLQuery` until Phase 1 lands — `&mut T`
-// auto-derefs to `&T` so the impls below compile against either.
+// shim still emits `this: &mut JSMySQLQuery` — `&mut T` auto-derefs to `&T`
+// so the impls below compile against either.
 #[derive(bun_ptr::CellRefCounted)]
 #[ref_count(destroy = Self::deinit)]
 pub struct JSMySQLQuery {
@@ -66,7 +66,7 @@ impl JSMySQLQuery {
         core::mem::size_of::<Self>()
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn] — free-fn shim emitted inside an
+    // TODO(port): #[bun_jsc::host_fn] — free-fn shim emitted inside an
     // `impl` block tries to call `constructor()` unqualified; re-enable once the
     // proc-macro emits `Self::constructor` for receiverless impl items.
     pub fn constructor(
@@ -91,7 +91,6 @@ impl JSMySQLQuery {
         bun_ptr::finalize_js_box(self, |this| this.this_value.with_mut(|v| v.finalize()));
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(export = "MySQLQuery__createInstance")]
     // — same proc-macro limitation as `constructor` above.
     pub fn create_instance(
         global_this: &JSGlobalObject,
@@ -167,7 +166,7 @@ impl JSMySQLQuery {
         Ok(this_value)
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)] — see JsClass note above.
+    // TODO(port): #[bun_jsc::host_fn(method)] — see JsClass note above.
     pub fn do_run(
         this: &Self,
         global_object: &JSGlobalObject,
@@ -209,7 +208,7 @@ impl JSMySQLQuery {
         Ok(JSValue::UNDEFINED)
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)] — see JsClass note above.
+    // TODO(port): #[bun_jsc::host_fn(method)] — see JsClass note above.
     pub fn do_cancel(
         _this: &Self,
         _global_object: &JSGlobalObject,
@@ -220,7 +219,7 @@ impl JSMySQLQuery {
         Ok(JSValue::UNDEFINED)
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)] — see JsClass note above.
+    // TODO(port): #[bun_jsc::host_fn(method)] — see JsClass note above.
     pub fn do_done(
         _this: &Self,
         _global_object: &JSGlobalObject,
@@ -230,7 +229,7 @@ impl JSMySQLQuery {
         Ok(JSValue::UNDEFINED)
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)] — see JsClass note above.
+    // TODO(port): #[bun_jsc::host_fn(method)] — see JsClass note above.
     pub fn set_mode_from_js(
         this: &Self,
         global_object: &JSGlobalObject,
@@ -258,7 +257,7 @@ impl JSMySQLQuery {
         Ok(JSValue::UNDEFINED)
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)] — see JsClass note above.
+    // TODO(port): #[bun_jsc::host_fn(method)] — see JsClass note above.
     pub fn set_pending_value_from_js(
         this: &Self,
         _global_object: &JSGlobalObject,

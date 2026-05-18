@@ -3,8 +3,8 @@ use crate::string::strings;
 const SPECIAL_CHARACTERS: &[u8] = b"|\\{}()[]^$+*?.-";
 
 // TODO(port): writer trait — Zig uses `*std.Io.Writer` (byte writer). Mapping to
-// `&mut impl std::io::Write` per PORTING.md; Phase B may swap to the concrete
-// crate-local byte-writer trait once `bun_io` is wired.
+// `&mut impl std::io::Write` per PORTING.md; swap to the concrete crate-local
+// byte-writer trait once `bun_io` is wired.
 pub fn escape_reg_exp<W: std::io::Write>(
     input: &[u8],
     writer: &mut W,

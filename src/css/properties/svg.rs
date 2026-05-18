@@ -36,7 +36,7 @@ enum SVGPaintFallback {
 
 /// A value for the [stroke-linecap](https://www.w3.org/TR/SVG2/painting.html#LineCaps) property.
 // TODO(port): Zig source is `css.DefineEnumProperty(@compileError(css.todo_stuff.depth))` —
-// a lazy compile error placeholder (never instantiated). Define the real enum in Phase B.
+// a lazy compile error placeholder (never instantiated). Define the real enum if needed.
 pub enum StrokeLinecap {}
 
 /// A value for the [stroke-linejoin](https://www.w3.org/TR/SVG2/painting.html#LineJoin) property.
@@ -50,7 +50,7 @@ enum StrokeDasharray {
     None,
     /// Specifies a dashing pattern to use.
     // PERF(port): css is an arena crate; Zig used ArrayListUnmanaged. Revisit
-    // bun_alloc::ArenaVec<'bump, LengthPercentage> in Phase B.
+    // bun_alloc::ArenaVec<'bump, LengthPercentage> if it shows up on a hot path.
     Values(Vec<LengthPercentage>),
 }
 

@@ -1,6 +1,6 @@
 //! `DevServer.IncrementalGraph(side)` — port of `IncrementalGraph.zig`.
 //!
-//! The Phase-A draft formerly defined a *second*, layout-incompatible
+//! An earlier draft formerly defined a *second*, layout-incompatible
 //! `IncrementalGraph<S: GraphSide>` struct here (trait-param `Client`/`Server`
 //! markers, `ArrayHashMap<Box<[u8]>, S::FilePacked>`, `Vec<OptionalEdgeIndex>`)
 //! parallel to the canonical `dev_server::incremental_graph::IncrementalGraph

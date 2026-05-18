@@ -1249,7 +1249,7 @@ impl SendQueue {
         );
         self.debug_log_message_queue();
         // defer this.updateRef(global) — handled at every return below.
-        // TODO(port): errdefer — use scopeguard for update_ref-on-exit in Phase B.
+        // TODO(port): errdefer — use scopeguard for update_ref-on-exit.
 
         if self.queue.is_empty() {
             self.update_ref(global);

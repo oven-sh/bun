@@ -185,7 +185,7 @@ mod host {
     // Zig used `std.StaticStringMap` keyed by the UTF-16LE *byte* reinterpretation of
     // each extension (via `wU8`). Here we match directly on the `&[u16]` extension
     // using `bun_core::w!` literals — semantically identical, drops the byte cast.
-    // PERF(port): was comptime StaticStringMap (perfect hash) — profile in Phase B
+    // PERF(port): was comptime StaticStringMap (perfect hash) — profile if hot.
     fn bun_extensions_get(ext: &[u16]) -> Option<ExtensionType> {
         use ExtensionType::*;
         macro_rules! w {

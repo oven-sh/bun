@@ -1,4 +1,4 @@
-//! This type helps detect race conditions in debug/`ci_assert` builds.
+//! This type helps detect race conditions in debug builds.
 //!
 //! Store an instance of this type in or alongside shared data. Then, add the following to any
 //! block of code that accesses the shared data:
@@ -32,21 +32,15 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use bun_core::StoredTrace;
 
 // TODO(port): `ThreadId` / `INVALID_THREAD_ID` / `current_thread_id()` come from the sibling
-// `src/safety/thread_id.zig` port + Zig's `std.Thread`. Phase B: confirm the concrete integer
+// `src/safety/thread_id.zig` port + Zig's `std.Thread`. TODO(port): confirm the concrete integer
 // width and atomic type (Zig's `std.Thread.Id` is platform-dependent).
 use super::thread_id::{
     AtomicThreadId, INVALID as INVALID_THREAD_ID, ThreadId, current as current_thread_id,
 };
 
-// TODO(port): `bun.Environment.ci_assert` — map to the correct cfg gate in Phase B.
-#[cfg(feature = "ci_assert")]
-pub const ENABLED: bool = true;
-#[cfg(not(feature = "ci_assert"))]
-pub(crate) const ENABLED: bool = false;
-
 #[derive(Default)]
 pub struct CriticalSection {
-    #[cfg(feature = "ci_assert")]
+    #[cfg(debug_assertions)]
     internal_state: State,
     // When not enabled, this is a zero-sized type (Zig: `void`).
 }
@@ -241,20 +235,20 @@ impl CriticalSection {
     /// Marks the beginning of a critical section which accesses (and potentially modifies) shared data.
     /// Calls to this function can be nested; each must be paired with a call to `end`.
     pub fn begin(&mut self) {
-        #[cfg(feature = "ci_assert")]
+        #[cfg(debug_assertions)]
         self.internal_state.lock_exclusive();
     }
 
     /// Marks the beginning of a critical section which performs read-only accesses on shared data.
     /// Calls to this function can be nested; each must be paired with a call to `end`.
     pub fn begin_read_only(&mut self) {
-        #[cfg(feature = "ci_assert")]
+        #[cfg(debug_assertions)]
         self.internal_state.lock_shared();
     }
 
     /// Marks the end of a critical section started by `begin` or `begin_read_only`.
     pub fn end(&mut self) {
-        #[cfg(feature = "ci_assert")]
+        #[cfg(debug_assertions)]
         self.internal_state.unlock();
     }
 }

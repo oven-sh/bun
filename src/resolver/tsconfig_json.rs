@@ -146,7 +146,7 @@ pub type JsxFieldSet = EnumSet<JsxField>;
 
 pub struct TSConfigJSON {
     // TODO(port): lifetime — Zig never frees these string fields (resolver-lifetime arena);
-    // Phase A models them as owned Box<[u8]>. Revisit if profiling shows churn.
+    // modeled here as owned Box<[u8]>. Revisit if profiling shows churn.
     pub abs_path: Box<[u8]>,
 
     /// The absolute path of "compilerOptions.baseUrl"

@@ -910,7 +910,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
 
                 let name = lockfile.str(&package.name).to_vec();
                 let existing_patchfile_hash: Option<u64> = 'existing_patchfile_hash: {
-                    // PERF(port): was stack-fallback alloc — profile in Phase B
+                    // PERF(port): was stack-fallback alloc — profile if it shows up on a hot path.
                     let mut name_and_version = Vec::new();
                     write!(
                         &mut name_and_version,
@@ -968,7 +968,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
                 let pkg_name = pkg.name.slice(strbuf).to_vec();
 
                 let existing_patchfile_hash: Option<u64> = 'existing_patchfile_hash: {
-                    // PERF(port): was stack-fallback alloc — profile in Phase B
+                    // PERF(port): was stack-fallback alloc — profile if it shows up on a hot path.
                     let mut name_and_version = Vec::new();
                     write!(
                         &mut name_and_version,
@@ -1307,7 +1307,7 @@ fn pkg_info_for_name_and_version(
     name: &[u8],
     version: Option<&[u8]>,
 ) -> (PackageID, Vec<u8>) {
-    // PERF(port): was stack-fallback alloc — profile in Phase B
+    // PERF(port): was stack-fallback alloc — profile if it shows up on a hot path.
     let mut pairs: Vec<IdPair> = Vec::with_capacity(8);
 
     let name_hash = string_hash(name);

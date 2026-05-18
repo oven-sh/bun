@@ -62,7 +62,7 @@ struct PoolStats {
 
 // PORT NOTE: Zig's `packed struct(u32)` named `Sync` is kept as `Sync` here for
 // diffability with the .zig. It shadows `core::marker::Sync` within this module;
-// no `T: Sync` bounds are written in this file. Phase B may rename.
+// no `T: Sync` bounds are written in this file.
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 struct Sync(u32);
@@ -552,7 +552,7 @@ impl ThreadPool {
             run_fn,
         };
 
-        // PERF(port): was allocator.alloc(RunnerTask, values.len) — using Vec; profile in Phase B
+        // PERF(port): was allocator.alloc(RunnerTask, values.len) — using Vec; profile if hot.
         let mut tasks: Vec<RunnerTask<Ctx, V, F>> = Vec::with_capacity(values.len());
         let mut batch = Batch::default();
         let mut offset = values.len();
@@ -1698,7 +1698,7 @@ pub mod node {
     impl Buffer {
         // PORT NOTE: Zig's `.raw` field access (non-atomic) on Atomic(T) is mapped to
         // Relaxed loads here; Rust does not expose unsynchronized access on atomics.
-        // PERF(port): was non-atomic raw read — profile in Phase B.
+        // PERF(port): was non-atomic raw read — profile if hot.
         #[inline]
         fn tail_raw(&self) -> Index {
             self.tail.load(Ordering::Relaxed)

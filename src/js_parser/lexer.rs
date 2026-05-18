@@ -15,7 +15,7 @@ use identifier as js_identifier;
 // MOVE-IN: Indentation now lives in this crate (was bun_js_printer::Options::Indentation).
 use bun_ast::{Indentation, IndentationCharacter};
 // TODO(port): arena threading — js_parser is an AST crate; many `arena.*` calls below
-// should use `&'bump bumpalo::Bump`. For Phase A we keep a `&dyn Allocator`-ish slot and
+// should use `&'bump bumpalo::Bump`. For now we keep a `&dyn Allocator`-ish slot and
 // route owned buffers through `Vec`/`Box`.
 use bun_alloc::Arena;
 
@@ -179,7 +179,7 @@ pub type NewLexer<'a, J: JsonOptionsT = DefaultJsonOptions> = LexerType<
     { <J as JsonOptionsT>::GUESS_INDENTATION },
 >;
 
-// TODO(b1): `thiserror` not in this crate's deps; hand-roll Display/Error.
+// TODO(port): `thiserror` not in this crate's deps; hand-roll Display/Error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum Error {
     UTF8Fail,
@@ -377,13 +377,13 @@ pub struct LexerType<
     /// Only used for JSON stringification when bundling
     /// This is a zero-bit type unless we're parsing JSON.
     // TODO(port): Zig uses `if (is_json) bool else void` for zero-cost when !is_json.
-    // PERF(port): always-bool here wastes 1 byte in non-JSON instantiations — profile in Phase B.
+    // PERF(port): always-bool here wastes 1 byte in non-JSON instantiations — profile if hot.
     pub is_ascii_only: bool,
     pub track_comments: bool,
     pub all_comments: Vec<Range>,
 
     // TODO(port): Zig field type is `if (guess_indentation) struct{..} else void`.
-    // PERF(port): always-present here — profile in Phase B.
+    // PERF(port): always-present here — profile if hot.
     pub indent_info: IndentInfo,
 }
 
@@ -1232,7 +1232,7 @@ lexer_impl_header! {
 
     #[inline]
     pub fn expect(&mut self, token: T) -> Result<(), Error> {
-        // PERF(port): Zig param is `comptime token: T` — profile in Phase B
+        // PERF(port): Zig param is `comptime token: T` — profile if hot.
         if self.token != token {
             self.expected(token)?;
         }
@@ -2484,6 +2484,12 @@ lexer_impl_header! {
     }
 
     /// This scans a "// comment" in a single pass over the input.
+    ///
+    /// PERF: outlined for the same reason as `scan_multi_line_comment_body` —
+    /// keep the SIMD newline scan, arena allocation, and pragma scanning out of
+    /// `next()`'s hot ASCII arms. `#[inline(never)]` (not `#[cold]`) because
+    /// `//` comments are common enough that we don't want the branch pessimized.
+    #[inline(never)]
     fn scan_single_line_comment(&mut self) {
         // PERF: keep the source slice register-resident — see `next_codepoint_with`.
         let contents: &[u8] = self.contents;
@@ -2797,7 +2803,7 @@ lexer_impl_header! {
     fn assert_not_json(&self) {
         if IS_JSON {
             // TODO(port): Zig uses @compileError; Rust const generics can't compile-error
-            // here without nightly. Phase B may gate JSX methods to non-JSON instantiations.
+            // here without nightly. Could gate JSX methods to non-JSON instantiations.
             unreachable!("JSON should not reach this point");
         }
     }
@@ -4108,8 +4114,8 @@ impl PragmaArg {
 }
 
 fn skip_to_interesting_character_in_multiline_comment(text_: &[u8]) -> Option<u32> {
-    // PERF(port): Zig uses portable @Vector SIMD here. Rust port uses scalar; Phase B
-    // should swap to bun_highway or core::simd. Logic preserved (returns offset of first
+    // PERF(port): Zig uses portable @Vector SIMD here. Rust port uses scalar; could
+    // swap to bun_highway or core::simd. Logic preserved (returns offset of first
     // '*' / '\r' / '\n' / non-ASCII byte, truncated to chunks of `ascii_vector_size`).
     // TODO(port): SIMD reimplementation
     let vsize = strings::ASCII_VECTOR_SIZE;

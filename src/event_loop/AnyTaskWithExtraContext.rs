@@ -31,8 +31,6 @@ impl AnyTaskWithExtraContext {
     /// Zig signature: `fn fromCallbackAutoDeinit(ptr: anytype, comptime fieldName: [:0]const u8) *AnyTaskWithExtraContext`
     /// where `fieldName` names a decl on `@TypeOf(ptr).*`. Rust cannot look up a
     /// method by comptime string, so callers pass the function directly.
-    // TODO(port): Zig used `@field(Ptr, fieldName)` (comptime decl lookup by name).
-    // Rust callers must pass the fn pointer; verify all call sites in Phase B.
     pub fn from_callback_auto_deinit<T>(
         ptr: *mut T,
         callback: fn(*mut T, *mut c_void),
@@ -79,11 +77,11 @@ impl AnyTaskWithExtraContext {
     /// Zig signature: `fn from(this: *@This(), of: anytype, comptime field: []const u8) *@This()`
     /// — initializes `this` in place to call `@TypeOf(of).field(of, extra)` with
     /// `ContextType = void`.
-    // TODO(port): Zig used `@field(T, field)` comptime decl lookup; Rust callers
-    // pass the fn pointer directly. Verify call sites in Phase B.
+    // PORT NOTE: Zig used `@field(T, field)` comptime decl lookup; Rust callers
+    // pass the fn pointer directly.
     // TODO(port): Zig passes `ContextType = void` (the unit type, NOT `anyopaque`);
     // `*void` is zero-bit so the callee is effectively `fn(*T)` only. Mapped here
-    // to `*mut ()` — Phase B may want `fn(*mut T)` and to drop the second arg.
+    // to `*mut ()` — could be `fn(*mut T)` with the second arg dropped.
     // PORT NOTE: name kept as `from` to match Zig; not the `From` trait.
     pub fn from<T>(&mut self, of: *mut T, callback: fn(*mut T, *mut ())) -> *mut Self {
         *self = New::<T, ()>::init(of, callback);
@@ -104,7 +102,7 @@ impl AnyTaskWithExtraContext {
 /// Stable Rust cannot take a fn value as a const generic, so `Callback` moves to
 /// a runtime argument on `init` and is type-erased (ABI-identical: both forms
 /// are thin fn pointers taking two thin data pointers).
-// TODO(port): if Phase B needs the zero-storage comptime form, switch to a
+// TODO(port): if a zero-storage comptime form is ever needed, switch to a
 // `trait TaskCallback<C> { fn call(&mut self, extra: *mut C); }` bound on `T`.
 pub struct New<T, C>(PhantomData<(*mut T, *mut C)>);
 
@@ -126,9 +124,9 @@ impl<T, C> New<T, C> {
     // the type-erasing thunk stored in `.callback = wrap`. Because stable Rust
     // can't take `Callback` as a const generic, `init` erases the typed fn
     // pointer directly instead — so `wrap` is folded into that cast and
-    // intentionally omitted here. If Phase B switches to a `TaskCallback<C>`
+    // intentionally omitted here. If this ever switches to a `TaskCallback<C>`
     // trait bound on `T`, reintroduce `wrap` as the 2-arg stored thunk.
-    // PERF(port): Zig used `@call(bun.callmod_inline, Callback, ...)` — profile in Phase B.
+    // PERF(port): Zig used `@call(bun.callmod_inline, Callback, ...)` — profile if hot.
 }
 
 // ported from: src/event_loop/AnyTaskWithExtraContext.zig

@@ -234,7 +234,7 @@ macro_rules! impl_statement_data {
                 }
                 #[inline]
                 fn arena_alloc(self, bump: &bun_alloc::Arena) -> Data {
-                    // TODO(port): StoreRef vs &'bump — Phase B unify arena ref type
+                    // TODO(port): StoreRef vs &'bump — unify the arena ref type.
                     Data::$variant(StoreRef::from_bump(bump.alloc(self)))
                 }
             }

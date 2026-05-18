@@ -31,7 +31,7 @@ pub struct DirectoryWatchStore {
     // TODO(port): Zig stores keys as `[]const u8` sub-slices into a duped
     // buffer (trailing slash trimmed), then frees the slice via allocator.
     // `Box<[u8]>` cannot represent "free the larger backing allocation from a
-    // sub-slice"; Phase B may need a thin key newtype or trim-before-dupe.
+    // sub-slice"; may need a thin key newtype or trim-before-dupe.
     pub watches: ArrayHashMap<Box<[u8]>, Entry>,
     pub dependencies: Vec<Dep>,
     /// Dependencies cannot be re-ordered. This list tracks what indexes are free.
@@ -69,8 +69,8 @@ impl DirectoryWatchStore {
     pub fn owner(&mut self) -> &mut DevServer {
         // SAFETY: `self` is always the `directory_watchers` field of a `DevServer`.
         // TODO(port): `container_of` aliasing — returning &mut DevServer while
-        // &mut self is live is unsound under stacked borrows; Phase B may need
-        // to return *mut DevServer or restructure access.
+        // &mut self is live is unsound under stacked borrows; may need to
+        // return *mut DevServer or restructure access.
         unsafe {
             &mut *bun_core::from_field_ptr!(
                 DevServer,
@@ -186,7 +186,7 @@ impl DirectoryWatchStore {
 
         if self.dependencies_free_list.is_empty() {
             self.dependencies.reserve(1);
-            // PERF(port): was ensureUnusedCapacity — profile in Phase B
+            // PERF(port): was ensureUnusedCapacity — profile if hot
         }
 
         // PORT NOTE: reshaped for borrowck — capturing gop fields before
@@ -223,7 +223,7 @@ impl DirectoryWatchStore {
             w.swap_remove_at(gop_index);
         });
         // TODO(port): errdefer — guard captures &mut self.watches; subsequent
-        // self.* accesses below may need raw-ptr workaround in Phase B.
+        // self.* accesses below may need a raw-ptr workaround.
 
         // Try to use an existing open directory handle
         // SAFETY: server_transpiler is initialized by Framework::init_transpiler
@@ -336,7 +336,7 @@ impl DirectoryWatchStore {
                 let index =
                     DepIndex::init(u32::try_from(self.dependencies.len()).expect("int cast"));
                 self.dependencies.push(d);
-                // PERF(port): was appendAssumeCapacity — profile in Phase B
+                // PERF(port): was appendAssumeCapacity — profile if hot
                 index
             }
         };
@@ -457,7 +457,7 @@ impl DirectoryWatchStore {
 
         let index = DepIndex::init(u32::try_from(self.dependencies.len()).expect("int cast"));
         self.dependencies.push(dep);
-        // PERF(port): was appendAssumeCapacity — profile in Phase B
+        // PERF(port): was appendAssumeCapacity — profile if hot
         index
     }
 }

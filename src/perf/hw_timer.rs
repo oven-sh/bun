@@ -209,7 +209,10 @@ fn read_frequency() -> u64 {
     compile_error!("hw_timer::read_frequency: unsupported target");
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(
+    target_arch = "x86_64",
+    not(any(target_os = "macos", target_os = "freebsd"))
+))]
 struct CpuidResult {
     eax: u32,
     ebx: u32,
@@ -217,7 +220,10 @@ struct CpuidResult {
     edx: u32,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(
+    target_arch = "x86_64",
+    not(any(target_os = "macos", target_os = "freebsd"))
+))]
 #[inline]
 fn cpuid(leaf: u32, subleaf: u32) -> CpuidResult {
     // PORT NOTE: Rust inline asm reserves `rbx` (LLVM PIC base), so we use the

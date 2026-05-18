@@ -483,7 +483,7 @@ pub trait StaticRouteLike<const SSL: bool>: 'static {
     );
 }
 
-// PORT NOTE (layering): the Phase-A `RequestUnion`/`ResponseUnion` placeholders
+// PORT NOTE (layering): the original `RequestUnion`/`ResponseUnion` placeholders
 // were duplicates of `bun_uws_sys::AnyRequest`/`AnyResponse` (which already
 // model Zig's `.{ .h1 = req }` / `.{ .SSL = resp }`). Re-export the real types
 // so any straggler reference resolves to the canonical opaque.
@@ -650,7 +650,7 @@ fn get_routes_object(global: &JSGlobalObject, arg: JSValue) -> JsResult<Option<J
 /// Bridge `crate::bake::FileSystemRouterType` (Cow-backed, populated by
 /// `server_body::AnyRoute::from_js`) into `bake_body::FileSystemRouterType`
 /// (`&'static [u8]`-backed, consumed by `Framework::auto`). Both mirror Zig's
-/// single `bake.Framework.FileSystemRouterType`; the duplication is a Phase-A
+/// single `bake.Framework.FileSystemRouterType`; the duplication is a
 /// layering wart and this conversion stands in for an arena-dupe until the two
 /// structs unify. All bytes are duped into `arena` so the resulting `&'static`
 /// slices live as long as `UserOptions.arena`.
@@ -661,9 +661,9 @@ fn convert_file_system_router_type(
     use crate::bake::bake_body as bb;
     // PORT NOTE: `bb::arena_erase` is the single sanctioned `'bump → 'static`
     // erasure for the `UserOptions.arena` self-referential pattern; bake_body's
-    // own `Framework::from_js` / `resolve` use it identically. Phase B threads
-    // a real `'bump` through `bb::Framework`/`bb::FileSystemRouterType` and
-    // removes this together with `arena_erase`.
+    // own `Framework::from_js` / `resolve` use it identically.
+    // TODO(refactor): thread a real `'bump` through `bb::Framework`/
+    // `bb::FileSystemRouterType` and remove this together with `arena_erase`.
     fn dupe(arena: &bun_alloc::Arena, bytes: &[u8]) -> &'static [u8] {
         bb::arena_erase(arena.alloc_slice_copy(bytes))
     }
@@ -1027,7 +1027,7 @@ impl ServerConfig {
 
                     // Convert `crate::bake::FileSystemRouterType` (Cow-backed)
                     // into `bake_body::FileSystemRouterType` (`&'static` slices)
-                    // by duping every string into the arena. Phase-A type
+                    // by duping every string into the arena. Type
                     // duplication; remove once the two structs unify.
                     let router_types: Vec<bb::FileSystemRouterType> =
                         core::mem::take(&mut init_ctx.framework_router_list)

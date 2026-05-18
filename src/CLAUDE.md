@@ -22,6 +22,9 @@ Conventions:
 - Don't `.unwrap()` a fallible path that user input or the OS can hit at runtime — return the error. `.unwrap()` is for invariants you can prove.
 - The C ABI / syscall boundary uses `bun_sys::Maybe<T>` (= `Result<T, bun_sys::Error>`); ordinary Rust code uses `Result<T, E>` with `?`.
 - `bun_core::Error` is a lightweight interned `NonZeroU16` error code; `bun_sys::Error` is the rich syscall error (errno + syscall tag + path). `From<bun_sys::Error> for bun_core::Error` exists.
+- NEVER add comments to deleted code blocks.
+- Do not add comments that reference context from the transcript.
+- Avoid adding comments where not necessary.
 
 ## Prefer `bun_core` / `bun_sys` over `std`
 

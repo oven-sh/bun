@@ -15,7 +15,7 @@ use crate::{Names, Param, ParseOptions, Values};
 // array fields. `findParam` is `inline for`, so every `args.flag("--foo")`
 // compiles to a constant index — zero runtime cost.
 //
-// The Phase-A port did all of this at runtime: `convert_params` heap-allocated
+// An earlier draft of this port did all of this at runtime: `convert_params` heap-allocated
 // a `Vec<Param<usize>>` on every CLI start, and `find_param` linear-scanned it
 // for every `flag()`/`option()` lookup (~190 lookups × ~100 params on the
 // `bun run` path). perf put this at ~0.25 % of `bun --version` cycles vs ~0 %

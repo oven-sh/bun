@@ -248,7 +248,7 @@ impl S3HttpDownloadStreamingTask {
             }
             // store the new state
             self.set_state(*state);
-            // TODO(port): Zig does `this.http = async_http.*;` (struct copy). Phase B: confirm
+            // TODO(port): Zig does `this.http = async_http.*;` (struct copy). Confirm
             // AsyncHTTP copy/move semantics in Rust.
             // SAFETY: `async_http` points to a live AsyncHTTP owned by the HTTP thread; Zig does a
             // plain struct copy (`this.http = async_http.*`) — bitwise read+write matches that.

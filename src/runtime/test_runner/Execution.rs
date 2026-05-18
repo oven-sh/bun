@@ -380,7 +380,7 @@ impl Execution {
                     _ => unreachable!(),
                 };
 
-                // PORT NOTE: `bun.Environment.ci_assert` → debug_assertions (no `ci_assert` Cargo feature in bun_runtime).
+                // Zig: gated on `bun.Environment.ci_assert`.
                 // SAFETY: sequence_ptr points into this.sequences; valid while BunTest is alive.
                 debug_assert!(unsafe { sequence_ptr.as_ref() }.active_entry.is_some());
                 Execution::advance_sequence(buntest_ptr, sequence_ptr, group_ptr);
@@ -540,7 +540,7 @@ impl Execution {
                 sequence.active_entry = nn(entry.next);
             }
         } else {
-            // PORT NOTE: `bun.Environment.ci_assert` → debug_assertions (no `ci_assert` Cargo feature in bun_runtime).
+            // Zig: gated on `bun.Environment.ci_assert`.
             debug_assert!(false, "can't call advanceSequence on a completed sequence");
         }
 
@@ -683,7 +683,7 @@ impl Execution {
             if sequence.test_entry.is_some() || sequence.result != Result::Pass {
                 // SAFETY: deref parent BunTest at point-of-use. `sequence` aliases
                 // `buntest.execution.sequences[i]`; `handle_test_completed`'s signature still takes
-                // both `&mut BunTest` and `&mut ExecutionSequence` (Phase B: reshape callee).
+                // both `&mut BunTest` and `&mut ExecutionSequence` (TODO(refactor): reshape callee).
                 test_command::CommandLineReporter::handle_test_completed(
                     unsafe { &mut *buntest.as_ptr() },
                     sequence,

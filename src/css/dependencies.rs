@@ -43,7 +43,7 @@ impl Location {
 /// An `@import` dependency.
 pub struct ImportDependency {
     /// The url to import.
-    // TODO(port): lifetime — arena-borrowed from `rule.url` (CSS arena); Phase B may want `&'bump [u8]`.
+    // TODO(port): lifetime — arena-borrowed from `rule.url` (CSS arena); consider `&'bump [u8]`.
     pub url: *const [u8],
     /// The placeholder that the URL was replaced with.
     // TODO(port): lifetime — arena-allocated by `css_modules::hash`.

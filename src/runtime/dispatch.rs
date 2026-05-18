@@ -1076,7 +1076,7 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             };
             // SAFETY: per fn contract. `bun_test_timeout_callback` takes a
             // `&bun_core::Timespec`; the low-tier `EventLoopTimer::Timespec` is
-            // a layout-identical local stub (see EventLoopTimer.rs TODO(b1)).
+            // a layout-identical local stub (see EventLoopTimer.rs TODO(port)).
             let now_core = unsafe {
                 bun_core::Timespec {
                     sec: (*now).sec,

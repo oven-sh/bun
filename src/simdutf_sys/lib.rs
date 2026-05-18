@@ -6,7 +6,6 @@
     clippy::all
 )]
 #![warn(unused_must_use)]
-// AUTOGEN: mod declarations only — real exports added in B-1.
 pub mod simdutf;
 
 // Top-level re-exports of the safe slice-taking wrappers in `simdutf::validate`.

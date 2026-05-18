@@ -879,7 +879,7 @@ impl RuntimeTranspilerCache {
         // PORT NOTE: Zig matched on `source_code.encoding()`; derive from
         // `is_utf8()` instead. Zig's `.utf8` arm borrowed `source_code.byteSlice()`
         // without copying; `OutputCode::Utf8` here owns a `Box<[u8]>`, so we
-        // copy. PERF(port): add a borrowed `OutputCode` variant in Phase B.
+        // copy. PERF(port): add a borrowed `OutputCode` variant to avoid the copy.
         //
         // Zig: `else => .{ .string = source_code }` — by-value copy, **no**
         // `dupeRef()` and **no** matching `deref()`. `BunString` is `Copy` and

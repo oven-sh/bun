@@ -462,36 +462,31 @@ impl hooks::AutoInstaller for PackageManager {
 // upcast to the `dyn AutoInstaller` trait object the resolver stores.
 //
 // SAFETY (callee contract):
-//   • `log` is the resolver's `*mut bun_ast::Log` (Transpiler-owned,
+//   • `log` is the resolver's `NonNull<bun_ast::Log>` (Transpiler-owned,
 //     process-lifetime; `init_with_runtime` stores it raw).
-//   • `install` is the type-erased `Option<&Api::BunInstall>` projected from
-//     `BundleOptions.install` (`*const ()` — null ⇔ None). The pointee is the
-//     CLI-owned `Box<BunInstall>` (process-lifetime).
-//   • `env` is the type-erased `*mut DotEnv::Loader` (Transpiler-owned,
+//   • `install` is `BundleOptions.install` (`?*Api.BunInstall`). The pointee is
+//     the CLI-owned `Box<BunInstall>` (process-lifetime), read-only.
+//   • `env` is the resolver's unwrapped `env_loader` (Transpiler-owned,
 //     process-lifetime). `init_with_runtime` stores it as
-//     `NonNull<Loader<'static>>`; the lifetime erasure matches Zig's raw
-//     `*DotEnv.Loader`.
+//     `NonNull<Loader<'static>>`; the `'static` lifetime matches Zig's
+//     untracked `*DotEnv.Loader`.
 #[unsafe(no_mangle)]
 pub unsafe fn __bun_resolver_init_package_manager(
-    log: *mut bun_ast::Log,
-    install: *const (),
-    env: *mut core::ffi::c_void,
+    mut log: core::ptr::NonNull<bun_ast::Log>,
+    install: Option<core::ptr::NonNull<crate::bun_schema::api::BunInstall>>,
+    mut env: core::ptr::NonNull<bun_dotenv::Loader<'static>>,
 ) -> core::ptr::NonNull<dyn hooks::AutoInstaller> {
     // Zig: `bun.HTTPThread.init(&.{})` — idempotent.
     bun_http::http_thread::init(&Default::default());
 
-    // SAFETY: `install` is either null or points at a live `Api::BunInstall`
+    // SAFETY: when `Some`, `install` points at a live `Api::BunInstall`
     // (see `run_command::wire_transpiler_from_ctx`); read-only borrow.
-    let bun_install: Option<&crate::bun_schema::api::BunInstall> = unsafe {
-        install
-            .cast::<crate::bun_schema::api::BunInstall>()
-            .as_ref()
-    };
-    // SAFETY: caller guarantees `log` / `env` are non-null process-lifetime
-    // pointers (resolver `.expect`s `env_loader` before calling).
-    let log_ref: &mut bun_ast::Log = unsafe { &mut *log };
-    let env_ref: &mut bun_dotenv::Loader<'static> =
-        unsafe { &mut *env.cast::<bun_dotenv::Loader<'static>>() };
+    let bun_install: Option<&crate::bun_schema::api::BunInstall> =
+        install.map(|p| unsafe { p.as_ref() });
+    // SAFETY: caller guarantees `log` / `env` point at process-lifetime
+    // Transpiler-owned storage with no aliasing `&mut` live across this call.
+    let log_ref: &mut bun_ast::Log = unsafe { log.as_mut() };
+    let env_ref: &mut bun_dotenv::Loader<'static> = unsafe { env.as_mut() };
 
     let pm: *mut PackageManager = crate::package_manager::init_with_runtime(
         log_ref,

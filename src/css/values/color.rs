@@ -1,10 +1,7 @@
-// ─── B-2 round 8: parse / to_css / ComponentParser / Interpolate un-gated ──
 // Full `CssColor::parse` / `to_css` surface, `ComponentParser` /
 // `RelativeComponentParser`, the `Colorspace` / `Interpolate` traits,
-// `color-mix()`, and the 47-variant `SystemColor` are now real. The
-// `From<Src> for Dst` lattice + `ColorGamut`/`map_gamut` were un-gated in
-// round 7 and remain at the bottom of the file. The former
-// `gated_full_impl` reference module has been folded into the outer scope.
+// `color-mix()`, and the 47-variant `SystemColor`. The `From<Src> for Dst`
+// lattice + `ColorGamut`/`map_gamut` are at the bottom of the file.
 
 use crate::PrintErr;
 use crate::compat::Feature;
@@ -1022,7 +1019,7 @@ use super::color_generated::generated_color_conversions as _;
 
 /// Trait every colorspace implements. The Zig used `@field(this, "x")` over the
 /// first three struct fields plus `alpha`; here we expose them by index.
-/// `// TODO(port): Phase B may want to derive this with a proc-macro.`
+/// `// TODO(port): could be derived with a proc-macro.`
 pub trait Colorspace: Copy + Sized + FromAnyColorspace {
     const CHANNEL_NAMES: (&'static [u8], &'static [u8], &'static [u8]);
     const CHANNEL_TYPES: (ChannelType, ChannelType, ChannelType);
@@ -2185,9 +2182,6 @@ impl RelativeComponentParser {
             return Ok(css::color::AngleOrNumber::Number { value });
         }
 
-        // TODO(port): Zig threads a stack `Angle` through `Calc(Angle).parseWith` via a closure
-        // that returns `Calc{ .value = &t.angle }` (raw stack pointer). Here we use a Cell-based
-        // closure; Phase B should verify Calc::parse_with API shape.
         // PORT NOTE: Zig threads a stack `Angle` through `Calc(Angle).parseWith`
         // via a closure that returns `Calc{ .value = &t.angle }` (raw stack
         // pointer). Rust `Calc::Value` is `Box<V>`, so box the temporary.
@@ -2843,8 +2837,6 @@ const D50: [f32; 3] = [
 //
 // In Rust we express each conversion as `impl From<Src> for Dst`. The
 // handwritten ones are below; generated ones live in `color_generated.rs`.
-// `// TODO(port): Phase B must verify the generated From impls don't conflict
-//  with these (Rust forbids overlapping From impls).`
 // ──────────────────────────────────────────────────────────────────────────
 
 impl From<RGBA> for SRGB {
@@ -3715,11 +3707,10 @@ pub enum ConvertTo {
     PredefinedColor,
 }
 
-// TODO(port): `ColorIntoMixin` resolved conversions at comptime via @hasDecl
+// PORT NOTE: `ColorIntoMixin` resolved conversions at comptime via @hasDecl
 // across handwritten + generated tables. In Rust this is the union of the
-// `impl From<Src> for Dst` blocks above plus `color_generated.rs`. Phase B
-// must ensure every `T: From<U>` pair the macro requires actually exists
-// (the generated file fills the transitive gaps).
+// `impl From<Src> for Dst` blocks above plus `color_generated.rs`; the
+// generated file fills the transitive gaps the macro requires.
 
 crate::css_eql_partialeq!(CssColor);
 

@@ -43,7 +43,7 @@ macro_rules! create_source_code_getter {
 // is not const-constructible in Rust (Box<[u8]>/HashMap fields), so per PORTING.md
 // §Concurrency this is a `LazyLock` runtime-init singleton. `@setEvalBranchQuota` is dropped.
 //
-// PERF(port): Zig used a comptime perfect-hash map; this builds at first access — profile in Phase B.
+// PERF(port): Zig used a comptime perfect-hash map; this builds at first access.
 macro_rules! fallback_module_init {
     ($name:literal, $code_path:literal) => {{
         const _VERSION: &[u8] = b"0.0.0-polyfill";

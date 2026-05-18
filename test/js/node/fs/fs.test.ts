@@ -29,6 +29,7 @@ import fs, {
   lstatSync,
   mkdirSync,
   mkdtemp,
+  mkdtempDisposableSync,
   mkdtempSync,
   openAsBlob,
   openSync,
@@ -4029,5 +4030,103 @@ describe("synchronous I/O string flags", () => {
     closeSync(fd);
 
     expect(buf.toString("utf8", 0, bytesRead)).toBe("hello");
+  });
+});
+
+describe("mkdtempDisposableSync", () => {
+  it("creates a directory and removes it via Symbol.dispose", () => {
+    const result = mkdtempDisposableSync(join(tmpdirSync(), "disposable-"));
+    expect(typeof result.path).toBe("string");
+    expect(existsSync(result.path)).toBe(true);
+    result[Symbol.dispose]();
+    expect(existsSync(result.path)).toBe(false);
+  });
+
+  it("calling dispose twice is safe", () => {
+    const result = mkdtempDisposableSync(join(tmpdirSync(), "disposable-"));
+    result[Symbol.dispose]();
+    result[Symbol.dispose]();
+    expect(existsSync(result.path)).toBe(false);
+  });
+
+  it("remove() works as a manual alternative to dispose", () => {
+    const result = mkdtempDisposableSync(join(tmpdirSync(), "disposable-"));
+    result.remove();
+    expect(existsSync(result.path)).toBe(false);
+  });
+
+  it("works with `using` syntax", () => {
+    let savedPath: string;
+    {
+      using temp = mkdtempDisposableSync(join(tmpdirSync(), "disposable-"));
+      savedPath = temp.path;
+      expect(existsSync(temp.path)).toBe(true);
+    }
+    expect(existsSync(savedPath!)).toBe(false);
+  });
+
+  it("removes a non-empty directory recursively", () => {
+    const result = mkdtempDisposableSync(join(tmpdirSync(), "disposable-"));
+    writeFileSync(join(result.path, "nested.txt"), "hello");
+    mkdirSync(join(result.path, "sub"));
+    writeFileSync(join(result.path, "sub", "deep.txt"), "world");
+    result[Symbol.dispose]();
+    expect(existsSync(result.path)).toBe(false);
+  });
+
+  it("survives process.chdir between create and dispose", () => {
+    const originalCwd = process.cwd();
+    const base = tmpdirSync();
+    process.chdir(base);
+    try {
+      const result = mkdtempDisposableSync("./disposable-");
+      const absolute = path.resolve(base, result.path);
+      expect(existsSync(absolute)).toBe(true);
+      process.chdir(os.tmpdir());
+      result[Symbol.dispose]();
+      expect(existsSync(absolute)).toBe(false);
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
+});
+
+describe("fs.promises.mkdtempDisposable", () => {
+  it("creates a directory and removes it via Symbol.asyncDispose", async () => {
+    const result = await _promises.mkdtempDisposable(join(tmpdirSync(), "disposable-"));
+    expect(typeof result.path).toBe("string");
+    expect(existsSync(result.path)).toBe(true);
+    await result[Symbol.asyncDispose]();
+    expect(existsSync(result.path)).toBe(false);
+  });
+
+  it("works with `await using` syntax", async () => {
+    let savedPath: string;
+    {
+      await using temp = await _promises.mkdtempDisposable(join(tmpdirSync(), "disposable-"));
+      savedPath = temp.path;
+      expect(existsSync(temp.path)).toBe(true);
+    }
+    expect(existsSync(savedPath!)).toBe(false);
+  });
+
+  it("calling asyncDispose twice is safe", async () => {
+    const result = await _promises.mkdtempDisposable(join(tmpdirSync(), "disposable-"));
+    await result[Symbol.asyncDispose]();
+    await result[Symbol.asyncDispose]();
+    expect(existsSync(result.path)).toBe(false);
+  });
+
+  it("remove() returns a Promise that resolves", async () => {
+    const result = await _promises.mkdtempDisposable(join(tmpdirSync(), "disposable-"));
+    await result.remove();
+    expect(existsSync(result.path)).toBe(false);
+  });
+
+  it("is also reachable via the node:fs `promises` namespace", async () => {
+    const result = await promises.mkdtempDisposable(join(tmpdirSync(), "disposable-"));
+    expect(existsSync(result.path)).toBe(true);
+    await result[Symbol.asyncDispose]();
+    expect(existsSync(result.path)).toBe(false);
   });
 });

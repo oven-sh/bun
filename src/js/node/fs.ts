@@ -560,6 +560,22 @@ var access = function access(path, mode, callback) {
   lstatSync = fs.lstatSync.bind(fs) as unknown as typeof import("node:fs").lstatSync,
   mkdirSync = fs.mkdirSync.bind(fs) as unknown as typeof import("node:fs").mkdirSync,
   mkdtempSync = fs.mkdtempSync.bind(fs) as unknown as typeof import("node:fs").mkdtempSync,
+  mkdtempDisposableSync = function mkdtempDisposableSync(prefix, options) {
+    const folder = fs.mkdtempSync(prefix, options);
+    // Capture cwd at creation time so process.chdir() between creation and
+    // disposal cannot misdirect the recursive rm.
+    const fullPath = require("node:path").resolve(process.cwd(), folder);
+    const remove = () => {
+      rmSync(fullPath, { recursive: true, force: true });
+    };
+    return {
+      path: folder,
+      remove,
+      [Symbol.dispose]() {
+        remove();
+      },
+    };
+  },
   openSync = fs.openSync.bind(fs) as unknown as typeof import("node:fs").openSync,
   readSync = function readSync(fd, buffer, offsetOrOptions, length, position) {
     let offset = offsetOrOptions;
@@ -1199,6 +1215,7 @@ var exports = {
   mkdir,
   mkdirSync,
   mkdtemp,
+  mkdtempDisposableSync,
   mkdtempSync,
   open,
   openSync,
@@ -1349,6 +1366,7 @@ setName(lutimesSync, "lutimesSync");
 setName(mkdir, "mkdir");
 setName(mkdirSync, "mkdirSync");
 setName(mkdtemp, "mkdtemp");
+setName(mkdtempDisposableSync, "mkdtempDisposableSync");
 setName(mkdtempSync, "mkdtempSync");
 setName(open, "open");
 setName(openSync, "openSync");

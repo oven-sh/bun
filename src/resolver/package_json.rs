@@ -1687,13 +1687,24 @@ impl PackageJSON {
                         else {
                             continue;
                         };
-                        if key.is_empty() {
+                        // Zig `asPropertyStringMap` drops entries where the key
+                        // OR the value is empty (expr.zig: `key.len > 0 and
+                        // value.len > 0`). An empty-valued script
+                        // (`{"scripts":{"build":""}}`) must NOT become a real
+                        // (empty) script — npm/Zig report "Script not found".
+                        if key.is_empty() || value.is_empty() {
                             continue;
                         }
                         // SAFETY: `key`/`value` borrow `contents_static`; see SAFETY note
                         // on `contents_static` above (owned by the returned PackageJSON).
                         let value: &'static [u8] = unsafe { bun_ptr::detach_lifetime(value) };
                         map.put_assume_capacity(key, value);
+                    }
+                    // Zig returns null when the FILTERED map is empty
+                    // (expr.zig: `if (count == 0) return null;`), not just when
+                    // the raw object had no properties.
+                    if map.len() == 0 {
+                        return None;
                     }
                     Some(Box::new(map))
                 };

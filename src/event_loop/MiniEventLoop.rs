@@ -112,10 +112,11 @@ pub struct MiniEventLoop<'a> {
 
 thread_local! {
     pub static GLOBAL_INITIALIZED: Cell<bool> = const { Cell::new(false) };
-    // PORT NOTE: Zig `threadlocal var global: *MiniEventLoop = undefined;` — raw pointer
-    // because the global is heap-allocated once (heap::alloc) and lives for the
-    // thread's lifetime (a true thread-lifetime singleton; never freed in Zig either).
+    // Zig `threadlocal var global: *MiniEventLoop = undefined;` — raw pointer for
+    // fast access. The owning `Box` lives in `GLOBAL_OWNER` so the TLS dtor
+    // frees it at thread exit (Zig leaked it; LSan reports the strand).
     pub static GLOBAL: Cell<*mut MiniEventLoop<'static>> = const { Cell::new(core::ptr::null_mut()) };
+    static GLOBAL_OWNER: core::cell::RefCell<Option<Box<MiniEventLoop<'static>>>> = const { core::cell::RefCell::new(None) };
 }
 
 /// Returns the thread-local `*mut MiniEventLoop` (Zig: `*MiniEventLoop`).
@@ -134,11 +135,14 @@ pub fn init_global(
         return GLOBAL.with(|g| g.get());
     }
     let loop_ = MiniEventLoop::init();
-    // PORT NOTE: §Forbidden bans `Box::leak` for `&'static`; this is a
-    // thread-lifetime singleton, so use `heap::alloc` (intrusive ownership)
-    // and store the raw pointer in the thread-local — same as Zig
-    // `bun.default_allocator.create` + `threadlocal var global: *MiniEventLoop`.
-    let global_ptr: *mut MiniEventLoop<'static> = bun_core::heap::into_raw(Box::new(loop_));
+    let global_ptr: *mut MiniEventLoop<'static> = GLOBAL_OWNER.with(|g| {
+        let mut owner = g.borrow_mut();
+        *owner = Some(Box::new(loop_));
+        // SAFETY: the Box's heap allocation is owned by `GLOBAL_OWNER` for the
+        // rest of the thread's lifetime; only the fat pointer moves on Vec
+        // grow / RefCell write.
+        owner.as_deref_mut().unwrap() as *mut _
+    });
     // SAFETY: `global_ptr` was just allocated via `heap::alloc`; this thread
     // holds the only reference for the duration of first-init. The `GLOBAL`
     // thread-local is NOT yet published (set below, after this `&mut` is dropped),

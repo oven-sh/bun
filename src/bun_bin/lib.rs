@@ -130,14 +130,6 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         "leak:bun_runtime::node::fs_events::init_core_foundation\n",
         "leak:bun_runtime::node::fs_events::init_core_services\n",
         "leak:bun_runtime::node::fs_events::FSEventsLoop\n",
-        // TODO(asan): the per-parse Box<bun_js_parser_jsc::Macro::MacroContext>
-        // (lazily created at transpiler.rs:1708 in `parse_maybe_return_file_only…`)
-        // is freed for the long-lived owners (vm.transpiler, bundler ThreadPool
-        // workers, BundleV2.owned_client_transpiler, JSTranspiler transformSync —
-        // see e683f982daf2) but the CLI `bun build` BuildCommand transpiler and
-        // the per-file Define-table clone it pins still strand it. Remove once
-        // every Transpiler scope-exit calls macro_context.take().deinit().
-        "leak:bun_js_parser_jsc::Macro\n",
         // Process-lifetime inspector thread. The debugger handles SIGINT and
         // serves the WebSocket protocol up to (and during) `process.exit()`;
         // joining it from `global_exit` would deadlock when the user is

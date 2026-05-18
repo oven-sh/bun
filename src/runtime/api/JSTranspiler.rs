@@ -772,6 +772,26 @@ impl<'a> TransformTask<'a> {
         let arena = Arena::new();
         // defer arena.deinit() → Drop
 
+        // `self.transpiler` is a `ManuallyDrop` bytewise copy of the
+        // `JSTranspiler`'s long-lived transpiler (`ptr::read` in `create()`),
+        // so its `macro_context` may alias a box the `JSTranspiler` still owns
+        // — and that box's `resolver`/`remap` raw pointers point at the
+        // *original* transpiler, not this copy. Null it so `parse()` lazily
+        // creates a fresh one whose self-refs target this copy, then reclaim
+        // the fresh box on every return path (mirrors `RuntimeTranspilerStore`).
+        self.transpiler.macro_context = None;
+        let _macro_ctx_guard = scopeguard::guard(
+            core::ptr::addr_of_mut!(self.transpiler.macro_context),
+            |slot| {
+                // SAFETY: `slot` points into the heap-stable `TransformTask`
+                // box; only this thread holds `&mut self`, and the parser's
+                // `&mut MacroContext` borrow ended with `parse()`.
+                if let Some(ctx) = unsafe { (*slot).take() } {
+                    ctx.deinit();
+                }
+            },
+        );
+
         // TODO(port): ASTMemoryAllocator scope — typed_arena in AST crates; here we just
         // construct one and enter it. Model as RAII guard.
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::new(&arena);
@@ -1102,6 +1122,16 @@ impl JSTranspiler {
 
 impl Drop for JSTranspiler {
     fn drop(&mut self) {
+        // `scan()` / `scanImports()` lazily create a `MacroContext` on
+        // `self.transpiler` and (unlike `transformSync`) leave it in place
+        // for reuse across calls. The boxed `bun_js_parser_jsc::MacroContext`
+        // behind `.data` has no `Drop` glue — release it explicitly.
+        // `with_mut` borrow is closure-scoped; no JS re-entry inside.
+        self.transpiler.with_mut(|t| {
+            if let Some(ctx) = t.macro_context.take() {
+                ctx.deinit();
+            }
+        });
         // SAFETY: `transpiler.log` is a *mut Log set via `set_log` to a live Log.
         let log = self.transpiler.get().log;
         if !log.is_null() {

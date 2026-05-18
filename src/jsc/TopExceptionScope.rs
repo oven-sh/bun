@@ -47,29 +47,29 @@ impl SourceLocation {
     }
 }
 
-/// Intern a `&'static str` (from `Location::file()`) as a leaked NUL-terminated C string.
+/// Intern a `&'static str` (from `Location::file()`) as a NUL-terminated C string.
 /// Thread-local cache keyed by string-data pointer identity — `Location::file()` always
 /// returns the same `&'static str` for a given call site, so the cache is bounded by the
-/// number of distinct `#[track_caller]` sites that reach a scope ctor.
+/// number of distinct `#[track_caller]` sites that reach a scope ctor. The cache owns the
+/// `Box<CStr>` so LSan sees it as reachable; the returned pointer is stable because the
+/// `HashMap` value is `Box<CStr>` (the boxed string never moves on rehash).
 #[cfg(any(debug_assertions, bun_asan))]
 fn intern_location_file(file: &'static str) -> *const c_char {
     use std::cell::RefCell;
     use std::collections::HashMap;
-    use std::ffi::CString;
+    use std::ffi::{CStr, CString};
     thread_local! {
-        static CACHE: RefCell<HashMap<usize, *const c_char>> = RefCell::new(HashMap::new());
+        static CACHE: RefCell<HashMap<usize, Box<CStr>>> = RefCell::new(HashMap::new());
     }
     CACHE.with(|c| {
-        *c.borrow_mut()
+        c.borrow_mut()
             .entry(file.as_ptr() as usize)
             .or_insert_with(|| {
-                // `file!()` paths never contain interior NULs; fall back gracefully if one
-                // somehow does.
-                let cs = CString::new(file).unwrap_or_else(|_| CString::new("<rust>").unwrap());
-                // Bounded leak — same lifetime semantics as the `concat!(file!(), "\0")` literals
-                // the [`src!`] macro emits.
-                Box::leak(cs.into_boxed_c_str()).as_ptr()
+                CString::new(file)
+                    .unwrap_or_else(|_| CString::new("<rust>").unwrap())
+                    .into_boxed_c_str()
             })
+            .as_ptr()
     })
 }
 #[cfg(not(any(debug_assertions, bun_asan)))]

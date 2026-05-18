@@ -1,11 +1,15 @@
 import { describe, expect, test } from "bun:test";
 
 import { password } from "bun";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isDebug } from "harness";
 
 const placeholder = "hey";
 
-describe("does not leak", () => {
+// argon2id iterates so slowly under debug/ASAN that the 60 000 warm-up
+// iterations blow past the 90 s test timeout before the leak check even
+// starts. The leak numbers are only meaningful on release anyway — skip
+// the whole suite on debug so the rest of the file can run.
+describe.skipIf(isDebug)("does not leak", () => {
   async function run(code: string) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--smol", "-e", code],
@@ -290,9 +294,18 @@ for (let algorithmValue of algorithms) {
       return algorithmValue ? password.verifySync(pw, value, algorithmValue as any) : password.verifySync(pw, value);
     };
 
+    // Argon2 with the default `interactive_2id` params (64 MiB / 2 iter)
+    // is too slow under debug/ASAN to finish inside the per-test timeout;
+    // those invocations live in `password sync` (implicit default) and in
+    // the `runSlowTest` branch below (explicit default per algorithm). Gate
+    // them on release so the rest of the file still exercises the
+    // fast-path (bcrypt, arg-parsing, explicit `memoryCost: 8`).
+    const isArgonDefaults = algorithmValue === undefined || algorithmValue === "argon2id";
+    const skipSlowArgonOnDebug = isDebug && isArgonDefaults;
+
     for (let input of [placeholder, Buffer.from(placeholder)]) {
       describe(typeof input === "string" ? "string" : "buffer", () => {
-        test("password sync", () => {
+        test.skipIf(skipSlowArgonOnDebug)("password sync", () => {
           const hashed = hashSync(input);
           expect(hashed).toStartWith(prefix);
           expect(verifySync(input, hashed)).toBeTrue();
@@ -337,8 +350,10 @@ for (let algorithmValue of algorithms) {
             // these tests are very slow
             // run the hashing tests in parallel
             for (const a of argons) {
+              // `runSlowTest` uses default params; only `runSlowTestWithOptions`
+              // (memoryCost: 8) is fast enough for debug/ASAN.
               test(`${a}`, async () => {
-                await runSlowTest(a);
+                if (!isDebug) await runSlowTest(a);
                 await runSlowTestWithOptions(a);
               });
             }
@@ -359,7 +374,7 @@ for (let algorithmValue of algorithms) {
               await runSlowBCryptTest();
             });
           } else {
-            test("default", async () => {
+            test.skipIf(skipSlowArgonOnDebug)("default", async () => {
               await defaultTest();
             });
           }

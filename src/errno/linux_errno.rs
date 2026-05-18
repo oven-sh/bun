@@ -188,8 +188,15 @@ impl GetErrno for usize {
         } else {
             0
         };
-        // SAFETY: int is in [0, 4096); E is #[repr] over the kernel errno range
-        unsafe { core::mem::transmute::<u16, E>(int as u16) }
+        // Use the checked `SystemErrno::init` path. The previous
+        // transmute<u16, E> was only sound for declared enum discriminants,
+        // while the raw-syscall errno range is wider than Linux's dense
+        // `SystemErrno` set. Unknown values fall back to SUCCESS, matching the
+        // existing `e_from_negated` policy in lib.rs.
+        //
+        // `int` is in [0, 4096), so this cast is lossless on supported
+        // 32- and 64-bit targets. `init` takes `i64` for POSIX errno parity.
+        SystemErrno::init(int as i64).unwrap_or(SystemErrno::SUCCESS)
     }
 }
 

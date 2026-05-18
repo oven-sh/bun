@@ -70,7 +70,10 @@ impl<Value> GuardedBy<Value, Mutex> {
     #[inline]
     pub fn try_lock(&self) -> Option<GuardedLock<'_, Value, Mutex>> {
         if self.mutex.try_lock() {
-            Some(GuardedLock { guarded: self })
+            Some(GuardedLock {
+                guarded: self,
+                _not_send: core::marker::PhantomData,
+            })
         } else {
             None
         }
@@ -99,7 +102,10 @@ impl<Value, M: RawMutex> GuardedBy<Value, M> {
     /// releases the lock on drop.
     pub fn lock(&self) -> GuardedLock<'_, Value, M> {
         self.mutex.lock();
-        GuardedLock { guarded: self }
+        GuardedLock {
+            guarded: self,
+            _not_send: core::marker::PhantomData,
+        }
     }
 
     /// Lock-free mutable access when the caller already has `&mut self`
@@ -130,6 +136,11 @@ impl<Value, M: RawMutex> GuardedBy<Value, M> {
 /// `lock()`/`defer unlock()` pair.
 pub struct GuardedLock<'a, Value, M: RawMutex> {
     guarded: &'a GuardedBy<Value, M>,
+    // Preserve the same `!Send`/`!Sync` auto-trait surface that sibling
+    // `MutexGuard` already has: the OS mutex backends require unlock on the
+    // locking thread. Without this marker, safe code could move a guard to
+    // another thread and run `Drop` there.
+    _not_send: core::marker::PhantomData<*const ()>,
 }
 
 impl<'a, Value> GuardedLock<'a, Value, Mutex> {

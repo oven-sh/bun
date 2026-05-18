@@ -378,8 +378,12 @@ impl FetchTasklet {
         }
         let self_ = Self::from_raw_ref(this);
         if self_.javascript_vm.is_shutting_down() {
-            // SAFETY: last ref; exclusive access
-            unsafe { FetchTasklet::deinit(this) };
+            // SAFETY (Intentional Leak): We are on the background HTTP thread.
+            // During VM shutdown, the JS event loop is dead, so enqueueing a task
+            // is useless. However, calling `deinit()` synchronously from here is UB:
+            // it destroys JS-bound handles (`Response::unref` mutating `Cell<u32>`,
+            // `ReadableStream::Strong`, etc.) off the main JS thread.
+            // We explicitly abandon this allocation and let the OS reclaim it.
             return;
         }
         // this is really unlikely to happen, but can happen

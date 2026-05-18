@@ -2959,7 +2959,14 @@ impl RunCommand {
         let arena = runner_arena();
 
         let mut positionals: &[Box<[u8]>] = &ctx.positionals[..];
-        if !positionals.is_empty() && positionals[0].as_ref() == b"run" {
+        // `bun run --check <file>` puts "run" in positionals[0]; strip it.
+        // Not applicable under `node`-argv0 emulation, where positionals[0]
+        // is always the script name (a file literally named "run" must not
+        // be stripped).
+        if !crate::cli::PRETEND_TO_BE_NODE.load(::core::sync::atomic::Ordering::Relaxed)
+            && !positionals.is_empty()
+            && positionals[0].as_ref() == b"run"
+        {
             positionals = &positionals[1..];
         }
 

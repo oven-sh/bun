@@ -109,6 +109,86 @@ pub fn processNamesArray(
     if (arr.items.len == 0) return 0;
 
     const orig_msgs_len = log.msgs.items.len;
+    const root_dir = source.path.name.dir;
+
+    // Process the top-level workspaces array
+    try processNamesArrayOnePass(
+        workspace_names,
+        allocator,
+        json_cache,
+        log,
+        arr,
+        source,
+        root_dir,
+        loc,
+        string_builder,
+    );
+
+    if (orig_msgs_len != log.msgs.items.len) return error.InstallFailed;
+
+    // Recursively discover nested workspaces declared in sub-packages' own
+    // `workspaces` fields. Patterns in each sub-package's `workspaces` field
+    // are resolved relative to that sub-package's directory, but stored as
+    // paths relative to the original root. Nested discovery is best-effort:
+    // if a sub-package's nested field is broken, we roll back any log
+    // messages it produced and move on — the user can always list the
+    // problematic path directly in the root `workspaces` to get a loud
+    // error. OOM propagates, nothing else does.
+    const nested_msgs_snapshot = log.msgs.items.len;
+    const nested_warnings_snapshot = log.warnings;
+    const nested_errors_snapshot = log.errors;
+    discoverNestedWorkspaces(
+        workspace_names,
+        allocator,
+        json_cache,
+        log,
+        root_dir,
+        string_builder,
+    ) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => {},
+    };
+    // Deinit the discarded messages — Msg owns its text/notes allocations.
+    for (log.msgs.items[nested_msgs_snapshot..]) |*msg| {
+        msg.deinit(log.msgs.allocator);
+    }
+    log.msgs.shrinkRetainingCapacity(nested_msgs_snapshot);
+    log.warnings = nested_warnings_snapshot;
+    log.errors = nested_errors_snapshot;
+
+    // Sort the names for determinism
+    workspace_names.sort(struct {
+        values: []const WorkspaceMap.Entry,
+        pub fn lessThan(
+            self: @This(),
+            a: usize,
+            b: usize,
+        ) bool {
+            return strings.order(self.values[a].name, self.values[b].name) == .lt;
+        }
+    }{
+        .values = workspace_names.values(),
+    });
+
+    return @truncate(workspace_names.count());
+}
+
+/// Single pass over a `workspaces` array. `base_dir` is the directory that stored
+/// workspace paths should be relative to (usually the root package.json's dir).
+/// For the top-level call, `base_dir == source.path.name.dir`. For nested discovery,
+/// `base_dir` stays as the original root while `source` points at the sub-package.
+fn processNamesArrayOnePass(
+    workspace_names: *WorkspaceMap,
+    allocator: Allocator,
+    json_cache: *PackageManager.WorkspacePackageJSONCache,
+    log: *logger.Log,
+    arr: *JSAst.E.Array,
+    source: *const logger.Source,
+    base_dir: []const u8,
+    loc: logger.Loc,
+    string_builder: ?*StringBuilder,
+) !void {
+    if (arr.items.len == 0) return;
 
     var workspace_globs = std.array_list.Managed(string).init(allocator);
     defer workspace_globs.deinit();
@@ -187,7 +267,7 @@ pub fn processNamesArray(
         if (workspace_entry.name.len == 0) continue;
 
         const rel_input_path = Path.relativePlatform(
-            source.path.name.dir,
+            base_dir,
             strings.withoutSuffixComptime(abs_package_json_path, std.fs.path.sep_str ++ "package.json"),
             .auto,
             true,
@@ -195,6 +275,14 @@ pub fn processNamesArray(
         if (comptime Environment.isWindows) {
             Path.dangerouslyConvertPathToPosixInPlace(u8, @constCast(rel_input_path));
         }
+
+        // Skip if this resolves back to the base_dir (the root package itself)
+        if (rel_input_path.len == 0 or strings.eqlComptime(rel_input_path, ".")) continue;
+
+        // Deduplicate: avoid double-counting the string_builder when the same
+        // workspace is discovered via multiple paths (overlapping patterns or
+        // nested workspace declarations).
+        if (workspace_names.map.contains(rel_input_path)) continue;
 
         if (string_builder) |builder| {
             builder.count(workspace_entry.name);
@@ -340,7 +428,7 @@ pub fn processNamesArray(
                 if (workspace_entry.name.len == 0) continue;
 
                 const workspace_path: string = Path.relativePlatform(
-                    source.path.name.dir,
+                    base_dir,
                     abs_workspace_dir_path,
                     .auto,
                     true,
@@ -348,6 +436,12 @@ pub fn processNamesArray(
                 if (comptime Environment.isWindows) {
                     Path.dangerouslyConvertPathToPosixInPlace(u8, @constCast(workspace_path));
                 }
+
+                // Skip if this resolves back to the base_dir (the root package itself)
+                if (workspace_path.len == 0 or strings.eqlComptime(workspace_path, ".")) continue;
+
+                // Deduplicate: see comment in the non-glob branch above.
+                if (workspace_names.map.contains(workspace_path)) continue;
 
                 if (string_builder) |builder| {
                     builder.count(workspace_entry.name);
@@ -366,24 +460,97 @@ pub fn processNamesArray(
             }
         }
     }
+}
 
-    if (orig_msgs_len != log.msgs.items.len) return error.InstallFailed;
+/// Scan each already-registered workspace's package.json for its own
+/// `workspaces` field and add any discovered packages to the map. Iterates
+/// by index so that packages added mid-loop are naturally scanned too,
+/// supporting arbitrary nesting depth. The map itself prevents cycles and
+/// duplicates.
+fn discoverNestedWorkspaces(
+    workspace_names: *WorkspaceMap,
+    allocator: Allocator,
+    json_cache: *PackageManager.WorkspacePackageJSONCache,
+    log: *logger.Log,
+    root_dir: []const u8,
+    string_builder: ?*StringBuilder,
+) !void {
+    const filepath_bufOS = bun.handleOom(allocator.create(bun.PathBuffer));
+    const filepath_buf = std.mem.asBytes(filepath_bufOS);
+    defer allocator.destroy(filepath_bufOS);
 
-    // Sort the names for determinism
-    workspace_names.sort(struct {
-        values: []const WorkspaceMap.Entry,
-        pub fn lessThan(
-            self: @This(),
-            a: usize,
-            b: usize,
-        ) bool {
-            return strings.order(self.values[a].name, self.values[b].name) == .lt;
-        }
-    }{
-        .values = workspace_names.values(),
-    });
+    var index: usize = 0;
+    while (index < workspace_names.count()) : (index += 1) {
+        // The map's key storage can be reallocated when new entries are inserted,
+        // so copy the path before we trigger any new processing.
+        const rel_path = try allocator.dupe(u8, workspace_names.keys()[index]);
+        defer allocator.free(rel_path);
 
-    return @truncate(workspace_names.count());
+        const abs_package_json_path: stringZ = Path.joinAbsStringBufZ(
+            root_dir,
+            filepath_buf,
+            &.{ rel_path, "package.json" },
+            .auto,
+        );
+
+        // getWithPath caches successful reads, and every workspace in the map
+        // already parsed successfully in processNamesArrayOnePass, so this is
+        // a cache hit for registered workspaces. A miss here means the file
+        // moved between passes — skip it rather than aborting discovery.
+        // OOM from the JSON parse path still propagates.
+        const cached = json_cache.getWithPath(
+            allocator,
+            log,
+            abs_package_json_path,
+            .{
+                .init_reset_store = false,
+                .guess_indentation = true,
+            },
+        ).unwrap() catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => continue,
+        };
+
+        const workspaces_expr = cached.root.get("workspaces") orelse continue;
+
+        const nested_arr: *JSAst.E.Array = switch (workspaces_expr.data) {
+            .e_array => |nested| nested,
+            .e_object => |obj| if (obj.get("packages")) |packages| switch (packages.data) {
+                .e_array => |nested| nested,
+                else => continue,
+            } else continue,
+            else => continue,
+        };
+
+        if (nested_arr.items.len == 0) continue;
+
+        // Copy `cached.source` by value: `cached` is a pointer into the
+        // json_cache HashMap, which processNamesArrayOnePass can grow via
+        // its own getWithPath calls — a resize would free the backing
+        // array and make `&cached.source` dangling. The slices inside
+        // Source point to allocations outside the HashMap, so a by-value
+        // copy is stable for the duration of the recursive call.
+        const source_copy = cached.source;
+
+        // Best-effort per sub-package: a broken nested `workspaces` field
+        // in one sibling shouldn't stop discovery of the others. Only OOM
+        // is fatal. The caller rolls back log messages from this recursive
+        // pass, so logged errors get swallowed there anyway.
+        processNamesArrayOnePass(
+            workspace_names,
+            allocator,
+            json_cache,
+            log,
+            nested_arr,
+            &source_copy,
+            root_dir,
+            workspaces_expr.loc,
+            string_builder,
+        ) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => continue,
+        };
+    }
 }
 
 const IGNORED_PATHS: []const []const u8 = &.{

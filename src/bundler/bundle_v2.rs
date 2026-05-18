@@ -5050,9 +5050,11 @@ pub mod bv2_impl {
                         // SAFETY: worker ptrs are live until `deinit_soon`.
                         unsafe { (**worker).deinit_soon() };
                     }
-                    assignments.clear_retaining_capacity();
                     pool.worker_pool().wake_for_idle_events();
                 }
+                // `ThreadPool` is arena-allocated; the arena bulk-free won't
+                // run its `Drop`, so release the map's backing storage here.
+                assignments.clear_and_free();
             }
             pool.deinit();
 

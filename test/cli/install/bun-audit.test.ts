@@ -343,4 +343,71 @@ describe("`bun audit`", () => {
       expect(output).toContain("vulnerabilities");
     },
   });
+
+  // Regression: https://github.com/oven-sh/bun/issues/31009
+  // --json previously bypassed --audit-level and --ignore because it wrote the
+  // raw registry response straight to stdout.
+  doAuditTest("--json honors --audit-level by filtering out lower severities", {
+    exitCode: 1,
+    files: fixture("express@3"),
+    args: ["--json", "--audit-level", "high"],
+    fn: async ({ stdout }) => {
+      const json = JSON.parse(await stdout) as Record<
+        string,
+        { severity: string }[]
+      >;
+      const severities = Object.values(json)
+        .flat()
+        .map(v => v.severity);
+      expect(severities.length).toBeGreaterThan(0);
+      expect(severities).not.toContain("low");
+      expect(severities).not.toContain("moderate");
+      for (const sev of severities) {
+        expect(["high", "critical"]).toContain(sev);
+      }
+    },
+  });
+
+  doAuditTest("--json with --audit-level critical only keeps critical advisories", {
+    exitCode: 1,
+    files: fixture("express@3"),
+    args: ["--json", "--audit-level", "critical"],
+    fn: async ({ stdout }) => {
+      const json = JSON.parse(await stdout) as Record<
+        string,
+        { severity: string }[]
+      >;
+      const severities = Object.values(json)
+        .flat()
+        .map(v => v.severity);
+      expect(severities.length).toBeGreaterThan(0);
+      for (const sev of severities) {
+        expect(sev).toBe("critical");
+      }
+    },
+  });
+
+  doAuditTest("--json honors --ignore by dropping matching advisories", {
+    exitCode: 1,
+    files: fixture("express@3"),
+    args: ["--json", "--ignore", "GHSA-gwg9-rgvj-4h5j"],
+    fn: async ({ stdout }) => {
+      const out = await stdout;
+      expect(out).not.toContain("GHSA-gwg9-rgvj-4h5j");
+      // Still valid JSON.
+      JSON.parse(out);
+    },
+  });
+
+  doAuditTest("--json drops packages when every advisory gets filtered out", {
+    exitCode: 0,
+    files: fixture("mix-of-safe-and-vulnerable-dependencies"),
+    args: ["--json", "--audit-level", "critical"],
+    fn: async ({ stdout }) => {
+      const json = JSON.parse(await stdout);
+      // ms@0.7.0 has only moderate + high advisories in the fixture — nothing
+      // at or above critical — so the package shouldn't even appear.
+      expect(json).toEqual({});
+    },
+  });
 });

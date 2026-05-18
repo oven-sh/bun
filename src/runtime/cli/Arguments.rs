@@ -1083,7 +1083,9 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
             ctx.runtime_options.eval.script = script.into();
         }
         ctx.runtime_options.syntax_check = args.flag(b"--check");
-        if ctx.runtime_options.syntax_check && !ctx.runtime_options.eval.script.is_empty() {
+        if ctx.runtime_options.syntax_check
+            && (args.option(b"--eval").is_some() || args.option(b"--print").is_some())
+        {
             Output::err_generic(
                 "either --check or --eval can be used, not both",
                 format_args!(""),

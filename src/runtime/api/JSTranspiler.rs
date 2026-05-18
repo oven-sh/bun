@@ -766,7 +766,6 @@ impl<'a> TransformTask<'a> {
 
     pub fn run(&mut self) {
         let name = self.loader.stdin_name();
-        let source = bun_ast::Source::init_path_string(name, self.input_code.slice());
 
         // PERF(port): was MimallocArena bulk-free — profile if hot.
         let arena = Arena::new();
@@ -799,8 +798,10 @@ impl<'a> TransformTask<'a> {
 
         // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
         // Transpiler<'static> forces the borrow to 'static, so launder through a raw ptr.
-        self.transpiler
-            .set_arena(unsafe { bun_ptr::detach_lifetime_ref(&arena) });
+        let arena_ref: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
+        let source: &bun_ast::Source =
+            arena_ref.alloc(bun_ast::Source::init_path_string(name, self.input_code.slice()));
+        self.transpiler.set_arena(arena_ref);
         self.transpiler.set_log(&raw mut self.log);
         // self.log.msgs.allocator = bun.default_allocator → no-op
 
@@ -812,14 +813,14 @@ impl<'a> TransformTask<'a> {
         };
 
         let parse_options = ParseOptions {
-            arena: &arena,
+            arena: arena_ref,
             macro_remappings: clone_macro_map(&self.macro_map),
             dirname_fd: bun_sys::Fd::INVALID,
             file_descriptor: None,
             loader: self.loader,
             jsx,
             path: source.path.clone(),
-            virtual_source: Some(&source),
+            virtual_source: Some(source),
             replace_exports: self.replace_exports.entries.clone().expect("OOM"),
             experimental_decorators: self.tsconfig.map_or(false, |ts| ts.experimental_decorators),
             emit_decorator_metadata: self.tsconfig.map_or(false, |ts| ts.emit_decorator_metadata),
@@ -1258,11 +1259,11 @@ impl JSTranspiler {
 
     fn get_parse_result(
         &self,
-        arena: &Arena,
+        arena: &'static Arena,
         code: &[u8],
         loader: Option<Loader>,
         macro_js_ctx: MacroJSCtx,
-    ) -> Option<ParseResult> {
+    ) -> Option<ParseResult<'static>> {
         let config = self.config.get();
         let name = config.default_loader.stdin_name();
 
@@ -1284,7 +1285,8 @@ impl JSTranspiler {
             code
         };
 
-        let source = bun_ast::Source::init_path_string(name, processed_code);
+        let source: &bun_ast::Source =
+            arena.alloc(bun_ast::Source::init_path_string(name, processed_code));
 
         let jsx = match config.tsconfig.as_deref() {
             Some(ts) => ts
@@ -1294,14 +1296,14 @@ impl JSTranspiler {
         };
 
         let parse_options = ParseOptions {
-            arena: arena,
+            arena,
             macro_remappings: clone_macro_map(&config.macro_map),
             dirname_fd: bun_sys::Fd::INVALID,
             file_descriptor: None,
             loader: loader.unwrap_or(config.default_loader),
             jsx,
             path: source.path.clone(),
-            virtual_source: Some(&source),
+            virtual_source: Some(source),
             replace_exports: config.runtime.replace_exports.entries.clone().expect("OOM"),
             macro_js_ctx,
             experimental_decorators: config
@@ -1368,9 +1370,10 @@ impl JSTranspiler {
         // `_restore` (declared after `arena`/`log`, so dropped first) restores
         // `prev_arena` and `&self.config.log` before either local drops.
         // `with_mut` borrow is closure-scoped; no JS re-entry inside.
+        let arena_ref: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
         let prev_arena = self.transpiler.with_mut(|t| {
             let prev = t.arena;
-            t.set_arena(unsafe { bun_ptr::detach_lifetime_ref(&arena) });
+            t.set_arena(arena_ref);
             t.set_log(&raw mut log);
             prev
         });
@@ -1384,7 +1387,7 @@ impl JSTranspiler {
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::new(&arena);
         let _ast_scope = ast_memory_allocator.enter();
 
-        let parse_result = self.get_parse_result(&arena, code, loader, MacroJSCtx::ZERO);
+        let parse_result = self.get_parse_result(arena_ref, code, loader, MacroJSCtx::ZERO);
         let log_ref = self.transpiler.get().log_mut();
         let Some(mut parse_result) = parse_result else {
             if (log_ref.warnings + log_ref.errors) > 0 {
@@ -1401,7 +1404,7 @@ impl JSTranspiler {
         let imports_label = ZigString::static_(b"imports");
         let named_imports_value = named_imports_to_js(
             global,
-            parse_result.ast.import_records.slice(),
+            parse_result.ast.import_records.as_slice(),
             self.config.get().trim_unused_imports.unwrap_or(false),
         )?;
 
@@ -1557,11 +1560,12 @@ impl JSTranspiler {
         // `_restore` (declared after `arena`/`log`, so dropped first) restores
         // `prev_arena`, `&self.config.log`, and `prev_macro_context` before either drops.
         // `with_mut` borrow is closure-scoped; no JS re-entry inside.
+        let arena_ref: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
         let (prev_arena, prev_macro_context) = self.transpiler.with_mut(|t| {
             let prev_arena = t.arena;
             // `take()` both reads the prior value AND nulls it (spec: `macro_context = null`).
             let prev_mc = t.macro_context.take();
-            t.set_arena(unsafe { bun_ptr::detach_lifetime_ref(&arena) });
+            t.set_arena(arena_ref);
             t.set_log(&raw mut log);
             (prev_arena, prev_mc)
         });
@@ -1574,7 +1578,7 @@ impl JSTranspiler {
 
         // `MacroJSCtx` carries the encoded `JSValue` bits (`#[repr(transparent)] i64`).
         let macro_js_ctx: MacroJSCtx = MacroJSCtx(js_ctx_value.0 as i64);
-        let parse_result = self.get_parse_result(&arena, code, loader, macro_js_ctx);
+        let parse_result = self.get_parse_result(arena_ref, code, loader, macro_js_ctx);
         let log_ref = self.transpiler.get().log_mut();
         let Some(parse_result) = parse_result else {
             if (log_ref.warnings + log_ref.errors) > 0 {

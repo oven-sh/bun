@@ -26,7 +26,7 @@ use crate::{
 bun_core::declare_scope!(AsyncModule, hidden);
 
 pub struct InitOpts<'a> {
-    pub parse_result: ParseResult,
+    pub parse_result: ParseResult<'static>,
     pub referrer: &'a [u8],
     pub specifier: &'a [u8],
     pub path: Fs::Path<'a>,
@@ -40,7 +40,7 @@ pub struct InitOpts<'a> {
 
 pub struct AsyncModule {
     // This is all the state used by the printer to print the module
-    pub parse_result: ParseResult,
+    pub parse_result: ParseResult<'static>,
     pub promise: StrongOptional, // Strong.Optional, default .empty
     /// Packed `referrer ++ specifier ++ path.text`. Owns the bytes that the
     /// Zig version aliased via `buf.allocatedSlice()`. Stored as offsets so
@@ -938,11 +938,7 @@ impl AsyncModule {
         );
         let location = bun_ast::range_data(
             Some(&self.parse_result.source),
-            self.parse_result
-                .ast
-                .import_records
-                .at(import_record_id as usize)
-                .range,
+            self.parse_result.ast.import_records[import_record_id as usize].range,
             b"",
         )
         .location
@@ -1162,11 +1158,7 @@ impl AsyncModule {
 
         let location = bun_ast::range_data(
             Some(&self.parse_result.source),
-            self.parse_result
-                .ast
-                .import_records
-                .at(import_record_id as usize)
-                .range,
+            self.parse_result.ast.import_records[import_record_id as usize].range,
             b"",
         )
         .location
@@ -1175,10 +1167,7 @@ impl AsyncModule {
             global_this,
             b"specifier",
             ZigString::from_bytes(
-                self.parse_result
-                    .ast
-                    .import_records
-                    .at(import_record_id as usize)
+                self.parse_result.ast.import_records[import_record_id as usize]
                     .path
                     .text,
             )
@@ -1241,7 +1230,9 @@ impl AsyncModule {
         // back. Rust takes-by-value via `mem::take` then restores below to
         // satisfy borrowck around `linker.link(&mut parse_result)` while
         // `self` is also borrowed.
-        let mut parse_result = core::mem::take(&mut self.parse_result);
+        let arena = *self.parse_result.ast.parts.allocator();
+        let mut parse_result =
+            core::mem::replace(&mut self.parse_result, ParseResult::empty(arena));
         // SAFETY: `string_buf` is a `Box<[u8]>` whose backing allocation is
         // stable for the lifetime of `*self`; this fn never replaces it, so
         // slices into it remain valid across the `&mut self` reborrows below
@@ -1300,7 +1291,9 @@ impl AsyncModule {
         let is_commonjs_module = self.parse_result.ast.has_commonjs_export_names
             || self.parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
         let input_fd = self.parse_result.input_fd;
-        let parse_result = core::mem::take(&mut self.parse_result);
+        let arena = *self.parse_result.ast.parts.allocator();
+        let parse_result =
+            core::mem::replace(&mut self.parse_result, ParseResult::empty(arena));
 
         // PORT NOTE: `VirtualMachine.source_code_printer` is a thread-local
         // `?*BufferPrinter` (see `SOURCE_CODE_PRINTER`); Zig dereferenced to

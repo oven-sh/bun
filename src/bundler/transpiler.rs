@@ -963,14 +963,14 @@ impl<'a> ParseResult<'a> {
 }
 
 /// Port of `transpiler.zig:Transpiler.ParseOptions`.
-pub struct ParseOptions<'a> {
+pub struct ParseOptions<'a, 'b> {
     pub arena: &'a Arena,
     pub dirname_fd: FD,
     pub file_descriptor: Option<FD>,
     pub file_hash: Option<u32>,
 
     /// On exception, we might still want to watch the file.
-    pub file_fd_ptr: Option<&'a mut FD>,
+    pub file_fd_ptr: Option<&'b mut FD>,
 
     pub path: bun_paths::fs::Path<'static>,
     pub loader: options::Loader,
@@ -979,7 +979,7 @@ pub struct ParseOptions<'a> {
     pub jsx: crate::options_impl::jsx::Pragma,
     pub macro_remappings: MacroRemap,
     pub macro_js_ctx: MacroJSCtx,
-    pub virtual_source: Option<&'a bun_ast::Source>,
+    pub virtual_source: Option<&'b bun_ast::Source>,
     /// Zig: `runtime.Runtime.Features.ReplaceableExport.Map`.
     pub replace_exports: bun_collections::StringArrayHashMap<bun_ast::runtime::ReplaceableExport>,
     pub inject_jest_globals: bool,
@@ -997,7 +997,7 @@ pub struct ParseOptions<'a> {
     /// See: https://nodejs.org/api/packages.html#type
     pub module_type: options::ModuleType,
 
-    pub runtime_transpiler_cache: Option<&'a mut RuntimeTranspilerCache>,
+    pub runtime_transpiler_cache: Option<&'b mut RuntimeTranspilerCache>,
 
     pub keep_json_and_toml_as_one_statement: bool,
     pub allow_bytecode_cache: bool,
@@ -1376,7 +1376,7 @@ impl<'a> Transpiler<'a> {
 
     pub fn parse(
         &mut self,
-        this_parse: ParseOptions<'a>,
+        this_parse: ParseOptions<'a, '_>,
         client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint>,
     ) -> Option<ParseResult<'a>> {
         self.parse_maybe_return_file_only::<false>(this_parse, client_entry_point_)
@@ -1384,7 +1384,7 @@ impl<'a> Transpiler<'a> {
 
     pub fn parse_maybe_return_file_only<const RETURN_FILE_ONLY: bool>(
         &mut self,
-        this_parse: ParseOptions<'a>,
+        this_parse: ParseOptions<'a, '_>,
         client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint>,
     ) -> Option<ParseResult<'a>> {
         self.parse_maybe_return_file_only_allow_shared_buffer::<RETURN_FILE_ONLY, false>(
@@ -1398,7 +1398,7 @@ impl<'a> Transpiler<'a> {
         const USE_SHARED_BUFFER: bool,
     >(
         &mut self,
-        mut this_parse: ParseOptions<'a>,
+        mut this_parse: ParseOptions<'a, '_>,
         // TODO(port): Zig `anytype` + `@hasField(.., "source")` — only ever
         // called with `?*EntryPoints.ClientEntryPoint` in this file. If other
         // callers pass a different type, introduce a `ClientEntryPointLike`

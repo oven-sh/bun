@@ -4491,9 +4491,7 @@ pub(crate) fn resolve_embedded_file_to_buf(
             let size_ok = st.st_size as usize == file_contents.len();
             #[cfg(unix)]
             {
-                size_ok
-                    && st.st_uid == extract_owner_uid()
-                    && bun_sys::S::ISREG(st.st_mode as u32)
+                size_ok && st.st_uid == extract_owner_uid() && bun_sys::S::ISREG(st.st_mode as u32)
             }
             #[cfg(windows)]
             {
@@ -4515,14 +4513,19 @@ pub(crate) fn resolve_embedded_file_to_buf(
     let content_hash = bun_wyhash::hash(file_contents);
     let uid = extract_owner_uid();
     let mut canonical_name_buf = [0u8; 64];
-    let canonical_name_len = format_canonical_name(&mut canonical_name_buf, uid, content_hash, extname)?;
-    let canonical_name =
-        bun_core::ZStr::from_buf(&canonical_name_buf[..canonical_name_len], canonical_name_len - 1);
+    let canonical_name_len =
+        format_canonical_name(&mut canonical_name_buf, uid, content_hash, extname)?;
+    let canonical_name = bun_core::ZStr::from_buf(
+        &canonical_name_buf[..canonical_name_len],
+        canonical_name_len - 1,
+    );
 
     // If a previous run of this binary already wrote the canonical file
     // and it's still ours with the right size, skip the write — just
     // resolve the path and cache it.
-    let tmpdir = (unsafe { &mut *Fs::FileSystem::instance() }).tmpdir().ok()?;
+    let tmpdir = (unsafe { &mut *Fs::FileSystem::instance() })
+        .tmpdir()
+        .ok()?;
     let tmpdir_fd: bun_sys::Fd = tmpdir.fd;
     if let Ok(st) = bun_sys::fstatat(tmpdir_fd, canonical_name) {
         let size_ok = st.st_size as usize == file_contents.len();

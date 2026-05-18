@@ -525,6 +525,44 @@ impl FetchTasklet {
         unsafe { FetchTasklet::deinit(this.cast()) };
     }
 
+    /// `HTTPClientResultCallback::release_at_shutdown` for `FetchTasklet`.
+    /// Called from `dealloc_in_flight_for_exit` on the HTTP thread for each
+    /// request still in `in_flight` when `process.exit()` interrupts it.
+    /// `queue()` left two refs (initial +1 and `node_ref.ref_()`); the final
+    /// `callback`'s deref and `on_progress_update`'s JS-side deref will never
+    /// run, so this must balance both — but only when no `on_progress_update`
+    /// is already parked in the parent's concurrent queue.
+    ///
+    /// The `has_schedule_callback` flag distinguishes the two states:
+    ///   * `false` — nothing queued. Drop both refs here; `dealloc_for_shutdown`
+    ///     parks the box for `shutdown_for_exit`'s drain.
+    ///   * `true` — a non-final `on_progress_update` is queued (this entry is
+    ///     still in `in_flight`, so the *final* `callback` hasn't run). That
+    ///     queued node owns the JS-side ref. The JS thread releases it from
+    ///     `release_queued_tasks_for_shutdown` *after* the HTTP daemon parks;
+    ///     dropping it here too would leave the queued node pointing at a
+    ///     freed `FetchTasklet`. Drop only the HTTP-side ref.
+    ///
+    /// `has_schedule_callback` is written exclusively by the HTTP-thread
+    /// `callback` and the JS-thread `on_progress_update`; the JS thread is
+    /// parked in `wait_timeout_while` here, so the load is race-free.
+    ///
+    /// SAFETY: `this` is the live `*mut FetchTasklet` registered as
+    /// `result_callback.ctx` in `get()`; HTTP-thread-only at this point.
+    unsafe fn release_at_shutdown(this: *mut ()) {
+        let this = this.cast::<FetchTasklet>();
+        // Free the body-bytes buffer the same way the `is_shutting_down`
+        // branch in `callback` does (no JS-thread drain will reclaim it).
+        // SAFETY: caller contract — `this` is live and HTTP-thread-exclusive.
+        let queued_progress_update =
+            unsafe { (*this).has_schedule_callback.load(Ordering::Acquire) };
+        unsafe { (*this).scheduled_response_buffer = MutableString::default() };
+        FetchTasklet::deref_from_thread(this);
+        if !queued_progress_update {
+            FetchTasklet::deref_from_thread(this);
+        }
+    }
+
     fn get_current_response(&self) -> Option<*mut Response> {
         // we need a body to resolve the promise when buffering
         if let Some(response) = self.native_response {
@@ -1761,9 +1799,10 @@ impl FetchTasklet {
             response_buffer,
             request_body_slice,
             // handles response events (on headers, on body, etc.)
-            http::HTTPClientResultCallback::new::<FetchTasklet>(
+            http::HTTPClientResultCallback::new_with_release::<FetchTasklet>(
                 fetch_tasklet_ptr,
                 FetchTasklet::callback,
+                FetchTasklet::release_at_shutdown,
             ),
             fetch_options.redirect_type,
             http::async_http::Options {

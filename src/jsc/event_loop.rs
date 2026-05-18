@@ -268,6 +268,11 @@ unsafe extern "Rust" {
     /// `WTFTimer::run` — `timer` is an erased `*mut bun_runtime::timer::WTFTimer`.
     /// Defined in `bun_runtime::dispatch`. Link-time resolved.
     fn __bun_run_wtf_timer(timer: *mut (), vm: *mut VirtualMachine);
+    /// Tag-specific shutdown release for a queued-but-never-run task. Called
+    /// from `EventLoop::deinit` (after `is_shutting_down` is observed true)
+    /// for every entry left in `self.tasks`. Must not call into JSC. Defined
+    /// in `bun_runtime::dispatch`. Link-time resolved.
+    fn __bun_release_task_at_shutdown(task: bun_event_loop::Task);
 }
 
 #[inline]
@@ -782,6 +787,34 @@ impl EventLoop {
                 // SAFETY: heap-owned (see `ConcurrentTask::create`); not yet
                 // freed, and the iterator no longer references it.
                 drop(unsafe { bun_core::heap::take(node) });
+            }
+        }
+    }
+
+    /// Release queued-but-never-run tasks that own a ref the dispatch path
+    /// would have dropped. Called from `global_exit` after `shutdown_for_exit`
+    /// (HTTP daemon parked, no further cross-thread posts) and before
+    /// `destructOnExit` (JSC still live, so `FetchTasklet::deinit` can drop
+    /// its `Strong`/`Weak` handles). Re-runs `drop_concurrent_cpp_tasks` first
+    /// so any task the HTTP thread posted after the earlier drain — its
+    /// `is_shutting_down()` read is non-atomic and can lag — is forwarded into
+    /// `self.tasks` for the per-tag release below.
+    pub fn release_queued_tasks_for_shutdown(&mut self) {
+        self.drop_concurrent_cpp_tasks();
+        while let Some(task) = self.tasks.read_item() {
+            if task.tag == bun_event_loop::task_tag::ManagedTask {
+                // SAFETY: every ManagedTask is heap_owned (ManagedTask::new -> heap::into_raw).
+                let managed =
+                    unsafe { bun_core::heap::take(task.ptr.cast::<ManagedTask::ManagedTask>()) };
+                if let (Some(cleanup), Some(ctx)) = (managed.cleanup, managed.ctx) {
+                    cleanup(ctx.as_ptr());
+                }
+                drop(managed);
+            } else {
+                // SAFETY: tag-specific release (drops JSC handles while the VM
+                // is still live); definer in `bun_runtime::dispatch` matches
+                // the same tag set `tick_queue_with_count` does.
+                unsafe { __bun_release_task_at_shutdown(task) };
             }
         }
     }

@@ -956,10 +956,20 @@ impl HttpThread {
     /// `ThreadlocalAsyncHTTP` box by mirroring the teardown
     /// `on_async_http_callback_raw` performs (drop the clone-only fields,
     /// then raw-dealloc the storage — NOT `Box::drop`, since the remaining
-    /// fields are bitwise-shared with the JS-thread original). The result
-    /// callback is deliberately not invoked: the JS thread is parked in
-    /// `global_exit()` waiting on us and will not process the completion.
+    /// fields are bitwise-shared with the JS-thread original). The full
+    /// result callback is not invoked (the JS thread is parked in
+    /// `global_exit()` waiting on us and will not process the completion);
+    /// only `release_at_shutdown` runs so the owner can drop the ref it
+    /// took for the in-flight callback — without it the `ctx` ⇄
+    /// `Box<AsyncHTTP>` cycle is unreachable from any root and LSan reports
+    /// the whole chain as indirect leaks.
     fn dealloc_in_flight_for_exit(&mut self) {
+        bun_core::scoped_log!(
+            HTTPThread,
+            "dealloc_in_flight_for_exit: in_flight={} deferred={}",
+            self.in_flight.len(),
+            self.deferred_tasks.len()
+        );
         for nn in core::mem::take(&mut self.in_flight) {
             // SAFETY: every entry is the `heap::release` allocation pushed by
             // `start_queued_task`; HTTP-thread-only and removed at the
@@ -968,6 +978,13 @@ impl HttpThread {
             // `client`, but the loop below never ticks again (we park
             // forever after this returns).
             unsafe {
+                // Snapshot before tearing down `client` — `release_at_shutdown`
+                // must run after the clone-only fields drop (it may park `ctx`
+                // for JS-thread `deinit`, which frees the original
+                // `Box<AsyncHTTP>` whose bitwise-shared fields those clone
+                // fields alias) but before the raw `dealloc` (so `ctx` is
+                // observed once per in-flight entry).
+                let release = (*nn.as_ptr()).async_http.result_callback;
                 let client = &mut (*nn.as_ptr()).async_http.client;
                 drop(core::mem::take(&mut client.redirect));
                 drop(core::mem::take(&mut client.prev_redirect));
@@ -979,6 +996,9 @@ impl HttpThread {
                     ctx.deref();
                 }
                 drop(core::mem::take(&mut client.state));
+                if let Some(f) = release.release_at_shutdown {
+                    f(release.ctx);
+                }
                 std::alloc::dealloc(
                     nn.as_ptr().cast::<u8>(),
                     std::alloc::Layout::new::<crate::ThreadlocalAsyncHttp<'static>>(),

@@ -1587,6 +1587,15 @@ impl VirtualMachine {
             // a terminal state. Ask it to reclaim them now (waits up to 1s).
             bun_http::shutdown_for_exit();
 
+            // The HTTP daemon is parked. Release any task it posted to our
+            // queue before observing `is_shutting_down` (the read is
+            // non-atomic and can lag the JS-thread store) — `FetchTasklet`'s
+            // `on_progress_update` would have dropped the JS-side ref, and
+            // without it the tasklet ⇄ `Box<AsyncHTTP>` cycle leaks. Must
+            // precede `destructOnExit` so `FetchTasklet::deinit` can drop its
+            // JSC `Strong`/`Weak` handles against a live HandleSet.
+            self.event_loop_mut().release_queued_tasks_for_shutdown();
+
             Zig__GlobalObject__destructOnExit(self.global());
 
             // lastChanceToFinalize() above runs Listener/Server finalize →

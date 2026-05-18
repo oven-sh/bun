@@ -1152,4 +1152,30 @@ pub fn __bun_tick_queue_with_count(
 // (former duplicate `__bun_run_tasks` removed r6 — `bun_jsc::task::run_tasks`
 // had no callers; `__bun_tick_queue_with_count` above is the sole entry point.)
 
+/// `__bun_release_task_at_shutdown` body — declared `extern "Rust"` in
+/// `bun_jsc::event_loop`. Called from `EventLoop::deinit` for every queued
+/// task that will never be dispatched (the JS thread is past `global_exit`'s
+/// `is_shutting_down` flip and the loop will not tick again). Releases the
+/// per-tag refs the run path would have dropped, without calling into JSC.
+/// Tags not listed are no-ops — either their payload is field-embedded in a
+/// box reclaimed elsewhere, or their owner is process-lifetime.
+#[unsafe(no_mangle)]
+pub fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) {
+    use bun_event_loop::task_tag;
+    #[allow(clippy::single_match)]
+    match task.tag {
+        // `callback` (HTTP thread) won the `has_schedule_callback` CAS and
+        // posted this entry, then deref'd its own +1 if final; the JS-side
+        // +1 it expected `on_progress_update` to drop is the one we release
+        // here. Runs on the JS thread, so the plain `deref` (→ `deinit` on
+        // 1→0) is the right teardown path; the HTTP daemon is already
+        // parked (`shutdown_for_exit` precedes `destroy`), so the
+        // `Box<AsyncHTTP>` and any `metadata` it owns are exclusively ours.
+        task_tag::FetchTasklet => {
+            FetchTasklet::deref(task.ptr.cast::<FetchTasklet>());
+        }
+        _ => {}
+    }
+}
+
 // ported from: src/jsc/Task.zig

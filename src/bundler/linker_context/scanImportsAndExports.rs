@@ -545,6 +545,7 @@ pub fn scan_imports_and_exports(
         // const needs_export_symbol_from_runtime: []const bool = this.graph.meta.items().needs_export_symbol_from_runtime;
 
         let mut runtime_export_symbol_ref: Ref = Ref::NONE;
+        let mut ident_scratch: Vec<u8> = Vec::new();
 
         for source_index_ in &reachable {
             let source_index = source_index_.get();
@@ -560,6 +561,21 @@ pub fn scan_imports_and_exports(
             let exports_ref = col_ref!(exports_refs)[id];
             let module_ref = col_ref!(module_refs)[id];
 
+            // Format the source identifier once into a reusable scratch so the
+            // per-file `init_/exports_/module_` writes below are plain memcpys
+            // instead of three trips through `core::fmt::write`.
+            let ident: &[u8] = if !source.identifier_name.is_empty() {
+                &source.identifier_name[..]
+            } else {
+                ident_scratch.clear();
+                core::fmt::Write::write_fmt(
+                    &mut bun_core::fmt::VecWriter(&mut ident_scratch),
+                    format_args!("{}", source.fmt_identifier()),
+                )
+                .expect("infallible: VecWriter never errors");
+                &ident_scratch[..]
+            };
+
             let string_buffer_len: usize = 'brk: {
                 let mut count: usize = 0;
                 if is_entry_point && output_format == Format::Esm {
@@ -571,11 +587,7 @@ pub fn scan_imports_and_exports(
                     }
                 }
 
-                let ident_fmt_len: usize = if source.identifier_name.len() > 0 {
-                    source.identifier_name.len()
-                } else {
-                    bun_core::fmt::count(format_args!("{}", source.fmt_identifier()))
-                };
+                let ident_fmt_len = ident.len();
 
                 if wrap == WrapKind::Esm && col_ref!(wrapper_refs)[id].is_valid() {
                     count += "init_".len() + ident_fmt_len;
@@ -637,8 +649,11 @@ pub fn scan_imports_and_exports(
             if wrap == WrapKind::Esm {
                 let r#ref = col_ref!(wrapper_refs)[id];
                 if r#ref.is_valid() {
-                    let original_name =
-                        builder.fmt(format_args!("init_{}", source.fmt_identifier()));
+                    let start = builder.len;
+                    builder.append(b"init_");
+                    builder.append(ident);
+                    let end = builder.len;
+                    let original_name = &builder.allocated_slice()[start..end];
                     unsafe { this.graph.symbol_mut(r#ref) }.original_name =
                         bun_ast::StoreStr::new(original_name);
                 }
@@ -653,12 +668,16 @@ pub fn scan_imports_and_exports(
                 && export_kind != ExportsKind::Cjs
                 && output_format != Format::InternalBakeDev
             {
-                let exports_name = bun_ast::StoreStr::new(
-                    builder.fmt(format_args!("exports_{}", source.fmt_identifier())),
-                );
-                let module_name = bun_ast::StoreStr::new(
-                    builder.fmt(format_args!("module_{}", source.fmt_identifier())),
-                );
+                let start = builder.len;
+                builder.append(b"exports_");
+                builder.append(ident);
+                let end = builder.len;
+                let exports_name = bun_ast::StoreStr::new(&builder.allocated_slice()[start..end]);
+                let start = builder.len;
+                builder.append(b"module_");
+                builder.append(ident);
+                let end = builder.len;
+                let module_name = bun_ast::StoreStr::new(&builder.allocated_slice()[start..end]);
 
                 // Note: it's possible for the symbols table to be resized
                 // so we cannot call .get() above this scope.

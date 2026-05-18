@@ -7191,12 +7191,11 @@ pub mod bv2_impl {
                         &mut result.ast.import_records,
                         Vec::new_in(result_heap),
                     );
-                    let source_path_owned: Box<[u8]> = source_path_text.into();
                     this.patch_import_record_source_indices(
                         &mut import_records,
                         PatchImportRecordsCtx {
                             source_index: Index::init(result_source_index as IndexInt),
-                            source_path: &source_path_owned,
+                            source_path: source_path_text,
                             loader: result.loader,
                             target: result.ast.target,
                             redirect_import_record_index: result.ast.redirect_import_record_index,
@@ -7375,7 +7374,6 @@ pub mod bv2_impl {
                             )
                             .expect("oom");
                     }
-                    let _ = source_path_owned;
                 }
                 parse_task::ResultValue::Err(err) => {
                     if cfg!(feature = "debug_logs") {

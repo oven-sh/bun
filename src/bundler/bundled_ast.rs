@@ -159,11 +159,39 @@ bitflags::bitflags! {
 }
 
 impl<'arena> BundledAst<'arena> {
-    // TODO(port): Zig `pub const empty = BundledAst.init(Ast.empty);` — cannot be a `const` in Rust
-    // because `init` is not const-evaluable. Consider a `static` via `OnceLock` or make
-    // `init`/`Ast::empty_in` const fn if feasible.
+    // Zig: `pub const empty = BundledAst.init(Ast.empty)` (comptime). The three `ArenaVec`
+    // fields prevent `const fn` here, but spell out the defaults directly instead of
+    // round-tripping through `Ast::empty_in` + `init` — this runs once per discovered
+    // module on the main thread.
     pub fn empty_in(arena: &'arena bun_alloc::Arena) -> Self {
-        Self::init(Ast::empty_in(arena))
+        Self {
+            approximate_newline_count: 0,
+            nested_scope_slot_counts: SlotCounts::default(),
+            exports_kind: ExportsKind::None,
+            import_records: import_record::List::new_in(arena),
+            hashbang: StoreStr::EMPTY,
+            parts: part::List::new_in(arena),
+            css: None,
+            url_for_css: b"",
+            symbols: symbol::List::new_in(arena),
+            module_scope: Scope::default(),
+            char_freq: CharFreq::default(),
+            exports_ref: Ref::NONE,
+            module_ref: Ref::NONE,
+            wrapper_ref: Ref::NONE,
+            require_ref: Ref::NONE,
+            top_level_await_keyword: bun_ast::Range::NONE,
+            tla_check: TlaCheck::default(),
+            named_imports: NamedImports::default(),
+            named_exports: NamedExports::default(),
+            export_star_import_records: Box::default(),
+            top_level_symbols_to_parts: TopLevelSymbolToParts::default(),
+            commonjs_named_exports: CommonJSNamedExports::default(),
+            redirect_import_record_index: u32::MAX,
+            target: bun_ast::Target::Browser,
+            ts_enums: bun_ast::ast_result::TsEnumsMap::default(),
+            flags: Flags::empty(),
+        }
     }
 
     // PORT NOTE: Zig's `*const BundledAst` bitwise-copies every field; the Rust

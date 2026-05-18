@@ -747,15 +747,8 @@ impl EventLoop {
         let _ = self.tasks.write_item(task);
     }
 
-    /// Free every queued `ManagedTask` box without running it. Running could
-    /// re-enter the dying VM; freeing only drops the box and its owned ctx.
-    ///
-    /// Must run **before** `Zig__GlobalObject__destructOnExit()` /
-    /// `WebWorker__teardownJSCVM()` if any owned ctx holds a JS handle
-    /// (`Strong` / `JSPromiseStrong` / `AsyncTaskTracker`) — those `Drop`
-    /// impls dereference the VM's `HandleSet`, which is freed by `~VM`.
-    pub fn drain_pending_managed_tasks(&mut self) {
-        let mut survivors: Vec<Task> = Vec::new();
+    pub fn deinit(&mut self) {
+        // Free (don't run — running could re-enter the dying VM) queued ManagedTask boxes.
         while let Some(task) = self.tasks.read_item() {
             if task.tag == bun_event_loop::task_tag::ManagedTask {
                 // SAFETY: every ManagedTask is heap_owned (ManagedTask::new -> heap::into_raw).
@@ -765,20 +758,8 @@ impl EventLoop {
                     cleanup(ctx.as_ptr());
                 }
                 drop(managed);
-            } else {
-                survivors.push(task);
             }
         }
-        // Re-enqueue tasks we can't free (no Drop hook) so a partial drain
-        // doesn't strand them — `deinit()` reaps the buffers either way.
-        for t in survivors {
-            let _ = self.tasks.write_item(t);
-        }
-    }
-
-    pub fn deinit(&mut self) {
-        // Free (don't run — running could re-enter the dying VM) queued ManagedTask boxes.
-        self.drain_pending_managed_tasks();
         // PORT NOTE: Zig's `tasks.deinit()` / `clearAndFree()` map to dropping
         // the owned buffers; reassigning a fresh value drops the old in place.
         self.tasks = Queue::init();

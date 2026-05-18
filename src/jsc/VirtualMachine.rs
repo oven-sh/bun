@@ -1562,13 +1562,6 @@ impl VirtualMachine {
                     .close_all_socket_groups(vm_ref);
             }
 
-            // Free queued ManagedTask boxes whose ctx may hold a JS handle
-            // (e.g. `ServerAllConnectionsClosedTask.promise: JSPromiseStrong`)
-            // while the VM's HandleSet is still alive. `close_all_socket_groups`
-            // above can enqueue such tasks (`server.stop()` from `on_close`).
-            self.regular_event_loop.drain_pending_managed_tasks();
-            self.macro_event_loop.drain_pending_managed_tasks();
-
             Zig__GlobalObject__destructOnExit(self.global());
 
             // lastChanceToFinalize() above runs Listener/Server finalize →

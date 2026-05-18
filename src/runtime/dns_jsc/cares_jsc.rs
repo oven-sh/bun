@@ -680,7 +680,11 @@ fn getaddrinfo_uv_errno(e: c_ares::Error) -> i32 {
     const UV_EAI_BADHINTS: i32 = -3013;
     match e {
         c_ares::Error::ENODATA => UV_EAI_NODATA,
-        c_ares::Error::ENOTFOUND | c_ares::Error::ENONAME => UV_EAI_NONAME,
+        // `c_ares::Error::code()` aliases ENOTFOUND/ENONAME/EBADNAME to
+        // "DNS_ENOTFOUND"; keep errno in lockstep with code/message.
+        c_ares::Error::ENOTFOUND | c_ares::Error::ENONAME | c_ares::Error::EBADNAME => {
+            UV_EAI_NONAME
+        }
         c_ares::Error::EBADFAMILY => UV_EAI_FAMILY,
         c_ares::Error::EBADFLAGS => UV_EAI_BADFLAGS,
         c_ares::Error::EBADHINTS => UV_EAI_BADHINTS,

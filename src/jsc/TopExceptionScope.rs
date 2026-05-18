@@ -73,7 +73,9 @@ fn intern_location_file(file: &'static str) -> *const c_char {
     use std::ffi::{CStr, CString};
     use std::sync::Mutex;
     static CACHE: Mutex<Option<HashMap<usize, Box<CStr>>>> = Mutex::new(None);
-    let mut guard = CACHE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut guard = CACHE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     guard
         .get_or_insert_with(HashMap::new)
         .entry(file.as_ptr() as usize)

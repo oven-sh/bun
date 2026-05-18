@@ -2664,8 +2664,11 @@ impl BlobExt for Blob {
 
         if bom == Some(strings::BOM::Utf16Le) {
             let _free = (LIFETIME == Lifetime::Temporary).then(|| TemporaryBytes(raw_bytes));
-            // BOM::Utf16Le ⇒ buf is UTF-16LE bytes; len is even after BOM strip.
-            // Mirrors Zig `bun.reinterpretSlice(u16, buf)`; bytemuck checks align + even-len.
+            // BOM::Utf16Le ⇒ buf is UTF-16LE bytes. Stripping the 2-byte BOM
+            // does not change parity, so an odd-length input would make
+            // `bytemuck::cast_slice` `panic!` (uncatchable). Drop the trailing
+            // odd byte first, mirroring Zig's `@divTrunc(bytes.len, 2)`.
+            let buf = &buf[..buf.len() & !1];
             // +1 WTF ref; `OwnedString` releases it on scope exit (Zig: `defer out.deref()`).
             let out =
                 OwnedString::new(BunString::clone_utf16(bytemuck::cast_slice::<u8, u16>(buf)));
@@ -2847,8 +2850,11 @@ impl BlobExt for Blob {
         }
 
         if bom == Some(strings::BOM::Utf16Le) {
-            // BOM::Utf16Le ⇒ buf is UTF-16LE bytes; len is even after BOM strip.
-            // Mirrors Zig `bun.reinterpretSlice(u16, buf)`; bytemuck checks align + even-len.
+            // BOM::Utf16Le ⇒ buf is UTF-16LE bytes. Stripping the 2-byte BOM
+            // does not change parity, so an odd-length input would make
+            // `bytemuck::cast_slice` `panic!` (uncatchable). Drop the trailing
+            // odd byte first, mirroring Zig's `@divTrunc(bytes.len, 2)`.
+            let buf = &buf[..buf.len() & !1];
             // +1 WTF ref; `OwnedString` releases it on scope exit (Zig: `defer out.deref()`).
             let mut out =
                 OwnedString::new(BunString::clone_utf16(bytemuck::cast_slice::<u8, u16>(buf)));

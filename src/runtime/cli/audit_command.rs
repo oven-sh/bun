@@ -11,6 +11,7 @@ use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::package_manager_real::command_line_arguments::AuditLevel;
 use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{CommandLineArguments, PackageManager, Subcommand};
+use bun_js_printer as js_printer;
 use bun_libdeflate_sys::libdeflate;
 use bun_parsers::json as bun_json;
 use bun_url::URL;
@@ -106,9 +107,9 @@ impl AuditCommand {
         Global::exit(code);
     }
 
-    /// Returns the exit code of the command. 0 if no vulnerabilities were found, 1 if vulnerabilities were found.
-    /// The exception is when you pass --json, it will simply return 0 as that was considered a successful "request
-    /// for the audit information"
+    /// Returns the exit code of the command: 0 if no vulnerabilities were
+    /// found (after `--audit-level` / `--ignore` filtering), 1 otherwise.
+    /// `--json` follows the same convention.
     pub(crate) fn audit(
         _ctx: Command::Context,
         pm: &mut PackageManager,
@@ -139,37 +140,45 @@ impl AuditCommand {
         let response_text = send_audit_request(pm, &packages_result.audit_body)?;
 
         if json_output {
-            let _ = Output::writer().write_all(&response_text);
-            let _ = Output::writer().write_all(b"\n");
-
-            if !response_text.is_empty() {
-                let source =
-                    bun_ast::Source::init_path_string(b"audit-response.json", &response_text[..]);
-                let mut log = bun_ast::Log::init();
-                let bump = bun_alloc::Arena::new();
-
-                let expr = match bun_json::parse::<true>(&source, &mut log, &bump) {
-                    Ok(e) => e,
-                    Err(_) => {
-                        bun_core::pretty_errorln!(
-                            "<red>error<r>: audit request failed to parse json. Is the registry down?"
-                        );
-                        return Ok(1); // If we can't parse then safe to assume a similar failure
-                    }
-                };
-
-                // If the response is an empty object, no vulnerabilities
-                if let ExprData::EObject(obj) = &expr.data {
-                    if obj.properties.len_u32() == 0 {
-                        return Ok(0);
-                    }
-                }
-
-                // If there's any content in the response, there are vulnerabilities
-                return Ok(1);
+            if response_text.is_empty() {
+                return Ok(0);
             }
 
-            return Ok(0);
+            let source =
+                bun_ast::Source::init_path_string(b"audit-response.json", &response_text[..]);
+            let mut log = bun_ast::Log::init();
+            let bump = bun_alloc::Arena::new();
+
+            let expr = match bun_json::parse::<true>(&source, &mut log, &bump) {
+                Ok(e) => e,
+                Err(_) => {
+                    // Fall back to writing the raw response so callers keep
+                    // whatever diagnostic the registry returned.
+                    let _ = Output::writer().write_all(&response_text);
+                    let _ = Output::writer().write_all(b"\n");
+                    bun_core::pretty_errorln!(
+                        "<red>error<r>: audit request failed to parse json. Is the registry down?"
+                    );
+                    return Ok(1);
+                }
+            };
+
+            let remaining = filter_audit_response(&expr, audit_level, ignore_list);
+
+            match serialize_audit_json(expr, &source) {
+                Ok(bytes) => {
+                    let _ = Output::writer().write_all(&bytes);
+                    let _ = Output::writer().write_all(b"\n");
+                }
+                Err(_) => {
+                    // Re-printing shouldn't fail, but if it does fall back to
+                    // the raw response so the caller still sees _something_.
+                    let _ = Output::writer().write_all(&response_text);
+                    let _ = Output::writer().write_all(b"\n");
+                }
+            }
+
+            return Ok(if remaining > 0 { 1 } else { 0 });
         } else if !response_text.is_empty() {
             let exit_code = print_enhanced_audit_report(
                 &response_text,
@@ -190,6 +199,169 @@ impl AuditCommand {
             return Ok(0);
         }
     }
+}
+
+/// Extract the `"severity"` string from a vulnerability object.
+/// Matches the fallback in `parse_vulnerability` (and
+/// `AuditLevel::should_include_severity`): a missing/non-string severity is
+/// treated as `"moderate"`.
+fn vulnerability_severity<'a>(vuln: &'a Expr) -> &'a [u8] {
+    if let ExprData::EObject(obj) = &vuln.data {
+        for prop in obj.properties.slice() {
+            let Some(key) = &prop.key else { continue };
+            let ExprData::EString(key_str) = &key.data else {
+                continue;
+            };
+            if key_str.data.slice() != b"severity" {
+                continue;
+            }
+            let Some(value) = &prop.value else { continue };
+            if let ExprData::EString(val_str) = &value.data {
+                return val_str.data.slice();
+            }
+        }
+    }
+    b"moderate"
+}
+
+/// Render a vulnerability id / url the same way `parse_vulnerability` does
+/// so `--ignore` matching is consistent between the JSON and enhanced output
+/// paths.
+fn vulnerability_matches_ignore(vuln: &Expr, ignore_list: &[&[u8]]) -> bool {
+    if ignore_list.is_empty() {
+        return false;
+    }
+
+    let ExprData::EObject(obj) = &vuln.data else {
+        return false;
+    };
+
+    let mut id_bytes: Option<&[u8]> = None;
+    let mut id_number_buf: [u8; 20] = [0; 20];
+    let mut id_number_len: usize = 0;
+    let mut url_bytes: &[u8] = b"";
+
+    for prop in obj.properties.slice() {
+        let Some(key) = &prop.key else { continue };
+        let ExprData::EString(key_str) = &key.data else {
+            continue;
+        };
+        let field_name = key_str.data.slice();
+        let Some(value) = &prop.value else { continue };
+        match &value.data {
+            ExprData::EString(val_str) => {
+                let v = val_str.data.slice();
+                if field_name == b"id" {
+                    id_bytes = Some(v);
+                } else if field_name == b"url" {
+                    url_bytes = v;
+                }
+            }
+            ExprData::ENumber(num) => {
+                if field_name == b"id" {
+                    let mut cursor = std::io::Cursor::new(&mut id_number_buf[..]);
+                    if write!(&mut cursor, "{}", num.value as u64).is_ok() {
+                        id_number_len = cursor.position() as usize;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let id_slice: &[u8] = id_bytes.unwrap_or(&id_number_buf[..id_number_len]);
+
+    for ignored in ignore_list {
+        if strings::eql(id_slice, ignored) {
+            return true;
+        }
+        if !url_bytes.is_empty() && strings::index_of(url_bytes, ignored).is_some() {
+            return true;
+        }
+    }
+    false
+}
+
+/// Drop vulnerabilities in-place from a parsed audit response. Packages whose
+/// vulnerability array becomes empty are removed entirely. Returns the total
+/// number of vulnerabilities left after filtering (used to pick the exit code).
+fn filter_audit_response(
+    expr: &Expr,
+    audit_level: Option<AuditLevel>,
+    ignore_list: &[&[u8]],
+) -> u32 {
+    let ExprData::EObject(mut obj) = expr.data else {
+        return 0;
+    };
+
+    // Fast path: no filters configured → count remaining vulns without touching the tree.
+    if audit_level.is_none() && ignore_list.is_empty() {
+        let mut total: u32 = 0;
+        for prop in obj.properties.slice() {
+            let Some(value) = &prop.value else { continue };
+            if let ExprData::EArray(arr) = &value.data {
+                total = total.saturating_add(arr.items.len_u32());
+            }
+        }
+        return total;
+    }
+
+    // Mutate each package's vulnerability array in place, then drop packages
+    // whose array became empty. All nodes live in the parse arena so we can
+    // freely `retain` without worrying about running destructors.
+    let mut total_remaining: u32 = 0;
+    obj.properties.retain_mut(|prop| {
+        let Some(value) = prop.value.as_mut() else {
+            return true;
+        };
+        let ExprData::EArray(mut arr) = value.data else {
+            return true;
+        };
+
+        arr.items.retain(|item| {
+            if let Some(level) = audit_level {
+                if !level.should_include_severity(vulnerability_severity(item)) {
+                    return false;
+                }
+            }
+            !vulnerability_matches_ignore(item, ignore_list)
+        });
+
+        if arr.items.is_empty() {
+            return false;
+        }
+        total_remaining = total_remaining.saturating_add(arr.items.len_u32());
+        true
+    });
+
+    total_remaining
+}
+
+/// Pretty-print an audit response (`{"pkg":[...]}`) back to JSON bytes using
+/// the shared printer. Two-space indent matches npm's `npm audit --json` shape.
+fn serialize_audit_json(
+    expr: Expr,
+    source: &bun_ast::Source,
+) -> Result<Vec<u8>, bun_core::Error> {
+    let buffer_writer = js_printer::BufferWriter::init();
+    let mut printer = js_printer::BufferPrinter::init(buffer_writer);
+
+    js_printer::print_json(
+        &mut printer,
+        expr,
+        source,
+        js_printer::PrintJsonOptions {
+            mangled_props: None,
+            indent: bun_ast::Indentation {
+                scalar: 2,
+                count: 0,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    )?;
+
+    Ok(printer.ctx.written_without_trailing_zero().to_vec())
 }
 
 fn print_skipped_packages(skipped_packages: &[Box<[u8]>]) {

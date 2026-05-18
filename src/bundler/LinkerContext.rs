@@ -306,7 +306,7 @@ impl<'a> LinkerContext<'a> {
     /// split-borrow patterns that interleave `&mut Graph` with other `self`
     /// borrows.
     #[inline]
-    pub fn parse_graph_mut(&mut self) -> &mut Graph {
+    pub fn parse_graph_mut(&mut self) -> &mut Graph<'a> {
         debug_assert!(
             !self.parse_graph.is_null(),
             "LinkerContext.parse_graph accessed before load()"
@@ -515,7 +515,7 @@ impl<'a> LinkerContext<'a> {
     /// (or otherwise not overlap the fields named above).
     pub unsafe fn load(
         &mut self,
-        bundle: *mut BundleV2,
+        bundle: *mut BundleV2<'a>,
         entry_points: &[Index],
         server_component_boundaries: &bun_ast::server_component_boundary::List,
         reachable: &[Index],
@@ -787,7 +787,7 @@ impl<'a> LinkerContext<'a> {
     #[inline(never)]
     pub unsafe fn link(
         &mut self,
-        bundle: *mut BundleV2,
+        bundle: *mut BundleV2<'a>,
         entry_points: &[Index],
         server_component_boundaries: &bun_ast::server_component_boundary::List,
         reachable: &[Index],
@@ -815,7 +815,7 @@ impl<'a> LinkerContext<'a> {
             // and reborrow per call to satisfy borrowck (`&mut self` is held
             // across the recursion).
             let parse_graph: *mut Graph<'a> = self.parse_graph;
-            let import_records_list: *const [Vec<ImportRecord>] =
+            let import_records_list: *const [bun_ast::import_record::List<'a>] =
                 self.graph.ast.items_import_records();
             let flags: *mut [crate::ungate_support::js_meta::Flags] =
                 self.graph.meta.items_flags_mut();
@@ -858,7 +858,7 @@ impl<'a> LinkerContext<'a> {
                     continue;
                 }
 
-                let import_records = import_records_list[source_index as usize].slice();
+                let import_records = import_records_list[source_index as usize].as_slice();
                 let _ = self.validate_tla(
                     source_index,
                     tla_keywords,
@@ -922,8 +922,9 @@ impl<'a> LinkerContext<'a> {
         // Zig held them simultaneously. The SoA columns are physically disjoint
         // and the underlying slabs don't reallocate during tree-shaking, so we
         // cache raw column base pointers and reborrow at each recursive call.
-        let parts: *mut [Vec<Part>] = self.graph.ast.items_parts_mut();
-        let import_records: *const [Vec<ImportRecord>] = self.graph.ast.items_import_records();
+        let parts: *mut [bun_ast::PartList<'a>] = self.graph.ast.items_parts_mut();
+        let import_records: *const [bun_ast::import_record::List<'a>] =
+            self.graph.ast.items_import_records();
         let css_reprs: *const [crate::bundled_ast::CssCol] = self.graph.ast.items_css();
         let side_effects: *const [SideEffects] =
             self.parse_graph().input_files.items_side_effects();
@@ -1886,7 +1887,7 @@ impl<'a> LinkerContext<'a> {
         input_files: &[Source],
         import_records: &[ImportRecord],
         meta_flags: &mut [crate::ungate_support::js_meta::Flags],
-        ast_import_records: &[Vec<ImportRecord>],
+        ast_import_records: &[bun_ast::import_record::List<'a>],
     ) -> Result<TlaCheck, AllocError> {
         // PORT NOTE: reshaped for borrowck — Zig held &mut tla_checks[source_index] across recursive
         // calls that also mutate tla_checks. We re-index after each recursion.
@@ -1905,7 +1906,7 @@ impl<'a> LinkerContext<'a> {
                         tla_keywords,
                         tla_checks,
                         input_files,
-                        ast_import_records[record.source_index.get() as usize].slice(),
+                        ast_import_records[record.source_index.get() as usize].as_slice(),
                         meta_flags,
                         ast_import_records,
                     )?;
@@ -1990,7 +1991,7 @@ impl<'a> LinkerContext<'a> {
                                 text: text.into(),
                                 location: bun_ast::Location::init_or_null(
                                     Some(&input_files[parent_source_index as usize]),
-                                    ast_import_records[parent_source_index as usize].slice()
+                                    ast_import_records[parent_source_index as usize].as_slice()
                                         [tla_checks[parent_source_index as usize]
                                             .import_record_index
                                             as usize]
@@ -2363,7 +2364,7 @@ impl<'a> LinkerContext<'a> {
         }
 
         let all_css_asts = self.graph.ast.items_css();
-        let all_symbols: &[Vec<Symbol>] = self.graph.ast.items_symbols();
+        let all_symbols: &[bun_ast::symbol::List<'a>] = self.graph.ast.items_symbols();
         // SAFETY: parse_graph backref; raw deref because `all_sources` is held
         // across `&mut self.mangled_props` below (split borrow).
         let all_sources: &[Source] = unsafe { (*self.parse_graph).input_files.items_source() };
@@ -2378,7 +2379,7 @@ impl<'a> LinkerContext<'a> {
                     continue;
                 }
                 let symbols = &all_symbols[source_index];
-                for (inner_index, symbol_) in symbols.slice_const().iter().enumerate() {
+                for (inner_index, symbol_) in symbols.as_slice().iter().enumerate() {
                     let mut symbol = symbol_;
                     if symbol.kind == bun_ast::symbol::Kind::LocalCss {
                         let r#ref = 'follow: {
@@ -2391,8 +2392,8 @@ impl<'a> LinkerContext<'a> {
                             );
                             while symbol.has_link() {
                                 r#ref = symbol.link.get();
-                                symbol = all_symbols[r#ref.source_index() as usize]
-                                    .at(r#ref.inner_index() as usize);
+                                symbol = &all_symbols[r#ref.source_index() as usize]
+                                    [r#ref.inner_index() as usize];
                             }
                             break 'follow r#ref;
                         };
@@ -2618,8 +2619,8 @@ impl<'a> LinkerContext<'a> {
         // Spec (LinkerContext.zig:1579) passes `parts: []Vec(Part)` and only
         // reads it. `&mut` here forced an aliased reborrow against the
         // `parts_in_file` slice below — borrowck conflict in un-gated code.
-        parts: &[Vec<Part>],
-        import_records: &[Vec<ImportRecord>],
+        parts: &[bun_ast::PartList<'a>],
+        import_records: &[bun_ast::import_record::List<'a>],
         file_entry_bits: &mut [AutoBitSet],
         css_reprs: &[crate::bundled_ast::CssCol],
     ) {
@@ -2662,7 +2663,7 @@ impl<'a> LinkerContext<'a> {
         }
 
         if css_reprs[source_index as usize].is_some() {
-            for record in import_records[source_index as usize].slice() {
+            for record in import_records[source_index as usize].as_slice() {
                 if record.source_index.is_valid()
                     && !self.is_external_dynamic_import(record, source_index)
                 {
@@ -2681,7 +2682,7 @@ impl<'a> LinkerContext<'a> {
             return;
         }
 
-        for record in import_records[source_index as usize].slice() {
+        for record in import_records[source_index as usize].as_slice() {
             if record.source_index.is_valid()
                 && !self.is_external_dynamic_import(record, source_index)
             {
@@ -2698,7 +2699,7 @@ impl<'a> LinkerContext<'a> {
             }
         }
 
-        let parts_in_file = parts[source_index as usize].slice();
+        let parts_in_file = parts[source_index as usize].as_slice();
         for part in parts_in_file {
             for dependency in part.dependencies.slice() {
                 if dependency.source_index.get() != source_index {
@@ -2721,8 +2722,8 @@ impl<'a> LinkerContext<'a> {
         &mut self,
         source_index: crate::IndexInt,
         side_effects: &[SideEffects],
-        parts: &mut [Vec<Part>],
-        import_records: &[Vec<ImportRecord>],
+        parts: &mut [bun_ast::PartList<'a>],
+        import_records: &[bun_ast::import_record::List<'a>],
         entry_point_kinds: &[EntryPoint::Kind],
         css_reprs: &[crate::bundled_ast::CssCol],
     ) {
@@ -2767,7 +2768,7 @@ impl<'a> LinkerContext<'a> {
         }
 
         if css_reprs[source_index as usize].is_some() {
-            for record in import_records[source_index as usize].slice() {
+            for record in import_records[source_index as usize].as_slice() {
                 let other_source_index = record.source_index.get();
                 if record.source_index.is_valid() {
                     self.mark_file_live_for_tree_shaking(
@@ -2787,7 +2788,7 @@ impl<'a> LinkerContext<'a> {
         // via .url kind import records. Follow all import records for HTML files
         // so these assets are marked live and included in the manifest.
         if self.parse_graph().input_files.items_loader()[source_index as usize] == Loader::Html {
-            for record in import_records[source_index as usize].slice() {
+            for record in import_records[source_index as usize].as_slice() {
                 if record.source_index.is_valid() {
                     self.mark_file_live_for_tree_shaking(
                         record.source_index.get(),
@@ -2802,10 +2803,10 @@ impl<'a> LinkerContext<'a> {
             return;
         }
 
-        let part_count = parts[source_index as usize].slice().len();
+        let part_count = parts[source_index as usize].len();
         for part_index in 0..part_count {
             // PORT NOTE: reshaped for borrowck — re-borrow part each iteration since recursion mutates `parts`
-            let part = &parts[source_index as usize].slice()[part_index];
+            let part = &parts[source_index as usize].as_slice()[part_index];
             let mut can_be_removed_if_unused = part.can_be_removed_if_unused;
 
             if can_be_removed_if_unused && part.tag == bun_ast::PartTag::CommonjsNamedExport {
@@ -2818,7 +2819,7 @@ impl<'a> LinkerContext<'a> {
             // PORT NOTE: clone indices to avoid holding borrow across recursive call
             let import_indices: Vec<u32> = part.import_record_indices.slice().to_vec();
             for import_index in import_indices {
-                let record = import_records[source_index as usize].at(import_index as usize);
+                let record = &import_records[source_index as usize][import_index as usize];
                 if record.kind != ImportKind::Stmt {
                     continue;
                 }
@@ -2860,7 +2861,7 @@ impl<'a> LinkerContext<'a> {
             // everything if tree-shaking is disabled. Note that we still want to
             // perform tree-shaking on the runtime even if tree-shaking is disabled.
             let force_tree_shaking =
-                parts[source_index as usize].slice()[part_index].force_tree_shaking;
+                parts[source_index as usize].as_slice()[part_index].force_tree_shaking;
             if !can_be_removed_if_unused
                 || (!force_tree_shaking
                     && !self.options.tree_shaking
@@ -2884,12 +2885,12 @@ impl<'a> LinkerContext<'a> {
         part_index: crate::IndexInt,
         source_index: crate::IndexInt,
         side_effects: &[SideEffects],
-        parts: &mut [Vec<Part>],
-        import_records: &[Vec<ImportRecord>],
+        parts: &mut [bun_ast::PartList<'a>],
+        import_records: &[bun_ast::import_record::List<'a>],
         entry_point_kinds: &[EntryPoint::Kind],
         css_reprs: &[crate::bundled_ast::CssCol],
     ) {
-        let part: &mut Part = &mut parts[source_index as usize].slice_mut()[part_index as usize];
+        let part: &mut Part = &mut parts[source_index as usize].as_mut_slice()[part_index as usize];
 
         // only once
         if part.is_live {
@@ -3367,7 +3368,7 @@ impl<'a> LinkerContext<'a> {
         let ast_flags = self.graph.ast.items_flags();
 
         // Is this an external file?
-        let record: &ImportRecord = import_records[named_import.import_record_index as usize];
+        let record: &ImportRecord = &import_records[named_import.import_record_index as usize];
         if !record.source_index.is_valid() {
             return ImportTrackerIterator {
                 value: Default::default(),

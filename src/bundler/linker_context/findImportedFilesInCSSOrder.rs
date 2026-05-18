@@ -81,7 +81,7 @@ pub fn find_imported_files_in_css_order<'a>(
         arena: &'a Arena,
         // `BundledAst.css` SoA column.
         css_asts: &'a [crate::bundled_ast::CssCol],
-        all_import_records: &'a [Vec<ImportRecord>],
+        all_import_records: &'a [bun_ast::import_record::List<'a>],
 
         // PORT NOTE: Zig's `graph: *LinkerGraph` is never read in `visit()`;
         // dropped here to avoid an aliasing `&mut this.graph` borrow against
@@ -89,7 +89,7 @@ pub fn find_imported_files_in_css_order<'a>(
         // `BackRef` (not `&'a Graph`) so the visitor's `'a` borrow stays
         // disjoint from `LinkerContext` (constructed from the raw `parse_graph`
         // backref, valid for the link step).
-        parse_graph: bun_ptr::BackRef<Graph>,
+        parse_graph: bun_ptr::BackRef<Graph<'a>>,
 
         has_external_import: bool,
         visited: Vec<Index>,
@@ -164,7 +164,7 @@ pub fn find_imported_files_in_css_order<'a>(
                 if let BundlerCssRule::Import(import_rule) = rule {
                     // `defer import_record_idx += 1;` — increment at end of this arm
                     let record =
-                        self.all_import_records[source_index.get() as usize].at(import_record_idx);
+                        &self.all_import_records[source_index.get() as usize][import_record_idx];
 
                     // Follow internal dependencies
                     if record.source_index.is_valid() {
@@ -257,7 +257,7 @@ pub fn find_imported_files_in_css_order<'a>(
             // Iterate over the "composes" directives. Note that the order doesn't
             // matter for these because the output order is explicitly undfened
             // in the specification.
-            for record in self.all_import_records[source_index.get() as usize].slice_const() {
+            for record in self.all_import_records[source_index.get() as usize].as_slice() {
                 if record.kind == ImportKind::Composes && record.source_index.is_valid() {
                     self.visit(
                         record.source_index,
@@ -293,7 +293,7 @@ pub fn find_imported_files_in_css_order<'a>(
 
     // PORT NOTE: reshaped for borrowck — read MultiArrayList columns before constructing visitor.
     let css_asts_slice: &[crate::bundled_ast::CssCol] = this.graph.ast.items_css();
-    let all_import_records_slice: &[Vec<ImportRecord>] = this.graph.ast.items_import_records();
+    let all_import_records_slice = this.graph.ast.items_import_records();
     let arena = this.graph.arena();
 
     let mut visitor = Visitor {

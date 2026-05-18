@@ -1846,7 +1846,7 @@ pub mod bv2_impl {
                             // (source_index, path) before re-borrowing `all_import_records` mutably.
                             let (other_src_idx, other_path) = {
                                 let other_import_records =
-                                    self.all_import_records[other_source.get() as usize].slice();
+                                    self.all_import_records[other_source.get() as usize].as_slice();
                                 let other_import_record =
                                     &other_import_records[redirect_id as usize];
                                 (
@@ -2940,8 +2940,8 @@ pub mod bv2_impl {
             Ok(this)
         }
 
-        pub fn arena(&self) -> &bun_alloc::Arena {
-            &self.graph.heap
+        pub fn arena(&self) -> &'a bun_alloc::Arena {
+            self.graph.heap
         }
 
         /// Allocate `value` into the bundler's arena (`self.graph.heap`) and return
@@ -4963,13 +4963,13 @@ pub mod bv2_impl {
                     ($ast:expr) => {{
                         let ast = $ast;
                         for v in ast.items_parts_mut() {
-                            drop(core::mem::take(v));
+                            drop(core::mem::replace(v, Vec::new_in(*v.allocator())));
                         }
                         for v in ast.items_symbols_mut() {
-                            drop(core::mem::take(v));
+                            drop(core::mem::replace(v, Vec::new_in(*v.allocator())));
                         }
                         for v in ast.items_import_records_mut() {
-                            drop(core::mem::take(v));
+                            drop(core::mem::replace(v, Vec::new_in(*v.allocator())));
                         }
                         for v in ast.items_named_imports_mut() {
                             drop(core::mem::take(v));
@@ -5944,8 +5944,9 @@ pub mod bv2_impl {
                 // bounds crashes in BundleV2.onResolve / runResolver. The linker
                 // never runs because `transpiler.log.errors > 0` aborts the
                 // build before link time, so saving the AST is safe.
+                let result_heap = *result.ast.import_records.allocator();
                 this.graph.ast.items_import_records_mut()[source_index.0 as usize] =
-                    core::mem::take(&mut result.ast.import_records);
+                    core::mem::replace(&mut result.ast.import_records, Vec::new_in(result_heap));
 
                 // Move the CSS stylesheet onto the graph row so teardown can find
                 // and drop it — the `Success` arm that would normally do this is skipped.
@@ -5965,7 +5966,7 @@ pub mod bv2_impl {
     }
 
     pub struct ResolveImportRecordCtx<'a> {
-        pub import_records: &'a mut import_record::List<'a>,
+        pub import_records: &'a mut [ImportRecord],
         pub source: &'a bun_ast::Source,
         pub loader: Loader,
         pub target: options::Target,
@@ -5990,7 +5991,7 @@ pub mod bv2_impl {
             let loader = ctx.loader;
             let source_dir = source.path.source_dir();
             let mut estimated_resolve_queue_count: usize = 0;
-            for import_record in ctx.import_records.as_mut_slice() {
+            for import_record in ctx.import_records.iter_mut() {
                 if import_record
                     .flags
                     .contains(bun_ast::ImportRecordFlags::IS_INTERNAL)
@@ -6026,7 +6027,7 @@ pub mod bv2_impl {
 
             let mut last_error: Option<Error> = None;
 
-            'outer: for (i, import_record) in ctx.import_records.as_mut_slice().iter_mut().enumerate()
+            'outer: for (i, import_record) in ctx.import_records.iter_mut().enumerate()
             {
                 // Preserve original import specifier before resolution modifies path
                 if import_record.original_path.is_empty() {
@@ -6907,12 +6908,13 @@ pub mod bv2_impl {
             // 3. Add it to the graph
             // PORT NOTE: Zig aliased `graph = &this.graph;` — re-borrow `self.graph`
             // at each use so the `self.*` method calls below don't conflict.
-            let empty_html_file_source = bun_ast::Source {
+            let heap = self.graph.heap;
+            let empty_html_file_source: &mut bun_ast::Source = self.arena_create(bun_ast::Source {
                 path: path_as_static(path.clone()),
                 index: bun_ast::Index(self.graph.input_files.len() as u32),
                 contents: std::borrow::Cow::Borrowed(&b""[..]),
                 ..Default::default()
-            };
+            });
             let mut js_parser_options = bun_js_parser::ParserOptions::init(
                 self.transpiler_for_target(target)
                     .options
@@ -6952,7 +6954,7 @@ pub mod bv2_impl {
 
             let ast_for_html_entrypoint = JSAst::init(
                 bun_js_parser::new_lazy_export_ast(
-                    self.arena(),
+                    heap,
                     unsafe { &mut *define_ptr },
                     js_parser_options,
                     unsafe { &mut *log_ptr },
@@ -6963,7 +6965,7 @@ pub mod bv2_impl {
                         },
                         bun_ast::Loc::EMPTY,
                     ),
-                    &empty_html_file_source,
+                    empty_html_file_source,
                     // We replace this runtime API call's ref later via .link on the Symbol.
                     b"__jsonParse",
                 )?
@@ -6971,7 +6973,7 @@ pub mod bv2_impl {
             );
 
             let fake_input_file = crate::Graph::InputFile {
-                source: empty_html_file_source,
+                source: empty_html_file_source.clone(),
                 side_effects: bun_ast::SideEffects::NoSideEffectsPureData,
                 ..Default::default()
             };
@@ -7187,7 +7189,11 @@ pub mod bv2_impl {
                         result_source_index as IndexInt,
                     );
 
-                    let mut import_records = core::mem::take(&mut result.ast.import_records);
+                    let result_heap = *result.ast.import_records.allocator();
+                    let mut import_records = core::mem::replace(
+                        &mut result.ast.import_records,
+                        Vec::new_in(result_heap),
+                    );
                     let source_path_owned: Box<[u8]> = source_path_text.into();
                     this.patch_import_record_source_indices(
                         &mut import_records,
@@ -7255,9 +7261,10 @@ pub mod bv2_impl {
                         None
                     };
 
+                    let result_heap = *result.ast.parts.allocator();
                     this.graph.ast.set(
                         result_source_index,
-                        core::mem::replace(&mut result.ast, JSAst::empty_in(self.graph.heap)),
+                        core::mem::replace(&mut result.ast, JSAst::empty_in(result_heap)),
                     );
 
                     // Barrel optimization: eagerly record import requests and

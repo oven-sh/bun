@@ -802,7 +802,7 @@ impl<'a> LinkerGraph<'a> {
                     return;
                 }
 
-                for import_record in self.import_records[index].slice_const().iter() {
+                for import_record in self.import_records[index].as_slice().iter() {
                     match import_record.kind {
                         ImportKind::Stmt => {}
 

@@ -1244,8 +1244,8 @@ impl DependencyWrapper<'_> {
 // ──────────────────────────────────────────────────────────────────────────
 // ExportStarContext — port of the inner Zig struct. Holds raw column ptrs.
 // ──────────────────────────────────────────────────────────────────────────
-struct ExportStarContext {
-    import_records_list: *mut [ImportRecordList<'_>],
+struct ExportStarContext<'a> {
+    import_records_list: *mut [ImportRecordList<'a>],
     source_index_stack: Vec<IndexInt>,
     exports_kind: *mut [ExportsKind],
     named_exports: *mut [NamedExports],
@@ -1253,7 +1253,7 @@ struct ExportStarContext {
     export_star_records: *mut [Box<[u32]>],
 }
 
-impl ExportStarContext {
+impl<'a> ExportStarContext<'a> {
     /// Recursively merge re-exports from `source_index` into
     /// `resolved_exports[target_id]`.
     fn add_exports(
@@ -1273,7 +1273,7 @@ impl ExportStarContext {
 
         for import_id in col_ref!(self.export_star_records)[source_index as usize].iter() {
             let other_source_index = col_ref!(self.import_records_list)[source_index as usize]
-                .slice()[*import_id as usize]
+                .as_slice()[*import_id as usize]
                 .source_index
                 .get();
 
@@ -1503,10 +1503,10 @@ mod __css_validation {
             range: bun_ast::Range,
         }
 
-        struct Visitor<'a> {
+        struct Visitor<'a, 'bump> {
             visited: ArrayHashMap<bun_ast::Ref, ()>,
             properties: StringArrayHashMap<PropertyInFile>,
-            all_import_records: *mut [ImportRecordList<'_>],
+            all_import_records: *mut [ImportRecordList<'bump>],
             all_css_asts: *mut [CssCol],
             all_symbols: &'a symbol::Map,
             all_sources: *mut [Source],
@@ -1515,7 +1515,7 @@ mod __css_validation {
 
         // PORT NOTE: `pub fn deinit` → Drop on `visited` / `properties` handles cleanup.
 
-        impl<'a> Visitor<'a> {
+        impl<'a, 'bump> Visitor<'a, 'bump> {
             fn add_property_or_warn(
                 &mut self,
                 local: bun_ast::Ref,
@@ -1617,7 +1617,7 @@ mod __css_validation {
                         if let Some(from) = compose.from.as_ref() {
                             if let Specifier::ImportRecordIndex(import_record_idx) = from {
                                 let record = &col_ref!(self.all_import_records)[idx as usize]
-                                    .slice()[*import_record_idx as usize];
+                                    .as_slice()[*import_record_idx as usize];
                                 if record.source_index.is_invalid() {
                                     continue;
                                 }

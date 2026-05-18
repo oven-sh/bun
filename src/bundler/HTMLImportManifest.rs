@@ -56,9 +56,9 @@ use crate::{BundleV2, Chunk, LinkerGraph};
 #[derive(Clone, Copy)]
 pub struct HTMLImportManifest<'a> {
     pub index: u32,
-    pub graph: &'a Graph,
+    pub graph: &'a Graph<'a>,
     pub chunks: &'a [Chunk],
-    pub linker_graph: &'a LinkerGraph,
+    pub linker_graph: &'a LinkerGraph<'a>,
 }
 
 impl<'a> fmt::Display for HTMLImportManifest<'a> {

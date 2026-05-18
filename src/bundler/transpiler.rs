@@ -841,7 +841,7 @@ pub enum AlreadyBundled {
 }
 
 impl Default for AlreadyBundled {
-    pub fn empty(arena: &'a bun_alloc::Arena) -> Self {
+    fn default() -> Self {
         AlreadyBundled::None
     }
 }
@@ -1376,7 +1376,7 @@ impl<'a> Transpiler<'a> {
 
     pub fn parse(
         &mut self,
-        this_parse: ParseOptions<'_>,
+        this_parse: ParseOptions<'a>,
         client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint>,
     ) -> Option<ParseResult<'a>> {
         self.parse_maybe_return_file_only::<false>(this_parse, client_entry_point_)
@@ -1384,7 +1384,7 @@ impl<'a> Transpiler<'a> {
 
     pub fn parse_maybe_return_file_only<const RETURN_FILE_ONLY: bool>(
         &mut self,
-        this_parse: ParseOptions<'_>,
+        this_parse: ParseOptions<'a>,
         client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint>,
     ) -> Option<ParseResult<'a>> {
         self.parse_maybe_return_file_only_allow_shared_buffer::<RETURN_FILE_ONLY, false>(
@@ -1398,7 +1398,7 @@ impl<'a> Transpiler<'a> {
         const USE_SHARED_BUFFER: bool,
     >(
         &mut self,
-        mut this_parse: ParseOptions<'_>,
+        mut this_parse: ParseOptions<'a>,
         // TODO(port): Zig `anytype` + `@hasField(.., "source")` — only ever
         // called with `?*EntryPoints.ClientEntryPoint` in this file. If other
         // callers pass a different type, introduce a `ClientEntryPointLike`
@@ -1428,7 +1428,7 @@ impl<'a> Transpiler<'a> {
 
         // PORT NOTE: Zig `&brk: { ... }` took the address of a temporary; Rust
         // owns the value and borrows it after the block.
-        let source_owned: bun_ast::Source = 'brk: {
+        let source: &'a bun_ast::Source = arena.alloc('brk: {
             if let Some(virtual_source) = this_parse.virtual_source {
                 break 'brk virtual_source.clone();
             }
@@ -1552,11 +1552,11 @@ impl<'a> Transpiler<'a> {
                 Ok(s) => break 'brk s,
                 Err(_) => return None,
             }
-        };
-        let source: &bun_ast::Source = &source_owned;
+        });
 
         if RETURN_FILE_ONLY {
             return Some(ParseResult::empty_with(
+                arena,
                 source.clone(),
                 loader,
                 input_fd,
@@ -1569,6 +1569,7 @@ impl<'a> Transpiler<'a> {
         {
             if !loader.handles_empty_file() {
                 return Some(ParseResult::empty_with(
+                    arena,
                     source.clone(),
                     loader,
                     input_fd,
@@ -1585,6 +1586,7 @@ impl<'a> Transpiler<'a> {
                 // wasm magic number
                 if source.is_web_assembly() {
                     return Some(ParseResult::empty_with(
+                        arena,
                         source.clone(),
                         options::Loader::Wasm,
                         input_fd,
@@ -1720,18 +1722,23 @@ impl<'a> Transpiler<'a> {
                     self.macro_context.as_mut().unwrap().javascript_object =
                         this_parse.macro_js_ctx;
                 }
-                opts.macro_context = self.macro_context.as_mut();
-
                 // `crate::defines::Define` IS
                 // `bun_js_parser::defines::Define`. Hand the parser the real
                 // table so user `--define` values apply at parse time.
-                // SAFETY: `self.options.define` is `Box<Define>` owned by the
-                // long-lived `Transpiler`; the parser borrows it for `'a`
-                // (arena lifetime). Erase to `'a` to satisfy
-                // `JavaScript::parse`'s `&'a Define` param — the box is never
-                // dropped while a parse is in flight (Zig held `*const Define`).
-                let define: &'a js_ast::defines::Define =
-                    unsafe { &*(&raw const *self.options.define) };
+                // SAFETY: `self.options.define` / `self.macro_context` are
+                // owned by the long-lived `Transpiler`; the parser borrows
+                // them for `'a` (arena lifetime). Erase to `'a` so the
+                // returned `Ast<'a>` is not pinned to the `&mut self` borrow
+                // — neither field is dropped while a parse is in flight
+                // (Zig held `*const Define` / `*MacroContext`).
+                let define: &'a js_ast::defines::Define;
+                unsafe {
+                    define = &*(&raw const *self.options.define);
+                    opts.macro_context = self
+                        .macro_context
+                        .as_mut()
+                        .map(|m| &mut *core::ptr::from_mut(m));
+                }
 
                 // PORT NOTE: spec calls `transpiler.resolver.caches.js.parse`.
                 // The resolver-side `cache::JavaScript` is a fieldless
@@ -1870,6 +1877,7 @@ impl<'a> Transpiler<'a> {
                     loader,
                     input_fd,
                     source_backing,
+                    arena,
                     &path,
                     self.options.target,
                     log,
@@ -1899,12 +1907,12 @@ impl<'a> Transpiler<'a> {
 
 #[cold]
 #[inline(never)]
-fn parse_data_loader(
+fn parse_data_loader<'a>(
     source: &bun_ast::Source,
     loader: options::Loader,
     input_fd: Option<FD>,
     source_backing: resolver::cache::Contents,
-    arena: &Arena,
+    arena: &'a Arena,
     log: &mut bun_ast::Log,
     keep_json_and_toml_as_one_statement: bool,
 ) -> Option<ParseResult<'a>> {
@@ -2130,8 +2138,8 @@ fn parse_data_loader(
             }]);
         }
     };
+    let mut ast = bun_ast::Ast::from_parts(parts, arena);
     ast.symbols = bun_alloc::vec_from_iter_in(symbols.into_iter(), arena);
-    ast.symbols = bun_ast::symbol::List::from_owned_slice(symbols.into_boxed_slice());
 
     return Some(ParseResult {
         ast,
@@ -2148,12 +2156,12 @@ fn parse_data_loader(
 
 #[cold]
 #[inline(never)]
-fn parse_text_loader(
+fn parse_text_loader<'a>(
     source: &bun_ast::Source,
     loader: options::Loader,
     input_fd: Option<FD>,
     source_backing: resolver::cache::Contents,
-    arena: &Arena,
+    arena: &'a Arena,
 ) -> Option<ParseResult<'a>> {
     let expr = bun_ast::Expr::init(
         bun_ast::E::EString::init(&source.contents),
@@ -2191,12 +2199,12 @@ fn parse_text_loader(
 
 #[cold]
 #[inline(never)]
-fn parse_md_loader(
+fn parse_md_loader<'a>(
     source: &bun_ast::Source,
     loader: options::Loader,
     input_fd: Option<FD>,
     source_backing: resolver::cache::Contents,
-    arena: &Arena,
+    arena: &'a Arena,
     log: &mut bun_ast::Log,
 ) -> Option<ParseResult<'a>> {
     let html: &'static [u8] = match bun_md::root::render_to_html(&source.contents) {
@@ -2249,11 +2257,12 @@ fn parse_md_loader(
 
 #[cold]
 #[inline(never)]
-fn parse_wasm_loader(
+fn parse_wasm_loader<'a>(
     source: &bun_ast::Source,
     loader: options::Loader,
     input_fd: Option<FD>,
     source_backing: resolver::cache::Contents,
+    arena: &'a Arena,
     path: &bun_paths::fs::Path<'static>,
     target: options::Target,
     log: &mut bun_ast::Log,
@@ -2376,8 +2385,12 @@ impl<'a> Transpiler<'a> {
         // take the column out (the printer never reads `tree.symbols`; it
         // walks `symbols` exclusively — `rg tree.symbols js_printer/lib.rs` is
         // empty). `init_with_one_list` boxes the single inner list.
-        let symbols = bun_ast::symbol::Map::init_with_one_list(core::mem::replace(&mut ast.symbols, Vec::new_in(arena)).into_iter().collect());
-        let symbols = bun_ast::symbol::Map::init_with_one_list(core::mem::take(&mut ast.symbols));
+        let arena = *ast.symbols.allocator();
+        let symbols = bun_ast::symbol::Map::init_with_one_list(
+            core::mem::replace(&mut ast.symbols, Vec::new_in(arena))
+                .into_iter()
+                .collect(),
+        );
 
         // `runtime_imports` is now forwarded — after Round-G `Ast.runtime_imports`
         // is the real `parser::Runtime::Imports`, the same type
@@ -3300,7 +3313,7 @@ pub struct BuildResolveResultPair {
 }
 
 impl Default for BuildResolveResultPair {
-    pub fn empty(arena: &'a bun_alloc::Arena) -> Self {
+    fn default() -> Self {
         Self {
             written: 0,
             input_fd: None,

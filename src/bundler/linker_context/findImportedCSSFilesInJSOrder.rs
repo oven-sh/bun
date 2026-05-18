@@ -43,8 +43,8 @@ pub fn find_imported_css_files_in_js_order(
     #[allow(clippy::too_many_arguments)]
     fn visit(
         c: &LinkerContext,
-        import_records: &[Vec<ImportRecord>],
-        parts: &[PartList],
+        import_records: &[bun_ast::import_record::List<'_>],
+        parts: &[PartList<'_>],
         loaders: &[Loader],
         visits: &mut BitSet,
         o: &mut Vec<Index>,
@@ -56,7 +56,7 @@ pub fn find_imported_css_files_in_js_order(
         }
         visits.set(source_index.get() as usize);
 
-        let records: &[ImportRecord] = import_records[source_index.get() as usize].slice();
+        let records: &[ImportRecord] = import_records[source_index.get() as usize].as_slice();
         let p = &parts[source_index.get() as usize];
 
         // Iterate over each part in the file in order

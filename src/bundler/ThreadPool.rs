@@ -515,9 +515,16 @@ impl Worker {
     /// can observe the `Worker`, and is never dangling after that point. The
     /// pointee is the worker's own `heap` field, which is pinned for the
     /// worker's lifetime.
+    /// The worker-owned bump arena. Returns `&'static` because the arena is
+    /// pinned for the worker's lifetime and `Worker::get` already hands out a
+    /// `&'static mut Worker`; centralising the erasure here avoids per-call-site
+    /// `detach_lifetime_ref` (the previous pattern at `ParseTask::run`).
     #[inline]
-    pub fn arena(&self) -> &ThreadLocalArena {
-        self.arena.get()
+    pub fn arena(&self) -> &'static ThreadLocalArena {
+        // SAFETY: `self.arena` is a `BackRef` to the worker-owned heap, set in
+        // `Worker::create` and never reassigned; the heap is pinned for the
+        // process lifetime (workers are never destroyed before exit).
+        unsafe { bun_ptr::detach_lifetime_ref(self.arena.get()) }
     }
 }
 

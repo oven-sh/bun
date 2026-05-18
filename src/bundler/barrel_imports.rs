@@ -300,7 +300,11 @@ fn resolve_barrel_records(
     let loader = this.graph.input_files.items_loader()[idx];
     // Move the column cells out so the `&mut self` method calls below don't
     // alias borrows into `graph.ast` / `graph.input_files`.
-    let mut barrel_ir = core::mem::take(&mut this.graph.ast.items_import_records_mut()[idx]);
+    let heap = this.graph.heap;
+    let mut barrel_ir = core::mem::replace(
+        &mut this.graph.ast.items_import_records_mut()[idx],
+        Vec::new_in(heap),
+    );
     let source = core::mem::take(&mut this.graph.input_files.items_source_mut()[idx]);
     let source_path: &'static [u8] = source.path.text;
 

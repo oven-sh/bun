@@ -295,12 +295,12 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
     pub fn to_bundled_ast(
         &mut self,
         target: options::Target,
-    ) -> Result<crate::BundledAst<'static>, OOM> {
+    ) -> Result<crate::BundledAst<'bump>, OOM> {
         // TODO: missing import scanner
         debug_assert!(self.scopes.is_empty());
         let module_scope = self.current_scope;
 
-        let mut parts = Vec::with_capacity_in(2, self.arena);
+        let mut parts = Vec::with_capacity_in(2, self.bump);
         // PORT NOTE: Zig grew len then wrote `parts.mut(i).* = ...`, which is a
         // bitwise store on the SoA slot. In Rust `*parts.mut_(i) = ...` first
         // *drops* the (uninitialized) prior `Part` — and `Part` carries Drop
@@ -308,8 +308,8 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         // heap (observed downstream as `printStmt` reading a junk `Stmt`
         // discriminant from an arena allocation that was clobbered). Append
         // into the reserved capacity instead so no drop runs.
-        parts.append_assume_capacity(Part::default());
-        parts.append_assume_capacity(Part {
+        parts.push(Part::default());
+        parts.push(Part {
             // overwritten below with the arena-backed copy (`stmts_in_bump`)
             stmts: bun_ast::StoreSlice::EMPTY,
             can_be_removed_if_unused: false,
@@ -448,12 +448,11 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                         // matches Zig's value copy (no Drop fields touched).
                         let value = unsafe { core::ptr::read(&raw const st.value) }.to_expr();
                         let temp_id = self.generate_temp_ref(Some(b"default_export"));
-                        parts.mut_(1).declared_symbols.append(DeclaredSymbol {
+                        parts[1].declared_symbols.append(DeclaredSymbol {
                             ref_: temp_id,
                             is_top_level: true,
                         })?;
-                        parts
-                            .mut_(1)
+                        parts[1]
                             .symbol_uses
                             .put(temp_id, symbol::Use { count_estimate: 1 })?;
                         VecExt::append(&mut self.current_scope_mut().generated, temp_id);
@@ -510,25 +509,24 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                     Loc::EMPTY,
                 ));
                 // mark a dependency on module_ref so it is renamed
-                parts
-                    .mut_(1)
+                parts[1]
                     .symbol_uses
                     .put(self.module_ref, symbol::Use { count_estimate: 1 })?;
-                parts.mut_(1).declared_symbols.append(DeclaredSymbol {
+                parts[1].declared_symbols.append(DeclaredSymbol {
                     ref_: self.module_ref,
                     is_top_level: true,
                 })?;
             }
             // Head-part bookkeeping (only `parts[0]`, which is the empty
             // namespace-export part): mark dead and depend on `parts[1]`.
-            parts.mut_(0).tag = bun_ast::PartTag::DeadDueToInlining;
-            parts.mut_(0).dependencies.push(bun_ast::Dependency {
+            parts[0].tag = bun_ast::PartTag::DeadDueToInlining;
+            parts[0].dependencies.push(bun_ast::Dependency {
                 part_index: 1,
                 source_index: bun_ast::Index(self.source_index),
             });
 
             let stmts_in_bump: &mut [Stmt] = self.bump.alloc_slice_copy(hmr_stmts.as_slice());
-            parts.mut_(1).stmts = bun_ast::StoreSlice::new_mut(stmts_in_bump);
+            parts[1].stmts = bun_ast::StoreSlice::new_mut(stmts_in_bump);
         } else {
             // Non-HMR path: mirror `ImportScanner.scan(AstBuilder, p, stmts,
             // false, false, {})` for the stmt shapes AstBuilder callers emit
@@ -574,13 +572,13 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                 }
             }
             let stmts_in_bump: &mut [Stmt] = self.bump.alloc_slice_copy(in_stmts.as_slice());
-            parts.mut_(1).stmts = bun_ast::StoreSlice::new_mut(stmts_in_bump);
+            parts[1].stmts = bun_ast::StoreSlice::new_mut(stmts_in_bump);
         }
 
-        parts.mut_(1).declared_symbols = core::mem::take(&mut self.declared_symbols);
-        parts.mut_(1).scopes =
+        parts[1].declared_symbols = core::mem::take(&mut self.declared_symbols);
+        parts[1].scopes =
             bun_ast::StoreSlice::new_mut(self.bump.alloc_slice_copy(self.scopes.as_slice()));
-        parts.mut_(1).import_record_indices = bun_ast::PartImportRecordIndices::move_from_list(
+        parts[1].import_record_indices = bun_ast::PartImportRecordIndices::move_from_list(
             core::mem::take(&mut self.import_records_for_current_part),
         );
 
@@ -591,11 +589,11 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         Ok(crate::BundledAst {
             parts,
             module_scope: module_scope_value,
-            symbols: bun_alloc::vec_from_iter_in(core::mem::take(&mut self.symbols).into_iter(), self.arena),
+            symbols: bun_alloc::vec_from_iter_in(core::mem::take(&mut self.symbols).into_iter(), self.bump),
             exports_ref: Ref::NONE,
             wrapper_ref: Ref::NONE,
             module_ref: self.module_ref,
-            import_records: bun_alloc::vec_from_iter_in(core::mem::take(&mut self.import_records).into_iter(), self.arena),
+            import_records: bun_alloc::vec_from_iter_in(core::mem::take(&mut self.import_records).into_iter(), self.bump),
             export_star_import_records: Box::default(),
             approximate_newline_count: 1,
             exports_kind: ExportsKind::Esm,

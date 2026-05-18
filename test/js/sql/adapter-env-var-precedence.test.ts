@@ -472,4 +472,100 @@ describe("SQL adapter environment variable precedence", () => {
       });
     });
   });
+
+  // Issue #31015 — the docs used to claim that `ssl: "<mode>"` on the options
+  // object picked an SSL mode. It does not. These tests pin down what actually
+  // works so the docs stay honest:
+  //   - `sslmode=<mode>` on the URL is the only way to select a mode.
+  //   - `tls: true | {...}` configures the TLS material and coerces the mode
+  //     up to `prefer` when no explicit mode has been set.
+  //   - `ssl` is a deprecated alias for `tls` with the same shape.
+  describe("SSL mode and TLS option parsing", () => {
+    // Keep these mirrored with the SSLMode const enum in
+    // src/js/internal/sql/shared.ts.
+    const SSLMode = {
+      disable: 0,
+      prefer: 1,
+      require: 2,
+      verify_ca: 3,
+      verify_full: 4,
+    } as const;
+
+    test.each([
+      ["disable", SSLMode.disable],
+      ["prefer", SSLMode.prefer],
+      ["require", SSLMode.require],
+      ["verify-ca", SSLMode.verify_ca],
+      ["verify-full", SSLMode.verify_full],
+    ])("URL ?sslmode=%s selects SSLMode.%s", (mode, expected) => {
+      const options = new SQL(`postgres://user:pass@localhost/mydb?sslmode=${mode}`);
+      expect(options.options.sslMode).toBe(expected);
+    });
+
+    test("sslMode defaults to disable when no mode and no tls are set", () => {
+      const options = new SQL({
+        adapter: "postgres",
+        hostname: "localhost",
+        username: "user",
+        password: "pass",
+      });
+      expect(options.options.sslMode).toBe(SSLMode.disable);
+      expect(options.options.tls).toBeUndefined();
+    });
+
+    test("tls: true coerces sslMode to prefer", () => {
+      const options = new SQL({
+        adapter: "postgres",
+        hostname: "localhost",
+        username: "user",
+        password: "pass",
+        tls: true,
+      });
+      expect(options.options.sslMode).toBe(SSLMode.prefer);
+      expect(options.options.tls).toBe(true);
+    });
+
+    test("tls: TLSOptions keeps the object and coerces sslMode to prefer", () => {
+      const options = new SQL({
+        adapter: "postgres",
+        hostname: "localhost",
+        username: "user",
+        password: "pass",
+        tls: { rejectUnauthorized: false },
+      });
+      expect(options.options.sslMode).toBe(SSLMode.prefer);
+      expect(options.options.tls).toEqual({ rejectUnauthorized: false });
+    });
+
+    test("URL sslmode + tls object combine (tls shape wins, sslmode wins)", () => {
+      const options = new SQL("postgres://user:pass@localhost/mydb?sslmode=verify-full", {
+        tls: { rejectUnauthorized: true },
+      });
+      expect(options.options.sslMode).toBe(SSLMode.verify_full);
+      expect(options.options.tls).toEqual({ rejectUnauthorized: true, serverName: "localhost" });
+    });
+
+    test("ssl option is an alias for tls (deprecated)", () => {
+      const withSsl = new SQL({
+        adapter: "postgres",
+        hostname: "localhost",
+        username: "user",
+        password: "pass",
+        ssl: { rejectUnauthorized: false } as Bun.TLSOptions,
+      });
+      const withTls = new SQL({
+        adapter: "postgres",
+        hostname: "localhost",
+        username: "user",
+        password: "pass",
+        tls: { rejectUnauthorized: false },
+      });
+      expect(withSsl.options.sslMode).toBe(withTls.options.sslMode);
+      expect(withSsl.options.tls).toEqual(withTls.options.tls as object);
+    });
+
+    test("URL sslmode=invalid throws", () => {
+      expect(() => new SQL("postgres://user:pass@localhost/mydb?sslmode=bogus")).toThrow();
+    });
+  });
 });

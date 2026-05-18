@@ -19,6 +19,7 @@ use bun_jsc::{
     VirtualMachineRef as VirtualMachine, ZigStringJsc as _,
 };
 use bun_paths::resolve_path::{self as Path, platform};
+use bun_ptr::AsCtxPtr;
 use bun_sys::{self, SystemErrno};
 use bun_threading::Mutex;
 
@@ -96,15 +97,6 @@ impl FSWatcher {
         // documented cross-thread entry point and only touches the lock-free
         // queue.
         self.vm().event_loop_shared().enqueue_task_concurrent(task)
-    }
-
-    /// `self`'s address as `*mut Self` for path-watcher / abort-signal /
-    /// rare-data ctx slots. Callbacks deref it as `&*const` (shared) — all
-    /// mutation goes through `Cell`/`JsCell` — so no write provenance is
-    /// required; the `*mut` spelling is purely to match the C signature.
-    #[inline]
-    fn as_ctx_ptr(&self) -> *mut Self {
-        (self as *const Self).cast_mut()
     }
 
     /// `pub const finalize = deinit;` — codegen `finalize: true` entry point.

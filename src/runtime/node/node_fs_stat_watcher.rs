@@ -19,7 +19,7 @@ use bun_jsc::{
     WorkPoolTask,
 };
 use bun_paths::resolve_path::{self as Path, platform};
-use bun_ptr::{BackRef, ParentRef, RefPtr, ThreadSafeRefCount};
+use bun_ptr::{AsCtxPtr, BackRef, ParentRef, RefPtr, ThreadSafeRefCount};
 use bun_resolver::fs;
 use bun_sys::{self, PosixStat};
 use bun_threading::{Guarded, UnboundedQueue};
@@ -539,15 +539,6 @@ impl StatWatcher {
     #[inline]
     fn ctx_el_ctx(&self) -> bun_io::EventLoopCtx {
         VirtualMachine::event_loop_ctx(self.ctx.as_ptr())
-    }
-
-    /// `self`'s address as `*mut Self` for `ConcurrentTask` ctx slots. The
-    /// callbacks deref it as `&*const` (shared) — see
-    /// `swap_and_call_listener_on_main_thread` etc. — so no write provenance
-    /// is required; the `*mut` spelling is purely to match the C ABI.
-    #[inline]
-    fn as_ctx_ptr(&self) -> *mut Self {
-        (self as *const Self).cast_mut()
     }
 
     pub fn event_loop(&self) -> *mut EventLoop {

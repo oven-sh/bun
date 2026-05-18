@@ -6,7 +6,7 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 use std::sync::atomic::AtomicU32;
 
-use bun_ptr::{RefCount, RefCounted, RefPtr};
+use bun_ptr::{AsCtxPtr, RefCount, RefCounted, RefPtr};
 
 use bun_core::Output;
 use bun_io::{FilePoll, KeepAlive};
@@ -252,15 +252,6 @@ impl<'a> Subprocess<'a> {
     #[inline]
     pub fn global_this(&self) -> &JSGlobalObject {
         self.global_this.get()
-    }
-
-    /// `self`'s address as `*mut Self` for C-callback ctx slots / abort-signal
-    /// native bindings. Callbacks deref it as `&*const` (shared) — see the
-    /// `*_c` thunks below — so no write provenance is required; the `*mut`
-    /// spelling is purely to match the C signature.
-    #[inline]
-    pub fn as_ctx_ptr(&self) -> *mut Self {
-        (self as *const Self).cast_mut()
     }
 
     /// Read-modify-write the packed `Cell<Flags>` through `&self`.

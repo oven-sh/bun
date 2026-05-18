@@ -24,9 +24,11 @@ pub struct SourceLocation {
 }
 
 // SAFETY: both pointers always reference `'static` data — either compile-time literals
-// from `concat!(file!(), "\0")` / `c"…"`, or leaked interned `CString`s from
-// `intern_location_file`. They are never freed and never written through, so sharing
-// across threads is sound.
+// from `concat!(file!(), "\0")` / `c"…"`, or interned `CString`s owned by
+// `intern_location_file`'s process-level `static` cache. The cache only ever inserts
+// (never removes or shrinks), and Rust never drops `static`s, so the boxed bytes live
+// for the rest of the process and are never written through. Sharing across threads is
+// therefore sound.
 unsafe impl Send for SourceLocation {}
 unsafe impl Sync for SourceLocation {}
 
@@ -48,29 +50,39 @@ impl SourceLocation {
 }
 
 /// Intern a `&'static str` (from `Location::file()`) as a NUL-terminated C string.
-/// Thread-local cache keyed by string-data pointer identity — `Location::file()` always
-/// returns the same `&'static str` for a given call site, so the cache is bounded by the
-/// number of distinct `#[track_caller]` sites that reach a scope ctor. The cache owns the
-/// `Box<CStr>` so LSan sees it as reachable; the returned pointer is stable because the
-/// `HashMap` value is `Box<CStr>` (the boxed string never moves on rehash).
+/// Cache keyed by string-data pointer identity — `Location::file()` always returns the
+/// same `&'static str` for a given call site, so the cache is bounded by the number of
+/// distinct `#[track_caller]` sites that reach a scope ctor.
+///
+/// The cache is a process-level `static` (not `thread_local!`) on purpose: long-lived
+/// threadpool/worker threads are still parked when the main thread calls `exit()`, so
+/// their TLS destructors never run and LSan does not trace those threads' TLS slots as
+/// roots — every `Box<CStr>` interned from a worker was reported as leaked. A `static`
+/// lives in `.data`/`.bss` (a built-in LSan root), is never dropped, and reaches the
+/// boxed `CStr` data transitively via the `HashMap`'s bucket allocation. It also closes
+/// a latent UAF: `SourceLocation` is `Copy + Send + Sync`, so a value handed across
+/// threads could outlive a per-thread cache that *did* run its destructor. The returned
+/// pointer is stable across rehash because the `HashMap` value is `Box<CStr>` — the
+/// boxed bytes never move.
+///
+/// Only compiled under `cfg(any(debug_assertions, bun_asan))`; after warmup the critical
+/// section is a single `HashMap::get`, and this never runs on a release path.
 #[cfg(any(debug_assertions, bun_asan))]
 fn intern_location_file(file: &'static str) -> *const c_char {
-    use std::cell::RefCell;
     use std::collections::HashMap;
     use std::ffi::{CStr, CString};
-    thread_local! {
-        static CACHE: RefCell<HashMap<usize, Box<CStr>>> = RefCell::new(HashMap::new());
-    }
-    CACHE.with(|c| {
-        c.borrow_mut()
-            .entry(file.as_ptr() as usize)
-            .or_insert_with(|| {
-                CString::new(file)
-                    .unwrap_or_else(|_| CString::new("<rust>").unwrap())
-                    .into_boxed_c_str()
-            })
-            .as_ptr()
-    })
+    use std::sync::Mutex;
+    static CACHE: Mutex<Option<HashMap<usize, Box<CStr>>>> = Mutex::new(None);
+    let mut guard = CACHE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    guard
+        .get_or_insert_with(HashMap::new)
+        .entry(file.as_ptr() as usize)
+        .or_insert_with(|| {
+            CString::new(file)
+                .unwrap_or_else(|_| CString::new("<rust>").unwrap())
+                .into_boxed_c_str()
+        })
+        .as_ptr()
 }
 #[cfg(not(any(debug_assertions, bun_asan)))]
 #[inline(always)]
@@ -622,7 +634,7 @@ pub fn call_zero_is_throw_at(
 
 /// `[[ZIG_EXPORT(zero_is_throw)]]` — `#[track_caller]` convenience wrapper.
 /// Prefer [`call_zero_is_throw_at`] with [`src!`](crate::src) in hot paths (avoids the
-/// debug-build thread-local intern of `Location::file()`).
+/// debug-build process-level intern of `Location::file()`).
 #[track_caller]
 #[inline]
 pub fn call_zero_is_throw(
@@ -723,7 +735,7 @@ pub fn call_check_slow<R>(global: &JSGlobalObject, f: impl FnOnce() -> R) -> JsR
 
 /// Macro forms of the per-mode wrappers — expand [`src!`](crate::src) at the *call site* so
 /// the debug-build diagnostic `SourceLocation` is a NUL-terminated literal (zero-cost),
-/// not a `#[track_caller]` `Location::file()` interned through a thread-local HashMap.
+/// not a `#[track_caller]` `Location::file()` interned through a process-level HashMap.
 /// Prefer these over the bare `call_*_is_throw` fns in hand-written hot-path shims.
 #[macro_export]
 macro_rules! call_zero_is_throw {

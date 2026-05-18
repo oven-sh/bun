@@ -176,15 +176,49 @@ impl FakeTimers {
     fn clear(&mut self) {
         self.assert_valid(AssertMode::Locked);
 
+        // Collect the popped `TimeoutObject` parents so the cancel/deref pass
+        // runs after this `&mut self` heap-drain loop ends. `cancel()` reaches
+        // `(*state).timer.increment_timer_ref()` which forms `&mut All`,
+        // aliasing `&mut self.fake_timers` under Stacked Borrows — same
+        // hazard `execute_next()`/`fire()` document above.
+        let mut to_cancel: Vec<*mut crate::timer::TimeoutObject> = Vec::new();
         while let Some(timer) = self.timers.delete_min() {
             // SAFETY: `delete_min` returns a live `*mut EventLoopTimer` just unlinked.
             unsafe {
                 (*timer).state = EventLoopTimerState::CANCELLED;
                 (*timer).in_heap = InHeap::None;
+                if (*timer).tag == crate::timer::EventLoopTimerTag::TimeoutObject {
+                    to_cancel.push(crate::timer::TimeoutObject::from_timer_ptr(timer));
+                }
             }
         }
 
         self.assert_valid(AssertMode::Locked);
+
+        // Marking `state = CANCELLED` above only detaches the node — it
+        // doesn't release the heap's `+1` taken by `reschedule()` or downgrade
+        // the `Strong` JS pin set in `set_this_value()`. Without those, the
+        // box's refcount sticks at 2 and the `Strong` roots the wrapper so GC
+        // can never sweep it: the `Box<TimeoutObject>` is unreachable from
+        // either heap and leaks. (The Zig spec, FakeTimers.zig:81-89, has the
+        // same gap — this is a pre-existing bug, not a port regression.)
+        //
+        // `cancel()` downgrades the `Strong` and clears the keep-alive flag;
+        // its own heap-removal + deref is gated on `was_active` (the state is
+        // already `CANCELLED`, so it's a no-op there). Pair the heap-side
+        // `reschedule()` `ref_()` with an explicit `deref()`.
+        if !to_cancel.is_empty() {
+            let vm = bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr();
+            for parent in to_cancel {
+                // SAFETY: `parent` is a live `Box<TimeoutObject>` (refcount ≥ 1);
+                // the JS thread is the only mutator. `cancel()` may not free it
+                // (refcount goes 2→1); `deref()` may (1→0) — never touched again.
+                unsafe {
+                    (*parent).internals.cancel(vm);
+                    crate::timer::TimeoutObject::deref(parent);
+                }
+            }
+        }
     }
 
     // PORT NOTE (noalias re-entrancy): `execute_*` / `fire` do NOT take

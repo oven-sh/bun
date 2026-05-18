@@ -827,7 +827,7 @@ pub fn error_to_js_with_syscall(
     instance.put(
         global_this,
         b"name",
-        bstr::String::static_(b"DNSException").to_js(global_this)?,
+        bstr::String::static_(b"Error").to_js(global_this)?,
     );
     Ok(instance)
 }
@@ -856,7 +856,7 @@ pub fn error_to_js_with_syscall_and_hostname(
     instance.put(
         global_this,
         b"name",
-        bstr::String::static_(b"DNSException").to_js(global_this)?,
+        bstr::String::static_(b"Error").to_js(global_this)?,
     );
     Ok(instance)
 }

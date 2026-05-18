@@ -521,7 +521,7 @@ pub mod lib_uv_backend {
                 // (e.g. UV_EINVAL from the 256-byte IDNA buffer for long hostnames,
                 // or UV_ENOMEM). Route the error through the same path the async
                 // completion would have taken so the pending-cache slot is released
-                // and the promise is rejected with a DNSException.
+                // and the promise is rejected with a Node-shaped error.
                 if let Some(resolver) = (*request).resolver_for_caching {
                     if (*request).cache.pending_cache() {
                         (*resolver).drain_pending_host_native(
@@ -2056,9 +2056,13 @@ impl DNSLookup {
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
             if let Some(err) = c_ares::Error::init_eai(status) {
-                let host = (*this).name.clone();
-                error_to_deferred(err, b"getaddrinfo", Some(&host[..]), &mut (*this).promise)
-                    .reject_later((*this).global_this());
+                error_to_deferred(
+                    err,
+                    b"getaddrinfo",
+                    Some(&(*this).name),
+                    &mut (*this).promise,
+                )
+                .reject_later((*this).global_this());
                 Self::destroy(this);
                 return;
             }
@@ -2088,20 +2092,23 @@ impl DNSLookup {
         unsafe {
             let global_this = (*this).global_this();
             if let Some(err) = err_ {
-                let host = (*this).name.clone();
-                error_to_deferred(err, b"getaddrinfo", Some(&host[..]), &mut (*this).promise)
-                    .reject_later(global_this);
+                error_to_deferred(
+                    err,
+                    b"getaddrinfo",
+                    Some(&(*this).name),
+                    &mut (*this).promise,
+                )
+                .reject_later(global_this);
                 Self::destroy(this);
                 return;
             }
 
             // `r` is the c-ares-allocated AddrInfo valid for the callback's duration.
             let Some(r) = result.filter(|r| !(**r).node.is_null()) else {
-                let host = (*this).name.clone();
                 error_to_deferred(
                     c_ares::Error::ENOTFOUND,
                     b"getaddrinfo",
-                    Some(&host[..]),
+                    Some(&(*this).name),
                     &mut (*this).promise,
                 )
                 .reject_later(global_this);

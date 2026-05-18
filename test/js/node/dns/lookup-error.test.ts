@@ -47,6 +47,7 @@ test("dns.lookup failure has a Node-shaped error", async () => {
 test("dns.lookup({ all: true }) failure has a Node-shaped error", async () => {
   const err = await lookupError(HOST, { all: true });
   assertNodeShape(err, HOST);
+  assert.strictEqual(err.message, `getaddrinfo ENOTFOUND ${HOST}`);
 });
 
 test("dnsPromises.lookup failure has a Node-shaped error", async () => {

@@ -542,7 +542,7 @@ function ClientRequest(input, options, cb) {
         };
 
         if (candidates.length === 0) {
-          fail("No records found", "DNSException", "ENOTFOUND", "getaddrinfo");
+          fail(`getaddrinfo ENOTFOUND ${host}`, "Error", "ENOTFOUND", "getaddrinfo");
           return;
         }
 

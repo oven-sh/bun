@@ -557,6 +557,8 @@ impl<'a> LinkerContext<'a> {
         let sources: &[Source] = unsafe { (*self.parse_graph).input_files.items_source() };
 
         self.graph.load(
+            // SAFETY: parse_graph backref just assigned above.
+            unsafe { (*self.parse_graph).heap },
             entry_points,
             sources,
             server_component_boundaries,

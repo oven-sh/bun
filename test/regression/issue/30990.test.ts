@@ -127,9 +127,9 @@ async function runUpgradeAgainstMock(opts: { zipSize: number; advertiseSize: boo
   return stderr;
 }
 
-test.skipIf(isWindows).concurrent(
-  "bun upgrade [current/total] progress uses binary-bytes (MiB), not raw bytes (#30990)",
-  async () => {
+test
+  .skipIf(isWindows)
+  .concurrent("bun upgrade [current/total] progress uses binary-bytes (MiB), not raw bytes (#30990)", async () => {
     // With `size` advertised, Progress renders `[current/total]` — both
     // sides go through the binary-bytes formatter.
     const stderr = await runUpgradeAgainstMock({ zipSize: 5 * 1024 * 1024, advertiseSize: true });
@@ -146,23 +146,24 @@ test.skipIf(isWindows).concurrent(
     // Broken shape: raw integer bytes `[<N>/5242880]` (5 × 1024²).
     const anyRawBytes = downloadingLines.some(l => /\[\d+\/5242880\]/.test(l));
     expect(anyRawBytes).toBe(false);
-  },
-);
+  });
 
-test.skipIf(isWindows).concurrent("bun upgrade [current] progress (unknown size) uses binary-bytes (#30990)", async () => {
-  // With `size` omitted, bun's `version.size == 0` and Progress takes the
-  // `eti == 0 && completed_items != 0` branch — the one-sided `[current]`
-  // arm. Same arm exercised by the canary upgrade path.
-  const stderr = await runUpgradeAgainstMock({ zipSize: 5 * 1024 * 1024, advertiseSize: false });
+test
+  .skipIf(isWindows)
+  .concurrent("bun upgrade [current] progress (unknown size) uses binary-bytes (#30990)", async () => {
+    // With `size` omitted, bun's `version.size == 0` and Progress takes the
+    // `eti == 0 && completed_items != 0` branch — the one-sided `[current]`
+    // arm. Same arm exercised by the canary upgrade path.
+    const stderr = await runUpgradeAgainstMock({ zipSize: 5 * 1024 * 1024, advertiseSize: false });
 
-  const downloadingLines = stderr.split("\n").filter(l => l.includes("Downloading ["));
-  expect(downloadingLines.length).toBeGreaterThan(0);
+    const downloadingLines = stderr.split("\n").filter(l => l.includes("Downloading ["));
+    expect(downloadingLines.length).toBeGreaterThan(0);
 
-  const anyBinaryUnit = downloadingLines.some(l => /\[[\d.]+(MiB|KiB|GiB|B)\]/.test(l));
-  expect({ anyBinaryUnit, downloadingLines }).toEqual({ anyBinaryUnit: true, downloadingLines });
+    const anyBinaryUnit = downloadingLines.some(l => /\[[\d.]+(MiB|KiB|GiB|B)\]/.test(l));
+    expect({ anyBinaryUnit, downloadingLines }).toEqual({ anyBinaryUnit: true, downloadingLines });
 
-  // Broken shape: `[<many-digit-int>]` with no IEC suffix (e.g. `[3407873]`).
-  // `[0B]` is fine — it's the new code printing zero.
-  const anyRawBytes = downloadingLines.some(l => /\[\d{5,}\]/.test(l));
-  expect(anyRawBytes).toBe(false);
-});
+    // Broken shape: `[<many-digit-int>]` with no IEC suffix (e.g. `[3407873]`).
+    // `[0B]` is fine — it's the new code printing zero.
+    const anyRawBytes = downloadingLines.some(l => /\[\d{5,}\]/.test(l));
+    expect(anyRawBytes).toBe(false);
+  });

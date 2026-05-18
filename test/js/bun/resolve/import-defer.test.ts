@@ -1,7 +1,7 @@
 // TC39 proposal-defer-import-eval (Stage 3) — static `import defer * as ns from "..."`
 // https://tc39.es/proposal-defer-import-eval/
 
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 async function run(files: Record<string, string>, entry = "main.js") {

@@ -1002,6 +1002,7 @@ pub fn defines_from_transform_options(
             &default_values,
             behavior,
             &framework.prefix,
+            bump,
         )?;
     }
 

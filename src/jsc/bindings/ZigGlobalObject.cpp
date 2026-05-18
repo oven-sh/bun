@@ -3866,6 +3866,19 @@ extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObjec
     Bun__InspectorConnection__disconnectAllOnExit(globalObject);
     // Hold a Ref so the RunLoop is guaranteed to outlive the VM teardown below.
     Ref<WTF::RunLoop> runLoop = vm.runLoop();
+    {
+        // Drop the module loader's registry and the require() cache before
+        // collecting, so module-level bindings become unreachable. Without
+        // this, every value stored in a module top-level binding (e.g. the
+        // `tmpdirs[]` array in test/harness.ts that keeps mkdtempSync paths)
+        // is rooted through the registry and survives collectNow(), so the
+        // ExternalStringImpl deallocators never run and LSan reports the
+        // backing buffers as leaked. Mirrors WebWorker__teardownJSCVM.
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        globalObject->moduleLoader()->clearAll();
+        globalObject->requireMap()->clear(globalObject);
+        scope.exception(); // mirror WebWorker__teardownJSCVM — leave any pending exception in place
+    }
     gcUnprotect(globalObject);
     globalObject = nullptr;
     vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);

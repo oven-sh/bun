@@ -1716,6 +1716,18 @@ impl UDPSocket {
         // SAFETY: called from finalize with valid Box-allocated payload.
         let this_ref = unsafe { &*this };
         debug_assert!(this_ref.closed.get() || VirtualMachine::get().is_shutting_down());
+        // VM-shutdown path: `lastChanceToFinalize` can finalize the wrapper
+        // while the underlying poll is still open (the Strong in `this_value`
+        // kept it GC-rooted until now). Close it so the `us_udp_socket_t`
+        // lands on `closed_udp_head` for the post-destruct
+        // `drain_closed_sockets()` sweep instead of leaking. `on_close`
+        // re-derives `&UDPSocket` from the uws user pointer (= `this`, still
+        // live) and only touches `Cell`/`JsCell` fields; `this_value` is
+        // already `Finalized` so its `downgrade()` is a no-op.
+        if let Some(socket) = this_ref.socket.take() {
+            this_ref.closed.set(true);
+            uws::udp::Socket::opaque_mut(socket).close();
+        }
         this_ref.poll_ref.with_mut(|p| p.disable());
         // config drop handled by heap::take below.
         // this_value.deinit() handled by JsRef Drop.

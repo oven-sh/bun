@@ -120,7 +120,6 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         "leak:bun_runtime::node::fs_events::init_core_foundation\n",
         "leak:bun_runtime::node::fs_events::init_core_services\n",
         "leak:bun_runtime::node::fs_events::FSEventsLoop\n",
-        "leak:bun_bake::framework_router::JSFrameworkRouter\n",
         "leak:bun_js_parser_jsc::Macro\n",
         "leak:bun_tcc_sys::tcc::State>::init\n",
         "leak:bun_runtime::api::bun::dynamic_library\n",

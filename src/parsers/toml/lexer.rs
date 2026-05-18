@@ -821,10 +821,22 @@ impl<'a> Lexer<'a> {
                         let text = &self.source.contents[slice_lo..slice_hi];
                         let mut array_list =
                             bun_alloc::ArenaVec::with_capacity_in(text.len(), self.bump);
+                        // Diagnostic positions inside decode_escape_sequences are computed as
+                        // base + iter.i, where iter.i is an offset into `text`. Pass `slice_lo`
+                        // (which equals `start` for single-line and `start + 2 + trimmed LF/CRLF`
+                        // for multi-line) so the column points at the real source byte.
                         if is_multiline_string_literal {
-                            self.decode_escape_sequences::<true>(start, text, &mut array_list)?;
+                            self.decode_escape_sequences::<true>(
+                                slice_lo,
+                                text,
+                                &mut array_list,
+                            )?;
                         } else {
-                            self.decode_escape_sequences::<false>(start, text, &mut array_list)?;
+                            self.decode_escape_sequences::<false>(
+                                slice_lo,
+                                text,
+                                &mut array_list,
+                            )?;
                         }
                         self.string_literal_slice = array_list.into_bump_slice();
                         self.string_literal_is_ascii = false;

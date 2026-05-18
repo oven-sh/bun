@@ -496,9 +496,9 @@ impl BunTestRoot {
             // SAFETY: `ptr` was produced by `IntrusiveRc::into_raw` in
             // `BunTest::run_test_callback`; it is live because the promise
             // never settled (the settle path removes the entry before
-            // `deref()`). `from_raw` reclaims that `+1` and may destroy the
-            // box. Single-threaded.
-            drop(unsafe { RefDataPtr::from_raw(ptr.cast_mut()) });
+            // `deref()`). `RefPtr<T>` has no `Drop`, so explicitly `.deref()`
+            // to release the `+1` and destroy the box. Single-threaded.
+            unsafe { RefDataPtr::from_raw(ptr.cast_mut()) }.deref();
         }
     }
 

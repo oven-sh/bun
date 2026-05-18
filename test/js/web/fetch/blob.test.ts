@@ -325,19 +325,23 @@ test("dupe() preserves allocated content_type for Body clone", () => {
   expect(clonedType).toBe(originalType);
 });
 
-test("Blob.json()/.text() on odd-length UTF-16LE+BOM does not abort", async () => {
-  // Stripping the 2-byte BOM keeps the length odd, which used to make the
-  // u8->u16 cast `panic!` and abort the whole process (uncatchable). Run in a
-  // subprocess: pre-fix it exits 133 with no output; fixed it drops the
-  // trailing odd byte like Zig and parses the valid prefix.
+test("Blob.json()/.text() on odd-length/odd-aligned UTF-16LE+BOM does not abort", async () => {
+  // Odd length: stripping the 2-byte BOM keeps the length odd. Odd address:
+  // `.slice(1)` of a shared byte store hands an odd pointer straight to the
+  // u8->u16 cast. Either used to `panic!` and abort the whole process
+  // (uncatchable). Run in a subprocess: pre-fix it exits 133 with no output;
+  // fixed it drops the trailing odd byte and reads unaligned like Zig.
   const src = `
     const oddJson = Buffer.concat([Buffer.from([0xFF, 0xFE]), Buffer.from(JSON.stringify({ a: 1 }), "utf16le"), Buffer.from([0x20])]);
     const oddText = Buffer.concat([Buffer.from([0xFF, 0xFE]), Buffer.from("hi", "utf16le"), Buffer.from([0x20])]);
     const evenJson = Buffer.concat([Buffer.from([0xFF, 0xFE]), Buffer.from(JSON.stringify({ a: 1 }), "utf16le")]);
+    // Odd address: pad 1 byte then .slice(1) so the view starts at base+1.
+    const misaligned = Buffer.concat([Buffer.from([0x00, 0xFF, 0xFE]), Buffer.from("hi", "utf16le")]);
     const j = await new Blob([oddJson]).json();
     const t = await new Blob([oddText]).text();
     const e = await new Blob([evenJson]).json();
-    process.stdout.write(JSON.stringify(j) + "|" + JSON.stringify(t) + "|" + JSON.stringify(e));
+    const m = await new Blob([misaligned]).slice(1).text();
+    process.stdout.write(JSON.stringify(j) + "|" + JSON.stringify(t) + "|" + JSON.stringify(e) + "|" + JSON.stringify(m));
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", src],
@@ -345,7 +349,8 @@ test("Blob.json()/.text() on odd-length UTF-16LE+BOM does not abort", async () =
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(stdout).toBe(`{"a":1}|"hi"|{"a":1}`);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe(`{"a":1}|"hi"|{"a":1}|"hi"`);
   expect(exitCode).toBe(0);
 });

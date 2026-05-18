@@ -2664,14 +2664,19 @@ impl BlobExt for Blob {
 
         if bom == Some(strings::BOM::Utf16Le) {
             let _free = (LIFETIME == Lifetime::Temporary).then(|| TemporaryBytes(raw_bytes));
-            // BOM::Utf16Le ⇒ buf is UTF-16LE bytes. Stripping the 2-byte BOM
-            // does not change parity, so an odd-length input would make
-            // `bytemuck::cast_slice` `panic!` (uncatchable). Drop the trailing
-            // odd byte first, mirroring Zig's `@divTrunc(bytes.len, 2)`.
-            let buf = &buf[..buf.len() & !1];
+            // BOM::Utf16Le ⇒ buf is UTF-16LE bytes. `buf` may be odd-length
+            // (truncated input) or odd-address (`.slice(odd)` of a shared
+            // store) — either makes `bytemuck::cast_slice` `panic!`
+            // (uncatchable). `chunks_exact(2)` + `from_le_bytes` handles both:
+            // it drops any trailing odd byte (Zig's `@divTrunc(len, 2)`) and
+            // reads unaligned. `clone_utf16` copies anyway, so the extra Vec
+            // is one allocation either way.
+            let utf16: Vec<u16> = buf
+                .chunks_exact(2)
+                .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                .collect();
             // +1 WTF ref; `OwnedString` releases it on scope exit (Zig: `defer out.deref()`).
-            let out =
-                OwnedString::new(BunString::clone_utf16(bytemuck::cast_slice::<u8, u16>(buf)));
+            let out = OwnedString::new(BunString::clone_utf16(&utf16));
             return out.to_js(global);
         }
 
@@ -2850,14 +2855,19 @@ impl BlobExt for Blob {
         }
 
         if bom == Some(strings::BOM::Utf16Le) {
-            // BOM::Utf16Le ⇒ buf is UTF-16LE bytes. Stripping the 2-byte BOM
-            // does not change parity, so an odd-length input would make
-            // `bytemuck::cast_slice` `panic!` (uncatchable). Drop the trailing
-            // odd byte first, mirroring Zig's `@divTrunc(bytes.len, 2)`.
-            let buf = &buf[..buf.len() & !1];
+            // BOM::Utf16Le ⇒ buf is UTF-16LE bytes. `buf` may be odd-length
+            // (truncated input) or odd-address (`.slice(odd)` of a shared
+            // store) — either makes `bytemuck::cast_slice` `panic!`
+            // (uncatchable). `chunks_exact(2)` + `from_le_bytes` handles both:
+            // it drops any trailing odd byte (Zig's `@divTrunc(len, 2)`) and
+            // reads unaligned. `clone_utf16` copies anyway, so the extra Vec
+            // is one allocation either way.
+            let utf16: Vec<u16> = buf
+                .chunks_exact(2)
+                .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                .collect();
             // +1 WTF ref; `OwnedString` releases it on scope exit (Zig: `defer out.deref()`).
-            let mut out =
-                OwnedString::new(BunString::clone_utf16(bytemuck::cast_slice::<u8, u16>(buf)));
+            let mut out = OwnedString::new(BunString::clone_utf16(&utf16));
             // PORT NOTE: Zig used `defer { free; detach }`. Reshaped to compute the
             // result first, then perform the deferred work explicitly — capturing
             // `&mut self` in a scopeguard closure conflicts with later uses below.

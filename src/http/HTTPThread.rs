@@ -1290,6 +1290,29 @@ static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 static SHUTDOWN_DONE: (std::sync::Mutex<bool>, std::sync::Condvar) =
     (std::sync::Mutex::new(false), std::sync::Condvar::new());
 
+struct ShutdownReclaim {
+    ctx: *mut c_void,
+    drop_fn: unsafe fn(*mut c_void),
+}
+// SAFETY: pushed from the HTTP thread, drained from the JS thread once the
+// HTTP thread is parked; `ctx` is an exclusive heap allocation handed off
+// between the two.
+unsafe impl Send for ShutdownReclaim {}
+
+static SHUTDOWN_RECLAIMS: std::sync::Mutex<Vec<ShutdownReclaim>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// Park `(ctx, drop_fn)` until [`shutdown_for_exit`] has waited the HTTP
+/// thread out of its loop. The drop is applied on the JS thread once the
+/// daemon is parked, so callers can hand off allocations whose teardown is
+/// not safe while a `tick()` is still on the HTTP-thread stack.
+pub fn defer_shutdown_reclaim(ctx: *mut c_void, drop_fn: unsafe fn(*mut c_void)) {
+    SHUTDOWN_RECLAIMS
+        .lock()
+        .unwrap()
+        .push(ShutdownReclaim { ctx, drop_fn });
+}
+
 /// Called from `bun_jsc::VirtualMachine::global_exit()` on the JS thread,
 /// before `~VM`. Asks the HTTP daemon thread to reclaim every in-flight
 /// `ThreadlocalAsyncHTTP` box and waits (with a short timeout) for it to ack.
@@ -1320,6 +1343,15 @@ pub fn shutdown_for_exit() {
     let _ = SHUTDOWN_DONE
         .1
         .wait_timeout_while(done, std::time::Duration::from_secs(1), |d| !*d);
+
+    // The daemon is parked (or timed out); no further callbacks will fire.
+    // Reclaim boxes that result-callback handlers parked here while the
+    // calling stack still aliased their contents.
+    for r in core::mem::take(&mut *SHUTDOWN_RECLAIMS.lock().unwrap()) {
+        // SAFETY: `drop_fn` is paired with `ctx` by `defer_shutdown_reclaim`;
+        // each entry is pushed exactly once and drained exactly once here.
+        unsafe { (r.drop_fn)(r.ctx) };
+    }
 }
 
 // dispatch_deps bridge removed — real impls now live in

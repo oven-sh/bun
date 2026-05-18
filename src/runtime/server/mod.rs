@@ -1370,6 +1370,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         nhr.maybe_stop_reading_body(unsafe { &mut *vm }, this_value);
                     }
                 }
+            } else if nhr_flags.contains(NhrFlags::IS_REQUEST_PENDING) {
+                // The socket was adopted by the WebSocket context inside the
+                // handler; `raw_response` is gone and no further uws abort/end
+                // callback will fire on it, so the IS_REQUEST_PENDING ref
+                // (one of the initial 3) would otherwise strand and leak the
+                // box. Release it now and balance the server's
+                // pending-request counter via `mark_request_as_done()`.
+                // `should_request_be_pending()` returns false once UPGRADED
+                // is set, so this reaches `mark_request_as_done()`.
+                nhr.on_request_complete();
             }
         }
 

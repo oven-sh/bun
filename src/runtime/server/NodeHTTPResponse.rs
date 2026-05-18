@@ -512,7 +512,12 @@ impl NodeHTTPResponse {
 
     pub fn should_request_be_pending(&self) -> bool {
         let flags = self.flags.get();
-        if flags.contains(Flags::SOCKET_CLOSED) {
+        // Once the socket is closed or has been adopted by the WebSocket
+        // layer, the HTTP request/response cycle is over — no further uws
+        // callbacks will arrive on `raw_response` to balance the
+        // IS_REQUEST_PENDING ref, so report not-pending so
+        // `mark_request_as_done()` can release it.
+        if flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::UPGRADED) {
             return false;
         }
 

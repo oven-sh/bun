@@ -497,11 +497,18 @@ impl FetchTasklet {
 
     /// Last-ref reclaim from the HTTP thread once the VM has begun shutdown.
     ///
-    /// `clear_data()` and the auto-`Drop` of `promise` / `abort_reason` /
-    /// `check_server_identity` / `readable_stream_ref` reach into the VM's JSC
-    /// `HandleSet`, which is JS-thread-only; that whole set is freed by
-    /// `destructOnExit`, so leak the handle slots and only drop the Rust-side
-    /// allocations (notably `Box<AsyncHTTP>` and the response buffers) here.
+    /// Neither `clear_data()` nor dropping the box is safe here:
+    ///   * the JSC `Strong`/`Weak` fields touch the VM's HandleSet/WeakSet on
+    ///     `Drop` (JS-thread-only), and
+    ///   * the leaked `response: jsc::Weak` keeps a finalize callback
+    ///     (`on_response_finalize`) registered against `this`, so freeing the
+    ///     box before `destructOnExit` sweeps the Response is a UAF.
+    ///
+    /// Park the intact box on the JS thread via
+    /// `bun_http::defer_shutdown_reclaim`; the drain runs from
+    /// `global_exit()` after the HTTP thread has parked but before
+    /// `destructOnExit`, so `deinit()` there can release every handle on the
+    /// right thread and the Weak is cleared before its referent is finalized.
     ///
     /// SAFETY: `this` must be the last reference (ref_count == 0) and have
     /// been allocated via heap::alloc.
@@ -509,24 +516,13 @@ impl FetchTasklet {
         bun_output::scoped_log!(FetchTasklet, "deallocForShutdown");
         // SAFETY: caller contract — `this` is live with ref_count == 0.
         unsafe { (*this).ref_count.assert_no_refs() };
-        // SAFETY: heap-allocated in `get()`; exclusive on count == 0.
-        let mut boxed = unsafe { bun_core::heap::take(this) };
-        core::mem::forget(core::mem::replace(
-            &mut boxed.promise,
-            jsc::JSPromiseStrong::empty(),
-        ));
-        core::mem::forget(core::mem::take(&mut boxed.abort_reason));
-        core::mem::forget(core::mem::take(&mut boxed.check_server_identity));
-        core::mem::forget(core::mem::take(&mut boxed.readable_stream_ref));
-        core::mem::forget(core::mem::take(&mut boxed.request_body));
-        // `response: jsc::Weak` has a `Drop` that calls `Bun__WeakRef__delete`
-        // (touches the VM's WeakSet free list) — JS-thread-only, so leak it.
-        core::mem::forget(core::mem::take(&mut boxed.response));
-        // `signal`, `native_response`, `sink`, `request_body_streaming_buffer`
-        // are raw pointers with no `Drop`; their manual unref (in `clear_data`)
-        // is intentionally skipped at shutdown. Remaining fields are pure-Rust
-        // allocations that drop safely off-thread.
-        drop(boxed);
+        http::defer_shutdown_reclaim(this.cast(), FetchTasklet::deinit_erased);
+    }
+
+    unsafe fn deinit_erased(this: *mut c_void) {
+        // SAFETY: parked by `dealloc_for_shutdown` with ref_count == 0; runs
+        // on the JS thread after the HTTP daemon has parked.
+        unsafe { FetchTasklet::deinit(this.cast()) };
     }
 
     fn get_current_response(&self) -> Option<*mut Response> {

@@ -1459,6 +1459,10 @@ pub mod command {
             Global::exit(1);
         }
 
+        if ctx.runtime_options.syntax_check {
+            return run_command::RunCommand::exec_check(ctx);
+        }
+
         if tag == Tag::AutoCommand && !ctx.runtime_options.eval.script.is_empty() {
             return run_command::RunCommand::exec_eval(ctx);
         }

@@ -2173,7 +2173,7 @@ pub mod bv2_impl {
             for (ast_import_record_list, target) in
                 ast_import_records.iter_mut().zip(targets.iter())
             {
-                let import_records = ast_import_record_list.slice_mut();
+                let import_records = ast_import_record_list.as_mut_slice();
                 let path_to_source_index_map = &self.graph.build_graphs[*target];
                 for import_record in import_records.iter_mut() {
                     let source_index = import_record.source_index.get();
@@ -2239,7 +2239,7 @@ pub mod bv2_impl {
                             let record: &mut ImportRecord =
                                 &mut self.graph.ast.items_import_records_mut()
                                     [import_record.importer_source_index as usize]
-                                    .slice_mut()
+                                    .as_mut_slice()
                                     [import_record.import_record_index as usize];
                             if let Some(out_loader) = record.loader {
                                 break 'brk out_loader;
@@ -2269,14 +2269,14 @@ pub mod bv2_impl {
                         let record: &mut ImportRecord =
                             &mut self.graph.ast.items_import_records_mut()
                                 [import_record.importer_source_index as usize]
-                                .slice_mut()
+                                .as_mut_slice()
                                 [import_record.import_record_index as usize];
                         record.source_index = Index::init(idx);
                     } else {
                         let record: &mut ImportRecord =
                             &mut self.graph.ast.items_import_records_mut()
                                 [import_record.importer_source_index as usize]
-                                .slice_mut()
+                                .as_mut_slice()
                                 [import_record.import_record_index as usize];
                         // SAFETY: see `value_ptr` note above.
                         record.source_index = Index::init(unsafe { *value_ptr });
@@ -2350,7 +2350,7 @@ pub mod bv2_impl {
                             let record: &mut ImportRecord =
                                 &mut self.graph.ast.items_import_records_mut()
                                     [import_record.importer_source_index as usize]
-                                    .slice_mut()
+                                    .as_mut_slice()
                                     [import_record.import_record_index as usize];
                             handles_import_errors = record
                                 .flags
@@ -2435,7 +2435,7 @@ pub mod bv2_impl {
                 None => {
                     let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()
                         [import_record.importer_source_index as usize]
-                        .slice_mut()[import_record.import_record_index as usize];
+                        .as_mut_slice()[import_record.import_record_index as usize];
                     // Disable failing packages from being printed.
                     // This may cause broken code to write.
                     // However, doing this means we tell them all the resolve errors
@@ -2485,7 +2485,7 @@ pub mod bv2_impl {
                 let loader: Loader = 'brk: {
                     let record: &ImportRecord = &self.graph.ast.items_import_records()
                         [import_record.importer_source_index as usize]
-                        .slice()[import_record.import_record_index as usize];
+                        .as_slice()[import_record.import_record_index as usize];
                     if let Some(out_loader) = record.loader {
                         break 'brk out_loader;
                     }
@@ -2560,7 +2560,7 @@ pub mod bv2_impl {
             if let Some(source_index) = out_source_index {
                 let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()
                     [import_record.importer_source_index as usize]
-                    .slice_mut()[import_record.import_record_index as usize];
+                    .as_mut_slice()[import_record.import_record_index as usize];
                 record.source_index = source_index;
             }
         }
@@ -3821,7 +3821,7 @@ pub mod bv2_impl {
             let import_records = self.graph.ast.items_import_records();
 
             for source_index in reachable_files {
-                let records: &[ImportRecord] = import_records[source_index.get() as usize].slice();
+                let records: &[ImportRecord] = import_records[source_index.get() as usize].as_slice();
                 for record in records {
                     if !record.source_index.is_valid()
                         && record.tag == bun_ast::ImportRecordTag::None
@@ -4867,7 +4867,7 @@ pub mod bv2_impl {
                                 });
                             } else {
                                 let import_record: &mut ImportRecord = &mut source_import_records
-                                    .slice_mut()
+                                    .as_mut_slice()
                                     [resolve.import_record.import_record_index as usize];
                                 import_record.source_index = source_index;
                             }
@@ -5377,7 +5377,7 @@ pub mod bv2_impl {
                             let mut log = bun_ast::Log::init();
                             if LinkerContext::scan_css_imports(
                                 u32::try_from(index).expect("int cast"),
-                                import_records.slice(),
+                                import_records.as_slice(),
                                 // PORT NOTE: `scan_css_imports` takes the column as a raw
                                 // `*const` slice (the scanImportsAndExports caller holds raw
                                 // SoA pointers); it only reads via `is_none()`. Zig spec
@@ -5419,13 +5419,13 @@ pub mod bv2_impl {
                                 js_files.push(Index::init(u32::try_from(index).expect("int cast"))); // PERF(port): was assume_capacity
 
                                 // Mark every part live.
-                                for p in part_list.slice_mut() {
+                                for p in part_list.as_mut_slice() {
                                     p.is_live = true;
                                 }
                             }
 
                             // Discover all CSS roots.
-                            for record in import_records.slice_mut() {
+                            for record in import_records.as_mut_slice() {
                                 if !record.source_index.is_valid() {
                                     continue;
                                 }
@@ -6866,7 +6866,7 @@ pub mod bv2_impl {
                     if save_import_record_source_index
                         || input_file_loaders[to_assign.to_source_index.get() as usize].is_css()
                     {
-                        import_records.slice_mut()[to_assign.import_record_index as usize]
+                        import_records.as_mut_slice()[to_assign.import_record_index as usize]
                             .source_index = to_assign.to_source_index;
                     }
                 }
@@ -6876,7 +6876,7 @@ pub mod bv2_impl {
             // Inlined `self.path_to_source_index_map(ctx.target)` (== `&mut self.graph.build_graphs[target]`)
             // so borrowck sees it as disjoint from `self.graph.input_files` above.
             let path_to_source_index_map = &mut self.graph.build_graphs[ctx.target];
-            for (i, record) in import_records.slice_mut().iter_mut().enumerate() {
+            for (i, record) in import_records.as_mut_slice().iter_mut().enumerate() {
                 if let Some(source_index) = path_to_source_index_map.get_path(&record.path) {
                     if save_import_record_source_index
                         || input_file_loaders[source_index as usize].is_css()
@@ -7210,7 +7210,7 @@ pub mod bv2_impl {
                     let result_ast_target = result.ast.target;
                     for star_record_idx in result.ast.export_star_import_records.iter() {
                         if (*star_record_idx as usize) < import_records.len() as usize {
-                            let star_ir = &import_records.slice()[*star_record_idx as usize];
+                            let star_ir = &import_records.as_slice()[*star_record_idx as usize];
                             let resolved_index = if star_ir.source_index.is_valid() {
                                 star_ir.source_index.get()
                             } else if let Some(idx) =

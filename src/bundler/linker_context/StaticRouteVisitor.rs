@@ -81,7 +81,7 @@ impl<'a> StaticRouteVisitor<'a> {
         let import_records = &all_import_records[source_index.get() as usize];
 
         let result = 'result: {
-            for import_record in import_records.slice() {
+            for import_record in import_records.as_slice() {
                 if !import_record.source_index.is_valid() {
                     continue;
                 }

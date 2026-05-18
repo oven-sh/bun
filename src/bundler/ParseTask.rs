@@ -1170,7 +1170,7 @@ pub mod parse_worker {
                 // gave up on figuring out how to fix it so that
                 // this feature could ship.
                 ast.has_lazy_export = false;
-                ast.parts.slice_mut()[1] = Part {
+                ast.parts.as_mut_slice()[1] = Part {
                     stmts: ast::StoreSlice::EMPTY,
                     is_live: true,
                     import_record_indices: {

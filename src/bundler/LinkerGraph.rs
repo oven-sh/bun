@@ -232,7 +232,7 @@ pub fn add_part_to_file(
     // call (O(1); the cache was a Zig micro-opt that does not survive
     // Stacked Borrows).
     let declared_symbols: &mut DeclaredSymbolList =
-        &mut parts[id as usize].mut_(part_id as usize).declared_symbols;
+        &mut parts[id as usize][part_id as usize].declared_symbols;
 
     struct Ctx<'a> {
         overlay: &'a mut [TopLevelSymbolToParts],
@@ -297,7 +297,7 @@ pub fn generate_symbol_import_and_use(
 
     // Mark this symbol as used by this part
     {
-        let part: &mut Part = &mut parts[source_index as usize].slice_mut()[part_index as usize];
+        let part: &mut Part = &mut parts[source_index as usize].as_mut_slice()[part_index as usize];
         let uses_entry = part.symbol_uses.get_or_put(ref_)?;
         if !uses_entry.found_existing {
             *uses_entry.value_ptr = symbol::Use {
@@ -342,7 +342,7 @@ pub fn generate_symbol_import_and_use(
         ref_,
     );
     let dependencies =
-        &mut parts[source_index as usize].slice_mut()[part_index as usize].dependencies;
+        &mut parts[source_index as usize].as_mut_slice()[part_index as usize].dependencies;
     // SAFETY: every element of `new_dependencies` is overwritten in the
     // zip-loop immediately below before any read/drop.
     let new_dependencies = unsafe { dependencies.writable_slice(part_ids.len()) };
@@ -630,7 +630,7 @@ impl LinkerGraph {
                     self.ast.items_import_records_mut();
                 for source_id in self.reachable_files.slice() {
                     for import_record in import_records_list[source_id.get() as usize]
-                        .slice_mut()
+                        .as_mut_slice()
                         .iter_mut()
                     {
                         if import_record.source_index.is_valid()

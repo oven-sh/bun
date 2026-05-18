@@ -2684,7 +2684,7 @@ lexer_impl_header! {
     }
 
     pub fn init_json(
-        log: &'a mut Log,
+        log: &mut Log,
         source: &'a Source,
         arena: &'a Arena,
     ) -> Result<Self, Error> {
@@ -2694,8 +2694,12 @@ lexer_impl_header! {
         Ok(lex)
     }
 
+    /// `log` is *not* tied to `'a`: the lexer stores it as `NonNull<Log>` (see
+    /// the `log` field doc) and the caller must keep the pointee alive for the
+    /// lexer's lifetime. The looser bound lets `'a` (which `Ast<'a>` borrows
+    /// through `arena`) outlive a stack-local scratch log.
     pub fn init_without_reading(
-        log: &'a mut Log,
+        log: &mut Log,
         source: &'a Source,
         arena: &'a Arena,
     ) -> Self {
@@ -2748,7 +2752,7 @@ lexer_impl_header! {
     }
 
     pub fn init(
-        log: &'a mut Log,
+        log: &mut Log,
         source: &'a Source,
         arena: &'a Arena,
     ) -> Result<Self, Error> {

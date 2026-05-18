@@ -489,7 +489,7 @@ impl<'a> LinkerContext<'a> {
         if stmts.len() == 1 {
             if let Some(s_import) = stmts[0].data.s_import() {
                 let record = self.graph.ast.items_import_records()[source_index as usize]
-                    .at(s_import.import_record_index as usize);
+                    [s_import.import_record_index as usize];
                 if record.source_index.is_valid()
                     && self.graph.meta.items_flags()[record.source_index.get() as usize].wrap
                         == WrapKind::None
@@ -746,7 +746,7 @@ impl<'a> LinkerContext<'a> {
                 // on shape mismatch).
                 let original_ref = unsafe {
                     (*self.graph.ast.items_parts()[html_import as usize]
-                        .at(1)
+                        [1]
                         .stmts)[0]
                         .data
                         .s_lazy_export()
@@ -2042,7 +2042,7 @@ impl<'a> LinkerContext<'a> {
         alloc: &Bump,
         ast: &JSAst,
     ) -> Result<bool, BunError> {
-        let record = ast.import_records.at(import_record_index as usize);
+        let record = ast.import_records[import_record_index as usize];
         // Barrel optimization: deferred import records should be dropped
         if record.flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED) {
             return Ok(true);
@@ -2309,7 +2309,7 @@ impl<'a> LinkerContext<'a> {
                 &printer_ast,
                 source,
                 print_options,
-                ast.import_records.slice(),
+                ast.import_records.as_slice(),
                 parts_to_print,
                 r,
             )
@@ -2321,7 +2321,7 @@ impl<'a> LinkerContext<'a> {
                 &printer_ast,
                 source,
                 print_options,
-                ast.import_records.slice(),
+                ast.import_records.as_slice(),
                 parts_to_print,
                 r,
             )
@@ -3150,7 +3150,7 @@ impl<'a> LinkerContext<'a> {
                 // no-op kept for parity with the original.
                 for &part_id in common_js_parts {
                     let runtime_parts =
-                        self.graph.ast.items_parts()[Index::RUNTIME.get() as usize].slice();
+                        self.graph.ast.items_parts()[Index::RUNTIME.get() as usize].as_slice();
                     let part: &Part = &runtime_parts[part_id as usize];
                     let symbol_refs = part.symbol_uses.keys();
                     for r#ref in symbol_refs {
@@ -3240,7 +3240,7 @@ impl<'a> LinkerContext<'a> {
                 let mut async_import_count: usize = 0;
                 {
                     let import_records =
-                        self.graph.ast.items_import_records()[source_index as usize].slice();
+                        self.graph.ast.items_import_records()[source_index as usize].as_slice();
                     let meta_flags = self.graph.meta.items_flags();
 
                     for record in import_records {
@@ -3367,7 +3367,7 @@ impl<'a> LinkerContext<'a> {
         let ast_flags = self.graph.ast.items_flags();
 
         // Is this an external file?
-        let record: &ImportRecord = import_records.at(named_import.import_record_index as usize);
+        let record: &ImportRecord = import_records[named_import.import_record_index as usize];
         if !record.source_index.is_valid() {
             return ImportTrackerIterator {
                 value: Default::default(),

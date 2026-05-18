@@ -317,7 +317,7 @@ impl<'a> Options<'a> {
 impl<'a> Parser<'a> {
     pub fn init(
         options: Options<'a>,
-        log: &'a mut bun_ast::Log,
+        log: &mut bun_ast::Log,
         source: &'a bun_ast::Source,
         define: &'a Define,
         bump: &'a Arena,

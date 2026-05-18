@@ -60,7 +60,7 @@ pub fn find_imported_css_files_in_js_order(
         let p = &parts[source_index.get() as usize];
 
         // Iterate over each part in the file in order
-        for part in p.slice() {
+        for part in p.as_slice() {
             // Traverse any files imported by this part. Note that CommonJS calls
             // to "require()" count as imports too, sort of as if the part has an
             // ESM "import" statement in it. This may seem weird because ESM imports

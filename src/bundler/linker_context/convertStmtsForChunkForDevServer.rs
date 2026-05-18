@@ -58,7 +58,7 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
     let input_files = &c.parse_graph().input_files;
     let loaders = input_files.items_loader();
     let sources = input_files.items_source();
-    for record in ast.import_records.slice_mut() {
+    for record in ast.import_records.as_mut_slice() {
         if record.path.is_disabled {
             continue;
         }
@@ -78,7 +78,7 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
     for stmt in part_stmts {
         match &stmt.data {
             StmtData::SImport(st) => {
-                let record = ast.import_records.mut_(st.import_record_index as usize);
+                let record = ast.import_records[st.import_record_index as usize];
                 if record.path.is_disabled {
                     continue;
                 }

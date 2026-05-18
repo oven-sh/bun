@@ -42,7 +42,7 @@ pub fn generate_code_for_lazy_export(
     let exports_kind = this.graph.ast.items_exports_kind()[source_index as usize];
     // PORT NOTE: reshaped for borrowck — take `parts` as a raw pointer *before* the
     // long-lived immutable `items_css()` borrow below; re-borrowed again later as needed.
-    let parts: *mut [Part] = this.graph.ast.items_parts_mut()[source_index as usize].slice_mut();
+    let parts: *mut [Part] = this.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice();
     // SAFETY: parse_graph backref; raw deref because `all_sources` is held
     // across `&mut *this.log` below (split borrow).
     let all_sources = unsafe { &(*this.parse_graph).input_files }.items_source();
@@ -504,7 +504,7 @@ pub fn generate_code_for_lazy_export(
                             key.loc,
                         )));
                     // PORT NOTE: `parts.ptr[generated[1]]` — re-borrow `parts` here for borrowck.
-                    let parts = this.graph.ast.items_parts_mut()[source_index as usize].slice_mut();
+                    let parts = this.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice();
                     parts[generated.1 as usize].stmts = bun_ast::StoreSlice::new_mut(new_stmts);
                 }
             }
@@ -539,7 +539,7 @@ pub fn generate_code_for_lazy_export(
                         },
                         stmt.loc,
                     )));
-                let parts = this.graph.ast.items_parts_mut()[source_index as usize].slice_mut();
+                let parts = this.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice();
                 parts[generated.1 as usize].stmts = bun_ast::StoreSlice::new_mut(new_stmts);
             }
         }

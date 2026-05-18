@@ -191,7 +191,7 @@ fn apply_barrel_optimization_impl(
 
         for rec_idx in needed_records.keys() {
             if (*rec_idx as usize) < ast.import_records.len() {
-                needed_paths.put(ast.import_records.slice()[*rec_idx as usize].path.text, ())?;
+                needed_paths.put(ast.import_records.as_slice()[*rec_idx as usize].path.text, ())?;
             }
         }
 
@@ -200,7 +200,7 @@ fn apply_barrel_optimization_impl(
             if let Some(imp) = ast.named_imports.get(&entry.ref_) {
                 if (imp.import_record_index as usize) < ast.import_records.len() {
                     if needed_paths.contains(
-                        ast.import_records.slice()[imp.import_record_index as usize]
+                        ast.import_records.as_slice()[imp.import_record_index as usize]
                             .path
                             .text,
                     ) {
@@ -222,7 +222,7 @@ fn apply_barrel_optimization_impl(
             let iri = imp.import_record_index;
             if !needed_records.contains(&iri) {
                 if (iri as usize) < ast.import_records.len() {
-                    ast.import_records.slice_mut()[iri as usize]
+                    ast.import_records.as_mut_slice()[iri as usize]
                         .flags
                         .insert(import_record::Flags::IS_UNUSED);
                     has_deferrals = true;
@@ -270,7 +270,7 @@ fn un_defer_record(import_records: &mut import_record::List, record_idx: u32) ->
     if record_idx as usize >= import_records.len() {
         return false;
     }
-    let rec = &mut import_records.slice_mut()[record_idx as usize];
+    let rec = &mut import_records.as_mut_slice()[record_idx as usize];
     if rec.flags.contains(import_record::Flags::IS_INTERNAL)
         || !rec.flags.contains(import_record::Flags::IS_UNUSED)
     {
@@ -410,7 +410,7 @@ pub fn schedule_barrel_deferred_imports(
     // text, using non-unused records in this file. See #28886.
     let mut dedup_fallback: StringArrayHashMap<&'static [u8]> = StringArrayHashMap::default();
     if dev_handle.is_some() {
-        for ir_probe in file_import_records.slice() {
+        for ir_probe in file_import_records.as_slice() {
             if ir_probe.flags.contains(import_record::Flags::IS_UNUSED)
                 || ir_probe.flags.contains(import_record::Flags::IS_INTERNAL)
             {
@@ -432,7 +432,7 @@ pub fn schedule_barrel_deferred_imports(
             continue;
         }
         named_ir_indices.put(ni.import_record_index, ())?;
-        let ir = &file_import_records.slice()[ni.import_record_index as usize];
+        let ir = &file_import_records.as_slice()[ni.import_record_index as usize];
         // In dev server mode, source_index may not be patched — resolve via
         // path map as a read-only fallback. Do NOT write back to the import
         // record — the dev server intentionally leaves source_indices unset
@@ -493,7 +493,7 @@ pub fn schedule_barrel_deferred_imports(
     // - `import("x")`: returns the full module namespace at runtime — consumer
     //   can destructure or access any export. Must mark as .all. We cannot
     //   safely assume which exports will be used.
-    for (idx, ir) in file_import_records.slice().iter().enumerate() {
+    for (idx, ir) in file_import_records.as_slice().iter().enumerate() {
         let target = if ir.source_index.is_valid() {
             ir.source_index.get()
         } else if let Some(map) = path_to_source_index_map {
@@ -538,7 +538,7 @@ pub fn schedule_barrel_deferred_imports(
         if ni.import_record_index as usize >= file_import_records.len() {
             continue;
         }
-        let ir = &file_import_records.slice()[ni.import_record_index as usize];
+        let ir = &file_import_records.as_slice()[ni.import_record_index as usize];
         let resolved_path_text = if ir.flags.contains(import_record::Flags::IS_UNUSED) {
             dedup_fallback
                 .get(ir.path.text)
@@ -575,7 +575,7 @@ pub fn schedule_barrel_deferred_imports(
 
     // Add bare require/dynamic-import targets to BFS as star imports — both
     // always need the full namespace.
-    for (idx, ir) in file_import_records.slice().iter().enumerate() {
+    for (idx, ir) in file_import_records.as_slice().iter().enumerate() {
         let target = if ir.source_index.is_valid() {
             ir.source_index.get()
         } else if let Some(map) = path_to_source_index_map {
@@ -702,7 +702,7 @@ pub fn schedule_barrel_deferred_imports(
             // PORT NOTE: reshaped for borrowck — read flags by index, then mutate
             let len = barrel_ir.len();
             for idx in 0..len {
-                let flags = barrel_ir.slice()[idx].flags;
+                let flags = barrel_ir.as_slice()[idx].flags;
                 if flags.contains(import_record::Flags::IS_UNUSED)
                     && !flags.contains(import_record::Flags::IS_INTERNAL)
                 {
@@ -735,14 +735,14 @@ pub fn schedule_barrel_deferred_imports(
                 if un_defer_record(barrel_ir, star_idx) {
                     barrels_to_resolve.put(barrel_idx, ())?;
                 }
-                let mut star_rec_si = barrel_ir.slice()[star_idx as usize].source_index;
+                let mut star_rec_si = barrel_ir.as_slice()[star_idx as usize].source_index;
                 if !star_rec_si.is_valid() {
                     // Deferred record was never resolved — resolve inline now.
                     newly_scheduled +=
                         resolve_barrel_records(this, barrel_idx, &mut barrels_to_resolve);
                     // Re-derive after resolution may have mutated slices.
                     star_rec_si = this.graph.ast.items_import_records_mut()[barrel_idx as usize]
-                        .slice()[star_idx as usize]
+                        .as_slice()[star_idx as usize]
                         .source_index;
                 }
                 if star_rec_si.is_valid() {
@@ -770,12 +770,12 @@ pub fn schedule_barrel_deferred_imports(
         };
         if (resolution.import_record_index as usize) < barrel_ir.len() {
             let mut rec_si =
-                barrel_ir.slice()[resolution.import_record_index as usize].source_index;
+                barrel_ir.as_slice()[resolution.import_record_index as usize].source_index;
             if !rec_si.is_valid() {
                 // Deferred record was never resolved — resolve inline now.
                 newly_scheduled +=
                     resolve_barrel_records(this, barrel_idx, &mut barrels_to_resolve);
-                rec_si = this.graph.ast.items_import_records_mut()[barrel_idx as usize].slice()
+                rec_si = this.graph.ast.items_import_records_mut()[barrel_idx as usize].as_slice()
                     [resolution.import_record_index as usize]
                     .source_index;
             }

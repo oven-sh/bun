@@ -301,9 +301,9 @@ pub fn post_process_js_chunk(
             if all_flags[part_range.source_index.get() as usize].wrap == crate::WrapKind::Cjs {
                 continue;
             }
-            let source_parts = all_parts[part_range.source_index.get() as usize].slice();
+            let source_parts = all_parts[part_range.source_index.get() as usize].as_slice();
             let source_import_records =
-                all_import_records[part_range.source_index.get() as usize].slice();
+                all_import_records[part_range.source_index.get() as usize].as_slice();
             let mut part_i = part_range.part_index_begin;
             while part_i < part_range.part_index_end {
                 // `Part.stmts: StoreSlice<Stmt>` — arena-backed, safe `Deref`.
@@ -1369,7 +1369,7 @@ pub fn generate_entry_point_tail_js<'a>(
     // which outlives `'a` (the chunk-processing scope). Detach the borrow from
     // the local `ast_view` so it can satisfy `print`'s `&'a [ImportRecord]`.
     let import_records: &'a [ImportRecord] =
-        unsafe { bun_ptr::detach_lifetime(ast_view.import_records.slice()) };
+        unsafe { bun_ptr::detach_lifetime(ast_view.import_records.as_slice()) };
 
     CompileResult::Javascript {
         result: js_printer::print::<false>(

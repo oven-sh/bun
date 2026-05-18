@@ -145,7 +145,7 @@ pub fn convert_stmts_for_chunk(
                     }
 
                     // "export * from 'path'"
-                    let record = ast.import_records.at(s.import_record_index as usize);
+                    let record = ast.import_records[s.import_record_index as usize];
 
                     // Barrel optimization: deferred export * records should be dropped
                     if record.flags.contains(ImportRecordFlags::IS_UNUSED) {

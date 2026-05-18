@@ -177,24 +177,16 @@ pub type NamedExports = StringArrayHashMap<NamedExport, StringContext, AstAlloc>
 pub type ConstValuesMap = ArrayHashMap<Ref, Expr, AutoContext, AstAlloc>;
 pub type TsEnumsMap = ArrayHashMap<Ref, StringHashMap<InlinedEnumValue>, AutoContext, AstAlloc>;
 
-impl Ast<'static> {
-    pub fn from_parts(parts: Box<[Part]>) -> Ast<'static> {
-        let arena = bun_alloc::global_arena();
+impl<'a> Ast<'a> {
+    pub fn from_parts(parts: Box<[Part]>, arena: &'a bun_alloc::MimallocArena) -> Ast<'a> {
         let mut p = PartList::with_capacity_in(parts.len(), arena);
         p.extend(parts.into_vec());
         Ast {
             parts: p,
-            ..Ast::empty()
+            ..Ast::empty_in(arena)
         }
     }
 
-    // Zig: `pub const empty = Ast{ .parts = Part.List{}, .runtime_imports = .{} };`
-    pub fn empty() -> Ast<'static> {
-        Ast::empty_in(bun_alloc::global_arena())
-    }
-}
-
-impl<'a> Ast<'a> {
     // Zig: `std.json.stringify(self.parts, opts, stream)` where
     // `opts = .{ .whitespace = .{ .separator = true } }`. In the Rust port the
     // `crate::JsonWriter` trait stands in for the configured

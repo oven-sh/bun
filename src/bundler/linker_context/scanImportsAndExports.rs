@@ -731,7 +731,7 @@ pub fn scan_imports_and_exports(
                             // PERF(port): was zero-copy slice borrow; profile.
 
                             let part: &mut Part =
-                                &mut col!(parts_list)[id].slice_mut()[part_index as usize];
+                                &mut col!(parts_list)[id].as_mut_slice()[part_index as usize];
                             let re_exports: &[Dependency] = &re_exports_ptr;
                             let total_len = parts_declaring_symbol.len()
                                 + re_exports.len()
@@ -869,11 +869,11 @@ pub fn scan_imports_and_exports(
                 // Imports of wrapped files must depend on the wrapper
                 // PORT NOTE: iterate by index so each iteration re-borrows
                 // `import_records` (the body calls `&mut this.graph` methods).
-                let import_record_indices_len = col_ref!(parts_list)[id].slice()[part_index]
+                let import_record_indices_len = col_ref!(parts_list)[id].as_slice()[part_index]
                     .import_record_indices
                     .len() as usize;
                 for iri in 0..import_record_indices_len {
-                    let import_record_index = col_ref!(parts_list)[id].slice()[part_index]
+                    let import_record_index = col_ref!(parts_list)[id].as_slice()[part_index]
                         .import_record_indices
                         .slice()[iri];
                     let (kind, rec_source_index, rec_flags) = {

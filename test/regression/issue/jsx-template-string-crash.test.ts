@@ -22,9 +22,9 @@ test("JSX lexer should not crash with slice bounds issues", async () => {
         at <cwd>/[eval]:1:34
 
     1 | export function x(){return<div a=\`\`/>}
-                                            ^
-    error: Unexpected >
-        at <cwd>/[eval]:1:37"
+                                          ^
+    error: Unterminated string literal
+        at <cwd>/[eval]:1:35"
   `);
   expect(normalizeBunSnapshot(stdout.toString())).toMatchInlineSnapshot(`""`);
 });

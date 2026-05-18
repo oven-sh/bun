@@ -243,6 +243,7 @@ impl MimallocArena {
         // destroyed (we own it). After this call all outstanding allocations
         // are freed; replacing `self.heap` with a fresh heap restores the
         // invariant.
+        crate::ast_alloc::bump_invalidate_heap(self.heap_ptr());
         unsafe { mimalloc::mi_heap_destroy(self.heap_ptr()) };
         let heap = unsafe { mimalloc::mi_heap_new() };
         self.heap = NonNull::new(heap).unwrap_or_else(|| crate::out_of_memory());
@@ -585,6 +586,7 @@ impl Drop for MimallocArena {
         // every block still allocated in it without running per-block free.
         // SAFETY: `self.heap` is a live heap obtained from `mi_heap_new` and
         // is destroyed exactly once here.
+        crate::ast_alloc::bump_invalidate_heap(self.heap_ptr());
         unsafe { mimalloc::mi_heap_destroy(self.heap_ptr()) };
     }
 }

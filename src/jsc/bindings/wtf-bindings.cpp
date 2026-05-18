@@ -61,7 +61,7 @@ extern "C" int uv_tty_reset_mode(void)
 
 static void uv__tty_make_raw(struct termios* tio)
 {
-    assert(tio != NULL);
+    ASSERT(tio != NULL);
 
 #if defined __sun || defined __MVS__
     /*

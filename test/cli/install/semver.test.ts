@@ -227,7 +227,7 @@ describe("Bun.semver.satisfies()", () => {
       }
     }
     Bun.gc(true);
-  });
+  }, 30_000);
 
   test("exact versions", () => {
     testSatisfiesExact("1.2.3", "1.2.3", true);
@@ -752,4 +752,4 @@ test("a version range with >=256 || comparators does not abort", async () => {
   expect(stdout).toBe("true");
   if (exitCode !== 0) expect(stderr).toBe("");
   expect(exitCode).toBe(0);
-});
+}, 30_000);

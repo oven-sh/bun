@@ -114,7 +114,30 @@ function cp(src, dest, options) {
 }
 
 async function opendir(dir: string, options) {
-  return new (require("node:fs").Dir)(1, dir, options);
+  let path = dir;
+  if (path instanceof URL || (typeof path === "string" && path.startsWith("file:"))) {
+    path = Bun.fileURLToPath(path);
+  } else if (typeof path !== "string") {
+    throw $ERR_INVALID_ARG_TYPE("path", "string or URL", path);
+  }
+  path = require("node:path").resolve(path);
+  let stat;
+  try {
+    stat = await fs.stat(path);
+  } catch (e: any) {
+    e.syscall = "opendir";
+    e.message = e.message?.replace(/,\s*\w+\s+'/, ", opendir '");
+    throw e;
+  }
+  if (!stat.isDirectory()) {
+    throw Object.assign(new Error(`ENOTDIR: not a directory, opendir '${path}'`), {
+      code: "ENOTDIR",
+      errno: -20,
+      syscall: "opendir",
+      path,
+    });
+  }
+  return new (require("node:fs").Dir)(1, path, options);
 }
 
 const private_symbols = {

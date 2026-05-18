@@ -1233,6 +1233,72 @@ registry = "${mockRegistryUrl}"`,
       expect(lockfile).toContain("regular-package@2.1.0");
       expect(lockfile).not.toContain("regular-package@3.0.0");
     });
+
+    test.each([
+      {
+        name: "wildcard exclusion for scoped packages",
+        deps: { "@scope/scoped-package": "*", "regular-package": "*" },
+        excludes: ["@scope/*"],
+        expected: ["@scope/scoped-package@2.0.0", "regular-package@2.1.0"],
+        notPresent: ["regular-package@3.0.0"],
+      },
+      {
+        name: "wildcard exclusion for unscoped packages",
+        deps: { "regular-package": "*", "bugfix-package": "*" },
+        excludes: ["bugfix-*"],
+        expected: ["bugfix-package@1.0.3", "regular-package@2.1.0"],
+        notPresent: ["regular-package@3.0.0"],
+      },
+      {
+        name: "multiple wildcard patterns",
+        deps: { "@scope/scoped-package": "*", "regular-package": "*", "bugfix-package": "*" },
+        excludes: ["@scope/*", "bugfix-*"],
+        expected: ["@scope/scoped-package@2.0.0", "bugfix-package@1.0.3", "regular-package@2.1.0"],
+        notPresent: ["regular-package@3.0.0"],
+      },
+      {
+        name: "wildcard with exact match patterns",
+        deps: { "@scope/scoped-package": "*", "excluded-package": "*", "regular-package": "*" },
+        excludes: ["@scope/*", "excluded-package"],
+        expected: ["@scope/scoped-package@2.0.0", "excluded-package@1.0.1", "regular-package@2.1.0"],
+        notPresent: ["regular-package@3.0.0"],
+      },
+      {
+        name: "multiple wildcards in single pattern",
+        deps: { "@scope/scoped-package": "*", "regular-package": "*" },
+        excludes: ["@*/*-package"],
+        expected: ["@scope/scoped-package@2.0.0", "regular-package@2.1.0"],
+        notPresent: ["regular-package@3.0.0"],
+      },
+    ])("$name", async ({ name, deps, excludes, expected, notPresent }) => {
+      using dir = tempDir(name.replace(/\s+/g, "-"), {
+        "package.json": JSON.stringify({ dependencies: deps }),
+        "bunfig.toml": `[install]
+minimumReleaseAge = ${5 * SECONDS_PER_DAY}
+minimumReleaseAgeExcludes = ${JSON.stringify(excludes)}
+registry = "${mockRegistryUrl}"`,
+      });
+
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const exitCode = await proc.exited;
+      expect(exitCode).toBe(0);
+
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+
+      for (const pkg of expected) {
+        expect(lockfile).toContain(pkg);
+      }
+      for (const pkg of notPresent) {
+        expect(lockfile).not.toContain(pkg);
+      }
+    });
   });
 
   describe("configuration", () => {

@@ -145,6 +145,14 @@ void JSNodeHTTPServerSocket::onClose()
 
     WebCore::ScriptExecutionContext* scriptExecutionContext = globalObject->scriptExecutionContext();
 
+    if (!scriptExecutionContext || globalObject->isShuttingDown()) {
+        if (auto* res = this->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
+            Bun__NodeHTTPResponse_onClose(res->m_ctx, JSValue::encode(res));
+        }
+        this->detach();
+        return;
+    }
+
     if (scriptExecutionContext) {
         scriptExecutionContext->postTask([self = this](ScriptExecutionContext& context) {
             WTF::NakedPtr<JSC::Exception> exception;

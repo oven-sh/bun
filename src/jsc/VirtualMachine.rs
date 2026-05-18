@@ -1523,6 +1523,19 @@ impl VirtualMachine {
                 // VirtualMachine.zig:967 `t.deinit(true)`.
                 unsafe { uws::Timer::close::<true>(t.as_ptr()) };
             }
+            // Drain `TimeoutObject`s / `ImmediateObject`s from `All.timers`
+            // while `runtime_state`, the event loop, and the JSC heap are all
+            // still alive: drops their JS pins and in-heap `+1` refs so the GC
+            // sweep below (`destructOnExit` → `lastChanceToFinalize`) collects
+            // them instead of leaking. Must precede `close_all_socket_groups`
+            // and `~RunLoop::Timer` so no dangling `WTFTimer` heap node is
+            // observed during the walk.
+            if let Some(hooks) = runtime_hooks() {
+                // SAFETY: `self` is the live per-thread VM on the JS thread;
+                // `runtime_state` is still installed (it's torn down in
+                // `destroy()`, well after `global_exit`).
+                unsafe { (hooks.cancel_all_timers)(core::ptr::from_mut(self)) };
+            }
             // Detached worker threads may still be in startVM()/spin() using
             // the process-global resolver BSSMap singletons. transpiler.deinit()
             // below frees those singletons, so request termination of every
@@ -1772,6 +1785,15 @@ pub struct RuntimeHooks {
     /// dispatches here. No-op when `bun test` isn't running.
     pub retroactively_report_discovered_tests:
         unsafe fn(agent: *mut crate::debugger::TestReporterHandle),
+    /// Cancel every `TimeoutObject` / `ImmediateObject` still in the calling
+    /// thread's `timer::All` heap so their JS pins and in-heap `+1` refs drop
+    /// before the GC sweep. `timer::All` lives in `bun_runtime` (forward-dep);
+    /// callers (`global_exit`, `WebWorker::shutdown`) are in this crate.
+    ///
+    /// # Safety
+    /// `vm` is the live per-thread VM; `runtime_state` must still be installed
+    /// and the JSC heap must not have been swept yet.
+    pub cancel_all_timers: unsafe fn(vm: *mut VirtualMachine),
 }
 
 /// Canonical `EventLoopCtx` vtable for a `*mut VirtualMachine` owner — the JS

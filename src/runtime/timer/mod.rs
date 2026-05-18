@@ -1124,6 +1124,84 @@ impl All {
         #[cfg(windows)]
         let _ = uws_loop;
     }
+
+    /// VM-teardown pass: `cancel()` every `TimeoutObject` / `ImmediateObject`
+    /// still linked in `timers` / `fake_timers.timers` so the in-heap `+1` ref
+    /// and the JS pin (`this_value` Strong) are released before the GC sweep.
+    ///
+    /// Snapshots the heap under `lock` (cross-thread `WTFTimer__update` from
+    /// the GC scheduler thread can race the DFS otherwise), then cancels each
+    /// node *outside* the lock — `cancel()` re-enters [`All::remove`] which
+    /// re-acquires `lock` (non-recursive `bun_threading::Mutex`).
+    ///
+    /// # Safety
+    /// JS thread only, with the TLS `RuntimeState` still installed and `vm`
+    /// the live per-thread VM. Must run BEFORE JSC teardown
+    /// (`Zig__GlobalObject__destructOnExit` / `WebWorker__teardownJSCVM`) and
+    /// BEFORE `runtime_state` is nulled — the GC sweep frees the
+    /// `TimeoutObject` boxes whose `event_loop_timer` fields the heap nodes
+    /// alias.
+    pub unsafe fn cancel_all_timeout_objects(
+        this: *mut Self,
+        vm: *mut crate::jsc::virtual_machine::VirtualMachine,
+    ) {
+        let mut to_cancel: Vec<*const TimerObjectInternals> = Vec::new();
+        let mut stack: Vec<*mut EventLoopTimer> = Vec::new();
+
+        // SAFETY: `this` is the live per-thread `All`; `lock` guards both heap
+        // roots against concurrent `WTFTimer` insert/remove from off-thread
+        // (GC scheduler thread). Lock/unlock is manual (non-RAII Mutex).
+        unsafe { (*this).lock.lock() };
+        // SAFETY: `this` live; both roots are heap roots or null.
+        let roots = unsafe {
+            [
+                (*this).timers.0.root,
+                (*this).fake_timers.timers.0.root,
+            ]
+        };
+        for root in roots {
+            if !root.is_null() {
+                stack.push(root);
+            }
+        }
+        while let Some(node) = stack.pop() {
+            // SAFETY: intrusive-heap invariant — every node reachable from a
+            // root is a live `EventLoopTimer` while linked. Read-only walk.
+            let (tag, child, next) =
+                unsafe { ((*node).tag, (*node).heap.child, (*node).heap.next) };
+            if !child.is_null() {
+                stack.push(child);
+            }
+            if !next.is_null() {
+                stack.push(next);
+            }
+            match tag {
+                EventLoopTimerTag::TimeoutObject => {
+                    // SAFETY: tag invariant — `node` IS the `event_loop_timer`
+                    // field of a live `TimeoutObject`.
+                    let parent = unsafe { TimeoutObject::from_timer_ptr(node) };
+                    to_cancel.push(unsafe { core::ptr::addr_of!((*parent).internals) });
+                }
+                EventLoopTimerTag::ImmediateObject => {
+                    // SAFETY: tag invariant — see above.
+                    let parent = unsafe { ImmediateObject::from_timer_ptr(node) };
+                    to_cancel.push(unsafe { core::ptr::addr_of!((*parent).internals) });
+                }
+                _ => {}
+            }
+        }
+        // SAFETY: paired with the `lock()` above. Must release before the
+        // cancel loop — `cancel()` re-enters `All::remove` which re-locks.
+        unsafe { (*this).lock.unlock() };
+
+        for internals in to_cancel {
+            // SAFETY: each pointer was collected from the live heap; the
+            // parent box is still alive (the +1 ref `cancel()` releases is
+            // exactly the one keeping it pinned). `cancel()` may free the
+            // parent on the final deref — never touched again.
+            unsafe { (*internals).cancel(vm) };
+        }
+    }
 }
 
 // ─── JS-facing surface (gated on bun_jsc) ────────────────────────────────────

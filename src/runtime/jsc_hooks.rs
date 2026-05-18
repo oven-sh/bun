@@ -1425,6 +1425,7 @@ pub static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     cron_clear_all_reload,
     terminate_all_workers_and_wait,
     retroactively_report_discovered_tests,
+    cancel_all_timers,
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1524,6 +1525,27 @@ fn cron_clear_all_reload(vm: &mut VirtualMachine) {
 /// Main-thread only; called from `global_exit` after `is_shutting_down` is set.
 fn terminate_all_workers_and_wait(timeout_ms: u64) {
     bun_jsc::web_worker::terminate_all_and_wait(timeout_ms);
+}
+
+/// `RuntimeHooks::cancel_all_timers` — cancel every `TimeoutObject` /
+/// `ImmediateObject` still linked in the current thread's timer heap so the
+/// in-heap `+1` ref and the JS pin drop before the GC sweep / `~VM`.
+/// `timer::All` lives in `bun_runtime`; callers (`global_exit`,
+/// `WebWorker::shutdown`) are in `bun_jsc`, hence the hook.
+///
+/// # Safety
+/// `vm` is the live per-thread VM; `runtime_state()` must still be installed.
+/// Must run on the JS thread before JSC teardown.
+unsafe fn cancel_all_timers(vm: *mut VirtualMachine) {
+    let state = runtime_state();
+    if state.is_null() {
+        return;
+    }
+    // SAFETY: `state` is the live boxed per-thread `RuntimeState`; `vm` per fn
+    // contract. `addr_of_mut!` does not materialize a `&mut RuntimeState`.
+    unsafe {
+        crate::timer::All::cancel_all_timeout_objects(ptr::addr_of_mut!((*state).timer), vm);
+    }
 }
 
 /// `TestReporterAgent.retroactivelyReportDiscoveredTests(agent)` — spec

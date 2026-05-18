@@ -1242,6 +1242,14 @@ impl WebWorker {
             vm.on_exit();
             if let Some(hooks) = runtime_hooks() {
                 (hooks.cron_clear_all_teardown)(vm);
+                // Drain `TimeoutObject`s from this worker's timer heap before
+                // `close_all_socket_groups` / `WebWorker__teardownJSCVM` so
+                // their heap nodes are unlinked while `runtime_state` and the
+                // JSC heap are both still alive.
+                // SAFETY: `vm_ptr` was unpublished under `vm_lock` above, so
+                // this thread is the sole owner; `runtime_state` for this
+                // worker thread is still installed (torn down in `destroy()`).
+                unsafe { (hooks.cancel_all_timers)(vm_ptr) };
             }
             // Embedded socket groups must drain while JSC is still alive —
             // closeAll() fires on_close → JS callbacks. RareData.deinit() runs

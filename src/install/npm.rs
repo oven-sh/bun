@@ -97,7 +97,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     let header_buf: &[u8] = headers.content.written_slice();
 
     let mut req =
-        manager.registry_request(http::Method::GET, url, headers.entries, header_buf, b"");
+        manager.registry_request(http::Method::GET, url, headers.entries, header_buf, b"", registry::registry_tls_config(registry));
 
     let res = match manager.send_with_retries(&mut req, &mut response_buf) {
         Ok(res) => res,
@@ -251,6 +251,8 @@ pub mod registry {
 
         /// The `.npmrc` key this registry's URL resolves to, once every source was applied.
         pub(crate) url_auth_key: Option<Box<[u8]>>,
+        pub certfile: Box<[u8]>,
+        pub keyfile: Box<[u8]>,
     }
 
     /// After `:` in yarn's shape (`/api/:_authToken=T`), after `/` in JFrog's (`/npm/_auth=<b64>`).
@@ -383,13 +385,15 @@ pub mod registry {
         }
 
         pub(crate) fn has_credentials(&self) -> bool {
-            !self.token.is_empty() || !self.auth.is_empty()
+            !self.token.is_empty() || !self.auth.is_empty() || (!self.certfile.is_empty() && !self.keyfile.is_empty())
         }
 
         pub(crate) fn copy_credentials_from(&mut self, other: &Scope) {
             self.token.clone_from(&other.token);
             self.auth.clone_from(&other.auth);
             self.user.clone_from(&other.user);
+            self.certfile.clone_from(&other.certfile);
+            self.keyfile.clone_from(&other.keyfile);
             self.declared_in_npmrc = other.declared_in_npmrc;
         }
 
@@ -577,12 +581,28 @@ pub mod registry {
                 token: registry.token,
                 auth,
                 user,
+                certfile: registry.certfile,
+                keyfile: registry.keyfile,
                 declared_in_npmrc: registry.declared_in_npmrc,
                 ..Default::default()
             };
             scope.set_url(final_href);
             Ok(scope)
         }
+    }
+
+    pub fn registry_tls_config(registry: &Scope) -> Option<http::ssl_config::SharedPtr> {
+        if registry.certfile.is_empty() && registry.keyfile.is_empty() {
+            return None;
+        }
+        let mut config = http::ssl_config::SSLConfig::default();
+        if !registry.certfile.is_empty() {
+            config.cert_file_name = bun_core::dupe_z(&registry.certfile);
+        }
+        if !registry.keyfile.is_empty() {
+            config.key_file_name = bun_core::dupe_z(&registry.keyfile);
+        }
+        Some(http::ssl_config::SharedPtr::new(config))
     }
 
     // Keys are pre-hashed (`Scope::hash`), so don't re-hash them.

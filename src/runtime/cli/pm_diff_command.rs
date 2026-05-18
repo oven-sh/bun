@@ -1031,6 +1031,7 @@ fn registry_get(
         headers.entries,
         headers.content.written_slice(),
         b"",
+        pm.options.tarball_credentials(scope, &url, normalized).and_then(bun_install::npm::registry::registry_tls_config),
     );
     let res = match pm.send_with_retries(&mut req, &mut response_buf) {
         Ok(r) => r,

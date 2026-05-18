@@ -132,7 +132,7 @@ pub(crate) fn view(
     let mut response_buf = MutableString::init(2048)?;
     let header_buf: &[u8] = headers.content.written_slice();
     let mut req =
-        manager.registry_request(http::Method::GET, url, headers.entries, header_buf, b"");
+        manager.registry_request(http::Method::GET, url, headers.entries, header_buf, b"", npm::registry::registry_tls_config(scope));
 
     let res = match manager.send_with_retries(&mut req, &mut response_buf) {
         Ok(r) => r,

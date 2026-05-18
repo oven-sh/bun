@@ -3412,7 +3412,7 @@ where
             // do not insert the content type if it is the fallback value
             // we may not know the content-type when streaming
             && (!self.blob.is_detached()
-                || content_type.value.as_ptr() != bun_http_types::MimeType::OTHER.value.as_ptr())
+                || content_type.category != bun_http_types::MimeType::Category::Other)
         {
             resp.write_header(b"content-type", &content_type.value);
         }

@@ -752,7 +752,8 @@ impl EventLoop {
         while let Some(task) = self.tasks.read_item() {
             if task.tag == bun_event_loop::task_tag::ManagedTask {
                 // SAFETY: every ManagedTask is heap_owned (ManagedTask::new -> heap::into_raw).
-                let managed = unsafe { bun_core::heap::take(task.ptr.cast::<ManagedTask::ManagedTask>()) };
+                let managed =
+                    unsafe { bun_core::heap::take(task.ptr.cast::<ManagedTask::ManagedTask>()) };
                 if let (Some(cleanup), Some(ctx)) = (managed.cleanup, managed.ctx) {
                     cleanup(ctx.as_ptr());
                 }

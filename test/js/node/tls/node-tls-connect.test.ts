@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe, isASAN, tls as COMMON_CERT_ } from "harness";
+import { bunEnv, bunExe, tls as COMMON_CERT_, isASAN } from "harness";
 import net from "net";
 import { join } from "path";
 import stream from "stream";

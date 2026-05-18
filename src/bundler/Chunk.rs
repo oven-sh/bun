@@ -129,9 +129,7 @@ unsafe impl Sync for OwnedCssRuleSlabs {}
 /// headers, so `CssImportOrder::Drop` forgets `conditions` and ownership lives
 /// here. `Drop` only deallocs the slab; element storage is arena-owned.
 #[derive(Default)]
-pub struct OwnedCssConditionSlabs(
-    pub Vec<(core::ptr::NonNull<bun_css::ImportConditions>, usize)>,
-);
+pub struct OwnedCssConditionSlabs(pub Vec<(core::ptr::NonNull<bun_css::ImportConditions>, usize)>);
 
 impl Drop for OwnedCssConditionSlabs {
     fn drop(&mut self) {

@@ -338,7 +338,10 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                         composes: Default::default(),
                         ..BundlerStyleSheet::empty()
                     };
-                    record_slab(&mut chunk.owned_css_rule_slabs, &mut css_chunk.asts[i].rules);
+                    record_slab(
+                        &mut chunk.owned_css_rule_slabs,
+                        &mut css_chunk.asts[i].rules,
+                    );
                 }
                 CssImportOrderKind::SourceIndex(source_index) => {
                     let source_index = *source_index;

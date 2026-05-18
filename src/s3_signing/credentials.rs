@@ -648,8 +648,7 @@ impl S3Credentials {
                     query_parts.push(alloc_print!("X-Amz-Date={}", BStr::new(&amz_date)));
                     query_parts.push(alloc_print!("X-Amz-Expires={}", expires));
                     if let Some(token) = encoded_session_token {
-                        query_parts
-                            .push(alloc_print!("X-Amz-Security-Token={}", BStr::new(token)));
+                        query_parts.push(alloc_print!("X-Amz-Security-Token={}", BStr::new(token)));
                     }
                     query_parts.push(alloc_print!("X-Amz-SignedHeaders=host"));
                     if let Some(cd) = encoded_content_disposition {
@@ -659,8 +658,7 @@ impl S3Credentials {
                         ));
                     }
                     if let Some(ct) = encoded_content_type {
-                        query_parts
-                            .push(alloc_print!("response-content-type={}", BStr::new(ct)));
+                        query_parts.push(alloc_print!("response-content-type={}", BStr::new(ct)));
                     }
                     if request_payer {
                         query_parts.push(alloc_print!("x-amz-request-payer=requester"));
@@ -739,8 +737,7 @@ impl S3Credentials {
                 url_query_parts.push(alloc_print!("X-Amz-Date={}", BStr::new(&amz_date)));
                 url_query_parts.push(alloc_print!("X-Amz-Expires={}", expires));
                 if let Some(token) = encoded_session_token {
-                    url_query_parts
-                        .push(alloc_print!("X-Amz-Security-Token={}", BStr::new(token)));
+                    url_query_parts.push(alloc_print!("X-Amz-Security-Token={}", BStr::new(token)));
                 }
                 url_query_parts.push(alloc_print!(
                     "X-Amz-Signature={}",
@@ -754,8 +751,7 @@ impl S3Credentials {
                     ));
                 }
                 if let Some(ct) = encoded_content_type {
-                    url_query_parts
-                        .push(alloc_print!("response-content-type={}", BStr::new(ct)));
+                    url_query_parts.push(alloc_print!("response-content-type={}", BStr::new(ct)));
                 }
                 if request_payer {
                     url_query_parts.push(alloc_print!("x-amz-request-payer=requester"));

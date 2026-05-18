@@ -20,8 +20,8 @@ use crate::test_command::CommandLineReporter;
 
 // PORT NOTE: `bun.spawn.Status` lives in src/runtime/api/bun/process.zig
 // (not the lower-tier `bun_spawn` crate). Worker.exit_status is this type.
-use crate::api::bun::process::Status as SpawnStatus;
 use crate::api::bun::process::Process;
+use crate::api::bun::process::Status as SpawnStatus;
 
 pub struct Coordinator<'a> {
     pub vm: &'a VirtualMachine,

@@ -499,7 +499,7 @@ mod transition_handler_body {
             // Expand vendor prefixes into multiple transitions.
             // PORT NOTE: Zig used `inline for (VendorPrefix.FIELDS)` over packed-struct
             // bool fields. With bitflags, iterate the individual flag bits.
-            // PERF(port): was comptime-unrolled inline-for — profile in Phase B.
+            // PERF(port): was comptime-unrolled inline-for — profile if it shows up on a hot path.
             for &prefix_flag in VendorPrefix::FIELDS {
                 if prefix_to_iter.contains(prefix_flag) {
                     let mut t = if cloned {
@@ -626,8 +626,6 @@ mod transition_handler_body {
     fn get_logical_properties(property_id: &PropertyId) -> LogicalPropertyId {
         use LogicalPropertyId::{Block, Inline};
         use compat::Feature as F;
-        // TODO(port): PropertyId variant names assumed PascalCase from Zig kebab-case
-        // (e.g. `.@"block-size"` → `BlockSize`). Adjust to actual generated names in Phase B.
         match property_id {
             PropertyId::BlockSize => Block(F::LogicalSize, &[PropertyId::Height]),
             PropertyId::InlineSize => {

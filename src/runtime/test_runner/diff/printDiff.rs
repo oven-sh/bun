@@ -53,7 +53,7 @@ pub fn print_diff_main(
     writer: &mut impl Write,
     config: &DiffConfig,
 ) -> std::fmt::Result {
-    // PERF(port): was arena bulk-free — profile in Phase B (all intermediate Vecs below were arena-allocated in Zig)
+    // PERF(port): was arena bulk-free — all intermediate Vecs below were arena-allocated in Zig.
     if not {
         match config.enable_ansi_colors {
             true => write!(
@@ -317,7 +317,7 @@ pub enum DiffSegmentMode {
 }
 
 // TODO(port): lifetime — `removed`/`inserted` borrow from caller input and diff_match_patch output;
-// in Zig these were arena-backed slices. Revisit ownership in Phase B.
+// in Zig these were arena-backed slices. Revisit ownership.
 #[derive(Clone)]
 pub struct DiffSegment<'a> {
     pub removed: &'a [u8],
@@ -667,7 +667,7 @@ pub fn print_diff(
     diff_segments: &[DiffSegment<'_>],
     config: &DiffConfig,
 ) -> std::fmt::Result {
-    // PERF(port): was arena bulk-free — profile in Phase B
+    // PERF(port): was arena bulk-free.
     let mut removed_line_number: usize = 1;
     let mut inserted_line_number: usize = 1;
     let mut removed_diff_lines: usize = 0;

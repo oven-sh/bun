@@ -2,7 +2,7 @@
 // source: src/options_types/schema.zig (3224 lines)
 // PORT STATUS: skipped — generated file (see PORTING.md §Don't translate)
 //
-// B-2: minimal hand-stubbed `api` namespace so Context.rs / BundleEnums.rs
+// Minimal hand-stubbed `api` namespace so Context.rs / BundleEnums.rs
 // struct fields type-check. Full body arrives when peechy emits .rs.
 
 /// Port of `schema.Writer(WritableStream)` (schema.zig:169) specialised to a
@@ -231,7 +231,7 @@ pub mod api {
         /// `NpmRegistry.dupe(allocator)` — Zig packs all five strings into one
         /// contiguous allocation and reslices. Rust can't hand back five
         /// `Box<[u8]>` views into one buffer without leaking, so this is a
-        /// plain field-wise clone. PERF(port): single-buffer pack — Phase B.
+        /// plain field-wise clone. PERF(port): could pack into a single buffer.
         #[inline]
         pub fn dupe(&self) -> NpmRegistry {
             self.clone()

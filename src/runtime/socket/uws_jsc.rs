@@ -142,7 +142,7 @@ pub extern "C" fn us_socket_buffered_js_write(
     // reshaped as a labeled block + post-block cleanup so the side effects run on every
     // exit path without a scopeguard borrow conflict.
     let result: JSValue = 'body: {
-        // PERF(port): was stack-fallback (std.heap.stackFallback(16 * 1024)) — profile in Phase B
+        // PERF(port): was stack-fallback (std.heap.stackFallback(16 * 1024)) — profile if hot.
         let node_buffer: BlobOrStringOrBuffer = if data.is_undefined() {
             BlobOrStringOrBuffer::StringOrBuffer(StringOrBuffer::EMPTY)
         } else {

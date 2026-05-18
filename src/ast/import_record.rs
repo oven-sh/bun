@@ -16,7 +16,7 @@ pub use crate::{ImportKind, Index, Loader};
 pub struct ImportRecord {
     pub range: Range,
     // TODO(port): lifetime — `bun_paths::fs::Path<'a>` borrows resolver-owned
-    // strings. Phase A uses 'static (PORTING.md: no struct lifetime params).
+    // strings. Uses 'static (PORTING.md: no struct lifetime params).
     pub path: Path<'static>,
     pub kind: ImportKind,
     pub tag: Tag,
@@ -35,7 +35,7 @@ pub struct ImportRecord {
     /// This is preserved before resolution overwrites `path` with the resolved path.
     /// Used for metafile generation.
     // TODO(port): lifetime — Zig `[]const u8` defaulting to "", never freed in this file.
-    // Likely a borrow into parser-owned source text; using &'static [u8] as Phase-A placeholder.
+    // Likely a borrow into parser-owned source text; using &'static [u8] as a placeholder.
     pub original_path: &'static [u8],
 
     /// Pack all boolean flags into 2 bytes to reduce padding overhead.

@@ -28,7 +28,7 @@ pub fn from_js<V: Copy>(
     // transcoding. `phf` keys are `&[u8]`, so materialize UTF-8 bytes and do a
     // direct phf lookup.
     // PERF(port): avoid the UTF-8 transcode for 8-bit/latin1-backed strings —
-    // profile in Phase B.
+    // profile if hot.
     let utf8 = str.to_utf8();
     Ok(map.get(utf8.slice()).copied())
 }

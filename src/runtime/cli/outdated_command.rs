@@ -705,7 +705,7 @@ impl OutdatedCommand {
         table.print_column_names();
 
         // Print grouped items sorted by behavior type
-        // PERF(port): was `inline for` over a comptime tuple — profile in Phase B.
+        // PERF(port): was `inline for` over a comptime tuple.
         for group_behavior in [
             Behavior::PROD,
             Behavior::DEV,

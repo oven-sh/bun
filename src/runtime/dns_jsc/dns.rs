@@ -227,7 +227,7 @@ pub mod lib_info {
             return unsafe { (*dns_lookup).promise.value() };
         }
 
-        // PERF(port): was StackFallbackAllocator(1024) — profile in Phase B
+        // PERF(port): was StackFallbackAllocator(1024) — profile if it shows up on a hot path.
         let name_z = bun::ZBox::from_bytes(query.name.as_ref());
 
         let request = GetAddrInfoRequest::init(
@@ -284,8 +284,9 @@ pub mod lib_info {
                     // POD-ness.
                     let pos = (*request).cache.pos_in_pending();
                     this.pending_host_cache_native.with_mut(|c| {
-                        let slot = c.buffer[pos as usize].as_mut_ptr();
-                        c.put_raw(slot);
+                        let slot = c.ptr_at(pos as usize);
+                        // SAFETY: `pos` was alloc'd; no other token outstanding.
+                        unsafe { c.put_raw(slot) };
                     });
                 }
                 // Drop the KeepAlive + resolver ref that `GetAddrInfoRequest.init` took.
@@ -631,7 +632,7 @@ pub trait CAresRecordType: Sized {
 }
 
 pub struct ResolveInfoRequest<T: CAresRecordType> {
-    // TODO(port): lifetime — TSV says BORROW_PARAM → Option<&'a Resolver> (struct gets <'a>); raw ptr until Phase B reconciles with intrusive RC
+    // TODO(port): lifetime — TSV says BORROW_PARAM → Option<&'a Resolver> (struct gets <'a>); raw ptr until reconciled with intrusive RC
     pub resolver_for_caching: Option<*mut Resolver>,
     pub hash: u64,
     pub cache: CacheConfig,
@@ -780,7 +781,7 @@ impl<T: CAresRecordType> c_ares::ResolveHandler for ResolveInfoRequest<T> {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct GetHostByAddrInfoRequest {
-    // TODO(port): lifetime — TSV says BORROW_PARAM → Option<&'a Resolver>; raw ptr until Phase B
+    // TODO(port): lifetime — TSV says BORROW_PARAM → Option<&'a Resolver>; raw ptr for now
     pub resolver_for_caching: Option<*mut Resolver>,
     pub hash: u64,
     pub cache: CacheConfig,
@@ -1040,7 +1041,7 @@ impl Drop for CAresNameInfo {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct GetNameInfoRequest {
-    // TODO(port): lifetime — TSV says BORROW_PARAM → Option<&'a Resolver>; raw ptr until Phase B
+    // TODO(port): lifetime — TSV says BORROW_PARAM → Option<&'a Resolver>; raw ptr for now
     pub resolver_for_caching: Option<*mut Resolver>,
     pub hash: u64,
     pub cache: CacheConfig,
@@ -1186,7 +1187,7 @@ impl c_ares::NameinfoHandler for GetNameInfoRequest {
 
 pub struct GetAddrInfoRequest {
     pub backend: get_addr_info_request::Backend,
-    // TODO(port): lifetime — TSV says BORROW_PARAM → Option<&'a Resolver>; raw ptr until Phase B
+    // TODO(port): lifetime — TSV says BORROW_PARAM → Option<&'a Resolver>; raw ptr for now
     pub resolver_for_caching: Option<*mut Resolver>,
     pub hash: u64,
     pub cache: CacheConfig,
@@ -2184,7 +2185,7 @@ pub mod internal {
     // PORT NOTE: Zig stored a borrowed `[:0]const u8` here and only allocated in
     // `toOwned()`. We keep a raw borrow on the stack key (constructed in `init`) and
     // allocate in `to_owned()` before storing on the heap `Request`.
-    // TODO(port): lifetime — model the borrow with `<'a>` once Phase B settles ZStr ownership.
+    // TODO(port): lifetime — model the borrow with `<'a>` once ZStr ownership is settled.
     pub struct RequestKey {
         pub host: Option<*const ZStr>, // BORROW until to_owned(); never freed via this field
         /// Used for getaddrinfo() to avoid glibc UDP port 0 bug, but NOT included in hash
@@ -4034,7 +4035,7 @@ impl Resolver {
         // `&Resolver` from their stored ctx without aliasing UB.
         let deref_this = self.as_ctx_ptr();
         scopeguard::defer! {
-            // PORT NOTE (b2-cycle): low-tier `VirtualMachine.timer` is `()`;
+            // PORT NOTE (jsc/runtime crate cycle): low-tier `VirtualMachine.timer` is `()`;
             // resolve via the high-tier `RuntimeState` hook.
             let state = crate::jsc_hooks::runtime_state();
             // SAFETY: `state` is the boxed per-thread `RuntimeState`; single-threaded JS heap.
@@ -4237,12 +4238,10 @@ impl Resolver {
         cache_field: PendingCacheField,
     ) -> R::PendingCacheKey {
         let cache = R::pending_cache(self, cache_field);
-        debug_assert!(cache.used.is_set(index as usize));
-        // SAFETY: `used` bit is set ⇒ slot was initialized by `get_or_put_into_resolve_pending_cache`
-        // + `*Request::init`. `PendingCacheKey` is POD; reading by value then unsetting the bit
-        // hands ownership of the slot back to the HiveArray (Zig's `= undefined`).
-        let entry = unsafe { core::ptr::read(cache.buffer[index as usize].as_ptr()) };
-        cache.used.unset(index as usize);
+        // SAFETY: slot at `index` was alloc'd by `get_or_put_into_resolve_pending_cache`.
+        let entry = unsafe { cache.box_at(index as usize) }
+            .expect("pending DNS slot")
+            .into_inner();
         entry
     }
 
@@ -4253,24 +4252,27 @@ impl Resolver {
         field: PendingCacheField,
     ) -> get_addr_info_request::PendingCacheKey {
         let cache = self.pending_host_cache(field);
-        debug_assert!(cache.used.is_set(index as usize));
-        let entry = unsafe { core::ptr::read(cache.buffer[index as usize].as_ptr()) };
-        cache.used.unset(index as usize);
+        // SAFETY: slot at `index` was alloc'd by `get_or_put_into_resolve_pending_cache`.
+        let entry = unsafe { cache.box_at(index as usize) }
+            .expect("pending DNS slot")
+            .into_inner();
         entry
     }
     fn get_key_addr(&self, index: u8) -> get_host_by_addr_info_request::PendingCacheKey {
         self.pending_addr_cache_cares.with_mut(|cache| {
-            debug_assert!(cache.used.is_set(index as usize));
-            let entry = unsafe { core::ptr::read(cache.buffer[index as usize].as_ptr()) };
-            cache.used.unset(index as usize);
+            // SAFETY: slot at `index` was alloc'd by `get_or_put_into_resolve_pending_cache`.
+            let entry = unsafe { cache.box_at(index as usize) }
+                .expect("pending DNS slot")
+                .into_inner();
             entry
         })
     }
     fn get_key_nameinfo(&self, index: u8) -> get_name_info_request::PendingCacheKey {
         self.pending_nameinfo_cache_cares.with_mut(|cache| {
-            debug_assert!(cache.used.is_set(index as usize));
-            let entry = unsafe { core::ptr::read(cache.buffer[index as usize].as_ptr()) };
-            cache.used.unset(index as usize);
+            // SAFETY: slot at `index` was alloc'd by `get_or_put_into_resolve_pending_cache`.
+            let entry = unsafe { cache.box_at(index as usize) }
+                .expect("pending DNS slot")
+                .into_inner();
             entry
         })
     }
@@ -4289,13 +4291,10 @@ impl Resolver {
         // TODO(port): generic getKey over T::CACHE_FIELD
         let key = {
             let cache = self.pending_cache_for::<T>(T::CACHE_FIELD);
-            debug_assert!(cache.used.is_set(index as usize));
-            // SAFETY: `used` bit is set ⇒ slot was initialized by
-            // `get_or_put_into_resolve_pending_cache` + `*Request::init`.
-            // `PendingCacheKey` is POD; reading by value then unsetting the bit hands
-            // ownership of the slot back to the HiveArray (Zig's `= undefined`).
-            let key = unsafe { core::ptr::read(cache.buffer[index as usize].as_ptr()) };
-            cache.used.unset(index as usize);
+            // SAFETY: slot at `index` was alloc'd by `get_or_put_into_resolve_pending_cache`.
+            let key = unsafe { cache.box_at(index as usize) }
+                .expect("pending DNS slot")
+                .into_inner();
             key
         };
 
@@ -4612,7 +4611,7 @@ impl Resolver {
 
         while let Some(index) = inflight_iter.next() {
             // SAFETY: `used` bit is set ⇒ slot was initialized.
-            let entry = unsafe { &mut *cache.buffer[index].as_mut_ptr() };
+            let entry = unsafe { &mut *cache.ptr_at(index) };
             if R::key_hash(entry) == R::key_hash(key) && R::key_len(entry) == R::key_len(key) {
                 return LookupCacheHit::Inflight(std::ptr::from_mut(entry));
             }
@@ -4635,7 +4634,7 @@ impl Resolver {
 
         while let Some(index) = inflight_iter.next() {
             // SAFETY: `used` bit is set ⇒ slot was initialized.
-            let entry = unsafe { &mut *cache.buffer[index].as_mut_ptr() };
+            let entry = unsafe { &mut *cache.ptr_at(index) };
             if entry.hash == key.hash && entry.len == key.len {
                 return CacheHit::Inflight(std::ptr::from_mut(entry));
             }
@@ -5954,7 +5953,7 @@ impl Resolver {
     ) -> JsResult<JSValue> {
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         // PORT NOTE: VirtualMachine.dns_result_order is `u8` upstream (see
-        // jsc/VirtualMachine.rs TODO(b2-cycle)); cast through Order's repr(u8).
+        // jsc/VirtualMachine.rs TODO(port)); cast through Order's repr(u8).
         let raw = global_this.bun_vm().as_mut().dns_result_order;
         let order = match raw {
             4 => Order::Ipv4first,

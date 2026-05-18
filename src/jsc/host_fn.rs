@@ -162,7 +162,7 @@ fn debug_exception_assertion(global_this: &JSGlobalObject, value: JSValue, func:
         }
     }
     let _ = func;
-    bun_core::assertf!(value.is_empty() == global_this.has_exception(), "host fn return/exception state mismatch");
+    assert!(value.is_empty() == global_this.has_exception(), "host fn return/exception state mismatch");
 }
 
 pub fn to_js_host_setter_value(global_this: &JSGlobalObject, value: JsResult<()>) -> bool {
@@ -728,7 +728,7 @@ pub fn from_js_host_call_generic<R>(
     // about whether an exception was thrown.
     //
     // TODO(port): static-assert `R != JSValue` (Zig used @compileError; Rust needs a
-    // negative trait bound or specialization — neither stable). Phase B: sealed trait trick.
+    // negative trait bound or specialization — neither stable). A sealed-trait trick could enforce this.
     crate::call_check_slow(global_this, f)
 }
 

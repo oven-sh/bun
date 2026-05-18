@@ -11,7 +11,7 @@ use crate::env::version_string;
 use crate::output as Output; // @import("./output.zig")
 
 use crate::{USE_MIMALLOC, debug_allocator_data};
-use bun_alloc as alloc; // B-1 stubs (real consts ungate in B-2)
+use bun_alloc as alloc;
 // MOVE_DOWN: bun_core::ZStr → bun_core (move-in pass).
 use crate::ZStr;
 
@@ -807,9 +807,9 @@ pub fn crash() -> ! {
 
 pub const user_agent: &str = concatcp!("Bun/", package_json_version);
 
-// TODO(port): `*const c_char` is `!Sync`; Phase B should wrap this in a
-// `#[repr(transparent)]` Sync newtype or export via a `#[used]` static byte
-// array. Kept as-is to mirror the Zig `export const`.
+// TODO(port): `*const c_char` is `!Sync`; wrap this in a `#[repr(transparent)]`
+// Sync newtype or export via a `#[used]` static byte array. Kept as-is to
+// mirror the Zig `export const`.
 #[repr(transparent)]
 pub struct SyncCStr(pub *const c_char);
 // SAFETY: points into a `'static` string literal; the pointer is never mutated.

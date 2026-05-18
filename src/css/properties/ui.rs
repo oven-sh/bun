@@ -184,18 +184,16 @@ pub enum Appearance {
     SliderHorizontal,
     SquareButton,
     Textarea,
-    // TODO(port): arena-owned slice in Zig (`[]const u8`); using raw fat ptr until 'bump threading in Phase B.
+    // TODO(port): arena-owned slice in Zig (`[]const u8`); using raw fat ptr until `'bump` threading lands.
     NonStandard(*const [u8]),
 }
 
 #[derive(Default)]
 pub struct ColorSchemeHandler;
 
-// PORT NOTE: un-gated B-2 round 15 — Property::ColorScheme variant +
-// PropertyHandlerContext::{add_dark_rule,targets} + TokenList/DashedIdent/
-// CustomProperty shapes are all real now. `context.arena` was dropped from
-// PropertyHandlerContext; `define_var` no longer needs an arena because
-// `TokenList.v` is a std `Vec<TokenOrValue>` (LIFETIMES.tsv classification).
+// PORT NOTE: `context.arena` was dropped from PropertyHandlerContext;
+// `define_var` no longer needs an arena because `TokenList.v` is a std
+// `Vec<TokenOrValue>` (LIFETIMES.tsv classification).
 impl ColorSchemeHandler {
     pub fn handle_property(
         &mut self,

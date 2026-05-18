@@ -5,8 +5,8 @@
 //! every CSS value type. Per PORTING.md §Comptime reflection, that has no Rust
 //! equivalent — the port defines a trait per protocol, provides blanket impls for
 //! the structural cases (Option/Box/slice/Vec/Vec/SmallList/primitives), and
-//! per-struct/-enum impls are expected to come from `#[derive(...)]` macros in
-//! Phase B (`#[derive(ToCss, DeepClone, CssEql, CssHash)]` etc.).
+//! per-struct/-enum impls come from the `bun_css_derive` proc-macros
+//! (`#[derive(ToCss, DeepClone, CssEql, CssHash)]` etc.).
 //!
 //! Free functions with the original names are kept as thin trait-method wrappers
 //! so call sites in sibling files port 1:1.
@@ -48,7 +48,7 @@ pub type ArrayList<'bump, T> = bun_alloc::ArenaVec<'bump, T>;
 
 /// Arena-aware deep clone. Equivalent of Zig's `deepClone(T, *const T, Allocator) T`.
 ///
-/// Per-struct/-enum impls are expected from `#[derive(DeepClone)]` (Phase B);
+/// Per-struct/-enum impls come from `#[derive(DeepClone)]`;
 /// the Zig `implementDeepClone` body is the spec for that derive (field-wise /
 /// variant-wise recursion).
 pub trait DeepClone<'bump>: Sized {
@@ -108,7 +108,7 @@ impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for &'bump T {
 impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for &'bump [T] {
     fn deep_clone(&self, bump: &'bump Arena) -> Self {
         // Zig: alloc slice, then memcpy if simple-copy else element-wise deepClone.
-        // PERF(port): Zig fast-paths `isSimpleCopyType` with @memcpy — profile in Phase B
+        // PERF(port): Zig fast-paths `isSimpleCopyType` with @memcpy — profile if hot
         // (specialization would let `T: Copy` use `alloc_slice_copy`).
         bump.alloc_slice_fill_iter(self.iter().map(|e| e.deep_clone(bump)))
     }
@@ -118,7 +118,7 @@ impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for ArrayList<'bump, T> {
     #[inline]
     fn deep_clone(&self, bump: &'bump Arena) -> Self {
         // Zig: `css.deepClone(T, arena, this)` → alloc capacity, element-wise deepClone.
-        // PERF(port): Zig fast-paths simple-copy types with @memcpy — profile in Phase B.
+        // PERF(port): Zig fast-paths simple-copy types with @memcpy — profile if hot.
         let mut out = ArrayList::with_capacity_in(self.len(), bump);
         for item in self.iter() {
             out.push(item.deep_clone(bump));
@@ -198,8 +198,8 @@ impl<'bump> DeepClone<'bump> for bun_ast::Loc {
 // ───────────────────────────────────────────────────────────────────────────────
 
 /// `lhs.eql(&rhs)` for CSS types. This is the equivalent of doing
-/// `#[derive(PartialEq)]` in Rust — and in Phase B most impls should be exactly
-/// that. Kept as a separate trait because some CSS types want structural
+/// `#[derive(PartialEq)]` in Rust — and most impls could be exactly that.
+/// Kept as a separate trait because some CSS types want structural
 /// equality that differs from `PartialEq` (e.g. `VendorPrefix`, idents).
 pub trait CssEql {
     fn eql(&self, other: &Self) -> bool;
@@ -309,7 +309,7 @@ eql_simple!(f32, f64, i32, u32, i64, u64, usize, isize, u16, bool);
 
 /// Stamp `impl CssEql for $T` forwarding to `PartialEq::eq`.
 ///
-/// Exported sibling of `eql_simple!` for crate-defined types whose Phase-A
+/// Exported sibling of `eql_simple!` for crate-defined types whose
 /// inherent `pub fn eql(&self, other) { self == other }` was a pure `PartialEq`
 /// forwarder (Zig `css.implementEql(@This())` leakage).
 ///
@@ -839,7 +839,7 @@ mod inherent_bridge {
 
 // TODO(port): Zig also special-cases `@typeInfo(T).struct.layout == .packed` →
 // bitwise `==`. In Rust those are `bitflags!` types implementing `PartialEq`;
-// add `impl<T: BitFlags> CssEql for T` or per-type impls in Phase B.
+// add `impl<T: BitFlags> CssEql for T` or per-type impls.
 
 // ───────────────────────────────────────────────────────────────────────────────
 // Hash
@@ -1161,8 +1161,8 @@ is_compatible_container!(
 //
 // `Parse` is intentionally lifetime-free: every value-type parser takes
 // `&mut Parser<'_>` (the borrowed source slice) and returns an owned value.
-// `'bump` arena threading is a Phase-B follow-up; until then the parser holds
-// the arena and arena-backed lists go through `from_list(Vec)`.
+// TODO(refactor): `'bump` arena threading is a follow-up; until then the parser
+// holds the arena and arena-backed lists go through `from_list(Vec)`.
 
 /// `T::parse(&mut Parser) -> CssResult<T>`.
 pub trait Parse: Sized {

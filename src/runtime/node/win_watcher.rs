@@ -446,7 +446,7 @@ impl PathWatcher {
         // SAFETY: caller guarantees `this` is a live heap-allocated pointer (see `init`).
         let me = unsafe { &mut *this };
         me.handlers.clear();
-        // PERF(port): was clearAndFree (shrinks capacity) — profile in Phase B.
+        // PERF(port): was clearAndFree (shrinks capacity).
 
         if let Some(manager) = me.manager.take() {
             let path: &ZStr = if !me.handle.path.is_null() {

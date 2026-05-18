@@ -6,8 +6,6 @@
     clippy::all
 )]
 #![warn(unused_must_use)]
-// AUTOGEN: mod declarations only — real exports added in B-1.
-
 // PORTING.md crate-map name is `bun_str`; workspace crate is `bun_string`.
 #![warn(unreachable_pub)]
 extern crate bun_core as bun_str;

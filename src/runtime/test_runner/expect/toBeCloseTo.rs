@@ -101,9 +101,9 @@ impl Expect {
             RECEIVED_DIFFERENCE,
         );
 
-        // TODO(port): Zig `this.throw(global, signature, fmt, .{args})` passes fmt-string + tuple
-        // separately. Rust `format_args!` requires a literal fmt string, so SUFFIX_FMT cannot be
-        // threaded as a runtime arg. Phase B: decide `Expect::throw` signature — likely
+        // TODO(refactor): Zig `this.throw(global, signature, fmt, .{args})` passes fmt-string +
+        // tuple separately. Rust `format_args!` requires a literal fmt string, so SUFFIX_FMT cannot
+        // be threaded as a runtime arg. Decide `Expect::throw` signature — likely
         // `fn throw(&self, &JSGlobalObject, &str, fmt::Arguments) -> JsResult<JSValue>` and inline
         // SUFFIX_FMT into the `format_args!` call (or make `throw!` a macro).
         if not {

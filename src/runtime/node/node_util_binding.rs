@@ -76,7 +76,7 @@ fn split(
     global: &JSGlobalObject,
     str: &BunString,
 ) -> JsResult<JSValue> {
-    // PERF(port): was stack-fallback (std.heap.stackFallback(1024)) — profile in Phase B.
+    // PERF(port): was stack-fallback (std.heap.stackFallback(1024)).
     // Allocator param dropped (non-AST crate uses global mimalloc).
 
     // `defer { for (lines.items) |out| out.deref(); lines.deinit(alloc); }`
@@ -168,7 +168,7 @@ pub fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     let content = frame.argument(0);
     validators::validate_string(global, content, "content")?;
 
-    // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile in Phase B.
+    // PERF(port): was arena bulk-free (std.heap.ArenaAllocator).
     // Non-AST crate: arena dropped; Map/Loader use global allocator and Drop.
 
     // `validate_string` above guarantees `content.is_string()`, so

@@ -108,7 +108,7 @@ pub fn constructor(
 }
 
 // Raw JSHostFn shim that #[bun_jsc::host_fn] would emit for `construct_redirect`;
-// Phase B may replace this hand-written export with the macro.
+// TODO(refactor): replace this hand-written export with the macro.
 // C++ side declares `extern "C" SYSV_ABI ... JSC_HOST_CALL_ATTRIBUTES`.
 bun_jsc::jsc_host_abi! {
     #[unsafe(no_mangle)]
@@ -152,7 +152,7 @@ bun_jsc::jsc_host_abi! {
         global_object: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JSValue {
-        // PERF(port): was @call(bun.callmod_inline, ...) — profile in Phase B
+        // PERF(port): was @call(bun.callmod_inline, ...).
         bun_jsc::to_js_host_call(global_object, || construct_render(global_object, call_frame))
     }
 }

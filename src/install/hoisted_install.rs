@@ -145,8 +145,8 @@ pub fn install_hoisted_packages(
         scripts_node = root_node.start(ProgressStrings::script(), 0);
         this.downloads_node = Some(core::ptr::addr_of_mut!(download_node));
         this.scripts_node = NonNull::new(&raw mut scripts_node);
-        // TODO(port): storing pointers to stack locals into `this` — Phase B must reshape
-        // (move nodes into PackageManager or thread lifetimes).
+        // TODO(port): storing pointers to stack locals into `this` — reshape so the
+        // nodes live in PackageManager or thread lifetimes through.
     }
 
     // PORT NOTE: `defer { progress.root.end(); progress = .{} }`
@@ -444,7 +444,7 @@ pub fn install_hoisted_packages(
             const UNROLL_COUNT: usize = 64 / core::mem::size_of::<PackageID>();
 
             while remaining.len() > UNROLL_COUNT {
-                // PERF(port): was `inline while` manual unroll — profile in Phase B.
+                // PERF(port): was `inline while` manual unroll — profile if hot.
                 let mut i: usize = 0;
                 while i < UNROLL_COUNT {
                     installer.install_package(remaining[i], log_level);

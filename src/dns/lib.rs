@@ -101,7 +101,7 @@ impl GetAddrInfo {
 // TODO(port): Zig is `packed struct(u64)` — bit layout: family:2, socktype:2,
 // protocol:2, backend:2, flags:32 (std.c.AI), _:24. Represented here as a plain
 // struct because every use site reads fields by name; only `hash()` cared about
-// the raw bytes (handled via `to_packed_bytes`). Phase B: decide if a true
+// the raw bytes (handled via `to_packed_bytes`). Decide if a true
 // `#[repr(transparent)] u64` newtype is needed.
 #[derive(Clone, Copy)]
 pub struct Options {
@@ -163,8 +163,8 @@ impl Options {
 }
 
 // TODO(port): FromJSError types are only consumed by the *_jsc extension fns;
-// consider moving these to bun_runtime::dns_jsc in Phase B.
-// TODO(b1): thiserror not in deps — dropped Error derive
+// consider moving these to bun_runtime::dns_jsc.
+// TODO(port): thiserror not in deps — dropped Error derive
 #[derive(Debug, strum::IntoStaticStr)]
 pub enum OptionsFromJsError {
     //     #[error("InvalidFamily")]
@@ -386,7 +386,7 @@ pub fn address_to_string(address: &Address) -> Result<BunString, AllocError> {
         }
         sock::AF_INET6 => {
             let v6 = address.as_in6().unwrap(); // family() just checked
-            // PERF(port): was stack-fallback alloc — profile in Phase B
+            // PERF(port): was stack-fallback alloc — profile if it shows up on a hot path.
             // PORT NOTE: Zig formatted via std.net.Address Display ("[addr%scope]:port")
             // then sliced the brackets/port off ("TODO: this is a hack"). Here we
             // render the bare address directly via ares_inet_ntop, then re-append

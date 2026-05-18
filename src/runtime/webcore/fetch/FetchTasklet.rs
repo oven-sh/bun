@@ -58,8 +58,8 @@ pub type ResumableSink = ResumableFetchSink;
 #[ref_count(destroy = FetchTasklet::deinit)]
 pub struct FetchTasklet {
     // PORT NOTE: ResumableSink is intrusively refcounted (`ref_count: Cell<u32>` +
-    // heap::alloc); was `Option<Arc<_>>` in Phase A — `Arc` can't be mutably
-    // borrowed for `cancel/drain`, so model as raw like Zig's `?*ResumableSink`.
+    // heap::alloc); `Arc` can't be mutably borrowed for `cancel/drain`, so model
+    // as a raw pointer like Zig's `?*ResumableSink`.
     pub sink: Option<*mut ResumableSink>,
     // Self-referential: borrows from `request_body` / `request_headers` owned
     // by sibling fields, so the lifetime is erased to `'static`.
@@ -70,9 +70,9 @@ pub struct FetchTasklet {
     pub global_this: GlobalRef,
     pub request_body: HTTPRequestBody,
     // PORT NOTE: ThreadSafeStreamBuffer is intrusively refcounted (`ref_count: AtomicU32`,
-    // starts at 2) and shared with the HTTP thread via raw ptr; was `Option<Arc<_>>` in
-    // Phase A — `Arc` can't be mutably borrowed for `acquire/release`. Model as raw like
-    // Zig's `?*http.ThreadSafeStreamBuffer`.
+    // starts at 2) and shared with the HTTP thread via raw ptr; `Arc` can't be mutably
+    // borrowed for `acquire/release`. Model as a raw pointer like Zig's
+    // `?*http.ThreadSafeStreamBuffer`.
     pub request_body_streaming_buffer: Option<core::ptr::NonNull<ThreadSafeStreamBuffer>>,
 
     /// buffer being used by AsyncHTTP
@@ -1662,7 +1662,7 @@ impl FetchTasklet {
                     let buf_ptr: *const [u8] = &raw const *fetch_tasklet.url_proxy_buffer;
                     url = ZigURL::parse(unsafe { &(&*buf_ptr)[0..old_url_len] });
                     proxy = Some(ZigURL::parse(unsafe { &(&*buf_ptr)[old_url_len..] }));
-                    // TODO(port): self-referential borrow into url_proxy_buffer; Phase B needs raw ptr or owned URL
+                    // TODO(port): self-referential borrow into url_proxy_buffer; needs raw ptr or owned URL.
                 } else {
                     proxy = Some(env_proxy);
                 }

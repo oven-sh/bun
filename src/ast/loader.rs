@@ -234,8 +234,7 @@ impl Loader {
             slice_
         };
         // Zig: names.getWithEql(slice, strings.eqlCaseInsensitiveASCIIICheckLength)
-        // TODO(port): phf is case-sensitive; Phase B may need a lowercase pass or
-        // bun_core::eql_case_insensitive_ascii lookup over NAMES.entries().
+        // phf is case-sensitive, so fall back to a case-insensitive scan over NAMES.entries().
         Self::NAMES.get(slice).copied().or_else(|| {
             Self::NAMES
                 .entries()

@@ -13,8 +13,7 @@ use crate::{PrintErr, Printer, VendorPrefix};
 use bun_alloc::Arena;
 use bun_core::strings;
 
-// ─── B-2 round 6 notes ────────────────────────────────────────────────────
-// Un-gated. `'bump` arena threading dropped for now: `BumpVec<'bump,_>` →
+// `'bump` arena threading dropped for now: `BumpVec<'bump,_>` →
 // `Vec<_>` (matches `Parser::parse_comma_separated → Vec<T>`); re-thread once
 // `Parser<'bump,'_>` two-lifetime arity lands and `arena()` returns
 // `&'bump Bump`. The generic `D` bound (`LengthPercentage` / `AnglePercentage`)

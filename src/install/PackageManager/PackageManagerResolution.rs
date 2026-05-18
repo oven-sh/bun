@@ -189,7 +189,7 @@ impl PackageManager {
             let mut version = parsed.version.min();
             let total = (version.tag.build.len() + version.tag.pre.len()) as usize;
             if total > 0 {
-                // PERF(port): was ensureUnusedCapacity — profile in Phase B
+                // PERF(port): was ensureUnusedCapacity — profile if hot
                 let len_before = tags_buf.len();
                 // `clone_into` writes exactly `total` bytes (build.len + pre.len)
                 // into `available` and advances it; zero-fill the tail first so
@@ -221,7 +221,7 @@ impl PackageManager {
         }
 
         // PERF(port): was arena bulk-free (bun.ArenaAllocator + stackFallback(4096)) —
-        // profile in Phase B. Allocator params dropped; Vec uses global mimalloc.
+        // profile if hot. Allocator params dropped; Vec uses global mimalloc.
         let mut tags_buf: Vec<u8> = Vec::new();
         let mut installed_versions =
             match self.get_installed_versions_from_disk_cache(&mut tags_buf, package_name) {

@@ -787,9 +787,8 @@ unsafe fn ensure_debugger(vm: *mut VirtualMachine, block_until_connected: bool) 
     //   }
     //
     // PORT NOTE: `Debugger::create` / `wait_for_debugger_if_necessary` live in
-    // `bun_jsc::debugger`; their heavy bodies (futex spin, debugger-thread
-    // spawn, deadline poll-loop) are preserved verbatim under the
-    // `__phase_a_body` mod in Debugger.rs and un-gate independently. This hook
+    // `bun_jsc::debugger::Debugger` (Debugger.rs); the heavy bodies (futex
+    // spin, debugger-thread spawn, deadline poll-loop) are there. This hook
     // is the literal `ensureDebugger` body — it owns the "is a debugger
     // configured?" guard and the `block_until_connected` branch, then
     // delegates to those two fns exactly as Zig does.
@@ -1153,32 +1152,6 @@ unsafe fn create_node_fs(vm: *mut VirtualMachine) -> *mut c_void {
     .cast::<c_void>()
 }
 
-/// `Body.Value.HiveRef.init(body, &vm.body_value_pool)` — Spec
-/// VirtualMachine.zig:255. `body` is moved by value into the pooled slot.
-///
-/// # Safety
-/// `body` is a `*mut webcore::body::Value` the caller is donating (read-once,
-/// not dropped by the caller). Returns a `*mut webcore::body::HiveRef` erased
-/// to `*mut c_void`.
-unsafe fn init_request_body_value(_vm: *mut VirtualMachine, body: *mut c_void) -> *mut c_void {
-    use crate::webcore::body::{HiveRef, Value};
-    let state = runtime_state();
-    debug_assert!(
-        !state.is_null(),
-        "init_request_body_value before init_runtime_state"
-    );
-    // SAFETY: per fn contract — `body` points at an initialised `Body::Value`
-    // the caller hands over by move; `state` is the live per-thread box and
-    // its `body_value_pool` `Box` payload is heap-stable for the
-    // VM's lifetime (BACKREF contract on `HiveRef::allocator`).
-    let value = unsafe { core::ptr::read(body.cast::<Value>()) };
-    let pool: *mut crate::webcore::body::HiveAllocator =
-        unsafe { &raw mut *(*state).body_value_pool };
-    // Spec returns `!*HiveRef` with the only `try` site being the pool
-    // allocation; `bun.handleOom`-style crash matches Zig.
-    unsafe { HiveRef::init(value, pool) }.cast::<c_void>()
-}
-
 /// `WebCore.ObjectURLRegistry.singleton().has(specifier["blob:".len..])` —
 /// Spec VirtualMachine.zig:1760.
 fn has_blob_url(blob_id: &[u8]) -> bool {
@@ -1437,7 +1410,6 @@ pub static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     default_client_ssl_ctx,
     ssl_ctx_cache_get_or_create,
     create_node_fs,
-    init_request_body_value,
     has_blob_url,
     body_mixin_get_blob,
     process_exit,
@@ -2178,15 +2150,15 @@ fn transpile_source_code_inner(
             // (`.reset_store()`, `.linker`, `.log` at :338) so the original
             // "uninitialized Transpiler" gate was stale.
             // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+            // `transpiler.log` / `args.log` are never-null (set in
+            // `Transpiler::init_in_place` / by the C++ caller respectively).
             let old_log = unsafe { &*jsc_vm }.transpiler.log;
+            let old_log_nn = core::ptr::NonNull::new(old_log).expect("transpiler.log is non-null");
+            let args_log_nn = core::ptr::NonNull::new(args.log).expect("args.log is non-null");
             unsafe {
                 (*jsc_vm).transpiler.log = args.log;
-                // TODO(port): lifetime — `Resolver.log` is an unbounded `&mut Log`
-                // (Transpiler<'static>); `args.log` is `*mut Log`. Spec aliases
-                // freely; Rust would need `Resolver.log: *mut Log` first.
-
                 {
-                    (*jsc_vm).transpiler.resolver.log = args.log;
+                    (*jsc_vm).transpiler.resolver.log = args_log_nn;
                 }
                 // TODO(b2-blocked): `Linker` is a unit stub in `bun_bundler`
                 // — `.log` field un-gates with `linker.rs`.
@@ -2204,7 +2176,7 @@ fn transpile_source_code_inner(
                 (*jsc_vm).transpiler.log = old_log;
 
                 {
-                    (*jsc_vm).transpiler.resolver.log = old_log;
+                    (*jsc_vm).transpiler.resolver.log = old_log_nn;
                     (*jsc_vm).transpiler.linker.log = old_log;
                     if let Some(pm) = (*jsc_vm).transpiler.resolver.package_manager {
                         // TODO(blocked_on): bun_resolver::package_json::PackageManager::log
@@ -2355,7 +2327,7 @@ fn transpile_source_code_inner(
                 // entry path borrows a heap `Utf8Slice` that drops at frame
                 // exit — so re-intern into the same `FilenameStore` here
                 // instead of transmuting the lifetime (PORTING.md §Forbidden).
-                // Phase-B collapses both `Path` defs into one type.
+                // TODO(refactor): collapse both `Path` defs into one type.
                 //
                 // PORT NOTE: when `disable_transpilying` is true the
                 // `parse_result` is consumed *within this frame* (the
@@ -2367,7 +2339,7 @@ fn transpile_source_code_inner(
                 // borrowed path bytes outlive `parse_result` in that branch,
                 // so reuse them directly. The Zig spec passes `path` by value
                 // with no intern at all (ModuleLoader.zig:90); the intern is a
-                // Phase-A workaround for the async-module queue path only.
+                // workaround for the async-module queue path only.
                 let parse_path = if disable_transpilying {
                     bun_paths::fs::Path {
                         pretty: path.pretty,
@@ -3375,8 +3347,10 @@ fn get_hardcoded_module(
             use bun_jsc::resolved_source::Tag;
             Some(OwnedResolvedSource::new(ResolvedSource {
                 source_code: bun_core::String::clone_utf8(&ep.contents),
-                specifier: *specifier,
-                source_url: *specifier,
+                // +1 each: ~SourceProvider() derefs `specifier` and
+                // `source_url` once all uses are done (see ZigSourceProvider.cpp).
+                specifier: specifier.dupe_ref(),
+                source_url: specifier.dupe_ref(),
                 tag: Tag::Esm,
                 source_code_needs_deref: true,
                 ..ResolvedSource::default()
@@ -3402,8 +3376,9 @@ fn get_hardcoded_module(
             {
                 return Some(OwnedResolvedSource::new(ResolvedSource {
                     source_code: bun_core::String::init(bun_ast::runtime::Runtime::source_code()),
-                    specifier: *specifier,
-                    source_url: *specifier,
+                    // +1 each: ~SourceProvider() derefs both.
+                    specifier: specifier.dupe_ref(),
+                    source_url: specifier.dupe_ref(),
                     ..ResolvedSource::default()
                 }));
             }
@@ -3475,7 +3450,8 @@ unsafe fn fetch_builtin_module(
             unsafe {
                 *out = ErrorableResolvedSource::ok(ResolvedSource {
                     source_code: bun_core::String::clone_utf8(&(*entry).source.contents),
-                    specifier: *specifier,
+                    // +1 each: ~SourceProvider() derefs both.
+                    specifier: specifier.dupe_ref(),
                     source_url: specifier.dupe_ref(),
                     ..ResolvedSource::default()
                 });
@@ -3521,7 +3497,8 @@ export default db;
                 unsafe {
                     *out = ErrorableResolvedSource::ok(ResolvedSource {
                         source_code: bun_core::String::static_(SQLITE_MODULE_SOURCE_STANDALONE),
-                        specifier: *specifier,
+                        // +1 each: ~SourceProvider() derefs both.
+                        specifier: specifier.dupe_ref(),
                         source_url: specifier.dupe_ref(),
                         source_code_needs_deref: false,
                         ..ResolvedSource::default()
@@ -3539,7 +3516,8 @@ export default db;
             unsafe {
                 *out = ErrorableResolvedSource::ok(ResolvedSource {
                     source_code: file.to_wtf_string(),
-                    specifier: *specifier,
+                    // +1 each: ~SourceProvider() derefs both.
+                    specifier: specifier.dupe_ref(),
                     source_url: specifier.dupe_ref(),
                     bytecode_origin_path: if !file.bytecode_origin_path.is_empty() {
                         bun_core::String::from_bytes(file.bytecode_origin_path)
@@ -3772,8 +3750,8 @@ unsafe fn get_loader_and_virtual_source<'a>(
                     // SAFETY: same lifetime erasure as above — `shared_view()`
                     // borrows the blob's backing store (held in the caller's
                     // `blob_to_deinit` slot for the synchronous transpile).
-                    // `bun_ast::Source` stores `&'static [u8]` (Phase A
-                    // shape — see logger/lib.rs §`type Str`), so erase to
+                    // `bun_ast::Source` stores `&'static [u8]` (see
+                    // logger/lib.rs §`type Str`), so erase to
                     // `'static`; sound because the blob outlives the
                     // synchronous `transpile_source_code_inner` call.
                     let (contents, path_text): (&'static [u8], &'static [u8]) = unsafe {
@@ -4950,33 +4928,32 @@ unsafe fn resolve_hook(
 
     // Spec :1937-1954 — swap `vm.log` (and resolver/linker/pm logs) to a fresh
     // local Log so resolver diagnostics don't leak into the VM log. PORT NOTE:
-    // the Rust `Resolver.log` / `Linker.log` are `*mut Log` (see
+    // `Resolver.log` is `NonNull<Log>` and `Linker.log` is `*mut Log` (see
     // transpile_source_code's identical swap at jsc_hooks.rs:848-879), so the
     // pointer write is sound; restore via scopeguard so the early-`return
     // false` paths don't leave a dangling stack pointer.
     let mut log = bun_ast::Log::init();
-    // SAFETY: `vm.log` is `Option<NonNull<Log>>`.
-    let old_log: *mut bun_ast::Log = match unsafe { &*vm }.log {
-        Some(p) => p.as_ptr(),
-        None => ptr::null_mut(),
-    };
-    let log_ptr: *mut bun_ast::Log = &raw mut log;
-    // SAFETY: `vm` is the live per-thread VM; the log fields are raw `*mut`.
+    // `vm.log` is set unconditionally in `init` and never cleared (Zig stores
+    // `*logger.Log`, always non-null) — the `expect` is infallible.
+    let old_log: core::ptr::NonNull<bun_ast::Log> =
+        unsafe { &*vm }.log.expect("vm.log set in init");
+    let log_nn: core::ptr::NonNull<bun_ast::Log> = core::ptr::NonNull::from(&mut log);
+    // SAFETY: `vm` is the live per-thread VM.
     unsafe {
-        (*vm).log = core::ptr::NonNull::new(log_ptr);
-        (*vm).transpiler.resolver.log = log_ptr;
-        (*vm).transpiler.linker.log = log_ptr;
+        (*vm).log = Some(log_nn);
+        (*vm).transpiler.resolver.log = log_nn;
+        (*vm).transpiler.linker.log = log_nn.as_ptr();
         // TODO(b2-cycle): `transpiler.resolver.package_manager` log swap —
         // gated alongside the PM field (see transpile_source_code §log-swap).
     }
     scopeguard::defer! {
-        // SAFETY: `vm` is the live per-thread VM; restoring the raw `*mut Log`
-        // fields swapped just above so early-return paths don't leave a
-        // dangling stack pointer.
+        // SAFETY: `vm` is the live per-thread VM; restoring the log pointers
+        // swapped just above so early-return paths don't leave a dangling
+        // stack pointer.
         unsafe {
-            (*vm).log = core::ptr::NonNull::new(old_log);
+            (*vm).log = Some(old_log);
             (*vm).transpiler.resolver.log = old_log;
-            (*vm).transpiler.linker.log = old_log;
+            (*vm).transpiler.linker.log = old_log.as_ptr();
         }
     }
 

@@ -194,7 +194,7 @@ impl ABIType {
 
     // TODO(port): map_to_js_object — Zig builds a comptime "{...}" string from
     // `map` via EnumMapFormatter. Rust cannot iterate phf at const time;
-    // generate via build.rs or const_format! in Phase B.
+    // generate via build.rs or const_format!.
     pub const MAP_TO_JS_OBJECT: &'static str = "";
 
     /// Zig `std.enums.fromInt(ABIType, int) orelse ...` — returns `None` for

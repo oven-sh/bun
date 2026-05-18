@@ -214,7 +214,7 @@ impl GarbageCollectionController {
     //
     // When the heap size is increasing, we always switch to fast mode
     // When the heap size has been the same or less for 30 seconds, we switch to slow mode
-    // PERF(port): was comptime enum-literal monomorphization — profile in Phase B
+    // PERF(port): was comptime enum-literal monomorphization — profile if hot.
     pub fn update_gc_repeat_timer(&mut self, setting: GcRepeatSetting) {
         if setting == GcRepeatSetting::Fast && !self.gc_repeating_timer_fast {
             self.gc_repeating_timer_fast = true;

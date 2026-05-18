@@ -238,7 +238,7 @@ fn update_package_json_and_install_with_manager_with_updates(
             // if we're removing, they don't have to specify where it is installed in the dependencies list
             // they can even put it multiple times and we will just remove all of them
             for request in updates.iter() {
-                // PERF(port): was `inline for` — profile in Phase B
+                // PERF(port): was `inline for` — profile if hot
                 const LISTS: [&[u8]; 4] = [
                     b"dependencies",
                     b"devDependencies",
@@ -417,7 +417,7 @@ fn update_package_json_and_install_with_manager_with_updates(
     // The cache entry (`Cow<'static, [u8]>`) outlives this stack frame, and
     // `new_package_json_source` is reassigned below on the add/update/link path, so we
     // must store an *owning* copy to avoid a dangling borrow. PERF(port): one extra
-    // alloc+copy vs Zig's single dupe — profile in Phase B.
+    // alloc+copy vs Zig's single dupe — profile if hot.
     current_package_json.source.contents = Cow::Owned(new_package_json_source.clone());
     // PORT NOTE: Zig edited `current_package_json.root` in place above; we edited a
     // promoted T4 copy (`current_package_json_root`). Re-parse the printed source so

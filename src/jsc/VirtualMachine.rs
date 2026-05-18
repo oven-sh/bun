@@ -2,15 +2,6 @@
 //!
 //! Today, Bun is one VM per thread, so the name "VirtualMachine" sort of makes
 //! sense. If that changes, this should be renamed `ScriptExecutionContext`.
-//!
-//! ──────────────────────────────────────────────────────────────────────────
-//! B-2 un-gate: real `VirtualMachine` struct with the core field set
-//! (`global`, `event_loop`, `jsc_vm`, `transpiler`, `source_mappings`,
-//! `rare_data`, `counters`, `active_tasks`, …) + lifecycle accessors. Fields
-//! and methods that name `bun_runtime` / `bun_webcore` types (forward-dep
-//! cycle on `bun_jsc`) are preserved verbatim from the Phase-A draft inside
-//! `` blocks below; un-gate piecewise as the cycle breaks.
-//! ──────────────────────────────────────────────────────────────────────────
 
 use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_void};
@@ -1510,9 +1501,7 @@ impl VirtualMachine {
                 _ => break,
             };
             for hook in hooks {
-                // SAFETY: ctx/func were registered together by the N-API
-                // caller (`CleanupHook::init`).
-                unsafe { (hook.func)(hook.ctx) };
+                (hook.func)(hook.ctx);
             }
         }
         // Zig `defer rare_data.cleanup_hooks.clearAndFree(...)` — `mem::take`
@@ -1670,12 +1659,6 @@ pub struct RuntimeHooks {
     /// `NodeFS` lives in `bun_runtime`; the high tier boxes one and returns
     /// the type-erased pointer. Stored back into `vm.node_fs`.
     pub create_node_fs: unsafe fn(vm: *mut VirtualMachine) -> *mut c_void,
-    /// `Body.Value.HiveRef.init(body, &vm.body_value_pool)` — spec
-    /// VirtualMachine.zig:255. The hive allocator lives inside `runtime_state`
-    /// (high tier); `body` and the returned `*mut Body.Value.HiveRef` are
-    /// erased here and cast back on the `bun_runtime` side.
-    pub init_request_body_value:
-        unsafe fn(vm: *mut VirtualMachine, body: *mut c_void) -> *mut c_void,
     /// `WebCore.ObjectURLRegistry.singleton().has(specifier["blob:".len..])` —
     /// spec VirtualMachine.zig:1760. Registry lives in `bun_runtime::webcore`.
     pub has_blob_url: fn(blob_id: &[u8]) -> bool,
@@ -3040,22 +3023,6 @@ impl VirtualMachine {
             .unwrap_or(UnhandledRejections::Bun)
     }
 
-    /// Spec VirtualMachine.zig:255 `initRequestBodyValue`.
-    ///
-    /// `body` is a `*mut bun_runtime::webcore::Body::Value`; the returned
-    /// pointer is a `*mut Body::Value::HiveRef`. Both types live in the
-    /// higher `bun_runtime` tier (forward-dep on `bun_jsc`), so they're
-    /// type-erased here and dispatched through [`RuntimeHooks`]. Callers in
-    /// `bun_runtime` cast back.
-    pub fn init_request_body_value(&mut self, body: *mut c_void) -> *mut c_void {
-        let hooks = runtime_hooks().expect("runtime hooks not installed");
-        // SAFETY: hook contract — `body` is a `Body::Value` allocated by the
-        // same `bun_runtime` build that registered the hook; `self` is the
-        // live per-thread VM (which owns the hive allocator inside
-        // `runtime_state`).
-        unsafe { (hooks.init_request_body_value)(self, body) }
-    }
-
     /// Spec VirtualMachine.zig:279 `uvLoop`.
     pub fn uv_loop(&self) -> *mut Async::Loop {
         #[cfg(debug_assertions)]
@@ -4236,7 +4203,7 @@ impl VirtualMachine {
         let old_log: NonNull<bun_ast::Log> = jsc_vm.log.expect("vm.log set in init");
         let mut log = bun_ast::Log::default();
         jsc_vm.log = NonNull::new(&raw mut log);
-        jsc_vm.transpiler.resolver.log = &raw mut log;
+        jsc_vm.transpiler.resolver.log = NonNull::from(&mut log);
         // TODO(b2-cycle): `transpiler.linker.log` / `resolver.package_manager.log`
         // — gated bundler fields.
         // PORT NOTE: Zig `defer { restore old_log }` — fires on every exit
@@ -4255,7 +4222,7 @@ impl VirtualMachine {
                 // thread); `old_log` outlives the VM (Box::leak in `init`).
                 let jsc_vm = self.vm.get().as_mut();
                 jsc_vm.log = Some(self.old_log);
-                jsc_vm.transpiler.resolver.log = &raw mut *self.old_log.as_ptr();
+                jsc_vm.transpiler.resolver.log = self.old_log;
             }
         }
         let _restore = RestoreLog {

@@ -89,9 +89,8 @@ mod posix_compat {
 
     /// `std.posix.errno(rc)` — Zig: with libc, `rc == -1 ⇒ read __errno`,
     /// else `.SUCCESS`. The `posix_spawn*` family instead returns the errno
-    /// **directly** (0 on success). The Phase-A draft conflated both call
-    /// conventions; preserve that here so behaviour matches the .zig source
-    /// 1:1, and let Phase-B audit (TODO(port) below).
+    /// **directly** (0 on success). This helper conflates both call
+    /// conventions to match the .zig source 1:1; see TODO(port) below.
     // TODO(port): split into `errno_from_posix_spawn(rc)` (rc IS errno) vs
     // `errno_from_ret(rc)` (rc == -1 ⇒ read libc errno) and route call sites.
     #[inline]
@@ -259,7 +258,7 @@ pub mod bun_spawn {
             // sets directly on this struct BEFORE calling set(). Preserve
             // that value when the flag bit isn't available.
             // TODO(port): Zig used `@hasDecl(bun.c, "POSIX_SPAWN_SETSID")`; approximated
-            // here as unix-not-freebsd. Phase B should use a build-time cfg from bindgen.
+            // here as unix-not-freebsd. Should use a build-time cfg from bindgen.
             #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 // glibc/musl/bionic <spawn.h> all define POSIX_SPAWN_SETSID as 0x80;
@@ -496,7 +495,7 @@ pub mod posix_spawn {
     pub type Actions = bun_spawn::Actions;
     #[cfg(unix)]
     pub type Attr = bun_spawn::Attr;
-    // TODO(b2-blocked): not(unix) Actions/Attr aliased PosixSpawn* in the Zig
+    // TODO(port): not(unix) Actions/Attr aliased PosixSpawn* in the Zig
     // draft, but Windows goes through `process.rs::spawn_process_windows`
     // (libuv), never these. Leave undeclared on Windows for now.
 
@@ -585,7 +584,7 @@ pub mod posix_spawn {
 
         // TODO(port): cfg-gate platform-only field access — the body below touches
         // bun_spawn::Actions/Attr fields that don't exist on the not(unix) Actions/Attr
-        // alias; cfg!() above keeps both arms in the type-checker. Phase B may need to
+        // alias; cfg!() above keeps both arms in the type-checker. May need to
         // restructure (linux/freebsd fall-through after this block is statically
         // unreachable but rustc can't prove it from the runtime `use_bun_spawn` bool).
         #[cfg(unix)]

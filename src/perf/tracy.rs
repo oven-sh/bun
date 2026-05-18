@@ -94,7 +94,7 @@ pub fn trace(srcloc: &'static ___tracy_source_location_data) -> Ctx {
     // TODO(port): Zig signature is `trace(comptime src: std.builtin.SourceLocation)`
     // and synthesizes a per-monomorphization `static holder.srcloc`. Rust cannot
     // create a fresh static per generic-value instantiation without a macro, so this
-    // fn takes the already-built static directly. Phase B: provide a `tracy_trace!()`
+    // fn takes the already-built static directly. TODO(port): provide a `tracy_trace!()`
     // macro that emits a per-callsite
     // `static SRCLOC: ___tracy_source_location_data { function: concat!(module_path!(),"\0"),
     // file: concat!(file!(),"\0"), line: line!(), .. }` and calls this — do NOT
@@ -114,8 +114,8 @@ pub fn trace(srcloc: &'static ___tracy_source_location_data) -> Ctx {
 pub fn trace_named(srcloc: &'static ___tracy_source_location_data) -> Ctx {
     // TODO(port): Zig `traceNamed(comptime src, comptime name)` — same
     // per-callsite-static issue as `trace`. The `name` is folded into the
-    // caller-provided static `srcloc.name`. Phase B macro:
-    // `tracy_trace_named!("name")`.
+    // caller-provided static `srcloc.name`. TODO(port): add a
+    // `tracy_trace_named!("name")` macro.
     if !enable() {
         return Ctx::default();
     }
@@ -140,7 +140,7 @@ pub fn tracy_allocator() -> TracyAllocator {
 // TODO(port): re-express as a `core::alloc::GlobalAlloc` shim over
 // `bun_alloc::Mimalloc` that emits tracy alloc/free hooks (alloc/alloc_named/
 // free/free_named below). Only relevant if `ENABLE_ALLOCATION` is flipped on —
-// it is `false` today, so this is dead in practice. Phase B.
+// it is `false` today, so this is dead in practice.
 // PERF(port): Zig monomorphized on `comptime name`; Rust stores it as a field
 // because `Option<&'static CStr>` is not a valid const-generic param on stable.
 pub struct TracyAllocator {
@@ -155,7 +155,7 @@ impl TracyAllocator {
     // PORT NOTE: Zig `allocFn`/`resizeFn`/`freeFn` built a `std.mem.Allocator`
     // vtable. That concept does not exist in the Rust port (global mimalloc via
     // `#[global_allocator]`); the tracy emit hooks they called are preserved
-    // below as `alloc`/`alloc_named`/`free`/`free_named` for the Phase-B
+    // below as `alloc`/`alloc_named`/`free`/`free_named` for a future
     // `GlobalAlloc` shim to use.
 }
 
@@ -233,7 +233,7 @@ pub fn named_frame(name: &'static core::ffi::CStr) -> Frame {
 
 /// Zig: `fn Frame(comptime name: [:0]const u8) type`
 // PERF(port): was comptime monomorphization (zero-sized struct per name) —
-// store name as a field instead. Profile in Phase B.
+// store name as a field instead.
 pub struct Frame {
     name: &'static core::ffi::CStr,
 }
@@ -796,7 +796,7 @@ fn dlsym<T: Copy>(symbol: &'static core::ffi::CStr) -> Option<T> {
 
         // PORT NOTE: Zig `bun.C.dlsymWithHandle` cached per-(Type,symbol) via a comptime
         // local static. Rust has no const-generic-string statics; do an uncached lookup
-        // through the shared handle. PERF(port): per-symbol OnceLock cache — profile in Phase B.
+        // through the shared handle. PERF(port): per-symbol OnceLock cache — profile if it shows up on a hot path.
         let p = bun_sys::dlsym_impl(handle_getter(), sym_z)?;
         // SAFETY: caller asserts `T` is fn-pointer-shaped matching the symbol's ABI
         // (same contract as Zig `bun.cast(Type, ptr)`).
@@ -805,7 +805,7 @@ fn dlsym<T: Copy>(symbol: &'static core::ffi::CStr) -> Option<T> {
 }
 
 // TODO(port): Zig pulls this from `@import("build_options").tracy_callstack_depth`.
-// Phase B: wire to build-time config (env! / cfg-set const).
+// Wire to build-time config (env! / cfg-set const).
 const CALLSTACK_DEPTH: c_int = 10;
 
 // ported from: src/perf/tracy.zig

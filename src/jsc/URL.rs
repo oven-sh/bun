@@ -5,7 +5,7 @@ use bun_core::String;
 use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult};
 
 // PORT NOTE: `jsc.markBinding(@src())` calls were dropped — debug-only binding-trace
-// helper with no Rust equivalent; Phase B can add a `mark_binding!()` macro if wanted.
+// helper with no Rust equivalent; a `mark_binding!()` macro could be added if wanted.
 
 bun_opaque::opaque_ffi! {
     /// Opaque handle to a WebKit `WTF::URL` allocated on the C++ side.
@@ -97,7 +97,7 @@ impl URL {
         NonNull::new(URL__fromString(&mut input))
     }
     // TODO(port): from_js/from_string/from_utf8 return an owned C++ heap pointer that
-    // the caller must destroy(). Consider an RAII wrapper in Phase B instead of NonNull<URL>.
+    // the caller must destroy(). Consider an RAII wrapper instead of NonNull<URL>.
 
     pub fn protocol(&self) -> String {
         URL__protocol(self)

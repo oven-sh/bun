@@ -79,7 +79,7 @@ impl JSString {
     // an owned UTF-8 copy so the result outlives the GC'd JSString. Returning
     // `to_slice()` here (a borrow that may alias JSC-owned memory) would hand
     // callers a use-after-free once the cell is collected.
-    // TODO(b2-blocked): un-gate once `bun_core::ZigString::to_slice_clone` is
+    // TODO(port): un-gate once `bun_core::ZigString::to_slice_clone` is
     // ported; gated so wrong-semantics fallback cannot be called.
 
     pub fn to_slice_clone(&self, global: &JSGlobalObject) -> JsResult<ZigStringSlice> {
@@ -91,7 +91,7 @@ impl JSString {
     // Spec (JSString.zig:54-62): `str.toSliceZ(allocator)` guarantees a `[:0]`
     // sentinel. `to_slice()` is not NUL-terminated; passing it to a C API that
     // expects one reads past the buffer end.
-    // TODO(b2-blocked): un-gate once `bun_core::ZigString::to_slice_z` is
+    // TODO(port): un-gate once `bun_core::ZigString::to_slice_z` is
     // ported; gated so wrong-semantics fallback cannot be called.
 
     pub fn to_slice_z(&self, global: &JSGlobalObject) -> ZigStringSlice {

@@ -54,7 +54,7 @@ fn find_path(
     request_bun_str: BunString,
     paths_maybe: Option<&JSArray>,
 ) -> JsResult<JSValue> {
-    // PERF(port): was stack-fallback (8192 bytes) — profile in Phase B
+    // PERF(port): was stack-fallback (8192 bytes) — profile if it shows up on a hot path.
     let request_slice = request_bun_str.to_utf8();
     let request = request_slice.slice();
 
@@ -262,7 +262,7 @@ pub extern "C" fn NodeModuleModule__onRequireExtensionModify(
     loader: ApiLoader,
     value: JSValue,
 ) {
-    // PERF(port): was stack-fallback (8192 bytes) — profile in Phase B
+    // PERF(port): was stack-fallback (8192 bytes) — profile if it shows up on a hot path.
     // SAFETY: C++ caller guarantees non-null str for the call's duration.
     let str_slice = unsafe { &*str }.to_utf8();
     if on_require_extension_modify(global, str_slice.slice(), loader, value).is_err() {
@@ -275,7 +275,7 @@ pub extern "C" fn NodeModuleModule__onRequireExtensionModifyNonFunction(
     global: &JSGlobalObject,
     str: *const BunString,
 ) {
-    // PERF(port): was stack-fallback (8192 bytes) — profile in Phase B
+    // PERF(port): was stack-fallback (8192 bytes) — profile if it shows up on a hot path.
     // SAFETY: C++ caller guarantees non-null str for the call's duration.
     let str_slice = unsafe { &*str }.to_utf8();
     if on_require_extension_modify_non_function(global, str_slice.slice()).is_err() {

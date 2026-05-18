@@ -20,7 +20,7 @@ use bun_sys as sys;
 
 // TODO(port): several `[]const u8` fields below are leaked in Zig (program exits). In Zig,
 // `script_content` and `combined` alias the same `copy_script` buffer; here they are split
-// into separate owned boxes for Phase A. Revisit ownership in Phase B.
+// into separate owned boxes. Revisit ownership.
 struct ScriptConfig {
     package_json_path: Box<[u8]>,
     package_name: Box<[u8]>,
@@ -100,7 +100,7 @@ impl<'a> ProcessHandle<'a> {
             // Get the envp with the PATH configured
             // There's probably a more optimal way to do this where you have a Vec shared
             // instead of creating a new one for each process
-            // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile in Phase B
+            // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile if it shows up on a hot path.
             let env_ptr = state.env;
             // SAFETY: state.env is the process-lifetime DotEnv loader (Transpiler::env).
             let env = unsafe { &mut *env_ptr };
@@ -746,9 +746,9 @@ pub fn run_scripts_with_filter(
         &mut root_buf,
     )?;
 
-    // TODO(port): out-param init — Zig used `var this_transpiler: Transpiler = undefined` and
+    // TODO(refactor): out-param init — Zig used `var this_transpiler: Transpiler = undefined` and
     // `configureEnvForRun` writes through it. Per PORTING.md this should be reshaped to
-    // `RunCommand::configure_env_for_run(...) -> Result<Transpiler, _>` in Phase B; until then
+    // `RunCommand::configure_env_for_run(...) -> Result<Transpiler, _>`; until then
     // pass `&mut MaybeUninit<Transpiler>` (zeroed() is invalid: Transpiler is not #[repr(C)] POD).
     let mut this_transpiler = core::mem::MaybeUninit::<bun_bundler::Transpiler<'static>>::uninit();
     let _ = RunCommand::configure_env_for_run(&mut *ctx, &mut this_transpiler, None, true, false)?;

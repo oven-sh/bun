@@ -15,8 +15,8 @@
 //! a slice of field values.
 //!
 //! Implementation note: this port uses nightly `core::mem::type_info`
-//! reflection to discover `T`'s fields at compile time, replacing the
-//! Phase-A `MultiArrayElement` trait + derive macro. Field metadata (name,
+//! reflection to discover `T`'s fields at compile time, replacing an earlier
+//! `MultiArrayElement` trait + derive macro. Field metadata (name,
 //! size, alignment, in-struct offset) is computed in `const` context; column
 //! accessors take a `const NAME: &'static str` generic and verify both the
 //! name and the requested column type against the reflected field's `TypeId`
@@ -1279,7 +1279,7 @@ impl<T, A: Allocator> Drop for MultiArrayList<T, A> {
         // element destructors here would double-free that side.
         //
         // For lists that *do* uniquely own heap-backed columns (e.g.
-        // `LineOffsetTable.columns_for_non_ascii: Vec<i32>`), call
+        // `LineOffsetTable.columns_for_non_ascii: Box<[i32]>`), call
         // [`MultiArrayList::drop_elements`] before letting this run, or the
         // column payloads leak.
         self.free_allocated_bytes();

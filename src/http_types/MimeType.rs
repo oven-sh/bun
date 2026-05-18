@@ -58,19 +58,15 @@ impl Compact {
     }
 
     pub fn to_mime_type(self) -> MimeType {
-        #[cfg(feature = "ci_assert")]
-        {
-            if !strings::eql(
+        assert!(
+            strings::eql(
                 self.value.slice(),
                 <&'static str>::from(self.value).as_bytes(),
-            ) {
-                bun_core::Output::panic(format_args!(
-                    "{} != {}. Code generation is broken.",
-                    bstr::BStr::new(self.value.slice()),
-                    <&'static str>::from(self.value),
-                ));
-            }
-        }
+            ),
+            "{} != {}. Code generation is broken.",
+            bstr::BStr::new(self.value.slice()),
+            <&'static str>::from(self.value),
+        );
 
         // TODO(port): Zig matches on `Table` enum variants directly; we compare against
         // `t!` placeholders because variant idents are not yet defined (see top-of-file note).
@@ -120,18 +116,14 @@ pub fn create_hash_table() -> Result<Map, bun_alloc::AllocError> {
     let mut map = Map::default();
     map.reserve(Table::ALL.len() as u32 as usize);
     // PERF(port): was put_assume_capacity_no_clobber + borrowed-key map — Rust
-    // `StringHashMap` boxes the key. Profile in Phase B.
+    // `StringHashMap` boxes the key.
     for entry in Table::ALL {
-        #[cfg(feature = "ci_assert")]
-        {
-            if !strings::eql(entry.slice(), <&'static str>::from(*entry).as_bytes()) {
-                bun_core::Output::panic(format_args!(
-                    "{} != {}. Code generation is broken.",
-                    bstr::BStr::new(entry.slice()),
-                    <&'static str>::from(*entry),
-                ));
-            }
-        }
+        assert!(
+            strings::eql(entry.slice(), <&'static str>::from(*entry).as_bytes()),
+            "{} != {}. Code generation is broken.",
+            bstr::BStr::new(entry.slice()),
+            <&'static str>::from(*entry),
+        );
         map.put(entry.slice(), *entry)?;
     }
 
@@ -508,8 +500,8 @@ impl MimeType {
             Cow::Owned(s.to_vec())
         } else {
             // TODO(port): Zig borrows the input slice here (zero-copy). A non-'static
-            // borrow needs a struct lifetime param, forbidden in Phase A — copying for now.
-            // PERF(port): was zero-copy borrow — profile in Phase B
+            // borrow would need a struct lifetime param — copying for now.
+            // PERF(port): was zero-copy borrow
             Cow::Owned(s.to_vec())
         }
     }
@@ -1758,7 +1750,7 @@ pub fn sniff(bytes: &[u8]) -> Option<MimeType> {
         return None;
     }
 
-    // PERF(port): was `inline for` over heterogeneous-length tuples — profile in Phase B
+    // PERF(port): was `inline for` over heterogeneous-length tuples
     for (header, table) in IMAGES_HEADERS {
         if bytes.len() >= header.len() && &bytes[0..header.len()] == *header {
             return Some(Compact::from(*table).to_mime_type());

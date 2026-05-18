@@ -18,7 +18,7 @@ pub fn create(global: &JSGlobalObject) -> JSValue {
 
 #[bun_jsc::host_fn]
 pub fn order(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    // PERF(port): was ArenaAllocator + stackFallback(512) — profile in Phase B
+    // PERF(port): was ArenaAllocator + stackFallback(512) — profile if it shows up on a hot path.
     // (allocator params dropped; to_slice() owns its buffer and Drops)
 
     let arguments = frame.arguments_old::<2>();
@@ -71,7 +71,7 @@ pub fn order(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
 #[bun_jsc::host_fn]
 pub fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    // PERF(port): was ArenaAllocator + stackFallback(512) — profile in Phase B
+    // PERF(port): was ArenaAllocator + stackFallback(512) — profile if it shows up on a hot path.
 
     let arguments = frame.arguments_old::<2>();
     let arguments = arguments.slice();

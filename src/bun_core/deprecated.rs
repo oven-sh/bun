@@ -5,8 +5,8 @@ use core::ptr;
 // ──────────────────────────────────────────────────────────────────────────
 
 // TODO(port): Zig's `ReaderType` only needs `.read(&mut [u8]) -> Result<usize, Self::Error>`
-// and an associated `Error` type. There is no `bun_io::Read` trait yet; Phase B should
-// introduce one (or reuse whatever the `std.Io.GenericReader` port lands as) and bound `R` on it.
+// and an associated `Error` type. There is no `bun_io::Read` trait yet; introduce one
+// (or reuse whatever the `std.Io.GenericReader` port lands as) and bound `R` on it.
 pub struct BufferedReader<const BUFFER_SIZE: usize, R> {
     pub unbuffered_reader: R,
     pub buf: [u8; BUFFER_SIZE],
@@ -52,7 +52,7 @@ where
     pub fn reader(&mut self) -> &mut Self {
         // TODO(port): Zig returned a `std.Io.GenericReader` adapter wrapping `self`.
         // Until the generic-reader port exists, hand back `&mut Self` (which already
-        // exposes `read`). Phase B: wire to the real adapter type.
+        // exposes `read`). Wire to the real adapter type once it exists.
         self
     }
 }

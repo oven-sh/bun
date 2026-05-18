@@ -10,8 +10,7 @@ use crate::PrintErr;
 pub use crate::Error;
 
 // ─────────────────────────────────────────────────────────────────────────
-// `CssModule` is un-gated (B-2). `reference_dashed` is un-gated; its
-// `dest.importRecord()` lookup is hoisted to the caller (see PORT NOTE on
+// `reference_dashed`'s `dest.importRecord()` lookup is hoisted to the caller (see PORT NOTE on
 // the method) to satisfy Rust borrowck (caller holds `&mut dest.css_module`).
 // ─────────────────────────────────────────────────────────────────────────
 pub struct CssModule<'a> {
@@ -50,7 +49,7 @@ impl<'a> CssModule<'a> {
                 };
                 // PORT NOTE: Zig `defer if (alloced) arena.free(source);` — arena-allocated, bulk-freed on bump.reset()
                 let _ = alloced;
-                // PERF(port): was appendAssumeCapacity — profile in Phase B
+                // PERF(port): was appendAssumeCapacity — profile if it shows up on a hot path
                 hashes.push(hash(
                     bump,
                     format_args!("{}", bstr::BStr::new(source)),
@@ -61,7 +60,7 @@ impl<'a> CssModule<'a> {
         };
         let exports_by_source_index = 'exports_by_source_index: {
             let mut exports_by_source_index = BumpVec::with_capacity_in(sources.len(), bump);
-            // PERF(port): was appendNTimesAssumeCapacity — profile in Phase B
+            // PERF(port): was appendNTimesAssumeCapacity — profile if it shows up on a hot path
             for _ in 0..sources.len() {
                 exports_by_source_index.push(CssModuleExports::default());
             }

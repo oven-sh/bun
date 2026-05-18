@@ -526,8 +526,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             p.lexer.expect(T::TCloseBrace)?;
 
                             // PERF(port): was arena arena.create — bump.alloc returns &'a mut T;
-                            // Vec::from_slice copies the bump-backed StmtList into a heap-backed list
-                            // (Phase B: route ClassStaticBlock.stmts through arena slice directly).
+                            // Vec::from_slice copies the bump-backed StmtList into a heap-backed list.
+                            // TODO(perf): route ClassStaticBlock.stmts through arena slice directly.
                             let stmt_list = bun_alloc::AstVec::<Stmt>::from_slice(stmts.as_slice());
                             let block = p.arena.alloc(G::ClassStaticBlock {
                                 stmts: stmt_list,

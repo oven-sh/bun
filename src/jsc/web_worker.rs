@@ -168,7 +168,7 @@ pub struct WebWorker {
     status: Cell<Status>,
     // PERF(port): was MimallocArena bulk-free backing the worker VM — keep as
     // explicit arena rather than deleting per §Allocators non-AST rule, because
-    // the VM's allocator IS this arena (load-bearing). Profile in Phase B.
+    // the VM's allocator IS this arena (load-bearing). Profile if it shows up on a hot path.
     // `JsCell` (not `Cell`) because `Arena` is non-`Copy`; worker-thread-only
     // so the single-owner-thread invariant `JsCell` documents is upheld.
     arena: JsCell<Option<bun_alloc::Arena>>,
@@ -881,7 +881,7 @@ impl WebWorker {
         // in shutdown). Rust's `Arena = bumpalo::Bump` doesn't run Drop, so
         // box on the global heap instead and hand ownership to the VM via
         // `transpiler.env`; reclaimed in `vm.destroy()` in `shutdown()`.
-        // PERF(port): MimallocArena bulk-free — profile in Phase B.
+        // PERF(port): MimallocArena bulk-free — profile if it shows up on a hot path.
         let mut map = Box::new(bun_dotenv::Map::default());
         {
             let parent_slots = parent.proxy_env_storage.lock();
@@ -1139,7 +1139,7 @@ impl WebWorker {
             vm.global().vm().release_weak_refs();
             // PERF(port): `vm.arena.gc()` was `MimallocArena.gc()` →
             // `mi_heap_collect`. `Arena = bumpalo::Bump` has no collect;
-            // global mimalloc handles reclamation. Profile in Phase B.
+            // global mimalloc handles reclamation. Profile if it shows up on a hot path.
             let _ = vm.global().vm().run_gc(false);
         }
 

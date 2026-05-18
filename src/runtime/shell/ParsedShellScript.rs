@@ -17,15 +17,13 @@ use super::{EnvMap, EnvStr, Interpreter};
 // `#[bun_jsc::JsClass]` derive in Rust — do not hand-port them.
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
-// shim still emits `this: &mut ParsedShellScript` until Phase 1 lands —
-// `&mut T` auto-derefs to `&T` so the impls below compile against either.
+// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
 #[bun_jsc::JsClass(no_constructor)]
 pub struct ParsedShellScript {
     pub args: JsCell<Option<Box<ShellArgs>>>,
     /// allocated with arena in jsobjs
     // PORT NOTE: in Zig this Vec's backing storage lives in `args.arena` (self-referential
-    // with the `args` field). Phase A uses a global-alloc Vec; revisit if profiling shows
+    // with the `args` field). Uses a global-alloc Vec here; revisit if profiling shows
     // the extra alloc matters. JSValues here are GC-rooted via `toJSWithValues` codegen
     // (own: array on the C++ wrapper), so storing them on the Rust heap is sound.
     pub jsobjs: JsCell<Vec<JSValue>>,
@@ -233,13 +231,13 @@ fn create_parsed_shell_script_impl(
     let template_args_js = arguments[1];
     let mut template_args = template_args_js.array_iterator(global)?;
 
-    // PERF(port): was std.heap.stackFallback(@sizeOf(bun.String) * 4, arena) — profile in Phase B
+    // PERF(port): was std.heap.stackFallback(@sizeOf(bun.String) * 4, arena) — profile if hot.
     // Zig: `defer { for jsstrings |s| s.deref(); jsstrings.deinit() }` — handled by
     // `JsStrings`'s `Drop` (per-element `bun.String::deref()` then Vec free).
     let mut jsstrings = JsStrings::with_capacity(4);
 
     // PORT NOTE: in Zig `jsobjs` and `script` are allocated from `shargs.arena_allocator()`.
-    // Shell is an AST crate (arena-backed); Phase A uses global Vec to sidestep the
+    // Shell is an AST crate (arena-backed); uses global Vec here to sidestep the
     // self-referential borrow against `shargs` (it later moves into `ParsedShellScript`).
     let mut jsobjs: Vec<JSValue> = Vec::new();
     let mut script: Vec<u8> = Vec::new();

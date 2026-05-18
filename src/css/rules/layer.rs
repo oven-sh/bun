@@ -13,9 +13,9 @@ use crate::{PrintErr, Printer, SmallList};
 #[derive(Default)]
 pub struct LayerName {
     // TODO(port): arena lifetime — Zig `[]const u8` segments borrow the parser
-    // arena. Phase B threads `'bump` once `CssRuleList` re-gains its arena
-    // lifetime; until then segments are laundered through `&'static [u8]` like
-    // every other CSS slice in this crate.
+    // arena. Thread `'bump` once `CssRuleList` re-gains its arena lifetime;
+    // until then segments are laundered through `&'static [u8]` like every
+    // other CSS slice in this crate.
     pub v: SmallList<&'static [u8], 1>,
 }
 

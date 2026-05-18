@@ -839,7 +839,7 @@ fn print_line_from_file_any_os(
     // Need this to always block even in async I/O mode, because this could potentially
     // be called from e.g. the event loop code crashing.
     // TODO(port): Zig used std.fs.cwd().openFile directly (bypassing bun.sys). PORTING.md
-    // forbids std::fs; using bun_sys here. Phase B: confirm bun_sys::File is safe to call
+    // forbids std::fs; using bun_sys here. Confirm bun_sys::File is safe to call
     // from inside a crash handler / lldb (must not re-enter event loop).
     let f = bun_sys::File::open_at(
         bun_sys::Fd::cwd(),

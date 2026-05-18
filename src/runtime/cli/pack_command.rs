@@ -2094,6 +2094,22 @@ pub fn pack<const FOR_PUBLISH: bool>(
     );
     // SAFETY: `configure_env_for_run` fully initialized `this_transpiler`.
     let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
+    // `Transpiler::deinit` only frees the heap-owned `options`/`result`/
+    // `resolver.opts`/`resolve_results` fields; the `env` raw pointer
+    // (`transpiler_env` captured below) and the `log`/`fs` singletons are left
+    // intact, so running the deferred deinit at scope exit is sound even
+    // though `transpiler_env` is dereferenced past the guard's binding.
+    // `MaybeUninit` does not run `Drop` on its contents, so without this the
+    // `Arc<TransformOptions>` and resolver hash maps strand on every `bun pm
+    // pack` / `bun publish`.
+    let transpiler_for_deinit: *mut bun_bundler::Transpiler<'static> = this_transpiler;
+    scopeguard::defer! {
+        // SAFETY: `transpiler_for_deinit` points at the initialized
+        // `this_transpiler` stack slot, which outlives the guard. `defer!`
+        // fires exactly once so the `drop_in_place` calls inside `deinit` are
+        // not repeated.
+        unsafe { (*transpiler_for_deinit).deinit() };
+    }
     // `Transpiler::env` is a process-singleton `*mut` (set by `init`); pass as
     // raw pointer so `run_package_script_foreground` can `&mut` it without
     // conflicting with our `&Transpiler` borrow.

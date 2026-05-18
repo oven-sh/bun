@@ -117,35 +117,18 @@ pub extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
 #[unsafe(no_mangle)]
 pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
     // One rule per line. Substring match on any frame in the allocation stack.
-    // Most "ported Zig-named" entries below mirror `test/leaksan.supp` 1:1
-    // (their Zig spellings live there; C/C++ entries stay there unchanged). A
-    // few — e.g. `TimeoutObject>::init_with` — are conceptually pre-existing
-    // Zig leaks that mimalloc hid from LSAN, so they never needed a
-    // `leaksan.supp` entry until the Rust port switched the global allocator
-    // to `std::alloc::System` under ASAN. Per-entry comments call those out.
     concat!(
         // Rust std false positive — detached threads' Arc<thread::Inner>.
         "leak:std::thread::thread::Thread>::new\n",
         // ── ported Zig-named entries ────────────────────────────────────────
         "leak:bun_runtime::api::server::ServerAllConnectionsClosedTask\n",
         "leak:bun_cli::bunfig::Bunfig>::parse\n",
-        // `Resolver` is `arena.alloc()`'d in `build_command::exec` ("PORT NOTE:
-        // process-lifetime") — its `dir_cache` (parsed package.json/tsconfig,
-        // `RealFS::dir_cache` `DirEntry`s) is bulk-reclaimed by the OS at exit.
-        // No module path: the resolver currently demangles as
-        // `bun_resolver::__phase_a_body::Resolver` (porting-artifact module name
-        // that will move) — pin only the stable `Resolver>::<fn>` tail.
         "leak:Resolver>::parse_package_json\n",
         "leak:bun_resolver::package_json::PackageJSON>::parse\n",
         "leak:Resolver>::parse_tsconfig\n",
-        // `dir_info_cached_maybe_log` is the single entry point that populates
-        // `Resolver::dir_cache` (every package.json/tsconfig/node_modules walk).
         "leak:Resolver>::dir_info_cached_maybe_log\n",
         "leak:bun_resolver::fs::RealFS>::read_directory\n",
         "leak:bun_jsc::JSGlobalObject::JSGlobalObject>::create\n",
-        // `print_ast` lives at the crate root (`bun_js_printer::print_ast`),
-        // not in a `js_printer` submodule — keep the path matching the
-        // demangled frame so the runtime sourcemap-cache blobs are suppressed.
         "leak:bun_js_printer::print_ast\n",
         "leak:bun_jsc::ipc::on_data2\n",
         "leak:bun_runtime::node::fs_events::init_core_foundation\n",
@@ -165,9 +148,6 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         "leak:bun_sys_jsc::error_jsc::error_to_system_error\n",
         "leak:bun_runtime::webcore::Blob>::get_name_string\n",
         "leak:bun_patch::patch::PatchFile>::apply\n",
-        // Zig `jsc.ModuleLoader.RuntimeTranspilerStore.TranspilerJob` — Rust
-        // module is `bun_jsc::runtime_transpiler_store::TranspilerJob`; the
-        // store and its sourcemap blobs are owned by the process-lifetime VM.
         "leak:bun_jsc::runtime_transpiler_store::TranspilerJob\n",
         "leak:bun_jsc::saved_source_map::SavedSourceMap\n",
         "leak:bun_runtime::webcore::blob::Store>::init_s3\n",
@@ -193,97 +173,35 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         // `bun_jsc::Debugger` substring missed it (capital-D after `::`).
         "leak:bun_jsc::debugger::Debugger>::start_js_debugger_thread\n",
         "leak:bun_runtime::socket::udp_socket::UDPSocket\n",
-        // Armed `.unref()`'d timer at process exit: wrapper is pinned by
-        // `internals.this_value` (Strong) and the reschedule ref only drops on
-        // fire/cancel — neither path runs at exit. Reachable from per-VM
-        // `RuntimeState::timer` (process lifetime). Zig has the same leak but
-        // mimalloc hid it from LSAN, so `test/leaksan.supp` has no counterpart.
         "leak:bun_runtime::timer::timeout_object::TimeoutObject>::init_with\n",
         // ── Rust-only process-lifetime allocations ──────────────────────────
-        // No Zig analogue; first observed once the global allocator switched to
-        // `std::alloc::System` under ASAN (mimalloc previously hid these from
-        // LSAN). All are reachable from process-lifetime structures that are
-        // intentionally never dropped — the OS reclaims them at exit.
-        //
-        // `cli::test::scanner::Scanner` walks the test directory tree on
-        // startup; `RealFS::dir_cache` `Box<DirEntry>` entries (~60 KB for a
-        // medium repo) live for the test run.
         "leak:bun_runtime::cli::test::scanner::Scanner\n",
-        // `Transpiler` / its `Resolver` config is `arena.alloc()`'d in
-        // `build_command::exec` (process-lifetime); arenas don't run `Drop`.
         "leak:bun_bundler::transpiler::resolver_bundle_options_subset\n",
         "leak:Transpiler>::sync_resolver_opts\n",
         "leak:bun_bundler::options_impl::ESMConditions\n",
         "leak:bun_bundler::options_impl::defines_from_transform_options\n",
-        // `ThreadPool::get_worker` `Box<Worker>` is freed via a deferred idle
-        // task pushed by `Worker::deinit_soon`; that task races process exit
-        // (deliberately — joining would block on the runtime VM's parse pool).
         "leak:bun_bundler::thread_pool::ThreadPool>::get_worker\n",
-        // `StringVoidMapPool` is a thread-local `ObjectPool` (preheated, 32
-        // slots). LSAN does not scan other threads' TLS roots at exit (same
-        // category as the `std::thread::Thread>::new` false positive above).
         "leak:bun_js_parser::parser::StringVoidMap\n",
-        // `BSSMapInner` singletons live in anonymous-mmap pages from
-        // `bss_lazy_bytes`, which LSan does not scan as roots — the global-heap
-        // hashbrown table backing `BSSMapInner::index` is therefore reported as
-        // unreachable even though the singleton is process-lifetime.
         "leak:BSSMapInner>::get_or_put\n",
-        // `intern_location_file` `Box::leak`s a `CString` per `src!()` callsite
-        // into a thread-local cache (debug/ASAN-only — release uses static
-        // `c"…"` literals). Bounded leak by design; the per-thread `HashMap`
-        // is also a TLS root LSAN doesn't scan.
         "leak:bun_jsc::top_exception_scope::intern_location_file\n",
-        // `AnyEventLoop` for `Bun.build()` is `bump.alloc()`'d in the bundler
-        // thread (`js_bundle_completion_task::generate_in_new_thread`); the
-        // arena is bulk-freed without running `Drop`, so the `MiniEventLoop`
-        // task queue's `Box<[…]>` slab strands. Bounded (one slab per build).
         "leak:bun_event_loop::MiniEventLoop\n",
-        // CLI `Transpiler` is `arena.alloc()`'d (process-lifetime; see
-        // `build_command.rs` PORT NOTE) — its `BundleOptions::bundler_feature_flags`
-        // `Box<StringSet>` strands when the arena bulk-frees.
         "leak:bun_js_parser::parser::Runtime::Features::init_bundler_feature_flags\n",
         // TODO(leak): `UpdateRequest.name: &'static [u8]` is a CLI positional
         // leaked separately from the `PackageManager` singleton. Bounded.
         "leak:bun_install::package_manager_real::update_request::UpdateRequest\n",
         // ── CSS AST arena: heap-backed members in arena-allocated nodes ─────
-        // The CSS parser bump-allocates AST nodes in `bun_alloc::Arena`; the
-        // arena bulk-frees without `Drop`. Members that own a global-heap
-        // allocation (`SmallList` heap spill, `Vec` from `deep_clone`) strand.
-        // Pre-existing in Zig (same arena model). Phase B re-threads `'i` to
-        // make these bump-backed.
-        //
-        // `SmallList` heap-spilling entry points are `#[inline(never)]` under
-        // `bun_asan` so these v0-demangled patterns match (when fully inlined
-        // the DWARF inline frame is the bare method name and never matches).
-        // LSan matching is substring-based, so `>::append` also covers
-        // `append_assume_capacity` / `append_slice*`.
         "leak:SmallList<*>::append\n",
         "leak:SmallList<*>::clone\n",
         "leak:SmallList<*>::extend\n",
         "leak:SmallList<*>::from_iter\n",
         "leak:SmallList<*>::init_capacity\n",
         // ── LSan-fires-before-final-GC-sweep ────────────────────────────────
-        // These wrap a Rust allocation in a JSC GC cell (or leak it to JSC as
-        // an external string). Ownership is correct — the cell finalizer /
-        // external-string finalizer frees the allocation — but LSan checks at
-        // process exit *before* the final GC sweep, so any not-yet-collected
-        // wrapper reports its inner allocation. See the matching `LSan` notes
-        // on `bun_ast::Location::clone`, `bun_ast::Data::clone`, and
-        // `bun_core::strings::to_utf16_alloc_maybe_buffered`.
         "leak:BuildMessage>::create\n",
         "leak:ResolveMessage>::create\n",
         "leak:TextDecoder>::decode_slice\n",
-        // Process-lifetime: `RuntimeState.entry_point.contents` lives behind a
-        // TLS `Cell<*mut>` LSan doesn't scan as a root (`Run::start` is `-> !`).
         "leak:VirtualMachine>::reload_entry_point\n",
-        // `start()`'s +1 still strands on write-error / EOF / GC-skipped exit;
-        // releasing there needs a deref after FilePoll dispatch unwinds.
         "leak:StaticPipeWriter<*>::create\n",
-        // `final_buffer()` (install lifecycle scripts / cron): `_buffer` strands
-        // because the embedding parent is itself leaked with the `PackageManager`.
         "leak:PosixBufferedReader>::final_buffer\n",
-        // `Bun.serve` / bake dev-server `Request` Box: owned by the JS GC
-        // wrapper; LSan fires before the final sweep / deferred-pool drain.
         "leak:AnyServer>::prepare_and_save_js_request_context\n",
         "leak:NewServer<*>::prepare_js_request_context\n",
         "\0",

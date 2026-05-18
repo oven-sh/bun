@@ -417,7 +417,6 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     pub fn new(init: Self) -> *mut Self {
         let ptr = bun_core::heap::into_raw(Box::new(init));
-        // LSan: freed by the JS wrapper's GC finalizer, which `process.exit()` skips.
         lsan_ignore_js_managed(ptr.cast_const());
         ptr
     }
@@ -454,10 +453,6 @@ impl<const SSL: bool> NewSocket<SSL> {
                 // `RefPtr: Deref<Target = H2FrameParser>`; `on_native_close`
                 // takes `&self`, so no raw-pointer reach-through is needed.
                 h2.on_native_close();
-                // Zig `h2.deref()`. `RefPtr`/`IntrusiveRc` deliberately has no
-                // `Drop` impl (see ref_count.rs), so `drop(h2)` would silently
-                // strand the `+1` taken in `attach_to_native_socket` and the
-                // parser's refcount could never reach zero. Release it explicitly.
                 h2.deref();
             }
             NativeCallbacks::None => {}
@@ -2593,8 +2588,6 @@ impl<const SSL: bool> NewSocket<SSL> {
     unsafe fn deinit_and_destroy(this: *mut Self) {
         let this_ref: &Self = unsafe { &*this };
         this_ref.mark_inactive();
-        // Client/duplex `handlers` is a per-socket heap Box. Every freeing path also
-        // nulls the field, so a still-set ptr here means the free was skipped.
         if this_ref.flags.get().contains(Flags::OWNS_HANDLERS) {
             if let Some(h) = this_ref.handlers.take() {
                 // SAFETY: `OWNS_HANDLERS` ⇒ `h` is the unfreed `heap::alloc` root.
@@ -2643,14 +2636,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         if !this_ref.socket.get().is_closed() {
             this_ref.close_and_detach(uws::CloseCode::Failure);
         } else {
-            // The socket was already closed without a JS `on_close` dispatch
-            // (e.g. `close_all_socket_groups()` during `process.exit()` /
-            // `BUN_DESTRUCT_VM_ON_EXIT=1` teardown). `close_and_detach()` is
-            // skipped above, so the +1 `IntrusiveRc` stowed in `native_callback`
-            // by `attach_native_callback()` would never be released and the
-            // attached `H2FrameParser` (and its `streams` map) would leak.
-            // `detach_native_callback()` is idempotent — it `replace()`s the
-            // slot with `None` and is a no-op if `on_close` already ran.
             this_ref.detach_native_callback();
         }
 
@@ -3071,8 +3056,6 @@ impl<const SSL: bool> NewSocket<SSL> {
             // tears down `raw_handlers` (client-mode handlers free
             // themselves there). No poll_ref — `tls` keeps the loop alive.
             // active_connections=1 was already on raw_handlers from `this`.
-            // OWNS_HANDLERS: `upgrade_tls` rejects server sockets, so
-            // `raw_handlers` is always the per-socket heap allocation from `this`.
             flags: Cell::new(
                 Flags::BYPASS_TLS | Flags::IS_ACTIVE | Flags::OWNED_PROTOS | Flags::OWNS_HANDLERS,
             ),
@@ -3469,8 +3452,6 @@ bitflags::bitflags! {
         /// `us_socket_raw_write` (bypassing the SSL layer) so node:net can pipe
         /// pre-handshake bytes / read the underlying TCP stream.
         const BYPASS_TLS           = 1 << 9;
-        /// `handlers` is a per-socket `heap::alloc` Box (client/duplex mode), not the
-        /// Listener's embedded field; `deinit_and_destroy` may need to free it.
         const OWNS_HANDLERS        = 1 << 10;
         // bits 11..15 unused (Zig: `_: u6 = 0`)
     }

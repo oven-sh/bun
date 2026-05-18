@@ -619,12 +619,6 @@ pub fn post_process_js_chunk(
 
     let mut compile_results_for_source_map: MultiArrayList<CompileResultForSourceMap> =
         MultiArrayList::default();
-    // OOM aborts (matching Zig's `bun.handleOom`). Aborting here is also a
-    // *safety* requirement: the loop below appends `Chunk::alias()` bitwise
-    // copies into this MAL, and if `append` were ever allowed to fail-and-drop
-    // the just-built element it would double-free the aliased buffer. Reserving
-    // up front means `append` never reallocates, and wrapping the `append` in
-    // `handle_oom` (see below) closes the door entirely.
     bun_core::handle_oom(compile_results_for_source_map.set_capacity(compile_results.len()));
 
     let show_comments = c.options.mode == LinkerOptionsMode::Bundle && !c.options.minify_whitespace;
@@ -722,36 +716,11 @@ pub fn post_process_js_chunk(
 
             if let Some(source_map_chunk) = compile_result.source_map_chunk() {
                 if c.options.source_maps != options::SourceMapOption::None {
-                    // `handle_oom` (abort, not `?`): `MultiArrayList::append`
-                    // calls `ensure_unused_capacity` *before* writing the
-                    // element; on `Err` the element is dropped at scope exit.
-                    // Dropping a `CompileResultForSourceMap` that holds an
-                    // aliased `Chunk` would double-free `buffer.list` (see the
-                    // SAFETY comment below). Aborting on OOM — the same
-                    // behavior as Zig's `bun.handleOom` and the sibling CSS
-                    // path (`postProcessCSSChunk.rs`) — ensures the alias's
-                    // contract ("at most one of self/the alias is dropped") is
-                    // never violated. The `set_capacity` above (also
-                    // `handle_oom`) means this never even needs to grow.
                     bun_core::handle_oom(compile_results_for_source_map.append(
                         CompileResultForSourceMap {
-                            // SAFETY: bitwise alias, not a deep clone — Zig's
-                            // struct-copy semantics (postProcessJSChunk.zig:484).
-                            // The original `bun_sourcemap::Chunk` lives in
-                            // `chunk.compile_results_for_chunk` (borrowed as
-                            // `compile_results` above), which is read-only for
-                            // the rest of this fn and outlives the
-                            // `generate_source_map_for_chunk` call below that
-                            // consumes `compile_results_for_source_map`.
-                            // `MultiArrayList::Drop` is slab-only (no element
-                            // destructors), so the alias's `MutableString` is
-                            // never freed — `chunk.compile_results_for_chunk`
-                            // keeps the single owner. A `.clone()` here
-                            // deep-copied `buffer.list`, and that copy stranded
-                            // when the slab dropped without running destructors
-                            // (LSan: `sourcemap/Chunk.rs:#[derive(Clone)]`,
-                            // `postProcessJSChunk.rs` ↘
-                            // `generate_source_map_for_chunk`).
+                            // SAFETY: bitwise alias of `chunk.compile_results_for_chunk`
+                            // (read-only and outlives this fn); slab-only MAL drop means
+                            // the alias is never freed — original keeps the single owner.
                             source_map_chunk: unsafe { source_map_chunk.alias() },
                             generated_offset: match line_offset {
                                 SourceMap::LineColumnOffsetOptional::Value(v) => v,

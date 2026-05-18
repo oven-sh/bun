@@ -21,16 +21,7 @@ use crate::bun_fs::RealFS;
 pub struct OutputFile {
     pub loader: Loader,
     pub input_loader: Loader,
-    /// Display-only `Path` whose `text` borrows [`Self::owned_src_path_text`]
-    /// (or a static `b""` when empty). `fs::Path<'static>` carries borrowed
-    /// slices, so the heap allocation is held in the side field below — see
-    /// the `OutputFile::init` doc for why.
     pub src_path: fs::Path<'static>,
-    /// Backing storage for `src_path.text`. Zig's `OutputFile::deinit` freed
-    /// `src_path.text` via the default allocator even though `Fs.Path` doesn't
-    /// own it; the Rust port previously `Box::leak`'d the bytes (stranded one
-    /// allocation per output file). Owned here so the field's `Drop` reclaims
-    /// it. Empty when `src_path.text` is the static `b""`.
     pub owned_src_path_text: Box<[u8]>,
     pub value: Value,
     pub size: usize,
@@ -83,18 +74,11 @@ impl OutputFile {
 
 impl Clone for OutputFile {
     fn clone(&self) -> Self {
-        // `src_path.text`/`pretty`/`name.*` borrow `owned_src_path_text`; a
-        // derived clone would copy the `&'static [u8]` slices verbatim and
-        // leave them pointing at the *original*'s buffer (UAF once the
-        // original drops). Re-borrow the cloned buffer instead.
         let owned_src_path_text = self.owned_src_path_text.clone();
         // SAFETY: `owned_src_path_text` is a sibling field of `src_path`
         // (lives exactly as long); `Box<[u8]>`'s heap buffer never moves.
         let text: &'static [u8] =
             unsafe { core::mem::transmute::<&[u8], &'static [u8]>(&owned_src_path_text) };
-        // Re-derive from `text` only when it's actually backed by
-        // `owned_src_path_text`; some paths assign a static/process-lifetime
-        // `src_path` after `init()` (`transpiler.rs:2946`) — preserve those.
         let src_path = if !self.owned_src_path_text.is_empty() {
             fs::Path {
                 is_disabled: self.src_path.is_disabled,
@@ -436,20 +420,9 @@ impl OutputFile {
             OptionsData::File { size, .. } => *size,
             OptionsData::Saved(_) => 0,
         });
-        // PORT NOTE: Zig `Fs.Path.init(options.input_path)` stored the borrowed
-        // slice and `OutputFile.deinit` freed it via `default_allocator` — i.e.
-        // `OutputFile` *owns* `src_path.text`. `bun_paths::fs::Path<'static>` is a
-        // borrowed-slice struct, so the `Box<[u8]>` is held in the side field
-        // `owned_src_path_text` and `src_path.text` borrows it. The `Box`'s heap
-        // buffer has a stable address, so the borrow stays valid across
-        // `OutputFile` moves; a future `fs::Path` with an owning
-        // `Cow<'static, [u8]>` would let this be a plain move.
         let owned_src_path_text: Box<[u8]> = options.input_path;
-        // SAFETY: `owned_src_path_text` is a sibling field that outlives
-        // `src_path` (same struct lifetime, dropped together; declaration order
-        // doesn't matter — `Path` has no `Drop`). The `Box`'s heap buffer never
-        // moves, so the `&'static` lifetime erasure is sound for `OutputFile`'s
-        // lifetime.
+        // SAFETY: `owned_src_path_text` is a sibling field that outlives `src_path`;
+        // the `Box`'s heap buffer never moves, so `&'static` erasure is sound.
         let input_path: &'static [u8] =
             unsafe { core::mem::transmute::<&[u8], &'static [u8]>(&owned_src_path_text) };
         OutputFile {

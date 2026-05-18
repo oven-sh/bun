@@ -11,20 +11,11 @@ use crate::{Alignment, AllocatorVTable, StdAllocator};
 // tracing is dropped here rather than re-declared as a no-op stub.
 
 /// Shared **mimalloc-only** free path for `MimallocArena`'s vtable/trait
-/// `free` slots. `mi_free_size` internally just asserts the size, so it's
-/// faster in release if we don't pass it through — but the assertion (and
-/// `mi_is_in_heap_region`) is worth having in debug.
-///
-/// Always real `mi_free`, even under ASAN — arena allocations come from
-/// `mi_heap_malloc` and must be released to mimalloc. Vtables that act as the
-/// **default allocator** (`C_ALLOCATOR`/`Z_ALLOCATOR`/`GLOBAL_MIMALLOC_VTABLE`)
-/// must use [`default_allocator_free`] instead, which routes through
-/// [`crate::default_alloc`] and stays in agreement with the
-/// `#[global_allocator]` (libc malloc under ASAN).
+/// `free` slots. Always real `mi_free`, even under ASAN — arena allocations
+/// come from `mi_heap_malloc`. Default-allocator vtables use [`default_allocator_free`].
 ///
 /// # Safety
-/// `ptr` must have been allocated by mimalloc with the given `size`/`align`
-/// (Allocator vtable invariant). `mi_is_in_heap_region` accepts any pointer.
+/// `ptr` must have been allocated by mimalloc with the given `size`/`align`.
 #[inline(always)]
 pub(crate) unsafe fn mi_free_checked(ptr: *mut c_void, size: usize, align: usize) {
     if cfg!(debug_assertions) {
@@ -45,14 +36,10 @@ pub(crate) unsafe fn mi_free_checked(ptr: *mut c_void, size: usize, align: usize
     }
 }
 
-/// Vtable `free` for the **default allocator** vtables (`C_ALLOCATOR`,
-/// `Z_ALLOCATOR`, `GLOBAL_MIMALLOC_VTABLE`). Routes through
-/// [`crate::default_alloc::free`] so it agrees with the
-/// `#[global_allocator]` — `mi_free` normally, `libc::free` under ASAN.
+/// Vtable `free` for the **default allocator** vtables; routes through
+/// [`crate::default_alloc::free`] so it agrees with the `#[global_allocator]`.
 pub(crate) fn default_allocator_free(_: *mut c_void, buf: &mut [u8], _: Alignment, _: usize) {
-    // SAFETY: Allocator vtable invariant — `buf` was allocated by the default
-    // allocator (with the recorded len/alignment); `default_alloc::free` is
-    // layout-agnostic.
+    // SAFETY: Allocator vtable invariant — `buf` was allocated by the default allocator.
     unsafe { default_alloc::free(buf.as_mut_ptr().cast()) }
 }
 
@@ -96,8 +83,6 @@ impl MimallocAllocator {
         _: usize,
     ) -> bool {
         if cfg!(bun_asan) {
-            // libc has no in-place expand. The vtable contract treats `false`
-            // as "could not resize in place" — caller will `remap` instead.
             return false;
         }
         // SAFETY: buf.ptr was allocated by mimalloc (non-ASAN ⇒ default = mimalloc)
@@ -219,18 +204,9 @@ static Z_ALLOCATOR_VTABLE: AllocatorVTable = AllocatorVTable {
     free: ZAllocator::FREE_WITH_Z_ALLOCATOR,
 };
 
-/// `mi_free(ptr)` — mimalloc can free allocations without being given their size.
-///
-/// **Always real `mi_free`, even under ASAN.** Both call sites pass
-/// mimalloc-owned pointers regardless of the `#[global_allocator]`:
-/// - `bun_alloc::free_sensitive_cstr` — pairs with `bun_core::dupe_z`, which
-///   allocates via `mi_malloc` deliberately (keeps cert/key material out of
-///   the ASAN quarantine — see `dupe_z`'s doc).
-/// - `bun_jsc::generated` bindgen `convert_from_extern` — frees a buffer
-///   `mi_malloc`'d by C++ `MimallocMalloc::malloc`.
-///
-/// For pointers that came from `Vec`/`Box`/`String` (the global allocator),
-/// use [`crate::default_alloc::free`] instead.
+/// `mi_free(ptr)`. Always real `mi_free`, even under ASAN — callers pass
+/// mimalloc-owned pointers regardless of `#[global_allocator]`. For pointers
+/// from `Vec`/`Box`/`String`, use [`crate::default_alloc::free`] instead.
 pub fn free_without_size(ptr: *mut c_void) {
     // SAFETY: ptr is null or was allocated by mimalloc; mi_free accepts null.
     unsafe { mimalloc::mi_free(ptr) }

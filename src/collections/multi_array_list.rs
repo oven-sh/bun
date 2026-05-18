@@ -854,31 +854,13 @@ impl<T> Slice<T> {
     }
 
     /// Frees the slab backing a `Slice` returned by
-    /// [`MultiArrayList::to_owned_slice`].
+    /// [`MultiArrayList::to_owned_slice`]. Slab-only — per-element destructors do not run.
     ///
-    /// `to_owned_slice` transfers slab ownership to the caller, but `Slice`
-    /// has no `Drop` (it is `Copy`), so the caller must free it explicitly or
-    /// the slab leaks. This is that free. Like `MultiArrayList`'s own `Drop`,
-    /// it is **slab-only** — per-element destructors do not run.
-    ///
-    /// **Contract** (not enforceable in the type system because `Slice<T>`
-    /// is `Copy`):
-    /// * `self` was produced by `to_owned_slice()` on a
-    ///   `MultiArrayList<T, Global>` (matching `to_owned_slice`'s "global
-    ///   allocator only" contract).
-    /// * Call exactly once. Holding a copy of the `Slice` and calling this
-    ///   on both is a double free. Reading any column after the call is a
-    ///   use-after-free.
+    /// **Contract** (not enforceable; `Slice<T>` is `Copy`):
+    /// * `self` came from `to_owned_slice()` on a `MultiArrayList<T, Global>`.
+    /// * Call exactly once. Calling on a copy too is a double free; reading any
+    ///   column after the call is a use-after-free.
     pub fn deinit_owned(self) {
-        // Delegate to [`Slice::to_multi_array_list`] — the single place that
-        // knows how to recover the slab base (`ptrs[SIZES.1[0]]`) and rebuild
-        // a `MultiArrayList` from a `Slice` — then let the reconstructed
-        // list's `Drop` free it via
-        // [`free_allocated_bytes`](MultiArrayList::free_allocated_bytes).
-        // This keeps the module to a single `Allocator::deallocate` site (see
-        // the module-level "Unsafe budget" table). For `COUNT == 0` /
-        // all-ZST `T` / `capacity == 0`, the reconstructed list's `Drop` is a
-        // no-op.
         drop(self.to_multi_array_list());
     }
 }

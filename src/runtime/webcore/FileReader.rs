@@ -430,8 +430,6 @@ impl FileReader {
                 self.reader().start(self.fd.get(), pollable)
             };
             if let Err(e) = start_result {
-                // The reader never started, so `on_reader_done`/`on_reader_error`
-                // will never fire to release the ref we just took.
                 self.waiting_for_on_reader_done.set(false);
                 let parent = self.parent();
                 // SAFETY: `parent()` is the live Source owning `self`; the JS
@@ -443,8 +441,6 @@ impl FileReader {
             #[cfg(unix)]
             {
                 use bun_io::pipe_reader::PosixFlags;
-                // `!started`: a second `on_start()` lands here (lazy was reset to None);
-                // re-incrementing strands a ref the single bool can't track and leaks the Source.
                 if !self.started.get()
                     && self.reader().flags.contains(PosixFlags::POLLABLE)
                     && !self.reader().is_done()
@@ -542,11 +538,7 @@ impl FileReader {
         self.reader().update_ref(false);
     }
 
-    /// GC-finalizer detach: must not run JS. Drops the `waiting_for_on_reader_done`
-    /// self-ref so the JS-wrapper deref in `Source::finalize` can reach zero.
     fn finalize_detach(&self) -> bool {
-        // `done` ⇒ `on_cancel` ran; its sync close completion already released the ref.
-        // Both true would strand the ref again — catch that regression in debug.
         debug_assert!(!(self.done.get() && self.waiting_for_on_reader_done.get()));
         if self.done.get() || !self.waiting_for_on_reader_done.get() {
             return false;
@@ -1024,25 +1016,11 @@ impl FileReader {
         });
         self.pending.with_mut(|p| p.run());
 
-        // After a read error `BufferedReader` never reaches `done()` again
-        // (`PosixBufferedReader::on_error` returns to the read loop without
-        // calling `finish()`/`done()`), so the matching `on_reader_done()` that
-        // balances the `waiting_for_on_reader_done` source ref taken in
-        // `on_start()` will never fire. Without this, the `NewSource<FileReader>`
-        // refcount is stuck at >0 and the whole Source — including `buffered`
-        // and the embedded reader's `_buffer` — leaks (LSan: io/PipeReader.rs
-        // `read_with_fn` / FileReader.rs `on_read_chunk`).
-        //
-        // Skip when `pending.run()` re-entered `on_cancel()` (`done == true`):
-        // that path already drove `reader().close()`, whose (possibly async)
-        // completion calls `on_reader_done()` and releases the ref.
         if self.waiting_for_on_reader_done.get() && !self.done.get() {
             self.waiting_for_on_reader_done.set(false);
             let parent = self.parent();
-            // SAFETY: `parent` was produced by `Source::new` (`Box::into_raw`).
-            // Tail position — `self` (a field of `*parent`) is not accessed
-            // after this call, which may free the allocation when the refcount
-            // hits zero. (Same contract as `on_reader_done`.)
+            // SAFETY: `parent` from `Source::new` (`Box::into_raw`); tail position
+            // — `self` (a field of `*parent`) is not accessed after this call.
             let _ = unsafe { Source::decrement_count(parent) };
         }
     }

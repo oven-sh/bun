@@ -284,13 +284,8 @@ macro_rules! arena_format {
 /// `typed_arena::Arena<T>` — typed slab with stable addresses (AST node Store).
 pub type TypedArena<T> = typed_arena::Arena<T>;
 
-/// `bun.use_mimalloc` — `true` when [`Mimalloc`] is the `#[global_allocator]`.
-///
-/// ASAN builds (`--cfg=bun_asan`) install `std::alloc::System` instead, so the
-/// ASAN interceptor wraps every `Box`/`Vec` allocation directly. Code that
-/// assumes the global allocator routes to `mi_free` (layout-agnostic free,
-/// adopting C++ `mi_malloc`'d buffers into `Vec`, etc.) must gate on this.
-/// `MimallocArena` is unaffected — it always uses mimalloc heaps.
+/// `bun.use_mimalloc` — `true` when [`Mimalloc`] is the `#[global_allocator]`
+/// (false under ASAN, where the global allocator is `std::alloc::System`).
 pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
 
 // ── Allocator-vtable modules: per-module disposition (PORTING.md §Allocators) ──
@@ -324,22 +319,8 @@ pub mod maybe_owned;
 pub mod nullable_allocator;
 pub mod stack_fallback;
 
-/// Layout-agnostic raw alloc/free that **match the `#[global_allocator]`**.
-///
-/// Normally the global allocator is [`Mimalloc`], so these are
-/// `mi_malloc`/`mi_free`. Under ASAN (`cfg(bun_asan)`) the global allocator is
-/// `std::alloc::System` (libc malloc) so the ASAN interceptor sees every
-/// `Box`/`Vec` allocation — these route through `libc::malloc`/`free` to stay
-/// in agreement with it.
-///
-/// Use this module wherever a raw pointer crosses the `Vec`/`Box` ↔
-/// raw-pointer boundary without a `Layout`: JSC `ArrayBuffer` deallocator
-/// callbacks, C-library allocator hooks (zlib/brotli), `default_dupe`/
-/// `default_free` byte buffers. Going through `mi_*` directly there is wrong
-/// under ASAN because the buffer was allocated by `System`, not mimalloc.
-///
-/// **Not** for `MimallocArena` allocations — those always pair `mi_heap_malloc`
-/// with mimalloc's `mi_free` regardless of ASAN.
+/// Layout-agnostic raw alloc/free that **match the `#[global_allocator]`**
+/// (`mi_*` normally, `libc::malloc/free` under ASAN). Not for `MimallocArena`.
 pub mod default_alloc {
     use core::ffi::c_void;
 

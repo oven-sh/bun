@@ -709,30 +709,10 @@ extern "C" void Debugger__willDispatchAsyncCall(JSGlobalObject* globalObject, As
     agent->willDispatchAsyncCall(getCallType(callType), callbackId);
 }
 
-// Called from `Zig__GlobalObject__destructOnExit` (BUN_DESTRUCT_VM_ON_EXIT
-// teardown, on the JS thread that owns `globalObject`). While a frontend is
-// connected, `JSGlobalObjectInspectorController::connectFrontend` holds a
-// `RefPtr<VM> m_strongVM` and a `Strong<JSGlobalObject> m_strongGlobalObject`.
-// If those are still set when destructOnExit derefs the VM, refcount never
-// hits 0, `~VM()`/`Heap::lastChanceToFinalize()` never run, and every
-// JS-managed native (test/xtest/describe/xdescribe `ScopeFunctions`,
-// `Bun.stderr`'s `Blob`, the per-VM `WTFTimer`, ...) reads as a direct leak
-// under LSan. Drop the frontend here so the VM can actually tear down.
-//
-// `BunInspectorConnection::disconnect()` posts to the context thread; we are
-// already on it, so call `JSGlobalObjectDebuggable::disconnect` directly. The
-// connection objects themselves are intentionally left alone: their
-// `Strong<Unknown>` handle lives in the *debugger thread's* VM, which is not
-// safe to touch from this thread.
 extern "C" void Bun__InspectorConnection__disconnectAllOnExit(Zig::GlobalObject* globalObject)
 {
-    // Snapshot the connections under the lock and release it before calling
-    // into the inspector — `disconnect()` runs each agent's
-    // `willDestroyFrontendAndBackend`, which is arbitrary code and must not
-    // observe `inspectorConnectionsLock` held (the same shape `runWhilePaused`
-    // uses above). Marking `status = Disconnected` here is what keeps the
-    // posted `BunInspectorConnection::disconnect()` lambda (if any is still
-    // queued) from disconnecting twice.
+    // Snapshot under the lock, release before calling into the inspector —
+    // `willDestroyFrontendAndBackend` must not run with `inspectorConnectionsLock` held.
     Vector<BunInspectorConnection*, 8> toDisconnect;
     {
         Locker<Lock> locker(inspectorConnectionsLock);
@@ -761,46 +741,12 @@ extern "C" void Bun__InspectorConnection__disconnectAllOnExit(Zig::GlobalObject*
     for (auto* connection : toDisconnect)
         globalObject->inspectorDebuggable().disconnect(*connection);
 
-    // We are about to leak the connected controller (see below). Run its
-    // teardown first: `globalObjectDestroyed()` calls
-    // `InjectedScriptManager::disconnect()` which clears the inspector's
-    // `JSC::Strong<>` handles to RemoteObject groups (otherwise objects
-    // captured by `Console.enable` / `Runtime.enable` survive the final GC and
-    // their natives leak), and it resets `m_debugger` whose `~Debugger()` runs
-    // `globalObject->setDebugger(nullptr)` so `~JSGlobalObject()` doesn't call
-    // `m_debugger->detach(...)` on a dangling pointer. It is idempotent;
-    // `~JSGlobalObject()` will call it again on the replacement controller,
-    // which has never had a frontend.
     globalObject->m_inspectorController->globalObjectDestroyed();
 
-    // WebKit fork bug, exposed once the VM actually tears down: in
-    // `JSGlobalObjectInspectorController.h`, `CheckedPtr<InspectorAgent>
-    // m_inspectorAgent` is declared *before* `AgentRegistry m_agents`, so the
-    // implicit member-destruction order in `~JSGlobalObjectInspectorController`
-    // destroys the agent (via `~m_agents`) while `m_inspectorAgent` still
-    // counts a reference. `WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR` then scribbles
-    // the agent and leaks it; `~CheckedPtr` reads the scribbled count of 0 and
-    // calls `crashDueToCheckedPtrToDeadObject()`. `m_inspectorAgent` is set
-    // lazily by `ensureInspectorAgent()`, which runs from `connectFrontend()`
-    // — i.e. only after a frontend has connected. Until that header fix lands
-    // upstream (move `m_inspectorAgent` after `m_agents`, or null it in
-    // `~JSGlobalObjectInspectorController`), leak the connected controller (it
-    // and every agent it owns are TZone-allocated, so LSan never sees them) and
-    // hand the global a fresh, never-connected controller whose destructor is
-    // safe.
-    //
-    // Why this is not a UAF risk:
-    //  - The leaked controller's storage is never freed, so any stale pointer
-    //    to it (or to its console client / agents) reads valid-but-dead memory,
-    //    not freed memory.
-    //  - `JSGlobalObjectDebuggable` and `BunInspectorConnection` always reach
-    //    the controller via `globalObject->inspectorController()`, which
-    //    returns the new one after the swap.
-    //  - `JSGlobalObject::m_consoleClient` is a `WeakPtr` to the leaked
-    //    controller's console client; since the pointee is never destroyed the
-    //    `WeakPtr` stays valid, and the global is itself about to be destroyed.
-    //  - `JSGlobalObject::m_debugger` was already nulled by the
-    //    `globalObjectDestroyed()` call above.
+    // WebKit header bug: `m_inspectorAgent` (CheckedPtr) is declared before
+    // `m_agents`, so `~JSGlobalObjectInspectorController` destroys the agent
+    // while a CheckedPtr still counts it -> `crashDueToCheckedPtrToDeadObject()`.
+    // Leak the connected controller and hand the global a fresh, never-connected one.
     [[maybe_unused]] auto* leakedController = globalObject->m_inspectorController.release();
     globalObject->m_inspectorController = makeUnique<Inspector::JSGlobalObjectInspectorController>(*globalObject, Bun::BunInjectedScriptHost::create());
 }

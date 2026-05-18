@@ -96,19 +96,6 @@ impl PipeReader {
 
     /// Clear the `process` backref and drop the ref it represented.
     ///
-    /// Refcount accounting: `create()` returns a `+1` owned by `Readable::Pipe`,
-    /// and `start()` takes a *second* `+1` for the in-flight read (released in
-    /// `on_reader_done`/`on_reader_error` when `process.take()` is `Some`). The
-    /// two `detach()`-shaped calls in `Readable::to_js`/`to_buffered_value`
-    /// (this fn from `to_readable_stream()` + `Readable::pipe_detach`) balance
-    /// both. `Readable::finalize` only calls `pipe_detach` once — if the
-    /// reader is still active there (process == Some, e.g. VM teardown under
-    /// `BUN_DESTRUCT_VM_ON_EXIT=1` while a child is still piping), the start
-    /// ref is orphaned and the boxed `PipeReader` (incl. the embedded
-    /// `BufferedReader._buffer`) leaks. The fix belongs in
-    /// `Readable::pipe_detach` (Readable.rs), which must release the start ref
-    /// when it observes `process == Some`; not changeable from this file.
-    ///
     /// # Safety
     /// `this` must point to a live `PipeReader`; may be freed on return (see `deref`).
     pub unsafe fn detach(this: *mut Self) {
@@ -230,16 +217,8 @@ impl PipeReader {
             let kind = self.kind(process.get());
             process.on_close_io(kind);
         }
-        // Always release the `start()` "in-flight read" ref — even when
-        // `process` was already cleared (e.g. `Readable::pipe_detach` ran from
-        // the Subprocess GC finalizer while the read was still pending, which
-        // happens at every `BUN_DESTRUCT_VM_ON_EXIT=1` teardown). Without
-        // this, the start ref strands and `PipeReader` (plus its
-        // `PosixBufferedReader::_buffer` read accumulator) is never freed —
-        // LSan reported it via `posix_event_loop::on_update`.
-        // SAFETY: last use of `self`; raw ptr derived from `&mut self` carries
-        // write provenance, and the caller (BufferedReader vtable) holds only a
-        // raw parent pointer, so freeing here does not invalidate any live `&mut`.
+        // SAFETY: last use of `self`; caller holds only a raw parent pointer,
+        // so freeing here does not invalidate any live `&mut`.
         unsafe { PipeReader::deref(self) };
     }
 
@@ -355,8 +334,7 @@ impl PipeReader {
             let kind = self.kind(process.get());
             process.on_close_io(kind);
         }
-        // Always release the `start()` ref — see `on_reader_done` for rationale.
-        // SAFETY: last use of `self`; see `on_reader_done` for rationale.
+        // SAFETY: last use of `self`; see `on_reader_done`.
         unsafe { PipeReader::deref(self) };
     }
 

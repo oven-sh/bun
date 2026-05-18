@@ -7,12 +7,6 @@ use crate::{
     internal_source_map, line_offset_table,
 };
 
-/// LEAK NOTE: `Clone` deep-copies `buffer` (the per-file VLQ-encoded mappings,
-/// often several KB). Only clone this when the destination's `Drop` will run —
-/// **not** into a `MultiArrayList` (its `Drop` is slab-only and never destructs
-/// elements; see `MultiArrayList::Drop`) and **not** into an arena. For Zig
-/// struct-copy semantics where the copy aliases `buffer.list` instead of
-/// duplicating it, use [`Chunk::alias`].
 #[derive(Clone)]
 pub struct Chunk {
     pub buffer: MutableString,
@@ -53,16 +47,7 @@ impl Chunk {
     // `MutableString` handles automatically.
 
     /// Bitwise copy that **aliases** `self.buffer.list`'s heap allocation
-    /// instead of cloning it. Mirrors Zig's plain struct-copy at
-    /// `postProcessJSChunk.zig:484`, where `CompileResultForSourceMap
-    /// .source_map_chunk = source_map_chunk` shares the `MutableString` slice
-    /// with the original.
-    ///
-    /// Use this when the copy is stored somewhere whose `Drop` never runs
-    /// element destructors — e.g. a `MultiArrayList` (slab-only `Drop`) or an
-    /// arena. In those containers a deep `Clone` allocates a buffer that has
-    /// no destructor to free it (LSan: `Chunk.rs:#[derive(Clone)]`), while an
-    /// alias has no allocation to leak.
+    /// instead of cloning it (Zig struct-copy semantics).
     ///
     /// # Safety
     /// The returned `Chunk` shares `self.buffer.list`'s allocation. The caller
@@ -71,9 +56,7 @@ impl Chunk {
     /// that every read of the alias happens-before whichever one *is* dropped.
     #[inline]
     pub unsafe fn alias(&self) -> Chunk {
-        // SAFETY: `Chunk` is plain-old-data plus a `Vec<u8>`; a bitwise read
-        // produces a struct that aliases the same heap allocation. The caller
-        // upholds the no-double-drop contract documented above.
+        // SAFETY: bitwise read; caller upholds the no-double-drop contract.
         unsafe { core::ptr::read(self) }
     }
 

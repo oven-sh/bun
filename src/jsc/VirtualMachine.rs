@@ -269,10 +269,6 @@ pub struct VirtualMachine {
 
     pub rare_data: Option<Box<RareData>>,
     pub proxy_env_storage: crate::rare_data::ProxyEnvStorage,
-    /// Owned backing storage for the `_resolve` fast-path duplicates handed
-    /// out as `&'static [u8]` via [`Self::dupe_resolved_path`]. Each entry is
-    /// a heap `Box<[u8]>` whose address is stable across `Vec` growth, so the
-    /// borrow stays valid for the VM's lifetime; freed in [`Self::destroy`].
     pub resolved_path_dups: Vec<Box<[u8]>>,
     pub is_us_loop_entered: bool,
     pub pending_internal_promise: Option<*mut JSInternalPromise>,
@@ -1563,8 +1559,6 @@ impl VirtualMachine {
             // loop, which is live for the process lifetime.
             unsafe { (*uws::Loop::get()).drain_closed_sockets() };
 
-            // `transpiler.deinit()` runs inside `destroy()` (frees `BundleOptions`;
-            // resolver BSSMap teardown still unported — see `Transpiler::deinit`).
             self.gc_controller.deinit();
             self.destroy();
         }
@@ -3920,19 +3914,11 @@ impl VirtualMachine {
         ret.unwrap()
     }
 
-    /// Zig `bun.default_allocator.dupe(u8, s)` for the `_resolve`
-    /// fast-paths. These back `ResolveFunctionResult.path` for the VM
-    /// lifetime (see the field's `TODO(port): lifetime` note). The bytes are
-    /// owned by [`Self::resolved_path_dups`] so they're reclaimed when the
-    /// VM is destroyed (e.g. `BUN_DESTRUCT_VM_ON_EXIT=1`), instead of leaking.
+    /// Zig `bun.default_allocator.dupe(u8, s)` for the `_resolve` fast-paths.
     fn dupe_resolved_path(&mut self, s: &[u8]) -> &'static [u8] {
         let boxed: Box<[u8]> = s.to_vec().into_boxed_slice();
         // SAFETY: `boxed`'s heap allocation has a stable address for as long
-        // as the owning `Box` lives in `resolved_path_dups`; that `Vec` is
-        // only drained in `destroy()`, after which no `ResolveFunctionResult`
-        // borrowing it is reachable. Erasing to `'static` mirrors the Zig
-        // spec's VM-lifetime contract (VirtualMachine.zig:1740/:1744/:1755/
-        // :1761) without leaking under `BUN_DESTRUCT_VM_ON_EXIT=1`.
+        // as the owning `Box` lives in `resolved_path_dups` (drained in `destroy()`).
         let slice: &'static [u8] = unsafe { core::mem::transmute::<&[u8], &'static [u8]>(&*boxed) };
         self.resolved_path_dups.push(boxed);
         slice
@@ -4335,8 +4321,6 @@ impl VirtualMachine {
     /// `VirtualMachine.deinit` — worker-thread teardown. Spec
     /// VirtualMachine.zig:2109.
     pub fn destroy(&mut self) {
-        // Drain queued tasks (drop, don't run) so heap-owned `ManagedTask`
-        // payloads don't leak under `BUN_DESTRUCT_VM_ON_EXIT=1`.
         self.regular_event_loop.deinit();
         self.macro_event_loop.deinit();
 
@@ -4376,16 +4360,8 @@ impl VirtualMachine {
         // proxy strings; `ProxyEnvStorage: Default` so take()+drop suffices.
         drop(core::mem::take(&mut self.proxy_env_storage));
 
-        // Free `BundleOptions` heap fields — the VM is `alloc_zeroed`'d and never
-        // `Drop`'d, so `transpiler`'s fieldwise drop never runs.
         self.transpiler.deinit();
 
-        // Free the `_resolve` fast-path duplicates handed out as `'static`
-        // borrows by `dupe_resolved_path`. The Zig spec relied on
-        // `bun.default_allocator` teardown to reclaim these; under the system
-        // allocator (ASAN) and `BUN_DESTRUCT_VM_ON_EXIT=1` they'd otherwise be
-        // reported as leaks. Safe to drop here: nothing past `destroy()`
-        // dereferences a `ResolveFunctionResult.path`.
         drop(core::mem::take(&mut self.resolved_path_dups));
 
         self.overridden_main.deinit();

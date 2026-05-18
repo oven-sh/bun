@@ -98,9 +98,8 @@ pub struct Chunk {
     pub flags: Flags,
 }
 
-/// Raw `(ptr, cap)` for `Vec<BundlerCssRule>` slabs `prepareCssAstsForChunk` allocated to
-/// replace bitwise-aliased `asts[i].rules.v`. Elements alias the source AST and must not
-/// be dropped, so `Drop` only `dealloc`s the slab.
+/// Raw `(ptr, cap)` for `Vec<BundlerCssRule>` slabs `prepareCssAstsForChunk` allocated.
+/// Elements alias the source AST; `Drop` only `dealloc`s the slab.
 #[derive(Default)]
 pub struct OwnedCssRuleSlabs(
     pub  Vec<(
@@ -1395,14 +1394,9 @@ impl Drop for CssChunk {
         // Zig `asts: []BundlerStyleSheet` is an arena slice of bitwise shallow
         // copies (see `prepareCssAstsForChunk` `ptr::read`). Multiple slots may
         // alias the same source AST's heap buffers when a file is imported more
-        // than once, so element-wise drop would double-free. Skip the element
-        // destructors but free the slab itself — `mem::forget` strands the
-        // `Box<[T]>` allocation (~480 B/element) and LSan reports it once the
-        // global allocator is `std::alloc::System` under ASAN.
+        // than once, so element-wise drop would double-free.
         let mut asts = core::mem::take(&mut self.asts).into_vec();
-        // SAFETY: `set_len(0)` is sound for any `Vec` (it only marks elements
-        // as logically uninitialized). `Vec::drop` then frees the slab without
-        // running `BundlerStyleSheet::drop` on the aliased elements.
+        // SAFETY: `set_len(0)` then `Vec::drop` frees the slab without running element destructors.
         unsafe { asts.set_len(0) };
     }
 }

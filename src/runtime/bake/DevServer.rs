@@ -421,8 +421,6 @@ pub struct DevServer {
     pub bundles_since_last_error: usize,
 
     pub framework: bake::Framework,
-    /// Arena-allocated `bake_types::Framework` projections; the arena bulk-frees
-    /// without running `Drop`, so these are `drop_in_place`d in `Drop`.
     pub bundler_framework_views: Vec<*mut bun_bundler::bake_types::Framework>,
     pub bundler_options: bake::SplitBundlerOptions,
     // Each logical graph gets its own bundler configuration.
@@ -733,7 +731,6 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // SAFETY: `options.arena` outlives every `Transpiler` field it backs (see
     // `Options::arena` doc — "must live until DevServer drops").
     let arena: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(options.arena) };
-    // Tracked for `drop_in_place` in `Drop` (arena bulk-frees without destructors).
     let mut bundler_framework_views: Vec<*mut bun_bundler::bake_types::Framework> =
         Vec::with_capacity(4);
     unsafe {
@@ -1186,18 +1183,13 @@ impl Drop for DevServer {
             ));
         }
 
-        // The transpilers are `MaybeUninit<Transpiler>` so the auto field drop
-        // never reaches `BundleOptions` heap fields. When `!separate_ssr_graph`
-        // (see `init`), `ssr_transpiler` is a bitwise alias of
-        // `server_transpiler` — dropping both would double-free.
         let separate_ssr_graph = self
             .framework
             .server_components
             .as_ref()
             .is_some_and(|sc| sc.separate_ssr_graph);
-        // SAFETY: all three are written exactly once in `init()` before
-        // `assume_init`; `ssr_transpiler` is only an independent allocation
-        // when `separate_ssr_graph`.
+        // SAFETY: all three written exactly once in `init()`; `ssr_transpiler`
+        // is only an independent allocation when `separate_ssr_graph`.
         unsafe {
             self.server_transpiler.assume_init_drop();
             self.client_transpiler.assume_init_drop();
@@ -1206,16 +1198,12 @@ impl Drop for DevServer {
             }
         }
 
-        // Arena bulk-frees without destructors; these projections own heap, and
-        // `BundleOptions::framework` is a borrow, so drop them explicitly here.
         // SAFETY: each ptr is a unique arena slot written once in `init()`.
         for &ptr in &self.bundler_framework_views {
             unsafe { ::core::ptr::drop_in_place(ptr) };
         }
         self.bundler_framework_views.clear();
 
-        // `client_bundle` / `cached_response` are `BackRef<StaticRoute>` (Copy,
-        // no Drop) holding an intrusive ref taken at store time — release here.
         for rb in &mut self.route_bundles {
             if let Some(bundle) = rb.client_bundle.take() {
                 // SAFETY: stored ref from `StaticRoute::init_*`; no live borrow.
@@ -3863,13 +3851,8 @@ pub fn finalize_bundle(
     // without re-borrowing `result.chunks` (already split).
     let chunks_ptr: *mut bundler::chunk::Chunk = result.chunks.as_mut_ptr();
     let chunks_len = result.chunks.len();
-    // The chunks live in `bv2.graph.heap` (an arena), which the outer defer
-    // bulk-frees via `drop(heap)` without running element Drops. Run them here
-    // (LIFO: this fires before the outer defer) so per-chunk heap fields —
-    // renamer, compile_results, source maps — don't strand.
     scopeguard::defer! {
-        // SAFETY: `chunks_ptr/len` snapshot the arena slice before any
-        // `split_at_mut`; all sub-borrows expire before this guard runs.
+        // SAFETY: `chunks_ptr/len` snapshot the arena slice before any `split_at_mut`.
         unsafe {
             ::core::ptr::drop_in_place(::core::ptr::slice_from_raw_parts_mut(
                 chunks_ptr, chunks_len,

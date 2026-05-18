@@ -605,27 +605,6 @@ impl ReadFile {
         // Zig hands `buffer.items` as a raw slice with `is_temporary = true`;
         // receiver takes ownership. Normalize to `Box<[u8]>` so every consumer
         // can reclaim via `heap::take` with a matching layout.
-        //
-        // LEAK NOTE (LSan/ASAN): the boxed slice produced here is not freed by
-        // this function — `cb` always transfers ownership to the JS heap.
-        // `cb` is one of:
-        //   • `handler_run::<NewReadFileHandler<F>>` (`ReadFile::create`, used by
-        //     `Blob::do_read_file`): forwards to `to_*_with_bytes::<Temporary>`,
-        //     every arm of which either reclaims via `heap::take` or hands the
-        //     pointer to a JSC external string / ArrayBuffer whose finalizer
-        //     frees it on GC. Under `BUN_DESTRUCT_VM_ON_EXIT=1` (CI) those
-        //     finalizers run at VM teardown.
-        //   • `NewInternalReadFileHandler::<C, F>::run`
-        //     (`Blob::do_read_file_internal`): there are multiple
-        //     `InternalReadFileFn` impls — `Adapter<H>` in `Blob.rs` reclaims
-        //     via `heap::take(b.buf).into_vec()` and gives the `Vec` to the
-        //     handler; `LoadFileAdapter` in `Body.rs` reclaims via
-        //     `Box::<[u8]>::from_raw(data.buf)`. Each takes ownership of the
-        //     boxed slice.
-        // If LSan still reports this allocation site, the leak is in the
-        // *consumer* (a missed `heap::take` / a JS object never reaching GC),
-        // not here — `then()` itself never strands the buffer (every early
-        // return drops `buf` while it is still the original `Vec<u8>`).
         cb(
             cb_ctx,
             ReadFileResultType::Result(ReadFileRead {

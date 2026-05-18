@@ -1086,6 +1086,7 @@ impl PackageManager {
         headers: http::headers::EntryList,
         headers_buf: &'a [u8],
         body: &'a [u8],
+        tls_props: Option<http::ssl_config::SharedPtr>,
     ) -> Box<http::AsyncHTTP<'a>> {
         let http_proxy = self.http_proxy(&url);
         let mut req = http::AsyncHTTP::init_sync(
@@ -1098,6 +1099,7 @@ impl PackageManager {
             self.proxy_settings(),
             http::FetchRedirect::Follow,
         );
+        req.client.tls_props = tls_props;
         req.client.flags.reject_unauthorized = self.tls_reject_unauthorized();
         req.client.flags.redirect_credentials = http::RedirectCredentialsPolicy::HttpsUpgrade;
         req

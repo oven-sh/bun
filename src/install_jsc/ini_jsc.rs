@@ -84,6 +84,8 @@ pub(crate) fn load_npmrc<'a>(
             registry.auth = found.auth;
             registry.username = found.username;
             registry.password = found.password;
+            registry.certfile = found.certfile;
+            registry.keyfile = found.keyfile;
         }
     }
 
@@ -93,10 +95,14 @@ pub(crate) fn load_npmrc<'a>(
         default_registry_username,
         default_registry_password,
         default_registry_auth,
+        default_registry_certfile,
+        default_registry_keyfile,
     ) = 'brk: {
         let Some(default_registry) = install.default_registry.as_ref() else {
             break 'brk (
                 StringView::static_(Registry::DEFAULT_URL),
+                StringView::EMPTY,
+                StringView::EMPTY,
                 StringView::EMPTY,
                 StringView::EMPTY,
                 StringView::EMPTY,
@@ -110,6 +116,8 @@ pub(crate) fn load_npmrc<'a>(
             StringView::from_bytes(&default_registry.username),
             StringView::from_bytes(&default_registry.password),
             StringView::from_bytes(&default_registry.auth),
+            StringView::from_bytes(&default_registry.certfile),
+            StringView::from_bytes(&default_registry.keyfile),
         )
     };
     // Rust has no field reflection; mirror struct-literal object creation with
@@ -122,6 +130,8 @@ pub(crate) fn load_npmrc<'a>(
         default_registry_username: StringView<'a>,
         default_registry_password: StringView<'a>,
         default_registry_auth: StringView<'a>,
+        default_registry_certfile: StringView<'a>,
+        default_registry_keyfile: StringView<'a>,
         ignore_scripts: Option<bool>,
         link_workspace_packages: Option<bool>,
         save_exact: Option<bool>,
@@ -131,7 +141,7 @@ pub(crate) fn load_npmrc<'a>(
         b.map_or(JSValue::UNDEFINED, JSValue::js_boolean)
     }
     impl bun_jsc::js_object::PojoFields for Pojo<'_> {
-        const FIELD_COUNT: usize = 9;
+        const FIELD_COUNT: usize = 11;
         fn put_fields(
             &self,
             global: &JSGlobalObject,
@@ -157,6 +167,8 @@ pub(crate) fn load_npmrc<'a>(
                 b"default_registry_auth",
                 self.default_registry_auth.to_js(global)?,
             )?;
+            put(b"default_registry_certfile", self.default_registry_certfile.to_js(global)?)?;
+            put(b"default_registry_keyfile", self.default_registry_keyfile.to_js(global)?)?;
             put(b"ignore_scripts", optional_bool(self.ignore_scripts))?;
             put(
                 b"link_workspace_packages",
@@ -173,6 +185,8 @@ pub(crate) fn load_npmrc<'a>(
         default_registry_username,
         default_registry_password,
         default_registry_auth,
+        default_registry_certfile,
+        default_registry_keyfile,
         ignore_scripts: install.ignore_scripts,
         link_workspace_packages: install.link_workspace_packages,
         save_exact: install.exact,

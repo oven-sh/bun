@@ -110,6 +110,8 @@ Bun supports the following options:
 - `_password` (base64 encoded password)
 - `_auth` (sent as written in a `Basic` header; npm's form is base64 encoded username:password, for example `btoa(username + ":" + password)`)
 - `email` (accepted and ignored, as npm does)
+- `certfile` (path to the client certificate for mutual TLS authentication)
+- `keyfile` (path to the client private key for mutual TLS authentication)
 
 The equivalent `bunfig.toml` option is to add a key in [`install.scopes`](/runtime/bunfig#install-scopes):
 
@@ -238,6 +240,15 @@ cafile=/path/to/ca-bundle.crt
 ```
 
 If both are set, only `cafile` is used. A `ca` or `cafile` in a later `.npmrc` or in `bunfig.toml`, or `--ca` / `--cafile` on the command line, replaces both.
+
+### `certfile` and `keyfile`: Client certificate authentication
+
+Configure a client certificate and private key for registries that require mutual TLS:
+
+```ini .npmrc icon="npm"
+//my-registry.example.com/:certfile=/path/to/client-cert.pem
+//my-registry.example.com/:keyfile=/path/to/client-key.pem
+```
 
 ### `omit` and `include`: Control dependency types
 

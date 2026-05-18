@@ -1095,6 +1095,10 @@ impl Listener {
                         }
                         debug_assert!(!prev.this_value.get().is_empty());
                         prev.handlers.set(NonNull::new(handlers_ptr));
+                        // Same ownership rationale as `connect_finish`'s prev
+                        // branch — see the comment there.
+                        prev.flags
+                            .set(prev.flags.get() | SocketFlags::OWNS_HANDLERS);
                         debug_assert!(matches!(
                             prev.socket.get().socket,
                             uws::InternalSocket::Detached
@@ -1187,6 +1191,10 @@ impl Listener {
                             }
                         }
                         prev.handlers.set(NonNull::new(handlers_ptr));
+                        // Same ownership rationale as `connect_finish`'s prev
+                        // branch — see the comment there.
+                        prev.flags
+                            .set(prev.flags.get() | SocketFlags::OWNS_HANDLERS);
                         debug_assert!(matches!(
                             prev.socket.get().socket,
                             uws::InternalSocket::Detached

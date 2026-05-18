@@ -40,4 +40,31 @@ describe("spawnSync", () => {
   it.skipIf(!isPosix)("should use spawnSync optimizations when possible", () => {
     expect([join(import.meta.dir, "spawnSync-counters-fixture.ts")]).toRun();
   });
+
+  // On Linux, JSC uses SIGPWR to suspend/resume threads for GC. The spawnSync
+  // signal-forwarding table used to include SIGPWR, so a GC that fired while
+  // (or after) spawnSync ran would terminate the process with signal 30.
+  it.skipIf(process.platform !== "linux")("does not clobber the GC thread-suspend signal handler", () => {
+    const result = Bun.spawnSync({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          for (let i = 0; i < 50; i++) {
+            Bun.spawnSync({ cmd: ["true"] });
+            Bun.gc(true);
+          }
+          for (let i = 0; i < 50; i++) {
+            Bun.spawnSync({ cmd: ["true"] });
+          }
+          Bun.gc(true);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    expect(result.signalCode).toBeFalsy();
+    expect(result.exitCode).toBe(0);
+  });
 });

@@ -33,7 +33,9 @@ function assetBaseName(): string {
         ? "darwin"
         : process.platform === "win32"
           ? "windows"
-          : "unknown";
+          : process.platform === "freebsd"
+            ? "freebsd"
+            : "unknown";
   return `bun-${os}-${arch}`;
 }
 

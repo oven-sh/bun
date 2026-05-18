@@ -550,6 +550,23 @@ impl NodeHTTPResponse {
         // defer this.deref(); — moved to end of fn body.
         self.update_flags(|f| f.remove(Flags::IS_REQUEST_PENDING));
 
+        // The async path (`on_node_http_request_with_upgrade_ctx`) stashes the
+        // handler's pending promise here and registers `then2` reactions that
+        // are responsible for releasing the server-handler ref (one of the
+        // initial 3). When the request is torn down via abort/socket-close
+        // those reactions may never fire (the JS-side resolve chain is broken
+        // once the socket is gone), which would strand that ref forever and
+        // leak the whole `NodeHTTPResponse` allocation. Treat a still-held
+        // promise as the ownership token for that ref: drop the strong root
+        // and release the ref here. `on_resolve`/`on_reject` observe the
+        // empty slot and skip their own deref, so a late settlement is a
+        // no-op rather than a double release.
+        let had_async_promise = self.promise.with_mut(|p| {
+            let had = p.has();
+            p.deinit();
+            had
+        });
+
         let vm = vm_get();
         self.clear_on_data_callback(self.get_this_value(), vm.global());
         self.upgrade_context.with_mut(|c| c.reset());
@@ -562,6 +579,9 @@ impl NodeHTTPResponse {
 
         server.on_request_complete();
 
+        if had_async_promise {
+            self.deref();
+        }
         self.deref();
     }
 
@@ -1077,7 +1097,13 @@ pub fn node_http_request_on_resolve(
     // arguments[1] is the JSNodeHTTPResponse cell from the resolve callback.
     // R-2: deref shared — `maybe_stop_reading_body`/`on_request_complete` re-enter.
     let this: &NodeHTTPResponse = arguments.ptr[1].as_class_ref::<NodeHTTPResponse>().unwrap();
-    this.promise.with_mut(|p| p.deinit());
+    // `promise` non-empty is the ownership token for the server-handler ref;
+    // `mark_request_as_done` may have already released it on abort.
+    let had_promise = this.promise.with_mut(|p| {
+        let had = p.has();
+        p.deinit();
+        had
+    });
     // defer this.deref(); — moved to tail.
     this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments.ptr[1]);
 
@@ -1099,7 +1125,9 @@ pub fn node_http_request_on_resolve(
         this.on_request_complete();
     }
 
-    this.deref();
+    if had_promise {
+        this.deref();
+    }
     JSValue::UNDEFINED
 }
 
@@ -1113,7 +1141,13 @@ pub fn node_http_request_on_reject(
     // arguments[1] is the JSNodeHTTPResponse cell from the reject callback.
     // R-2: deref shared — `maybe_stop_reading_body`/`on_request_complete` re-enter.
     let this: &NodeHTTPResponse = arguments.ptr[1].as_class_ref::<NodeHTTPResponse>().unwrap();
-    this.promise.with_mut(|p| p.deinit());
+    // `promise` non-empty is the ownership token for the server-handler ref;
+    // `mark_request_as_done` may have already released it on abort.
+    let had_promise = this.promise.with_mut(|p| {
+        let had = p.has();
+        p.deinit();
+        had
+    });
     this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments.ptr[1]);
 
     // defer this.deref(); — moved to tail.
@@ -1142,7 +1176,9 @@ pub fn node_http_request_on_reject(
     }
 
     let _ = bun_vm_mut(global_object).uncaught_exception(global_object, err, true);
-    this.deref();
+    if had_promise {
+        this.deref();
+    }
     JSValue::UNDEFINED
 }
 

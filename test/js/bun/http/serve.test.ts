@@ -1367,6 +1367,39 @@ it("request body and signal life cycle", async () => {
   }
 }, 30_000);
 
+describe("does not send a spurious content-type for empty/redirect/204/untyped-stream responses", () => {
+  const cases: Array<[string, () => Response]> = [
+    ["new Response()", () => new Response()],
+    ["Response.redirect()", () => Response.redirect("http://example.com/", 302)],
+    ["new Response(null, { status: 204 })", () => new Response(null, { status: 204 })],
+    ["new Response(null, { status: 302 })", () => new Response(null, { status: 302, headers: { location: "/x" } })],
+    [
+      "untyped ReadableStream",
+      () =>
+        new Response(
+          new ReadableStream({
+            start(c) {
+              c.enqueue(new TextEncoder().encode("hi"));
+              c.close();
+            },
+          }),
+        ),
+    ],
+  ];
+  for (const [name, make] of cases) {
+    it(name, async () => {
+      using server = Bun.serve({ port: 0, fetch: () => make() });
+      const res = await fetch(server.url, { redirect: "manual" });
+      const contentType = res.headers.get("content-type");
+      await res.text().catch(() => {});
+      // Zig sends no content-type here; the Rust port wrote a spurious
+      // application/octet-stream because a `const` pointer-identity sentinel
+      // never matched the fallback MimeType.
+      expect(contentType).toBeNull();
+    });
+  }
+});
+
 it("propagates content-type from a Bun.file()'s file path in fetch()", async () => {
   const body = Bun.file(import.meta.dir + "/fetch.js.txt");
   const bodyText = await body.text();

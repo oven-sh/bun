@@ -1804,7 +1804,12 @@ impl Drop for CAresReverse {
     fn drop(&mut self) {
         let _ = self.global_this();
         self.poll_ref.unref(js_event_loop_ctx());
-        // self.name / self.resolver freed by field Drop (Box / IntrusiveRc deref)
+        // RefPtr (= IntrusiveRc) does NOT deref on Drop; release the ref taken
+        // by `init_ref` in `init()` / `GetHostByAddrInfoRequest::init()`.
+        if let Some(resolver) = self.resolver.take() {
+            resolver.deref();
+        }
+        // self.name freed by Box<[u8]> Drop
     }
 }
 
@@ -1947,7 +1952,12 @@ impl<T: CAresRecordType> Drop for CAresLookup<T> {
     fn drop(&mut self) {
         let _ = self.global_this();
         self.poll_ref.unref(js_event_loop_ctx());
-        // self.name / self.resolver freed by field Drop (Box / IntrusiveRc deref)
+        // RefPtr (= IntrusiveRc) does NOT deref on Drop; release the ref taken
+        // by `init_ref` in `init()` / `ResolveInfoRequest::init()`.
+        if let Some(resolver) = self.resolver.take() {
+            resolver.deref();
+        }
+        // self.name freed by Box<[u8]> Drop
     }
 }
 
@@ -2125,7 +2135,11 @@ impl Drop for DNSLookup {
         self.poll_ref.unref(Async::posix_event_loop::get_vm_ctx(
             Async::AllocatorType::Js,
         ));
-        // self.resolver freed by IntrusiveRc Drop → deref
+        // RefPtr (= IntrusiveRc) does NOT deref on Drop; release the ref taken
+        // by `init_ref` in `init()` / `GetAddrInfoRequest::init()`.
+        if let Some(resolver) = self.resolver.take() {
+            resolver.deref();
+        }
     }
 }
 

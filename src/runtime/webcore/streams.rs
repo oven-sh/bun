@@ -49,22 +49,8 @@ pub mod result {
 // Start
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Options payload for the `Start::FileSink` variant. Mirrors
-/// `jsc.WebCore.FileSink.Options` (path-or-fd + chunk size).
-// TODO(port): once `crate::webcore::file_sink::Options` is exported, alias to it.
-pub struct FileSinkOptions {
-    pub chunk_size: BlobSizeType,
-    pub input_path: crate::webcore::PathOrFileDescriptor,
-}
-
-impl Default for FileSinkOptions {
-    fn default() -> Self {
-        Self {
-            chunk_size: 0,
-            input_path: crate::webcore::PathOrFileDescriptor::Fd(Fd::INVALID),
-        }
-    }
-}
+/// Options payload for the `Start::FileSink` variant.
+pub type FileSinkOptions = crate::webcore::file_sink::Options;
 
 pub enum Start {
     Empty,
@@ -253,6 +239,7 @@ impl Start {
                             // folded into the owning `ZigStringSlice`.
                             path.to_slice(global_this)?,
                         ),
+                        ..Default::default()
                     }));
                 } else if let Some(fd_value) = value.get_truthy(global_this, b"fd")? {
                     if !fd_value.is_any_int() {
@@ -268,6 +255,7 @@ impl Start {
                         return Ok(Start::FileSink(FileSinkOptions {
                             chunk_size,
                             input_path: crate::webcore::PathOrFileDescriptor::Fd(fd),
+                            ..Default::default()
                         }));
                     } else {
                         return Ok(Start::Err(SysError {
@@ -281,6 +269,7 @@ impl Start {
                 return Ok(Start::FileSink(FileSinkOptions {
                     input_path: crate::webcore::PathOrFileDescriptor::Fd(Fd::INVALID),
                     chunk_size,
+                    ..Default::default()
                 }));
             }
             StartTag::NetworkSink
@@ -898,7 +887,7 @@ impl StreamResult {
                 ab.to_js(global_this)
             }
             StreamResult::Temporary(temp) | StreamResult::TemporaryAndDone(temp) => {
-                // TODO(b2-blocked): JSValue::create_uninitialized_uint8_array — falls
+                // TODO(port): JSValue::create_uninitialized_uint8_array — falls
                 // back to ArrayBuffer::create (copies) until the no-init path lands.
                 ArrayBuffer::create::<{ JSType::Uint8Array }>(global_this, temp.slice())
             }
@@ -1169,7 +1158,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     } else {
         "HTTPResponseSink"
     };
-    // PORT NOTE: associated const with const-generic if — requires `#![feature(generic_const_exprs)]` or Phase B trait
+    // PORT NOTE: associated const with const-generic if — requires `#![feature(generic_const_exprs)]` or a trait-based dispatch.
 
     // TODO(port): `pub const JSSink = Sink.JSSink(@This(), name)` — type generator; needs macro/codegen
 }
@@ -1237,7 +1226,7 @@ impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkAbi
     }
 }
 
-// TODO(b2-blocked): full impl depends on `bun_uws::Response<SSL>`
+// TODO(port): full impl depends on `bun_uws::Response<SSL>`
 // const-generic dispatch (the body casts `res` to `*mut uws::Response` without
 // the SSL/H3 parameter), `bun_event_loop::AutoFlusher` free-fns (the local
 // `crate::webcore::AutoFlusher` is a fieldless stub), and `ByteListPool::Node`
@@ -2088,7 +2077,7 @@ pub type H3ResponseSink = HTTPServerWritable<true, true>;
 pub struct NetworkSink {
     // TODO(port): SHARED Option<Arc<MultiPartUpload>> per LIFETIMES.tsv — but Zig calls task.deref()
     // (intrusive refcount). Stored as `BackRef` (set-once, counted ref keeps the
-    // pointee alive while `Some`; released in `detach_writable`). Phase B: confirm Arc vs IntrusiveArc.
+    // pointee alive while `Some`; released in `detach_writable`). TODO(refactor): confirm Arc vs IntrusiveArc.
     pub task: Option<BackRef<bun_s3::MultiPartUpload>>,
     pub signal: Signal,
     // JSC_BORROW: process-lifetime VM global; safe `Deref` via `BackRef`.
@@ -2478,7 +2467,7 @@ impl BufferAction {
         self.tag
     }
 
-    // TODO(b2-blocked): `AnyBlob::wrap` takes `(jsc::AnyPromise, &JSGlobalObject,
+    // TODO(port): `AnyBlob::wrap` takes `(jsc::AnyPromise, &JSGlobalObject,
     // BufferActionTag)`; `swap()` here yields `*mut JSPromise`. Un-gate once an
     // `AnyPromise::from(*mut JSPromise)` adapter exists.
 

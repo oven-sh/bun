@@ -32,7 +32,7 @@ pub use crate::{
     PackageInstall as PackageInstallExport, bun_hash_tag as bun_hash_tag_export,
 };
 // TODO(port): the Zig file re-exports these under the same names; Rust cannot re-export and `use`
-// the same identifier twice in one module without aliasing. Phase B should collapse the duplicate
+// the same identifier twice in one module without aliasing. Collapse the duplicate
 // `*Export` aliases above once module layout is settled.
 
 bun_output::declare_scope!(InstallPatch, visible);
@@ -264,8 +264,8 @@ impl PatchTask {
                 .print(std::ptr::from_mut(Output::error_writer()));
             // PORT NOTE: Zig called `apply.logger.deinit()` here under `defer`. The `Log` is a
             // field and will be dropped with the task; explicit early drop is skipped to avoid
-            // double-drop. If `Log::deinit` is reset-to-empty (idempotent), Phase B can restore
-            // an explicit `apply.logger.clear()` here.
+            // double-drop. If `Log::deinit` is reset-to-empty (idempotent), an explicit
+            // `apply.logger.clear()` could be restored here.
             // TODO(port): confirm Log drop semantics
         }
     }
@@ -881,7 +881,7 @@ impl PatchTask {
 }
 
 // TODO(port): these enum/type references are placeholders for cross-file types that live in
-// `bun_install`. Phase B should replace with the real paths once those modules are ported.
+// `bun_install`. Replace with the real paths once those modules are ported.
 use crate::PreinstallState;
 use crate::network_task::Authorization;
 use crate::package_install::{InstallResult, Method as InstallMethod};

@@ -101,7 +101,7 @@ pub fn new_cstring(
 }
 
 // TODO(port): `DOMCall("FFI", @This(), "ptr", ...)` is a comptime type-generator that
-// emits a DOMJIT fast-path descriptor + slow-path host fn. Phase B needs a proc-macro
+// emits a DOMJIT fast-path descriptor + slow-path host fn. Needs a proc-macro
 // or codegen step (`bun_jsc::dom_call!`). Represented here as a const descriptor.
 // PORT NOTE: the `DOMEffect.forRead(.TypedArrayProperties)` argument is consumed by
 // the C++ codegen, not the runtime descriptor; it lives in the generated
@@ -1001,10 +1001,10 @@ macro_rules! wrap_host_fn {
 
 mod fields {
     use super::*;
-    // PORT NOTE: `print`/`callback`/`link_symbols`/`close_callback` live on the
-    // Phase-A `ffi_body::FFI` (real, compiled bodies) — not yet hoisted onto the
-    // canonical `crate::ffi::FFI`. They are static (no `&self`), so type identity
-    // is irrelevant; route to them directly until the two `FFI` structs merge.
+    // PORT NOTE: `print`/`callback`/`link_symbols`/`close_callback` live on
+    // `ffi_body::FFI` — not yet hoisted onto the canonical `crate::ffi::FFI`.
+    // They are static (no `&self`), so type identity is irrelevant; route to
+    // them directly until the two `FFI` structs merge.
     use super::super::ffi_body::FFI as FfiImpl;
 
     // viewSource → FFI::print(global, JSValue, ?JSValue) -> JsResult<JSValue>

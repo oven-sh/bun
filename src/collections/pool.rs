@@ -161,7 +161,7 @@ impl<T> SinglyLinkedList<T> {
             // matched the null `node`, which callers never pass)
             let mut current_elm = self.first;
             // SAFETY: walk live list nodes; Zig's `.?` would panic on null —
-            // mirror that with an unchecked deref (debug_assert in Phase B).
+            // mirror that with an unchecked deref.
             unsafe {
                 while (*current_elm).next != node {
                     current_elm = (*current_elm).next;
@@ -224,7 +224,7 @@ pub struct DataStruct<T> {
     // PORT NOTE: Zig used `MaxCountInt = std.math.IntFittingRange(0, max_count)`.
     // Rust const generics cannot pick an integer type from a const value; use
     // `usize` and accept the few extra bytes.
-    // PERF(port): was IntFittingRange — profile in Phase B
+    // PERF(port): was IntFittingRange — narrow if it shows up on a hot path.
     pub count: usize,
 }
 
@@ -430,8 +430,8 @@ where
         }
 
         if LOG_ALLOCATIONS {
-            // PORT NOTE: Zig wrote to stderr via std.fs; banned here. Phase B
-            // can route through `bun_core::Output` if this is ever flipped on.
+            // PORT NOTE: Zig wrote to stderr via std.fs; banned here. Route
+            // through `bun_core::Output` if this is ever flipped on.
             // TODO(port): log "Allocate {type_name} - {size} bytes"
         }
 

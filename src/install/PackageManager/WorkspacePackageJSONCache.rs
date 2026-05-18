@@ -155,7 +155,7 @@ impl WorkspacePackageJSONCache {
         &mut self,
         log: &mut Log,
         abs_package_json_path: &[u8],
-        // PERF(port): was comptime monomorphization — profile in Phase B
+        // PERF(port): was comptime monomorphization — profile if hot
         opts: GetJSONOptions,
     ) -> GetResult<'_> {
         debug_assert!(is_absolute(abs_package_json_path));
@@ -233,7 +233,7 @@ impl WorkspacePackageJSONCache {
         &mut self,
         log: &mut Log,
         source: &Source,
-        // PERF(port): was comptime monomorphization — profile in Phase B
+        // PERF(port): was comptime monomorphization — profile if hot
         opts: GetJSONOptions,
     ) -> GetResult<'_> {
         debug_assert!(is_absolute(source.path.text()));

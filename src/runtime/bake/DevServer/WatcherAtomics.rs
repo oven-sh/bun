@@ -21,9 +21,8 @@ pub struct WatcherAtomics {
     /// The next event to be run. If an event is already running, new events are stored in this
     /// field instead of scheduled directly, and will be run once the current event finishes.
     // TODO(port): Zig had `align(std.atomic.cache_line)` on this field; Rust cannot align
-    // individual fields — wrap in a `#[repr(align(128))]` newtype in Phase B if false sharing
-    // shows up in profiles.
-    // PERF(port): cache-line padding — profile in Phase B
+    // individual fields — wrap in a `#[repr(align(128))]` newtype if false sharing shows up
+    // in profiles.
     pub next_event: AtomicU8,
 
     // Only the watcher thread uses these two fields. They are both indices into the `events` array,

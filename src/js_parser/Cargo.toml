@@ -16,6 +16,7 @@ strum.workspace = true
 phf.workspace = true
 bstr.workspace = true
 scopeguard.workspace = true
+smallvec.workspace = true
 const_format.workspace = true
 enum-map.workspace = true
 enumset.workspace = true

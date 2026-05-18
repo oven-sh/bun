@@ -133,7 +133,7 @@ impl<Unit: DiffUnit> Default for DiffMatchPatch<Unit> {
 impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
     /// DMP with default configuration options
     pub const DEFAULT: Self = Self {
-        // TODO(port): `Config::default()` is not const; Phase B may need a `Config::DEFAULT`.
+        // TODO(port): `Config::default()` is not const; consider adding a `Config::DEFAULT`.
         config: Config {
             diff_timeout: 1000,
             diff_edit_cost: 4,
@@ -549,7 +549,7 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
 
             // Walk the front path one step.
             // PERF(port): @intCast — bare `as usize` kept for v1/v2/before/after indexing
-            // in this hot Myers inner loop; profile in Phase B.
+            // in this hot Myers inner loop.
             let mut k1 = -d + k1start;
             while k1 <= d - k1end {
                 let k1_offset = v_offset + k1;
@@ -592,7 +592,7 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
 
             // Walk the reverse path one step.
             // PERF(port): @intCast — bare `as usize` kept for v1/v2/before/after indexing
-            // in this hot Myers inner loop; profile in Phase B.
+            // in this hot Myers inner loop.
             let mut k2: isize = -d + k2start;
             while k2 <= d - k2end {
                 let k2_offset = v_offset + k2;
@@ -881,8 +881,8 @@ pub struct HalfMatchResult<Unit: DiffUnit> {
 pub struct LinesToCharsResult<Unit: DiffUnit> {
     pub chars_1: Box<[usize]>,
     pub chars_2: Box<[usize]>,
-    // TODO(port): lifetime — borrows slices from the input texts; raw ptr in Phase A
-    // (no struct lifetime params), Phase B may promote to BORROW_PARAM in LIFETIMES.tsv.
+    // TODO(port): lifetime — borrows slices from the input texts; raw ptr here
+    // (no struct lifetime params). May promote to BORROW_PARAM in LIFETIMES.tsv.
     pub line_array: Vec<*const [Unit]>,
 }
 // `deinit` → Drop handles all fields automatically.
@@ -1647,7 +1647,7 @@ mod tests {
     // diffLineMode, diffCleanupSemantic, diffCleanupEfficiency. They were
     // wrapped in `checkAllAllocationFailures` (Zig OOM-injection harness)
     // which has no Rust equivalent (global allocator aborts on OOM). Port
-    // the assertions directly in Phase B; the test data is preserved in the
+    // the assertions directly; the test data is preserved in the
     // .zig source.
 
     fn rebuildtexts(diffs: &DiffList<u8>) -> [Box<[u8]>; 2] {

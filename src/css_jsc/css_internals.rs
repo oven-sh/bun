@@ -27,7 +27,7 @@ pub enum TestCategory {
 
 // `#[bun_jsc::host_fn]` proc-macro not yet available; wrappers are plain fns
 // for now and re-gain the attribute when bun_jsc::host_fn lands.
-// TODO(b2-blocked): bun_jsc::host_fn (proc-macro attribute)
+// TODO(port): bun_jsc::host_fn (proc-macro attribute)
 
 pub fn minify_error_test_with_options(
     global: &JSGlobalObject,

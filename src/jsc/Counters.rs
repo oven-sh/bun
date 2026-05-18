@@ -11,7 +11,7 @@ impl Counters {
     pub fn mark(&mut self, tag: Field) {
         // PORT NOTE: Zig used `comptime tag` + `@field(this, @tagName(tag))` reflection;
         // Rust dispatches via match. Demoted to runtime arg (not used in a type position).
-        // PERF(port): was comptime monomorphization — profile in Phase B.
+        // PERF(port): was comptime monomorphization — profile if it shows up on a hot path.
         let slot = match tag {
             Field::SpawnSyncBlocking => &mut self.spawn_sync_blocking,
             Field::SpawnMemfd => &mut self.spawn_memfd,
@@ -20,9 +20,8 @@ impl Counters {
     }
 
     pub fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        // TODO(port): `JSObject::create(struct_value, global)` relies on field reflection in Zig
-        // (builds an object with one property per struct field). Phase B: hand-roll the two
-        // `put` calls or add a small derive.
+        // PORT NOTE: Zig used `JSObject::create(struct_value, global)` (field reflection
+        // builds an object with one property per struct field). Hand-rolled `put` calls here.
         let obj = JSValue::create_empty_object(global, 2);
         obj.put(
             global,

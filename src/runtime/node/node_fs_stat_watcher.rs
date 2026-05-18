@@ -180,7 +180,7 @@ impl StatWatcherScheduler {
         // BACKREF — `this` is the live ref-counted scheduler (last ref); wrap
         // once so the field reads below go through safe `ParentRef` Deref.
         let this_ref = ParentRef::from(NonNull::new(this).expect("deinit: scheduler"));
-        bun_core::assertf!(
+        assert!(
             this_ref.watchers.is_empty(),
             "destroying StatWatcherScheduler while it still has watchers",
         );
@@ -232,7 +232,7 @@ impl StatWatcherScheduler {
 
     /// Set the timer (this function is not thread safe, should be called only from the main thread)
     fn set_timer(this: *mut Self, interval: i32) {
-        // b2-cycle: `vm.timer: api.Timer.All` lives in `RuntimeState` (this crate),
+        // jsc/runtime crate cycle: `vm.timer: api.Timer.All` lives in `RuntimeState` (this crate),
         // not as a value field on the low-tier `VirtualMachine`. Recover it via
         // the per-thread `runtime_state()` (single JS thread; see jsc_hooks.rs).
         // SAFETY: main-thread-only per fn contract; `runtime_state()` is non-null

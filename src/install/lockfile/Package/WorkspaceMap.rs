@@ -319,7 +319,7 @@ impl WorkspaceMap {
                     cwd = bun_resolver::fs::FileSystem::instance().top_level_dir();
                 }
                 // PORT NOTE: GlobWalker::init_with_cwd is now an associated constructor
-                // returning `Result<Maybe<Self>>`; arena param dropped (Phase A: heap-backed),
+                // returning `Result<Maybe<Self>>`; arena param dropped (heap-backed),
                 // ignore filter supplied as final arg (was comptime fn param in Zig).
                 let mut walker = match GlobWalker::init_with_cwd(
                     glob_pattern,

@@ -182,7 +182,7 @@ mod _impl {
     }
 
     fn create_exec_argv(global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        // PERF(port): was stack-fallback alloc (4096 bytes) — profile in Phase B
+        // PERF(port): was stack-fallback alloc (4096 bytes) — profile if hot.
         // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
         let vm = global_object.bun_vm();
 
@@ -275,7 +275,7 @@ mod _impl {
             // `bun.cli.Arguments.auto_params` and emitting `--long` / `-s` for every
             // param with `takes_value != .none`. Rust cannot reflect over that list
             // at compile time, so build the set lazily at runtime from the same
-            // `AUTO_PARAMS` table. Phase B may swap this for a phf::Set via
+            // `AUTO_PARAMS` table. Could swap this for a phf::Set via
             // build.rs or a proc-macro.
             static MAP: std::sync::LazyLock<std::collections::HashSet<Vec<u8>>> =
                 std::sync::LazyLock::new(|| {
@@ -318,7 +318,7 @@ mod _impl {
         // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
         let vm = global_object.bun_vm();
 
-        // PERF(port): was stack-fallback alloc (32 * sizeof(ZigString) + MAX_PATH_BYTES + 1 + 32) — profile in Phase B
+        // PERF(port): was stack-fallback alloc (32 * sizeof(ZigString) + MAX_PATH_BYTES + 1 + 32) — profile if hot.
 
         let worker: Option<&WebWorker> = vm.worker_ref();
 
@@ -517,7 +517,7 @@ mod _impl {
         // `String::{is_8bit,latin1,utf16,length}` dispatch to the WTF impl when
         // `tag == WTFStringImpl` (guaranteed here: C++ caller passes WTF-backed
         // strings and we've already returned on `Empty`).
-        // PERF(port): was stack-fallback alloc (1025 bytes) — profile in Phase B
+        // PERF(port): was stack-fallback alloc (1025 bytes) — profile if hot.
         let mut buf1: Vec<u16> = vec![0u16; k.utf16_byte_length() + 1];
         let mut buf2: Vec<u16> = vec![0u16; v.utf16_byte_length() + 1];
         let len1: usize = if k.is_8bit() {

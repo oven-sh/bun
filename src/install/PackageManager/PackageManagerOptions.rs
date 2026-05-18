@@ -12,8 +12,8 @@ use bun_install::{Features, Npm};
 
 // PORT NOTE: `string` fields are `[]const u8` borrowed from CLI args / bunfig config,
 // which live for the process lifetime. There is no `deinit` on Options. Mapped to
-// `&'static [u8]` per PORTING.md (no lifetime params on structs in Phase A).
-// TODO(port): lifetime — if any source is not truly 'static, revisit in Phase B.
+// `&'static [u8]` per PORTING.md (no lifetime params on structs).
+// TODO(port): lifetime — if any source is not truly 'static, add a lifetime parameter.
 
 pub struct Options {
     pub log_level: LogLevel,
@@ -378,9 +378,9 @@ pub fn open_global_bin_dir(
 
 // PORT NOTE: Zig borrowed `[]const u8` from `Api.BunInstall` (process-lifetime
 // arena). Rust `BunInstall` owns `Box<[u8]>`; Options stores `&'static [u8]`
-// per Phase-A "no struct lifetime params". Park a clone for the lifetime of
-// the install command (matches Zig's never-reset config arena) via the named
-// hand-off helper.
+// per the "no struct lifetime params" porting convention. Park a clone for the
+// lifetime of the install command (matches Zig's never-reset config arena) via
+// the named hand-off helper.
 #[inline]
 fn leak_static(s: &[u8]) -> &'static [u8] {
     bun_core::heap::release(s.to_vec().into_boxed_slice())
@@ -395,7 +395,7 @@ impl Options {
         // Spec PackageManagerOptions.zig:224 `bun_install_: ?*Api.BunInstall` —
         // every access below is a read of `config.*`; no field is ever written.
         // Taking `&` (not `&mut`) keeps provenance coherent with the bundler/
-        // resolver storage (`Option<&api::BunInstall>` / `*const ()`).
+        // resolver storage (`Option<NonNull<api::BunInstall>>`).
         bun_install_: Option<&Api::BunInstall>,
         subcommand: Subcommand,
     ) -> Result<(), bun_alloc::AllocError> {

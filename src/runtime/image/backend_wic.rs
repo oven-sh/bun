@@ -45,7 +45,7 @@ use bun_sys::windows;
 
 /// `codecs::Error || error{BackendUnavailable}`
 // TODO(port): narrow error set — Zig flat-unions codecs::Error with BackendUnavailable;
-// variants used in this file are inlined here. Phase B should reconcile with codecs::Error.
+// variants used in this file are inlined here. Reconcile with codecs::Error.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, thiserror::Error, strum::IntoStaticStr)]
 pub enum BackendError {
     #[error("BackendUnavailable")]
@@ -147,7 +147,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendE
     if out_len > u32::MAX as u64 {
         return Err(TooManyPixels);
     }
-    // PERF(port): was uninitialized alloc — profile in Phase B
+    // PERF(port): was uninitialized alloc — profile if it shows up on a hot path.
     let mut out = vec![0u8; usize::try_from(out_len).expect("int cast")];
     // (errdefer free(out) deleted — Vec drops on `?`/early return)
     if conv.copy_pixels(
@@ -1094,7 +1094,7 @@ fn dup_global<const PREFIX: usize>(
         // SAFETY: h is locked.
         let _ = unsafe { GlobalUnlock(h) };
     }
-    // PERF(port): was uninitialized alloc — profile in Phase B
+    // PERF(port): was uninitialized alloc — profile if it shows up on a hot path.
     let mut out = vec![0u8; PREFIX + size];
     // SAFETY: ptr_ points to `size` valid bytes inside the locked HGLOBAL.
     out[PREFIX..].copy_from_slice(unsafe { bun_core::ffi::slice(ptr_, size) });

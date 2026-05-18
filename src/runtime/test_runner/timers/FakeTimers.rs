@@ -119,7 +119,7 @@ fn timers_lock_guard() -> bun_threading::MutexGuard {
 }
 
 /// Convert `bun_core::Timespec` → the low-tier `bun_event_loop` Timespec stub
-/// (same `{sec,nsec}` shape, different nominal type until B-2 unifies them).
+/// (same `{sec,nsec}` shape, different nominal type until they are unified).
 #[inline]
 fn to_el_timespec(t: &Timespec) -> ElTimespec {
     ElTimespec { sec: t.sec, nsec: t.nsec }

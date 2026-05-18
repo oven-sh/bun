@@ -679,7 +679,10 @@ pub const BASE_RUNTIME_TRANSPILER_PARAMS: &[ParamType] =
 // built with `comptime_table!(.., cold)` and stay in plain `.rodata`, where
 // `src/startup.order` can still cluster the ones a sampled cold path actually
 // hits without weighing down the `.rodata.startup` fault-around window.
-#[cfg_attr(any(target_os = "linux", target_os = "android"), unsafe(link_section = ".rodata.startup"))]
+#[cfg_attr(
+    any(target_os = "linux", target_os = "android"),
+    unsafe(link_section = ".rodata.startup")
+)]
 pub static AUTO_TABLE: &clap::ConvertedTable = clap::comptime_table!(AUTO_PARAMS);
 pub static RUN_TABLE: &clap::ConvertedTable = clap::comptime_table!(RUN_PARAMS, cold);
 pub static BUILD_TABLE: &clap::ConvertedTable = clap::comptime_table!(BUILD_PARAMS, cold);
@@ -744,7 +747,7 @@ pub use bun_bunfig::arguments::{load_config, load_config_path, load_config_with_
 /// other arms; here `command::tag_params(cmd)` does the runtime lookup, and the
 /// per-`cmd` blocks below are guarded by `if matches!(cmd, …)` instead of
 /// `if comptime cmd == …`.
-// PERF(port): was comptime monomorphization — profile in Phase B.
+// PERF(port): was comptime monomorphization.
 pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions, bun_core::Error> {
     let mut diag = clap::Diagnostic::default();
     let table = tag_table(cmd);

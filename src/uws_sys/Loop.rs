@@ -13,7 +13,7 @@ bun_core::declare_scope!(Loop, visible);
 // TODO(port): Zig has field-level `align(16)` on `internal_loop_data` and
 // `ready_polls`. Rust cannot align individual fields directly; `#[repr(C, align(16))]`
 // covers the struct head, but `ready_polls` may need explicit padding to match
-// the C layout in usockets. Verify with a static size/offset assertion in Phase B.
+// the C layout in usockets. Verify with a static size/offset assertion.
 #[repr(C, align(16))]
 pub struct PosixLoop {
     pub internal_loop_data: InternalLoopData,
@@ -246,10 +246,10 @@ impl PosixLoop {
         unsafe { c::us_loop_close_all_groups(self) != 0 }
     }
 
-    // TODO(port): Zig `nextTick` took a `comptime deferCallback: fn(UserType) void` and
+    // PORT NOTE: Zig `nextTick` took a `comptime deferCallback: fn(UserType) void` and
     // synthesized a per-callsite `extern "C"` trampoline that casts `*anyopaque` → `UserType`.
-    // Rust cannot monomorphize an `extern "C"` fn over a fn-pointer const generic on stable.
-    // Callers must provide the C-ABI trampoline directly (or via a `next_tick!` macro in Phase B).
+    // Rust cannot monomorphize an `extern "C"` fn over a fn-pointer const generic on stable,
+    // so callers provide the C-ABI trampoline directly.
     pub fn next_tick(
         &mut self,
         user_data: *mut c_void,

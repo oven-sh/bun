@@ -154,7 +154,7 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
     }
 
     pub fn expect_int<Int: ProtocolInt>(&mut self, value: Int) -> Result<bool, AnyPostgresError> {
-        // PERF(port): `value` was `comptime comptime_int` — profile in Phase B
+        // PERF(port): `value` was `comptime comptime_int` — profile if it shows up on a hot path.
         let actual = self.int::<Int>()?;
         Ok(actual == value)
     }
@@ -188,7 +188,7 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
         // via `defer result.deinit()`. `Data` here is `Temporary` (points into the
         // connection buffer), so the bytes outlive the `Data` wrapper itself;
         // `borrow_utf8` stores a raw pointer (no lifetime) so this matches Zig
-        // semantics 1:1. Phase B: audit that no caller holds the returned
+        // semantics 1:1. TODO(audit): no caller may hold the returned
         // `BunString` past the next buffer fill.
         Ok(BunString::borrow_utf8(result.slice()))
     }

@@ -46,7 +46,7 @@ fn to_jsc_system_error(e: SystemError) -> jsc::SystemError {
 pub struct CopyFile<'a> {
     pub destination_file_store: store::File,
     pub source_file_store: store::File,
-    // TODO(port): lifetime — heap-allocated across threads; Arc vs raw needs Phase B review
+    // TODO(port): lifetime — heap-allocated across threads; Arc vs raw needs review
     pub store: Option<StoreRef>,
     pub source_store: Option<StoreRef>,
     pub offset: SizeType,
@@ -62,7 +62,7 @@ pub struct CopyFile<'a> {
 
     // per LIFETIMES.tsv: JSC_BORROW → &JSGlobalObject
     // TODO(port): lifetime — this struct is Box-allocated and crosses threads;
-    // `'a` here is unsound in practice. Phase B: likely *const JSGlobalObject.
+    // `'a` here is unsound in practice. Likely should be *const JSGlobalObject.
     pub global_this: &'a JSGlobalObject,
 
     pub mkdirp_if_not_exists: bool,
@@ -340,8 +340,8 @@ impl<'a> CopyFile<'a> {
             // outlives this guard (dropped before fn return); disjoint fields.
             unsafe { *read_len_slot = *total_written_slot as SizeType };
         }
-        // TODO(port): defer captures &mut to disjoint field via raw ptr;
-        // Phase B: reshape to set read_len at each return site instead.
+        // TODO(refactor): defer captures &mut to disjoint field via raw ptr;
+        // reshape to set read_len at each return site instead.
 
         #[allow(unused_mut, unused_variables)]
         let mut has_unset_append = false;
@@ -952,7 +952,7 @@ impl Drop for CopyFile<'_> {
             if p.is_string() && self.system_error.is_none() {
                 // TODO(port): the Zig frees the path slice here. In Rust, ownership of
                 // `source_file_store.pathlike.path` should be encoded in the type so
-                // Drop handles it. Phase B: verify Store::File path ownership.
+                // Drop handles it. Verify Store::File path ownership.
             }
         }
         // self.store.?.deref() — Arc drop is automatic
@@ -1001,7 +1001,7 @@ pub struct CopyFileWindows<'a> {
     pub destination_mode: Option<Mode>,
     // per LIFETIMES.tsv: JSC_BORROW → &jsc::EventLoop
     // TODO(port): lifetime — heap-allocated and re-entered from libuv callbacks;
-    // Phase B: likely *const jsc::EventLoop.
+    // likely should be *const jsc::EventLoop.
     pub event_loop: &'a jsc::event_loop::EventLoop,
 
     pub size: SizeType,
@@ -1877,7 +1877,7 @@ fn unsupported_non_regular_file_error() -> SystemError {
     }
 }
 // TODO(port): Zig had these as `const` values; SystemError contains bun.String which
-// is not const-constructible in Rust. Using fns here. Phase B: consider lazy_static.
+// is not const-constructible in Rust. Using fns here. Consider lazy_static / OnceLock.
 
 pub type CopyFilePromiseTask<'a> =
     jsc::concurrent_promise_task::ConcurrentPromiseTask<'a, CopyFile<'a>>;

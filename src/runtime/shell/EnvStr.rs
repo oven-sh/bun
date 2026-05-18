@@ -104,7 +104,7 @@ impl EnvStr {
     pub fn init_ref_counted(str: &[u8]) -> EnvStr {
         // TODO(port): Zig `initRefCounted([]const u8)` hands the slice to RefCountedStr which
         // assumes ownership of the backing allocation. Revisit RefCountedStr::init ownership
-        // contract in Phase B (caller-allocated vs. dupe-on-init).
+        // contract (caller-allocated vs. dupe-on-init).
         if str.is_empty() {
             return Self::pack(0, Tag::Empty, 0);
         }
@@ -113,7 +113,7 @@ impl EnvStr {
         // length is recovered via RefCountedStr::byte_slice(). Preserve that.
         // PORT NOTE: Zig handed the borrowed slice to RefCountedStr which assumed ownership
         // of its backing allocation. Rust cannot transfer ownership through `&[u8]`, so we
-        // dupe here; Phase B should revisit `init_ref_counted`'s ownership contract (likely
+        // dupe here; revisit `init_ref_counted`'s ownership contract (likely
         // change the param to `Box<[u8]>`).
         Self::pack(
             to_ptr(RefCountedStr::init(Box::<[u8]>::from(str)) as *const c_void),

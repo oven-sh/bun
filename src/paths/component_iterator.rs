@@ -412,8 +412,10 @@ mod tests {
         assert_eq!(it.last().unwrap().name, b"c");
         assert_eq!(it.previous().unwrap().name, b"b");
         assert_eq!(it.previous().unwrap().name, b"a");
+        // `previous()` returning `None` doesn't rewind the cursor — still on `a`.
         assert!(it.previous().is_none());
-        assert_eq!(it.next().unwrap().name, b"a");
         assert_eq!(it.next().unwrap().name, b"b");
+        assert_eq!(it.next().unwrap().name, b"c");
+        assert!(it.next().is_none());
     }
 }

@@ -145,7 +145,7 @@ impl CallFrame {
     pub fn arguments_old<const MAX: usize>(&self) -> Arguments<MAX> {
         let slice = self.arguments();
         debug_assert!(MAX <= 15);
-        // PERF(port): was `switch { inline 1...15 => |count| ... }` comptime monomorphization — profile in Phase B
+        // PERF(port): was `switch { inline 1...15 => |count| ... }` comptime monomorphization — profile if it shows up on a hot path.
         let count = slice.len().min(MAX);
         if count == 0 {
             Arguments {
@@ -162,7 +162,7 @@ impl CallFrame {
     pub fn arguments_undef<const MAX: usize>(&self) -> Arguments<MAX> {
         let slice = self.arguments();
         debug_assert!(MAX <= 9);
-        // PERF(port): was `switch { inline 1...9 => |count| ... }` comptime monomorphization — profile in Phase B
+        // PERF(port): was `switch { inline 1...9 => |count| ... }` comptime monomorphization — profile if it shows up on a hot path.
         let count = slice.len().min(MAX);
         if count == 0 {
             Arguments {

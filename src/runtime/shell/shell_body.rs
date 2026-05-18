@@ -1193,7 +1193,7 @@ pub mod testing_apis {
             }
         };
         let mut template_args = template_args_js.array_iterator(global)?;
-        // PERF(port): was stack-fallback (4 BunString) — profile in Phase B
+        // PERF(port): was stack-fallback (4 BunString) — profile if hot.
         let mut jsstrings = JsStrings::with_capacity(4);
         // SAFETY: every JSValue pushed here is also rooted in marked_argument_buffer.
         let mut jsobjs: Vec<JSValue> = Vec::new();

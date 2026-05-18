@@ -179,7 +179,7 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
                     return Err(bun_core::err!(RequestBodyTooLarge));
                 }
                 // TODO(port): Zig handled OOM gracefully here; Vec::extend_from_slice aborts.
-                // Consider try_reserve in Phase B if graceful 500 on OOM is required.
+                // Consider try_reserve if graceful 500 on OOM is required.
                 body.extend_from_slice(chunk);
                 unsafe { Wrap::on_body(wrap, body.as_slice(), resp)? };
             } else {

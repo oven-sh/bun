@@ -27,7 +27,7 @@ use super::frame;
 
 pub struct Worker {
     // TODO(port): LIFETIMES.tsv classifies this BACKREF → *const, but the Zig
-    // mutates through it (live_workers, onWorkerExit, frame). Phase B: either
+    // mutates through it (live_workers, onWorkerExit, frame). Should use either
     // *mut or interior mutability on Coordinator.
     // PORT NOTE: `Coordinator<'a>` carries borrowed slices; the lifetime is
     // erased to `'static` here because this is a raw backref pointer that is
@@ -45,7 +45,7 @@ pub struct Worker {
     /// frames never truncates and the coordinator never blocks.
     // TODO(port): Zig `Channel(Worker, "ipc")` — second comptime arg is the
     // field name for `container_of` recovery. Rust side likely uses
-    // `offset_of!(Worker, ipc)` or an explicit owner-ptr; revisit in Phase B.
+    // `offset_of!(Worker, ipc)` or an explicit owner-ptr.
     pub ipc: Channel<Worker>,
     pub out: WorkerPipe,
     pub err: WorkerPipe,
@@ -444,7 +444,7 @@ pub enum PipeRole {
 pub struct WorkerPipe {
     // TODO(port): Zig default `BufferedReader.init(WorkerPipe)` passes the
     // owner type for callback vtable wiring. Rust side likely a generic param
-    // or trait impl; revisit in Phase B.
+    // or trait impl.
     pub reader: bun_io::BufferedReader,
     pub worker: *const Worker,
     pub role: PipeRole,
@@ -465,7 +465,7 @@ impl WorkerPipe {
     pub fn on_read_chunk(&mut self, chunk: &[u8], _: bun_io::ReadState) -> bool {
         // SAFETY: worker backref valid while WorkerPipe is embedded in Worker.
         // TODO(port): LIFETIMES.tsv says *const Worker but we mutate `captured`;
-        // Phase B may need *mut or Cell/UnsafeCell on Worker.captured.
+        // may need *mut or Cell/UnsafeCell on Worker.captured.
         unsafe { (*self.worker.cast_mut()).captured.extend_from_slice(chunk) };
         true
     }

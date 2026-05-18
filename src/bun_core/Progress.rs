@@ -203,7 +203,7 @@ pub struct Node {
     pub context: *mut Progress,
     pub parent: *mut Node,
     // TODO(port): lifetime — caller-borrowed slice, Zig is non-allocating; using
-    // 'static here as a Phase-A placeholder (callers in install/ pass string literals).
+    // 'static here as a placeholder (callers in install/ pass string literals).
     pub name: &'static [u8],
     pub unit: Unit,
     /// Must be handled atomically to be thread-safe.
@@ -418,7 +418,7 @@ impl Progress {
     /// `estimated_total_items` value of 0 means unknown.
     pub fn start(&mut self, name: &'static [u8], estimated_total_items: usize) -> &mut Node {
         // TODO(port): std.fs.File.stderr() / supportsAnsiEscapeCodes() / isTty() —
-        // map to bun_sys::File equivalents in Phase B.
+        // map to bun_sys::File equivalents.
         let stderr = File::stderr();
         self.terminal = None;
         if stderr.supports_ansi_escape_codes() {
@@ -649,7 +649,7 @@ impl Progress {
                                 format_args!("[{}/{} files] ", current_item, eti),
                             ),
                             // TODO(port): Zig `{Bi:.2}` is std.fmt binary-bytes formatter (e.g. "1.50KiB").
-                            // Need a bun_core::fmt::BytesBi helper in Phase B.
+                            // Need a bun_core::fmt::BytesBi helper.
                             Unit::Bytes => self
                                 .buf_write(&mut end, format_args!("[{}/{}] ", current_item, eti)),
                         }
@@ -695,7 +695,7 @@ impl Progress {
             eprint!("{}", args);
             return;
         };
-        // TODO(port): Zig `file.writerStreaming(&.{})` — map to bun_sys::File writer in Phase B.
+        // TODO(port): Zig `file.writerStreaming(&.{})` — map to bun_sys::File writer.
         self.refresh();
         if file.write_fmt(args).is_err() {
             self.terminal = None;

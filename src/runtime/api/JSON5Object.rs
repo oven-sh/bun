@@ -281,9 +281,6 @@ impl Stringifier {
     }
 
     fn stringify_object(&mut self, global: &JSGlobalObject, value: JSValue) -> StringifyResult<()> {
-        // TODO(port): JSPropertyIterator comptime options
-        // (`.{ .skip_empty_name = false, .include_value = true }`). Phase B:
-        // wire to whatever const-generic / config-struct API `bun_jsc` exposes.
         let mut iter = jsc::JSPropertyIterator::init(
             global,
             value.to_object(global)?,

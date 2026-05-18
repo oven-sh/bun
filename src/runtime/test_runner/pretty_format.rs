@@ -16,7 +16,7 @@ use super::expect::{self, dom_element_outer_html, is_dom_element_like};
 use crate::webcore::BlobExt as _;
 
 /// Local shim over `Output::pretty_fmt` that (a) accepts the const-generic
-/// `ENABLE_ANSI_COLORS` form the Phase-A draft was written against and
+/// `ENABLE_ANSI_COLORS` form callers in this file were written against and
 /// (b) returns a value that is `Display`, `Deref<Target=[u8]>`, *and* has an
 /// `.as_bytes()` method — covering all three call shapes in this file
 /// (`format_args!("{}", …)`, `writer.write_all(&…)`, `….as_bytes()`).

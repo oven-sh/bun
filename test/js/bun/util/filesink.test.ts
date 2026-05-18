@@ -268,3 +268,13 @@ it.skipIf(!isPosix)("does not leak native FileSink when a pending write fails (E
   // more than that indicates a native leak.
   expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
 });
+
+it("start() without path/fd on an already-open writer does not crash", async () => {
+  const path = join(tmpdirSync(), "filesink-restart.txt");
+  const writer = Bun.file(path).writer();
+  expect(() => writer.start({})).not.toThrow();
+  expect(() => writer.start({ highWaterMark: 1024 })).not.toThrow();
+  writer.write("hello");
+  await writer.end();
+  expect(await Bun.file(path).text()).toBe("hello");
+});

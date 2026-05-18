@@ -61,7 +61,7 @@ pub struct WindowsNamedPipe {
     pub pipe: Option<NonNull<uv::Pipe>>, // any duplex
     #[cfg(not(windows))]
     pub pipe: (),
-    // TODO(port): lifetime — JSC_BORROW; VM outlives this struct. Using &'static for Phase A;
+    // TODO(port): lifetime — JSC_BORROW; VM outlives this struct. Using &'static for now;
     // create a timeout version that doesn't need the jsc VM
     pub vm: &'static VirtualMachine,
     /// Typed enum mirror of `vm.event_loop()` for the io-layer FilePoll vtable
@@ -69,7 +69,7 @@ pub struct WindowsNamedPipe {
     pub event_loop_handle: bun_jsc::EventLoopHandle,
 
     // TODO(port): `bun.io.StreamingWriter(WindowsNamedPipe, .{ onClose, onWritable, onError, onWrite })`
-    // is a comptime type-generator binding callbacks at type level. Phase B: encode callbacks as a
+    // is a comptime type-generator binding callbacks at type level. Encode callbacks as a
     // trait impl (`impl StreamingWriterHandler for WindowsNamedPipe`) or const-generic vtable.
     pub writer: StreamingWriter<WindowsNamedPipe>,
 

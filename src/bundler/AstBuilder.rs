@@ -62,14 +62,14 @@ pub struct AstBuilder<'a, 'bump> {
 // Zig used `comptime` zero-sized fields (`options`, `import_items_for_namespace`)
 // and a `parser_features` decl so `ImportScanner.scan` could duck-type over both
 // the real parser and `AstBuilder`. In Rust this becomes a trait that both impl.
-// TODO(b2-ast-E): define `ImportScannerHost` trait in `bun_js_parser` and impl it here.
+// TODO(port): define `ImportScannerHost` trait in `bun_js_parser` and impl it here.
 pub mod parser_features {
     pub const TYPESCRIPT: bool = false;
 }
 
 impl<'a, 'bump> AstBuilder<'a, 'bump> {
     // stub for ImportScanner duck typing — Zig: `comptime options: js_parser.Parser.Options = .{ .jsx = .{}, .bundle = true }`
-    // TODO(b2-ast-E): expose as trait assoc const once `ImportScannerHost` exists
+    // TODO(port): expose as trait assoc const once `ImportScannerHost` exists
     pub fn options(&self) -> js_parser::parse::parse_entry::Options<'static> {
         js_parser::parse::parse_entry::Options {
             jsx: Default::default(),
@@ -154,7 +154,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             .children
             .append_assume_capacity(NonNull::new(scope).expect("bump alloc non-null").into());
         self.scopes.push(self.current_scope);
-        // PERF(port): was appendAssumeCapacity — profile in Phase B
+        // PERF(port): was appendAssumeCapacity — profile if it shows up on a hot path
         self.current_scope = scope;
         Ok(scope)
     }
@@ -269,7 +269,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
     pub fn append_stmt<T: StatementData>(&mut self, data: T) -> Result<(), OOM> {
         self.stmts.reserve(1);
         self.stmts.push(self.new_stmt(data));
-        // PERF(port): was appendAssumeCapacity — profile in Phase B
+        // PERF(port): was appendAssumeCapacity — profile if it shows up on a hot path
         Ok(())
     }
 
@@ -362,7 +362,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         // generated server-component proxy keeps raw `export` keywords inside
         // the HMR function wrapper and JSC rejects the chunk with
         // `SyntaxError: Unexpected keyword 'export'`.
-        // TODO(b2-ast-E): replace with a `ParserLike` trait so the real
+        // TODO(port): replace with a `ParserLike` trait so the real
         // `ImportScanner`/`ConvertESMExportsForHmr` can accept `AstBuilder`.
         //
         // PORT NOTE: Zig assigned `p.stmts.items` directly — its

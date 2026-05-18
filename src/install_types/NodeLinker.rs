@@ -169,8 +169,8 @@ impl From<CreateMatcherError> for FromExprError {
 bun_core::named_error_set!(FromExprError);
 
 impl PnpmMatcher {
-    // B-2 UN-GATED: bun_ast::ExprData now exposes the real value-shaped
-    // enum (`EString`/`EArray` via `StoreRef<E::*>`). `match` arms reconciled
+    // `bun_ast::ExprData` exposes the real value-shaped enum
+    // (`EString`/`EArray` via `StoreRef<E::*>`). `match` arms reconciled
     // against the arena-taking `E::String::slice` / `Expr::as_string_cloned`
     // signatures — Zig's `allocator` param maps to a local `bun_alloc::Arena`
     // (PORTING.md §Allocators: AST=bumpalo) used only for transient UTF-16→UTF-8

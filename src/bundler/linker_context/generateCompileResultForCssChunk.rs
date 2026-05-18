@@ -67,7 +67,7 @@ fn generate_compile_result_for_css_chunk_impl(
     // borrow via `BackRef::get` is fine. The heap is pinned for the worker's
     // lifetime; see `Worker::arena`.
     let arena = worker.arena.get();
-    // PERF(port): was arena bulk-free (worker.temporary_arena.reset(.retain_capacity)) — profile in Phase B
+    // PERF(port): was arena bulk-free (worker.temporary_arena.reset(.retain_capacity)).
     let _arena_reset = scopeguard::guard(&mut worker.temporary_arena, |arena| {
         // temporary_arena is initialized in Worker::create before any task runs.
         if let Some(a) = arena.as_mut() {

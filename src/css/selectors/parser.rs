@@ -25,15 +25,15 @@ pub use bun_css::Printer as PrinterRe; // re-export parity (Printer/PrintErr wer
 type CResult<T> = css::Result<T>;
 
 // TODO(port): arena lifetimes. The Zig code threads `parser.arena` / `input.arena()`
-// (a bump arena) through every allocation. Phase A uses `Vec`/`Box` and a `Str` alias for
-// source-borrowed byte slices; Phase B should re-thread `'bump` and switch to
+// (a bump arena) through every allocation. The Rust port uses `Vec`/`Box` and a `Str` alias for
+// source-borrowed byte slices; re-thread `'bump` and switch to
 // `bun_alloc::ArenaVec<'bump, T>` / `&'bump [u8]` per PORTING.md §Allocators (AST crates).
-// PERF(port): was arena bulk-free — profile in Phase B.
+// PERF(port): was arena bulk-free — profile if it shows up on a hot path.
 //
 // NOTE: `Str` is `&'static [u8]` here (not `crate::Str = *const [u8]`) to match
 // `crate::Token`'s payload shape (`Token::Ident(&'static [u8])` etc.) — every
-// `Str` in this module originates from a token slice. The `'static` is the
-// Phase-A placeholder for the tokenizer source lifetime; it widens to `&'bump
+// `Str` in this module originates from a token slice. The `'static` is a
+// placeholder for the tokenizer source lifetime; it widens to `&'bump
 // [u8]` once `Parser<'bump>` threads the arena lifetime.
 type Str = &'static [u8]; // arena-backed `[]const u8` source slice
 
@@ -46,7 +46,7 @@ type Str = &'static [u8]; // arena-backed `[]const u8` source slice
 // useless — equality recurses on `Impl::Assoc`, not `Impl`).
 //
 // `deep_clone` on the grammar types intentionally drops the `&Arena` parameter:
-// the selector AST is global-alloc (`Vec`/`Box`/`SmallList`) in Phase A, and
+// the selector AST is global-alloc (`Vec`/`Box`/`SmallList`), and
 // the only arena-borrowed payloads are `Str` / `Ident.v` (`*const [u8]`)
 // which are identity-copied (matches generics.zig "const strings" fast-path).
 use css::generics::{CssEql, CssHash};
@@ -74,9 +74,9 @@ fn small_list_into_box<T, const N: usize>(mut sl: SmallList<T, N>) -> Box<[T]> {
 /// for the parse session and frees it on arena reset). Returns a raw arena
 /// pointer (`*const [u8]`) — `Ident.v`'s field type — so we don't fabricate a
 /// `'static` lifetime (PORTING.md §Forbidden: never `Box::leak` to satisfy
-/// `&'static`). Phase B re-threads `&'bump Bump` and widens `Ident.v` to
+/// `&'static`). Re-threading `&'bump Bump` would widen `Ident.v` to
 /// `&'bump [u8]`.
-// PERF(port): was arena alloc — profile in Phase B.
+// PERF(port): was arena alloc — profile if it shows up on a hot path.
 #[inline]
 fn arena_lowercase(bump: &Bump, name: &[u8]) -> *const [u8] {
     let buf = bump.alloc_slice_fill_copy(name.len(), 0u8);
@@ -130,8 +130,8 @@ pub fn valid_selector_impl<T: SelectorImpl>() {
     // bound `T: SelectorImpl` is the check.
 }
 
-/// The `SelectorImpl` shape (Zig validated via `ValidSelectorImpl`). Phase B: this trait
-/// lives in `bun_css::selector::impl_` and is implemented by `impl_::Selectors`.
+/// The `SelectorImpl` shape (Zig validated via `ValidSelectorImpl`). Implemented
+/// by `impl_::Selectors` in `bun_css::selector::impl_`.
 // PORT NOTE: `PartialEq + Clone` bounds dropped — the concrete assoc types
 // (`values::ident::{Ident,IdentOrRef}`, `*const [u8]`) implement structural
 // equality via the `CssEql` protocol (`generics::implement_eql`), not
@@ -588,7 +588,7 @@ fn parse_selector<Impl: BunSelectorImpl>(
     }
 
     // PERF: allocations here
-    // PERF(port): was arena-backed SelectorBuilder — profile in Phase B
+    // PERF(port): was arena-backed SelectorBuilder — profile if it shows up on a hot path.
     let mut builder = SelectorBuilder::<Impl>::default();
 
     'outer_loop: loop {
@@ -914,7 +914,7 @@ pub enum PseudoClass {
     Lang {
         /// A list of language codes.
         languages: Vec<Str>,
-        // PERF(port): was arena ArrayList — profile in Phase B
+        // PERF(port): was arena ArrayList — profile if it shows up on a hot path.
     },
     /// The [:dir()](https://drafts.csswg.org/selectors-4/#the-dir-pseudo) pseudo class.
     Dir {
@@ -1214,7 +1214,7 @@ pub struct SelectorParser<'a> {
     pub is_nesting_allowed: bool,
     pub options: &'a ParserOptions<'a>,
     // `arena: Allocator` dropped — arena threaded via `input.arena()` in Zig.
-    // PERF(port): was arena bulk-free — Phase B re-threads `&'bump Bump`.
+    // PERF(port): was arena bulk-free — re-thread `&'bump Bump` to restore.
 }
 
 // Zig: `pub const Impl = impl_.Selectors;` lived inside the struct for
@@ -1257,7 +1257,7 @@ impl<'a> SelectorParser<'a> {
     pub fn namespace_for_prefix(&mut self, prefix: Ident) -> Option<Str> {
         let _ = self;
         // SAFETY: `Ident.v` borrows the parser arena which outlives the parse
-        // session (Phase-A `'static` placeholder).
+        // session (`'static` is a placeholder for the arena lifetime).
         Some(unsafe { crate::arena_str(prefix.v) })
     }
 
@@ -1372,7 +1372,7 @@ impl<'a> SelectorParser<'a> {
         // @compileError(css.todo_stuff.match_ignore_ascii_case);
         let pseudo_class: PseudoClass = 'pseudo_class: {
             // TODO(port): phf custom hasher — Zig used `ComptimeStringMap.getAnyCase`
-            // (ASCII case-insensitive). Phase B: generate a case-folded phf or use a
+            // (ASCII case-insensitive). Generate a case-folded phf or use a
             // `match` over the lowercased name.
             if let Some(pseudo) = lookup_non_ts_pseudo_class(name) {
                 break 'pseudo_class pseudo;
@@ -1807,7 +1807,7 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
             match selector {
                 Ok(sel) => {
                     values.append(sel);
-                    // PERF(port): was arena append — profile in Phase B
+                    // PERF(port): was arena append — profile if it shows up on a hot path.
                 }
                 Err(e) => match recovery {
                     ParseErrorRecovery::DiscardList => return Err(e),
@@ -1946,7 +1946,7 @@ impl<Impl: BunSelectorImpl> CssHash for GenericSelectorList<Impl> {
 pub struct GenericSelector<Impl: SelectorImpl> {
     pub specificity_and_flags: SpecificityAndFlags,
     pub components: Vec<GenericComponent<Impl>>,
-    // PERF(port): was arena ArrayList — profile in Phase B
+    // PERF(port): was arena ArrayList — profile if it shows up on a hot path.
 }
 
 pub struct SelectorDebugFmt<'a, Impl: SelectorImpl>(pub &'a GenericSelector<Impl>);
@@ -2586,7 +2586,7 @@ impl<Impl: BunSelectorImpl> CssHash for GenericComponent<Impl> {
 impl<Impl: BunSelectorImpl> fmt::Display for GenericComponent<Impl> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // TODO(port): Zig matches on a few variants and falls through to `@tagName`.
-        // Rust enums need `strum::IntoStaticStr` for the tag name; Phase B.
+        // Rust enums need `strum::IntoStaticStr` for the tag name.
         match self {
             Self::LocalName(ln) => write!(f, "local_name={}", bstr::BStr::new(ln.name.v())),
             Self::Combinator(c) => write!(f, "combinator='{}'", c),
@@ -3228,7 +3228,7 @@ impl PseudoElement {
 
 impl fmt::Display for PseudoElement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // TODO(port): @tagName — needs strum::IntoStaticStr; Phase B.
+        // TODO(port): @tagName — needs strum::IntoStaticStr.
         write!(f, "<pseudo_element>")
     }
 }
@@ -3343,7 +3343,7 @@ pub fn parse_type_selector<Impl: BunSelectorImpl>(
         sink.push_simple_selector(GenericComponent::LocalName(LocalName {
             lower_name: {
                 // PERF: check if it's already lowercase
-                // PERF(port): was arena alloc — profile in Phase B (see `arena_lowercase`).
+                // PERF(port): was arena alloc — profile if hot (see `arena_lowercase`).
                 Ident {
                     v: arena_lowercase(input.arena(), name),
                 }
@@ -3445,7 +3445,7 @@ pub fn parse_one_simple_selector<Impl: BunSelectorImpl>(
                         let names = input.parse_nested_block(
                             |input2: &mut CssParser| -> CResult<Box<[Impl::Identifier]>> {
                                 // todo_stuff.think_about_mem_mgmt
-                                // PERF(port): was arena ArrayList with capacity 1 — profile in Phase B
+                                // PERF(port): was arena ArrayList with capacity 1 — profile if hot.
                                 let mut result: Vec<Impl::Identifier> = Vec::with_capacity(1);
 
                                 result.push(Impl::Identifier::from(Ident {
@@ -3483,7 +3483,7 @@ pub fn parse_one_simple_selector<Impl: BunSelectorImpl>(
                         parser.parse_functional_pseudo_element(name, i)
                     })?
                     // TODO(port): `Impl::PseudoElement` is `PseudoElement` for the concrete
-                    // `impl_::Selectors`; the generic path needs a `From`/trait bound in Phase B.
+                    // `impl_::Selectors`; the generic path would need a `From`/trait bound.
                 } else {
                     parser.parse_pseudo_element(location, name)?
                 };
@@ -3589,7 +3589,7 @@ pub fn parse_attribute_selector<Impl: BunSelectorImpl>(
             Ok(v) => v.clone(),
             Err(_) => {
                 // [foo]
-                // PERF(port): was arena alloc — profile in Phase B (see `arena_lowercase`).
+                // PERF(port): was arena alloc — profile if hot (see `arena_lowercase`).
                 let local_name_lower: *const [u8] = arena_lowercase(input.arena(), local_name);
                 if let Some(ns) = namespace {
                     let x = attrs::AttrSelectorWithOptionalNamespace::<Impl> {
@@ -3677,7 +3677,7 @@ pub fn parse_attribute_selector<Impl: BunSelectorImpl>(
         };
         if let Some(first_uppercase) = first_uppercase {
             let str_ = &local_name[first_uppercase..];
-            // PERF(port): was arena alloc — profile in Phase B (see `arena_lowercase`).
+            // PERF(port): was arena alloc — profile if hot (see `arena_lowercase`).
             let lowered: *const [u8] = arena_lowercase(input.arena(), str_);
             break 'brk (Ident { v: lowered }, false);
         } else {
@@ -3797,7 +3797,7 @@ pub fn parse_functional_pseudo_class<Impl: BunSelectorImpl>(
 
     Ok(GenericComponent::NonTsPseudoClass(result.into()))
     // TODO(port): `Impl::NonTSPseudoClass` is `PseudoClass` for the concrete impl;
-    // generic path needs a `From` bound in Phase B.
+    // generic path would need a `From` bound.
 }
 
 pub fn parse_simple_pseudo_class<Impl: BunSelectorImpl>(
@@ -4219,8 +4219,8 @@ impl AttributeFlags {
 /// <https://html.spec.whatwg.org/multipage/#selectors>
 ///
 /// PERF(port): Zig used `ComptimeEnumMap.has` (zero-cost membership at
-/// comptime). The Phase-A port lowered that to a `phf::Set`, which on every
-/// `[attr=val]` selector pays a 32-bit FNV-ish hash over the name plus a
+/// comptime). An earlier `phf::Set` port paid, on every
+/// `[attr=val]` selector, a 32-bit FNV-ish hash over the name plus a
 /// bounds check, indirect load, and full key compare — measurable in CSS
 /// bundling profiles where the dominant inputs (`class`, `href`, `data-*`,
 /// `aria-*`) are *misses*. A 2-level open-coded dispatch (length →

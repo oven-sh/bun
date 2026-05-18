@@ -68,7 +68,7 @@ impl Time {
         let token = input.next()?.clone();
         match &token {
             Token::Dimension(dim) => {
-                // TODO(port): Zig fn name has a typo (`ASCIII`); verify exact bun_str symbol in Phase B.
+                // TODO(port): Zig fn name has a typo (`ASCIII`); verify exact bun_str symbol.
                 if bun_core::strings::eql_case_insensitive_ascii_check_length(b"s", dim.unit) {
                     Ok(Time::Seconds(dim.num.value))
                 } else if bun_core::strings::eql_case_insensitive_ascii_check_length(
@@ -168,7 +168,7 @@ impl Time {
     }
 
     pub fn map(&self, map_fn: impl Fn(f32) -> f32) -> Time {
-        // PERF(port): was comptime fn-pointer monomorphization — profile in Phase B.
+        // PERF(port): was comptime fn-pointer monomorphization — profile if hot.
         match *self {
             Time::Seconds(s) => Time::Seconds(map_fn(s)),
             Time::Milliseconds(ms) => Time::Milliseconds(map_fn(ms)),

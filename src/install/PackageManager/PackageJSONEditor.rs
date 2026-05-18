@@ -130,7 +130,7 @@ pub fn edit_trusted_dependencies(
     if let Some(query) = package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
         if let bun_ast::ExprData::EArray(arr) = &query.expr.data {
             // SAFETY: `arr` is a `StoreRef` into the AST arena which outlives
-            // this function; lifetime erased per Phase-A `Str` convention.
+            // this function; lifetime erased per the parser's `Str` convention.
             trusted_dependencies = unsafe { bun_ptr::detach_lifetime(arr.items.slice()) };
         }
     }
@@ -720,8 +720,23 @@ pub fn edit(
                                 }
                                 break;
                             } else {
-                                if request.version.tag == dependency::Tag::Github
-                                    || request.version.tag == dependency::Tag::Git
+                                // For non-aliased positionals where `get_name()` returns the
+                                // version literal (path/URL) rather than the resolved package
+                                // name — github/git/tarball URLs and local folder/tarball/link
+                                // paths — fall back to matching by the stored value so a
+                                // re-run doesn't append a duplicate `"<name>": "<literal>"`
+                                // key. Skipped when the user wrote `alias@url`: that form is
+                                // an explicit request to key by `alias`, so consolidating into
+                                // an existing entry under a different name would silently drop
+                                // the alias. `e_string.is_none()` guards so a match in an
+                                // earlier dependency list isn't re-counted across iterations.
+                                if request.e_string.is_none()
+                                    && !request.is_aliased
+                                    && (request.version.tag == dependency::Tag::Github
+                                        || request.version.tag == dependency::Tag::Git
+                                        || request.version.tag == dependency::Tag::Tarball
+                                        || request.version.tag == dependency::Tag::Folder
+                                        || request.version.tag == dependency::Tag::Symlink)
                                 {
                                     for item in query
                                         .expr
@@ -1236,7 +1251,7 @@ pub fn edit(
                                     write!(&mut v, "^{}", version_fmt)
                                         .expect("infallible: in-memory write");
                                 }
-                                // PERF(port): was comptime bool dispatch — profile in Phase B
+                                // PERF(port): was comptime bool dispatch — profile if hot
                                 v
                             };
 

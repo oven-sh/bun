@@ -41,9 +41,7 @@ pub trait HashAlgorithm {
 
 // ──────────────────────────────────────────────────────────────────────────
 // Hasher impls — one unit struct per algorithm.
-// TODO(port): the underlying hash functions reference Zig's `std.hash.*`.
-// Phase B must wire these to Rust equivalents (or FFI to the existing
-// implementations) that produce **bit-identical** output.
+// Each must produce output **bit-identical** to Zig's `std.hash.*`.
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct Wyhash;

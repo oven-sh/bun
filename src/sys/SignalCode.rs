@@ -112,7 +112,7 @@ pub struct Fmt {
 impl fmt::Display for Fmt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let signal = self.signal;
-        // PERF(port): was comptime bool dispatch (`switch inline else`) — profile in Phase B
+        // PERF(port): was comptime bool dispatch (`switch inline else`) — profile if it shows up on a hot path
         if let Some(str_) = signal.name() {
             if let Some(desc) = signal.description() {
                 // TODO(port): Output.prettyFmt("{s} <d>({s})<r>", enable_ansi_colors) —

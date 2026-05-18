@@ -120,9 +120,8 @@ impl ErrorReportRequest {
 
         let mut reader = bun_io::FixedBufferStream::new(body);
 
-        // PERF(port): was stack-fallback (65536) + ArenaAllocator — profile in Phase B
+        // PERF(port): was stack-fallback (65536) + ArenaAllocator — profile if it shows up on a hot path.
         let arena = Arena::new();
-        // PERF(port): was stack-fallback (65536) + ArenaAllocator — profile in Phase B
         // The Zig used a separate per-source-map arena that was reset between
         // parses; the Rust `source_map_store::get_parsed_source_map` (the
         // canonical impl on `DevServer.source_maps`) takes `&self` and

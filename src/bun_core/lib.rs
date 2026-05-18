@@ -9,7 +9,6 @@
     clippy::all
 )]
 #![warn(unused_must_use, unreachable_pub)]
-// AUTOGEN: mod declarations only — real exports added in B-1.
 
 pub mod Global;
 pub mod atomic_cell;
@@ -113,7 +112,7 @@ pub const unsafe fn cast_fn_ptr<F: Copy, G: Copy>(f: F) -> G {
 /// fields. Same contract as `bun_ptr::BackRef`: the slice memory is owned
 /// elsewhere (parent struct, leaked `Box`, interned string) and remains valid
 /// for the holder's full lifetime. Stores a fat raw pointer (`*const [T]`,
-/// `usize` len) so it is a byte-for-byte drop-in for the Phase-A `*const [T]`
+/// `usize` len) so it is a byte-for-byte drop-in for the raw `*const [T]`
 /// fields it replaces.
 #[repr(transparent)]
 pub struct RawSlice<T>(*const [T]);
@@ -604,7 +603,6 @@ pub mod vec {
     }
 }
 
-// ── B-2 gate ── remaining heavy modules ────────────────────────────────────
 #[path = "Progress.rs"]
 pub mod Progress;
 pub mod fmt;
@@ -657,97 +655,12 @@ impl ErrnoNames {
 /// so `$crate::pretty_fmt!` resolves from the wrapper macros in `output.rs`.
 pub use bun_core_macros::{EnumTag, pretty_fmt};
 
-/// Stand-in for Zig's `@import("build_options")`. Real values are emitted by
-/// `build.rs` via `env!()` in Phase C (link). Placeholder values let env.rs
-/// const-evaluate cleanly.
+/// Stand-in for Zig's `@import("build_options")`. Values are written at
+/// configure time by `scripts/build/buildOptionsRs.ts` from the resolved
+/// `Config` and `include!()`'d here; `build.rs` exports `BUN_CODEGEN_DIR`
+/// and fingerprints the file so a sha/version change recompiles this crate.
 pub mod build_options {
-    /// `option_env!` with a fallback literal — same shape as Zig's
-    /// `b.option(...) orelse default` in build.zig.
-    macro_rules! build_opt {
-        ($name:literal, $default:expr) => {
-            match option_env!($name) {
-                Some(v) => v,
-                None => $default,
-            }
-        };
-    }
-    macro_rules! build_opt_bool {
-        ($name:literal, $default:expr) => {
-            match option_env!($name) {
-                Some(v) => matches!(v.as_bytes(), b"true" | b"1"),
-                None => $default,
-            }
-        };
-    }
-
-    /// `true` for the `release-assertions` profile (Zig: ReleaseSafe).
-    pub const RELEASE_SAFE: bool = build_opt_bool!("BUN_RELEASE_SAFE", false);
-    pub const REPORTED_NODEJS_VERSION: &str = build_opt!("BUN_REPORTED_NODEJS_VERSION", "24.0.0");
-    pub const BASELINE: bool = build_opt_bool!("BUN_BASELINE", false);
-    pub const SHA: &str = build_opt!("BUN_GIT_SHA", "0000000000000000000000000000000000000000");
-    pub const IS_CANARY: bool = build_opt_bool!("BUN_IS_CANARY", false);
-    pub const CANARY_REVISION: &str = build_opt!("BUN_CANARY_REVISION", "0");
-    /// Repo root. Zig's build.zig passes `b.pathFromRoot(".")` (already
-    /// normalized, native separators) — there is *no* fallback in the spec.
-    /// `scripts/build/rust.ts` exports `BUN_BASE_PATH` for every build.
-    ///
-    /// The POSIX fallback derives it from this crate's manifest dir
-    /// (`<repo>/src/bun_core`) so a bare `cargo check` still works for
-    /// `runtime_embed_file!` (which goes through `PathBuf`, so the OS resolves
-    /// `..`). On Windows that fallback is *wrong*: `CARGO_MANIFEST_DIR` is
-    /// backslash-separated and concatenating `/../..` yields a mixed-separator,
-    /// unnormalized path that crash_handler's byte-wise `starts_with` (which
-    /// appends `SEP_STR` and compares against debug-info file paths) can never
-    /// match — so require the env var there, matching the Zig contract.
-    pub const BASE_PATH: &[u8] = match option_env!("BUN_BASE_PATH") {
-        Some(v) => v.as_bytes(),
-        // The fallback is correct on POSIX. On Windows it is mixed-separator
-        // + unnormalized and crash_handler's byte-wise `starts_with` will
-        // never match it — but real Windows builds always go through
-        // `scripts/build/rust.ts` (which sets the env var). Kept so that bare
-        // `cargo check --target *-windows-*` from a non-Windows host compiles.
-        None => concat!(env!("CARGO_MANIFEST_DIR"), "/../..").as_bytes(),
-    };
-    pub const ENABLE_LOGS: bool = cfg!(debug_assertions);
-    pub const ENABLE_ASAN: bool = cfg!(bun_asan);
-    pub const ENABLE_FUZZILLI: bool = false;
-    /// Whether `libtcc.a` is built and linked. Mirrors `cfg.tinycc` in
-    /// `scripts/build/config.ts`: TinyCC is disabled on Windows/aarch64
-    /// (TinyCC has no aarch64-pe-coff backend), Android, and FreeBSD (the
-    /// vendored fork doesn't support those targets and the dep is skipped).
-    /// Has to be a *compile-time* `false` on those targets — `ffi_body.rs`
-    /// gates its `bun_tcc_sys::*` calls behind `if !ENABLE_TINYCC { return }`,
-    /// and rustc only DCEs the `tcc_*` extern refs when the const folds; a
-    /// runtime check would still leave undefined symbols at link.
-    pub const ENABLE_TINYCC: bool = !cfg!(any(
-        all(windows, target_arch = "aarch64"),
-        target_os = "android",
-        target_os = "freebsd",
-    ));
-    /// `<build>/codegen`. `scripts/build/rust.ts` exports `BUN_CODEGEN_DIR` to
-    /// every crate's rustc env. POSIX fallback for bare `cargo check`; on
-    /// Windows the `/../../` fallback is mixed-separator + unnormalized (see
-    /// `BASE_PATH` above), so require the env var there.
-    pub const CODEGEN_PATH: &[u8] = match option_env!("BUN_CODEGEN_DIR") {
-        Some(v) => v.as_bytes(),
-        // See BASE_PATH note re: Windows fallback being mixed-separator. Real
-        // Windows builds set the env var; this only fires for cross-target
-        // `cargo check`.
-        None => concat!(env!("CARGO_MANIFEST_DIR"), "/../../build/debug/codegen").as_bytes(),
-    };
-    /// `cfg.version` from package.json, split by `scripts/build/rust.ts`.
-    pub const VERSION: crate::Version = crate::Version {
-        major: crate::const_parse_u32(build_opt!("BUN_VERSION_MAJOR", "1").as_bytes()),
-        minor: crate::const_parse_u32(build_opt!("BUN_VERSION_MINOR", "3").as_bytes()),
-        patch: crate::const_parse_u32(build_opt!("BUN_VERSION_PATCH", "0").as_bytes()),
-    };
-    /// Zig: `build_options.fallback_html_version` — hex-string hash of the
-    /// fallback HTML bundle, injected by the build system. Placeholder until
-    /// Phase C wires the real value via `env!()` in `build.rs`.
-    pub const FALLBACK_HTML_VERSION: &str = match option_env!("BUN_FALLBACK_HTML_VERSION") {
-        Some(v) => v,
-        None => "0000000000000000",
-    };
+    include!(concat!(env!("BUN_CODEGEN_DIR"), "/build_options.rs"));
 }
 
 // ── re-exports (the tier-0 surface downstream crates need) ────────────────
@@ -771,8 +684,8 @@ pub use util::*;
 //
 // Port of Zig's parent-from-field intrinsic. Intrusive data structures (task
 // queues, timer heaps, linked lists) hand callbacks a `*mut Field` and expect
-// the callee to walk back to the owning `*mut Parent`. Phase-A open-coded this
-// at ~150 sites as `ptr.cast::<u8>().sub(offset_of!(P, f)).cast::<P>()`; the
+// the callee to walk back to the owning `*mut Parent`. Earlier ports open-coded
+// this at ~150 sites as `ptr.cast::<u8>().sub(offset_of!(P, f)).cast::<P>()`; the
 // helpers below are the single canonical spelling. Re-exported from `bun_ptr`.
 
 /// Recover `*mut P` from a pointer to one of its fields.
@@ -809,7 +722,7 @@ pub const unsafe fn container_of_const<P, F>(field: *const F, offset: usize) -> 
 /// This is the canonical spelling for the ubiquitous trampoline pattern where
 /// a C library (libarchive, c-ares, uWS, libuv, lol-html, BoringSSL, …) round-
 /// trips a Rust object through a `void *user_data` slot and hands it back to
-/// an `extern "C" fn` thunk. Phase-A open-coded this as
+/// an `extern "C" fn` thunk. Earlier ports open-coded this as
 /// `unsafe { &mut *ctx.cast::<T>() }` at every site; centralising it here
 /// makes the pattern grep-able, attaches a uniform safety contract, and
 /// debug-asserts the non-null precondition the C side guarantees.
@@ -957,7 +870,7 @@ macro_rules! impl_field_parent {
 /// Declares that `Self` embeds exactly one intrusive `F` field at byte
 /// [`OFFSET`](IntrusiveField::OFFSET). This is the single Rust analogue of
 /// Zig's `@fieldParentPtr` builtin: every per-module `const X_OFFSET: usize`
-/// trait the Phase-A port grew (`TASK_OFFSET`, `MIXIN_OFFSET`,
+/// trait the port grew (`TASK_OFFSET`, `MIXIN_OFFSET`,
 /// `CHANNEL_OFFSET`, `LazyBool<_, const OFFSET>`, `from_task`, …) is the same
 /// `(Parent, Field, OFFSET)` triple plus [`container_of`] arithmetic — this
 /// trait is exactly that triple, with both directions provided.
@@ -1107,12 +1020,6 @@ pub fn concat_boxed<T: Copy>(parts: &[&[T]]) -> Box<[T]> {
 #[inline]
 pub fn concat<'b>(buf: &'b mut [u8], parts: &[&[u8]]) -> &'b [u8] {
     concat_into(buf, parts)
-}
-
-/// Zig `bun.assertf(cond, fmt, args)` — debug-only formatted assert.
-#[macro_export]
-macro_rules! assertf {
-    ($cond:expr, $($arg:tt)*) => { ::core::debug_assert!($cond, $($arg)*) };
 }
 
 /// Zig `union(enum)` field projection — `data.file`, `chunk.content.javascript`.
@@ -1333,7 +1240,6 @@ pub mod time {
 pub mod schema {
     pub mod api {
         pub use crate::util::StringPointer;
-        // Remaining schema types re-exported from bun_api in Phase B-2.
     }
 }
 
@@ -2241,7 +2147,7 @@ pub(crate) mod strings_impl {
     const AF_INET6: core::ffi::c_int = 23; // ws2def.h
 
     /// Zig: `bun.strings.isIPAddress` — `ares_inet_pton(AF_INET || AF_INET6) > 0`.
-    pub fn is_ip_address(input: &[u8]) -> bool {
+    pub(crate) fn is_ip_address(input: &[u8]) -> bool {
         let mut buf = [0u8; 512];
         if input.len() >= buf.len() {
             return false;
@@ -2708,7 +2614,7 @@ pub mod strings {
     pub use crate::strings_impl::{index_of_any, index_of_any_t};
 }
 
-// bun_alloc stubs Global.rs expects (real consts deferred to B-2 ungate of bun_alloc::basic)
+// bun_alloc stubs Global.rs expects (real consts pending bun_alloc::basic)
 pub const USE_MIMALLOC: bool = true;
 pub mod debug_allocator_data {
     #[inline]
@@ -2766,18 +2672,6 @@ pub fn linux_kernel_version() -> Version {
         major: 0,
         minor: 0,
         patch: 0,
-    }
-}
-
-/// Port of `bun.assertWithLocation` (src/bun_core/bun.zig) — `bun.assert` plus
-/// the caller's source location for the failure message. In release builds the
-/// Zig version logs and continues; here it panics under `debug_assertions` and
-/// is a no-op otherwise (matching `bun.assert`'s release-safe behaviour).
-#[track_caller]
-#[inline]
-pub fn assert_with_location(cond: bool, loc: &'static core::panic::Location<'static>) {
-    if cfg!(debug_assertions) && !cond {
-        panic!("assertion failed at {}:{}", loc.file(), loc.line());
     }
 }
 
@@ -3268,7 +3162,7 @@ pub mod asan {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// PHASE-C: glibc-compat / link wraps. Zig: src/workaround_missing_symbols.zig.
+// glibc-compat / link wraps. Zig: src/workaround_missing_symbols.zig.
 // build.ninja links with `-Wl,--wrap=gettid` so libc/std references land here.
 // ────────────────────────────────────────────────────────────────────────────
 #[cfg(target_os = "linux")]
@@ -3291,7 +3185,7 @@ pub fn get_total_memory_size() -> usize {
     Bun__ramSize()
 }
 
-/// PHASE-C: stack capture for `Global::StoredTrace` / `bun_crash_handler`.
+/// Stack capture for `Global::StoredTrace` / `bun_crash_handler`.
 /// Zig used `std.debug.captureStackTrace`; route through libc `backtrace()`.
 ///
 /// Only platforms whose libc actually exports `backtrace()` go through it:

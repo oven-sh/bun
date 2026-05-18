@@ -35,8 +35,8 @@ use crate::e::String as EString;
 /// hierarchical scope-based identifier lookup in JavaScript. Lookup now needs
 /// to search sibling scopes in addition to parent scopes. This is accomplished
 /// by sharing the map of exported members between all matching sibling scopes.
-// PORT NOTE: 'arena lifetime dropped — `EnumString` payload uses *const EString
-// (LIFETIMES.tsv ARENA → raw ptr in Phase A; Phase B threads 'bump crate-wide).
+// PORT NOTE: 'arena lifetime dropped — `EnumString` payload is a `StoreRef<EString>`
+// rather than an arena-borrowed reference (see the TODO on that variant).
 pub struct TSNamespaceScope {
     /// This is specific to this namespace block. It's the argument of the
     /// immediately-invoked function expression that the namespace block is

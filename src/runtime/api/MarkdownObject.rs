@@ -58,7 +58,7 @@ pub fn render_to_ansi(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     }
 
-    // PERF(port): was arena bulk-free — profile in Phase B
+    // PERF(port): was arena bulk-free — profile if hot
     let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
         return Err(global_this
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
@@ -125,7 +125,7 @@ pub fn render_to_html(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     }
 
-    // PERF(port): was arena bulk-free — profile in Phase B
+    // PERF(port): was arena bulk-free — profile if hot
     let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
         return Err(global_this
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
@@ -186,7 +186,7 @@ fn parse_options(global_this: &JSGlobalObject, opts_value: JSValue) -> JsResult<
         // TODO(port): comptime reflection over md::Options bool fields — Zig used
         // `inline for (@typeInfo(md.Options).@"struct".fields)` to iterate every bool
         // field (excluding the six handled above), checking both camelCase and
-        // snake_case keys. Phase B should generate this list from md::Options
+        // snake_case keys. This list could be generated from md::Options
         // (proc-macro or hand-maintained const slice in bun_md).
         for (snake, camel, set) in md::Options::BOOL_FIELD_SETTERS {
             // skip the compound-only fields
@@ -233,7 +233,7 @@ pub fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     }
 
-    // PERF(port): was arena bulk-free — profile in Phase B
+    // PERF(port): was arena bulk-free — profile if hot
     let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
         return Err(global_this
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
@@ -330,7 +330,7 @@ fn render_ast(
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     }
 
-    // PERF(port): was arena bulk-free — profile in Phase B
+    // PERF(port): was arena bulk-free — profile if hot
     let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
         return Err(global_this
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));

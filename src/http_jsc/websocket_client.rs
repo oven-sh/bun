@@ -287,15 +287,13 @@ impl<const SSL: bool> WebSocket<SSL> {
             if reject_unauthorized {
                 // Check for SSL errors
                 if ssl_error.error_no != 0 {
-                    self.outgoing_websocket = None;
-                    ws_ref.did_abrupt_close(ErrorCode::FailedToConnect);
+                    self.fail(ErrorCode::FailedToConnect);
                     return;
                 }
 
                 // Check authorization status
                 if !authorized {
-                    self.outgoing_websocket = None;
-                    ws_ref.did_abrupt_close(ErrorCode::FailedToConnect);
+                    self.fail(ErrorCode::FailedToConnect);
                     return;
                 }
 
@@ -317,8 +315,8 @@ impl<const SSL: bool> WebSocket<SSL> {
                     if !ssl_ptr.is_null()
                         && !boringssl::check_server_identity(unsafe { &mut *ssl_ptr }, hostname)
                     {
-                        self.outgoing_websocket = None;
-                        ws_ref.did_abrupt_close(ErrorCode::FailedToConnect);
+                        self.fail(ErrorCode::FailedToConnect);
+                        return;
                     }
                 }
             }
@@ -393,7 +391,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // PORT NOTE: reshaped for borrowck — drop deflate borrow before re-borrowing self
         let items = decompressed.as_slice();
         // TODO(port): borrowck — `decompressed` borrows `deflate.rare_data`; may need to
-        // copy out or restructure. Leaving as-is for Phase B.
+        // copy out or restructure.
         self.dispatch_data(items, kind);
     }
 
@@ -1102,7 +1100,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             // For compressed messages, we need to compress the content first
             let mut temp_buffer: Option<Vec<u8>> = None;
             // PORT NOTE: Zig used deflate.rare_data.arena(); in Rust we use global mimalloc.
-            // PERF(port): was rare_data arena allocator — profile in Phase B
+            // PERF(port): was rare_data arena allocator
             let content_to_compress: &[u8] = match bytes {
                 Copy::Utf16(utf16) => 'brk: {
                     // Convert UTF16 to UTF8 for compression
@@ -1139,7 +1137,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             {
                 // Compress the content
                 let mut compressed: Vec<u8> = Vec::new();
-                // PERF(port): was rare_data allocator — profile in Phase B
+                // PERF(port): was rare_data allocator
 
                 if self
                     .deflate
@@ -1322,6 +1320,10 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     fn send_close_with_body(&mut self, code: u16, body: Option<&mut [u8; 125]>, body_len: usize) {
+        // RFC 6455 §5.5: control-frame payloads are capped at 125 bytes total,
+        // and a close-frame payload starts with the 2-byte status code, so the
+        // reason text is limited to 123 bytes.
+        let body_len = body_len.min(123);
         log!("Sending close with code {}", code);
         if !self.has_tcp() {
             self.dispatch_abrupt_close(ErrorCode::Ended);
@@ -1667,6 +1669,10 @@ impl<const SSL: bool> WebSocket<SSL> {
                     cursor.set_position((pos + result.written as usize) as u64);
                 }
                 let wrote_len = cursor.position() as usize;
+                // 125-byte close-frame payload budget minus the 2-byte status code.
+                if wrote_len > 123 {
+                    break 'inner;
+                }
                 // SAFETY: close_reason_buf has 128 bytes; reinterpret first 125 as fixed array
                 let buf_ptr = close_reason_buf.as_mut_ptr().cast::<[u8; 125]>();
                 this.send_close_with_body(code, Some(unsafe { &mut *buf_ptr }), wrote_len);
@@ -2165,7 +2171,6 @@ pub struct InitialDataHandler<const SSL: bool> {
 
 impl<const SSL: bool> InitialDataHandler<SSL> {
     // pub const Handle = jsc.AnyTask.New(@This(), handle);
-    // TODO(port): jsc::AnyTask::new wrapper — Phase B wires queue_microtask_callback signature.
 
     pub fn handle_without_deinit(&mut self) {
         let Some(this_socket_ptr) = self.adopted.take() else {

@@ -295,19 +295,19 @@ pub fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding) -> Bun
                 return BunString::empty();
             }
 
-            // TODO(port): Zig reinterpreted the owned u8 allocation as []u16 (with @alignCast)
-            // and handed it to createExternalGloballyAllocated(.utf16, ...). Reinterpreting a
-            // Vec<u8> as Vec<u16> is not generally sound in Rust (alignment + allocator layout).
-            // Phase B: route through bun_core::String API that accepts raw (ptr,len,cap) bytes.
-            // SAFETY: input.as_ptr() is at least 1-aligned; Zig asserted u16 alignment via @alignCast.
-            let as_u16 = unsafe {
-                let mut input = core::mem::ManuallyDrop::new(input);
-                Vec::from_raw_parts(
-                    input.as_mut_ptr().cast::<u16>(),
-                    usable_len / 2,
-                    input.capacity() / 2,
-                )
-            };
+            // Allocate a fresh u16-aligned Vec and copy the bytes. The Zig
+            // original reinterpreted the owned `[]u8` as `[]u16` (with
+            // `@alignCast`), but the equivalent in Rust — rebuilding a
+            // `Vec<u16>` from a `Vec<u8>`'s raw parts — violates `Vec`'s
+            // Layout contract: alloc happened with align 1, but the eventual
+            // dealloc as `Vec<u16>` uses align 2. mimalloc gives us aligned
+            // pointers in practice, so this didn't crash, but it's UB on
+            // paper and an allocator change could surface it. Mirrors
+            // `construct_from_u16`'s utf16le arm, which fixed the symmetric
+            // Zig pattern for the same reason.
+            let mut as_u16 = vec![0u16; usable_len / 2];
+            let dst: &mut [u8] = bytemuck::cast_slice_mut(&mut as_u16);
+            dst.copy_from_slice(&input[..usable_len]);
             create_external_globally_allocated_utf16(as_u16)
         }
 
@@ -647,7 +647,7 @@ pub fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
                 unsafe { core::ptr::copy(input_u8, to, fixed_len) };
                 // PORT NOTE: Zig wrote `to[0..written]` from `input_u8[0..fixed_len]` (mismatched
                 // lengths into bun.memmove). Preserving fixed_len bytes copied as that is what is
-                // returned; revisit in Phase B if behavior diverges.
+                // returned; revisit if behavior diverges.
                 Ok(fixed_len)
             }
         }

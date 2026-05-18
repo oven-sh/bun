@@ -352,7 +352,7 @@ impl<'a> Printer<'a> {
             // PORT NOTE: reshaped for borrowck — copied (a, b) out before re-borrowing &mut self
             let a = a.to_vec();
             let b = b.to_vec();
-            // PERF(port): two small heap copies above; Zig borrowed directly. Profile in Phase B.
+            // PERF(port): two small heap copies above; Zig borrowed directly. Profile if it shows up on a hot path.
             self.write_str(&a)?;
             self.write_str(&b)?;
             return Ok(());
@@ -795,8 +795,8 @@ impl<'a> Printer<'a> {
         let ctx = css::StyleContext { selectors, parent };
 
         // TODO(port): lifetime — `&ctx` is stack-local but field type is `&'a StyleContext<'a>`.
-        // Zig relied on restoring `parent` before return. Phase B: change field to raw
-        // `*const StyleContext` or restructure StyleContext as an explicit stack.
+        // Zig relied on restoring `parent` before return. Consider changing the field to raw
+        // `*const StyleContext` or restructuring StyleContext as an explicit stack.
         // SAFETY: ctx outlives the call to func; self.ctx is restored to `parent` before return.
         // Inner-lifetime variance cast via raw pointer (`StyleContext<'x>` and
         // `StyleContext<'a>` share layout; only the borrow-checker tag differs).

@@ -459,7 +459,9 @@ pub fn edit(
                                 }
                                 break;
                             } else {
-                                if (request.version.tag == .github or request.version.tag == .git) {
+                                if (request.e_string == null and !request.is_aliased and
+                                    (request.version.tag == .github or request.version.tag == .git or request.version.tag == .tarball or request.version.tag == .folder or request.version.tag == .symlink))
+                                {
                                     for (query.expr.data.e_object.properties.slice()) |item| {
                                         if (item.value) |v| {
                                             const url = request.version.literal.slice(request.version_buf);

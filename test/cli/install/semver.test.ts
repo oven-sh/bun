@@ -749,8 +749,6 @@ test("a version range with >=256 || comparators does not abort", async () => {
     stderr: "pipe",
   });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  // The 256th comparator overflowed a u8 counter -> panic+abort (exit 133) in
-  // debug builds. Fixed: a wider counter parses it fine, like released Bun.
   expect(stdout).toBe("true");
   expect(exitCode).toBe(0);
 });

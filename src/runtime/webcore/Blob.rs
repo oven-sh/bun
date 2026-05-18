@@ -5411,9 +5411,13 @@ pub fn jsdom_file_construct_(
         if let Some(store_) = blob.store.get() {
             match store_.data_mut() {
                 store::Data::Bytes(bytes) => {
-                    // Zig: `toUTF8Bytes(allocator)` → owned heap slice adopted by
-                    // PathString. `to_utf8().slice()` would dangle as soon as the
-                    // temporary `ZigStringSlice` drops at end-of-statement.
+                    // `get::<_, true>` on a single-Blob sequence returns
+                    // `dupe()` (a shared StoreRef), so this `Bytes` may already
+                    // carry an owned `stored_name` from the source blob.
+                    // `PathString` is `Copy` — assignment alone would leak it.
+                    // SAFETY: every writer of `stored_name` adopts via
+                    // `PathString::init_owned` or leaves it `EMPTY`.
+                    unsafe { bytes.stored_name.deinit_owned() };
                     bytes.stored_name =
                         bun_core::PathString::init_owned(name_value_str.to_owned_slice());
                 }

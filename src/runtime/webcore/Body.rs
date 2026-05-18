@@ -844,7 +844,13 @@ impl Value {
             Value::Null => Ok(JSValue::NULL),
             Value::InternalBlob(_) | Value::Blob(_) | Value::WTFStringImpl(_) => {
                 // Zig: `defer blob.detach()` — must run on every exit incl. `?` paths.
-                let mut blob = scopeguard::guard(self.use_(), |mut b| b.detach());
+                // `use_()` hands back a stack-owned `Blob`; `Blob::detach()` only
+                // releases the store, so a heap-owned `content_type` (e.g. the
+                // `multipart/form-data; boundary=…` from `from_dom_form_data`)
+                // would leak. `deinit()` = detach + free_content_type and is a
+                // no-op on the heap-free path (`is_heap_allocated()` is false —
+                // asserted in `use_()`). Same gap exists in the Zig spec.
+                let mut blob = scopeguard::guard(self.use_(), |mut b| b.deinit());
                 blob.resolve_size();
                 let blob_size = blob.size.get();
                 let value = ReadableStream::from_blob_copy_ref(global_this, &mut blob, blob_size)?;

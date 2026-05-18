@@ -148,7 +148,12 @@ pub struct BundleV2<'a> {
     /// track requested export names for deduplication and cycle detection.
     /// Persists across calls to `scheduleBarrelDeferredImports` so cross-file
     /// deduplication is free.
-    pub requested_exports: ArrayHashMap<u32, RequestedExports>,
+    ///
+    /// Indexed by `source_index` (dense `0..module_count`); a `Vec<Option<_>>`
+    /// instead of the Zig `AutoArrayHashMap<u32, ...>` because the key space is
+    /// dense and this is probed once per import in `on_parse_task_complete`
+    /// (the main-thread parse-phase throughput limiter).
+    pub requested_exports: Vec<Option<RequestedExports>>,
 }
 
 bun_core::declare_scope!(Bundle, visible);
@@ -2833,7 +2838,7 @@ pub mod bv2_impl {
                 drain_defer_task: DeferredBatchTask::default(),
                 asynchronous: false,
                 has_any_top_level_await_modules: false,
-                requested_exports: ArrayHashMap::new(),
+                requested_exports: Vec::new(),
             });
             if let Some(bo) = bake_options {
                 this.client_transpiler = Some(bo.client_transpiler.into());

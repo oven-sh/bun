@@ -33,6 +33,26 @@ impl Default for RequestedExports {
     }
 }
 
+impl RequestedExports {
+    /// `get_or_put`-shaped entry on the dense `Vec<Option<Self>>` storage.
+    /// Returns `(found_existing, &mut value)`; inserts `Default` when absent.
+    #[inline]
+    pub fn entry(map: &mut Vec<Option<Self>>, idx: u32) -> (bool, &mut Self) {
+        let i = idx as usize;
+        if i >= map.len() {
+            map.resize_with(i + 1, || None);
+        }
+        let slot = &mut map[i];
+        let found = slot.is_some();
+        (found, slot.get_or_insert_with(Self::default))
+    }
+
+    #[inline]
+    pub fn lookup(map: &[Option<Self>], idx: u32) -> Option<&Self> {
+        map.get(idx as usize).and_then(Option::as_ref)
+    }
+}
+
 // PORT NOTE: `original_alias` is stored as the raw arena `*const [u8]` (the
 // `NamedImport.alias` representation) instead of a tied `&'a [u8]` so the BFS
 // loop can hold a `BarrelExportResolution` across a `&mut graph.ast` reborrow
@@ -124,7 +144,7 @@ fn apply_barrel_optimization_impl(
     // files parsed before this barrel. scheduleBarrelDeferredImports records
     // requests eagerly as each file is processed, so we don't need to scan
     // the graph.
-    if let Some(existing) = this.requested_exports.get(&source_index) {
+    if let Some(existing) = RequestedExports::lookup(&this.requested_exports, source_index) {
         match existing {
             RequestedExports::All => return Ok(()), // import * already seen — load everything
             RequestedExports::Partial(_) => {}
@@ -140,7 +160,7 @@ fn apply_barrel_optimization_impl(
         needed_records.put(*record_idx, ())?;
     }
 
-    if let Some(existing) = this.requested_exports.get(&source_index) {
+    if let Some(existing) = RequestedExports::lookup(&this.requested_exports, source_index) {
         match existing {
             RequestedExports::All => unreachable!(), // handled above
             RequestedExports::Partial(partial) => {
@@ -251,10 +271,7 @@ fn apply_barrel_optimization_impl(
         );
 
         // Merge with existing entry (keep already-requested names) or create new
-        let gop = this.requested_exports.get_or_put(source_index)?;
-        if !gop.found_existing {
-            *gop.value_ptr = RequestedExports::Partial(StringArrayHashMap::default());
-        }
+        let _ = RequestedExports::entry(&mut this.requested_exports, source_index);
 
         // Register with DevServer so isFileCached returns null for this barrel,
         // ensuring it gets re-parsed on every incremental build. This is needed
@@ -466,22 +483,15 @@ pub fn schedule_barrel_deferred_imports(
             continue;
         };
 
-        let gop = this.requested_exports.get_or_put(target)?;
+        let (_, value) = RequestedExports::entry(&mut this.requested_exports, target);
         if ni.alias_is_star {
-            *gop.value_ptr = RequestedExports::All;
+            *value = RequestedExports::All;
         } else if let Some(alias_ptr) = ni.alias {
             // SAFETY: arena-backed `*const [u8]` valid for the AST lifetime.
             let alias: &[u8] = alias_ptr.slice();
-            if gop.found_existing {
-                match gop.value_ptr {
-                    RequestedExports::All => {}
-                    RequestedExports::Partial(p) => {
-                        p.put(alias, ())?;
-                    }
-                }
-            } else {
-                *gop.value_ptr = RequestedExports::Partial(StringArrayHashMap::default());
-                if let RequestedExports::Partial(p) = gop.value_ptr {
+            match value {
+                RequestedExports::All => {}
+                RequestedExports::Partial(p) => {
                     p.put(alias, ())?;
                 }
             }
@@ -489,8 +499,6 @@ pub fn schedule_barrel_deferred_imports(
             if let Some(dev) = dev_handle {
                 persist_barrel_export(&dev, resolved_path_text, alias);
             }
-        } else if !gop.found_existing {
-            *gop.value_ptr = RequestedExports::Partial(StringArrayHashMap::default());
         }
     }
 
@@ -523,13 +531,10 @@ pub fn schedule_barrel_deferred_imports(
         {
             continue;
         }
-        if ir.kind == ImportKind::Require {
-            let gop = this.requested_exports.get_or_put(target)?;
-            *gop.value_ptr = RequestedExports::All;
-        } else if ir.kind == ImportKind::Dynamic {
-            // import() returns the full module namespace — must preserve all exports.
-            let gop = this.requested_exports.get_or_put(target)?;
-            *gop.value_ptr = RequestedExports::All;
+        if matches!(ir.kind, ImportKind::Require | ImportKind::Dynamic) {
+            // require() and import() expose the full module namespace — preserve all exports.
+            let (_, value) = RequestedExports::entry(&mut this.requested_exports, target);
+            *value = RequestedExports::All;
         }
     }
 
@@ -621,7 +626,7 @@ pub fn schedule_barrel_deferred_imports(
     // but B hadn't been parsed when A's BFS ran, so B's export * records
     // were empty and the propagation stopped.
     let this_source_index = result_source_index;
-    if let Some(existing) = this.requested_exports.get(&this_source_index) {
+    if let Some(existing) = RequestedExports::lookup(&this.requested_exports, this_source_index) {
         match existing {
             RequestedExports::All => queue.push(BarrelWorkItem {
                 barrel_source_index: this_source_index,
@@ -670,27 +675,24 @@ pub fn schedule_barrel_deferred_imports(
         // For BFS-propagated items (not from initial queue), use
         // requested_exports for dedup and cycle detection.
         if qi >= initial_queue_len {
-            let gop = this.requested_exports.get_or_put(barrel_idx)?;
+            let (found, value) = RequestedExports::entry(&mut this.requested_exports, barrel_idx);
             if item_is_star {
-                *gop.value_ptr = RequestedExports::All;
-            } else if gop.found_existing {
-                match gop.value_ptr {
+                *value = RequestedExports::All;
+            } else {
+                match value {
                     RequestedExports::All => {
-                        qi += 1;
-                        continue;
-                    }
-                    RequestedExports::Partial(p) => {
-                        let alias_gop = p.get_or_put(item_alias)?;
-                        if alias_gop.found_existing {
+                        if found {
                             qi += 1;
                             continue;
                         }
                     }
-                }
-            } else {
-                *gop.value_ptr = RequestedExports::Partial(StringArrayHashMap::default());
-                if let RequestedExports::Partial(p) = gop.value_ptr {
-                    p.put(item_alias, ())?;
+                    RequestedExports::Partial(p) => {
+                        let alias_gop = p.get_or_put(item_alias)?;
+                        if found && alias_gop.found_existing {
+                            qi += 1;
+                            continue;
+                        }
+                    }
                 }
             }
         }

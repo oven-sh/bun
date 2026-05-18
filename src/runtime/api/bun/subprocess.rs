@@ -1265,6 +1265,26 @@ impl Subprocess<'_> {
         );
         this.finalize_streams();
 
+        // `Writable::init()` took a +1 (`subprocess.ref_()`, guarded by
+        // `DEREF_ON_STDIN_DESTROYED`) for the stdin pipe back-pointer. The
+        // balancing `deref()` lives in `on_stdin_destroyed()`, reached either
+        // via the FileSink's signal (which `Writable::finalize` — called from
+        // `close_io` above when the `.stdin` getter never ran — clears *before*
+        // releasing the pipe) or via the JSFileSink's `m_onDestroy` callback
+        // (only installed when the getter ran). When the getter never ran there
+        // is no JSFileSink and the signal is now gone, so nothing will call
+        // `on_stdin_destroyed()`; release the stranded ref here so the box can
+        // reach zero. When the getter *did* run we must leave the ref in place:
+        // the JSFileSink may be swept after us in the same
+        // `lastChanceToFinalize` pass and would otherwise call
+        // `on_stdin_destroyed()` against a freed Box.
+        if this.flags.get().contains(Flags::DEREF_ON_STDIN_DESTROYED)
+            && !this.has_called_getter(ObservableGetter::Stdin)
+        {
+            this.update_flags(|f| f.remove(Flags::DEREF_ON_STDIN_DESTROYED));
+            this.deref();
+        }
+
         let exit_handler_pending = this.process().exit_handler.is_some();
         this.process_mut().detach();
         if exit_handler_pending {

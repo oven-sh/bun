@@ -1260,6 +1260,11 @@ impl WebWorker {
                 // `vm`. Re-derive `vm` through the raw ptr (sole owner).
                 rare.close_all_socket_groups(unsafe { &*vm_ptr });
             }
+            // Free queued ManagedTask boxes whose ctx may hold a JS handle
+            // while the VM's HandleSet is still alive — same ordering rationale
+            // as `global_exit()`.
+            vm.regular_event_loop.drain_pending_managed_tasks();
+            vm.macro_event_loop.drain_pending_managed_tasks();
             exit_code = i32::from(vm.exit_handler.exit_code);
             global_object = Some(vm.global);
         }

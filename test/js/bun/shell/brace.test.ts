@@ -91,6 +91,11 @@ describe("brace expansion emits one argv word per variant (including empty)", ()
     ["{a,,b}", "[a][][b]"],
     ["{a,b,}", "[a][b][]"],
     ["x{,,}", "[x][x][x]"],
+    ["{,}y", "[y][y]"],
+    // A quoted-empty prefix is part of the *same* compound word, not a prior
+    // word in the output — `""{,a}` is 2 words, not 3.
+    ['""{,a}', "[][a]"],
+    ['""{,,}', "[][][]"],
   ];
   for (const [pattern, expected] of cases) {
     test(pattern, async () => {

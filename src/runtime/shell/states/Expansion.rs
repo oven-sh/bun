@@ -293,12 +293,17 @@ impl Expansion {
         // version NUL-terminated then `out.pushResult`; the NodeId port
         // records word boundaries via `bounds` instead. A boundary is needed
         // before every variant except the very first word in `out`, including
-        // empty (leading) variants — the old `!buf.is_empty()` proxy collapsed
-        // a run of empty variants (`{,,,}` produced 1 word instead of 4)
-        // because an empty variant never advances `buf`.
+        // empty (leading) variants — checking `!buf.is_empty()` per-iteration
+        // collapsed a run of empty variants (`{,,,}` produced 1 word instead
+        // of 4) because an empty variant never advances `buf`.
+        //
+        // `had_prior_word` is `!buf.is_empty()` alone: at this point `bounds`
+        // non-empty implies `buf` non-empty (every prior bounds-push gated on
+        // it and `buf` only grows), and `has_quoted_empty` tracks an empty
+        // prefix of the *current* word, not a separate prior word — folding
+        // it in would over-count `""{,a}`.
         me.current_out.clear();
-        let had_prior_word =
-            !me.out.buf.is_empty() || !me.out.bounds.is_empty() || me.out.has_quoted_empty;
+        let had_prior_word = !me.out.buf.is_empty();
         for (i, s) in expanded.into_iter().enumerate() {
             if had_prior_word || i > 0 {
                 me.out.bounds.push(me.out.buf.len() as u32);

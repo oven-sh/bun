@@ -3999,13 +3999,13 @@ pub mod bv2_impl {
         /// used by `bun test --changed` to walk import records and compute which
         /// test entry points transitively depend on a given set of source files.
         ///
-        /// The returned BundleV2, its ThreadLocalArena, and its worker pool are
-        /// intentionally left alive for the remainder of the process. Tearing
-        /// the pool down via `deinitWithoutFreeingArena()` blocks on worker
-        /// shutdown and contends with the runtime VM's own parse threads; the
-        /// sole caller exec()s (watch mode) or exits shortly after, so the leak
-        /// is bounded. Dupe anything you need out of the graph before returning
-        /// to the caller.
+        /// The caller owns the returned BundleV2. Dupe anything needed out of
+        /// the graph and then call `deinit_without_freeing_arena()` — in the
+        /// Rust port the AST columns (`Vec<Symbol>` / `Vec<Part>` / …) live on
+        /// the global heap, not in `graph.heap`, so leaving the bundle alive is
+        /// no longer the bounded arena leak the Zig original described. The
+        /// worker pool is owned (created with `thread_pool: None`), so tearing
+        /// it down does not touch the runtime VM's parse threads.
         #[cold]
         pub fn scan_module_graph_from_cli(
             transpiler: &'a mut Transpiler<'a>,

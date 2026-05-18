@@ -182,12 +182,18 @@ impl<'a> Transpiler<'a> {
     }
 
     /// VM-teardown: the owning `VirtualMachine` is raw-allocated and never `Drop`'d,
-    /// so free `BundleOptions` here. `resolver`/`log`/`fs`/`env` are aliased/singletons; left alone.
+    /// so free `BundleOptions` here. `log`/`fs`/`env` are aliased/singletons; left alone.
+    /// `resolver` is a value field whose caches alias process-global BSSMaps, so the
+    /// resolver itself stays put — only its owned `opts` projection (cloned in
+    /// `resolver_bundle_options_subset`) is released.
     pub fn deinit(&mut self) {
-        // SAFETY: `options` and `result` are init'd and never read past `destroy()`.
+        // SAFETY: `options`, `result`, and `resolver.opts` are init'd and never
+        // read past `destroy()` / the `--changed` scan teardown.
         unsafe {
             core::ptr::drop_in_place(&mut self.options);
             core::ptr::drop_in_place(&mut self.result);
+            core::ptr::drop_in_place(&mut self.resolver.opts);
+            core::ptr::drop_in_place(&mut self.resolve_results);
         }
     }
 

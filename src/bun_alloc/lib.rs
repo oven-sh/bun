@@ -1963,6 +1963,19 @@ fn bss_mmap_noreserve(len: usize) -> *mut u8 {
     if p == libc::MAP_FAILED {
         crate::out_of_memory();
     }
+    // LSan only scans data/BSS, stacks, and malloc-tracked heap for live
+    // pointers. This anonymous mapping is none of those, so any `Box`/`Vec`
+    // whose owning pointer lives inside a `bss_*!` singleton (e.g. the
+    // resolver's `EntriesOption` cache) is reported as a leak — which then
+    // forces every subprocess to spend ~5s in llvm-symbolizer matching the
+    // suppression. Register the mapping as a root region so LSan walks it.
+    #[cfg(bun_asan)]
+    {
+        unsafe extern "C" {
+            safe fn __lsan_register_root_region(ptr: *const core::ffi::c_void, size: usize);
+        }
+        __lsan_register_root_region(p.cast(), len);
+    }
     p.cast::<u8>()
 }
 

@@ -1556,9 +1556,7 @@ console.log(<div {...obj} key="after" />);`),
     });
 
     for (const entity of ["&#7777707;", "&#x110000;", "&#2147483647;"]) {
-      expect(() => bun.transformSync(`export var x = <div>${entity}</div>`)).toThrow(
-        /JSX entity escape is too big/,
-      );
+      expect(() => bun.transformSync(`export var x = <div>${entity}</div>`)).toThrow(/JSX entity escape is too big/);
     }
 
     // Boundary: 0x10FFFF is the maximum valid code point and must still work.

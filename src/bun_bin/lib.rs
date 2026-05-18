@@ -117,48 +117,28 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         // Rust std false positive — detached threads' Arc<thread::Inner>.
         "leak:std::thread::thread::Thread>::new\n",
         // ── ported Zig-named entries ────────────────────────────────────────
-        "leak:bun_runtime::api::server::ServerAllConnectionsClosedTask\n",
-        "leak:bun_cli::bunfig::Bunfig>::parse\n",
-        "leak:bun_resolver::package_json::PackageJSON>::parse\n",
-        "leak:bun_resolver::fs::RealFS>::read_directory\n",
         "leak:bun_js_printer::print_ast\n",
-        "leak:bun_jsc::ipc::on_data2\n",
         "leak:bun_runtime::node::fs_events::init_core_foundation\n",
         "leak:bun_runtime::node::fs_events::init_core_services\n",
         "leak:bun_runtime::node::fs_events::FSEventsLoop\n",
         "leak:bun_bake::framework_router::JSFrameworkRouter\n",
         "leak:bun_js_parser_jsc::Macro\n",
-        "leak:bun_runtime::webcore::Blob>::find_or_create_file_from_path\n",
-        "leak:bun_runtime::node::node_fs_binding\n",
-        "leak:bun_jsc::module_loader::fetch_builtin_module\n",
-        "leak:bun_boringssl::boringssl::check_x509_server_identity\n",
         "leak:bun_runtime::cli::pack_command\n",
-        "leak:bun_runtime::dns_jsc::dns::GetAddrInfoRequest\n",
         "leak:bun_tcc_sys::tcc::State>::init\n",
         "leak:bun_runtime::api::bun::dynamic_library\n",
-        "leak:bun_runtime::webcore::body::Value>::from_js\n",
-        "leak:bun_runtime::webcore::Blob>::get_name_string\n",
         "leak:bun_patch::patch::PatchFile>::apply\n",
         "leak:bun_jsc::runtime_transpiler_store::TranspilerJob\n",
         "leak:bun_runtime::webcore::blob::Store>::init_s3\n",
         "leak:bun_runtime::webcore::s3::list_objects\n",
         "leak:bun_runtime::webcore::S3Client\n",
-        "leak:bun_runtime::node::node_fs::NodeFS>::realpath_inner\n",
-        "leak:bun_runtime::api::filesystem_router::FileSystemRouter\n",
-        "leak:bun_runtime::dns_jsc::dns::Resolver\n",
-        "leak:bun_runtime::node::node_fs_watcher::FSWatcher\n",
         "leak:bun_jsc::web_worker::WebWorker>::create\n",
-        "leak:bun_runtime::node::native_zlib_impl::Context>::init\n",
         "leak:bun_sql_jsc::postgres\n",
         "leak:bun_sql::postgres::protocol::FieldMessage\n",
-        "leak:bun_runtime::webcore::fetch::FetchTasklet>::to_response\n",
-        "leak:bun_lolhtml_sys::lol_html::HTMLString\n",
         // Zig `jsc.Debugger.startJSDebuggerThread` — the Rust module is
         // lowercase (`#[path = "Debugger.rs"] pub mod debugger;`), so the
         // demangled frame is `<bun_jsc::debugger::Debugger>::…`; the previous
         // `bun_jsc::Debugger` substring missed it (capital-D after `::`).
         "leak:bun_jsc::debugger::Debugger>::start_js_debugger_thread\n",
-        "leak:bun_runtime::cli::test::scanner::Scanner\n",
         "\0",
     )
     .as_ptr()

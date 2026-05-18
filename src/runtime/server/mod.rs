@@ -1338,6 +1338,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             }
                         }
                     }
+                    // The handler threw before `res.end()`; we just ended (or
+                    // will never end) the raw response above. Mark ENDED so
+                    // `on_request_complete()` → `mark_request_as_done()` runs
+                    // and releases the `IS_REQUEST_PENDING` ref (one of the
+                    // initial 3). Without this the box leaks: the later
+                    // `on_abort` socket-close path early-returns once
+                    // `REQUEST_HAS_COMPLETED` is set and never balances it.
+                    nhr.flags.set(nhr.flags.get() | NhrFlags::ENDED);
                     nhr.on_request_complete();
                 }
             }

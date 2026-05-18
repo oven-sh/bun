@@ -6279,6 +6279,9 @@ impl Any {
                     // `StoreRef` exposes interior-mutable `data_mut()` (no DerefMut).
                     let internal = s.data_mut().as_bytes_mut().to_internal_blob();
                     // PORT NOTE: Zig deref's the store; StoreRef::drop on replace handles it.
+                    // `content_type` is a raw pointer not covered by any field's
+                    // drop glue — free it explicitly.
+                    blob.free_content_type();
                     *self = Any::InternalBlob(internal);
                     return;
                 }
@@ -6560,6 +6563,11 @@ impl Any {
     pub fn detach(&mut self) {
         match self {
             Any::Blob(b) => {
+                // `content_type` is a raw `*const [u8]` not covered by `Blob`'s drop
+                // glue; release it here so a heap-owned content_type (e.g. the
+                // `multipart/form-data; boundary=…` string from `from_dom_form_data`)
+                // doesn't leak when the AnyBlob is torn down.
+                b.free_content_type();
                 b.detach();
                 *self = Any::Blob(Blob::default());
             }

@@ -187,6 +187,15 @@ impl<'a> Transpiler<'a> {
     /// resolver itself stays put — only its owned `opts` projection (cloned in
     /// `resolver_bundle_options_subset`) is released.
     pub fn deinit(&mut self) {
+        // The lazily-created `Box<bun_js_parser_jsc::Macro::MacroContext>` was
+        // intentionally process-lifetime under Zig (`default_allocator`), but
+        // worker VMs run `destroy()` on thread exit and would otherwise strand
+        // one box per worker. The box only owns a `MacroMap` and an optional
+        // `bun_alloc::Arena` — no JSC handles — so freeing it from either
+        // worker section-5 teardown or main-thread `global_exit` is safe.
+        if let Some(ctx) = self.macro_context.take() {
+            ctx.deinit();
+        }
         // SAFETY: `options`, `result`, and `resolver.opts` are init'd and never
         // read past `destroy()` / the `--changed` scan teardown.
         unsafe {

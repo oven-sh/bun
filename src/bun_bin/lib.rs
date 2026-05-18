@@ -120,7 +120,6 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         "leak:bun_runtime::node::fs_events::init_core_foundation\n",
         "leak:bun_runtime::node::fs_events::init_core_services\n",
         "leak:bun_runtime::node::fs_events::FSEventsLoop\n",
-        "leak:bun_js_parser_jsc::Macro\n",
         // Zig `jsc.Debugger.startJSDebuggerThread` — the Rust module is
         // lowercase (`#[path = "Debugger.rs"] pub mod debugger;`), so the
         // demangled frame is `<bun_jsc::debugger::Debugger>::…`; the previous

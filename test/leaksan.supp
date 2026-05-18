@@ -46,7 +46,6 @@ leak:Bun__Path__join
 leak:Bun__Path__resolve
 leak:Zig::GlobalObject::moduleLoaderImportModule
 leak:bake.FrameworkRouter.JSFrameworkRouter.getFileIdForRouter
-leak:js_parser_jsc.Macro.MacroContext.call
 leak:runtime.webcore.Blob.findOrCreateFileFromPath__anon
 leak:BunString::toWTFString(BunString::ZeroCopyTag)
 leak:runtime.node.node_fs_binding.Bindings(.mkdtemp).runSync

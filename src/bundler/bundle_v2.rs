@@ -5036,7 +5036,15 @@ pub mod bv2_impl {
             // alias first so it never dangles past the Box drop; in the
             // `BakeOptions`-borrowed path `owned_client_transpiler` is `None` and
             // the DevServer-owned pointer is left untouched.
-            if self.owned_client_transpiler.is_some() {
+            if let Some(ct) = self.owned_client_transpiler.as_deref_mut() {
+                // `wire_after_move` boxed a higher-tier
+                // `bun_js_parser_jsc::Macro::MacroContext` behind
+                // `macro_context.data`; the parser-level struct has no `Drop`
+                // (and can't — `RuntimeTranspilerStore` bytewise-clones it),
+                // so the `Box<Transpiler>` drop below would strand it.
+                if let Some(ctx) = ct.macro_context.take() {
+                    ctx.deinit();
+                }
                 self.client_transpiler = None;
                 self.owned_client_transpiler = None;
             }

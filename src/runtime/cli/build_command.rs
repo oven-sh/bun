@@ -571,15 +571,15 @@ impl BuildCommand {
                 // resolver subset; bundler-side `entry_naming` is sufficient.
             }
 
-            // Zig: `bun.jsc.AnyEventLoop.init(ctx.allocator)` — a Mini event loop
-            // owned by the arena. `generate_from_cli` → `wait_for_parse` derefs
-            // this via `r#loop()` to drain parse tasks; passing `None` panics.
-            let event_loop = arena.alloc(bun_event_loop::AnyEventLoop::init());
+            // Stack-owned Mini event loop so its tasks/concurrent_tasks queues
+            // drop at scope exit; the arena bulk-free skips Drop. Outlives the
+            // BACKREF passed to `generate_from_cli`.
+            let mut event_loop = bun_event_loop::AnyEventLoop::init();
 
             let build_result = match BundleV2::generate_from_cli(
                 this_transpiler,
                 arena,
-                Some(core::ptr::NonNull::from(event_loop)),
+                Some(core::ptr::NonNull::from(&mut event_loop)),
                 ctx.debug.hot_reload == HotReload::Watch,
                 &mut reachable_file_count,
                 &mut minify_duration,

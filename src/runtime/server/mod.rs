@@ -1588,12 +1588,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             matches!(self.js_value, jsc::JsRef::Finalized),
         );
 
-        let vm = self.vm_mut();
-
-        // SAFETY: `vm_mut()` returns the process-static `*mut VirtualMachine`
-        // (non-null for the server's lifetime); single-threaded JS context.
-        let shutting_down = unsafe { (*vm).is_shutting_down() };
-
         if self.pending_requests == 0
             && !self.has_listener()
             && !self.has_active_web_sockets()
@@ -1607,7 +1601,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // allocation entirely so a `Server::finalize()` that fires during
             // `lastChanceToFinalize()` doesn't strand a `Box` (and its
             // `JSPromiseStrong`) that no event-loop tick will ever drain.
-            && !shutting_down
+            && !self.vm().is_shutting_down()
         {
             httplog!("schedule other promise");
             // use a flag here instead of `this.all_closed_promise.get().isHandled(vm)` to prevent the race condition of this block being called
@@ -1616,10 +1610,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 .insert(ServerFlags::HAS_HANDLED_ALL_CLOSED_PROMISE);
 
             let global = self.global_this();
-            // SAFETY: `vm` is the process-static `*mut VirtualMachine` (non-null
-            // for the server's lifetime); single-threaded JS context, no aliasing
-            // `&mut`.
-            let vm_ref = unsafe { &mut *vm };
+            let vm_ref = jsc::VirtualMachine::get_mut();
             ServerAllConnectionsClosedTask::schedule(
                 ServerAllConnectionsClosedTask {
                     global_object: self.global_this,

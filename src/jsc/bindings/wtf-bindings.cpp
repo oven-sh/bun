@@ -13,6 +13,7 @@
 #endif
 
 #if !OS(WINDOWS)
+#include <cassert>
 #include <stdatomic.h>
 
 #include <signal.h>

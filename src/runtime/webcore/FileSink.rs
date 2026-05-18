@@ -849,7 +849,12 @@ impl FileSink {
 
     pub fn start(&self, stream_start: streams::Start) -> sys::Result<()> {
         match stream_start {
-            streams::Start::FileSink(ref file) => {
+            streams::Start::FileSink(ref file)
+                if !matches!(
+                    file.input_path,
+                    crate::webcore::PathOrFileDescriptor::Fd(Fd::INVALID)
+                ) =>
+            {
                 // PORT NOTE: `streams::FileSinkOptions` mirrors `file_sink::Options`
                 // but is a distinct draft type; bridge by-field until streams.rs
                 // aliases to this module's `Options`.

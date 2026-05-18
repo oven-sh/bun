@@ -168,7 +168,7 @@ describe.concurrent("bun --check", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr.toLowerCase()).toContain("either --check or --eval");
     expect(stdout).toBe("");
-    expect(exitCode).not.toBe(0);
+    expect(exitCode).toBe(9);
   });
 
   test("works via `bun run --check <file>`", async () => {

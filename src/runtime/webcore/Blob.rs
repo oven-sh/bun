@@ -6376,8 +6376,12 @@ impl Any {
                 Ok(str)
             }
             Any::WTFStringImpl(impl_) => {
-                let mut str =
-                    BunString::adopt_wtf_impl(core::mem::replace(impl_, core::ptr::null_mut()));
+                // Adopts a +1 WTF ref; `OwnedString` releases it on every exit
+                // path (Zig: `defer str.deref()`).
+                let mut str = OwnedString::new(BunString::adopt_wtf_impl(core::mem::replace(
+                    impl_,
+                    core::ptr::null_mut(),
+                )));
                 *self = Any::Blob(Blob::default());
                 if str.length() == 0 {
                     return Ok(JSValue::NULL);
@@ -6438,8 +6442,12 @@ impl Any {
                 Ok(owned)
             }
             Any::WTFStringImpl(impl_) => {
-                let str =
-                    BunString::adopt_wtf_impl(core::mem::replace(impl_, core::ptr::null_mut()));
+                // Adopts a +1 WTF ref; `OwnedString` releases it on scope exit
+                // (Zig: `defer str.deref()`).
+                let str = OwnedString::new(BunString::adopt_wtf_impl(core::mem::replace(
+                    impl_,
+                    core::ptr::null_mut(),
+                )));
                 *self = Any::Blob(Blob::default());
                 str.to_js(global)
             }
@@ -6480,8 +6488,13 @@ impl Any {
                 ))
             }
             Any::WTFStringImpl(impl_) => {
-                let str =
-                    BunString::adopt_wtf_impl(core::mem::replace(impl_, core::ptr::null_mut()));
+                // Adopts a +1 WTF ref; `OwnedString` releases it on scope exit,
+                // after `out_bytes` (which borrows it) is consumed below
+                // (Zig: `defer str.deref()`).
+                let str = OwnedString::new(BunString::adopt_wtf_impl(core::mem::replace(
+                    impl_,
+                    core::ptr::null_mut(),
+                )));
                 *self = Any::Blob(Blob::default());
 
                 let out_bytes = str.to_utf8_without_ref();

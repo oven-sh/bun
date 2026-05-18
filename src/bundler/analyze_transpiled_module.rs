@@ -312,7 +312,7 @@ impl ModuleInfoDeserialized {
         // Disarm the errdefer: ownership moves into the result.
         let duped_raw = scopeguard::ScopeGuard::into_inner(guard);
 
-        // All six views borrow `duped_raw` (the boxed allocation moved into
+        // All seven views borrow `duped_raw` (the boxed allocation moved into
         // `owner` below); they stay valid and at a stable address for the
         // lifetime of every `RawSlice` copied from this struct. `RawSlice::new`
         // erases the borrow lifetime — the structural invariant is upheld by

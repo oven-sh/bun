@@ -312,5 +312,17 @@ describe("import defer", () => {
       expect(exitCode).not.toBe(0);
       expect(stderr.toLowerCase()).toContain("error");
     });
+
+    test("'defer' with an escape sequence is not the phase keyword", async () => {
+      // `import def\u0065r *` must not be treated as `import defer *`; since
+      // `import <DefaultBinding> *` is not valid grammar either, it is a
+      // syntax error.
+      const { exitCode, stderr } = await run({
+        "main.js": `import def\\u0065r * as ns from "./dep.js"; console.log(ns);`,
+        "dep.js": `export const x = 1;`,
+      });
+      expect(exitCode).not.toBe(0);
+      expect(stderr.toLowerCase()).toContain("error");
+    });
   });
 });

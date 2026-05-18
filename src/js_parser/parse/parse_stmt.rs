@@ -1457,6 +1457,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 let mut default_name = p.lexer.identifier;
+                let default_name_raw = p.lexer.raw();
                 stmt = S::Import {
                     namespace_ref: Ref::NONE,
                     import_record_index: u32::MAX,
@@ -1475,8 +1476,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // `defer` is only a phase keyword when followed by `*`; in
                 // every other position (`import defer from 'x'`,
                 // `import defer, {x} from 'y'`) it is an ordinary default
-                // binding named `defer`.
-                if default_name == b"defer" && p.lexer.token == T::TAsterisk {
+                // binding named `defer`. Compare the raw token so
+                // `def\u0065r` is not treated as the phase keyword.
+                if default_name_raw == b"defer" && p.lexer.token == T::TAsterisk {
                     p.lexer.next()?;
                     p.lexer.expect_contextual_keyword(b"as")?;
                     stmt = S::Import {

@@ -7,9 +7,10 @@ use crate::bun_schema::api;
 use bun_alloc::AllocError;
 use bun_collections::{HashMap, StringSet};
 use bun_core::{Error, Global, Output, err, fmt as bun_fmt};
-use bun_core::{MutableString, strings};
+use bun_core::{MutableString, strings, dupe_z};
 use bun_dotenv::Loader as DotEnv;
 use bun_http::{self as http, AsyncHTTP, HTTPClient, HeaderBuilder};
+use bun_http::ssl_config::SSLConfig as HttpSSLConfig;
 use bun_picohttp as picohttp;
 use bun_semver::{self as Semver, ExternalString, SlicedString, String as SemverString};
 use bun_sys::{self, CloseOnDrop, Fd, File};
@@ -158,6 +159,8 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     // `&[]` when unallocated, matching the previous `None => b""` arm).
     let header_buf: &[u8] = headers.content.written_slice();
 
+    let tls_props = registry::registry_tls_config(registry);
+
     let mut req = AsyncHTTP::init_sync(
         http::Method::GET,
         url,
@@ -168,6 +171,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         None,
         None,
         http::FetchRedirect::Follow,
+        tls_props,
     );
 
     let res = match req.send_sync() {
@@ -315,6 +319,10 @@ pub mod registry {
 
         // username and password combo, `user:pass`
         pub user: Box<[u8]>,
+
+        // client TLS certificate paths for registry authentication
+        pub certfile: Box<[u8]>,
+        pub keyfile: Box<[u8]>,
     }
 
     impl Scope {
@@ -518,11 +526,35 @@ pub mod registry {
                 token: registry.token,
                 auth,
                 user,
+                certfile: registry.certfile,
+                keyfile: registry.keyfile,
             })
         }
     }
 
+<<<<<<< HEAD
     // TODO(port): Zig used `IdentityContext(u64)` hasher; std HashMap is fine for now.
+=======
+    pub fn registry_tls_config(registry: &Scope) -> Option<http::ssl_config::SharedPtr> {
+        let certfile = &registry.certfile;
+        let keyfile = &registry.keyfile;
+
+        if certfile.is_empty() && keyfile.is_empty() {
+            return None;
+        }
+
+        let mut config = http::ssl_config::SSLConfig::default();
+        if !certfile.is_empty() {
+            config.cert_file_name = dupe_z(certfile);
+        }
+        if !keyfile.is_empty() {
+            config.key_file_name = dupe_z(keyfile);
+        }
+        Some(http::ssl_config::SharedPtr::new(config))
+    }
+
+    // TODO(b2): Zig used `IdentityContext(u64)` hasher; std HashMap is fine for now.
+>>>>>>> db7a5c1cfa (install: support certfile and keyfile from .npmrc for client TLS auth)
     pub type Map = HashMap<u64, Scope>;
 
     pub enum PackageVersionResponse {
@@ -3447,3 +3479,48 @@ impl PackageManifest {
 }
 
 // ported from: src/install/npm.zig
+
+#[cfg(test)]
+mod tests {
+    use super::registry::{registry_tls_config, Scope};
+
+    #[test]
+    fn test_registry_tls_config_empty() {
+        let scope = Scope::default();
+        assert!(registry_tls_config(&scope).is_none());
+    }
+
+    #[test]
+    fn test_registry_tls_config_certfile_only() {
+        let mut scope = Scope::default();
+        scope.certfile = Box::from(&b"/path/to/cert.pem"[..]);
+        let result = registry_tls_config(&scope);
+        assert!(result.is_some());
+        let config = result.unwrap();
+        assert!(!config.cert_file_name.is_null());
+        assert!(config.key_file_name.is_null());
+    }
+
+    #[test]
+    fn test_registry_tls_config_keyfile_only() {
+        let mut scope = Scope::default();
+        scope.keyfile = Box::from(&b"/path/to/key.pem"[..]);
+        let result = registry_tls_config(&scope);
+        assert!(result.is_some());
+        let config = result.unwrap();
+        assert!(config.cert_file_name.is_null());
+        assert!(!config.key_file_name.is_null());
+    }
+
+    #[test]
+    fn test_registry_tls_config_both() {
+        let mut scope = Scope::default();
+        scope.certfile = Box::from(&b"/path/to/cert.pem"[..]);
+        scope.keyfile = Box::from(&b"/path/to/key.pem"[..]);
+        let result = registry_tls_config(&scope);
+        assert!(result.is_some());
+        let config = result.unwrap();
+        assert!(!config.cert_file_name.is_null());
+        assert!(!config.key_file_name.is_null());
+    }
+}

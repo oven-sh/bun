@@ -12,6 +12,7 @@ use bun_dotenv as dotenv;
 use bun_http as http;
 use bun_http::HeaderBuilder;
 use bun_install::lockfile::{LoadResult, LoadStep};
+use bun_install::npm::registry::registry_tls_config;
 use bun_install::{self as install, Dependency, Lockfile, Npm, PackageManager, Subcommand};
 use bun_libarchive::lib::{Archive, ArchiveIterator, IteratorResult as ArchiveIterResult};
 use bun_parsers::json as json_mod;
@@ -848,6 +849,7 @@ impl PublishCommand {
             None,
             None,
             http::FetchRedirect::Follow,
+            None,
         );
 
         let Ok(res) = req.send_sync() else {
@@ -974,6 +976,7 @@ impl PublishCommand {
             None,
             None,
             http::FetchRedirect::Follow,
+            None,
         );
 
         let res = match req.send_sync() {
@@ -1071,6 +1074,7 @@ impl PublishCommand {
                     None,
                     None,
                     http::FetchRedirect::Follow,
+                    registry_tls_config(registry),
                 );
 
                 let otp_res = match otp_req.send_sync() {
@@ -1306,6 +1310,7 @@ impl PublishCommand {
                         None,
                         None,
                         http::FetchRedirect::Follow,
+                        registry_tls_config(registry),
                     );
 
                     let res = match req.send_sync() {

@@ -1590,6 +1590,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         let vm = self.vm_mut();
 
+        // SAFETY: `vm_mut()` returns the process-static `*mut VirtualMachine`
+        // (non-null for the server's lifetime); single-threaded JS context.
+        let shutting_down = unsafe { (*vm).is_shutting_down() };
+
         if self.pending_requests == 0
             && !self.has_listener()
             && !self.has_active_web_sockets()
@@ -1597,6 +1601,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 .flags
                 .contains(ServerFlags::HAS_HANDLED_ALL_CLOSED_PROMISE)
             && self.all_closed_promise.has_value()
+            // `ServerAllConnectionsClosedTask::run_from_js_thread` early-returns
+            // (without resolving the promise) when the VM is shutting down —
+            // see the `if !vm.is_shutting_down()` gate there. Skip the
+            // allocation entirely so a `Server::finalize()` that fires during
+            // `lastChanceToFinalize()` doesn't strand a `Box` (and its
+            // `JSPromiseStrong`) that no event-loop tick will ever drain.
+            && !shutting_down
         {
             httplog!("schedule other promise");
             // use a flag here instead of `this.all_closed_promise.get().isHandled(vm)` to prevent the race condition of this block being called
@@ -3692,12 +3703,38 @@ impl bun_event_loop::Taskable for ServerAllConnectionsClosedTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ServerAllConnectionsClosedTask;
 }
 
+impl Drop for ServerAllConnectionsClosedTask {
+    fn drop(&mut self) {
+        // The owned `Box` may be reclaimed by `EventLoop::deinit()` *after*
+        // `~VM` has already torn down the JSC `HandleSet`. `JSPromiseStrong`'s
+        // own `Drop` would dereference the freed slot
+        // (`Bun__StrongRef__delete`), so leak the handle slot instead — `~VM`
+        // already freed the whole `HandleSet`, so nothing dangles. On the
+        // happy path (`run_from_js_thread` consumed `self.promise`), the slot
+        // is empty and this is a no-op; otherwise, this only fires at process
+        // exit where the slot's storage is already gone.
+        if jsc::VirtualMachine::get().is_shutting_down() {
+            std::mem::forget(std::mem::take(&mut self.promise));
+        }
+    }
+}
+
 impl ServerAllConnectionsClosedTask {
     /// Spec server.zig `schedule` — `bun.TrivialNew` heap-allocates `this`,
     /// then `vm.eventLoop().enqueueTask(jsc.Task.init(ptr))`.
+    ///
+    /// Use `ManagedTask::new_owned` (not `Task::init`) so a still-pending task
+    /// at process exit is freed by `EventLoop::deinit()`. Without this the
+    /// `Box` (and its `JSPromiseStrong`) leaks 24 bytes per `server.stop()`
+    /// that races `process.exit()`. The custom `Drop` impl above keeps the
+    /// late free from UAFing the freed `HandleSet`.
     pub fn schedule(this: Self, vm: &mut jsc::VirtualMachine) {
+        fn call_erased(this: *mut ServerAllConnectionsClosedTask) -> bun_event_loop::JsResult<()> {
+            ServerAllConnectionsClosedTask::run_from_js_thread(this, jsc::VirtualMachine::get_mut())
+                .map_err(Into::into)
+        }
         let ptr = bun_core::heap::into_raw(Box::new(this));
-        vm.enqueue_task(bun_event_loop::Task::init(ptr));
+        vm.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new_owned(ptr, call_erased));
     }
 
     /// Spec server.zig `runFromJSThread` — resolve the `server.stop()` promise
@@ -3709,21 +3746,20 @@ impl ServerAllConnectionsClosedTask {
         httplog!("ServerAllConnectionsClosedTask runFromJSThread");
 
         // SAFETY: `this` was `heap::alloc`'d in `schedule()`; reclaim
-        // ownership and move out of the Box (Zig: `bun.destroy(this)` after
-        // copying the fields it still needs onto the stack).
-        let this = *unsafe { bun_core::heap::take(this) };
+        // ownership (Zig: `bun.destroy(this)` after copying the fields it still
+        // needs onto the stack). Keep the `Box` because `Self` now has a `Drop`
+        // impl, which forbids per-field moves.
+        let mut this = unsafe { bun_core::heap::take(this) };
         // S008: `JSGlobalObject` is an `opaque_ffi!` ZST handle — safe
         // `*const → &` via `opaque_deref` (set from the live per-VM global in
         // `schedule()`; the task is only dispatched on that VM's JS thread).
         let global_object: &jsc::JSGlobalObject = bun_opaque::opaque_deref(this.global_object);
         let _dispatch = this.tracker.dispatch(global_object);
 
-        // Zig: `var promise = this.promise; defer promise.deinit();` —
-        // `JSPromiseStrong`'s Drop releases the strong handle on scope exit.
-        let mut promise = this.promise;
-
         if !vm.is_shutting_down() {
-            promise.resolve(global_object, JSValue::UNDEFINED)?;
+            // Zig: `var promise = this.promise; defer promise.deinit();` —
+            // `JSPromiseStrong`'s Drop runs when `this` falls out of scope.
+            this.promise.resolve(global_object, JSValue::UNDEFINED)?;
         }
         Ok(())
     }

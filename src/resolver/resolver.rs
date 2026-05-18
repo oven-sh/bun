@@ -341,24 +341,6 @@ fn intern_package_json(pkg: PackageJSON) -> core::ptr::NonNull<PackageJSON> {
     core::ptr::NonNull::from(&mut **guard.last_mut().unwrap())
 }
 
-/// Intern tsconfig.json source bytes into the process-lifetime DirInfo arena.
-/// `use_shared_buffer = false` at the read site guarantees `Owned`/`Empty`.
-fn intern_tsconfig_contents(contents: crate::cache::Contents) -> &'static [u8] {
-    use crate::cache::Contents;
-    let owned: Box<[u8]> = match contents {
-        Contents::Empty => return b"",
-        Contents::Owned(v) => v.into_boxed_slice(),
-        // Unreachable for the `parse_tsconfig` caller (use_shared_buffer=false);
-        // fall back to a copy so we never hand out a dangling slice.
-        other => Box::from(other.as_slice()),
-    };
-    // `Interned::leak` is the centralized process-lifetime byte-slice store
-    // (PORTING.md §Forbidden bars open-coded `Box::leak` + `from_raw_parts`;
-    // `bun_ptr::Interned` is the sanctioned wrapper that consumes the `Box`
-    // and hands back a proven `&'static [u8]`).
-    bun_ptr::Interned::leak(owned).as_bytes()
-}
-
 // Port of `const debuglog = Output.scoped(.Resolver, .hidden)` (resolver.zig:4).
 // `bun_core::declare_scope!` emits the per-scope `static ScopedLogger`; the
 // `debuglog!` macro forwards to the real `bun_core::scoped_log!` so debug builds
@@ -3907,14 +3889,17 @@ impl<'a> Resolver<'a> {
 
         // `use_shared_buffer = false` above, so `entry_contents` is
         // `Contents::Owned`/`Empty`. Zig reads with `bun.default_allocator` and
-        // never frees (tsconfig is interned into the permanent DirInfo cache).
-        // PORTING.md §Forbidden bars `mem::forget`/`from_raw_parts` to mint
-        // `&'static`; route through the process-lifetime arena instead.
-        // TODO(port): once `bun_ast::Source.contents` becomes `Cow<'static,[u8]>`
-        // / `Box<[u8]>`, the arena indirection here can be dropped.
-        let contents_static: &'static [u8] = intern_tsconfig_contents(entry_contents);
+        // never frees because the Zig `TSConfigJSON` borrows slices into the
+        // source; the Rust `TSConfigJSON` owns `Box<[u8]>` copies of every
+        // field, so the source bytes are dead once `parse` returns and can be
+        // dropped with the local `Source`.
+        let contents = match entry_contents {
+            crate::cache::Contents::Owned(v) => v,
+            crate::cache::Contents::Empty => Vec::new(),
+            other => other.as_slice().to_vec(),
+        };
 
-        let source = bun_ast::Source::init_path_string(key_path, contents_static);
+        let source = bun_ast::Source::init_path_string_owned(key_path, contents);
         let file_dir = source.path.source_dir();
 
         // SAFETY: BACKREF — `self.log` (see `log()` PORT NOTE); disjoint from `self.caches`,

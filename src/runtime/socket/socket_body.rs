@@ -918,6 +918,24 @@ impl<const SSL: bool> NewSocket<SSL> {
         );
 
         if vm.is_shutting_down() {
+            // The `cleanup` guard's `mark_inactive()` is a no-op for a socket
+            // that never opened (`IS_ACTIVE` unset), and at process exit the
+            // JS wrapper is typically still rooted by module scope so
+            // `deinit_and_destroy()`'s `OWNS_HANDLERS` cleanup never runs.
+            // That strands the per-connection `Handlers` box allocated in
+            // `connect_inner()`. Free it here so a connect that's aborted by
+            // `close_all_socket_groups()` at shutdown doesn't leak.
+            let flags = this.flags.get();
+            if flags.contains(Flags::OWNS_HANDLERS) && !flags.contains(Flags::IS_ACTIVE) {
+                if let Some(h) = this.handlers.take() {
+                    // SAFETY: `OWNS_HANDLERS` ⇒ `h` is this socket's own
+                    // `heap::alloc` Handlers box. `!IS_ACTIVE` ⇒ neither the
+                    // `cleanup` guard nor `Handlers::mark_inactive()` will
+                    // touch it after this, and `take()` nulls the cell so
+                    // `deinit_and_destroy()` can't double-free.
+                    drop(unsafe { bun_core::heap::take(h.as_ptr()) });
+                }
+            }
             drop(cleanup);
             return Ok(());
         }

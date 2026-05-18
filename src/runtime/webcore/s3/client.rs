@@ -556,7 +556,7 @@ pub fn writable_stream(
     // explicitly set it to a dead pointer
     // we use this memory address to disable signals being sent
     sink.signal.clear();
-    bun_core::assert_with_location(sink.signal.is_dead(), core::panic::Location::caller());
+    assert!(sink.signal.is_dead());
     Ok(sink.to_js(global_this))
 }
 

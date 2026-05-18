@@ -881,11 +881,7 @@ impl BunTest {
         let vm = global_this.bun_vm().as_mut();
         // Check liveness before allocating so the early return doesn't strand a Box.
         let Some(strong) = weak.upgrade() else {
-            // PORT NOTE: `bun.Environment.ci_assert` → `cfg!(debug_assertions)` (closest analogue;
-            // see src/ptr/ref_count.rs / src/collections/baby_list.rs for the same mapping).
-            if cfg!(debug_assertions) {
-                debug_assert!(false); // shouldn't be calling runNextTick after moving on to the next file
-            }
+            debug_assert!(false); // shouldn't be calling runNextTick after moving on to the next file
             return; // but just in case
         };
         let done_callback_test = bun_core::heap::into_raw(Box::new(RunTestsTask {
@@ -893,11 +889,6 @@ impl BunTest {
             global_this: GlobalRef::from(global_this),
             phase,
         }));
-        // errdefer bun.destroy(done_callback_test) → ManagedTask::run reconstitutes the Box
-        // PORT NOTE: `jsc::ManagedTask` re-exports the *module*; struct is `ManagedTask::ManagedTask`.
-        // `bun_event_loop::JsResult` carries the low-tier `ErasedJsError` tag (lower-tier
-        // crate can't name `jsc::JsError`); shim the callback signature preserving the
-        // discriminant so `report_error_or_terminate` branches correctly.
         fn call_erased(this: *mut RunTestsTask) -> bun_event_loop::JsResult<()> {
             RunTestsTask::call(this).map_err(Into::into)
         }

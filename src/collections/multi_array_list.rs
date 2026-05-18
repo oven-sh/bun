@@ -1285,7 +1285,7 @@ impl<T, A: Allocator> Drop for MultiArrayList<T, A> {
         // element destructors here would double-free that side.
         //
         // For lists that *do* uniquely own heap-backed columns (e.g.
-        // `LineOffsetTable.columns_for_non_ascii: Vec<i32>`), call
+        // `LineOffsetTable.columns_for_non_ascii: Box<[i32]>`), call
         // [`MultiArrayList::drop_elements`] before letting this run, or the
         // column payloads leak.
         self.free_allocated_bytes();

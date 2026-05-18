@@ -11,7 +11,7 @@ use super::response::HeadersRef;
 use crate::api::AnyRequestContext;
 use crate::webcore::BlobExt as _;
 use crate::webcore::blob::ZigStringBlobExt as _;
-use crate::webcore::body::{self, Body, BodyMixin, HiveRef as BodyHiveRef, Value as BodyValue};
+use crate::webcore::body::{self, Body, BodyHiveHandle, BodyMixin, Value as BodyValue};
 use crate::webcore::jsc::{
     self as jsc, CallFrame, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsRef, JsResult,
 };
@@ -32,6 +32,7 @@ use bun_jsc::StringJsc as _;
 use bun_jsc::generated::JSRequest as js_gen;
 use bun_ptr::weak_ptr::WeakPtrData;
 use bun_uws as uws;
+use core::mem::ManuallyDrop;
 
 // TODO(port): WeakRef = bun.ptr.WeakPtr(Request, "weak_ptr_data") — intrusive weak-ptr;
 // keep raw *mut Request + embedded WeakPtrData. See PORTING.md §Pointers.
@@ -93,13 +94,12 @@ pub struct Request {
     // `AbortSignalRef` wraps `NonNull<AbortSignal>` and routes Clone/Drop to
     // the C++ ref/unref.
     pub signal: JsCell<Option<AbortSignalRef>>,
-    /// Intrusive ref into the per-VM `Body::Value::HiveAllocator` pool. The
-    /// `Request` and (when served by `Bun.serve`) the `RequestContext` share
-    /// the same slot — `RequestContext.request_body` aliases
-    /// `&mut hive.value` — so streamed bytes buffered by the server surface
-    /// on `req.body`/`req.json()` without a copy. `finalize()` releases this
-    /// ref via `HiveRef::unref()`.
-    body: NonNull<BodyHiveRef>,
+    /// Owning `+1` handle into the per-VM `Body::Value` hive pool. The
+    /// `Request` and (when served by `Bun.serve`) the `RequestContext` each
+    /// hold their own `+1` on the same slot. `ManuallyDrop` because
+    /// `finalize()` decouples from `Box` and must release this handle exactly
+    /// once before `Box::from_raw().drop()` (which would otherwise re-run it).
+    body: ManuallyDrop<BodyHiveHandle>,
     js_ref: JsCell<JsRef>,
     pub method: Method,
     pub flags: Flags,
@@ -211,40 +211,22 @@ impl Request {
         self.body_value_mut()
     }
 
-    /// Exclusive borrow of the pooled `HiveRef<BodyValue>` slot this request
-    /// holds a `+1` ref on. **Single centralised `unsafe` deref** for the
-    /// set-once `body: NonNull<BodyHiveRef>` field — [`body_value`],
-    /// [`body_value_mut`], `finalize()` and the construct-cleanup path all
-    /// route through here so the `NonNull::as_ptr()` deref is audited in one
-    /// place.
-    ///
-    /// R-2: takes `&self` and projects `&mut` through the raw `NonNull`
-    /// (the hive slot is a separate heap allocation; not covered by `&self`'s
-    /// `noalias`). Single-JS-thread invariant — keep the borrow short.
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub(crate) fn body_hive(&self) -> &mut BodyHiveRef {
-        // SAFETY: `body` is a +1 ref into the VM-owned hive allocator; the
-        // slot is live until `finalize()` (or the JS wrapper's GC finalizer)
-        // calls `unref()`. `Request` is `!Sync` so no concurrent `&mut` exists.
-        // The slot is a separate hive allocation (not `*self`), so the returned
-        // `&mut` does not alias `&Request`. R-2: the aliasing
-        // `RequestContext.request_body` pointer is only dereferenced while no
-        // other `&mut BodyValue` is live (single-threaded event-loop sequencing).
-        unsafe { &mut *self.body.as_ptr() }
-    }
-
     /// Zig: `this.#body.value` (immutable view).
     #[inline]
     pub(crate) fn body_value(&self) -> &BodyValue {
-        &self.body_hive().value
+        &self.body
     }
 
-    /// Zig: `&this.#body.value`. See [`body_hive`] for the R-2 invariant.
+    /// Zig: `&this.#body.value`.
+    ///
+    /// R-2: `&self` → `&mut` through the slot's raw pointer. The slot is shared
+    /// with `RequestContext.request_body` but never `&mut`-borrowed concurrently
+    /// (single-threaded event-loop sequencing). Keep the borrow short.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub(crate) fn body_value_mut(&self) -> &mut BodyValue {
-        &mut self.body_hive().value
+        // SAFETY: see R-2 invariant above.
+        unsafe { &mut (*self.body.as_ptr()).value }
     }
 
     /// R-2: short-hand for `unsafe { self.headers.get_mut() }`. The
@@ -457,14 +439,14 @@ impl Request {
     pub fn init2(
         url: BunString,
         headers: Option<HeadersRef>,
-        body: NonNull<BodyHiveRef>,
+        body: BodyHiveHandle,
         method: Method,
     ) -> Request {
         Request {
             url: OwnedStringCell::new(url),
             headers: JsCell::new(headers),
             signal: JsCell::new(None),
-            body,
+            body: ManuallyDrop::new(body),
             js_ref: JsCell::new(JsRef::empty()),
             method,
             flags: Flags::default(),
@@ -837,12 +819,10 @@ impl Request {
         // hand ownership back to the raw pointer FIRST so a panic in the work
         // below leaks instead of Box-drop UAF-ing those weak holders.
         let this = bun_core::heap::release(self);
-        // Release the +1 hive ref handed out by `body::hive_alloc` /
-        // `HiveRef::ref_()`; slot returns to the pool when the count hits
-        // zero (drops the payload in place). `body: NonNull<_>` has no Drop,
-        // so this is the only release point. Deref is centralised in
-        // `body_hive()`.
-        this.body_hive().unref();
+        // Release the request's `+1` on the body slot. `ManuallyDrop` so the
+        // hot-path `Box::from_raw().drop()` below cannot re-run this.
+        // SAFETY: `this` is live and this is the sole release point for `body`.
+        unsafe { ManuallyDrop::drop(&mut this.body) };
         if this.weak_ptr_data.on_finalize() {
             // Hot path: no outstanding weak refs. Reclaim and drop the whole
             // allocation in one shot — `Box::from_raw`'s drop runs
@@ -1041,12 +1021,15 @@ impl Request {
     ) -> JsResult<Request> {
         let mut success = false;
         // SAFETY: bun_vm() yields the live per-thread VM singleton.
-        let body = body::hive_alloc(global_this.bun_vm().as_mut(), BodyValue::Null);
+        let body = body::hive_alloc(BodyValue::Null);
+        // Snapshot the seed slot pointer for the repoint check below; `body`
+        // (the +1) is moved into `req.body` next.
+        let body_seed_ptr = body.as_ptr();
         let mut req = Request {
             url: OwnedStringCell::new(BunString::empty()),
             headers: JsCell::new(None),
             signal: JsCell::new(None),
-            body,
+            body: ManuallyDrop::new(body),
             js_ref: JsCell::new(JsRef::init_weak(this_value)),
             method: Method::GET,
             flags: Flags::default(),
@@ -1059,24 +1042,28 @@ impl Request {
         //               if (req.#body != body) { _ = body.unref(); } }`
         // PORT NOTE: reshaped for borrowck — scopeguard cannot capture `&mut req` while the
         // fn body also uses it. Cleanup is invoked at each early-return site via `bail!`.
-        let cleanup = |req: &mut Request, body: NonNull<BodyHiveRef>, success: bool| {
+        let cleanup = |req: &mut Request,
+                       body_seed_ptr: *mut crate::webcore::body::HiveRef,
+                       success: bool| {
+            // Snapshot before the `!success` drop — reading a `ManuallyDrop`
+            // after `ManuallyDrop::drop()` is documented use-after-drop.
+            let req_body_ptr = req.body.as_ptr();
             if !success {
                 req.finalize_without_deinit();
-                // `req.body` is the +1 ref this fn allocated above; deref is
-                // centralised in `body_hive()`.
-                req.body_hive().unref();
+                // SAFETY: `req.body` is live; this is the sole release on this path.
+                unsafe { ManuallyDrop::drop(&mut req.body) };
             }
-            if req.body != body {
-                // SAFETY: `body` was allocated with ref_count=1 at fn entry; if
-                // `req.body` was repointed (not currently done by any path here),
-                // release the original.
-                unsafe { (*body.as_ptr()).unref() };
+            if req_body_ptr != body_seed_ptr {
+                // `clone_into` `ptr::write`-overwrote `req.body`, orphaning the
+                // seed slot's +1. Recover and drop it.
+                // SAFETY: `body_seed_ptr` is a live +1 leaked by the ptr::write.
+                drop(unsafe { BodyHiveHandle::from_raw(body_seed_ptr) });
             }
         };
 
         macro_rules! bail {
             ($e:expr) => {{
-                cleanup(&mut req, body, success);
+                cleanup(&mut req, body_seed_ptr, success);
                 return $e;
             }};
         }
@@ -1154,7 +1141,7 @@ impl Request {
                             Err(e) => bail!(Err(e)),
                         }
                         success = true;
-                        cleanup(&mut req, body, success);
+                        cleanup(&mut req, body_seed_ptr, success);
                         return Ok(req);
                     }
 
@@ -1512,7 +1499,7 @@ impl Request {
         req.check_body_stream_ref(global_this);
         success = true;
 
-        cleanup(&mut req, body, success);
+        cleanup(&mut req, body_seed_ptr, success);
         Ok(req)
     }
 
@@ -1552,26 +1539,17 @@ impl Request {
     ) -> JsResult<()> {
         // allocator param dropped (global mimalloc)
         let _ = self.ensure_url();
-        let vm = global_this.bun_vm().as_mut();
         let body_ = self.clone_body_value_via_cached_stream(global_this)?;
         // errdefer body_.deinit() → deleted; BodyValue: Drop frees on `?` error path
-        // SAFETY: vm is the live per-thread singleton.
-        let body = body::hive_alloc(unsafe { &mut *vm }, body_);
+        let body = body::hive_alloc(body_);
         // Last fallible call. Zig hoists `url` above this with an
         // `errdefer if (!preserve_url) url.deref()`; we instead sink the url
         // computation below it so no guard is needed at all — `BunString` is
         // `Copy` with no `Drop`, so an early return here leaves `req.url`
         // untouched and still owned by the caller's `finalize_without_deinit`.
-        let headers = match self.clone_headers(global_this) {
-            Ok(h) => h,
-            Err(e) => {
-                // Zig: `errdefer body.unref()` — `NonNull` is `Copy`, so no
-                // RAII covers this; release the +1 we just allocated.
-                // SAFETY: `body` is a fresh +1 hive slot from `hive_alloc`.
-                unsafe { (*body.as_ptr()).unref() };
-                return Err(e);
-            }
-        };
+        // `body` (a `BodyHiveHandle`) drops on the `?` error path below,
+        // releasing its +1 — Zig's `errdefer body.unref()`.
+        let headers = self.clone_headers(global_this)?;
         // errdefer if (headers) |_h| _h.deref() → Arc drop on error path is automatic
         let url = if preserve_url {
             // Bitwise copy — the `ptr::write` below overwrites the old slot;
@@ -1586,8 +1564,8 @@ impl Request {
         // on the old `*req`. Match that with `ptr::write` so future Drop impls
         // on `JsRef` / `strong::Optional` don't fire on the caller's sentinel.
         // The old `req.body` hive ref is NOT unref'd here (Zig doesn't either):
-        // `clone()` seeds it with `NonNull::dangling()`, and `construct_into`
-        // releases its seed via the `req.body != body` arm of its `cleanup`.
+        // `clone()` seeds it with a dangling sentinel, and `construct_into`
+        // releases its seed via the ptr-equality arm of its `cleanup`.
         // `url` was bitwise-copied above (preserve_url) or is the empty
         // sentinel; remaining incoming fields are None/weak/Copy by contract.
         // SAFETY: `req` is a valid &mut, fully initialized by the caller;
@@ -1599,7 +1577,7 @@ impl Request {
                     url: OwnedStringCell::new(url),
                     headers: JsCell::new(headers),
                     signal: JsCell::new(None),
-                    body,
+                    body: ManuallyDrop::new(body),
                     js_ref: JsCell::new(JsRef::empty()),
                     method: self.method,
                     flags: self.flags,
@@ -1620,18 +1598,20 @@ impl Request {
 
     pub fn clone(&self, global_this: &JSGlobalObject) -> JsResult<Box<Request>> {
         // allocator param dropped (global mimalloc)
-        // Zig does `Request.new(undefined)` then clone_into bit-overwrites the whole
-        // struct. clone_into uses `ptr::write` (no drop glue) but does `ptr::read`
-        // `req.body` first to release the seed allocation, so seed with a valid
-        // sentinel rather than `MaybeUninit`.
+        // Zig does `Request.new(undefined)` then clone_into bit-overwrites the
+        // whole struct. clone_into `ptr::write`s the new fields over the seed
+        // without reading or dropping it.
         let mut req = Box::new(Request {
             url: OwnedStringCell::new(BunString::empty()),
             headers: JsCell::new(None),
             signal: JsCell::new(None),
             // `clone_into` `ptr::write`s the whole struct without dropping the
-            // sentinel; seed with a non-deref'd dangling so no hive slot is
-            // allocated for the throwaway.
-            body: NonNull::dangling(),
+            // sentinel; seed with a non-deref'd dangling handle. `ManuallyDrop`
+            // suppresses drop, so the `?` error path won't unref the dangling ptr.
+            // SAFETY: never deref'd or dropped — overwritten by `clone_into`.
+            body: ManuallyDrop::new(unsafe {
+                BodyHiveHandle::from_raw(NonNull::dangling().as_ptr())
+            }),
             js_ref: JsCell::new(JsRef::empty()),
             method: Method::GET,
             flags: Flags::default(),
@@ -1695,13 +1675,13 @@ impl Request {
         request_context: AnyRequestContext,
         https: bool,
         signal: Option<AbortSignalRef>,
-        body: NonNull<BodyHiveRef>,
+        body: BodyHiveHandle,
     ) -> Request {
         Request {
             url: OwnedStringCell::new(BunString::empty()),
             headers: JsCell::new(None),
             signal: JsCell::new(signal),
-            body,
+            body: ManuallyDrop::new(body),
             js_ref: JsCell::new(JsRef::empty()),
             method,
             flags: Flags {

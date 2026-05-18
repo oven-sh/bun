@@ -1022,12 +1022,6 @@ pub fn concat<'b>(buf: &'b mut [u8], parts: &[&[u8]]) -> &'b [u8] {
     concat_into(buf, parts)
 }
 
-/// Zig `bun.assertf(cond, fmt, args)` — debug-only formatted assert.
-#[macro_export]
-macro_rules! assertf {
-    ($cond:expr, $($arg:tt)*) => { ::core::debug_assert!($cond, $($arg)*) };
-}
-
 /// Zig `union(enum)` field projection — `data.file`, `chunk.content.javascript`.
 ///
 /// In safety-checked Zig builds, reading a tagged-union field on the wrong
@@ -2679,18 +2673,6 @@ pub fn linux_kernel_version() -> Version {
         major: 0,
         minor: 0,
         patch: 0,
-    }
-}
-
-/// Port of `bun.assertWithLocation` (src/bun_core/bun.zig) — `bun.assert` plus
-/// the caller's source location for the failure message. In release builds the
-/// Zig version logs and continues; here it panics under `debug_assertions` and
-/// is a no-op otherwise (matching `bun.assert`'s release-safe behaviour).
-#[track_caller]
-#[inline]
-pub fn assert_with_location(cond: bool, loc: &'static core::panic::Location<'static>) {
-    if cfg!(debug_assertions) && !cond {
-        panic!("assertion failed at {}:{}", loc.file(), loc.line());
     }
 }
 

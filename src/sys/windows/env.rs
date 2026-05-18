@@ -13,9 +13,7 @@ pub static WTF8_ENV_BUF: bun_core::RacyCell<Option<&'static [u8]>> = bun_core::R
 pub static ORIG_ENVIRON: bun_core::RacyCell<Option<(*mut *mut c_char, usize)>> =
     bun_core::RacyCell::new(None);
 
-#[cfg(feature = "ci_assert")]
 static ENV_CONVERTED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-// PORT NOTE: `Environment.ci_assert` → cfg(feature = "ci_assert") (matches bun_safety/bun_http_types).
 
 /// Converts all strings in `std.os.environ` to WTF-8.
 ///
@@ -24,16 +22,11 @@ static ENV_CONVERTED: core::sync::atomic::AtomicBool = core::sync::atomic::Atomi
 ///
 /// This function is Windows-only.
 pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
-    #[cfg(feature = "ci_assert")]
-    {
-        // Zig `bun.assertf` fires in release CI builds too — must be `assert!`, not `debug_assert!`.
-        assert!(
-            !ENV_CONVERTED.load(core::sync::atomic::Ordering::Relaxed),
-            "convertEnvToWTF8 may only be called once"
-        );
-        ENV_CONVERTED.store(true, core::sync::atomic::Ordering::Relaxed);
-    }
-    #[cfg(feature = "ci_assert")]
+    assert!(
+        !ENV_CONVERTED.load(core::sync::atomic::Ordering::Relaxed),
+        "convertEnvToWTF8 may only be called once"
+    );
+    ENV_CONVERTED.store(true, core::sync::atomic::Ordering::Relaxed);
     let env_guard = scopeguard::guard((), |()| {
         ENV_CONVERTED.store(false, core::sync::atomic::Ordering::Relaxed);
     });
@@ -99,7 +92,6 @@ pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
         bun_core::os::set_environ(envp_slice.as_mut_ptr(), envp_nonnull_len);
     }
 
-    #[cfg(feature = "ci_assert")]
     let _ = scopeguard::ScopeGuard::into_inner(env_guard);
     Ok(())
 }

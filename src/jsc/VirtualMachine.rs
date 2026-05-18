@@ -1658,12 +1658,6 @@ pub struct RuntimeHooks {
     /// `NodeFS` lives in `bun_runtime`; the high tier boxes one and returns
     /// the type-erased pointer. Stored back into `vm.node_fs`.
     pub create_node_fs: unsafe fn(vm: *mut VirtualMachine) -> *mut c_void,
-    /// `Body.Value.HiveRef.init(body, &vm.body_value_pool)` — spec
-    /// VirtualMachine.zig:255. The hive allocator lives inside `runtime_state`
-    /// (high tier); `body` and the returned `*mut Body.Value.HiveRef` are
-    /// erased here and cast back on the `bun_runtime` side.
-    pub init_request_body_value:
-        unsafe fn(vm: *mut VirtualMachine, body: *mut c_void) -> *mut c_void,
     /// `WebCore.ObjectURLRegistry.singleton().has(specifier["blob:".len..])` —
     /// spec VirtualMachine.zig:1760. Registry lives in `bun_runtime::webcore`.
     pub has_blob_url: fn(blob_id: &[u8]) -> bool,
@@ -3027,22 +3021,6 @@ impl VirtualMachine {
             .transform_options
             .unhandled_rejections
             .unwrap_or(UnhandledRejections::Bun)
-    }
-
-    /// Spec VirtualMachine.zig:255 `initRequestBodyValue`.
-    ///
-    /// `body` is a `*mut bun_runtime::webcore::Body::Value`; the returned
-    /// pointer is a `*mut Body::Value::HiveRef`. Both types live in the
-    /// higher `bun_runtime` tier (forward-dep on `bun_jsc`), so they're
-    /// type-erased here and dispatched through [`RuntimeHooks`]. Callers in
-    /// `bun_runtime` cast back.
-    pub fn init_request_body_value(&mut self, body: *mut c_void) -> *mut c_void {
-        let hooks = runtime_hooks().expect("runtime hooks not installed");
-        // SAFETY: hook contract — `body` is a `Body::Value` allocated by the
-        // same `bun_runtime` build that registered the hook; `self` is the
-        // live per-thread VM (which owns the hive allocator inside
-        // `runtime_state`).
-        unsafe { (hooks.init_request_body_value)(self, body) }
     }
 
     /// Spec VirtualMachine.zig:279 `uvLoop`.

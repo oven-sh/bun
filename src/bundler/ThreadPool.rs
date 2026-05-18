@@ -205,14 +205,8 @@ impl ThreadPool {
     /// resolve without a separate module path.
     pub type Worker = Worker;
 
-    // PORT NOTE: generic over `V2` because, during the phased port,
-    // `bundle_v2.rs` carried a second `BundleV2` definition inside the gated
-    // `bv2_impl` draft module and both called `ThreadPool::init`. The backref
-    // is stored as a type-erased raw pointer (`.cast()`) regardless, so the
-    // monomorphised body is identical. Collapses to `&BundleV2<'_>` once
-    // `bv2_impl` is dropped.
-    pub fn init<V2>(
-        v2: &V2,
+    pub fn init(
+        v2: &BundleV2<'_>,
         // `Option<NonNull<_>>` (not `Option<&mut _>`): callers pass the
         // process-wide `WorkPool` singleton (`OnceLock`-backed, shared across
         // worker threads). Materializing `&mut` from that provenance is UB
@@ -247,7 +241,10 @@ impl ThreadPool {
         Ok(this)
     }
 
-    pub fn init_with_pool<V2>(v2: &V2, worker_pool: *mut ThreadPoolLib::ThreadPool) -> ThreadPool {
+    pub fn init_with_pool(
+        v2: &BundleV2<'_>,
+        worker_pool: *mut ThreadPoolLib::ThreadPool,
+    ) -> ThreadPool {
         ThreadPool {
             worker_pool,
             io_pool: if Self::uses_io_pool() {
@@ -256,7 +253,7 @@ impl ThreadPool {
                 None
             },
             // BACKREF: lifetime erased behind the raw pointer.
-            v2: std::ptr::from_ref::<V2>(v2).cast(),
+            v2: std::ptr::from_ref(v2).cast::<BundleV2<'static>>(),
             worker_pool_is_owned: false,
             workers_assignments: bun_threading::Guarded::new(ArrayHashMap::default()),
         }

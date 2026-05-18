@@ -380,7 +380,7 @@ impl Execution {
                     _ => unreachable!(),
                 };
 
-                // PORT NOTE: `bun.Environment.ci_assert` → debug_assertions (no `ci_assert` Cargo feature in bun_runtime).
+                // Zig: gated on `bun.Environment.ci_assert`.
                 // SAFETY: sequence_ptr points into this.sequences; valid while BunTest is alive.
                 debug_assert!(unsafe { sequence_ptr.as_ref() }.active_entry.is_some());
                 Execution::advance_sequence(buntest_ptr, sequence_ptr, group_ptr);
@@ -540,7 +540,7 @@ impl Execution {
                 sequence.active_entry = nn(entry.next);
             }
         } else {
-            // PORT NOTE: `bun.Environment.ci_assert` → debug_assertions (no `ci_assert` Cargo feature in bun_runtime).
+            // Zig: gated on `bun.Environment.ci_assert`.
             debug_assert!(false, "can't call advanceSequence on a completed sequence");
         }
 

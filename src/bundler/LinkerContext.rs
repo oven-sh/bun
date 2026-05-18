@@ -1263,7 +1263,11 @@ impl<'a> LinkerContext<'a> {
                 .extend_from_slice(&done[mapping_start..mapping_end]);
             pieces.suffix.extend_from_slice(&done[mapping_end..]);
         } else {
-            pieces.prefix.extend_from_slice(&done);
+            // No shifts → `finalize()` returns `prefix` verbatim. Move the
+            // joined buffer instead of allocating a fresh `Vec` and memcpying
+            // it; for the bundled three.js x100 case the source map JSON is
+            // ~300 MB, so this alloc+copy was ~20% of the build.
+            pieces.prefix = done.into_vec();
         }
 
         Ok(pieces)
@@ -1549,7 +1553,7 @@ impl SourceMapData {
                 .graph
                 .files
                 .slice()
-                .items_raw::<"quoted_source_contents", Option<Box<[u8]>>>()
+                .items_raw::<"quoted_source_contents", Option<Vec<u8>>>()
                 .add(source_index as usize)
         };
         *quoted_source_contents = None;
@@ -1564,7 +1568,12 @@ impl SourceMapData {
         let source: &Source = &parse_graph.input_files.items_source()[source_index as usize];
         let mut mutable = MutableString::init_empty();
         js_printer::quote_for_json(&source.contents, &mut mutable, false).expect("OOM");
-        *quoted_source_contents = Some(mutable.to_default_owned());
+        // Move the Vec out without `into_boxed_slice()`. The quote buffer is
+        // intentionally over-reserved (escape-expansion slack), so shrinking
+        // to `Box<[u8]>` would realloc and memcpy ~1.5 MB per file. The slack
+        // is dropped when the bundle finishes, and the `StringJoiner`
+        // downstream only borrows a `&[u8]` view.
+        *quoted_source_contents = Some(core::mem::take(&mut mutable.list));
     }
 }
 

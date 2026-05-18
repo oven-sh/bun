@@ -1011,11 +1011,8 @@ where
                         strings::index_of_needs_escape_for_java_script_string(remain, quote_char)
                     {
                         let j = j as usize;
-                        let text_chunk = &text[i..i + clamped_width];
-                        writer.write_all(text_chunk)?;
-                        i += clamped_width;
-                        writer.write_all(&remain[..j])?;
-                        i += j;
+                        writer.write_all(&text[i..i + clamped_width + j])?;
+                        i += clamped_width + j;
                     } else {
                         writer.write_all(&text[i..])?;
                         i = n;
@@ -1139,7 +1136,15 @@ pub fn quote_for_json(
 ) -> Result<(), bun_core::Error> {
     // Zig: `comptime ascii_only: bool`. We now thread `ascii_only` at runtime so
     // the heavy escaper isn't monomorphized per ascii_only/quote-char combo.
-    bytes.grow_if_needed(estimate_length_for_utf8(text, ascii_only, b'"'))?;
+    //
+    // Heuristic reservation (~12.5% slack) instead of `estimate_length_for_utf8`,
+    // which would do a full SIMD scan + per-escape rune decode over `text` just
+    // to size the buffer — the same work `write_pre_quoted_string_inner` repeats
+    // immediately below. Tab-indented JS (e.g. three.js) has ~9.4% of bytes
+    // needing 2-byte escapes (tabs + newlines + quotes/backslashes), so 6.25%
+    // slack would under-shoot and force a 2x doubling memcpy of the whole
+    // source. The writer still grows on demand if this under-shoots.
+    bytes.grow_if_needed(text.len() + (text.len() >> 3) + 8)?;
     bytes.append_char(b'"')?;
     write_pre_quoted_string_inner::<_, { Encoding::Utf8 }>(text, bytes, b'"', ascii_only, true)?;
     bytes.append_char(b'"').expect("unreachable");
@@ -7862,6 +7867,18 @@ pub fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
             i32::try_from(tree.approximate_newline_count).expect("int cast"),
         );
     }
+    // Pre-size the VLQ mappings buffer. With `--minify` we emit roughly one
+    // mapping per token; growing from 0 by doubling means ~16 reallocs and
+    // O(n) memmoves on a large module. The estimate is intentionally
+    // conservative — undershooting still saves the early small reallocs and
+    // the buffer doubles from there. Only the bundler/external path uses
+    // `data` directly; the prepend-count (Lazy) path writes through
+    // `internal` and would just waste the reservation.
+    if builder.source_map.ctx.internal.is_none() {
+        let hint =
+            (source.contents.len() / 4).max(tree.approximate_newline_count.saturating_mul(4));
+        let _ = builder.source_map.ctx.data.grow_if_needed(hint);
+    }
     builder
 }
 
@@ -8027,9 +8044,9 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
                 // `MultiArrayList::Drop` only frees the column buffer — it does
                 // NOT drop column elements (Zig allocated these into the arena
                 // so it didn't matter there). The per-row `columns_for_non_ascii`
-                // Vec<i32>s live on the global heap in the Rust port; drain them
+                // Box<[i32]>s live on the global heap in the Rust port; drain them
                 // before dropping the SoA storage to avoid leaking them.
-                for v in tables.items_mut::<"columns_for_non_ascii", Vec<i32>>() {
+                for v in tables.items_mut::<"columns_for_non_ascii", Box<[i32]>>() {
                     core::mem::take(v);
                 }
                 unsafe { core::mem::ManuallyDrop::drop(tables) };
@@ -8404,8 +8421,8 @@ pub fn print_common_js<
                 // dropped exactly once here.
                 let tables = unsafe { &mut *p };
                 // `MultiArrayList::Drop` does not drop column elements; drain
-                // the global-heap Vec<i32>s before dropping the SoA storage.
-                for v in tables.items_mut::<"columns_for_non_ascii", Vec<i32>>() {
+                // the global-heap Box<[i32]>s before dropping the SoA storage.
+                for v in tables.items_mut::<"columns_for_non_ascii", Box<[i32]>>() {
                     core::mem::take(v);
                 }
                 unsafe { core::mem::ManuallyDrop::drop(tables) };

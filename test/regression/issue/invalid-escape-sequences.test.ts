@@ -125,7 +125,10 @@ test("Invalid escaped z in identifier shows helpful error message", async () => 
 // https://github.com/oven-sh/bun/issues/30893
 // Invalid escape sequence where the first char after `\x`, `\u`, or `\u{` is a
 // multi-byte codepoint underflowed `start + iter.i - width` in the lexer's error
-// path — panic in debug, silent wrap in release.
+// path — panic in debug, silent wrap in release. The wrapped value is stored in
+// `self.end`, but `syntax_error()` reports at `self.start`, so release output is
+// identical pre/post-fix and nothing here can distinguish them under
+// USE_SYSTEM_BUN=1. These tests exist to guard `bun bd` (ASAN/debug) CI.
 test("invalid \\x followed by multi-byte codepoint does not panic (#30893)", async () => {
   // Input bytes: 0x27 0x5C 0x78 0xF0 0xB9 0x91 0x9C 0x27 0xFF
   //              '    \    x    <── U+3945C ──>  '    (trailing junk)

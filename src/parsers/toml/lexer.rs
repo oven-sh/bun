@@ -940,7 +940,7 @@ impl<'a> Lexer<'a> {
 
                         // legacy octal literals
                         c if ('0' as CodePoint..='7' as CodePoint).contains(&c) => {
-                            let octal_start = (iter.i as usize + width2 as usize) - 2;
+                            let octal_start = (iter.i as usize + width2 as usize).saturating_sub(2);
 
                             // 1-3 digit octal
                             let mut is_bad = false;
@@ -1014,7 +1014,8 @@ impl<'a> Lexer<'a> {
                         // 2-digit hexadecimal
                         c if c == 'x' as CodePoint => {
                             if ALLOW_MULTILINE {
-                                self.end = start + iter.i as usize - width2 as usize;
+                                self.end =
+                                    (start + iter.i as usize).saturating_sub(width2 as usize);
                                 self.syntax_error()?;
                             }
 
@@ -1030,7 +1031,8 @@ impl<'a> Lexer<'a> {
                             match hex_digit_value_u32(c3 as u32) {
                                 Some(d) => value = value * 16 | d as CodePoint,
                                 None => {
-                                    self.end = start + iter.i as usize - width3 as usize;
+                                    self.end =
+                                        (start + iter.i as usize).saturating_sub(width3 as usize);
                                     return self.syntax_error();
                                 }
                             }
@@ -1043,7 +1045,8 @@ impl<'a> Lexer<'a> {
                             match hex_digit_value_u32(c3 as u32) {
                                 Some(d) => value = value * 16 | d as CodePoint,
                                 None => {
-                                    self.end = start + iter.i as usize - width3 as usize;
+                                    self.end =
+                                        (start + iter.i as usize).saturating_sub(width3 as usize);
                                     return self.syntax_error();
                                 }
                             }
@@ -1063,10 +1066,10 @@ impl<'a> Lexer<'a> {
 
                             // variable-length
                             if c3 == '{' as CodePoint {
-                                let hex_start = iter.i as usize
-                                    - width as usize
-                                    - width2 as usize
-                                    - width3 as usize;
+                                let hex_start = (iter.i as usize)
+                                    .saturating_sub(width as usize)
+                                    .saturating_sub(width2 as usize)
+                                    .saturating_sub(width3 as usize);
                                 let mut is_first = true;
                                 let mut is_out_of_range = false;
                                 'variable_length: loop {
@@ -1077,7 +1080,8 @@ impl<'a> Lexer<'a> {
 
                                     if c3 == '}' as CodePoint {
                                         if is_first {
-                                            self.end = start + iter.i as usize - width3 as usize;
+                                            self.end = (start + iter.i as usize)
+                                                .saturating_sub(width3 as usize);
                                             return self.syntax_error();
                                         }
                                         break 'variable_length;
@@ -1085,7 +1089,8 @@ impl<'a> Lexer<'a> {
                                     match hex_digit_value_u32(c3 as u32) {
                                         Some(d) => value = value * 16 | d as i64,
                                         None => {
-                                            self.end = start + iter.i as usize - width3 as usize;
+                                            self.end = (start + iter.i as usize)
+                                                .saturating_sub(width3 as usize);
                                             return self.syntax_error();
                                         }
                                     }
@@ -1105,8 +1110,10 @@ impl<'a> Lexer<'a> {
                                                 start: i32::try_from(start + hex_start)
                                                     .expect("int cast"),
                                             },
-                                            len: i32::try_from(iter.i as usize - hex_start)
-                                                .unwrap(),
+                                            len: i32::try_from(
+                                                (iter.i as usize).saturating_sub(hex_start),
+                                            )
+                                            .unwrap(),
                                         },
                                         format_args!("Unicode escape sequence is out of range"),
                                     )?;
@@ -1122,7 +1129,8 @@ impl<'a> Lexer<'a> {
                                     match hex_digit_value_u32(c3 as u32) {
                                         Some(d) => value = value * 16 | d as i64,
                                         None => {
-                                            self.end = start + iter.i as usize - width3 as usize;
+                                            self.end = (start + iter.i as usize)
+                                                .saturating_sub(width3 as usize);
                                             return self.syntax_error();
                                         }
                                     }
@@ -1143,7 +1151,8 @@ impl<'a> Lexer<'a> {
                         }
                         c if c == '\r' as CodePoint => {
                             if !ALLOW_MULTILINE {
-                                self.end = start + iter.i as usize - width2 as usize;
+                                self.end =
+                                    (start + iter.i as usize).saturating_sub(width2 as usize);
                                 self.add_default_error(b"Unexpected end of line")?;
                             }
 
@@ -1158,7 +1167,8 @@ impl<'a> Lexer<'a> {
                         c if c == '\n' as CodePoint || c == 0x2028 || c == 0x2029 => {
                             // Ignore line continuations. A line continuation is not an escaped newline.
                             if !ALLOW_MULTILINE {
-                                self.end = start + iter.i as usize - width2 as usize;
+                                self.end =
+                                    (start + iter.i as usize).saturating_sub(width2 as usize);
                                 self.add_default_error(b"Unexpected end of line")?;
                             }
                             continue;

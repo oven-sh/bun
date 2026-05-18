@@ -397,7 +397,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                             // so we don't mutate the shared backing array.
                             // Preserve the "@layer" statements from the
                             // prefix and append the remaining tail.
-                            let mut new_rules: ArenaVec<BundlerCssRule> = Vec::with_capacity_in(
+                            let mut new_rules: ArenaVec<BundlerCssRule> = ArenaVec::with_capacity_in(
                                 layer_count + (original_rules.len() - prefix_end),
                                 bump,
                             );
@@ -456,7 +456,7 @@ fn arena_rule_list(rules: ArenaVec<'_, BundlerCssRule>) -> BundlerCssRuleList {
 
 /// Single-element shorthand for [`arena_rule_list`].
 fn arena_rule_list_one(bump: &Bump, rule: BundlerCssRule) -> BundlerCssRuleList {
-    let mut v: ArenaVec<BundlerCssRule> = Vec::with_capacity_in(1, bump);
+    let mut v: ArenaVec<BundlerCssRule> = ArenaVec::with_capacity_in(1, bump);
     v.push(rule);
     arena_rule_list(v)
 }

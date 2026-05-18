@@ -2213,8 +2213,8 @@ impl<'a> Parser<'a> {
             // Single up-front reserve preserves the Zig fused-growth; the inner
             // reserve() calls in prepend_from / append become no-ops.
             parts.reserve(before.len() + after.len());
-            bun_collections::prepend_from(&mut parts, &mut before);
-            parts.append(&mut after); // std Vec::append: bitwise-move tail, same allocator
+            parts.prepend_from(&mut before);
+            parts.append(&mut after);
         }
 
         // Pop the module scope to apply the "ContainsDirectEval" rules

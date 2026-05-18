@@ -2387,7 +2387,7 @@ impl<'a> Transpiler<'a> {
         // empty). `init_with_one_list` boxes the single inner list.
         let arena = *ast.symbols.allocator();
         let symbols = bun_ast::symbol::Map::init_with_one_list(
-            core::mem::replace(&mut ast.symbols, Vec::new_in(arena))
+            core::mem::replace(&mut ast.symbols, bun_alloc::ArenaVec::new_in(arena))
                 .into_iter()
                 .collect(),
         );

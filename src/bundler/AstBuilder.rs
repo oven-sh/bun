@@ -300,7 +300,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         debug_assert!(self.scopes.is_empty());
         let module_scope = self.current_scope;
 
-        let mut parts = Vec::with_capacity_in(2, self.bump);
+        let mut parts = bun_ast::PartList::with_capacity_in(2, self.bump);
         // PORT NOTE: Zig grew len then wrote `parts.mut(i).* = ...`, which is a
         // bitwise store on the SoA slot. In Rust `*parts.mut_(i) = ...` first
         // *drops* the (uninitialized) prior `Part` — and `Part` carries Drop

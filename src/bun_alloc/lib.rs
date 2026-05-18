@@ -265,10 +265,28 @@ pub use mimalloc_arena::MimallocArena;
 pub type Arena = MimallocArena;
 /// `bumpalo::Bump` — kept for genuinely bump-only scratch that's never resized.
 pub type Bump = bumpalo::Bump;
-/// Arena-backed `Vec` — `Vec<T, &'a MimallocArena>`. Real `deallocate`/`grow`
-/// via `mi_free`/`mi_heap_realloc_aligned`; reclaimed on arena `reset`/`Drop`.
-pub type ArenaVec<'a, T> = Vec<T, &'a MimallocArena>;
-pub use mimalloc_arena::{ArenaString, ArenaVecExt, live_arena_heaps, vec_from_iter_in};
+mod baby_vec;
+pub use baby_vec::BabyVec;
+/// Arena-backed `Vec` with `u32` length/capacity — port of Zig's
+/// `BabyList(T)`. 24 B (vs 32 B for `Vec<T, &'a MimallocArena>`); the
+/// allocator handle is kept inline for lifetime checking. Growth/free route
+/// through `<&MimallocArena as Allocator>` (= `mi_heap_realloc_aligned` /
+/// `mi_free`); reclaimed on arena `reset`/`Drop`.
+pub type ArenaVec<'a, T> = BabyVec<'a, T>;
+pub use mimalloc_arena::{ArenaString, ArenaVecExt, live_arena_heaps};
+
+/// `bumpalo::collections::Vec::from_iter_in` parity for [`ArenaVec`].
+#[inline]
+pub fn vec_from_iter_in<'a, T, I>(iter: I, arena: &'a MimallocArena) -> ArenaVec<'a, T>
+where
+    I: IntoIterator<Item = T>,
+{
+    let iter = iter.into_iter();
+    let (lo, _) = iter.size_hint();
+    let mut v = ArenaVec::with_capacity_in(lo, arena);
+    v.extend(iter);
+    v
+}
 
 /// Re-tag an [`ArenaVec`]'s allocator handle to `dst` without copying data.
 ///
@@ -289,12 +307,7 @@ pub use mimalloc_arena::{ArenaString, ArenaVecExt, live_arena_heaps, vec_from_it
 /// so the [`MimallocArena`] single-thread-alloc contract is preserved.
 #[inline]
 pub fn transfer_arena<'a, T>(v: &mut ArenaVec<'a, T>, dst: &'a MimallocArena) {
-    let mut old = core::mem::ManuallyDrop::new(core::mem::replace(v, Vec::new_in(dst)));
-    let (ptr, len, cap) = (old.as_mut_ptr(), old.len(), old.capacity());
-    // SAFETY: see fn doc — `<&MimallocArena as Allocator>::{deallocate,grow}`
-    // are heap-agnostic on `ptr`; `(ptr, len, cap)` are the just-decomposed
-    // valid `Vec` triplet from `old`, whose `Drop` is suppressed.
-    *v = unsafe { Vec::from_raw_parts_in(ptr, len, cap, dst) };
+    v.set_allocator(dst);
 }
 
 /// `bumpalo::format!` parity — `arena_format!(in arena, "...", ..)` →

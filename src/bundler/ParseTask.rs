@@ -668,7 +668,7 @@ pub mod parse_worker {
         bump: &'static Bump,
     ) -> bun_ast::symbol::List<'static> {
         use bun_ast::symbol::{Kind as PKind, Symbol as PSym};
-        let mut out = Vec::with_capacity_in(src.len(), bump);
+        let mut out = bun_ast::symbol::List::with_capacity_in(src.len(), bump);
         for s in src.slice() {
             // Post-dedup `bun_ast::Symbol` IS `bun_ast::symbol::Symbol`, so
             // `s.kind`/`s.import_item_status` are already the target nominal types

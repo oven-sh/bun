@@ -2140,9 +2140,19 @@ pub mod io {
     }
 
     /// In-memory growable sink. Zig: `std.Io.Writer.Allocating`.
-    /// Generic over the allocator so `bun_alloc::ArenaVec<'_, u8>`
-    /// (= `Vec<u8, &MimallocArena>`) gets the same impl as `Vec<u8>`.
     impl<A: core::alloc::Allocator> Write for Vec<u8, A> {
+        #[inline]
+        fn write_all(&mut self, buf: &[u8]) -> Result<(), crate::Error> {
+            self.extend_from_slice(buf);
+            Ok(())
+        }
+        #[inline]
+        fn written_len(&self) -> usize {
+            self.len()
+        }
+    }
+
+    impl<'a> Write for bun_alloc::BabyVec<'a, u8> {
         #[inline]
         fn write_all(&mut self, buf: &[u8]) -> Result<(), crate::Error> {
             self.extend_from_slice(buf);

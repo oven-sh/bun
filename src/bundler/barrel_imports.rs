@@ -323,7 +323,7 @@ fn resolve_barrel_records(
     let heap = this.graph.heap;
     let mut barrel_ir = core::mem::replace(
         &mut this.graph.ast.items_import_records_mut()[idx],
-        Vec::new_in(heap),
+        bun_alloc::ArenaVec::new_in(heap),
     );
     let source = core::mem::take(&mut this.graph.input_files.items_source_mut()[idx]);
     let source_path: &'static [u8] = source.path.text;

@@ -4961,13 +4961,13 @@ pub mod bv2_impl {
                     ($ast:expr) => {{
                         let ast = $ast;
                         for v in ast.items_parts_mut() {
-                            drop(core::mem::replace(v, Vec::new_in(*v.allocator())));
+                            drop(core::mem::replace(v, bun_alloc::ArenaVec::new_in(*v.allocator())));
                         }
                         for v in ast.items_symbols_mut() {
-                            drop(core::mem::replace(v, Vec::new_in(*v.allocator())));
+                            drop(core::mem::replace(v, bun_alloc::ArenaVec::new_in(*v.allocator())));
                         }
                         for v in ast.items_import_records_mut() {
-                            drop(core::mem::replace(v, Vec::new_in(*v.allocator())));
+                            drop(core::mem::replace(v, bun_alloc::ArenaVec::new_in(*v.allocator())));
                         }
                         for v in ast.items_named_imports_mut() {
                             drop(core::mem::take(v));
@@ -5944,7 +5944,10 @@ pub mod bv2_impl {
                 // build before link time, so saving the AST is safe.
                 let result_heap = *result.ast.import_records.allocator();
                 this.graph.ast.items_import_records_mut()[source_index.0 as usize] =
-                    core::mem::replace(&mut result.ast.import_records, Vec::new_in(result_heap));
+                    core::mem::replace(
+                        &mut result.ast.import_records,
+                        bun_alloc::ArenaVec::new_in(result_heap),
+                    );
 
                 // Move the CSS stylesheet onto the graph row so teardown can find
                 // and drop it — the `Success` arm that would normally do this is skipped.
@@ -7189,7 +7192,7 @@ pub mod bv2_impl {
                     let result_heap = *result.ast.import_records.allocator();
                     let mut import_records = core::mem::replace(
                         &mut result.ast.import_records,
-                        Vec::new_in(result_heap),
+                        bun_alloc::ArenaVec::new_in(result_heap),
                     );
                     this.patch_import_record_source_indices(
                         &mut import_records,

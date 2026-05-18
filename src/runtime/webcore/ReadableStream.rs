@@ -13,8 +13,6 @@ use crate::webcore::streams;
 #[allow(unused_imports)]
 use crate::webcore::{self, Blob, ByteBlobLoader, ByteStream, FileReader};
 
-use crate::server::lsan_ignore_js_managed;
-
 #[derive(Copy, Clone)]
 pub struct ReadableStream {
     pub value: JSValue,
@@ -824,10 +822,7 @@ impl<C: SourceContext> NewSource<C> {
     /// the JS cell still points at it (UAF), so this mirrors Zig's `TrivialNew`
     /// exactly and returns `*mut Self`.
     pub fn new(init: Self) -> *mut Self {
-        let ptr = bun_core::heap::into_raw(Box::new(init));
-        // LSan: freed by the JS wrapper's GC finalizer, which `process.exit()` skips.
-        lsan_ignore_js_managed(ptr.cast_const());
-        ptr
+        bun_core::heap::into_raw(Box::new(init))
     }
 
     /// [`Self::new`] returning the leaked allocation as an unbounded `&mut`.

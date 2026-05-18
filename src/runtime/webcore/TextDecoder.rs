@@ -14,8 +14,6 @@ use jsc::zig_string::ZigString;
 use strings::{u16_is_lead, u16_is_trail};
 const UNICODE_REPLACEMENT_U16: u16 = strings::UNICODE_REPLACEMENT as u16;
 
-use crate::server::lsan_ignore_js_managed;
-
 #[derive(Default, Clone, Copy)]
 pub struct Buffered {
     pub buf: [u8; 3],
@@ -88,10 +86,7 @@ impl core::ops::DerefMut for CodecGuard {
 
 impl TextDecoder {
     pub fn new(init: TextDecoder) -> Box<TextDecoder> {
-        let boxed = Box::new(init);
-        // LSan: freed by the JS wrapper's GC finalizer, which `process.exit()` skips.
-        lsan_ignore_js_managed(&raw const *boxed);
-        boxed
+        Box::new(init)
     }
 
     #[bun_jsc::host_fn(getter)]

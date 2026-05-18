@@ -2035,10 +2035,6 @@ pub extern "C" fn NodeHTTPResponse__createForJS(
         auto_flusher: JsCell::new(AutoFlusher::default()),
     }));
 
-    // LSan: the JS wrapper, server handler, and uws response each hold a ref;
-    // `process.exit()` skips the GC sweep + uws teardown that release them.
-    crate::server::lsan_ignore_js_managed(response.cast_const());
-
     // SAFETY: `response` was just allocated and leaked; we hold the only reference.
     let response_ref = unsafe { &*response };
     if *has_body {

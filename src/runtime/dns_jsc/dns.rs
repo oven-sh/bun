@@ -65,22 +65,6 @@ type SockaddrStorage = netc::sockaddr_storage;
 type AddrInfo = netc::addrinfo;
 type Sockaddr = netc::sockaddr;
 
-/// LSan: mark a DNS allocation that is process-lifetime by design (or held past
-/// exit by c-ares state) as a known non-leak. No-op without `bun_asan`.
-#[inline]
-fn lsan_ignore_object(ptr: *const c_void) {
-    #[cfg(bun_asan)]
-    {
-        // SAFETY: LSan runtime is linked under `bun_asan`; `ptr` is a live heap allocation.
-        unsafe extern "C" {
-            safe fn __lsan_ignore_object(ptr: *const c_void);
-        }
-        __lsan_ignore_object(ptr);
-    }
-    #[cfg(not(bun_asan))]
-    let _ = ptr;
-}
-
 /// Helper: fetch the per-VM global DNS resolver (port of
 /// `RareData::globalDNSResolver`). The slot itself lives in `bun_jsc::RareData`
 /// as a type-erased `Option<NonNull<c_void>>` to break the
@@ -103,8 +87,6 @@ pub(crate) fn global_resolver(global_this: &JSGlobalObject) -> &Resolver {
         None => {
             let gd_nn = bun_core::heap::into_raw_nn(GlobalData::init(vm));
             let gd = gd_nn.as_ptr();
-            // Process-lifetime singleton; RareData::Drop never frees this slot (Zig parity).
-            lsan_ignore_object(gd.cast());
             *vm.as_mut().rare_data().global_dns_data_slot() = Some(gd_nn.cast::<c_void>());
             // SAFETY: `gd` points to a live, freshly-allocated GlobalData.
             unsafe { (*gd).resolver.ref_() }; // live forever
@@ -4004,11 +3986,7 @@ impl Resolver {
 
     pub fn init(vm: &VirtualMachine) -> *mut Self {
         bun_output::scoped_log!(DNSResolver, "init");
-        let this = bun_core::heap::into_raw(Box::new(Self::setup(vm)));
-        // GC-managed via JSDNSResolver::~/finalize → deref(). At process exit
-        // c-ares may still pin a ref, so LSan flags this — it's exit-time only.
-        lsan_ignore_object(this.cast());
-        this
+        bun_core::heap::into_raw(Box::new(Self::setup(vm)))
     }
 
     pub fn finalize(self: Box<Self>) {

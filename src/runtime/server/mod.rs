@@ -119,22 +119,6 @@ pub use server_body::{
     ServerInitContext,
 };
 
-#[cfg(bun_asan)]
-unsafe extern "C" {
-    safe fn __lsan_ignore_object(p: *const c_void);
-}
-
-/// LSan: suppress reports for JS-managed allocations whose finalizer/teardown is
-/// skipped at `process.exit()`. Note this also blinds LSan to genuine leaks of these
-/// types on clean exits. TODO: move next to `bun_core::asan::register_root_region`.
-#[inline]
-pub(crate) fn lsan_ignore_js_managed<T>(ptr: *const T) {
-    #[cfg(bun_asan)]
-    __lsan_ignore_object(ptr.cast());
-    #[cfg(not(bun_asan))]
-    let _ = ptr;
-}
-
 // ─── write_status ────────────────────────────────────────────────────────────
 pub fn write_status<const SSL: bool>(resp: *mut uws_sys::NewAppResponse<SSL>, status: u16) {
     // Zig spec (server.zig:8-16) takes `?*Response` and no-ops on null. The
@@ -3726,9 +3710,6 @@ impl ServerAllConnectionsClosedTask {
     /// then `vm.eventLoop().enqueueTask(jsc.Task.init(ptr))`.
     pub fn schedule(this: Self, vm: &mut jsc::VirtualMachine) {
         let ptr = bun_core::heap::into_raw(Box::new(this));
-        // LSan: freed by `run_from_js_thread`; never drained if the process exits first.
-        // Note: the `bun_runtime::api::server::` suppression in bun_bin/lib.rs is stale.
-        lsan_ignore_js_managed(ptr.cast_const());
         vm.enqueue_task(bun_event_loop::Task::init(ptr));
     }
 

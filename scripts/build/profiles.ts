@@ -99,6 +99,27 @@ export const profiles = {
     lto: false,
   },
 
+  /**
+   * Bench-till-green profile. Mirrors the codegen the CI release build
+   * actually ships (`ci-release` resolves `lto: true` for ci+release+linux),
+   * so PORT-vs-SYS comparisons measure what we'd actually ship — no PGO, no
+   * symbol ordering, no special-case linker layout. lto=true selects the
+   * `-lto` WebKit prebuilt (LLVM bitcode, re-codegen'd `-fno-pic` under
+   * `-flto=full -fwhole-program-vtables`) so cross-TU inlining runs; without
+   * it the non-LTO WebKit .a lands ~555 KB of C++ vtables in `.data.rel.ro`,
+   * keeps `.eh_frame` (+962 KB), and outlines JSC slow-paths — the bench then
+   * reports a ~6-8% time / ~1 MB RSS "regression" that is pure binary layout.
+   */
+  btg: {
+    buildType: "Release",
+    webkit: "prebuilt",
+    lto: true,
+    // Pin the build dir so `--profile=btg` alone lands here and can never
+    // be confused with `--profile=release --build-dir=build/btg` (which
+    // would persist lto:false and silently de-LTO the bench binary).
+    buildDir: "build/btg",
+  },
+
   /** Release with local WebKit. */
   "release-local": {
     buildType: "Release",
@@ -107,8 +128,9 @@ export const profiles = {
   },
 
   /**
-   * Release + assertions + logs. RelWithDebInfo → zig gets ReleaseSafe
-   * (runtime safety checks), matching the old cmake build:assert script.
+   * Release + assertions + logs. RelWithDebInfo → cargo `release` profile
+   * with `debug-assertions = true` (runtime safety checks), matching the
+   * old cmake build:assert script.
    */
   "release-assertions": {
     buildType: "RelWithDebInfo",
@@ -131,7 +153,7 @@ export const profiles = {
     assertions: true,
   },
 
-  /** CI: compile C++ to libbun.a only (parallelized with zig build). */
+  /** CI: compile C++ to libbun.a only (parallelized with the cargo build). */
   "ci-cpp-only": {
     buildType: "Release",
     mode: "cpp-only",
@@ -141,12 +163,14 @@ export const profiles = {
   },
 
   /**
-   * CI: cross-compile bun-zig.o only. Target platform via --os/--arch
-   * overrides (zig cross-compiles cleanly; this runs on a fast linux box).
+   * CI: compile libbun_rust.a only. Target platform via --os/--arch
+   * overrides (cargo `--target <triple>`; linux/freebsd targets cross-
+   * compile from a linux box, darwin/windows run on a native agent — see
+   * `rustCanCrossFromLinux()`).
    */
-  "ci-zig-only": {
+  "ci-rust-only": {
     buildType: "Release",
-    mode: "zig-only",
+    mode: "rust-only",
     ci: true,
     buildkite: true,
     webkit: "prebuilt",

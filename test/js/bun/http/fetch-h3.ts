@@ -148,10 +148,10 @@ export function httpProtocols(): Array<{
   protocol: "http/1.1" | "http/3";
   fetch: (url: string | URL, init?: Init) => Promise<Response>;
   /** Serve options to spread into Bun.serve() for this protocol. */
-  serve: { tls?: object; h3?: boolean };
+  serve: { tls?: object; http3?: boolean };
 }> {
   return [
     { protocol: "http/1.1", fetch: (u, i) => fetch(u, i as RequestInit), serve: {} },
-    { protocol: "http/3", fetch: fetchH3, serve: { tls, h3: true } },
+    { protocol: "http/3", fetch: fetchH3, serve: { tls, http3: true } },
   ];
 }

@@ -92,6 +92,45 @@ export class ClassDefinition {
    */
   name: string;
   /**
+   * Which language implements the native side of this class.
+   *
+   * The C++ wrapper output (`ZigGeneratedClasses.{h,cpp}`) is byte-identical
+   * regardless of this flag — it only selects whether the implementer thunks
+   * land in `ZigGeneratedClasses.zig` or `generated_classes.rs`.
+   *
+   * @default "zig"
+   */
+  lang?: "zig" | "rust";
+  /**
+   * Fully-qualified Rust path of the native struct backing this class, e.g.
+   * `crate::webcore::request::Request`. The codegen emits
+   * `pub use <rustPath> as <name>;` so the `#[no_mangle]` thunks call
+   * inherent methods on the real type (compile error if a method is missing).
+   *
+   * If unset, the codegen scans `src/runtime/**\/*.rs` for
+   * `pub struct <name>` and resolves the module path from the `mod` tree
+   * rooted at `src/runtime/lib.rs`. Set this explicitly only when that
+   * heuristic picks the wrong file (or the struct lives in another crate).
+   */
+  rustPath?: string;
+  /**
+   * Host-fn receiver mutability for the generated Rust thunks.
+   *
+   * `true` emits `this: &T` and routes through the `host_fn::*_shared`
+   * helpers — required for any type whose methods may re-enter JS while
+   * `this` is live (R-2 noalias re-entrancy). The Rust impl must take
+   * `&self` and use `Cell`/`JsCell` for any field it mutates.
+   *
+   * `false` (the default, legacy) emits `this: &mut T`. UB if a method
+   * re-enters JS and another host-fn on the same instance runs — `&mut T`
+   * carries LLVM `noalias`, so the compiler may cache `*self` fields
+   * across the FFI call (proven miscompile: `NodeHTTPResponse::cork`,
+   * b818e70e1c57).
+   *
+   * @default false
+   */
+  sharedThis?: boolean;
+  /**
    * Class constructor is newable. Called before the JSValue corresponding to
    * the object is created. Throwing an exception prevents the object from being
    * created.

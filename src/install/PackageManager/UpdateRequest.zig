@@ -46,58 +46,7 @@ pub fn getResolvedName(this: *const UpdateRequest, lockfile: *const Lockfile) st
         this.version.literal.slice(this.version_buf);
 }
 
-pub fn fromJS(globalThis: *jsc.JSGlobalObject, input: jsc.JSValue) bun.JSError!jsc.JSValue {
-    var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
-    defer arena.deinit();
-    var stack = std.heap.stackFallback(1024, arena.allocator());
-    const allocator = stack.get();
-    var all_positionals = std.array_list.Managed([]const u8).init(allocator);
-
-    var log = logger.Log.init(allocator);
-
-    if (input.isString()) {
-        var input_str = try input.toSliceCloneWithAllocator(
-            globalThis,
-            allocator,
-        );
-        if (input_str.len > 0)
-            try all_positionals.append(input_str.slice());
-    } else if (input.isArray()) {
-        var iter = try input.arrayIterator(globalThis);
-        while (try iter.next()) |item| {
-            const slice = try item.toSliceCloneWithAllocator(globalThis, allocator);
-            if (slice.len == 0) continue;
-            try all_positionals.append(slice.slice());
-        }
-    } else {
-        return .js_undefined;
-    }
-
-    if (all_positionals.items.len == 0) {
-        return .js_undefined;
-    }
-
-    var array = Array{};
-
-    const update_requests = parseWithError(allocator, null, &log, all_positionals.items, &array, .add, false) catch {
-        return globalThis.throwValue(try log.toJS(globalThis, bun.default_allocator, "Failed to parse dependencies"));
-    };
-    if (update_requests.len == 0) return .js_undefined;
-
-    if (log.msgs.items.len > 0) {
-        return globalThis.throwValue(try log.toJS(globalThis, bun.default_allocator, "Failed to parse dependencies"));
-    }
-
-    if (update_requests[0].failed) {
-        return globalThis.throw("Failed to parse dependencies", .{});
-    }
-
-    var object = jsc.JSValue.createEmptyObject(globalThis, 2);
-    var name_str = bun.String.init(update_requests[0].name);
-    object.put(globalThis, "name", try name_str.transferToJS(globalThis));
-    object.put(globalThis, "version", try update_requests[0].version.toJS(update_requests[0].version_buf, globalThis));
-    return object;
-}
+pub const fromJS = @import("../../install_jsc/update_request_jsc.zig").fromJS;
 
 pub fn parse(
     allocator: std.mem.Allocator,
@@ -110,7 +59,7 @@ pub fn parse(
     return parseWithError(allocator, pm, log, positionals, update_requests, subcommand, true) catch Global.crash();
 }
 
-fn parseWithError(
+pub fn parseWithError(
     allocator: std.mem.Allocator,
     pm: ?*PackageManager,
     log: *logger.Log,
@@ -125,10 +74,14 @@ fn parseWithError(
     outer: for (positionals) |positional| {
         var input: []u8 = bun.handleOom(bun.default_allocator.dupe(u8, std.mem.trim(u8, positional, " \n\r\t")));
         {
-            var temp: [2048]u8 = undefined;
-            const len = std.mem.replace(u8, input, "\\\\", "/", &temp);
-            bun.path.platformToPosixInPlace(u8, &temp);
+            // Replacing "\\\\" (2 bytes) with "/" (1 byte) never grows the string, so a
+            // buffer of `input.len` bytes is always sufficient. Previously this was a
+            // fixed `[2048]u8` stack array which overflowed for longer positionals.
+            const temp = bun.handleOom(bun.default_allocator.alloc(u8, input.len));
+            defer bun.default_allocator.free(temp);
+            const len = std.mem.replace(u8, input, "\\\\", "/", temp);
             const input2 = temp[0 .. input.len - len];
+            bun.path.platformToPosixInPlace(u8, input2);
             @memcpy(input[0..input2.len], input2);
             input.len = input2.len;
         }
@@ -248,7 +201,6 @@ const Global = bun.Global;
 const JSAst = bun.ast;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
-const jsc = bun.jsc;
 const logger = bun.logger;
 const strings = bun.strings;
 

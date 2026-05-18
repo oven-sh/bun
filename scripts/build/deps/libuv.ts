@@ -4,8 +4,8 @@
  * layer). On unix, bun's event loop is custom (kqueue/epoll direct).
  *
  * On POSIX, node-api addons that reference libuv symbols are served by
- * src/bun.js/bindings/uv-posix-stubs.c + uv-posix-polyfills*.c, with headers
- * from src/bun.js/bindings/libuv/ (see flags.ts) — vendor libuv is not built.
+ * src/jsc/bindings/uv-posix-stubs.c + uv-posix-polyfills*.c, with headers
+ * from src/jsc/bindings/libuv/ (see flags.ts) — vendor libuv is not built.
  */
 
 import type { Dependency } from "../source.ts";
@@ -39,6 +39,16 @@ export const libuv: Dependency = {
     repo: "oven-sh/libuv",
     commit: LIBUV_COMMIT,
   }),
+
+  // Re-arm the AFD ioctl before poll_cb (matching wepoll's
+  // port__update_events_if_polling-before-return). AFD is level-triggered
+  // (ReactOS AfdSelect: `Events & FCB->PollState` checked on IRP arrival),
+  // so a peer RST that lands during poll_cb is caught by the freshly-
+  // submitted req. Upstream libuv re-arms *after* poll_cb, leaving a gap
+  // an in-process loopback fetch().abort() can fall into. To upstream:
+  // send to libuv/libuv with the wepoll/ReactOS references in the patch
+  // comment as the rationale.
+  patches: ["patches/libuv/win-poll-rearm-before-callback.patch"],
 
   build: () => ({
     kind: "direct",

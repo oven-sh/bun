@@ -22,6 +22,11 @@ export const lshpack: Dependency = {
     commit: LSHPACK_COMMIT,
   }),
 
+  // hencs[65536]/hdecs[65536] (768 KB of .rodata) are pure functions of the
+  // 257-entry encode_table. Declare them in .bss and fill on first init
+  // (~250 us once); the hot-path lookup is unchanged.
+  patches: ["patches/lshpack/bss-huff-tables.patch"],
+
   build: cfg => {
     // <sys/queue.h> ships with glibc and BSD libc but not musl or win32.
     // lshpack vendors a copy under compat/queue/ for that case.
@@ -35,7 +40,14 @@ export const lshpack: Dependency = {
         ...(needCompatQueue ? ["compat/queue"] : []),
         ...(cfg.windows ? ["compat/windows"] : []),
       ],
-      defines: { XXH_HEADER_NAME: "xxhash.h" },
+      defines: {
+        XXH_HEADER_NAME: "xxhash.h",
+        // lshpack.c defaults LS_HPACK_USE_LARGE_TABLES=1 internally; setting
+        // it here is purely defensive so the bss-huff-tables patch can't be
+        // silently disabled by a future upstream change to the default.
+        LS_HPACK_USE_LARGE_TABLES: 1,
+        LS_HPACK_BSS_LARGE_TABLES: 1,
+      },
     };
     if (cfg.windows) spec.cflags = ["-w"];
     return spec;

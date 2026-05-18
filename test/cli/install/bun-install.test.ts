@@ -10,6 +10,7 @@ import {
   joinP,
   readdirSorted,
   runBunInstall,
+  tempDir,
   tempDirWithFiles,
   textLockfile,
   toBeValidBin,
@@ -690,6 +691,111 @@ describe.concurrent("bun-install", () => {
         expect(err.code).toBe("ENOENT");
       }
     });
+  });
+
+  // The Rust port adds a same-origin guard in `NetworkTask::for_tarball` so a
+  // malicious registry can't point `dist.tarball` at a third-party host and
+  // harvest the scope's `Authorization` header. The guard must compare
+  // (protocol, hostname, effective port) — not the raw `URL.origin` slice —
+  // because some registries emit `dist.tarball` URLs with the scheme's
+  // default port spelled out (`https://host:443/...`) while the `.npmrc`
+  // registry URL has no port; the raw slices differ but the origin is the
+  // same, and the tarball request must still carry the token.
+  it("should send .npmrc _authToken on same-origin tarball download and withhold it cross-origin", async () => {
+    const token = "secret-registry-token";
+    const tgz = join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.0.0.tgz");
+    const integrity = "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==";
+
+    const sameOriginAuth: (string | null)[] = [];
+    const crossOriginAuth: (string | null)[] = [];
+
+    // "attacker" server on a different port — registry credentials must NOT
+    // reach this host even though the registry's own manifest points here.
+    await using attacker = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        crossOriginAuth.push(req.headers.get("authorization"));
+        return new Response(Bun.file(tgz));
+      },
+    });
+
+    await using registry = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname === "/same-origin") {
+          return Response.json({
+            name: "same-origin",
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "same-origin",
+                version: "1.0.0",
+                dist: {
+                  integrity,
+                  tarball: `http://127.0.0.1:${registry.port}/same-origin/-/same-origin-1.0.0.tgz`,
+                },
+              },
+            },
+          });
+        }
+        if (url.pathname === "/cross-origin") {
+          return Response.json({
+            name: "cross-origin",
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "cross-origin",
+                version: "1.0.0",
+                dist: {
+                  integrity,
+                  tarball: `http://127.0.0.1:${attacker.port}/cross-origin/-/cross-origin-1.0.0.tgz`,
+                },
+              },
+            },
+          });
+        }
+        if (url.pathname.endsWith(".tgz")) {
+          sameOriginAuth.push(req.headers.get("authorization"));
+          return new Response(Bun.file(tgz));
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    using dir = tempDir("tarball-auth-origin", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "same-origin": "1.0.0", "cross-origin": "1.0.0" },
+      }),
+      ".npmrc": [
+        `registry=http://127.0.0.1:${registry.port}/`,
+        `//127.0.0.1:${registry.port}/:_authToken=${token}`,
+        ``,
+      ].join("\n"),
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stderr, sameOriginAuth, crossOriginAuth }).toEqual({
+      stderr: expect.stringContaining("Saved lockfile"),
+      // same-origin tarball request carries the token
+      sameOriginAuth: [`Bearer ${token}`],
+      // cross-origin tarball request must not leak the token
+      crossOriginAuth: [null],
+    });
+    expect(stdout).toContain("2 packages installed");
+    expect(exitCode).toBe(0);
   });
 
   it("should handle empty string in dependencies", async () => {

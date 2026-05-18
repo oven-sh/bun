@@ -1,7 +1,7 @@
 import { FileSystemRouter } from "bun";
 import { expect, it } from "bun:test";
 import fs, { mkdirSync, rmSync } from "fs";
-import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import path, { dirname } from "path";
 
 function createTree(basedir: string, paths: string[]) {
@@ -469,6 +469,31 @@ it("origin should be validated", async () => {
   }).toThrow("Expected origin to be a string");
 });
 
+// POSIX allows arbitrary bytes (except '/' and NUL) in filenames, including 0xFF.
+// The route sorter's lookup table must cover the full u8 range.
+// Windows and macOS (APFS/HFS+) require filenames to be valid Unicode, so skip there.
+it.skipIf(isWindows || isMacOS)("handles filenames containing byte 0xFF", () => {
+  using dir = tempDir("fsr-byte-ff", {});
+  // Static routes sharing a prefix so the sorter must compare the 0xFF byte.
+  // tempDir's string-keyed map can't express raw 0xFF, so write via Buffer paths.
+  for (const name of [[0x61, 0xff], [0x61, 0x62], [0xff]]) {
+    fs.writeFileSync(
+      Buffer.concat([Buffer.from(String(dir) + "/"), Buffer.from(name), Buffer.from(".tsx")]),
+      "export default 1;\n",
+    );
+  }
+
+  const router = new FileSystemRouter({
+    dir: String(dir),
+    fileExtensions: [".tsx"],
+    style: "nextjs",
+  });
+
+  const routes = Object.keys(router.routes);
+  expect(routes.length).toBe(3);
+  expect(routes).toContain("/ab");
+});
+
 it("MatchedRoute.params does not leak", async () => {
   using dir = tempDir("fsr-params-leak", {
     "pages/[a]/[b]/[c]/[d].tsx": "export default 1;",
@@ -510,3 +535,37 @@ it("MatchedRoute.params does not leak", async () => {
   expect(stdout).toBe("");
   expect(exitCode).toBe(0);
 }, 60_000);
+
+it("throws a clean error for invalid route filenames (no use-after-free)", async () => {
+  // The constructor's log is backed by an arena allocator. When route loading
+  // produces errors (e.g. a filename like `[foo.tsx` missing its closing bracket),
+  // the arena must not be freed before log.toJS() reads the messages.
+  // Run in a subprocess so an ASAN crash doesn't take down the test runner.
+  using dir = tempDir("fsr-invalid-route", {
+    "pages/[foo.tsx": "export default 1;",
+  });
+
+  const code = /* ts */ `
+    try {
+      new Bun.FileSystemRouter({
+        style: "nextjs",
+        dir: ${JSON.stringify(path.join(String(dir), "pages"))},
+        fileExtensions: [".tsx"],
+      });
+      console.log("no-throw");
+    } catch (e) {
+      console.log("caught:" + (e?.message ?? String(e)));
+    }
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("caught:Route is missing a closing bracket]");
+  expect(exitCode).toBe(0);
+});

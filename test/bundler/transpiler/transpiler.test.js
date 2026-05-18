@@ -1302,6 +1302,30 @@ export default <>hi</>
     ).toThrow();
   });
 
+  it("define with an empty-string key is ignored without leaving uninitialized slots", async () => {
+    // `JSPropertyIterator` skips empty-name properties, but `names`/`values` were being
+    // indexed by the property position instead of a dense counter, leaving garbage in the
+    // skipped slot that `stringHashMapFromArrays` then tried to hash. Run in a subprocess
+    // so a crash surfaces as a test failure instead of taking down the test runner.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const t = new Bun.Transpiler({ define: { "": "1", FOO: '"bar"' } });
+          process.stdout.write(t.transformSync("console.log(FOO);", "js"));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe('console.log("bar");');
+    expect(exitCode).toBe(0);
+  });
+
   it("JSX keys", () => {
     var bun = new Bun.Transpiler({
       loader: "jsx",
@@ -1517,6 +1541,32 @@ console.log(<div {...obj} key="after" />);`),
 }, undefined, true, undefined, this);
 `,
     );
+  });
+
+  // https://github.com/oven-sh/bun/issues/30958
+  // A numeric JSX entity outside the Unicode range (0..=0x10FFFF) used to
+  // trip a debug_assert in u16_lead (src/bun_core/lib.rs) when the lexer
+  // encoded the value as a UTF-16 surrogate pair. The lexer must reject the
+  // entity with the same "JSX entity escape is too big" diagnostic it emits
+  // for i32-overflow, instead of forwarding an invalid code point.
+  describe("rejects out-of-range numeric JSX entities without panicking", () => {
+    const bun = new Bun.Transpiler({
+      loader: "jsx",
+      define: { "process.env.NODE_ENV": JSON.stringify("development") },
+    });
+
+    // Covers: the original fuzzer input (0x76B22B), max+1, i32::MAX, and the
+    // negative-i32 path — parse_int::<i32> accepts a leading '-' so `&#-1;`
+    // lands as a negative CodePoint that must be rejected before it reaches
+    // the u32 cast in push_codepoint_utf16.
+    it.each(["&#7777707;", "&#x110000;", "&#2147483647;", "&#-1;"])("%s is rejected", entity => {
+      expect(() => bun.transformSync(`export var x = <div>${entity}</div>`)).toThrow(/JSX entity escape is too big/);
+    });
+
+    // Boundary: 0x10FFFF is the maximum valid code point and must still work.
+    it("&#x10FFFF; (max valid) still transpiles", () => {
+      expect(bun.transformSync("export var x = <div>&#x10FFFF;</div>")).toContain("jsxDEV_");
+    });
   });
 
   it("require with a dynamic non-string expression", () => {

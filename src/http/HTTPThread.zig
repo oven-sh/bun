@@ -196,12 +196,10 @@ fn initOnce(opts: *const InitOpts) void {
         .loop = undefined,
         .http_context = .{
             .ref_count = .init(),
-            .us_socket_context = undefined,
             .pending_sockets = NewHTTPContext(false).PooledSocketHiveAllocator.empty,
         },
         .https_context = .{
             .ref_count = .init(),
-            .us_socket_context = undefined,
             .pending_sockets = NewHTTPContext(true).PooledSocketHiveAllocator.empty,
         },
         .timer = std.time.Timer.start() catch unreachable,
@@ -226,6 +224,18 @@ pub fn onStart(opts: InitOpts) void {
     Output.Source.configureNamedThread("HTTP Client");
     bun.http.default_arena = Arena.init();
     bun.http.default_allocator = bun.http.default_arena.allocator();
+
+    // uSockets' long-timeout counter is `% 240` minutes (see
+    // `us_socket_long_timeout` in packages/bun-usockets/src/socket.c), so
+    // values above 239 min wrap around and fire early. Clamp here — it's the
+    // only assignment — so the underlying timer can't wrap, and round values
+    // above 240s up to a whole minute so `socket.setTimeout`'s floor-to-
+    // minute long-timer path never yields a timeout *shorter* than requested.
+    // Normalising once here keeps the h1 (`HTTPClient.setTimeout`) and h2
+    // (`ClientSession.rearmTimeout`) paths identical without duplicating the
+    // math at each call site.
+    const raw: u64 = @min(bun.env_var.BUN_CONFIG_HTTP_IDLE_TIMEOUT.get(), 239 * 60);
+    bun.http.idle_timeout_seconds = @intCast(if (raw > 240) ((raw + 59) / 60) * 60 else raw);
 
     const loop = bun.jsc.MiniEventLoop.initGlobal(null, null);
 
@@ -274,7 +284,6 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !?New
             custom_context.* = .{
                 .ref_count = .init(),
                 .pending_sockets = NewHTTPContext(is_ssl).PooledSocketHiveAllocator.empty,
-                .us_socket_context = undefined,
             };
             custom_context.initWithClientConfig(client) catch |err| {
                 bun.default_allocator.destroy(custom_context);

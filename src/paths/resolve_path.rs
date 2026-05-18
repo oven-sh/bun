@@ -2351,12 +2351,16 @@ pub fn next_dirname(path_: &[u8]) -> Option<&[u8]> {
 ///
 /// To use this, stack allocate the following struct, and then call `resolve`.
 ///
-///     let mut normalizer = PosixToWinNormalizer::default();
-///     let result = normalizer.resolve(b"C:\\dev\\bun", b"/dev/bun/test/etc.js");
+/// ```ignore
+/// let mut normalizer = PosixToWinNormalizer::default();
+/// let result = normalizer.resolve(b"C:\\dev\\bun", b"/dev/bun/test/etc.js");
+/// ```
 ///
 /// When you are certain that using the current working directory is fine, you can use
 ///
-///     let result = normalizer.resolve_cwd(b"/dev/bun/test/etc.js");
+/// ```ignore
+/// let result = normalizer.resolve_cwd(b"/dev/bun/test/etc.js");
+/// ```
 ///
 /// This API does nothing on Linux (it has a size of zero)
 pub struct PosixToWinNormalizer {

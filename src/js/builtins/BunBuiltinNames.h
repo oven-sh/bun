@@ -151,8 +151,11 @@ using namespace JSC;
     macro(partitioned) \
     macro(path) \
     macro(paths) \
+    macro(peekPromiseSettledValue) \
+    macro(peekPromiseStatus) \
     macro(pendingAbortRequest) \
     macro(pendingPullIntos) \
+    macro(pokePromiseAsHandled) \
     macro(port) \
     macro(post) \
     macro(processBindingConstants) \

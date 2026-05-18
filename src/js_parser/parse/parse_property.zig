@@ -318,7 +318,7 @@ pub fn ParseProperty(
                                         },
                                     }
                                 }
-                            } else if (p.lexer.token == .t_open_brace and strings.eqlComptime(name, "static")) {
+                            } else if (opts.is_class and p.lexer.token == .t_open_brace and strings.eqlComptime(name, "static")) {
                                 const loc = p.lexer.loc();
                                 try p.lexer.next();
 

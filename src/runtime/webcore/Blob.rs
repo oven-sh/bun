@@ -4502,14 +4502,13 @@ pub fn write_file_with_source_destination(
         // Zig passes `destination_blob.*` / `source_blob.*` (raw struct copy,
         // +0 store ref) and `WriteFile.create` then calls `store.?.ref()`. The
         // Rust port folds that pair into RAII: callers hand over a +1 `Blob`
-        // via `borrowed_view()` (clones only the `StoreRef`; `name` /
-        // `content_type` are aliased — unused by `WriteFile*`, no `Drop`) and
+        // via `borrowed_view()` (clones the `StoreRef`/`name`; `content_type`
+        // is aliased — unused by `WriteFile*`, no `Drop`) and
         // `WriteFile::create` does NOT re-bump (see PORT NOTE in
         // `write_file.rs::create_with_ctx`); the matching deref runs when
-        // `heap::take` drops the embedded `StoreRef` in `then`/`deinit`.
-        // Net store ref balance is identical. `dupe()` is wrong here: it
-        // `dupe_ref()`s `name` and boxes a fresh `content_type`, neither of
-        // which is released by `Blob`'s (nonexistent) drop glue.
+        // `heap::take` drops the embedded `StoreRef`/`name` in `then`/`deinit`.
+        // Net ref balance is identical. `dupe()` is wrong here: it boxes a
+        // fresh `content_type`, which is not released by `Blob`'s drop glue.
         #[cfg(windows)]
         {
             let promise = JSPromise::create(ctx);

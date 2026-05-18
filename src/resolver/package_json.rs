@@ -1672,9 +1672,6 @@ impl PackageJSON {
                     let js_ast::ExprData::EObject(obj) = &prop.expr.data else {
                         return None;
                     };
-                    if obj.properties.len_u32() == 0 {
-                        return None;
-                    }
                     let mut map = StringArrayHashMap::<&'static [u8]>::default();
                     map.ensure_total_capacity(obj.properties.len_u32() as usize)
                         .ok()?;

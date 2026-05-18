@@ -149,7 +149,6 @@ pub struct BundleV2<'a> {
     /// Persists across calls to `scheduleBarrelDeferredImports` so cross-file
     /// deduplication is free.
     pub requested_exports: ArrayHashMap<u32, RequestedExports>,
-
 }
 
 bun_core::declare_scope!(Bundle, visible);

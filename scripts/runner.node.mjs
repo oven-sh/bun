@@ -2412,6 +2412,7 @@ function isAlwaysFailure(error) {
     error.includes("illegal instruction") ||
     error.includes("unchecked exception") ||
     error.includes("sigtrap") ||
+    error.includes("sigabrt") ||
     error.includes("sigkill") ||
     error.includes("error: addresssanitizer") ||
     error.includes("internal assertion failure") ||

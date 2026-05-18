@@ -221,7 +221,8 @@ pub mod lib_info {
             this.get_or_put_into_pending_cache(key, PendingCacheField::PendingHostCacheNative);
 
         if let CacheHit::Inflight(inflight) = cache {
-            let dns_lookup = DNSLookup::init(this.as_ctx_ptr(), global_this);
+            let dns_lookup =
+                DNSLookup::init(this.as_ctx_ptr(), global_this, Box::<[u8]>::from(&*query.name));
             // SAFETY: inflight points into resolver's HiveArray buffer
             unsafe { (*inflight).append(dns_lookup) };
             return unsafe { (*dns_lookup).promise.value() };
@@ -353,7 +354,11 @@ pub mod lib_c {
         let cache =
             this.get_or_put_into_pending_cache(key, PendingCacheField::PendingHostCacheNative);
         if let CacheHit::Inflight(inflight) = cache {
-            let dns_lookup = DNSLookup::init(this.as_ctx_ptr(), global_this);
+            let dns_lookup = DNSLookup::init(
+                this.as_ctx_ptr(),
+                global_this,
+                Box::<[u8]>::from(&*query_init.name),
+            );
             // SAFETY: inflight points into resolver's pending-cache HiveArray slot.
             unsafe { (*inflight).append(dns_lookup) };
             // SAFETY: dns_lookup just heap-allocated; owned by the inflight list.
@@ -458,7 +463,8 @@ pub mod lib_uv_backend {
         let cache =
             this.get_or_put_into_pending_cache(key, PendingCacheField::PendingHostCacheNative);
         if let CacheHit::Inflight(inflight) = cache {
-            let dns_lookup = DNSLookup::init(this.as_ctx_ptr(), global_this);
+            let dns_lookup =
+                DNSLookup::init(this.as_ctx_ptr(), global_this, Box::<[u8]>::from(&*query.name));
             unsafe { (*inflight).append(dns_lookup) };
             return Ok(unsafe { (*dns_lookup).promise.value() });
         }
@@ -1447,6 +1453,7 @@ impl GetAddrInfoRequest {
                 poll_ref,
                 allocated: false,
                 next: None,
+                name: Box::<[u8]>::from(&*query.name),
             },
             tail: ptr::null_mut(),
             // Zig: `task: bun.ThreadPool.Task = undefined`. The callback is
@@ -1977,6 +1984,9 @@ pub struct DNSLookup {
     pub allocated: bool,
     pub next: Option<NonNull<DNSLookup>>, // INTRUSIVE
     pub poll_ref: KeepAlive,
+    /// Queried hostname, kept so getaddrinfo failures can build a Node-shaped
+    /// error (`err.hostname` / `"getaddrinfo ENOTFOUND <name>"`).
+    pub name: Box<[u8]>,
 }
 
 impl DNSLookup {
@@ -1993,7 +2003,11 @@ impl DNSLookup {
         self.global_this.get()
     }
 
-    pub fn init(resolver: *mut Resolver, global_this: &JSGlobalObject) -> *mut Self {
+    pub fn init(
+        resolver: *mut Resolver,
+        global_this: &JSGlobalObject,
+        name: Box<[u8]>,
+    ) -> *mut Self {
         bun_output::scoped_log!(DNSLookup, "init");
 
         let mut poll_ref = KeepAlive::init();
@@ -2007,6 +2021,7 @@ impl DNSLookup {
             promise: JSPromiseStrong::init(global_this),
             allocated: true,
             next: None,
+            name,
         }))
     }
 
@@ -2035,7 +2050,8 @@ impl DNSLookup {
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
             if let Some(err) = c_ares::Error::init_eai(status) {
-                error_to_deferred(err, b"getaddrinfo", None, &mut (*this).promise)
+                let host = (*this).name.clone();
+                error_to_deferred(err, b"getaddrinfo", Some(&host[..]), &mut (*this).promise)
                     .reject_later((*this).global_this());
                 Self::destroy(this);
                 return;
@@ -2066,7 +2082,8 @@ impl DNSLookup {
         unsafe {
             let global_this = (*this).global_this();
             if let Some(err) = err_ {
-                error_to_deferred(err, b"getaddrinfo", None, &mut (*this).promise)
+                let host = (*this).name.clone();
+                error_to_deferred(err, b"getaddrinfo", Some(&host[..]), &mut (*this).promise)
                     .reject_later(global_this);
                 Self::destroy(this);
                 return;
@@ -2074,10 +2091,11 @@ impl DNSLookup {
 
             // `r` is the c-ares-allocated AddrInfo valid for the callback's duration.
             let Some(r) = result.filter(|r| !(**r).node.is_null()) else {
+                let host = (*this).name.clone();
                 error_to_deferred(
                     c_ares::Error::ENOTFOUND,
                     b"getaddrinfo",
-                    None,
+                    Some(&host[..]),
                     &mut (*this).promise,
                 )
                 .reject_later(global_this);
@@ -5404,7 +5422,8 @@ impl Resolver {
         let cache =
             self.get_or_put_into_pending_cache(key, PendingCacheField::PendingHostCacheCares);
         if let CacheHit::Inflight(inflight) = cache {
-            let dns_lookup = DNSLookup::init(self.as_ctx_ptr(), global_this);
+            let dns_lookup =
+                DNSLookup::init(self.as_ctx_ptr(), global_this, Box::<[u8]>::from(&*query.name));
             unsafe { (*inflight).append(dns_lookup) };
             return Ok(unsafe { (*dns_lookup).promise.value() });
         }

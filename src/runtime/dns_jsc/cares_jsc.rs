@@ -658,6 +658,42 @@ pub struct ErrorDeferred {
     pub promise: bun_jsc::JSPromiseStrong,
 }
 
+/// Node's `getaddrinfo` errors carry libuv's negative `EAI_*` errno
+/// (`err.errno`), not the positive c-ares enum value. `c_ares::Error::init_eai`
+/// collapses `EAI_NONAME`/`EAI_NODATA` into `ENOTFOUND`, so NXDOMAIN reports
+/// `UV_EAI_NONAME` (-3008) — matching Node for the common case.
+fn getaddrinfo_uv_errno(e: c_ares::Error) -> i32 {
+    // libuv `uv/errno.h` EAI_* codes. Platform-invariant ABI constants;
+    // `bun_libuv_sys` only re-exports them on Windows (its `libuv` module is
+    // `#![cfg(windows)]`), so inline the small subset we need — mirroring how
+    // `bun_libuv_sys/lib.rs` inlines its own non-Windows errno subset.
+    const UV_EAI_AGAIN: i32 = -3001;
+    const UV_EAI_BADFLAGS: i32 = -3002;
+    const UV_EAI_CANCELED: i32 = -3003;
+    const UV_EAI_FAIL: i32 = -3004;
+    const UV_EAI_FAMILY: i32 = -3005;
+    const UV_EAI_MEMORY: i32 = -3006;
+    const UV_EAI_NODATA: i32 = -3007;
+    const UV_EAI_NONAME: i32 = -3008;
+    const UV_EAI_SERVICE: i32 = -3010;
+    const UV_EAI_SOCKTYPE: i32 = -3011;
+    const UV_EAI_BADHINTS: i32 = -3013;
+    match e {
+        c_ares::Error::ENODATA => UV_EAI_NODATA,
+        c_ares::Error::ENOTFOUND | c_ares::Error::ENONAME => UV_EAI_NONAME,
+        c_ares::Error::EBADFAMILY => UV_EAI_FAMILY,
+        c_ares::Error::EBADFLAGS => UV_EAI_BADFLAGS,
+        c_ares::Error::EBADHINTS => UV_EAI_BADHINTS,
+        c_ares::Error::ENOMEM => UV_EAI_MEMORY,
+        c_ares::Error::ESERVICE => UV_EAI_SERVICE,
+        c_ares::Error::ECONNREFUSED => UV_EAI_SOCKTYPE,
+        c_ares::Error::ETIMEOUT => UV_EAI_AGAIN,
+        c_ares::Error::ECANCELLED => UV_EAI_CANCELED,
+        c_ares::Error::EBADSTR => UV_EAI_BADHINTS,
+        _ => UV_EAI_FAIL,
+    }
+}
+
 impl ErrorDeferred {
     pub fn init(
         errno: c_ares::Error,
@@ -690,8 +726,15 @@ impl ErrorDeferred {
                 BStr::new(&code[4..])
             ))
         };
+        // Node reports libuv's negative EAI errno for getaddrinfo; the c-ares
+        // query paths (resolve*/reverse) keep the raw c-ares value.
+        let errno = if self.syscall == b"getaddrinfo" {
+            getaddrinfo_uv_errno(self.errno)
+        } else {
+            self.errno as i32
+        };
         let system_error = SystemError {
-            errno: self.errno as i32,
+            errno,
             code: bstr::String::static_(code),
             message,
             syscall: bstr::String::clone_utf8(self.syscall),
@@ -701,10 +744,11 @@ impl ErrorDeferred {
 
         let instance =
             system_error.to_error_instance_with_async_stack(global_this, self.promise.get());
+        // Node's DNS errors are plain `Error` instances (`err.name === "Error"`).
         instance.put(
             global_this,
             b"name",
-            bstr::String::static_(b"DNSException").to_js(global_this)?,
+            bstr::String::static_(b"Error").to_js(global_this)?,
         );
 
         // `self` (and thus self.promise / self.hostname) drops at scope exit — matches

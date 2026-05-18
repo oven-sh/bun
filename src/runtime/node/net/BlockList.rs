@@ -295,8 +295,15 @@ impl BlockList {
                                 }
                             }
                             let one: u32 = 1;
-                            let mask_addr: u32 =
-                                ((one << (*prefix as u32)) - 1) << (32 - *prefix as u32);
+                            // A `/0` subnet matches every address (mask 0). The
+                            // general formula would compute `0u32 << 32`, which
+                            // Rust's debug `overflow-checks` aborts on; Zig's
+                            // ReleaseFast wraps the shift to 0 → same mask 0.
+                            let mask_addr: u32 = if *prefix == 0 {
+                                0
+                            } else {
+                                ((one << (*prefix as u32)) - 1) << (32 - *prefix as u32)
+                            };
                             let ip_net: u32 = u32::swap_bytes(ip_addr) & mask_addr;
                             let subnet_net: u32 = u32::swap_bytes(subnet_addr) & mask_addr;
                             if ip_net == subnet_net {
@@ -315,7 +322,13 @@ impl BlockList {
                             }
                         }
                         let one: u128 = 1;
-                        let mask_addr = ((one << (*prefix as u32)) - 1) << (128 - *prefix as u32);
+                        // `/0` matches every address (mask 0); see the IPv4 note
+                        // above — avoids the debug-only `0u128 << 128` panic.
+                        let mask_addr = if *prefix == 0 {
+                            0
+                        } else {
+                            ((one << (*prefix as u32)) - 1) << (128 - *prefix as u32)
+                        };
                         let ip_net: u128 = ip_addr.swap_bytes() & mask_addr;
                         let subnet_net: u128 = subnet_addr.swap_bytes() & mask_addr;
                         if ip_net == subnet_net {

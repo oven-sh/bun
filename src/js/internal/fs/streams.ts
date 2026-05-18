@@ -36,11 +36,6 @@ type FD = number;
 
 const { validateInteger, validateInt32, validateFunction } = require("internal/validators");
 
-// Bun supports a fast path for `createReadStream("path.txt")` with `.pipe(res)`,
-// where the entire stream implementation can be bypassed, effectively making it
-// `new Response(Bun.file("path.txt"))`.
-// This makes an idomatic Node.js pattern much faster.
-const kReadStreamFastPath = Symbol("kReadStreamFastPath");
 // Bun supports a fast path for `createWriteStream("path.txt")` where instead of
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
@@ -206,13 +201,6 @@ function ReadStream(this: FSStream, path, options): void {
     }
   }
 
-  this[kReadStreamFastPath] =
-    start === 0 &&
-    end === Infinity &&
-    autoClose &&
-    !customFs &&
-    // is it an encoding which we don't need to decode?
-    (encoding === "buffer" || encoding === "binary" || encoding == null || encoding === "utf-8" || encoding === "utf8");
   Readable.$call(this, options);
   return this as unknown as void;
 }
@@ -393,13 +381,6 @@ function closeAfterSync(stream, err, cb) {
   });
   stream.fd = null;
 }
-
-ReadStream.prototype.pipe = function (this: FSStream, dest, pipeOpts) {
-  // Fast path for streaming files:
-  // if (this[kReadStreamFastPath]) {
-  // }
-  return Readable.prototype.pipe.$call(this, dest, pipeOpts);
-};
 
 function WriteStream(this: FSStream, path: string | null, options?: any): void {
   if (!(this instanceof WriteStream)) {

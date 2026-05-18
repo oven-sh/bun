@@ -84,10 +84,16 @@ if (isDockerEnabled()) {
           await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
           using sql = await db.reserve();
           const t = "mi_" + randomUUIDv7("hex").replaceAll("-", "");
-          await sql`CREATE TEMPORARY TABLE ${sql(t)} (id INT PRIMARY KEY, uviews MEDIUMINT, sviews MEDIUMINT, balance BIGINT, ratio DOUBLE, name VARCHAR(64))`;
+          await sql`CREATE TEMPORARY TABLE ${sql(t)} (id INT PRIMARY KEY, uviews MEDIUMINT UNSIGNED, sviews MEDIUMINT, balance BIGINT, ratio DOUBLE, name VARCHAR(64))`;
           await sql`INSERT INTO ${sql(t)} VALUES (1, 100, -50, 5000, 3.5, ${"alice"})`;
           const [row] = await sql`SELECT id, uviews, sviews, balance, ratio, name FROM ${sql(t)} WHERE id = ${1}`;
           expect(row).toEqual({ id: 1, uviews: 100, sviews: -50, balance: 5000, ratio: 3.5, name: "alice" });
+          // `.raw()` takes a separate branch that must also consume 4 bytes.
+          const [rawRow] =
+            await sql`SELECT id, uviews, sviews, balance, ratio, name FROM ${sql(t)} WHERE id = ${1}`.raw();
+          expect(rawRow).toHaveLength(6);
+          expect(rawRow[2]).toEqual(new Uint8Array([0xce, 0xff, 0xff])); // -50 as i24 LE
+          expect(Buffer.from(rawRow[5]).toString("utf-8")).toBe("alice");
         });
         describe("should work with more than the max inline capacity", () => {
           for (let size of [50, 60, 62, 64, 70, 100]) {

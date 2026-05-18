@@ -826,17 +826,9 @@ impl<'a> Lexer<'a> {
                         // (which equals `start` for single-line and `start + 2 + trimmed LF/CRLF`
                         // for multi-line) so the column points at the real source byte.
                         if is_multiline_string_literal {
-                            self.decode_escape_sequences::<true>(
-                                slice_lo,
-                                text,
-                                &mut array_list,
-                            )?;
+                            self.decode_escape_sequences::<true>(slice_lo, text, &mut array_list)?;
                         } else {
-                            self.decode_escape_sequences::<false>(
-                                slice_lo,
-                                text,
-                                &mut array_list,
-                            )?;
+                            self.decode_escape_sequences::<false>(slice_lo, text, &mut array_list)?;
                         }
                         self.string_literal_slice = array_list.into_bump_slice();
                         self.string_literal_is_ascii = false;

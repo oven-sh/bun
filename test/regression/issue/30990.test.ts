@@ -99,6 +99,11 @@ async function runUpgradeAgainstMock(opts: { zipSize: number; advertiseSize: boo
       // Mock uses a self-signed cert; disable validation so the sync HTTP
       // client inside `bun upgrade` can connect.
       NODE_TLS_REJECT_UNAUTHORIZED: "0",
+      // `bun upgrade` deliberately leaks its `cli_arena()` allocations (the
+      // process is about to `execve` itself away), which ASAN happily
+      // reports under `detect_leaks=1` and aborts the subprocess. Keep the
+      // other options from CI's default so segv/coredump handling survives.
+      ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
       FORCE_COLOR: "0",
       NO_COLOR: "1",
       TMPDIR: String(scratch),

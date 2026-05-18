@@ -20,20 +20,12 @@ test("Bun.TOML.parse rejects \\x escape (basic strings don't allow \\x) without 
   // `\x` followed by a multi-byte codepoint would underflow in the error path.
   // Construct the bytes directly: `key = "\x<U+3945C>"`.
   const input =
-    "key = " +
-    String.fromCharCode(0x22) +
-    "\\x" +
-    String.fromCodePoint(0x3945c) +
-    String.fromCharCode(0x22);
+    "key = " + String.fromCharCode(0x22) + "\\x" + String.fromCodePoint(0x3945c) + String.fromCharCode(0x22);
   expect(() => Bun.TOML.parse(input)).toThrow();
 });
 
 test("Bun.TOML.parse rejects \\u followed by multi-byte codepoint without panicking (#30893)", () => {
   const input =
-    "key = " +
-    String.fromCharCode(0x22) +
-    "\\u" +
-    String.fromCodePoint(0x3945c) +
-    String.fromCharCode(0x22);
+    "key = " + String.fromCharCode(0x22) + "\\u" + String.fromCodePoint(0x3945c) + String.fromCharCode(0x22);
   expect(() => Bun.TOML.parse(input)).toThrow();
 });

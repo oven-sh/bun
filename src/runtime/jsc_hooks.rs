@@ -1427,7 +1427,15 @@ mod vm_loader_ctx {
                 let v = blob(b).shared_view();
                 core::slice::from_raw_parts(v.as_ptr(), v.len())
             },
-            blob_deinit(b) => drop(bun_core::heap::take(b.cast::<Blob>())),
+            blob_deinit(b) => {
+                // `b` was produced by `resolve_blob` (heap::into_raw of a
+                // `dupe_with_content_type` clone). `Blob`'s drop glue does not
+                // free `content_type` (raw `*const [u8]`), so the
+                // ObjectURLRegistry resolve path stranded that allocation.
+                // SAFETY: `b` is the live boxed `Blob`; sole owner.
+                unsafe { (*b.cast::<Blob>()).free_content_type() };
+                drop(bun_core::heap::take(b.cast::<Blob>()))
+            },
         }
     }
 }

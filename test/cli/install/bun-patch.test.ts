@@ -1,6 +1,6 @@
 import { $, ShellOutput } from "bun";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 const expectNoError = (o: ShellOutput) => expect(o.stderr.toString()).not.toContain("error");
@@ -370,7 +370,7 @@ describe("bun patch <pkg>", async () => {
           const { stdout } = await $`${bunExe()} run index.ts`.env(bunEnv).cwd(tempdir);
           expect(stdout.toString()).toBe("420\n");
         },
-        30 * 1000,
+        (isASAN ? 4 : 1) * 30 * 1000,
       );
     }
 

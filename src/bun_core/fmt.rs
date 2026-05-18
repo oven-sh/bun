@@ -2650,6 +2650,50 @@ impl Display for SizeFormatter {
     }
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// BinarySizeFormatter
+// ───────────────────────────────────────────────────────────────────────────
+
+/// Port of Zig's `{Bi:.P}` binary-bytes formatter (base 1024, IEC suffixes
+/// `KiB`/`MiB`/`GiB`/…). `value == 0` short-circuits to `"0B"`; otherwise
+/// we divide by the largest power of 1024 that fits and print the result
+/// with `P` decimals plus the IEC suffix. `P` defaults to 2 to match Bun's
+/// `Progress` call-sites (`"[{Bi:.2}/{Bi:.2}]"`).
+pub struct BinarySizeFormatter<const PRECISION: usize = 2> {
+    pub value: u64,
+}
+
+impl<const PRECISION: usize> Display for BinarySizeFormatter<PRECISION> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let value = self.value;
+        if value == 0 {
+            return f.write_str("0B");
+        }
+
+        // `" KMGTPEZY"` mirrors Zig stdlib: index 0 (space) is the no-prefix
+        // slot for values below the first magnitude (< 1024), so those print
+        // as `N.00B` — matching Zig's `{Bi:.2}` of e.g. 512 → "512.00B".
+        const MAGS_IEC: &[u8] = b" KMGTPEZY";
+        let log2 = (u64::BITS - 1 - value.leading_zeros()) as usize;
+        // log2(1024) == 10
+        let magnitude = (log2 / 10).min(MAGS_IEC.len() - 1);
+        let new_value = value as f64 / 1024f64.powi(magnitude as i32);
+        let suffix = MAGS_IEC[magnitude];
+        if suffix == b' ' {
+            write!(f, "{:.*}B", PRECISION, new_value)
+        } else {
+            write!(f, "{:.*}{}iB", PRECISION, new_value, suffix as char)
+        }
+    }
+}
+
+/// Binary-bytes formatter at the default precision of 2 decimals
+/// (Zig `{Bi:.2}`). Example: `size_bi(1_572_864)` → `"1.50MiB"`.
+#[inline]
+pub fn size_bi(bytes: u64) -> BinarySizeFormatter<2> {
+    BinarySizeFormatter { value: bytes }
+}
+
 pub fn size(bytes: usize, opts: SizeFormatterOptions) -> SizeFormatter {
     SizeFormatter { value: bytes, opts }
 }

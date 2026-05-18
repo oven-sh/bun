@@ -46,3 +46,12 @@ test("Bun.TOML.parse handles trailing backslash-CR in multiline basic string (#3
   const input = 'key = """\\\r"""';
   expect(Bun.TOML.parse(input)).toEqual({ key: "" });
 });
+
+// Pre-existing bug inherited from toml/lexer.zig: the `\t` / `\f` single-char escape
+// arms had their output codepoints swapped (`\t` produced 0x0C form feed instead of
+// 0x09 tab; `\f` produced 0x09 instead of 0x0C). The TOML spec (and ASCII) define
+// `\t` = U+0009 and `\f` = U+000C, and the JS lexer already gets this right.
+test("Bun.TOML.parse produces correct codepoints for \\t and \\f escapes", () => {
+  expect(Bun.TOML.parse('k = "a\\tb"').k).toBe("a\u0009b");
+  expect(Bun.TOML.parse('k = "a\\fb"').k).toBe("a\u000cb");
+});

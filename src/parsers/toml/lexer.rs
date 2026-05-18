@@ -912,7 +912,8 @@ impl<'a> Lexer<'a> {
                             continue;
                         }
                         c if c == 'f' as CodePoint => {
-                            buf.push(9);
+                            // Form feed: U+000C
+                            buf.push(12);
                             continue;
                         }
                         c if c == 'n' as CodePoint => {
@@ -930,7 +931,8 @@ impl<'a> Lexer<'a> {
                             continue;
                         }
                         c if c == 't' as CodePoint => {
-                            buf.push(12);
+                            // Horizontal tab: U+0009
+                            buf.push(9);
                             continue;
                         }
                         c if c == 'r' as CodePoint => {

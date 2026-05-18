@@ -908,14 +908,23 @@ extern "C" int ffi_fileno(FILE* file)
 #if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
 #include <signal.h>
 #include <pthread.h>
+#include <mutex>
 
-// Note: We only ever use bun.spawnSync on the main thread.
+// bun.spawnSync is primarily used from the main thread (e.g. `bun run`), but
+// Bun.openInEditor spawns detached threads that also go through this path.
+// The depth counter + lock below keep previous_actions[] from being corrupted
+// by overlapping register/unregister calls; only the outermost pair touches
+// process-wide signal dispositions.
 extern "C" int64_t Bun__currentSyncPID = 0;
 static int Bun__pendingSignalToSend = 0;
 static struct sigaction previous_actions[NSIG];
+static std::mutex signalForwardingLock;
+static int signalForwardingDepth = 0;
 
 // This list of signals is copied from npm.
 // https://github.com/npm/cli/blob/fefd509992a05c2dfddbe7bc46931c42f1da69d7/workspaces/arborist/lib/signals.js#L26-L57
+// SIGIOT is omitted because it aliases SIGABRT; registering both would
+// overwrite previous_actions[SIGABRT] with our own handler.
 #define FOR_EACH_POSIX_SIGNAL(M) \
     M(SIGABRT);                  \
     M(SIGALRM);                  \
@@ -929,7 +938,6 @@ static struct sigaction previous_actions[NSIG];
     M(SIGTRAP);                  \
     M(SIGSYS);                   \
     M(SIGQUIT);                  \
-    M(SIGIOT);                   \
     M(SIGIO);
 
 #if OS(LINUX)
@@ -937,8 +945,8 @@ static struct sigaction previous_actions[NSIG];
 // (see wtf/posix/ThreadingPOSIX.cpp). Overriding it here breaks GC and the
 // SA_RESETHAND disposition leaves it at SIG_DFL after one delivery, which
 // kills the process on the next collection.
+// SIGPOLL is omitted because it aliases SIGIO (see SIGIOT note above).
 #define FOR_EACH_LINUX_ONLY_SIGNAL(M) \
-    M(SIGPOLL);                       \
     M(SIGSTKFLT);
 
 #endif
@@ -979,6 +987,10 @@ extern "C" void Bun__sendPendingSignalIfNecessary()
 
 extern "C" void Bun__registerSignalsForForwarding()
 {
+    std::lock_guard<std::mutex> lock(signalForwardingLock);
+    if (signalForwardingDepth++ != 0)
+        return;
+
     Bun__pendingSignalToSend = 0;
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
@@ -1005,6 +1017,10 @@ extern "C" void Bun__registerSignalsForForwarding()
 extern "C" void Bun__unregisterSignalsForForwarding()
 {
     Bun__currentSyncPID = 0;
+
+    std::lock_guard<std::mutex> lock(signalForwardingLock);
+    if (--signalForwardingDepth != 0)
+        return;
 
 #define UNREGISTER_SIGNAL(SIG)                                \
     if (sigaction(SIG, &previous_actions[SIG], NULL) == -1) { \

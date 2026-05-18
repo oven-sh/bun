@@ -1882,10 +1882,11 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
     fn register_auto_flusher(&mut self) {
         let Some(res) = self.any_res() else { return };
+        // Match streams.zig:1231 — reset per-enqueue so a long stream of
+        // sub-highWaterMark writes between auto-flushes still bumps the idle
+        // timeout.
+        res.reset_timeout();
         if !self.auto_flusher.registered.get() {
-            // Reset the idle timeout once on registration; the pending flush
-            // resets it again so per-chunk resets are redundant FFI hops.
-            res.reset_timeout();
             let vm = self.global_this().bun_vm();
             AutoFlusher::register_deferred_microtask_with_type_unchecked::<Self>(self, vm);
         }

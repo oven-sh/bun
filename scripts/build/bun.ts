@@ -84,7 +84,19 @@ function systemLibs(cfg: Config): string[] {
   if (cfg.darwin) {
     // icucore: system ICU framework.
     // resolv: DNS resolution (getaddrinfo et al).
-    libs.push("-licucore", "-lresolv");
+    // Metal/CoreFoundation/QuartzCore/IOSurface: needed by wgpu Metal backend.
+    libs.push(
+      "-licucore",
+      "-lresolv",
+      "-lobjc",
+      "-framework Metal",
+      "-framework Foundation",
+      "-framework CoreFoundation",
+      "-framework CoreGraphics",
+      "-framework IOSurface",
+      "-framework QuartzCore",
+      "-framework IOKit",
+    );
   }
 
   if (cfg.freebsd) {

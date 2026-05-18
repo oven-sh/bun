@@ -39,10 +39,10 @@ test("native ReadableStream reuses the pull buffer across small reads", async ()
   expect(chunks.length).toBeGreaterThan(20);
 
   // Consecutive small reads should land in the same backing buffer (the
-  // tail subarray is reused until < ¼ remains). 2KB of ~few-byte chunks
-  // fits well inside one 256KB buffer, so the whole stream should share
-  // a handful at most. Pre-fix every chunk had its own 256KB buffer, so
-  // this was ~chunks.length.
+  // tail subarray is reused until a read fills it). 2KB of ~few-byte
+  // chunks fits well inside one 256KB buffer, so the whole stream should
+  // share a handful at most. Pre-fix every chunk had its own 256KB
+  // buffer, so this was ~chunks.length.
   const distinctBuffers = new Set(chunks.map(c => c.buffer));
   expect(distinctBuffers.size).toBeLessThan(8);
 

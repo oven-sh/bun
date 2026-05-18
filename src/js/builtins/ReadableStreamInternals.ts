@@ -2038,14 +2038,16 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
       var chunk = this.$data;
       // #handleNumberResult stores the unfilled tail (view.subarray(result))
       // here, so consecutive reads write into advancing offsets of the same
-      // backing ArrayBuffer and the enqueued chunks share it. Only rotate to
-      // a fresh allocation once less than a quarter of the buffer remains;
-      // before this the threshold was `< chunkSize`, which is true after any
+      // backing ArrayBuffer and the enqueued chunks share it. Rotate only
+      // when there is no buffer or autoAllocateChunkSize has grown past the
+      // one we allocated — the tail itself is reused until a read fills it
+      // exactly and #handleNumberResult sets $data = undefined. The previous
+      // check was `chunk.length < chunkSize`, which is true after any
       // nonzero read, so every pull allocated a fresh 256KB-2MB Gigacage
       // buffer while the previous one was still pinned by the consumer's
       // subarray — on Windows that drove commit charge to tens of GB before
       // VirtualAlloc(MEM_COMMIT) failed in pas_compact_heap_reservation.
-      if (!chunk || chunk.length * 4 < chunkSize) {
+      if (!chunk || chunk.buffer.byteLength < chunkSize) {
         this.$data = chunk = new Uint8Array(chunkSize);
       }
       return chunk;

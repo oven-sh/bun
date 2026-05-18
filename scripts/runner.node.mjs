@@ -1432,6 +1432,13 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
     // prettier-ignore
     env.LSAN_OPTIONS = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
   }
+  if (basename(execPath).includes("asan")) {
+    // ASAN test processes are slow and memory-heavy; if the bun test runner is
+    // SIGKILLed (timeout, OOM) its spawned subprocesses keep running and pile
+    // up, eventually OOM-killing the agent. --no-orphans makes every spawned
+    // bun exit when its parent dies AND SIGKILL its own descendants on exit.
+    env.BUN_FEATURE_FLAG_NO_ORPHANS = "1";
+  }
 
   const { ok, error, stdout, crashes } = await spawnBun(execPath, {
     args: isReallyTest ? testArgs : [...args, absPath],

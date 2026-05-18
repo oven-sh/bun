@@ -4581,7 +4581,8 @@ pub(crate) fn resolve_embedded_file_to_buf(
     // Try to rename the scratch file to the content-hashed canonical path.
     // On a shared `/tmp` with the sticky bit, this will fail EACCES/EPERM
     // if another user owns a file at the destination — in which case we
-    // just use the scratch file directly (correct, but no dedup this call).
+    // just use the scratch file directly. Within-process dedup still works
+    // (we cache the scratch path below); only cross-restart dedup is lost.
     let rename_ok = tmpfile.finish(canonical_name).is_ok();
     let _ = bun_sys::close(tmpfile_fd);
 

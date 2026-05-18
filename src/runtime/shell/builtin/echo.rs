@@ -71,10 +71,7 @@ impl Echo {
                     if thearg.last() == Some(&b'\n') {
                         has_leading_newline = true;
                     }
-                    // Collapse a trailing run of '\n' the way Zig does. The
-                    // open-coded loop here floored the kept length at 1, so a
-                    // pure-newline arg lost one '\n'; the faithful port of
-                    // Zig's `trimSubsequentLeadingChars` keeps two.
+                    // Collapse a trailing run of '\n'; matches Zig's trimSubsequentLeadingChars.
                     out.extend_from_slice(bun_core::strings::trim_subsequent_leading_chars(
                         thearg, b'\n',
                     ));

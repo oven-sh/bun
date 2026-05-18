@@ -8172,7 +8172,7 @@ pub fn print_json<W: WriterTrait>(
     // constructs the same empty inputs without round-tripping through `Ast`.
     let bump = bun_alloc::Arena::new();
     let mut no_op =
-        rename::NoOpRenamer::init(js_ast::symbol::Map::init_list(vec![Vec::new_in(bun_alloc::global_arena())]), source);
+        rename::NoOpRenamer::init(js_ast::symbol::Map::init_list(vec![Vec::new()]), source);
 
     let full_opts = Options {
         indent: opts.indent,

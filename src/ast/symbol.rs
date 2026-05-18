@@ -387,7 +387,11 @@ pub struct Use {
 }
 
 pub type List<'a> = bun_alloc::ArenaVec<'a, Symbol>;
-pub type NestedList = Vec<List<'static>>;
+/// `Map.symbols_for_source` storage. Decoupled from [`List`] (which is
+/// arena-backed): the linker clones every per-source symbol table here so it
+/// can mutate them independently of the parsed `BundledAst.symbols`, and those
+/// clones are owned for the link lifetime — global allocator, no arena tag.
+pub type NestedList = Vec<Vec<Symbol>>;
 
 impl Symbol {
     pub fn merge_contents_with(&mut self, old: &mut Symbol) {
@@ -548,7 +552,7 @@ impl Map {
         // SAFETY: src in-bounds (parser-produced ref); raw-ptr field read — no `&` to the
         // element is created. idx in-bounds of the inner list.
         unsafe {
-            let inner: *mut List<'static> = self.symbols_for_source.as_ptr().cast_mut().add(src);
+            let inner: *mut Vec<Symbol> = self.symbols_for_source.as_ptr().cast_mut().add(src);
             debug_assert!(idx < (*inner).len());
             Some((*inner).as_mut_ptr().add(idx))
         }
@@ -583,9 +587,8 @@ impl Map {
 
     pub fn init(source_count: usize) -> Map {
         // Zig: `arena.alloc([]Symbol, sourceCount)` (default_allocator) then NestedList.init.
-        let arena = bun_alloc::global_arena();
         let mut v: NestedList = Vec::with_capacity(source_count);
-        v.resize_with(source_count, || List::new_in(arena));
+        v.resize_with(source_count, Vec::new);
         Map {
             symbols_for_source: v,
         }
@@ -598,7 +601,7 @@ impl Map {
     // caller is the printer one-shot, cold).
     // OWNERSHIP: returned `Map` is *owned*; the `Vec<List>` allocated here leaks if a
     // consumer parks it in `ManuallyDrop` (e.g. renamer.rs `MinifyRenamer.symbols`).
-    pub fn init_with_one_list(list: List<'static>) -> Map {
+    pub fn init_with_one_list(list: Vec<Symbol>) -> Map {
         Self::init_list(vec![list])
     }
 

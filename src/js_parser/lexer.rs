@@ -2234,6 +2234,20 @@ lexer_impl_header! {
 
                     self.end = self.current;
                     self.token = T::TSyntaxError;
+                    // Mirror the `next_inside_jsx_element` fix (#30959): advance
+                    // `code_point`/`current` past the bad byte so a subsequent
+                    // recovery `next()` dispatches on the *following* byte rather
+                    // than re-dispatching on the still-in-`code_point` bad byte.
+                    // In the main lexer the byte that falls through to this arm
+                    // is invalid in main-lexer context too, so re-dispatch
+                    // currently stays in `TSyntaxError` and the duplicate-scope
+                    // panic isn't reachable — but keeping the `current > end`
+                    // invariant consistent across both dispatch tables means
+                    // future recovery code doesn't have to reason about one arm
+                    // that leaves the lexer with `current == end`. `end` was
+                    // already advanced above, so the error range `[start, end)`
+                    // is unchanged.
+                    self.step_with(contents);
                 }
             }
 
@@ -3049,6 +3063,20 @@ lexer_impl_header! {
 
                     self.end = self.current;
                     self.token = T::TSyntaxError;
+                    // Advance `code_point`/`current` past the bad byte so that a
+                    // subsequent recovery `next()` (e.g. via `expect(...)` inside
+                    // `parse_jsx_prop_value_identifier`) dispatches on the *following*
+                    // byte instead of re-dispatching on the still-in-`code_point` bad
+                    // byte. Without this step the recovery `next()` synthesises a
+                    // zero-length token at the offset of the next byte, and the byte
+                    // after that then gets tokenised a second time at the same
+                    // `start` — the parser pushes two `FunctionArgs` scopes at that
+                    // offset in `parse_paren_expr` and trips the strict-monotonicity
+                    // debug assertion in `push_scope_for_parse_pass` (see #30959).
+                    // `end` was already advanced above, so the step below only moves
+                    // `current`/`code_point` forward and leaves the error range
+                    // `[start, end)` intact.
+                    self.step();
                 }
             }
 

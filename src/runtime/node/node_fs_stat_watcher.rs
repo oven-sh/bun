@@ -51,6 +51,15 @@ fn stat_to_js_stats(
 #[ref_count(destroy = Self::deinit)]
 pub struct StatWatcherScheduler {
     current_interval: AtomicI32,
+    /// Set by `timer_callback` immediately before scheduling `work_pool_callback`
+    /// on the thread pool, cleared by `work_pool_callback` once it has finished
+    /// touching `watchers`. `shutdown_for_exit` spin-waits on this so it never
+    /// races the work-pool thread for the queue.
+    work_pool_in_flight: AtomicBool,
+    /// Set by `shutdown_for_exit`. Once true, `work_pool_callback` stops
+    /// rescheduling the timer (so no `Holder` task is left stranded in the
+    /// concurrent-task queue at process exit).
+    is_shutdown: AtomicBool,
     task: WorkPoolTask,
     main_thread: ThreadId,
     // JSC_BORROW per LIFETIMES.tsv — VM outlives the scheduler. `BackRef` gives
@@ -160,6 +169,8 @@ impl StatWatcherScheduler {
     pub fn init(vm: *mut VirtualMachine) -> RefPtr<StatWatcherScheduler> {
         RefPtr::new(StatWatcherScheduler {
             current_interval: AtomicI32::new(0),
+            work_pool_in_flight: AtomicBool::new(false),
+            is_shutdown: AtomicBool::new(false),
             task: WorkPoolTask {
                 node: Default::default(),
                 callback: Self::work_pool_callback,
@@ -215,7 +226,6 @@ impl StatWatcherScheduler {
 
     /// Update the current interval and set the timer (this function is thread safe)
     fn set_interval(this: *mut Self, interval: i32) {
-        Self::ref_(this);
         // BACKREF — `this` is live (caller holds a ref); `ParentRef` Deref
         // gives safe `&Self` for the atomic store / thread-id check below.
         let this_ref = ParentRef::from(NonNull::new(this).expect("set_interval: scheduler"));
@@ -316,10 +326,16 @@ impl StatWatcherScheduler {
         self.event_loop_timer.state = EventLoopTimerState::FIRED;
         self.event_loop_timer.heap = Default::default();
 
-        if has_been_cleared {
+        if has_been_cleared || self.is_shutdown.load(Ordering::Relaxed) {
             return;
         }
 
+        // One ref is held across the work-pool hop (released by the
+        // `SchedulerRefGuard` in `work_pool_callback`). Taken here — not in
+        // `set_interval` — so the count exactly tracks "task in flight" instead
+        // of accumulating one leak per `set_interval(0)` / re-arm.
+        Self::ref_(core::ptr::from_mut(self));
+        self.work_pool_in_flight.store(true, Ordering::Release);
         WorkPool::schedule(&raw mut self.task);
     }
 
@@ -331,9 +347,9 @@ impl StatWatcherScheduler {
         // `timer_callback`, so provenance covers the full allocation.
         let this: *mut StatWatcherScheduler =
             unsafe { bun_core::from_field_ptr!(StatWatcherScheduler, task, task) };
-        // ref'd when the timer was scheduled
-        // SAFETY: `this` is live; one ref (taken in `set_interval`) is owned by
-        // this callback and adopted here.
+        // ref'd when the work-pool task was scheduled
+        // SAFETY: `this` is live; one ref (taken in `timer_callback`) is owned
+        // by this callback and adopted here.
         let _ref_guard = unsafe { SchedulerRefGuard::adopt(this) };
         // BACKREF — `this` is alive (ref'd when the timer was scheduled);
         // `ParentRef` Deref gives safe `&Self` for the queue/interval reads.
@@ -381,7 +397,11 @@ impl StatWatcherScheduler {
             log!("reinsert watcher {:x}", watcher as usize);
         }
 
-        if contain_watchers {
+        if this_ref.is_shutdown.load(Ordering::Relaxed) {
+            // Do not enqueue an `update_timer` Holder onto a JS-thread queue
+            // that will never tick again.
+            this_ref.current_interval.store(0, Ordering::Relaxed);
+        } else if contain_watchers {
             // choose the smallest interval or the closest time to the next check
             Self::set_interval(
                 this,
@@ -389,8 +409,75 @@ impl StatWatcherScheduler {
             );
         } else {
             // we do not have watchers, we can stop the timer
-            Self::set_interval(this, 0);
+            this_ref.current_interval.store(0, Ordering::Relaxed);
         }
+        // Publish the queue writes above before declaring the work-pool hop
+        // finished; `shutdown_for_exit` Acquire-loads this and then drains.
+        this_ref
+            .work_pool_in_flight
+            .store(false, Ordering::Release);
+    }
+
+    /// Drain every queued [`StatWatcher`] and release the per-VM scheduler ref
+    /// stored in `RareData`. Runs on the JS thread during `global_exit` /
+    /// worker shutdown, before JSC teardown, so each watcher can still be
+    /// `close()`'d (downgrades its `JsRef` Strong) and so `finalize()` —
+    /// reached from `lastChanceToFinalize` — drops the last ref.
+    ///
+    /// Without this the queue forms a refcount cycle at exit
+    /// (`scheduler.watchers` → `StatWatcher` → `StatWatcher.scheduler`) and
+    /// every still-queued watcher leaks.
+    ///
+    /// # Safety
+    /// `vm` is the live per-thread VM. Must be called on the JS thread.
+    pub unsafe fn shutdown_for_exit(vm: *mut VirtualMachine) {
+        // SAFETY: per fn contract; main-thread only. Touch the raw `rare_data`
+        // option directly so a never-used VM does not lazy-allocate `RareData`
+        // here just to find an empty slot.
+        let Some(rare) = (unsafe { &mut (*vm).rare_data }).as_deref_mut() else {
+            return;
+        };
+        let Some(raw) = core::mem::take(rare.node_fs_stat_watcher_scheduler_slot()) else {
+            return;
+        };
+        let this: *mut StatWatcherScheduler = raw.as_ptr().cast();
+        let this_ref = ParentRef::from(NonNull::new(this).expect("shutdown: scheduler"));
+        debug_assert_eq!(this_ref.main_thread, thread::current().id());
+
+        this_ref.is_shutdown.store(true, Ordering::Relaxed);
+        // Disarm the event-loop timer so `timer_callback` cannot schedule a new
+        // work-pool task after we've waited below.
+        Self::set_timer(this, 0);
+
+        // Wait for any in-flight work-pool task to finish touching `watchers`.
+        // The task is bounded (one stat per queued watcher) so this is a short
+        // spin in the rare case it overlaps.
+        while this_ref.work_pool_in_flight.load(Ordering::Acquire) {
+            core::hint::spin_loop();
+        }
+
+        let batch = this_ref.watchers.pop_batch();
+        let mut iter = batch.iterator();
+        loop {
+            let watcher = iter.next();
+            if watcher.is_null() {
+                break;
+            }
+            let w = ParentRef::from(NonNull::new(watcher).expect("shutdown: watcher"));
+            if !w.closed.load(Ordering::Relaxed) {
+                // Downgrade the `JsRef` Strong so the JS wrapper becomes
+                // collectible at `lastChanceToFinalize`.
+                w.close();
+            }
+            // SAFETY: we own the queue ref taken in `append`.
+            unsafe { ThreadSafeRefCount::<StatWatcher>::deref(watcher) };
+        }
+
+        // Release the RareData ref (`into_raw()` in `lazy_scheduler`). The
+        // scheduler stays alive until every remaining `StatWatcher::finalize`
+        // drops its `RefPtr` during `lastChanceToFinalize`; the last of those
+        // brings the count to zero.
+        Self::deref(this);
     }
 }
 

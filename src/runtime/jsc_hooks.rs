@@ -1587,6 +1587,16 @@ unsafe fn cancel_all_timers(vm: *mut VirtualMachine) {
     if state.is_null() {
         return;
     }
+    // Drain the `fs.watchFile` scheduler queue while the timer heap and JSC
+    // are both still live. Each queued `StatWatcher` holds a `RefPtr` back to
+    // the scheduler and the scheduler holds a queue ref on the watcher, so any
+    // watcher still queued at exit forms a cycle and leaks. Runs before
+    // `cancel_all_timeout_objects` so the scheduler's `EventLoopTimer` is still
+    // linked when `set_timer(0)` removes it.
+    // SAFETY: `vm` per fn contract; JS thread, before JSC teardown.
+    unsafe {
+        crate::node::node_fs_stat_watcher::StatWatcherScheduler::shutdown_for_exit(vm);
+    }
     // SAFETY: `state` is the live boxed per-thread `RuntimeState`; `vm` per fn
     // contract. `addr_of_mut!` does not materialize a `&mut RuntimeState`.
     unsafe {

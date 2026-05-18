@@ -2434,11 +2434,34 @@ pub(crate) mod strings_impl {
                 return false;
             }
             let b = self.bytes[i];
-            // TODO(port): full UTF-8 decode — bun_str owns the table-driven impl.
-            let (cp, w) = if b < 0x80 {
-                (b as i32, 1u8)
+            // Decode the WTF-8 sequence so multi-byte code points report their
+            // true width (Zig sets `width = cp_len`); fmt.rs collapses any
+            // `width > 1` code point to a single `_`. Invalid / truncated
+            // sequences fall back to a 1-byte step.
+            let seq = wtf8_byte_sequence_length(b) as usize;
+            let valid = (2..=4).contains(&seq)
+                && i + seq <= self.bytes.len()
+                && self.bytes[i + 1..i + seq]
+                    .iter()
+                    .all(|&c| (c & 0xC0) == 0x80);
+            let (cp, w): (i32, u8) = if !valid {
+                (b as i32, 1)
             } else {
-                (b as i32, 1u8)
+                let cp = match seq {
+                    2 => ((b as i32 & 0x1F) << 6) | (self.bytes[i + 1] as i32 & 0x3F),
+                    3 => {
+                        ((b as i32 & 0x0F) << 12)
+                            | ((self.bytes[i + 1] as i32 & 0x3F) << 6)
+                            | (self.bytes[i + 2] as i32 & 0x3F)
+                    }
+                    _ => {
+                        ((b as i32 & 0x07) << 18)
+                            | ((self.bytes[i + 1] as i32 & 0x3F) << 12)
+                            | ((self.bytes[i + 2] as i32 & 0x3F) << 6)
+                            | (self.bytes[i + 3] as i32 & 0x3F)
+                    }
+                };
+                (cp, seq as u8)
             };
             cursor.i = i;
             cursor.c = cp;

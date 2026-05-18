@@ -474,6 +474,20 @@ impl BunTestRoot {
         });
     }
 
+    /// Tear down `bun:test` GC roots before `global_exit()` so
+    /// `Zig__GlobalObject__destructOnExit()`'s `collectNow()` can reclaim the
+    /// closures they pin. Releases the active file's per-test `Strong`s (the
+    /// bail path skips its `scopeguard::defer! { exit_file() }` because
+    /// `process::exit()` does not unwind), the preload-hook `Strong`s held in
+    /// `hook_scope`, and the `pending_then_refs` Vec.
+    pub fn deinit_for_exit(&mut self) {
+        if self.active_file.is_some() {
+            self.exit_file();
+        }
+        self.reset_hook_scope_for_test_isolation();
+        self.pending_then_refs.borrow_mut().clear();
+    }
+
     pub fn enter_file(
         &mut self,
         file_id: FileId,

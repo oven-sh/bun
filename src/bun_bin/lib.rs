@@ -116,19 +116,6 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
     concat!(
         // Rust std false positive — detached threads' Arc<thread::Inner>.
         "leak:std::thread::thread::Thread>::new\n",
-        // `ZigString::dupe_for_js` hands the buffer to JSC via
-        // `WTF::ExternalStringImpl::create(.., free_global_string)`; the
-        // deallocator is correct, but a handful of these (mkdtempSync /
-        // realpathSync paths from `tmpdirSync()`/`tempDir()`) survive
-        // `Zig__GlobalObject__destructOnExit()`'s `collectNow()` because
-        // `bun:test`'s process-lifetime `Jest::RUNNER` singleton — leaked
-        // `BunTestRoot.pending_then_refs` and the per-file `Strong`s pinning
-        // describe/test closures — is never deinit'd before `Global::exit()`.
-        // The proper fix is to drop `Jest::RUNNER` (or its `BunTestRoot`)
-        // before `global_exit()`; until then these are bounded (a few
-        // dozen bytes per test file) and the buffer is mechanically
-        // recorded with the right deallocator.
-        "leak:ZigString>::dupe_for_js\n",
         // ── ported Zig-named entries ────────────────────────────────────────
         "leak:bun_runtime::node::fs_events::init_core_foundation\n",
         "leak:bun_runtime::node::fs_events::init_core_services\n",

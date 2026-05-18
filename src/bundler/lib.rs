@@ -1,5 +1,5 @@
 #![feature(inherent_associated_types)]
-#![feature(adt_const_params, allocator_api)]
+#![feature(adt_const_params, allocator_api, thread_local)]
 #![allow(incomplete_features)] // inherent_associated_types — used only for ThreadPool::Worker path compat with Zig
 #![allow(
     unused,

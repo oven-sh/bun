@@ -221,8 +221,11 @@ pub mod lib_info {
             this.get_or_put_into_pending_cache(key, PendingCacheField::PendingHostCacheNative);
 
         if let CacheHit::Inflight(inflight) = cache {
-            let dns_lookup =
-                DNSLookup::init(this.as_ctx_ptr(), global_this, Box::<[u8]>::from(&*query.name));
+            let dns_lookup = DNSLookup::init(
+                this.as_ctx_ptr(),
+                global_this,
+                Box::<[u8]>::from(&*query.name),
+            );
             // SAFETY: inflight points into resolver's HiveArray buffer
             unsafe { (*inflight).append(dns_lookup) };
             return unsafe { (*dns_lookup).promise.value() };
@@ -463,8 +466,11 @@ pub mod lib_uv_backend {
         let cache =
             this.get_or_put_into_pending_cache(key, PendingCacheField::PendingHostCacheNative);
         if let CacheHit::Inflight(inflight) = cache {
-            let dns_lookup =
-                DNSLookup::init(this.as_ctx_ptr(), global_this, Box::<[u8]>::from(&*query.name));
+            let dns_lookup = DNSLookup::init(
+                this.as_ctx_ptr(),
+                global_this,
+                Box::<[u8]>::from(&*query.name),
+            );
             unsafe { (*inflight).append(dns_lookup) };
             return Ok(unsafe { (*dns_lookup).promise.value() });
         }
@@ -5422,8 +5428,11 @@ impl Resolver {
         let cache =
             self.get_or_put_into_pending_cache(key, PendingCacheField::PendingHostCacheCares);
         if let CacheHit::Inflight(inflight) = cache {
-            let dns_lookup =
-                DNSLookup::init(self.as_ctx_ptr(), global_this, Box::<[u8]>::from(&*query.name));
+            let dns_lookup = DNSLookup::init(
+                self.as_ctx_ptr(),
+                global_this,
+                Box::<[u8]>::from(&*query.name),
+            );
             unsafe { (*inflight).append(dns_lookup) };
             return Ok(unsafe { (*dns_lookup).promise.value() });
         }

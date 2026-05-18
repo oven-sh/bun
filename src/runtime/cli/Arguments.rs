@@ -277,6 +277,9 @@ pub const RUNTIME_PARAMS_: &[ParamType] = &[
         "-p, --print <STR>                 Evaluate argument as a script and print the result"
     ),
     parse_param!(
+        "--check                           Check the syntax of the entry point without executing it"
+    ),
+    parse_param!(
         "--prefer-offline                  Skip staleness checks for packages in the Bun runtime and resolve from disk"
     ),
     parse_param!(
@@ -1127,6 +1130,14 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
             ctx.runtime_options.eval.eval_and_print = true;
         } else if let Some(script) = args.option(b"--eval") {
             ctx.runtime_options.eval.script = script.into();
+        }
+        ctx.runtime_options.syntax_check = args.flag(b"--check");
+        if ctx.runtime_options.syntax_check && !ctx.runtime_options.eval.script.is_empty() {
+            Output::err_generic(
+                "either --check or --eval can be used, not both",
+                format_args!(""),
+            );
+            Global::exit(9);
         }
         ctx.runtime_options.if_present = args.flag(b"--if-present");
         ctx.runtime_options.smol = args.flag(b"--smol");

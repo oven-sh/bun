@@ -533,6 +533,7 @@ _bun_repl_completion() {
         '(-p --print)-e[Evaluate argument as a script, then exit]:script' \
         '(-e --eval)--print[Evaluate argument as a script, print the result, then exit]:script' \
         '(-e --eval)-p[Evaluate argument as a script, print the result, then exit]:script' \
+        '(-e --eval -p --print)--check[Check the syntax of the entry point without executing it]' \
         '--preload[Import a module before other modules are loaded]:preload' \
         '-r[Import a module before other modules are loaded]:preload' \
         '--smol[Use less memory, but run garbage collection more often]' \

@@ -32,7 +32,7 @@ use bun_js_parser as js_ast;
 use crate::linker_context_mod::LinkerCtx;
 
 type AstFlags = bundled_ast::Flags;
-type ImportRecordList = import_record::List;
+type ImportRecordList<'a> = import_record::List<'a>;
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum ScanImportsAndExportsError {
@@ -105,7 +105,7 @@ pub fn scan_imports_and_exports(
     let input = this.parse_graph().input_files.split_raw();
 
     use crate::bundled_ast::CssCol;
-    let import_records_list: *mut [ImportRecordList] = ast.import_records;
+    let import_records_list: *mut [ImportRecordList<'_>] = ast.import_records;
     let exports_kind: *mut [ExportsKind] = ast.exports_kind;
     let entry_point_kinds: *mut [EntryPoint::Kind] = files.entry_point_kind;
     let named_imports: *mut [NamedImports] = ast.named_imports;
@@ -151,7 +151,7 @@ pub fn scan_imports_and_exports(
                 // Inline URLs for non-CSS files into the CSS file
                 let _ = LinkerContext::scan_css_imports(
                     id as u32,
-                    col_ref!(import_records_list)[id].slice(),
+                    col_ref!(import_records_list)[id].as_slice(),
                     css_asts,
                     col_ref!(input_files),
                     col_ref!(loaders),
@@ -172,7 +172,7 @@ pub fn scan_imports_and_exports(
                 continue;
             }
 
-            for record in col_ref!(import_records_list)[id].slice() {
+            for record in col_ref!(import_records_list)[id].as_slice() {
                 if !record.source_index.is_valid() {
                     continue;
                 }
@@ -347,7 +347,7 @@ pub fn scan_imports_and_exports(
                 // `import_records` is a `&'a [_]` (Copy) field — copy it out so
                 // the loop borrow does not overlap `&mut dependency_wrapper`.
                 let import_records = dependency_wrapper.import_records;
-                for record in import_records[id].slice() {
+                for record in import_records[id].as_slice() {
                     if record.source_index.is_valid() {
                         let si = record.source_index.get();
                         if dependency_wrapper.exports_kind[si as usize] == ExportsKind::Cjs {
@@ -877,7 +877,7 @@ pub fn scan_imports_and_exports(
                         .import_record_indices
                         .slice()[iri];
                     let (kind, rec_source_index, rec_flags) = {
-                        let record = &col_ref!(import_records_list)[id].slice()
+                        let record = &col_ref!(import_records_list)[id].as_slice()
                             [import_record_index as usize];
                         (record.kind, record.source_index, record.flags)
                     };
@@ -887,7 +887,7 @@ pub fn scan_imports_and_exports(
                     // PORT NOTE: short-circuit — `is_external_dynamic_import` indexes by
                     // `record.source_index`, so it must only run when that index is valid.
                     let is_external_dyn = rec_source_index.is_valid() && {
-                        let record = &col_ref!(import_records_list)[id].slice()
+                        let record = &col_ref!(import_records_list)[id].as_slice()
                             [import_record_index as usize];
                         this.is_external_dynamic_import(record, source_index)
                     };
@@ -955,14 +955,14 @@ pub fn scan_imports_and_exports(
                                             == ExportsKind::Cjs
                                     {
                                         // Cross-chunk dynamic import to CJS - needs special handling in printer
-                                        col!(import_records_list)[id].slice_mut()
+                                        col!(import_records_list)[id].as_mut_slice()
                                             [import_record_index as usize]
                                             .flags
                                             .insert(ImportRecordFlags::WRAP_WITH_TO_ESM);
                                         to_esm_uses += 1;
                                     } else if kind != ImportKind::Dynamic {
                                         // Static imports to external CJS modules need __toESM wrapping
-                                        col!(import_records_list)[id].slice_mut()
+                                        col!(import_records_list)[id].as_mut_slice()
                                             [import_record_index as usize]
                                             .flags
                                             .insert(ImportRecordFlags::WRAP_WITH_TO_ESM);
@@ -999,7 +999,7 @@ pub fn scan_imports_and_exports(
                             && other_export_kind == ExportsKind::Cjs
                             && output_format != Format::InternalBakeDev
                         {
-                            col!(import_records_list)[id].slice_mut()[import_record_index as usize]
+                            col!(import_records_list)[id].as_mut_slice()[import_record_index as usize]
                                 .flags
                                 .insert(ImportRecordFlags::WRAP_WITH_TO_ESM);
                             to_esm_uses += 1;
@@ -1029,7 +1029,7 @@ pub fn scan_imports_and_exports(
                             // and subtle set of transpiler interop issues. See for example
                             // https://github.com/evanw/esbuild/issues/1591.
                             if kind == ImportKind::Require {
-                                col!(import_records_list)[id].slice_mut()
+                                col!(import_records_list)[id].as_mut_slice()
                                     [import_record_index as usize]
                                     .flags
                                     .insert(ImportRecordFlags::WRAP_WITH_TO_COMMONJS);
@@ -1060,7 +1060,7 @@ pub fn scan_imports_and_exports(
 
                 for import_record_index in col_ref!(export_star_import_records)[id].iter() {
                     let (rec_source_index,) = {
-                        let record = &col_ref!(import_records_list)[id].slice()
+                        let record = &col_ref!(import_records_list)[id].as_slice()
                             [*import_record_index as usize];
                         (record.source_index,)
                     };
@@ -1101,7 +1101,7 @@ pub fn scan_imports_and_exports(
                             Index::source(source_index),
                         )?;
                         col!(ast_flags_list)[id].insert(AstFlags::USES_EXPORTS_REF);
-                        col!(import_records_list)[id].slice_mut()[*import_record_index as usize]
+                        col!(import_records_list)[id].as_mut_slice()[*import_record_index as usize]
                             .flags
                             .insert(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN);
                         re_export_uses += 1;
@@ -1161,7 +1161,7 @@ fn should_call_runtime_require(format: options::Format) -> bool {
 struct DependencyWrapper<'a> {
     flags: &'a mut [js_meta::Flags],
     exports_kind: &'a mut [ExportsKind],
-    import_records: &'a [ImportRecordList],
+    import_records: &'a [ImportRecordList<'a>],
     export_star_map: HashMap<IndexInt, ()>,
     entry_point_kinds: &'a [EntryPoint::Kind],
     export_star_records: &'a [Box<[u32]>],
@@ -1192,7 +1192,7 @@ impl DependencyWrapper<'_> {
             // having an export star from a file with dynamic exports.
             let kind = self.entry_point_kinds[source_index as usize];
             let rec_source_index =
-                self.import_records[source_index as usize].slice()[*id as usize].source_index;
+                self.import_records[source_index as usize].as_slice()[*id as usize].source_index;
             if (rec_source_index.is_invalid()
                 && (!kind.is_entry_point() || !self.output_format.keep_es6_import_export_syntax()))
                 || (rec_source_index.is_valid()
@@ -1232,7 +1232,7 @@ impl DependencyWrapper<'_> {
         // `import_records` is a `&'a [_]` (Copy) field — copy it out so the
         // recursive `&mut self` call does not overlap the iterator borrow.
         let records = self.import_records;
-        for record in records[source_index as usize].slice() {
+        for record in records[source_index as usize].as_slice() {
             if !record.source_index.is_valid() {
                 continue;
             }
@@ -1245,7 +1245,7 @@ impl DependencyWrapper<'_> {
 // ExportStarContext — port of the inner Zig struct. Holds raw column ptrs.
 // ──────────────────────────────────────────────────────────────────────────
 struct ExportStarContext {
-    import_records_list: *mut [ImportRecordList],
+    import_records_list: *mut [ImportRecordList<'_>],
     source_index_stack: Vec<IndexInt>,
     exports_kind: *mut [ExportsKind],
     named_exports: *mut [NamedExports],
@@ -1410,14 +1410,14 @@ mod __css_validation {
         this: &mut LinkerContext,
         id: usize,
         css_asts: *mut [CssCol],
-        import_records_list: *mut [ImportRecordList],
+        import_records_list: *mut [ImportRecordList<'_>],
         input_files: *mut [Source],
     ) {
         // `css_asts[id]` checked Some by caller. We only *read* the AST here;
         // `other_css_ast` below may alias the same allocation when a file
         // composes from itself, so bind as shared.
         let css_ast: &BundlerStyleSheet = col_ref!(css_asts)[id].as_deref().unwrap();
-        let import_records: &[ImportRecord] = col_ref!(import_records_list)[id].slice();
+        let import_records: &[ImportRecord] = col_ref!(import_records_list)[id].as_slice();
 
         // Validate cross-file "composes: ... from" named imports
         for composes in css_ast.composes.values() {
@@ -1494,7 +1494,7 @@ mod __css_validation {
         this: &mut LinkerContext,
         index: IndexInt,
         root_css_ast: &BundlerStyleSheet,
-        import_records_list: *mut [ImportRecordList],
+        import_records_list: *mut [ImportRecordList<'_>],
         all_css_asts: *mut [CssCol],
     ) {
         #[derive(Default)]
@@ -1506,7 +1506,7 @@ mod __css_validation {
         struct Visitor<'a> {
             visited: ArrayHashMap<bun_ast::Ref, ()>,
             properties: StringArrayHashMap<PropertyInFile>,
-            all_import_records: *mut [ImportRecordList],
+            all_import_records: *mut [ImportRecordList<'_>],
             all_css_asts: *mut [CssCol],
             all_symbols: &'a symbol::Map,
             all_sources: *mut [Source],

@@ -841,7 +841,7 @@ pub enum AlreadyBundled {
 }
 
 impl Default for AlreadyBundled {
-    fn default() -> Self {
+    pub fn empty(arena: &'a bun_alloc::Arena) -> Self {
         AlreadyBundled::None
     }
 }
@@ -873,10 +873,10 @@ impl AlreadyBundled {
 // PORT NOTE: lifetime-free — `runtime_transpiler_cache` is a raw pointer (Zig
 // `?*RuntimeTranspilerCache`) so `AsyncModule.parse_result` / `JSTranspiler`
 // can store this by value without threading a borrow lifetime.
-pub struct ParseResult {
+pub struct ParseResult<'a> {
     pub source: bun_ast::Source,
     pub loader: options::Loader,
-    pub ast: bun_ast::Ast,
+    pub ast: bun_ast::Ast<'a>,
     pub already_bundled: AlreadyBundled,
     pub input_fd: Option<FD>,
     pub empty: bool,
@@ -906,12 +906,12 @@ pub struct ParseResult {
     pub source_contents_backing: resolver::cache::Contents,
 }
 
-impl Default for ParseResult {
+impl<'a> ParseResult<'a> {
     /// Spec transpiler.zig — `ParseResult` is value-copied (e.g.
     /// `AsyncModule.resumeLoadingModule` reads/writes `this.parse_result` by
     /// value). `Default` lets the Rust port `mem::take` it across that
     /// boundary; see `AsyncModule::resume_loading_module`.
-    fn default() -> Self {
+    pub fn empty(arena: &'a bun_alloc::Arena) -> Self {
         ParseResult {
             source: Default::default(),
             // PORT NOTE: `options::Loader` has no `Default`; Zig field had no
@@ -919,7 +919,7 @@ impl Default for ParseResult {
             // (BundleEnums.rs:353), and `Default` here exists only for
             // `mem::take` in `AsyncModule::resume_loading_module`.
             loader: options::Loader::File,
-            ast: bun_ast::Ast::empty(),
+            ast: bun_ast::Ast::empty_in(arena),
             already_bundled: Default::default(),
             input_fd: None,
             empty: true,
@@ -930,9 +930,10 @@ impl Default for ParseResult {
     }
 }
 
-impl ParseResult {
+impl<'a> ParseResult<'a> {
     #[inline]
     fn empty_with(
+        arena: &'a bun_alloc::Arena,
         source: bun_ast::Source,
         loader: options::Loader,
         input_fd: Option<FD>,
@@ -941,7 +942,7 @@ impl ParseResult {
         ParseResult {
             source,
             loader,
-            ast: bun_ast::Ast::empty(),
+            ast: bun_ast::Ast::empty_in(arena),
             already_bundled: AlreadyBundled::None,
             input_fd,
             empty: true,
@@ -1377,7 +1378,7 @@ impl<'a> Transpiler<'a> {
         &mut self,
         this_parse: ParseOptions<'_>,
         client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint>,
-    ) -> Option<ParseResult> {
+    ) -> Option<ParseResult<'a>> {
         self.parse_maybe_return_file_only::<false>(this_parse, client_entry_point_)
     }
 
@@ -1385,7 +1386,7 @@ impl<'a> Transpiler<'a> {
         &mut self,
         this_parse: ParseOptions<'_>,
         client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint>,
-    ) -> Option<ParseResult> {
+    ) -> Option<ParseResult<'a>> {
         self.parse_maybe_return_file_only_allow_shared_buffer::<RETURN_FILE_ONLY, false>(
             this_parse,
             client_entry_point_,
@@ -1403,7 +1404,7 @@ impl<'a> Transpiler<'a> {
         // callers pass a different type, introduce a `ClientEntryPointLike`
         // trait with `fn source() -> Option<&Source>`.
         client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint>,
-    ) -> Option<ParseResult> {
+    ) -> Option<ParseResult<'a>> {
         let arena = this_parse.arena;
         let dirname_fd = this_parse.dirname_fd;
         let file_descriptor = this_parse.file_descriptor;
@@ -1758,7 +1759,7 @@ impl<'a> Transpiler<'a> {
                     },
                     js_ast::Result::Cached => ParseResult {
                         // TODO(port): Zig used `undefined` for ast here.
-                        ast: bun_ast::Ast::empty(),
+                        ast: bun_ast::Ast::empty_in(arena),
                         runtime_transpiler_cache: rtc_ptr,
                         source: source.clone(),
                         loader,
@@ -1770,7 +1771,7 @@ impl<'a> Transpiler<'a> {
                     },
                     js_ast::Result::AlreadyBundled(already_bundled) => ParseResult {
                         // TODO(port): Zig used `undefined` for ast here.
-                        ast: bun_ast::Ast::empty(),
+                        ast: bun_ast::Ast::empty_in(arena),
                         already_bundled: match already_bundled {
                             js_ast::AlreadyBundled::Bun => AlreadyBundled::SourceCode,
                             js_ast::AlreadyBundled::BunCjs => AlreadyBundled::SourceCodeCjs,
@@ -1906,7 +1907,7 @@ fn parse_data_loader(
     arena: &Arena,
     log: &mut bun_ast::Log,
     keep_json_and_toml_as_one_statement: bool,
-) -> Option<ParseResult> {
+) -> Option<ParseResult<'a>> {
     // PERF(port): was `inline .toml, .yaml, .json, .jsonc, .json5
     // => |kind|` — comptime monomorphization per loader; profile if it
     // shows up on a hot path.
@@ -2129,7 +2130,7 @@ fn parse_data_loader(
             }]);
         }
     };
-    let mut ast = bun_ast::Ast::from_parts(parts);
+    ast.symbols = bun_alloc::vec_from_iter_in(symbols.into_iter(), arena);
     ast.symbols = bun_ast::symbol::List::from_owned_slice(symbols.into_boxed_slice());
 
     return Some(ParseResult {
@@ -2153,7 +2154,7 @@ fn parse_text_loader(
     input_fd: Option<FD>,
     source_backing: resolver::cache::Contents,
     arena: &Arena,
-) -> Option<ParseResult> {
+) -> Option<ParseResult<'a>> {
     let expr = bun_ast::Expr::init(
         bun_ast::E::EString::init(&source.contents),
         bun_ast::Loc::EMPTY,
@@ -2176,7 +2177,7 @@ fn parse_text_loader(
     }]);
 
     return Some(ParseResult {
-        ast: bun_ast::Ast::from_parts(parts),
+        ast: bun_ast::Ast::from_parts(parts, arena),
         source: source.clone(),
         loader,
         input_fd,
@@ -2197,7 +2198,7 @@ fn parse_md_loader(
     source_backing: resolver::cache::Contents,
     arena: &Arena,
     log: &mut bun_ast::Log,
-) -> Option<ParseResult> {
+) -> Option<ParseResult<'a>> {
     let html: &'static [u8] = match bun_md::root::render_to_html(&source.contents) {
         // Spec transpiler.zig:1162 allocates the rendered HTML via
         // `arena` (the per-parse arena), so it is freed with the
@@ -2234,7 +2235,7 @@ fn parse_md_loader(
     }]);
 
     return Some(ParseResult {
-        ast: bun_ast::Ast::from_parts(parts),
+        ast: bun_ast::Ast::from_parts(parts, arena),
         source: source.clone(),
         loader,
         input_fd,
@@ -2256,7 +2257,7 @@ fn parse_wasm_loader(
     path: &bun_paths::fs::Path<'static>,
     target: options::Target,
     log: &mut bun_ast::Log,
-) -> Option<ParseResult> {
+) -> Option<ParseResult<'a>> {
     if target.is_bun() {
         if !source.is_web_assembly() {
             let _ = log.add_error_fmt(
@@ -2271,7 +2272,7 @@ fn parse_wasm_loader(
         }
 
         return Some(ParseResult {
-            ast: bun_ast::Ast::empty(),
+            ast: bun_ast::Ast::empty_in(arena),
             source: source.clone(),
             loader,
             input_fd,
@@ -2375,7 +2376,7 @@ impl<'a> Transpiler<'a> {
         // take the column out (the printer never reads `tree.symbols`; it
         // walks `symbols` exclusively — `rg tree.symbols js_printer/lib.rs` is
         // empty). `init_with_one_list` boxes the single inner list.
-        // PERF(port): one extra alloc vs Zig's borrowed-slice — profile if hot.
+        let symbols = bun_ast::symbol::Map::init_with_one_list(core::mem::replace(&mut ast.symbols, Vec::new_in(arena)).into_iter().collect());
         let symbols = bun_ast::symbol::Map::init_with_one_list(core::mem::take(&mut ast.symbols));
 
         // `runtime_imports` is now forwarded — after Round-G `Ast.runtime_imports`
@@ -3299,7 +3300,7 @@ pub struct BuildResolveResultPair {
 }
 
 impl Default for BuildResolveResultPair {
-    fn default() -> Self {
+    pub fn empty(arena: &'a bun_alloc::Arena) -> Self {
         Self {
             written: 0,
             input_fd: None,

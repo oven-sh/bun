@@ -300,7 +300,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         debug_assert!(self.scopes.is_empty());
         let module_scope = self.current_scope;
 
-        let mut parts = PartList::init_capacity(2);
+        let mut parts = Vec::with_capacity_in(2, self.arena);
         // PORT NOTE: Zig grew len then wrote `parts.mut(i).* = ...`, which is a
         // bitwise store on the SoA slot. In Rust `*parts.mut_(i) = ...` first
         // *drops* the (uninitialized) prior `Part` — and `Part` carries Drop
@@ -591,13 +591,11 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         Ok(crate::BundledAst {
             parts,
             module_scope: module_scope_value,
-            symbols: symbol::List::move_from_list(core::mem::take(&mut self.symbols)),
+            symbols: bun_alloc::vec_from_iter_in(core::mem::take(&mut self.symbols).into_iter(), self.arena),
             exports_ref: Ref::NONE,
             wrapper_ref: Ref::NONE,
             module_ref: self.module_ref,
-            import_records: import_record::List::move_from_list(core::mem::take(
-                &mut self.import_records,
-            )),
+            import_records: bun_alloc::vec_from_iter_in(core::mem::take(&mut self.import_records).into_iter(), self.arena),
             export_star_import_records: Box::default(),
             approximate_newline_count: 1,
             exports_kind: ExportsKind::Esm,

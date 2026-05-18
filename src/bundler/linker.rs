@@ -412,7 +412,7 @@ impl Linker {
                 // borrows (`&result.source` + `&mut result.ast.*`) where
                 // needed, and hoist `is_pending_import` (which borrows the
                 // whole `result`) before any `ast` mut borrow.
-                let len = result.ast.import_records.slice().len();
+                let len = result.ast.import_records.as_slice().len();
                 for record_i in 0..len {
                     let record_index = u32::try_from(record_i).expect("int cast");
 
@@ -422,7 +422,7 @@ impl Linker {
                     // Field-split borrow: `source` ⟂ `ast`.
                     let source = &result.source;
                     let ast = &mut result.ast;
-                    let import_record = &mut ast.import_records.slice_mut()[record_i];
+                    let import_record = &mut ast.import_records.as_mut_slice()[record_i];
 
                     if import_record.flags.contains(ImportRecordFlags::IS_UNUSED) || skip_deferred {
                         continue;
@@ -510,7 +510,7 @@ impl Linker {
                     }
 
                     if let Some(runner) = self.plugin_runner {
-                        let import_record = &mut result.ast.import_records.slice_mut()[record_i];
+                        let import_record = &mut result.ast.import_records.as_mut_slice()[record_i];
                         if PluginRunner::could_be_plugin(import_record.path.text) {
                             // SAFETY: `plugin_runner` is `Some` only when set
                             // by the owning `Transpiler` to a live JSC-heap

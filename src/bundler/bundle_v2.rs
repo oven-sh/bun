@@ -100,7 +100,7 @@ pub struct BundleV2<'a> {
     pub ssr_transpiler: *mut Transpiler<'a>,
     /// When Bun Bake is used, the resolved framework is passed here.
     pub framework: Option<bake::Framework>,
-    pub graph: Graph,
+    pub graph: Graph<'a>,
     // `LinkerContext<'a>` borrows the same arena lifetime as `transpiler`
     // (Zig stored both as raw pointers into the bundler heap).
     pub linker: LinkerContext<'a>,
@@ -1758,7 +1758,7 @@ pub mod bv2_impl {
     pub struct ReachableFileVisitor<'a> {
         pub reachable: Vec<Index>,
         pub visited: DynamicBitSet,
-        pub all_import_records: &'a mut [import_record::List],
+        pub all_import_records: &'a mut [import_record::List<'a>],
         pub all_loaders: &'a [Loader],
         pub all_urls_for_css: &'a [&'a [u8]],
         pub redirects: &'a [u32],
@@ -1835,7 +1835,7 @@ pub mod bv2_impl {
                 for ir_idx in 0..import_records_len {
                     let import_record = &mut self.all_import_records
                         [import_record_list_id.get() as usize]
-                        .slice_mut()[ir_idx];
+                        .as_mut_slice()[ir_idx];
                     let mut other_source = import_record.source_index;
                     if other_source.is_valid() {
                         let mut redirect_count: usize = 0;
@@ -1856,7 +1856,7 @@ pub mod bv2_impl {
                             };
                             let import_record = &mut self.all_import_records
                                 [import_record_list_id.get() as usize]
-                                .slice_mut()[ir_idx];
+                                .as_mut_slice()[ir_idx];
                             import_record.source_index = other_src_idx;
                             import_record.path = other_path;
                             other_source = other_src_idx;
@@ -1876,7 +1876,7 @@ pub mod bv2_impl {
 
                         let import_record = &self.all_import_records
                             [import_record_list_id.get() as usize]
-                            .slice()[ir_idx];
+                            .as_slice()[ir_idx];
                         // Mark if the file is imported by JS and its URL is inlined for CSS
                         let is_inlined = import_record.source_index.is_valid()
                             && !self.all_urls_for_css[import_record.source_index.get() as usize]
@@ -1904,7 +1904,7 @@ pub mod bv2_impl {
                 {
                     let redirect_source_index = self.all_import_records
                         [source_index.get() as usize]
-                        .slice()[redirect_id as usize]
+                        .as_slice()[redirect_id as usize]
                         .source_index
                         .get();
                     self.visit::<CHECK_DYNAMIC_IMPORTS>(
@@ -1989,7 +1989,7 @@ pub mod bv2_impl {
             // `split_mut()` on the local can coexist with the shared borrows
             // below. The slab does not resize for the duration of this function.
             let mut ast_slice = self.graph.ast.slice();
-            let all_import_records: &mut [import_record::List] =
+            let all_import_records: &mut [import_record::List<'_>] =
                 ast_slice.split_mut().import_records;
             let all_urls_for_css = self.graph.ast.items_url_for_css();
 
@@ -2162,7 +2162,7 @@ pub mod bv2_impl {
             // borrowing `self.graph.ast`; read the per-target map through the
             // disjoint `build_graphs` field instead of the `&mut self` accessor.
             let mut ast_slice = self.graph.ast.slice();
-            let ast_import_records: &mut [import_record::List] =
+            let ast_import_records: &mut [import_record::List<'_>] =
                 ast_slice.split_mut().import_records;
             let targets = self.graph.ast.items_target();
             let max_valid_source_index = Index::init(self.graph.input_files.len());
@@ -2604,7 +2604,7 @@ pub mod bv2_impl {
             self.path_to_source_index_map(target)
                 .put(path_slice, source_index.get())
                 .expect("oom");
-            let _ = self.graph.ast.append(JSAst::empty_in(bun_alloc::global_arena())); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
             self.graph.input_files.append(crate::Graph::InputFile {
                 source: bun_ast::Source {
@@ -2720,7 +2720,7 @@ pub mod bv2_impl {
             self.path_to_source_index_map(target)
                 .put(&path.text, source_index.get())
                 .expect("oom");
-            let _ = self.graph.ast.append(JSAst::empty_in(bun_alloc::global_arena())); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
             let side_effects = result.primary_side_effects_data;
             self.graph.input_files.append(crate::Graph::InputFile {
@@ -2787,7 +2787,7 @@ pub mod bv2_impl {
             // here into `ThreadPool::init`, which stores it as `*mut`. Creating a
             // `&mut` along the way would violate Stacked Borrows.
             thread_pool: Option<NonNull<ThreadPoolLib>>,
-            heap: ThreadLocalArena,
+            heap: &'a ThreadLocalArena,
         ) -> Result<Box<BundleV2<'a>>, Error> {
             // TODO(port): arena-allocate self via bump.alloc — Box::new is wrong arena (Zig: arena.create(@This()) on arena)
             transpiler.env().load_tracy();
@@ -2810,7 +2810,7 @@ pub mod bv2_impl {
                     heap,
                     kit_referenced_server_data: false,
                     kit_referenced_client_data: false,
-                    ..Default::default()
+                    ..Graph::new(heap)
                 },
                 linker: LinkerContext {
                     r#loop: event_loop,
@@ -2864,7 +2864,7 @@ pub mod bv2_impl {
             // Rust `Transpiler<'a>`/`Resolver<'a>` store `&'a Arena` and `Log.msgs`
             // is a `Vec` (global alloc), so only `linker.graph.bump` needs the
             // backref into the now-stable `this.graph.heap` slot.
-            this.linker.graph.bump = bun_ptr::BackRef::new(&this.graph.heap);
+            this.linker.graph.bump = bun_ptr::BackRef::new(this.graph.heap);
             this.transpiler.log_mut().clone_line_text = true;
 
             // We don't expose an option to disable this. Bake forbids tree-shaking
@@ -3240,7 +3240,7 @@ pub mod bv2_impl {
             })?;
 
             // try this.graph.entry_points.append(arena, Index.runtime);
-            let _ = self.graph.ast.append(JSAst::empty_in(bun_alloc::global_arena())); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: Zig aborts; port keeps fire-and-forget
             self.path_to_source_index_map(self.transpiler.options.target)
                 .put(&b"bun:wrap"[..], Index::RUNTIME.get())
                 .expect("oom");
@@ -3557,7 +3557,7 @@ pub mod bv2_impl {
             known_target: options::Target,
         ) -> Result<IndexInt, AllocError> {
             let source_index = Index::init(u32::try_from(self.graph.ast.len()).expect("int cast"));
-            let _ = self.graph.ast.append(JSAst::empty_in(bun_alloc::global_arena())); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
             self.graph.input_files.append(crate::Graph::InputFile {
                 source: core::mem::take(source),
@@ -3611,7 +3611,7 @@ pub mod bv2_impl {
             known_target: options::Target,
         ) -> Result<IndexInt, AllocError> {
             let source_index = Index::init(u32::try_from(self.graph.ast.len()).expect("int cast"));
-            let _ = self.graph.ast.append(JSAst::empty_in(bun_alloc::global_arena())); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
             self.graph.input_files.append(crate::Graph::InputFile {
                 source: core::mem::take(source),
@@ -3726,7 +3726,7 @@ pub mod bv2_impl {
                 side_effects: bun_ast::SideEffects::HasSideEffects,
                 ..Default::default()
             })?;
-            let _ = self.graph.ast.append(JSAst::empty_in(bun_alloc::global_arena())); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
             // PORT NOTE: `bun.new(ServerComponentParseTask, …)` — heap-owned by the
             // worker pool; freed via `bun.destroy` in `on_complete` after the
@@ -3853,7 +3853,7 @@ pub mod bv2_impl {
         #[cold]
         pub fn generate_from_cli(
             transpiler: &'a mut Transpiler<'a>,
-            alloc: &bun_alloc::Arena,
+            alloc: &'a bun_alloc::Arena,
             event_loop: EventLoop,
             enable_reloading: bool,
             reachable_files_count: &mut usize,
@@ -3868,7 +3868,7 @@ pub mod bv2_impl {
                 event_loop,
                 enable_reloading,
                 None,
-                ThreadLocalArena::new(),
+                alloc,
             )?;
             this.unique_key = generate_unique_key();
 
@@ -4009,7 +4009,7 @@ pub mod bv2_impl {
         #[cold]
         pub fn scan_module_graph_from_cli(
             transpiler: &'a mut Transpiler<'a>,
-            alloc: &bun_alloc::Arena,
+            alloc: &'a bun_alloc::Arena,
             event_loop: EventLoop,
             entry_points: &[&[u8]],
         ) -> Result<Box<BundleV2<'a>>, Error> {
@@ -4020,7 +4020,7 @@ pub mod bv2_impl {
                 event_loop,
                 false,
                 None,
-                ThreadLocalArena::new(),
+                alloc,
             )?;
             this.unique_key = generate_unique_key();
 
@@ -4049,7 +4049,7 @@ pub mod bv2_impl {
             entry_points: &bake_types::production::EntryPointMap,
             server_transpiler: &'a mut Transpiler<'a>,
             bake_options: BakeOptions<'a>,
-            alloc: &bun_alloc::Arena,
+            alloc: &'a bun_alloc::Arena,
             event_loop: EventLoop,
         ) -> Result<Vec<options::OutputFile>, Error> {
             let mut this = BundleV2::init(
@@ -4059,7 +4059,7 @@ pub mod bv2_impl {
                 event_loop,
                 false,
                 None,
-                ThreadLocalArena::new(),
+                alloc,
             )?;
             this.unique_key = generate_unique_key();
 
@@ -4753,7 +4753,7 @@ pub mod bv2_impl {
                                 Index::init(u32::try_from(this.graph.ast.len()).expect("int cast"));
                             unsafe { *value_ptr = source_index.get() };
                             out_source_index = Some(source_index);
-                            let _ = this.graph.ast.append(JSAst::empty_in(bun_alloc::global_arena())); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                            let _ = this.graph.ast.append(JSAst::empty_in(this.graph.heap)); // OOM/capacity: Zig aborts; port keeps fire-and-forget
                             let loader = path
                                 .loader(&this.transpiler.options.loaders)
                                 .unwrap_or(Loader::File);
@@ -5887,8 +5887,8 @@ pub mod bv2_impl {
                     == Index::BAKE_CLIENT_DATA.get()
             );
 
-            let _ = self.graph.ast.append(JSAst::empty_in(bun_alloc::global_arena())); // PERF(port): was assume_capacity
-            let _ = self.graph.ast.append(JSAst::empty_in(bun_alloc::global_arena())); // PERF(port): was assume_capacity
+            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // PERF(port): was assume_capacity
+            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // PERF(port): was assume_capacity
             Ok(())
         }
 
@@ -5965,7 +5965,7 @@ pub mod bv2_impl {
     }
 
     pub struct ResolveImportRecordCtx<'a> {
-        pub import_records: &'a mut import_record::List,
+        pub import_records: &'a mut import_record::List<'a>,
         pub source: &'a bun_ast::Source,
         pub loader: Loader,
         pub target: options::Target,
@@ -5990,7 +5990,7 @@ pub mod bv2_impl {
             let loader = ctx.loader;
             let source_dir = source.path.source_dir();
             let mut estimated_resolve_queue_count: usize = 0;
-            for import_record in ctx.import_records.slice_mut() {
+            for import_record in ctx.import_records.as_mut_slice() {
                 if import_record
                     .flags
                     .contains(bun_ast::ImportRecordFlags::IS_INTERNAL)
@@ -6026,7 +6026,7 @@ pub mod bv2_impl {
 
             let mut last_error: Option<Error> = None;
 
-            'outer: for (i, import_record) in ctx.import_records.slice_mut().iter_mut().enumerate()
+            'outer: for (i, import_record) in ctx.import_records.as_mut_slice().iter_mut().enumerate()
             {
                 // Preserve original import specifier before resolution modifies path
                 if import_record.original_path.is_empty() {
@@ -6759,7 +6759,7 @@ pub mod bv2_impl {
                         .input_files
                         .append(new_input_file)
                         .expect("unreachable");
-                    let _ = self.graph.ast.append(JSAst::empty_in(bun_alloc::global_arena())); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                    let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
                     if is_html_entrypoint {
                         self.ensure_client_transpiler();
@@ -7257,7 +7257,7 @@ pub mod bv2_impl {
 
                     this.graph.ast.set(
                         result_source_index,
-                        core::mem::replace(&mut result.ast, JSAst::empty_in(bun_alloc::global_arena())),
+                        core::mem::replace(&mut result.ast, JSAst::empty_in(self.graph.heap)),
                     );
 
                     // Barrel optimization: eagerly record import requests and

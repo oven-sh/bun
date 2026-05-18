@@ -47,7 +47,7 @@ pub fn convert_stmts_for_chunk(
     chunk: &mut Chunk,
     bump: &Bump,
     wrap: WrapKind,
-    ast: &JSAst,
+    ast: &JSAst<'_>,
 ) -> Result<(), bun_core::Error> {
     let _ = bump;
     let should_extract_esm_stmts_for_wrap = wrap != WrapKind::None;
@@ -145,7 +145,7 @@ pub fn convert_stmts_for_chunk(
                     }
 
                     // "export * from 'path'"
-                    let record = ast.import_records[s.import_record_index as usize];
+                    let record = &ast.import_records[s.import_record_index as usize];
 
                     // Barrel optimization: deferred export * records should be dropped
                     if record.flags.contains(ImportRecordFlags::IS_UNUSED) {

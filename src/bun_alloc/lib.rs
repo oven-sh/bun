@@ -270,15 +270,6 @@ pub type Bump = bumpalo::Bump;
 pub type ArenaVec<'a, T> = Vec<T, &'a MimallocArena>;
 pub use mimalloc_arena::{ArenaString, ArenaVecExt, live_arena_heaps, vec_from_iter_in};
 
-/// Process-wide [`MimallocArena`] over `mi_heap_main()` — thread-safe to
-/// allocate from on any thread, never resets. Use as the allocator for
-/// placeholder/sentinel [`ArenaVec`]s (`Vec::new_in(global_arena())` is
-/// alloc-free) and for `ArenaVec`s that outlive any per-task arena (linker
-/// graph clones). Allocations behave identically to the global allocator.
-pub fn global_arena() -> &'static MimallocArena {
-    static ARENA: std::sync::OnceLock<MimallocArena> = std::sync::OnceLock::new();
-    ARENA.get_or_init(MimallocArena::borrowing_default)
-}
 
 /// `bumpalo::format!` parity — `arena_format!(in arena, "...", ..)` →
 /// [`ArenaString`].

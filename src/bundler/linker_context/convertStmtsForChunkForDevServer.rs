@@ -47,7 +47,7 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
     stmts: &mut StmtList,
     part_stmts: &[bun_ast::Stmt],
     bump: &'bump Bump,
-    ast: &mut JSAst,
+    ast: &mut JSAst<'_>,
 ) -> Result<(), AllocError> {
     // TODO(port): narrow error set
     let hmr_api_ref = ast.wrapper_ref;
@@ -78,7 +78,7 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
     for stmt in part_stmts {
         match &stmt.data {
             StmtData::SImport(st) => {
-                let record = ast.import_records[st.import_record_index as usize];
+                let record = &mut ast.import_records[st.import_record_index as usize];
                 if record.path.is_disabled {
                     continue;
                 }

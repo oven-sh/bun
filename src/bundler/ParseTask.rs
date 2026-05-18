@@ -164,7 +164,7 @@ impl WatcherData {
 }
 
 pub struct Success {
-    pub ast: JSAst,
+    pub ast: JSAst<'static>,
     pub source: Source,
     pub log: Log,
     pub use_directive: UseDirective,
@@ -615,7 +615,7 @@ pub mod parse_worker {
         opts: ParserOptions,
         bump: &'static Bump,
         source: &Source,
-    ) -> core::result::Result<JSAst, AnyError> {
+    ) -> core::result::Result<JSAst<'static>, AnyError> {
         let root = Expr::init(E::Object::default(), Loc { start: 0 });
         // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`; `options`
         // is disjoint from any other field the caller may hold a pointer to.
@@ -635,7 +635,7 @@ pub mod parse_worker {
         opts: ParserOptions,
         bump: &'static Bump,
         source: &Source,
-    ) -> core::result::Result<JSAst, AnyError> {
+    ) -> core::result::Result<JSAst<'static>, AnyError> {
         let root = Expr::init(RootType::default(), Loc::EMPTY);
         // SAFETY: see `get_empty_css_ast` — disjoint field of a live `*mut Transpiler`.
         let define = unsafe { &mut (*transpiler).options.define };
@@ -663,7 +663,7 @@ pub mod parse_worker {
     // populated symbol table (.zig:613).
     // ───────────────────────────────────────────────────────────────────────────
 
-    fn css_symbols_to_parser_symbols(src: Vec<bun_ast::Symbol>) -> bun_ast::symbol::List {
+    fn css_symbols_to_parser_symbols(src: Vec<bun_ast::Symbol>) -> bun_ast::symbol::List<'static> {
         use bun_ast::symbol::{Kind as PKind, Symbol as PSym};
         let mut out = Vec::<PSym>::init_capacity(src.len() as usize);
         for s in src.slice() {
@@ -732,7 +732,7 @@ pub mod parse_worker {
         unique_key_prefix: u64,
         unique_key_for_additional_file: &mut FileLoaderHash,
         has_any_css_locals: &AtomicU32,
-    ) -> core::result::Result<JSAst, AnyError> {
+    ) -> core::result::Result<JSAst<'static>, AnyError> {
         use core::fmt::Write as _;
 
         // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`.
@@ -811,7 +811,7 @@ pub mod parse_worker {
                 // scopeguard would alias `log`/`temp_log` (both borrowed mutably
                 // below); reshape as a closure so every `?` exits through one
                 // post-amble that flushes `temp_log`.
-                let result = (|| -> core::result::Result<JSAst, AnyError> {
+                let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
                     let root: Expr =
                         bun_parsers::toml::TOML::parse(source, &mut temp_log, bump, false)?.into();
                     Ok(JSAst::init(
@@ -833,7 +833,7 @@ pub mod parse_worker {
             Loader::Yaml => {
                 let _trace = perf::trace("Bundler.ParseYAML");
                 let mut temp_log = Log::init();
-                let result = (|| -> core::result::Result<JSAst, AnyError> {
+                let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
                     let root: Expr =
                         bun_parsers::yaml::YAML::parse(source, &mut temp_log, bump)?.into();
                     Ok(JSAst::init(
@@ -855,7 +855,7 @@ pub mod parse_worker {
             Loader::Json5 => {
                 let _trace = perf::trace("Bundler.ParseJSON5");
                 let mut temp_log = Log::init();
-                let result = (|| -> core::result::Result<JSAst, AnyError> {
+                let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
                     let root: Expr =
                         bun_parsers::json5::JSON5Parser::parse(source, &mut temp_log, bump)?.into();
                     Ok(JSAst::init(

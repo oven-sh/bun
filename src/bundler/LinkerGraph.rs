@@ -29,7 +29,7 @@ bun_core::declare_scope!(LinkerGraph, visible);
 // were drafted against an older `.items().field_name` shape; rewritten to the
 // `items_<field>()` spelling (matches `LinkerContext.rs`).
 
-pub struct LinkerGraph {
+pub struct LinkerGraph<'a> {
     pub files: FileList,
     pub files_live: BitSet,
     pub entry_points: entry_point::List,
@@ -47,7 +47,7 @@ pub struct LinkerGraph {
 
     // This is an alias from Graph
     // it is not a clone!
-    pub ast: MultiArrayList<JSAst>,
+    pub ast: MultiArrayList<JSAst<'a>>,
     pub meta: MultiArrayList<JSMeta>,
 
     /// We should avoid traversing all files in the bundle, because the linker
@@ -93,10 +93,10 @@ pub struct LinkerGraph {
 // `Send` is required because `LinkerGraph` is moved into `LinkerContext`
 // which is itself sent to the link task; the only `!Send` constituent is the
 // raw `*const Arena`, whose pointee is `Sync` and outlives the graph.
-unsafe impl Send for LinkerGraph {}
-unsafe impl Sync for LinkerGraph {}
+unsafe impl Send for LinkerGraph<'_> {}
+unsafe impl Sync for LinkerGraph<'_> {}
 
-impl LinkerGraph {
+impl<'a> LinkerGraph<'a> {
     /// `&Arena` accessor — `bump` is a raw backref into `BundleV2`.
     #[inline]
     pub fn arena(&self) -> &Arena {
@@ -106,7 +106,7 @@ impl LinkerGraph {
     }
 }
 
-impl LinkerGraph {
+impl<'a> LinkerGraph<'a> {
     pub fn init(bump: &Arena, file_count: usize) -> Result<Self, bun_core::Error> {
         // TODO(port): narrow error set
         Ok(LinkerGraph {
@@ -126,7 +126,7 @@ impl LinkerGraph {
     }
 }
 
-impl Default for LinkerGraph {
+impl Default for LinkerGraph<'_> {
     fn default() -> Self {
         LinkerGraph {
             files: FileList::default(),
@@ -213,7 +213,7 @@ pub fn top_level_symbol_to_parts<'a>(
 }
 
 pub fn add_part_to_file(
-    parts: &mut [part::List],
+    parts: &mut [part::List<'_>],
     top_level_symbol_to_parts_overlay: &mut [TopLevelSymbolToParts],
     top_level_symbols_to_parts: &[bundled_ast::TopLevelSymbolToParts],
     id: u32,
@@ -271,7 +271,7 @@ pub fn add_part_to_file(
 
 #[allow(clippy::too_many_arguments)]
 pub fn generate_symbol_import_and_use(
-    parts: &mut [part::List],
+    parts: &mut [part::List<'_>],
     ast_flags: &mut [bundled_ast::Flags],
     exports_ref: &[Ref],
     module_ref: &[Ref],
@@ -359,7 +359,7 @@ pub fn generate_symbol_import_and_use(
     Ok(())
 }
 
-impl LinkerGraph {
+impl<'a> LinkerGraph<'a> {
     pub fn runtime_function(&self, name: &[u8]) -> Ref {
         runtime_function(self.ast.items_named_exports(), name)
     }
@@ -489,7 +489,7 @@ impl LinkerGraph {
     }
 }
 
-impl LinkerGraph {
+impl<'a> LinkerGraph<'a> {
     pub fn load(
         &mut self,
         entry_points: &[Index],
@@ -626,7 +626,7 @@ impl LinkerGraph {
                 }
 
                 // For client components, the import record index currently points to the original source index, instead of the reference source index.
-                let import_records_list: &mut [import_record::List] =
+                let import_records_list: &mut [import_record::List<'_>] =
                     self.ast.items_import_records_mut();
                 for source_id in self.reachable_files.slice() {
                     for import_record in import_records_list[source_id.get() as usize]
@@ -686,7 +686,7 @@ impl LinkerGraph {
             let mut symbols: symbol::NestedList = Vec::with_capacity(src_symbols.len());
             for src in src_symbols {
                 let n = src.len();
-                let mut dest: symbol::List = Vec::with_capacity(n);
+                let mut dest: Vec<symbol::Symbol> = Vec::with_capacity(n);
                 // SAFETY: `dest` has capacity `n`; `src` is `n` initialized
                 // `Symbol`s; `Symbol` is bitwise-copyable (no `Drop`).
                 unsafe {
@@ -782,7 +782,7 @@ impl LinkerGraph {
         // TODO(port): narrow error set
         struct State<'a> {
             visited: AutoBitSet,
-            import_records: &'a [import_record::List],
+            import_records: &'a [import_record::List<'a>],
             flags: &'a mut [js_meta::Flags],
         }
 

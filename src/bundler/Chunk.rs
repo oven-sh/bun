@@ -543,7 +543,7 @@ impl IntermediateOutput {
         &mut self,
         allocator_to_use: Option<&DynAlloc>,
         parse_graph: &Graph,
-        linker_graph: &LinkerGraph,
+        linker_graph: &LinkerGraph<'_>,
         import_prefix: &[u8],
         // PORT NOTE: Zig passed `*Chunk` / `[]Chunk` (freely aliased — `chunk`
         // is `&chunks[i]`). The body only reads both, so take `&` to avoid
@@ -594,7 +594,7 @@ impl IntermediateOutput {
         &mut self,
         allocator_to_use: Option<&DynAlloc>,
         parse_graph: &Graph,
-        linker_graph: &LinkerGraph,
+        linker_graph: &LinkerGraph<'_>,
         import_prefix: &[u8],
         // See `code()` PORT NOTE — `chunk` aliases `chunks[i]`; body is read-only.
         chunk: &Chunk,
@@ -639,7 +639,7 @@ impl IntermediateOutput {
         &mut self,
         allocator_to_use: Option<&DynAlloc>,
         graph: &Graph,
-        linker_graph: &LinkerGraph,
+        linker_graph: &LinkerGraph<'_>,
         import_prefix: &[u8],
         // See `code()` PORT NOTE — `chunk` aliases `chunks[i]`; body is read-only.
         chunk: &Chunk,

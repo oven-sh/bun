@@ -176,8 +176,8 @@ pub use crate::DeferredBatchTask::DeferredBatchTask;
 pub use crate::ParseTask;
 
 pub struct LinkerContext<'a> {
-    pub parse_graph: *mut Graph,
-    pub graph: LinkerGraph,
+    pub parse_graph: *mut Graph<'a>,
+    pub graph: LinkerGraph<'a>,
     /// Backref into `Transpiler.log`, assigned in [`Self::load`]. Stored as a
     /// raw pointer (like `parse_graph` / `resolver`) so `Default` can be
     /// `null_mut()` instead of a dangling `&mut` (instant UB). Use
@@ -488,7 +488,7 @@ impl<'a> LinkerContext<'a> {
         let stmts: &[Stmt] = part.stmts.slice();
         if stmts.len() == 1 {
             if let Some(s_import) = stmts[0].data.s_import() {
-                let record = self.graph.ast.items_import_records()[source_index as usize]
+                let record = &self.graph.ast.items_import_records()[source_index as usize]
                     [s_import.import_record_index as usize];
                 if record.source_index.is_valid()
                     && self.graph.meta.items_flags()[record.source_index.get() as usize].wrap
@@ -705,7 +705,7 @@ impl<'a> LinkerContext<'a> {
         // PORT NOTE: reshaped for borrowck — Zig held overlapping `&`/`&mut`
         // into `parse_graph.html_imports` and `parse_graph.input_files`; here
         // we go through raw pointers and reborrow per use.
-        let parse_graph: *mut Graph = self.parse_graph;
+        let parse_graph: *mut Graph<'a> = self.parse_graph;
         // SAFETY: see above; sole accessor of `html_imports` for this scope.
         let server_len = unsafe { (*parse_graph).html_imports.server_source_indices.len() };
         if server_len > 0 {
@@ -814,7 +814,7 @@ impl<'a> LinkerContext<'a> {
             // reallocate inside `validate_tla`; we cache raw column pointers
             // and reborrow per call to satisfy borrowck (`&mut self` is held
             // across the recursion).
-            let parse_graph: *mut Graph = self.parse_graph;
+            let parse_graph: *mut Graph<'a> = self.parse_graph;
             let import_records_list: *const [Vec<ImportRecord>] =
                 self.graph.ast.items_import_records();
             let flags: *mut [crate::ungate_support::js_meta::Flags] =
@@ -2040,9 +2040,9 @@ impl<'a> LinkerContext<'a> {
         namespace_ref: Ref,
         import_record_index: u32,
         alloc: &Bump,
-        ast: &JSAst,
+        ast: &JSAst<'_>,
     ) -> Result<bool, BunError> {
-        let record = ast.import_records[import_record_index as usize];
+        let record = &ast.import_records[import_record_index as usize];
         // Barrel optimization: deferred import records should be dropped
         if record.flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED) {
             return Ok(true);
@@ -2176,7 +2176,7 @@ impl<'a> LinkerContext<'a> {
         alloc: &Bump,
         writer: &mut js_printer::BufferWriter,
         out_stmts: &mut [Stmt],
-        ast: &JSAst,
+        ast: &JSAst<'_>,
         flags: crate::ungate_support::js_meta::Flags,
         to_esm_ref: Ref,
         to_commonjs_ref: Ref,

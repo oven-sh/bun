@@ -1,4 +1,8 @@
 'use strict';
+// ci sets FORCE_COLOR/NO_COLOR, which makes the test fail in both node and bun
+delete process.env["FORCE_COLOR"];
+delete process.env["NO_COLOR"];
+delete process.env["NODE_DISABLE_COLORS"];
 
 const common = require('../common');
 const assert = require('node:assert');
@@ -189,7 +193,13 @@ assert.strictEqual(util.styleText('none', 'test'), 'test');
 
 const fd = common.getTTYfd();
 if (fd !== -1) {
-  const writeStream = new WriteStream(fd);
+  let writeStream;
+  try {
+    writeStream = new WriteStream(fd);
+  } catch {
+    // e.g. EINVAL from kqueue on /dev/tty on macOS
+    common.skip('Could not create TTY WriteStream');
+  }
 
   const originalEnv = process.env;
   [

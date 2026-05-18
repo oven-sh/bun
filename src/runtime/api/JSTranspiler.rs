@@ -1172,6 +1172,14 @@ impl Drop for TranspilerStateGuard {
         transpiler.set_log(restore_log);
         transpiler.arena = prev_arena;
         if let Some(prev) = prev_macro_context {
+            // `transformSync` created a fresh MacroContext for this parse and
+            // stored it in `transpiler.macro_context`; the box behind its
+            // `data` pointer is heap-owned and `MacroContext` has no `Drop`,
+            // so overwriting it with `prev` would strand the box. Free it
+            // explicitly before restoring the outer state.
+            if let Some(new_ctx) = transpiler.macro_context.take() {
+                new_ctx.deinit();
+            }
             transpiler.macro_context = prev;
         }
     }

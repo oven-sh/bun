@@ -324,5 +324,19 @@ describe("import defer", () => {
       expect(exitCode).not.toBe(0);
       expect(stderr.toLowerCase()).toContain("error");
     });
+
+    test("import defer inside a TypeScript namespace is a syntax error", async () => {
+      // ESM import declarations are only valid at module scope; a TypeScript
+      // `namespace` block only permits `import x = ...`.
+      const { exitCode, stderr } = await run(
+        {
+          "main.ts": `namespace X { import defer * as ns from "./dep.js"; }`,
+          "dep.js": `export const x = 1;`,
+        },
+        "main.ts",
+      );
+      expect(exitCode).not.toBe(0);
+      expect(stderr.toLowerCase()).toContain("error");
+    });
   });
 });

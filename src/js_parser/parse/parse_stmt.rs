@@ -1479,6 +1479,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // binding named `defer`. Compare the raw token so
                 // `def\u0065r` is not treated as the phase keyword.
                 if default_name_raw == b"defer" && p.lexer.token == T::TAsterisk {
+                    // Same scope restriction as `import * as ns from 'path'`:
+                    // ESM import declarations are only valid at module scope
+                    // (or inside a TypeScript `declare namespace`).
+                    if !opts.is_module_scope
+                        && (!opts.is_namespace_scope || !opts.is_typescript_declare)
+                    {
+                        p.lexer.unexpected()?;
+                        return Err(err!("SyntaxError"));
+                    }
                     p.lexer.next()?;
                     p.lexer.expect_contextual_keyword(b"as")?;
                     stmt = S::Import {

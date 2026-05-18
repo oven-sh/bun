@@ -287,7 +287,19 @@ impl BlockList {
                 Rule::Subnet { network, prefix } => {
                     if let Some(ip_addr) = address.as_v4() {
                         if let Some(subnet_addr) = network.as_v4() {
-                            if *prefix == 32 {
+                            // `as_v4()` also extracts the low 32 bits of an
+                            // IPv4-mapped IPv6 network (`::ffff:a.b.c.d`), whose
+                            // `prefix` was validated against [0,128] and applies
+                            // to the 128-bit form. The IPv4 payload is bits
+                            // 96..128, so translate before masking (Node does
+                            // the same). For a native-IPv4 network the prefix is
+                            // already in [0,32].
+                            let v4_prefix: u32 = if network.as_sin6().is_some() {
+                                (*prefix as u32).saturating_sub(96)
+                            } else {
+                                *prefix as u32
+                            };
+                            if v4_prefix == 32 {
                                 if ip_addr == subnet_addr {
                                     return Ok(JSValue::TRUE);
                                 } else {
@@ -299,10 +311,10 @@ impl BlockList {
                             // general formula would compute `0u32 << 32`, which
                             // Rust's debug `overflow-checks` aborts on; Zig's
                             // ReleaseFast wraps the shift to 0 → same mask 0.
-                            let mask_addr: u32 = if *prefix == 0 {
+                            let mask_addr: u32 = if v4_prefix == 0 {
                                 0
                             } else {
-                                ((one << (*prefix as u32)) - 1) << (32 - *prefix as u32)
+                                ((one << v4_prefix) - 1) << (32 - v4_prefix)
                             };
                             let ip_net: u32 = u32::swap_bytes(ip_addr) & mask_addr;
                             let subnet_net: u32 = u32::swap_bytes(subnet_addr) & mask_addr;

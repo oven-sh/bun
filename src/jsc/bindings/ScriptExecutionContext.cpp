@@ -7,6 +7,7 @@
 #include "_libusockets.h"
 #include "BunClientData.h"
 #include "EventLoopTask.h"
+#include <wtf/Threading.h>
 extern "C" void Bun__startLoop(us_loop_t* loop);
 
 namespace WebCore {
@@ -37,6 +38,7 @@ ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject*
     : m_vm(vm)
     , m_globalObject(globalObject)
     , m_identifier(initialIdentifier())
+    , m_contextThreadUID(Thread::currentSingleton().uid())
 {
     relaxAdoptionRequirement();
     addToContextsMap();
@@ -46,6 +48,7 @@ ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject*
     : m_vm(vm)
     , m_globalObject(globalObject)
     , m_identifier(identifier == std::numeric_limits<int32_t>::max() ? ++lastUniqueIdentifier : identifier)
+    , m_contextThreadUID(Thread::currentSingleton().uid())
 {
     relaxAdoptionRequirement();
     addToContextsMap();
@@ -137,12 +140,9 @@ bool ScriptExecutionContext::isJSExecutionForbidden()
     return !m_vm || m_vm->executionForbidden();
 }
 
-extern "C" void* Bun__getVM();
-
 bool ScriptExecutionContext::isContextThread()
 {
-    auto clientData = WebCore::clientData(vm());
-    return clientData && clientData->bunVM == Bun__getVM();
+    return m_contextThreadUID == Thread::currentSingleton().uid();
 }
 
 bool ScriptExecutionContext::ensureOnContextThread(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task)

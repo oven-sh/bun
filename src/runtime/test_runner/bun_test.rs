@@ -485,7 +485,21 @@ impl BunTestRoot {
             self.exit_file();
         }
         self.reset_hook_scope_for_test_isolation();
-        self.pending_then_refs.borrow_mut().clear();
+        // `pending_then_refs` holds the `+1` `RefData` ref taken at
+        // `Promise.then()` time so a never-settled promise's box stays
+        // reachable. The corresponding deref happens in
+        // `bun_test_then_or_catch` when the promise settles — which it now
+        // never will (the VM is going away). Release each orphan ourselves;
+        // any reaction that is still queued is dropped wholesale by
+        // `destructOnExit`.
+        for ptr in self.pending_then_refs.borrow_mut().drain(..) {
+            // SAFETY: `ptr` was produced by `IntrusiveRc::into_raw` in
+            // `BunTest::run_test_callback`; it is live because the promise
+            // never settled (the settle path removes the entry before
+            // `deref()`). `from_raw` reclaims that `+1` and may destroy the
+            // box. Single-threaded.
+            drop(unsafe { RefDataPtr::from_raw(ptr.cast_mut()) });
+        }
     }
 
     pub fn enter_file(

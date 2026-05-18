@@ -127,7 +127,7 @@ async function runUpgradeAgainstMock(opts: { zipSize: number; advertiseSize: boo
   return stderr;
 }
 
-test.skipIf(isWindows)(
+test.skipIf(isWindows).concurrent(
   "bun upgrade [current/total] progress uses binary-bytes (MiB), not raw bytes (#30990)",
   async () => {
     // With `size` advertised, Progress renders `[current/total]` — both
@@ -149,7 +149,7 @@ test.skipIf(isWindows)(
   },
 );
 
-test.skipIf(isWindows)("bun upgrade [current] progress (unknown size) uses binary-bytes (#30990)", async () => {
+test.skipIf(isWindows).concurrent("bun upgrade [current] progress (unknown size) uses binary-bytes (#30990)", async () => {
   // With `size` omitted, bun's `version.size == 0` and Progress takes the
   // `eti == 0 && completed_items != 0` branch — the one-sided `[current]`
   // arm. Same arm exercised by the canary upgrade path.

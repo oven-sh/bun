@@ -708,9 +708,10 @@ lexer_impl_header! {
                         // legacy octal literals
                         0x30..=0x37 => {
                             let octal_start =
-                                (iter.i as usize + width2 as usize) - 2;
+                                (iter.i as usize + width2 as usize).saturating_sub(2);
                             if IS_JSON {
-                                self.end = start + iter.i as usize - width2 as usize;
+                                self.end = (start + iter.i as usize)
+                                    .saturating_sub(width2 as usize);
                                 self.syntax_error()?;
                             }
 
@@ -799,8 +800,8 @@ lexer_impl_header! {
                             match hex_digit_value_u32(c3 as u32) {
                                 Some(d) => value = value * 16 | d as CodePoint,
                                 None => {
-                                    self.end =
-                                        start + iter.i as usize - width3 as usize;
+                                    self.end = (start + iter.i as usize)
+                                        .saturating_sub(width3 as usize);
                                     return self.syntax_error();
                                 }
                             }
@@ -813,8 +814,8 @@ lexer_impl_header! {
                             match hex_digit_value_u32(c3 as u32) {
                                 Some(d) => value = value * 16 | d as CodePoint,
                                 None => {
-                                    self.end =
-                                        start + iter.i as usize - width3 as usize;
+                                    self.end = (start + iter.i as usize)
+                                        .saturating_sub(width3 as usize);
                                     return self.syntax_error();
                                 }
                             }
@@ -835,8 +836,8 @@ lexer_impl_header! {
                             // variable-length
                             if c3 == 0x7B {
                                 if IS_JSON {
-                                    self.end =
-                                        start + iter.i as usize - width2 as usize;
+                                    self.end = (start + iter.i as usize)
+                                        .saturating_sub(width2 as usize);
                                     self.syntax_error()?;
                                 }
 
@@ -906,8 +907,8 @@ lexer_impl_header! {
                                     match hex_digit_value_u32(c3 as u32) {
                                         Some(d) => value = value * 16 | d as i64,
                                         None => {
-                                            self.end = start + iter.i as usize
-                                                - width3 as usize;
+                                            self.end = (start + iter.i as usize)
+                                                .saturating_sub(width3 as usize);
                                             return self.syntax_error();
                                         }
                                     }
@@ -928,8 +929,8 @@ lexer_impl_header! {
                         }
                         0x0D => {
                             if IS_JSON {
-                                self.end =
-                                    start + iter.i as usize - width2 as usize;
+                                self.end = (start + iter.i as usize)
+                                    .saturating_sub(width2 as usize);
                                 self.syntax_error()?;
                             }
 
@@ -943,8 +944,8 @@ lexer_impl_header! {
                         }
                         0x0A | 0x2028 | 0x2029 => {
                             if IS_JSON {
-                                self.end =
-                                    start + iter.i as usize - width2 as usize;
+                                self.end = (start + iter.i as usize)
+                                    .saturating_sub(width2 as usize);
                                 self.syntax_error()?;
                             }
 
@@ -956,8 +957,8 @@ lexer_impl_header! {
                                 match c2 {
                                     0x22 | 0x5C | 0x2F => {}
                                     _ => {
-                                        self.end = start + iter.i as usize
-                                            - width2 as usize;
+                                        self.end = (start + iter.i as usize)
+                                            .saturating_sub(width2 as usize);
                                         self.syntax_error()?;
                                     }
                                 }

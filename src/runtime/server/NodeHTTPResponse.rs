@@ -919,7 +919,22 @@ impl NodeHTTPResponse {
 
         if self.flags.get().contains(Flags::REQUEST_HAS_COMPLETED) {
             if EVENT == AbortEvent::Abort {
+                // The socket is gone — no further uws callback will arrive to
+                // balance the IS_REQUEST_PENDING ref. `on_request_complete()`
+                // can set REQUEST_HAS_COMPLETED while `body_read_state` is
+                // still `.pending` (e.g. the request body's last chunk was
+                // buffered during pause before `res.end()` — the
+                // `Expect: 100-continue` path), in which case
+                // `mark_request_as_done()` never ran there and both that ref
+                // and the server's pending-request counter are stranded. The
+                // synchronous `set_closed()` from `JSNodeHTTPServerSocket::
+                // onClose` has already flipped SOCKET_CLOSED, so
+                // `should_request_be_pending()` is now false; let the gate
+                // re-evaluate. Clear `raw_response` first so the
+                // `clear_on_data_callback` reached from `mark_request_as_done`
+                // can't touch the dead socket.
                 self.raw_response.set(None);
+                self.mark_request_as_done_if_necessary();
             }
             return;
         }

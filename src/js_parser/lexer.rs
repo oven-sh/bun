@@ -3336,8 +3336,21 @@ lexer_impl_header! {
 
                 // PORT NOTE: std.fmt.parseInt(i32, ..) — bytes-based parser; source bytes are
                 // not guaranteed UTF-8 so we never round-trip through &str (PORTING.md §Strings).
+                // Also reject values outside the Unicode range (0..=0x10FFFF); otherwise
+                // `push_codepoint_utf16` hits `debug_assert`s in `u16_lead`/`u16_trail`
+                // (release builds would silently encode garbage surrogate pairs).
                 cursor.c = match bun_core::parse_int::<i32>(number, base) {
-                    Ok(v) => v,
+                    Ok(v) if (0..=0x10FFFF).contains(&v) => v,
+                    Ok(_) => {
+                        self.add_error(
+                            self.start,
+                            format_args!(
+                                "JSX entity escape is too big: {}",
+                                bstr::BStr::new(entity)
+                            ),
+                        );
+                        strings::UNICODE_REPLACEMENT as CodePoint
+                    }
                     Err(err) => {
                         match err {
                             strings::ParseIntError::InvalidCharacter => {

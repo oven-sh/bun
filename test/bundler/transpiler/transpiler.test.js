@@ -1543,6 +1543,28 @@ console.log(<div {...obj} key="after" />);`),
     );
   });
 
+  // https://github.com/oven-sh/bun/issues/30958
+  // A numeric JSX entity outside the Unicode range (0..=0x10FFFF) used to
+  // trip a debug_assert in u16_lead (src/bun_core/lib.rs) when the lexer
+  // encoded the value as a UTF-16 surrogate pair. The lexer must reject the
+  // entity with the same "JSX entity escape is too big" diagnostic it emits
+  // for i32-overflow, instead of forwarding an invalid code point.
+  it("rejects out-of-range numeric JSX entities without panicking", () => {
+    var bun = new Bun.Transpiler({
+      loader: "jsx",
+      define: { "process.env.NODE_ENV": JSON.stringify("development") },
+    });
+
+    for (const entity of ["&#7777707;", "&#x110000;", "&#2147483647;"]) {
+      expect(() => bun.transformSync(`export var x = <div>${entity}</div>`)).toThrow(
+        /JSX entity escape is too big/,
+      );
+    }
+
+    // Boundary: 0x10FFFF is the maximum valid code point and must still work.
+    expect(bun.transformSync("export var x = <div>&#x10FFFF;</div>")).toContain("jsxDEV_");
+  });
+
   it("require with a dynamic non-string expression", () => {
     var nodeTranspiler = new Bun.Transpiler({ platform: "node" });
     expect(nodeTranspiler.transformSync("require('hi' + bar)")).toBe('require("hi" + bar);\n');

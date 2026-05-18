@@ -82,7 +82,9 @@ pub fn from_js(value: JSValue, global_object: &JSGlobalObject) -> JsResult<Strin
     // Throw a TypeError so callers always see a proper JS error.
     #[cfg(any(debug_assertions, bun_asan))]
     if !has_exception {
-        return Err(global_object.throw_type_error(format_args!("Failed to convert value to string")));
+        return Err(
+            global_object.throw_type_error(format_args!("Failed to convert value to string"))
+        );
     }
     let _ = has_exception;
 

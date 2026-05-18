@@ -1153,12 +1153,7 @@ impl All {
         // (GC scheduler thread). Lock/unlock is manual (non-RAII Mutex).
         unsafe { (*this).lock.lock() };
         // SAFETY: `this` live; both roots are heap roots or null.
-        let roots = unsafe {
-            [
-                (*this).timers.0.root,
-                (*this).fake_timers.timers.0.root,
-            ]
-        };
+        let roots = unsafe { [(*this).timers.0.root, (*this).fake_timers.timers.0.root] };
         for root in roots {
             if !root.is_null() {
                 stack.push(root);

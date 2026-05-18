@@ -111,9 +111,9 @@ impl AuditCommand {
         Global::exit(code);
     }
 
-    /// Returns the exit code of the command. 0 if no vulnerabilities were found, 1 if vulnerabilities were found.
-    /// The exception is when you pass --json, it will simply return 0 as that was considered a successful "request
-    /// for the audit information"
+    /// Returns the exit code of the command: 0 if no vulnerabilities were
+    /// found (after `--audit-level` / `--ignore` filtering), 1 otherwise.
+    /// `--json` follows the same convention.
     pub fn audit(
         ctx: Command::Context,
         pm: &mut PackageManager,

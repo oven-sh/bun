@@ -5731,9 +5731,9 @@ impl Resolver {
                 );
             }
 
-            let address_string = triple
-                .get_index(global_this, 1)?
-                .to_bun_string(global_this)?;
+            let address_string = bun_core::OwnedString::new(
+                triple.get_index(global_this, 1)?.to_bun_string(global_this)?,
+            );
             let address_slice = address_string.to_owned_slice();
 
             let mut address_buffer = vec![0u8; address_slice.len() + 1];

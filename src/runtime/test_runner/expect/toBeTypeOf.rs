@@ -36,8 +36,7 @@ pub fn to_be_type_of(
         return Err(global.throw_invalid_arguments(format_args!("toBeTypeOf() requires a string argument")));
     }
 
-    let expected_type = expected.to_bun_string(global)?;
-    // `defer expected_type.deref()` — handled by Drop on bun_core::String.
+    let expected_type = bun_core::OwnedString::new(expected.to_bun_string(global)?);
 
     let expected_utf8 = expected_type.to_utf8();
     let Some(typeof_) = JS_TYPE_OF_MAP.get(expected_utf8.slice()).copied() else {

@@ -6556,7 +6556,7 @@ pub fn plugin_runner_on_resolve_jsc(
         )));
     }
 
-    let file_path = path_value.to_bun_string(global)?;
+    let file_path = bun_core::OwnedString::new(path_value.to_bun_string(global)?);
 
     if file_path.length() == 0 {
         return Ok(Some(ErrorableString::err(

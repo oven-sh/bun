@@ -1510,8 +1510,7 @@ pub mod testing_apis {
         // SAFETY: `from_js` returned a live `*mut Subprocess` owned by the JS wrapper.
         // R-2: deref as shared (`&*const`) — fields are interior-mutable.
         let subprocess = unsafe { &*subprocess_ptr };
-        let kind_str = kind_value.to_bun_string(global_this)?;
-        // defer kind_str.deref() — bun_core::String Drop handles deref.
+        let kind_str = bun_core::OwnedString::new(kind_value.to_bun_string(global_this)?);
 
         let out: &JsCell<Readable> = if kind_str.eql_comptime(b"stdout") {
             &subprocess.stdout

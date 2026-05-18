@@ -4078,8 +4078,7 @@ pub mod bindings {
             return Err(global.throw(format_args!("expected tarball path string argument")));
         }
 
-        let tarball_path_str = args[0].to_bun_string(global)?;
-        // deref handled by Drop on BunString
+        let tarball_path_str = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
 
         let tarball_path = tarball_path_str.to_utf8();
 

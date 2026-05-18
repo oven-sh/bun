@@ -814,8 +814,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             if !obj.is_empty() {
                 if let Some(protocol_val) = obj.get(global_this, "protocol")? {
                     if protocol_val.is_string() {
-                        let str = protocol_val.to_bun_string(global_this)?;
-                        // PORT NOTE: `defer str.deref()` → Drop.
+                        let str = bun_core::OwnedString::new(protocol_val.to_bun_string(global_this)?);
                         if str.eql_comptime(b"http2") || str.eql_comptime(b"h2") {
                             force_http2 = true;
                         } else if str.eql_comptime(b"http3") || str.eql_comptime(b"h3") {

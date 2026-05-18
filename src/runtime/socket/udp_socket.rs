@@ -1446,7 +1446,7 @@ impl UDPSocket {
             u16::try_from(number).expect("int cast")
         };
 
-        let str = address_val.to_bun_string(global_this)?;
+        let str = bun_core::OwnedString::new(address_val.to_bun_string(global_this)?);
         // Owned NUL-terminated copy as a mutable Vec so we can write a NUL at
         // the `%` position for scope-id parsing.
         let mut address_slice: Vec<u8> = str.to_owned_slice_z().into_vec_with_nul();
@@ -1749,7 +1749,7 @@ impl UDPSocket {
             return Err(global_this.throw_invalid_arguments(format_args!("Expected 2 arguments")));
         }
 
-        let str = args.ptr[0].to_bun_string(global_this)?;
+        let str = bun_core::OwnedString::new(args.ptr[0].to_bun_string(global_this)?);
         let connect_host = str.to_owned_slice_z();
 
         let connect_port_js = args.ptr[1];

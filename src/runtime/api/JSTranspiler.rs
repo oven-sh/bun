@@ -31,7 +31,7 @@ use bun_resolver::package_json::{MacroMap, PackageJSON};
 use bun_resolver::tsconfig_json::TSConfigJSON;
 // `bun_schema::api` → schema lives in `bun_options_types::schema::api`.
 use bun_collections::ArrayHashMapExt;
-use bun_core::{String as BunString, ZigString};
+use bun_core::{OwnedString, String as BunString, ZigString};
 use bun_options_types::schema::api;
 
 // TODO(port): `pub const js = jsc.Codegen.JSTranspiler;` and the toJS/fromJS/fromJSDirect
@@ -314,8 +314,7 @@ impl Config {
                     break 'tsconfig;
                 }
                 let kind = tsconfig.js_type();
-                let mut out = BunString::empty();
-                // `defer out.deref()` → Drop on bun_core::String
+                let mut out = OwnedString::new(BunString::empty());
 
                 if kind.is_array() {
                     return Err(global.throw_invalid_arguments(format_args!(
@@ -327,7 +326,7 @@ impl Config {
                     // Use jsonStringifyFast for SIMD-optimized serialization
                     tsconfig.json_stringify_fast(global, &mut out)?;
                 } else {
-                    out = tsconfig.to_bun_string(global)?;
+                    out = OwnedString::new(tsconfig.to_bun_string(global)?);
                 }
 
                 if out.is_empty() {
@@ -367,14 +366,13 @@ impl Config {
                     );
                 }
 
-                let mut out = BunString::empty();
-                // `defer out.deref()` → Drop
+                let mut out = OwnedString::new(BunString::empty());
                 // TODO: write a converter between JSC types and Bun AST types
                 if is_object {
                     // Use jsonStringifyFast for SIMD-optimized serialization
                     macros.json_stringify_fast(global, &mut out)?;
                 } else {
-                    out = macros.to_bun_string(global)?;
+                    out = OwnedString::new(macros.to_bun_string(global)?);
                 }
 
                 if out.is_empty() {
@@ -613,8 +611,8 @@ impl Config {
                                 export_replacement_value(replacement_value, global, arena)?
                             {
                                 let replacement_key = value.get_index(global, 0)?;
-                                let slice = replacement_key.to_bun_string(global)?;
-                                // errdefer slice.deinit() → Drop
+                                let slice =
+                                    OwnedString::new(replacement_key.to_bun_string(global)?);
                                 let replacement_name = slice.to_owned_slice();
 
                                 if !JSLexer::is_identifier(&replacement_name) {

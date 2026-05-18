@@ -3,6 +3,7 @@ import { define } from "../../codegen/class-definitions";
 export default [
   define({
     name: "Transpiler",
+    rustPath: "crate::api::js_transpiler::JSTranspiler",
     construct: true,
     finalize: true,
     hasPendingActivity: false,

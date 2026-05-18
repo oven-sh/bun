@@ -29,7 +29,6 @@ import { resolveConfig, type Config, type PartialConfig } from "./build/config.t
 import { resolveToolchain } from "./build/configure.ts";
 import { allDeps } from "./build/deps/index.ts";
 import { downloadWithRetry, extractTarGz, extractZip, prefetchPathForUrl } from "./build/download.ts";
-import { zigCompilerSafe, zigDownloadUrl } from "./build/zig.ts";
 
 const dest = process.argv[2];
 if (dest === undefined) {
@@ -43,8 +42,8 @@ const extractedDir = resolve(dest, "extracted");
 // Enumerate URL-affecting config variants for the current host.
 //
 // github-archive sources are config-independent, so one base config covers
-// them. WebKit prebuilt URL varies by (musl, baseline, debug|lto, asan); zig
-// by host + safe. Iterate the cross-product, dedupe URLs.
+// them. WebKit prebuilt URL varies by (musl, baseline, debug|lto, asan).
+// Iterate the cross-product, dedupe URLs.
 // ───────────────────────────────────────────────────────────────────────────
 
 const toolchain = resolveToolchain();
@@ -118,20 +117,6 @@ for (const partial of variants) {
       });
     }
   }
-
-  // Zig — host-only download. Only the variant CI actually uses on this host
-  // gets pre-EXTRACTED to extracted/zig/ (the build's dest is always
-  // vendor/zig regardless of safe, so only one extracted tree can match);
-  // both URLs go into by-url/ so a safe-flag flip still avoids the network.
-  const ciSafe = zigCompilerSafe(cfg);
-  for (const safe of [false, true]) {
-    const url = zigDownloadUrl(cfg, safe);
-    const stampValue = `${cfg.zigCommit}${safe ? "-safe" : ""}`;
-    add({
-      url,
-      extract: safe === ciSafe ? { name: "zig", stamp: ".zig-commit", value: stampValue, kind: "zip" } : undefined,
-    });
-  }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -182,7 +167,7 @@ async function fetchOne(item: Item): Promise<void> {
   if (existsSync(stampPath) && readFileSync(stampPath, "utf8").trim() === item.extract.value) return;
 
   // Extract → hoist single top-level dir → apply rmAfterExtract → stamp.
-  // Mirrors fetchPrebuilt/fetchZig so the resulting tree is byte-identical
+  // Mirrors fetchPrebuilt so the resulting tree is byte-identical
   // to what a real build would produce at the same identity. Best-effort —
   // a corrupt tarball or full disk for one variant shouldn't abort the rest;
   // the build still has the by-url file to fall back on.

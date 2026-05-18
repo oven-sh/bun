@@ -1180,3 +1180,66 @@ it("process.versions", () => {
   expect(process.versions.napi).toEqual("10");
   expect(process.versions.modules).toEqual("137");
 });
+
+// On Windows, env var names are case-insensitive. The proxy-related vars
+// (HTTP_PROXY/HTTPS_PROXY/NO_PROXY) get a CustomAccessor at their canonical
+// uppercase name; that accessor must stay enumerable when the OS env block
+// carries a non-canonical casing (e.g. `Http_Proxy`), or the var is silently
+// dropped from {...process.env}. The spread preserves the *original* key case
+// from the OS env block (JS objects are case-sensitive), so consumers must
+// scan case-insensitively — but the var must at least survive enumeration.
+it.skipIf(!isWindows)("proxy env vars survive process.env enumeration regardless of OS env-block casing", () => {
+  const variants = ["Http_Proxy", "HTTP_proxy", "http_Proxy", "HTTPS_Proxy", "No_Proxy"];
+  for (const variant of variants) {
+    const canonical = variant.toUpperCase();
+    // Drop pre-existing forms of this proxy var from bunEnv so the test
+    // exercises only the explicitly-set non-canonical casing.
+    const env = { ...bunEnv, [variant]: "http://proxy.example" };
+    for (const k of Object.keys(env)) {
+      if (k !== variant && k.toUpperCase() === canonical) delete env[k];
+    }
+    const child = spawnSync({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const o = {...process.env};
+         const found = Object.keys(o).find(k => k.toUpperCase() === ${JSON.stringify(canonical)});
+         console.log(JSON.stringify({direct: process.env.${canonical}, enumerated: found ? o[found] : undefined}));`,
+      ],
+      env,
+    });
+    const { direct, enumerated } = JSON.parse(child.stdout.toString().trim());
+    expect(direct).toBe("http://proxy.example");
+    expect(enumerated).toBe("http://proxy.example");
+  }
+});
+
+// `process.env.HTTP_PROXY = "..."` (a runtime assignment of a proxy var that
+// was NOT in the OS env at startup) must make the var enumerable so it
+// survives `{...process.env}` / `Bun.spawn({env: process.env})`. The proxy
+// vars are lazily added as `DontEnum` CustomAccessors when not in the OS env
+// block; the setter must clear `DontEnum` on first assignment, like the
+// regular env-var setter does.
+it("proxy env vars assigned at runtime propagate to spawned children via {...process.env}", () => {
+  const cmd = [
+    bunExe(),
+    "-e",
+    `process.env.HTTP_PROXY = "http://x:8080";
+     process.env.HTTPS_PROXY = "http://y:8080";
+     process.env.NO_PROXY = "z";
+     const p = Bun.spawnSync({
+       cmd: [process.execPath, "-e", "console.log(JSON.stringify({HTTP_PROXY: process.env.HTTP_PROXY, HTTPS_PROXY: process.env.HTTPS_PROXY, NO_PROXY: process.env.NO_PROXY}))"],
+       env: { ...process.env },
+     });
+     process.stdout.write(p.stdout.toString());`,
+  ];
+  // Ensure none of the proxy vars are pre-set in the parent's env so the
+  // test exercises the not-in-OS-env-at-startup → assigned-at-runtime path.
+  const env = { ...bunEnv };
+  for (const k of Object.keys(env)) {
+    if (/^(https?|no)_proxy$/i.test(k)) delete env[k];
+  }
+  const child = spawnSync({ cmd, env });
+  const got = JSON.parse(child.stdout.toString().trim());
+  expect(got).toEqual({ HTTP_PROXY: "http://x:8080", HTTPS_PROXY: "http://y:8080", NO_PROXY: "z" });
+});

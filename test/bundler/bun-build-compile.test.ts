@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isArm64, isLinux, isMacOS, isMusl, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isMusl, isWindows, tempDir } from "harness";
 import { chmodSync } from "node:fs";
 import { join } from "path";
 
@@ -460,6 +460,61 @@ if (isLinux) {
       });
       const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stdout).toContain("wsl1-regression-20000");
+      expect(exitCode).toBe(0);
+    }, 60_000);
+  });
+}
+
+// Regression guard for the standalone-module-graph ELF probe on Android.
+//
+// Spec: src/standalone_graph/StandaloneModuleGraph.zig — `fromExecutable()`
+// gates the ELF `.bun` reader on `Environment.isLinux or Environment.isFreeBSD`.
+// Zig's `isLinux` (builtin.target.os.tag == .linux) is TRUE on Android, so
+// Android takes the ELF path and the trailing `comptime unreachable` is dead.
+//
+// In Rust, `target_os = "linux"` and `target_os = "android"` are distinct cfg
+// values. A naive port of the Zig gate as
+//   #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+// silently excludes Android and falls through to the catch-all
+// `unreachable!()`, so every `bun build --compile` binary panics at startup
+// on Android instead of loading its embedded module graph.
+//
+// This test only runs on an Android host. It compiles a trivial app and
+// asserts the resulting binary starts, finds its graph, and runs the entry —
+// i.e. the ELF arm was taken, not `unreachable!()`.
+if (process.platform === "android") {
+  describe("ELF section (Android)", () => {
+    test("compiled standalone binary loads its module graph on Android", async () => {
+      using dir = tempDir("build-compile-android-elf", {
+        "app.js": `console.log("android-standalone-ok");`,
+      });
+
+      const outfile = join(String(dir), "app-android");
+
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", join(String(dir), "app.js"), "--outfile", outfile],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+      expect(buildStderr).not.toContain("error:");
+      expect(buildExit).toBe(0);
+
+      await using proc = Bun.spawn({
+        cmd: [outfile],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      // If the Rust cfg-gate diverges from Zig's `Environment.isLinux`, the
+      // process panics with `internal error: entered unreachable code` before
+      // any user JS runs. Assert the spec behavior: graph found, entry ran.
+      expect(stderr).not.toContain("unreachable");
+      expect(stdout.trim()).toBe("android-standalone-ok");
       expect(exitCode).toBe(0);
     }, 60_000);
   });

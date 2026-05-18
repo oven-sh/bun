@@ -16,8 +16,8 @@
  * ## --console mode (for pool=console rules)
  *
  * stdio inherit — child gets direct TTY. For commands that have their own
- * TTY UI (zig's spinner, lld's progress). Ninja defers its own [N/M] while
- * the console job owns the terminal.
+ * TTY UI (cargo's progress bar, lld's progress). Ninja defers its own
+ * [N/M] while the console job owns the terminal.
  *
  * On Windows, applies a compensation for ninja's stdio buffering bug:
  * ninja's \n before console-pool jobs goes through fwrite without fflush
@@ -34,19 +34,15 @@
  *   pool = dep  # any depth — output streams live regardless
  *
  *   # console mode
- *   command = bun /path/to/stream.ts $name --console $zig build obj ...
+ *   command = bun /path/to/stream.ts $name --console $cargo build ...
  *   pool = console
  *
- * --cwd=DIR / --env=K=V / --console / --zig-progress / --stamp=PATH go
- * between <name> and <command>. They exist so the rule doesn't need
- * `sh -c '...'` (which would conflict with shell-quoted ninja vars like
- * $args). --stamp=PATH writes an empty file at PATH when the child exits
- * 0 — used for rules whose command doesn't naturally produce an output
- * file (e.g. `zig build check`) so ninja can still chain on it.
- *
- * --zig-progress (prefix mode, posix only): sets ZIG_PROGRESS=3, decodes
- * zig's binary progress protocol into `[zig] Stage [N/M]` lines. Without it,
- * zig sees piped stderr → spinner disabled → silence during compile.
+ * --cwd=DIR / --env=K=V / --console / --stamp=PATH go between <name> and
+ * <command>. They exist so the rule doesn't need `sh -c '...'` (which
+ * would conflict with shell-quoted ninja vars like $args). --stamp=PATH
+ * writes an empty file at PATH when the child exits 0 — used for rules
+ * whose command doesn't naturally produce an output file (e.g. a typecheck
+ * pass) so ninja can still chain on it.
  */
 
 import { spawn, spawnSync } from "node:child_process";
@@ -99,7 +95,6 @@ function main(): void {
 
   // Parse options (stop at first non-flag).
   let cwd: string | undefined;
-  let zigProgress = false;
   let consoleMode = false;
   let stampPath: string | undefined;
   const envOverrides: Record<string, string> = {};
@@ -140,8 +135,6 @@ function main(): void {
       const kv = opt.slice(6);
       const eq = kv.indexOf("=");
       if (eq > 0) envOverrides[kv.slice(0, eq)] = kv.slice(eq + 1);
-    } else if (opt === "--zig-progress") {
-      zigProgress = true;
     } else if (opt === "--console") {
       consoleMode = true;
     } else if (opt.startsWith("--stamp=")) {
@@ -154,8 +147,8 @@ function main(): void {
 
   // Create an empty stamp file after the child exits 0. Lets ninja chain
   // dependents on commands that don't naturally produce an output file
-  // (e.g. `zig build check`, typecheck runs) — cross-platform, no shell
-  // tricks. If the child fails, skip the stamp so ninja will retry.
+  // (e.g. typecheck runs) — cross-platform, no shell tricks. If the child
+  // fails, skip the stamp so ninja will retry.
   const writeStamp = (): void => {
     if (stampPath !== undefined) {
       closeSync(openSync(stampPath, "w"));
@@ -212,8 +205,7 @@ function main(): void {
   // when its stderr is a TTY, so this check alone tells us a human is
   // watching. Fallback mode (outFd=1, FD 3 not set up) means piped —
   // either scripts/bd logging, CI, or direct `ninja` — and in all those
-  // cases we want the quiet treatment: no colors, no zig progress,
-  // ninja buffers per-job.
+  // cases we want the quiet treatment: no colors, ninja buffers per-job.
   const interactive = outFd === STREAM_FD;
   const useColor = interactive && !process.env.NO_COLOR && process.env.TERM !== "dumb";
 
@@ -221,24 +213,7 @@ function main(): void {
   // Hash-to-color: same dep always gets the same color across runs.
   const prefix = useColor ? coloredPrefix(name) : `[${name}] `;
 
-  // ─── Zig progress IPC (interactive only) ───
-  // zig's spinner is TTY-only — piped stderr = silence during compile.
-  // ZIG_PROGRESS=<fd> makes it write a binary protocol to that fd
-  // instead. We open a pipe at child fd 3, set ZIG_PROGRESS=3, decode
-  // packets into `[zig] Stage [N/M]` lines.
-  //
-  // Needs oven-sh/zig's fix for ziglang/zig#24722 — upstream `zig build`
-  // strips ZIG_PROGRESS from the build runner's env; the fork forwards
-  // it through.
-  //
-  // Gated on `interactive`: when piped, progress lines are log noise
-  // (~35 Code Gen lines that clutter failure logs / LLM context). No
-  // FD 3 setup → zig sees no ZIG_PROGRESS → just start + summary.
   const stdio: import("node:child_process").StdioOptions = ["inherit", "pipe", "pipe"];
-  if (zigProgress && interactive) {
-    envOverrides.ZIG_PROGRESS = "3";
-    stdio.push("pipe"); // index 3 = zig's IPC write end
-  }
 
   const child = spawn(cmd[0]!, cmd.slice(1), {
     stdio,
@@ -271,11 +246,6 @@ function main(): void {
   pump(child.stdout!);
   pump(child.stderr!);
 
-  // stdio[3] only exists if we pushed it above (zigProgress && interactive).
-  if (child.stdio[3]) {
-    decodeZigProgress(child.stdio[3] as NodeJS.ReadableStream, text => write(prefix + text + "\n"));
-  }
-
   // writeSync for final messages: out.write() is async; process.exit()
   // terminates before the WriteStream buffer flushes. Sync write ensures
   // the last line actually reaches the terminal on error paths.
@@ -296,136 +266,4 @@ function main(): void {
     if (code === 0) writeStamp();
     process.exit(code ?? 1);
   });
-}
-
-// ───────────────────────────────────────────────────────────────────────────
-// ZIG_PROGRESS protocol decoder
-//
-// Wire format (vendor/zig/lib/std/Progress.zig writeIpc, all LE):
-//   1 byte:  N (node count, u8)
-//   N * 48:  Storage[] — per node: u32 completed, u32 total, [40]u8 name
-//   N * 1:   Parent[] — per node: u8 (254=unused 255=root else=index)
-//
-// Packets arrive ~60ms apart. We pick the most-active counted stage from
-// each, throttle to 1/sec, dedupe identical lines. Silence during
-// uncounted phases (LLVM Emit Object) matches zig's own non-TTY behavior.
-// ───────────────────────────────────────────────────────────────────────────
-
-const STORAGE_SIZE = 48; // u32 + u32 + [40]u8, aligned to 8
-const NAME_OFFSET = 8;
-const NAME_LEN = 40;
-
-function decodeZigProgress(stream: NodeJS.ReadableStream, emit: (text: string) => void): void {
-  let buf = Buffer.alloc(0);
-  let lastText = "";
-  let lastEmit = 0;
-
-  stream.on("data", (chunk: Buffer) => {
-    buf = Buffer.concat([buf, chunk]);
-
-    // Parse complete packets. Packet = 1 + N*48 + N bytes; N is byte 0.
-    while (buf.length >= 1) {
-      const n = buf[0]!;
-      const packetLen = 1 + n * STORAGE_SIZE + n;
-      if (buf.length < packetLen) break;
-
-      const packet = buf.subarray(0, packetLen);
-      buf = buf.subarray(packetLen);
-
-      const text = renderPacket(packet, n);
-      if (text === null || text === lastText) continue;
-
-      // Throttle: counters tick every packet, and `total` GROWS during
-      // the build (Code Generation: ~130 → ~120k as zig discovers more
-      // work), so count-based bucketing fails. Time-throttle is stable.
-      const now = Date.now();
-      if (now - lastEmit < 1000) continue;
-      lastText = text;
-      lastEmit = now;
-
-      emit(text);
-    }
-  });
-}
-
-/**
- * Pick a one-line status from the progress tree.
- *
- * Tree during bun compile (forwarded through the fork's #24722 fix):
- *   root ""                               ← frontend, name cleared
- *   └─ steps [2/5]                        ← build runner's step counter
- *      └─ compile obj bun-debug
- *         ├─ Semantic Analysis [14233]    ← completed-only counter
- *         │  └─ Io.Writer.print__anon_*   ← per-symbol noise, c=0 t=0
- *         ├─ Code Generation [3714/4174]  ← active bounded counter
- *         │  └─ fs.Dir.Walker.next        ← per-symbol noise
- *         └─ Linking [1/11599]            ← barely started
- *
- * Stages run IN PARALLEL and zig reuses node slots — index order is NOT
- * tree depth. The distinguisher is counters: stages have them (c and/or
- * t > 0), per-symbol noise doesn't (c=0 t=0). Strategy: highest-index
- * node with an ACTIVE counter (0 < c < t). Highest index ≈ most recently
- * allocated ≈ most relevant. Fall back to completed-only, then
- * just-started.
- *
- * Returns null when no counted node exists (LLVM phase — 60+ seconds
- * with no counter). Silence matches zig's own non-TTY behavior.
- */
-function renderPacket(packet: Buffer, n: number): string | null {
-  if (n === 0) return null;
-
-  const read = (idx: number) => {
-    const off = 1 + idx * STORAGE_SIZE;
-    return {
-      name: readName(packet, off + NAME_OFFSET),
-      completed: packet.readUInt32LE(off),
-      total: packet.readUInt32LE(off + 4),
-    };
-  };
-
-  const fmt = (name: string, c: number, t: number): string =>
-    t > 0 ? `${name} [${c}/${t}]` : c > 0 ? `${name} [${c}]` : name;
-
-  // total === u32::MAX: node holds an IPC fd (parent's reference to a
-  // child pipe), not a counter. Never render those.
-  const isIpc = (t: number) => t === 0xffffffff;
-
-  // Pass 1: active bounded counter (0 < c < t). Skips finished stages
-  // sitting at [976/976] while real work continues elsewhere.
-  for (let i = n - 1; i >= 0; i--) {
-    const { name, completed, total } = read(i);
-    if (isIpc(total) || name.length === 0) continue;
-    if (total > 0 && completed > 0 && completed < total) {
-      return fmt(name, completed, total);
-    }
-  }
-
-  // Pass 2: completed-only counter (Semantic Analysis goes to ~250k
-  // with no total).
-  for (let i = n - 1; i >= 0; i--) {
-    const { name, completed, total } = read(i);
-    if (isIpc(total) || name.length === 0) continue;
-    if (completed > 0 && total === 0) {
-      return fmt(name, completed, total);
-    }
-  }
-
-  // Pass 3: bounded but not started (c=0, t>0).
-  for (let i = n - 1; i >= 0; i--) {
-    const { name, completed, total } = read(i);
-    if (isIpc(total) || name.length === 0) continue;
-    if (total > 0) {
-      return fmt(name, completed, total);
-    }
-  }
-
-  return null;
-}
-
-/** Read a NUL-padded fixed-width name field. */
-function readName(buf: Buffer, offset: number): string {
-  const end = offset + NAME_LEN;
-  let nul = offset;
-  while (nul < end && buf[nul]! !== 0) nul++;
-  return buf.toString("utf8", offset, nul);
 }

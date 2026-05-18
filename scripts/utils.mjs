@@ -2652,26 +2652,32 @@ export function parseAnnotations(content) {
       annotations.push(annotation);
     }
 
-    // Zig compiler error
-    // e.g. /path/to/build.zig:8:19: error: ...
-    const zigMessage = line.match(/^(.+\.zig):(\d+):(\d+): (error|warning): (.+)$/);
-    if (zigMessage) {
-      const [, filename, line, column, level] = zigMessage;
-
-      const { match: callStackMatch } = readUntil(/referenced by:/i);
-      if (callStackMatch) {
-        readUntil(/(.+\.zig):(\d+):(\d+)/i, 5);
-      }
-
+    // rustc / cargo error
+    // e.g. error[E0308]: mismatched types
+    //        --> src/http/lib.rs:553:5
+    // The header line carries the level + (optional) code; the location
+    // arrives on the following `-->` line. Read until the blank line that
+    // separates rustc diagnostics so the annotation body contains the
+    // rendered span + help/note lines.
+    const rustHeader = line.match(/^(error|warning)(\[[A-Z0-9]+\])?: (.+)$/);
+    if (rustHeader && !/\b(generated|emitted)\b/.test(line) /* "warning: 3 warnings emitted" */) {
+      const [, level, code, title] = rustHeader;
+      const { match: locMatch } = readUntil(/-->\s+(.+?):(\d+):(\d+)/, 3);
+      // Swallow the diagnostic body up to the blank-line separator (rustc
+      // always emits one between diagnostics in the human format; cap at 30
+      // for `--message-format=short` which doesn't).
+      readUntil(/^$/, 30);
       const annotation = parseAnnotation({
-        source: "zig",
+        source: "rustc",
         level,
-        filename,
-        line,
-        column,
+        filename: locMatch?.[1],
+        line: locMatch?.[2],
+        column: locMatch?.[3],
+        title: code ? `${code} ${title}` : title,
         content: bufferedLines,
       });
       annotations.push(annotation);
+      continue;
     }
 
     const nodeJsError = line.match(/^file:\/\/(.+\.(?:c|m)js):(\d+)/i);
@@ -2752,9 +2758,13 @@ export function reportAnnotationToBuildKite({ context, label, content, style = "
   if (!isBuildkite) {
     return;
   }
+  // BuildKite rejects annotation contexts > 100 chars (`400 Bad Request: This
+  // context is too long`). rustc diagnostic titles routinely exceed that and
+  // were silently dropped, leaving only short warnings visible in the UI.
+  const ctx = `${context || label}`.slice(0, 100);
   const { error, status, signal, stderr } = nodeSpawnSync(
     "buildkite-agent",
-    ["annotate", "--append", "--style", `${style}`, "--context", `${context || label}`, "--priority", `${priority}`],
+    ["annotate", "--append", "--style", `${style}`, "--context", ctx, "--priority", `${priority}`],
     {
       input: content,
       stdio: ["pipe", "ignore", "pipe"],

@@ -29,9 +29,18 @@
  *     ambiguous case.
  */
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { Config } from "./config.ts";
 import { BuildError } from "./error.ts";
 import { satisfiesRange } from "./tools.ts";
+
+/** Read a crate's locked version out of the repo's Cargo.lock. */
+function lockedCrateVersion(cfg: Config, name: string): string | undefined {
+  const lock = readFileSync(join(cfg.cwd, "Cargo.lock"), "utf8");
+  const m = lock.match(new RegExp(`\\nname = "${name}"\\nversion = "([^"]+)"`));
+  return m?.[1];
+}
 
 export interface Workaround {
   /** Short slug — shows up in the error message. */
@@ -74,6 +83,94 @@ export const workarounds: Workaround[] = [
       return cfg.clangVersion !== undefined && satisfiesRange(cfg.clangVersion, `>=${FIXED_IN_LLVM}`);
     },
     cleanup: `Delete scripts/build/shims/asan-dyld-shim.c, scripts/build/shims.ts, the emitShims() calls in bun.ts, registerShimRules in rules.ts, and this entry.`,
+  },
+  {
+    id: "globalopt-crash-aarch64-musl",
+    issue: "https://github.com/llvm/llvm-project/issues/ (file once reduced; see CI #53109)",
+    description:
+      "rust-lld's link-stage LTO segfaults in the `globalopt` pass on the bun_runtime " +
+      "bitcode module on aarch64-unknown-linux-musl. Disable cross-language LTO for " +
+      "that target only — both halves still LTO independently (C++ via -flto=full, " +
+      'Rust via [profile.release] lto = "fat"); only Rust↔C++ inlining is lost.',
+    // Only exercised on the lane the crash hits.
+    applies: cfg => cfg.lto && cfg.arm64 && cfg.abi === "musl",
+    expectedToBeFixed: cfg => {
+      // The crash is inside rust-lld's LLVM (rustc nightly-2026-05-06 ⇒ LLVM 22).
+      // Re-test once the pinned rustc moves to LLVM 23. If it still crashes,
+      // bump this and file the upstream LLVM issue with a reduced repro
+      // (`llvm-reduce` over the bun_runtime cgu bitcode).
+      const FIXED_IN_RUST_LLVM = "23.0.0";
+      return cfg.rustLlvmVersion !== undefined && satisfiesRange(cfg.rustLlvmVersion, `>=${FIXED_IN_RUST_LLVM}`);
+    },
+    cleanup:
+      `Delete the \`!(aarch64 && abi === "musl")\` clause from the \`crossLangLto\` ` +
+      `derivation in resolveConfig() (config.ts), and this entry. The \`crossLangLto\` ` +
+      `field itself can stay (collapses to \`= lto\` when no per-target gates remain).`,
+  },
+  {
+    id: "rust-lld-for-crosslang-lto",
+    issue: "https://rustc-dev-guide.rust-lang.org/backend/updating-llvm.html",
+    description:
+      "rustc's bundled LLVM is newer than clang's, so clang's ld.lld can't read " +
+      "-Clinker-plugin-lto bitcode (forward-compatible only). Link with rust-lld instead.",
+    applies: cfg => cfg.crossLangLto && cfg.rustLlvmVersion !== undefined && cfg.clangVersion !== undefined,
+    expectedToBeFixed: cfg => {
+      // Obsolete once clang's LLVM major catches up to (or passes) rustc's —
+      // at that point clang's own ld.lld reads rustc's bitcode and the
+      // rust-lld swap in resolveConfig() never fires.
+      const clangMajor = Number(cfg.clangVersion!.split(".")[0]);
+      const rustMajor = Number(cfg.rustLlvmVersion!.split(".")[0]);
+      return clangMajor >= rustMajor;
+    },
+    cleanup:
+      `Delete the rust-lld swap block in resolveConfig() (config.ts), findRustLld() and its call ` +
+      `in resolveLlvmToolchain() (tools.ts), the rustLld/rustLlvmVersion fields on Toolchain/Config, ` +
+      `and this entry.`,
+  },
+  {
+    id: "rust-lld-musl-crt-zlib",
+    issue: "https://github.com/rust-lang/rust/issues/data-compression-not-enabled",
+    description:
+      "rust-lld is built without LLVM_ENABLE_ZLIB. Alpine's musl CRT objects ship with " +
+      "ELFCOMPRESS_ZLIB debug sections, which rust-lld rejects at input parse time. " +
+      "Decompress them via objcopy and prepend a -B search path.",
+    // Only exercised when the rust-lld swap actually fired on a musl link.
+    applies: cfg => cfg.linux && cfg.abi === "musl" && cfg.rustLld !== undefined && cfg.ld === cfg.rustLld,
+    expectedToBeFixed: cfg => {
+      // Obsolete the same instant the rust-lld swap above is — once clang's
+      // ld.lld (built with zlib) reads rustc's bitcode, we never select
+      // rust-lld and the compressed CRTs are a non-issue.
+      const clangMajor = Number(cfg.clangVersion!.split(".")[0]);
+      const rustMajor = Number(cfg.rustLlvmVersion!.split(".")[0]);
+      return clangMajor >= rustMajor;
+    },
+    cleanup:
+      `Delete needsMuslCrtDecompress(), MUSL_CRT_OBJECTS, the shim_crt_decompress rule, and the ` +
+      `musl block in emitShims() (scripts/build/shims.ts), and this entry.`,
+  },
+  {
+    id: "android-posix-spawn-setsid-const",
+    issue: "https://github.com/rust-lang/libc/pull/5104",
+    description:
+      "The libc crate doesn't expose POSIX_SPAWN_SETSID for target_os = android, so the " +
+      "linux+android cfg arm in spawn_sys hardcodes 0x80 (the value glibc/musl/bionic share).",
+    // Cleanup is a source-code change, not a build-config change — once
+    // Cargo.lock's libc has the constant, the local 0x80 can go regardless
+    // of which target is being built. Gate to android so the threshold-bump
+    // hint doesn't bother host-only builds.
+    applies: cfg => cfg.abi === "android",
+    expectedToBeFixed: cfg => {
+      // PR #5104 targets `main` with `stable-nominated`; a 0.2.x cherry-pick
+      // follows. Best guess for the first 0.2.x with it — bump if the
+      // constant isn't actually there yet.
+      const FIXED_IN_LIBC = "0.2.187";
+      const v = lockedCrateVersion(cfg, "libc");
+      return v !== undefined && satisfiesRange(v, `>=${FIXED_IN_LIBC}`);
+    },
+    cleanup:
+      `In src/spawn_sys/posix_spawn.rs (Attr::set) and src/spawn_sys/spawn_process.rs ` +
+      `(options.detached block), replace the local 0x80 with libc::POSIX_SPAWN_SETSID, ` +
+      `drop the explanatory comments, and delete this entry.`,
   },
 ];
 

@@ -760,15 +760,17 @@ declare module "bun" {
       /**
        * Also listen for HTTP/3 (QUIC) on the same port. Requires {@link tls}.
        * @default false
+       * @experimental
        */
-      h3?: boolean;
+      http3?: boolean;
 
       /**
-       * Listen for HTTP/1.1 (and HTTP/2) over TCP. Set to `false` together
-       * with `h3: true` to serve HTTP/3 only.
+       * Listen for HTTP/1.1 over TCP. Set to `false` together with
+       * `http3: true` to serve HTTP/3 only.
        * @default true
+       * @experimental
        */
-      h1?: boolean;
+      http1?: boolean;
 
       /**
        * Sets the number of seconds to wait before timing out a connection

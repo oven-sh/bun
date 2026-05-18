@@ -175,6 +175,15 @@ SourceProvider::~SourceProvider()
         zig__ModuleInfoDeserialized__deinit(static_cast<bun_ModuleInfoDeserialized*>(m_resolvedSource.module_info));
         m_resolvedSource.module_info = nullptr;
     }
+    // The Rust/Zig side hands these as +1 (RuntimeTranspilerStore::run_from_js_thread:
+    // `out.dupeRef()` / `out.createIfDifferent(..)`; ModuleLoader paths likewise).
+    // #9521 removed the early deref in `create()` because these strings are still
+    // read after that point; the matching deref belongs here, once all uses are done.
+    // `source_code` is intentionally NOT deref'd here — its +1 is consumed in
+    // `create()` (gated on `needsDeref && !isBuiltin`) or by ResolvedSourceCodeHolder.
+    m_resolvedSource.specifier.deref();
+    m_resolvedSource.source_url.deref();
+    m_resolvedSource.bytecode_origin_path.deref();
 }
 
 extern "C" void CachedBytecode__deref(JSC::CachedBytecode* cachedBytecode)

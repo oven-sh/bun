@@ -174,7 +174,7 @@ pub const JSTerminated = error{
 
 pub const JSOOM = OOM || JSError;
 
-pub const ci = @import("./cli/ci_info.zig");
+pub const ci = @import("./runtime/cli/ci_info.zig");
 
 /// Cross-platform system APIs
 pub const sys = @import("./sys/sys.zig");
@@ -237,7 +237,7 @@ pub const SmallList = css.SmallList;
 pub const csrf = @import("./csrf/csrf.zig");
 pub const validators = @import("./runtime/node/util/validators.zig");
 
-pub const shell = @import("./shell/shell.zig");
+pub const shell = @import("./runtime/shell/shell.zig");
 pub const md = @import("./md/root.zig");
 
 pub const Output = @import("./bun_core/output.zig");
@@ -725,7 +725,7 @@ pub fn StringEnum(comptime Type: type, comptime Map: anytype, value: []const u8)
     return ComptimeStringMap(Type, Map).get(value);
 }
 
-pub const Bunfig = @import("./cli/bunfig.zig").Bunfig;
+pub const Bunfig = @import("./runtime/cli/bunfig.zig").Bunfig;
 
 pub const HTTPThread = @import("./http/http.zig").HTTPThread;
 pub const http = @import("./http/http.zig");
@@ -1176,11 +1176,11 @@ pub fn isMissingIOUring() bool {
     };
 }
 
-pub const cli = @import("./cli/cli.zig");
+pub const cli = @import("./runtime/cli/cli.zig");
 
 pub const install = @import("./install/install.zig");
 pub const PackageManager = install.PackageManager;
-pub const RunCommand = @import("./cli/run_command.zig").RunCommand;
+pub const RunCommand = @import("./runtime/cli/run_command.zig").RunCommand;
 
 pub const fs = @import("./resolver/fs.zig");
 pub const transpiler = @import("./bundler/transpiler.zig");
@@ -1465,7 +1465,7 @@ pub fn asByteSlice(buffer: anytype) []const u8 {
 
 comptime {
     _ = @import("./runtime/node/buffer.zig").BufferVectorized.fill;
-    _ = @import("./cli/upgrade_command.zig").Version;
+    _ = @import("./runtime/cli/upgrade_command.zig").Version;
     _ = @import("./jsc/resolve_path_jsc.zig");
     _ = @import("./jsc/resolver_jsc.zig");
 }
@@ -3486,7 +3486,7 @@ pub fn memmove(output: []u8, input: []const u8) void {
 pub const hmac = @import("./sha_hmac/hmac.zig");
 pub const libdeflate = @import("./libdeflate_sys/libdeflate.zig");
 
-pub const bake = @import("./bake/bake.zig");
+pub const bake = @import("./runtime/bake/bake.zig");
 
 /// like std.enums.tagName, except it doesn't lose the sentinel value.
 pub fn tagName(comptime Enum: type, value: Enum) ?[:0]const u8 {
@@ -3809,7 +3809,7 @@ pub const deprecated = @import("./bun_core/deprecated.zig");
 pub fn getUseSystemCA(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) error{ JSError, OutOfMemory }!jsc.JSValue {
     _ = globalObject;
     _ = callFrame;
-    const Arguments = @import("./cli/Arguments.zig");
+    const Arguments = @import("./runtime/cli/Arguments.zig");
     return jsc.JSValue.jsBoolean(Arguments.Bun__Node__UseSystemCA);
 }
 

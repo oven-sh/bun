@@ -3,6 +3,8 @@ import { define } from "../../codegen/class-definitions";
 export default [
   define({
     name: "RedisClient",
+    // R-2 Phase 2: user impls take `&self`; emit `this: &T` shims.
+    sharedThis: true,
     construct: true,
     constructNeedsThis: true,
     call: false,

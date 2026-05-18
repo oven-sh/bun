@@ -12,7 +12,7 @@ use crate::mal_prelude::*;
 use bun_alloc::AllocError;
 use bun_ast::{ImportKind, import_record};
 use bun_collections::VecExt;
-use bun_collections::{ArrayHashMap, StringArrayHashMap};
+use bun_collections::{ArrayHashMap, AutoBitSet, StringArrayHashMap};
 
 use crate::Graph::{InputFileColumns as _, InputFileFlags};
 use crate::Index;
@@ -395,11 +395,6 @@ pub fn schedule_barrel_deferred_imports(
     // is later parsed, applyBarrelOptimization reads these pre-recorded requests
     // to decide which exports to keep. O(file's imports) per file.
 
-    // Build a set of import_record_indices that have named_imports entries,
-    // so we can detect bare imports (those with no specific export bindings).
-    // PERF(port): was stack-fallback (4096) — profile if hot.
-    let mut named_ir_indices: ArrayHashMap<u32, ()> = ArrayHashMap::default();
-
     // In dev server mode, patchImportRecordSourceIndices skips saving source_indices
     // on import records (the dev server uses path-based identifiers instead). But
     // barrel optimization requires source_indices to seed requested_exports and to
@@ -422,6 +417,10 @@ pub fn schedule_barrel_deferred_imports(
 
     // See PORT NOTE above — read-only deref valid through Phase 2.
     let file_import_records = file_import_records.get();
+
+    // Build a set of import_record_indices that have named_imports entries,
+    // so we can detect bare imports (those with no specific export bindings).
+    let mut named_ir_indices = AutoBitSet::init_empty(file_import_records.len())?;
 
     // In HMR, ConvertESMExportsForHmr deduplicates import records by path:
     // two `import { X } from 'mod'` statements become one, and the second
@@ -455,7 +454,7 @@ pub fn schedule_barrel_deferred_imports(
         if ni.import_record_index as usize >= file_import_records.len() {
             continue;
         }
-        named_ir_indices.put(ni.import_record_index, ())?;
+        named_ir_indices.set(ni.import_record_index as usize);
         let ir = &file_import_records.as_slice()[ni.import_record_index as usize];
         // In dev server mode, source_index may not be patched — resolve via
         // path map as a read-only fallback. Do NOT write back to the import
@@ -522,7 +521,7 @@ pub fn schedule_barrel_deferred_imports(
         if ir.flags.contains(import_record::Flags::IS_INTERNAL) {
             continue;
         }
-        if named_ir_indices.contains(&u32::try_from(idx).unwrap()) {
+        if named_ir_indices.is_set(idx) {
             continue;
         }
         if ir
@@ -601,7 +600,7 @@ pub fn schedule_barrel_deferred_imports(
         if ir.flags.contains(import_record::Flags::IS_INTERNAL) {
             continue;
         }
-        if named_ir_indices.contains(&u32::try_from(idx).unwrap()) {
+        if named_ir_indices.is_set(idx) {
             continue;
         }
         if ir

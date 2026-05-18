@@ -629,9 +629,9 @@ const sql = new SQL({
   tls: true,
   // tls: {
   //   rejectUnauthorized: true,
-  //   ca: "path/to/ca.pem",
-  //   key: "path/to/key.pem",
-  //   cert: "path/to/cert.pem",
+  //   ca: Bun.file("path/to/ca.pem"),
+  //   key: Bun.file("path/to/key.pem"),
+  //   cert: Bun.file("path/to/cert.pem"),
   // },
 
   // Callbacks
@@ -675,9 +675,9 @@ const sql = new SQL({
   // tls: {
   //   rejectUnauthorized: true,
   //   requestCert: true,
-  //   ca: "path/to/ca.pem",
-  //   key: "path/to/key.pem",
-  //   cert: "path/to/cert.pem",
+  //   ca: Bun.file("path/to/ca.pem"),
+  //   key: Bun.file("path/to/key.pem"),
+  //   cert: Bun.file("path/to/cert.pem"),
   //   checkServerIdentity(hostname, cert) {
   //     ...
   //   },
@@ -917,9 +917,9 @@ To customize certificate verification, provide CA/key/cert material, or toggle `
 ```ts
 const sql = new SQL("postgres://user:password@localhost/mydb?sslmode=verify-full", {
   tls: {
-    ca: "path/to/ca.pem",
-    key: "path/to/key.pem",
-    cert: "path/to/cert.pem",
+    ca: Bun.file("path/to/ca.pem"),
+    key: Bun.file("path/to/key.pem"),
+    cert: Bun.file("path/to/cert.pem"),
     rejectUnauthorized: true,
   },
 });

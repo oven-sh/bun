@@ -88,12 +88,15 @@ describe("brace + glob composition", () => {
       "src/app.ts": "",
       "src/util.tsx": "",
     });
-    const out = (await $`echo src/*.{ts,tsx}`.cwd(String(dir)).text()).trim();
+    // The glob walker joins matched paths with the native separator on
+    // Windows, so normalize before asserting.
+    const out = (await $`echo src/*.{ts,tsx}`.cwd(String(dir)).text()).trim().replaceAll("\\", "/");
+    const words = out.split(" ");
     // Zig composes both the literal brace variants and the glob matches.
-    expect(out).toContain("src/app.ts");
-    expect(out).toContain("src/util.tsx");
-    expect(out).toContain("src/*.ts");
-    expect(out).toContain("src/*.tsx");
+    expect(words).toContain("src/app.ts");
+    expect(words).toContain("src/util.tsx");
+    expect(words).toContain("src/*.ts");
+    expect(words).toContain("src/*.tsx");
   });
 
   test("{src,lib}/*.ts composes a brace prefix with a glob", async () => {
@@ -101,8 +104,9 @@ describe("brace + glob composition", () => {
       "src/a.ts": "",
       "lib/b.ts": "",
     });
-    const out = (await $`echo {src,lib}/*.ts`.cwd(String(dir)).text()).trim();
-    expect(out).toContain("src/a.ts");
-    expect(out).toContain("lib/b.ts");
+    const out = (await $`echo {src,lib}/*.ts`.cwd(String(dir)).text()).trim().replaceAll("\\", "/");
+    const words = out.split(" ");
+    expect(words).toContain("src/a.ts");
+    expect(words).toContain("lib/b.ts");
   });
 });

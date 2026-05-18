@@ -129,8 +129,6 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         "leak:bun_runtime::webcore::blob::Store>::init_s3\n",
         "leak:bun_runtime::webcore::s3::list_objects\n",
         "leak:bun_runtime::webcore::S3Client\n",
-        "leak:bun_sql_jsc::postgres\n",
-        "leak:bun_sql::postgres::protocol::FieldMessage\n",
         // Zig `jsc.Debugger.startJSDebuggerThread` — the Rust module is
         // lowercase (`#[path = "Debugger.rs"] pub mod debugger;`), so the
         // demangled frame is `<bun_jsc::debugger::Debugger>::…`; the previous

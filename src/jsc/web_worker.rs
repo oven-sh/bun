@@ -1238,7 +1238,7 @@ impl WebWorker {
             // clear it so process.on('exit') handlers can run. teardownJSCVM
             // re-sets it for the JSC VM teardown.
             vm.jsc_vm().clear_has_termination_request();
-            vm.is_shutting_down = true;
+            vm.is_shutting_down.store(true, Ordering::Release);
             vm.on_exit();
             if let Some(hooks) = runtime_hooks() {
                 (hooks.cron_clear_all_teardown)(vm);

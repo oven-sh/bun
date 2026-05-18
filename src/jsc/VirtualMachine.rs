@@ -6,6 +6,7 @@
 use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr::NonNull;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_bundler::Transpiler;
 use bun_io as Async;
@@ -207,7 +208,7 @@ pub struct VirtualMachine {
     pub hide_bun_stackframes: bool,
 
     pub is_printing_plugin: bool,
-    pub is_shutting_down: bool,
+    pub is_shutting_down: AtomicBool,
     pub plugin_runner: Option<crate::plugin_runner::PluginRunner>,
     pub is_main_thread: bool,
     pub exit_handler: ExitHandler,
@@ -981,13 +982,13 @@ impl VirtualMachine {
     }
 
     pub fn is_shutting_down(&self) -> bool {
-        self.is_shutting_down
+        self.is_shutting_down.load(Ordering::Acquire)
     }
 
     /// Port of `VirtualMachine.scriptExecutionStatus` (VirtualMachine.zig:885).
     /// Exported to C++ as `Bun__VM__scriptExecutionStatus` via virtual_machine_exports.rs.
     pub fn script_execution_status(&self) -> crate::ScriptExecutionStatus {
-        if self.is_shutting_down {
+        if self.is_shutting_down.load(Ordering::Acquire) {
             return crate::ScriptExecutionStatus::Stopped;
         }
 
@@ -1485,7 +1486,7 @@ impl VirtualMachine {
         }
 
         ExitHandler::dispatch_on_exit(self);
-        self.is_shutting_down = true;
+        self.is_shutting_down.store(true, Ordering::Release);
 
         // Make sure we run new cleanup hooks introduced by running cleanup
         // hooks.

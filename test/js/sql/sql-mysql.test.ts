@@ -76,6 +76,19 @@ if (isDockerEnabled()) {
             await sql`UPDATE ${sql(random_name)} SET name = "test2" WHERE id = ${lastInsertRowid}`;
           expect(affectedRows).toBe(1);
         });
+        test("MEDIUMINT not in the last column reads following columns correctly", async () => {
+          // MySQL's binary protocol sends MYSQL_TYPE_INT24 as a fixed 4-byte
+          // field. Reading only 3 left the cursor 1 byte behind, silently
+          // corrupting every following column (and hanging forever if a
+          // length-prefixed column like VARCHAR followed).
+          await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
+          using sql = await db.reserve();
+          const t = "mi_" + randomUUIDv7("hex").replaceAll("-", "");
+          await sql`CREATE TEMPORARY TABLE ${sql(t)} (id INT PRIMARY KEY, uviews MEDIUMINT, sviews MEDIUMINT, balance BIGINT, ratio DOUBLE, name VARCHAR(64))`;
+          await sql`INSERT INTO ${sql(t)} VALUES (1, 100, -50, 5000, 3.5, ${"alice"})`;
+          const [row] = await sql`SELECT id, uviews, sviews, balance, ratio, name FROM ${sql(t)} WHERE id = ${1}`;
+          expect(row).toEqual({ id: 1, uviews: 100, sviews: -50, balance: 5000, ratio: 3.5, name: "alice" });
+        });
         describe("should work with more than the max inline capacity", () => {
           for (let size of [50, 60, 62, 64, 70, 100]) {
             for (let duplicated of [true, false]) {

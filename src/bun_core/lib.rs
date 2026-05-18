@@ -2433,39 +2433,28 @@ pub(crate) mod strings_impl {
             if i >= self.bytes.len() {
                 return false;
             }
-            let b = self.bytes[i];
-            // Decode the WTF-8 sequence so multi-byte code points report their
-            // true width (Zig sets `width = cp_len`); fmt.rs collapses any
-            // `width > 1` code point to a single `_`. Invalid / truncated
-            // sequences fall back to a 1-byte step.
-            let seq = wtf8_byte_sequence_length(b) as usize;
-            let valid = (2..=4).contains(&seq)
-                && i + seq <= self.bytes.len()
-                && self.bytes[i + 1..i + seq]
-                    .iter()
-                    .all(|&c| (c & 0xC0) == 0x80);
-            let (cp, w): (i32, u8) = if !valid {
-                (b as i32, 1)
-            } else {
-                let cp = match seq {
-                    2 => ((b as i32 & 0x1F) << 6) | (self.bytes[i + 1] as i32 & 0x3F),
-                    3 => {
-                        ((b as i32 & 0x0F) << 12)
-                            | ((self.bytes[i + 1] as i32 & 0x3F) << 6)
-                            | (self.bytes[i + 2] as i32 & 0x3F)
-                    }
-                    _ => {
-                        ((b as i32 & 0x07) << 18)
-                            | ((self.bytes[i + 1] as i32 & 0x3F) << 12)
-                            | ((self.bytes[i + 2] as i32 & 0x3F) << 6)
-                            | (self.bytes[i + 3] as i32 & 0x3F)
-                    }
-                };
-                (cp, seq as u8)
-            };
+            let tail = &self.bytes[i..];
+            let b = tail[0];
             cursor.i = i;
-            cursor.c = cp;
-            cursor.width = w;
+            if b < 0x80 {
+                cursor.c = b as i32;
+                cursor.width = 1;
+                return true;
+            }
+            // Multi-byte: defer to the canonical WTF-8 decoder so this stub
+            // stays in lockstep with `strings::CodepointIterator::next`.
+            let len = wtf8_byte_sequence_length(b);
+            let take = (len as usize).min(tail.len());
+            let mut buf = [0u8; 4];
+            buf[..take].copy_from_slice(&tail[..take]);
+            let cp = crate::string::immutable::decode_wtf8_rune_t::<i32>(&buf, len, -1);
+            if cp == -1 {
+                cursor.c = crate::string::immutable::UNICODE_REPLACEMENT as i32;
+                cursor.width = 1;
+            } else {
+                cursor.c = cp;
+                cursor.width = len;
+            }
             true
         }
     }

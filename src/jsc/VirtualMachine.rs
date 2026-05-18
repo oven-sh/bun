@@ -208,6 +208,12 @@ pub struct VirtualMachine {
 
     pub is_printing_plugin: bool,
     pub is_shutting_down: bool,
+    /// Set once `on_exit()` has finished draining `RareData::cleanup_hooks`.
+    /// After this point the cleanup-hook list is never iterated again, so
+    /// pushing to it (e.g. from a deferred N-API finalizer scheduled during
+    /// the final `collectNow()` in `Zig__GlobalObject__destructOnExit`) would
+    /// only leak the hook's `ctx` allocation.
+    pub has_run_cleanup_hooks: bool,
     pub plugin_runner: Option<crate::plugin_runner::PluginRunner>,
     pub is_main_thread: bool,
     pub exit_handler: ExitHandler,
@@ -985,6 +991,10 @@ impl VirtualMachine {
         self.is_shutting_down
     }
 
+    pub fn has_run_cleanup_hooks(&self) -> bool {
+        self.has_run_cleanup_hooks
+    }
+
     /// Port of `VirtualMachine.scriptExecutionStatus` (VirtualMachine.zig:885).
     /// Exported to C++ as `Bun__VM__scriptExecutionStatus` via virtual_machine_exports.rs.
     pub fn script_execution_status(&self) -> crate::ScriptExecutionStatus {
@@ -1507,6 +1517,7 @@ impl VirtualMachine {
         }
         // Zig `defer rare_data.cleanup_hooks.clearAndFree(...)` — `mem::take`
         // above leaves an empty `Vec` (capacity already freed by drop).
+        self.has_run_cleanup_hooks = true;
     }
 
     pub fn global_exit(&mut self) -> ! {

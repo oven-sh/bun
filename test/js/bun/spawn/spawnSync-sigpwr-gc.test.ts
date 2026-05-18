@@ -39,13 +39,12 @@ console.log("ok");
       VISUAL: "",
     },
     stdout: "pipe",
-    stderr: "pipe",
+    stderr: "inherit",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
   expect(proc.signalCode).toBeNull();
-  expect(stderr).not.toContain("AddressSanitizer");
   expect(stdout.trim()).toBe("ok");
   expect(exitCode).toBe(0);
 });

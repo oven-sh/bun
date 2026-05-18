@@ -120,7 +120,6 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         "leak:bun_runtime::api::server::ServerAllConnectionsClosedTask\n",
         "leak:bun_cli::bunfig::Bunfig>::parse\n",
         "leak:bun_resolver::package_json::PackageJSON>::parse\n",
-        "leak:Resolver>::dir_info_cached_maybe_log\n",
         "leak:bun_resolver::fs::RealFS>::read_directory\n",
         "leak:bun_js_printer::print_ast\n",
         "leak:bun_jsc::ipc::on_data2\n",

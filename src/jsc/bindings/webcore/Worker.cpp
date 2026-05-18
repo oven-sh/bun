@@ -518,7 +518,7 @@ bool Worker::dispatchExit(int32_t exitCode)
 {
     // Runs on the worker thread after its JSC VM has been torn down. Post the
     // close event to the parent; that task additionally releases parent_poll_ref
-    // and drops the worker-thread-held ref (both parent-thread-only operations).
+    // (parent-thread-only).
     //
     // If posting fails — parent context no longer exists (nested worker whose
     // middle thread has already torn down) — the ref and poll are intentionally
@@ -527,7 +527,7 @@ bool Worker::dispatchExit(int32_t exitCode)
     // teardown implies process shutdown (or at least that nothing observes the
     // leak), so this is bounded. The proper fix is for a worker to stop+join
     // its sub-workers before tearing down its own context.
-    return postTaskToParent([exitCode, protectedThis = Ref { *this }](ScriptExecutionContext&) {
+    bool posted = postTaskToParent([exitCode, protectedThis = Ref { *this }](ScriptExecutionContext&) {
         // Closing → dispatch 'close' → Closed. The split lets 'close'/'exit'
         // handlers observe threadId == -1 and isOnline() == false while
         // postMessage() (gated only on Closed) still accepts and drops the
@@ -541,11 +541,25 @@ bool Worker::dispatchExit(int32_t exitCode)
 
         protectedThis->m_state.store(State::Closed);
         WebWorker__releaseParentPollRef(protectedThis->impl_);
-        // Drop the ref taken in create(). protectedThis keeps us alive across
-        // this line; its own deref happens at lambda destruction on the parent
-        // thread, so ~Worker never runs on the worker thread.
-        protectedThis->deref();
+        // protectedThis (and the JSWorker GC cell, if still rooted) keep us
+        // alive across the close-event dispatch; both deref on the parent
+        // thread (lambda destruction here / GC sweep), so ~Worker never runs
+        // on the worker thread.
     });
+    if (posted) {
+        // Drop the worker-thread-held ref taken in create(). The posted
+        // lambda's `protectedThis` capture keeps the Worker alive (so this
+        // never reaches refcount 0 on the worker thread). Releasing here
+        // instead of inside the task body covers the shutdown race where
+        // global_exit() observes OUTSTANDING == 0 (we've already
+        // unregistered) and destroys the parent VM before the task queue
+        // drains: the lambda is then destroyed on the parent thread without
+        // running, dropping `protectedThis` — and that is now the last ref,
+        // so ~Worker → WebWorker__destroy actually runs instead of leaking
+        // the WebWorker box and its preload/specifier slabs.
+        this->deref();
+    }
+    return posted;
 }
 
 // ---- extern "C" shims (called from Zig) -------------------------------------

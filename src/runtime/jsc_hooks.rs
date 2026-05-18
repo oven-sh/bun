@@ -563,13 +563,21 @@ unsafe fn deinit_runtime_state(_vm: *mut VirtualMachine, state: OpaqueRuntimeSta
         // alias exists.
         drop(unsafe { bun_core::heap::take(printer) });
     }
-    if state.is_null() {
-        return;
+    if !state.is_null() {
+        // SAFETY: per fn contract — `state` is the unique `heap::alloc` result
+        // from `init_runtime_state`; the TLS was just cleared so no other live
+        // alias exists on this thread.
+        drop(unsafe { bun_core::heap::take(state.cast::<RuntimeState>()) });
     }
-    // SAFETY: per fn contract — `state` is the unique `heap::alloc` result
-    // from `init_runtime_state`; the TLS was just cleared so no other live
-    // alias exists on this thread.
-    drop(unsafe { bun_core::heap::take(state.cast::<RuntimeState>()) });
+    // Free the thread-local AST stores allocated by `Transpiler::init_in_place`
+    // (via `Store::create()`). They live in TLS without a Drop, so each worker
+    // thread strands a `Box<Store>` plus its lazily-allocated block chain when
+    // the thread exits. `deinit()` is a no-op if a bundler arena currently owns
+    // the allocator (`memory_allocator()` non-null) or the store was never
+    // created. After the `RuntimeState` drop above nothing on this thread
+    // touches the stores again.
+    bun_ast::expr::data::Store::deinit();
+    bun_ast::stmt::data::Store::deinit();
 }
 
 /// `ServerEntryPoint.generate(watch, entry_path)` — produces the synthetic

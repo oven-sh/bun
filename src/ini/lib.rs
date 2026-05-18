@@ -1260,23 +1260,28 @@ mod draft {
         decoded.into_boxed_slice()
     }
 
-    /// Follows the order of npm's `hasAuth`, without `certfile` and `keyfile` (no mTLS), which
-    /// would stop the walk.
+    /// Follows the order of npm's `hasAuth`; a complete certificate pair also stops the walk.
     fn credentials_of_key(configs: &[ConfigItem], key: &[u8]) -> Option<NpmRegistry> {
         // npm's `opts[k]` truthiness test, applied after the collapse, so a later `username=`
         // clears an earlier one.
         let truthy =
             |opt| Some(&lookup(configs, key, opt)?.value).filter(|value| !value.is_empty());
         let mut credentials = NpmRegistry::default();
+        if let (Some(certfile), Some(keyfile)) = (truthy(ConfigOpt::Certfile), truthy(ConfigOpt::Keyfile)) {
+            credentials.certfile.clone_from(certfile);
+            credentials.keyfile.clone_from(keyfile);
+        }
         if let Some(token) = truthy(ConfigOpt::_AuthToken) {
             credentials.token.clone_from(token);
         } else if let Some(auth) = truthy(ConfigOpt::_Auth) {
             credentials.auth.clone_from(auth);
         } else {
-            credentials
-                .username
-                .clone_from(truthy(ConfigOpt::Username)?);
-            credentials.password = decode_password(truthy(ConfigOpt::_Password)?);
+            if let (Some(username), Some(password)) = (truthy(ConfigOpt::Username), truthy(ConfigOpt::_Password)) {
+                credentials.username.clone_from(username);
+                credentials.password = decode_password(password);
+            } else if credentials.certfile.is_empty() {
+                return None;
+            }
         }
         Some(credentials)
     }
@@ -1574,28 +1579,15 @@ mod draft {
                 }
                 continue;
             };
-            if matches!(optname, ConfigOpt::Certfile | ConfigOpt::Keyfile) {
-                // `put` stamps the key with the value's loc, so walk back over `<key>=` to the option name.
-                let optname_loc = match keyexpr.loc.to_nullable() {
-                    Some(loc) => Loc {
-                        start: loc.start - i32::try_from(key.len() - colon).expect("int cast"),
-                    },
-                    None => keyexpr.loc,
-                };
-                bun_ast::add_warning_pretty!(
-                    log,
-                    Some(source),
-                    optname_loc,
-                    "<b>{}<r> is not supported; ignoring this .npmrc option",
-                    <&'static str>::from(optname),
-                );
-                continue;
-            }
             // Credentials are resolved later, once, over the lines of every `.npmrc`.
             configs.push(ConfigItem {
                 registry_url: normalize_key(&key[2..colon]),
                 optname,
-                value: value.into(),
+                value: if matches!(optname, ConfigOpt::Certfile | ConfigOpt::Keyfile) {
+                    BunInstall::resolve_path(dir, value)
+                } else {
+                    value.into()
+                },
                 loc: keyexpr.loc,
                 source_idx,
             });

@@ -472,6 +472,18 @@ registry=http://localhost:\${PORT}/
     expect(result.default_registry_url).toEqual(`http://localhost:${registry.port}/`);
   });
 
+  test("certfile and keyfile are parsed for the default registry", () => {
+    const result = loadNpmrc(`//registry.npmjs.org/:certfile=/path/to/cert.pem\n//registry.npmjs.org/:keyfile=/path/to/key.pem`);
+    expect(result.default_registry_certfile).toBe("/path/to/cert.pem");
+    expect(result.default_registry_keyfile).toBe("/path/to/key.pem");
+  });
+
+  test("certfile and keyfile are empty by default", () => {
+    const result = loadNpmrc("");
+    expect(result.default_registry_certfile).toBe("");
+    expect(result.default_registry_keyfile).toBe("");
+  });
+
   async function makeTest(
     options: [option: string, value: string][],
     check: (result: {
@@ -804,6 +816,8 @@ registry=https://somehost.com/org1/npm/registry/
         default_registry_username: "",
         default_registry_password: "",
         default_registry_auth: "",
+        default_registry_certfile: "",
+        default_registry_keyfile: "",
       });
     });
 
@@ -817,6 +831,8 @@ registry=https://somehost.com/org1/npm/registry/
         default_registry_username: "v6-user",
         default_registry_password: "v6-password",
         default_registry_auth: "",
+        default_registry_certfile: "",
+        default_registry_keyfile: "",
       });
 
       const auth = Buffer.from("v6-user:v6-password").toString("base64");
@@ -826,6 +842,8 @@ registry=https://somehost.com/org1/npm/registry/
         default_registry_username: "",
         default_registry_password: "",
         default_registry_auth: auth,
+        default_registry_certfile: "",
+        default_registry_keyfile: "",
       });
     });
 
@@ -856,6 +874,8 @@ registry=https://somehost.com/org1/npm/registry/
         default_registry_username: "",
         default_registry_password: "",
         default_registry_auth: "",
+        default_registry_certfile: "",
+        default_registry_keyfile: "",
       });
     });
 
@@ -880,6 +900,8 @@ registry=https://somehost.com/org1/npm/registry/
         default_registry_username: "",
         default_registry_password: "",
         default_registry_auth: "",
+        default_registry_certfile: "",
+        default_registry_keyfile: "",
       });
 
       expect(loadNpmrc(`registry=${prefix}embedded-user:embedded-password@registry.example.com/npm/\n`)).toEqual({
@@ -888,6 +910,8 @@ registry=https://somehost.com/org1/npm/registry/
         default_registry_username: "embedded-user",
         default_registry_password: "embedded-password",
         default_registry_auth: "",
+        default_registry_certfile: "",
+        default_registry_keyfile: "",
       });
     });
   });
@@ -901,6 +925,8 @@ registry=https://somehost.com/org1/npm/registry/
       default_registry_username: "",
       default_registry_password: "",
       default_registry_auth: "",
+      default_registry_certfile: "",
+      default_registry_keyfile: "",
     });
   });
 
@@ -925,6 +951,8 @@ registry=https://somehost.com/org1/npm/registry/
         default_registry_username: username,
         default_registry_password: password,
         default_registry_auth: auth,
+        default_registry_certfile: "",
+        default_registry_keyfile: "",
       });
     });
 
@@ -935,6 +963,8 @@ registry=https://somehost.com/org1/npm/registry/
         default_registry_username: "",
         default_registry_password: "",
         default_registry_auth: "",
+        default_registry_certfile: "",
+        default_registry_keyfile: "",
       });
     });
 
@@ -1850,15 +1880,13 @@ describe.concurrent(".npmrc auth resolves by path-segment ancestor", () => {
     });
   });
 
-  // Bun does not implement certificate auth: it warns and ignores `certfile`/`keyfile`.
-  // An unsupported option must never suppress credentials Bun can actually send.
-  describe("certfile + keyfile are ignored", () => {
-    it("a complete pair does not stop a shallower _authToken", async () => {
+  describe("certfile + keyfile credential precedence", () => {
+    it("a complete pair stops a shallower _authToken", async () => {
       const auth = await probeAuthorization(
         host =>
           `//${host}/:_authToken=${token}\n//${host}${registryPath}:certfile=a.pem\n//${host}${registryPath}:keyfile=b.key`,
       );
-      expect(auth).toBe(`Bearer ${token}`);
+      expect(auth).toBe(null);
     });
 
     it("a lone certfile does not stop a shallower _authToken", async () => {
@@ -5546,6 +5574,8 @@ describe("trims Unicode whitespace like npm", () => {
       default_registry_username: "",
       default_registry_password: "",
       default_registry_auth: "",
+      default_registry_certfile: "",
+      default_registry_keyfile: "",
     });
   });
 });
@@ -5565,6 +5595,8 @@ registry=http://127.0.0.1:4873/ ; default registry
       default_registry_username: "",
       default_registry_password: "",
       default_registry_auth: "",
+      default_registry_certfile: "",
+      default_registry_keyfile: "",
     });
   });
 

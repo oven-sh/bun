@@ -49,22 +49,8 @@ pub mod result {
 // Start
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Options payload for the `Start::FileSink` variant. Mirrors
-/// `jsc.WebCore.FileSink.Options` (path-or-fd + chunk size).
-// TODO(port): once `crate::webcore::file_sink::Options` is exported, alias to it.
-pub struct FileSinkOptions {
-    pub chunk_size: BlobSizeType,
-    pub input_path: crate::webcore::PathOrFileDescriptor,
-}
-
-impl Default for FileSinkOptions {
-    fn default() -> Self {
-        Self {
-            chunk_size: 0,
-            input_path: crate::webcore::PathOrFileDescriptor::Fd(Fd::INVALID),
-        }
-    }
-}
+/// Options payload for the `Start::FileSink` variant.
+pub type FileSinkOptions = crate::webcore::file_sink::Options;
 
 pub enum Start {
     Empty,
@@ -253,6 +239,7 @@ impl Start {
                             // folded into the owning `ZigStringSlice`.
                             path.to_slice(global_this)?,
                         ),
+                        ..Default::default()
                     }));
                 } else if let Some(fd_value) = value.get_truthy(global_this, b"fd")? {
                     if !fd_value.is_any_int() {
@@ -268,6 +255,7 @@ impl Start {
                         return Ok(Start::FileSink(FileSinkOptions {
                             chunk_size,
                             input_path: crate::webcore::PathOrFileDescriptor::Fd(fd),
+                            ..Default::default()
                         }));
                     } else {
                         return Ok(Start::Err(SysError {
@@ -281,6 +269,7 @@ impl Start {
                 return Ok(Start::FileSink(FileSinkOptions {
                     input_path: crate::webcore::PathOrFileDescriptor::Fd(Fd::INVALID),
                     chunk_size,
+                    ..Default::default()
                 }));
             }
             StartTag::NetworkSink

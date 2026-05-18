@@ -55,3 +55,15 @@ test("Bun.TOML.parse produces correct codepoints for \\t and \\f escapes", () =>
   expect(Bun.TOML.parse('k = "a\\tb"').k).toBe("a\u0009b");
   expect(Bun.TOML.parse('k = "a\\fb"').k).toBe("a\u000cb");
 });
+
+// The outer `\r` arm in decode_escape_sequences had the same iter.i-semantics bug
+// as the `\r` escape arm below it: it indexed `text[iter.i]` for the CRLF lookahead,
+// but after `next()` returns for `\r`, `iter.i` IS the `\r` byte, so the check never
+// fired. Every literal CRLF in a slow-path multiline TOML basic string (any `"""..."""`
+// containing CRLF plus at least one backslash escape to force the slow path) decoded
+// to two LFs instead of one.
+test("Bun.TOML.parse normalizes literal CRLF to LF in multiline basic strings", () => {
+  // `"""a<CRLF>b\tc"""` — the `\t` escape forces the slow decode path.
+  const input = 'k = """a\r\nb\\tc"""';
+  expect(Bun.TOML.parse(input).k).toBe("a\nb\tc");
+});

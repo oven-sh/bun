@@ -887,8 +887,14 @@ impl<'a> Lexer<'a> {
             let width = iter.width;
             match iter.c {
                 c if c == '\r' as CodePoint => {
-                    // Convert '\r\n' into '\n'
-                    if (iter.i as usize) < text.len() && text[iter.i as usize] == b'\n' {
+                    // Convert '\r\n' into '\n'. After `next()` returns for `\r`,
+                    // `iter.i` is the start byte of the `\r` itself — the `\n`
+                    // we're looking for is at `iter.i + 1`. Reading `text[iter.i]`
+                    // would always be `\r`, so the check never fired and a literal
+                    // CRLF in a slow-path multiline basic string decoded to two LFs.
+                    // Match the JS lexer (js_parser/lexer.rs:660-661).
+                    let next_i: usize = iter.i as usize + 1;
+                    if next_i < text.len() && text[next_i] == b'\n' {
                         iter.i += 1;
                     }
 

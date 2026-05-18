@@ -22,6 +22,7 @@ import {
   isFork,
   isMainBranch,
   isMergeQueue,
+  isPullRequest,
   parseBoolean,
   setBuildMetadata,
   spawnSafe,
@@ -1314,6 +1315,14 @@ async function getPipelineOptions() {
   const isCanary =
     !parseBoolean(getEnv("RELEASE", false) || "false") &&
     !/\[(release|build release|release build)\]/i.test(commitMessage);
+
+  // [sign windows] / [publish images] reach code-signing and overwrite
+  // production AMIs, so they're main-branch-non-PR only. [build images] only
+  // bakes a test image and is needed when iterating on CI image changes from a
+  // branch, so it's allowed on any non-fork build.
+  const mainOnlyOption = pattern => (isMainBranch() && !isPullRequest() ? parseOption(pattern) : false);
+  const nonForkOption = pattern => (isFork() ? false : parseOption(pattern));
+
   return {
     canary: isCanary ? canary : 0,
     skipEverything: parseOption(/\[(skip ci|no ci)\]/i),
@@ -1321,11 +1330,13 @@ async function getPipelineOptions() {
     forceBuilds: parseOption(/\[(force builds?)\]/i),
     skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
     skipSizeCheck: parseOption(/\[(skip size( check)?|allow size)\]/i),
-    signWindows: parseOption(/\[(sign windows)\]/i),
-    buildImages: parseOption(/\[(build (?:(?:windows|linux) )?images?)\]/i),
+    signWindows: mainOnlyOption(/\[(sign windows)\]/i),
+    buildImages: nonForkOption(/\[(build (?:(?:windows|linux) )?images?)\]/i),
     dryRun: parseOption(/\[(dry run)\]/i),
-    publishImages: parseOption(/\[(publish (?:(?:windows|linux) )?images?)\]/i),
-    imageFilter: (commitMessage.match(/\[(?:build|publish) (windows|linux) images?\]/i) || [])[1]?.toLowerCase(),
+    publishImages: mainOnlyOption(/\[(publish (?:(?:windows|linux) )?images?)\]/i),
+    imageFilter: isFork()
+      ? undefined
+      : (commitMessage.match(/\[(?:build|publish) (windows|linux) images?\]/i) || [])[1]?.toLowerCase(),
     buildPlatforms: Array.from(buildPlatformsMap.values()),
     testPlatforms: Array.from(testPlatformsMap.values()),
   };
@@ -1444,9 +1455,12 @@ async function getPipeline(options = {}) {
     steps.push(getBinarySizeStep(strippedPlatforms, options, { recordOnly: isMainBranch() }));
   }
 
-  // Sign Windows builds on release (non-canary main) or when [sign windows]
-  // is in the commit message (for testing the sign step on a branch).
-  // DigiCert charges per signature, so canary builds are never signed.
+  // Sign Windows builds on release (non-canary main). DigiCert charges per
+  // signature, so canary builds are never signed.
+  //
+  // options.signWindows ([sign windows] in the commit message) is already
+  // gated to main-branch-non-PR at parse time, so the OR only fires for a
+  // push to main whose commit message has the tag while canary is on.
   const shouldSignWindows = (isMainBranch() && !options.canary) || options.signWindows;
   if (shouldSignWindows) {
     const windowsPlatforms = buildPlatforms.filter(p => p.os === "windows");

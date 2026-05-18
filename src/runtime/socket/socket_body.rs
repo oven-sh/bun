@@ -1113,9 +1113,18 @@ impl<const SSL: bool> NewSocket<SSL> {
             // leaving `this.handlers` dangling. Active-connection
             // bookkeeping is irrelevant once the process is exiting, so
             // just release the event-loop ref and stop.
-            let vm = VirtualMachine::get();
-            // SAFETY: VM singleton is always live once initialized.
-            if unsafe { (*vm).is_shutting_down() } {
+            //
+            // Client-mode (`OWNS_HANDLERS`) is exempt: `handlers` is this
+            // socket's own `heap::alloc` box, not a field of a Listener, so
+            // it cannot be finalized out from under us. Skipping the
+            // `Handlers::mark_inactive()` free strands that box —
+            // `close_all_socket_groups()` reaches here for every still-open
+            // client connection at exit and the test runner module scope
+            // typically still roots the JS wrapper, so the GC sweep never
+            // runs the `OWNS_HANDLERS` cleanup in `deinit_and_destroy`.
+            if VirtualMachine::get().is_shutting_down()
+                && !self.flags.get().contains(Flags::OWNS_HANDLERS)
+            {
                 self.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
                 return;
             }

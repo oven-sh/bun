@@ -12,7 +12,8 @@ const fifo = path.join(dir, "thefifo");
 try {
   fs.unlinkSync(fifo);
 } catch {}
-cp.spawnSync("mkfifo", [fifo]);
+cp.execFileSync("mkfifo", [fifo]);
+if (!fs.statSync(fifo).isFIFO()) throw new Error(`not a FIFO: ${fifo}`);
 
 const SIZE = 400 * 1024;
 cp.spawn(

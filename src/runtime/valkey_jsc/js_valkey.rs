@@ -1413,6 +1413,16 @@ impl JSValkeyClient {
         if delay_ms > 0 {
             self.add_timer(&self.reconnect_timer, delay_ms);
         }
+
+        // Release the keep-alive ref `connect()` took for the just-closed
+        // socket. We only reach here from `ValkeyClient::on_close()`'s reconnect
+        // branch, which (unlike its other branches) does not call
+        // `on_valkey_close()` and so never balances that ref. The reconnect
+        // timer (and the next `connect()`) take their own refs, so without this
+        // every retry leaks one ref and the client is never freed.
+        // SAFETY: caller (`SocketHandler::on_close`/`on_connect_error`) holds a
+        // scoped ref across this call, so the count stays > 0.
+        unsafe { JSValkeyClient::deref(std::ptr::from_ref(self).cast_mut()) };
     }
 
     // Callback for when Valkey client closes

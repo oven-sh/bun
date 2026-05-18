@@ -571,27 +571,31 @@ pub fn Package(comptime SemverIntType: type) type {
                 const from_resolutions = from.resolutions.get(from_lockfile.buffers.resolutions.items);
                 var to_i: usize = 0;
 
-                if (from_lockfile.overrides.map.count() != to_lockfile.overrides.map.count()) {
-                    summary.overrides_changed = true;
+                // Overrides are a lockfile-level concept; skip for recursive
+                // workspace-package comparisons (same rationale as trusted_dependencies).
+                if (is_root) {
+                    if (from_lockfile.overrides.map.count() != to_lockfile.overrides.map.count()) {
+                        summary.overrides_changed = true;
 
-                    if (PackageManager.verbose_install) {
-                        Output.prettyErrorln("Overrides changed since last install", .{});
-                    }
-                } else {
-                    from_lockfile.overrides.sort(from_lockfile);
-                    to_lockfile.overrides.sort(to_lockfile);
-                    for (
-                        from_lockfile.overrides.map.keys(),
-                        from_lockfile.overrides.map.values(),
-                        to_lockfile.overrides.map.keys(),
-                        to_lockfile.overrides.map.values(),
-                    ) |from_k, *from_override, to_k, *to_override| {
-                        if ((from_k != to_k) or (!from_override.eql(to_override, from_lockfile.buffers.string_bytes.items, to_lockfile.buffers.string_bytes.items))) {
-                            summary.overrides_changed = true;
-                            if (PackageManager.verbose_install) {
-                                Output.prettyErrorln("Overrides changed since last install", .{});
+                        if (PackageManager.verbose_install) {
+                            Output.prettyErrorln("Overrides changed since last install", .{});
+                        }
+                    } else {
+                        from_lockfile.overrides.sort(from_lockfile);
+                        to_lockfile.overrides.sort(to_lockfile);
+                        for (
+                            from_lockfile.overrides.map.keys(),
+                            from_lockfile.overrides.map.values(),
+                            to_lockfile.overrides.map.keys(),
+                            to_lockfile.overrides.map.values(),
+                        ) |from_k, *from_override, to_k, *to_override| {
+                            if ((from_k != to_k) or (!from_override.eql(to_override, from_lockfile.buffers.string_bytes.items, to_lockfile.buffers.string_bytes.items))) {
+                                summary.overrides_changed = true;
+                                if (PackageManager.verbose_install) {
+                                    Output.prettyErrorln("Overrides changed since last install", .{});
+                                }
+                                break;
                             }
-                            break;
                         }
                     }
                 }
@@ -680,6 +684,15 @@ pub fn Package(comptime SemverIntType: type) type {
                     //     are dependencies are all from the new lockfile. Removed is empty because the default
                     //     list isn't appended to the lockfile.
 
+                    // Trusted dependencies are a lockfile-level concept. When this
+                    // function is called recursively to compare individual workspace
+                    // packages, from_lockfile/to_lockfile are the *global* lockfiles
+                    // — not per-workspace — so comparing their trusted_dependencies
+                    // here produces a spurious diff (the temp lockfile used for the
+                    // fresh package.json parse has no trusted_dependencies). Skip
+                    // this check for non-root (recursive) calls.
+                    if (!is_root) break :trusted_dependencies;
+
                     // 1
                     if (from_lockfile.trusted_dependencies == null and to_lockfile.trusted_dependencies == null) break :trusted_dependencies;
 
@@ -765,7 +778,10 @@ pub fn Package(comptime SemverIntType: type) type {
                     }
                 }
 
+                // Patched dependencies are a lockfile-level concept; skip for
+                // recursive workspace-package comparisons.
                 summary.patched_dependencies_changed = patched_dependencies_changed: {
+                    if (!is_root) break :patched_dependencies_changed false;
                     if (from_lockfile.patched_dependencies.entries.len != to_lockfile.patched_dependencies.entries.len) break :patched_dependencies_changed true;
                     var iter = to_lockfile.patched_dependencies.iterator();
                     while (iter.next()) |entry| {

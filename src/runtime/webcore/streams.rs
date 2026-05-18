@@ -136,7 +136,9 @@ impl Start {
                 // — `@truncate` to i52 then `@intCast` to u32. Low-32-bit wrap matches that
                 // for the in-range values JS can produce; revisit if exact i52 sign-extension
                 // semantics matter.
-                return Ok(Start::ChunkSize(truncate_i52(chunk_size.to_int64()) as BlobSizeType));
+                return Ok(Start::ChunkSize(
+                    truncate_i52(chunk_size.to_int64()) as BlobSizeType
+                ));
             }
         }
 
@@ -214,7 +216,8 @@ impl Start {
                     if chunk_size_val.is_number() {
                         empty = false;
                         // Zig: `@intCast(@max(0, @as(i51, @truncate(toInt64()))))`
-                        chunk_size = 0i64.max(truncate_i51(chunk_size_val.to_int64())) as BlobSizeType;
+                        chunk_size =
+                            0i64.max(truncate_i51(chunk_size_val.to_int64())) as BlobSizeType;
                     }
                 }
 
@@ -234,7 +237,8 @@ impl Start {
                 {
                     if chunk_size_val.is_number() {
                         // Zig: `@intCast(@max(0, @as(i51, @truncate(toInt64()))))`
-                        chunk_size = 0i64.max(truncate_i51(chunk_size_val.to_int64())) as BlobSizeType;
+                        chunk_size =
+                            0i64.max(truncate_i51(chunk_size_val.to_int64())) as BlobSizeType;
                     }
                 }
 
@@ -300,7 +304,8 @@ impl Start {
                     if chunk_size_val.is_number() {
                         empty = false;
                         // Zig: `@intCast(@max(256, @as(i51, @truncate(toInt64()))))`
-                        chunk_size = 256i64.max(truncate_i51(chunk_size_val.to_int64())) as BlobSizeType;
+                        chunk_size =
+                            256i64.max(truncate_i51(chunk_size_val.to_int64())) as BlobSizeType;
                     }
                 }
 

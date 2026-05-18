@@ -2819,19 +2819,6 @@ where
         // hold a ref), so hand ownership back to the raw teardown path.
         let this = bun_core::heap::release(self);
         this.js_value.finalize();
-        // Mark so `schedule_deinit`'s shutdown fast path knows it's safe to
-        // `App::destroy` inline (we are not re-entered from the socket-group
-        // close iterator — see the gate's comment). Only set during
-        // `lastChanceToFinalize`: an incremental-GC `finalize()` before
-        // shutdown can land here with `pending_requests > 0` and bail without
-        // reaching `schedule_deinit`; a persisted flag would then arm the
-        // inline path for the later `on_request_complete()` re-entry from
-        // `close_all_socket_groups`, which is exactly the iterator-UAF the
-        // gate guards against.
-        // SAFETY: `vm_mut()` is the non-null process-static VM pointer.
-        if unsafe { (*this.vm_mut()).is_shutting_down() } {
-            this.flags.insert(ServerFlags::FROM_FINALIZE);
-        }
         this.deinit_if_we_can();
     }
 

@@ -57,3 +57,21 @@ describe.each(["some", "cool", "strings"])("works with describe: %s", s => {
 describe("does not return zero", () => {
   expect(it.each([1, 2])("wat", () => {})).toBeUndefined();
 });
+
+
+describe("empty array item in each does not trigger done timeout", () => {
+  it.each([undefined, null, "", [], {}])("receives %s as argument without timing out", (arg) => {
+    // The callback should execute synchronously without bun interpreting it as having a done parameter.
+    // Previously, [] caused a false done-callback timeout because spreading an empty array
+    // left callback_length at 1.
+    if (Array.isArray(arg)) {
+      expect(arg).toBeArray();
+    } else if (arg === null) {
+      expect(arg).toBeNull();
+    } else if (arg === undefined) {
+      expect(arg).toBeUndefined();
+    } else {
+      expect(typeof arg).toBe(typeof arg);
+    }
+  });
+});

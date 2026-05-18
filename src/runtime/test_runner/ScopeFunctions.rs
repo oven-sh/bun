@@ -249,7 +249,7 @@ pub fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
                 bound,
                 formatted_label.as_deref(),
                 &args.options,
-                callback_length.saturating_sub(args_list.len()),
+                callback_length.saturating_sub(args_list.len().max(1)),
                 line_no,
             )?;
 

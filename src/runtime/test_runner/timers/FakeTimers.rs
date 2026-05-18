@@ -5,7 +5,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use bun_core::Environment;
 use bun_core::Timespec;
 use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSHostFn, JSValue, JsResult};
-use crate::timer::{self, ElTimespec, EventLoopTimer, EventLoopTimerState, InHeap, TimerHeap};
+use crate::timer::{
+    self, ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, InHeap,
+    TimerObjectInternals, TimeoutObject, TimerHeap,
+};
 
 // TODO(port): move to test_runner_sys / jsc_sys
 unsafe extern "C" {
@@ -163,62 +166,55 @@ impl FakeTimers {
         self.assert_valid(AssertMode::Locked);
     }
 
-    fn deactivate(&mut self, global: &JSGlobalObject) {
+    fn deactivate(
+        &mut self,
+        global: &JSGlobalObject,
+    ) -> Vec<core::ptr::NonNull<TimerObjectInternals>> {
         self.assert_valid(AssertMode::Locked);
 
-        self.clear();
+        let pinned = self.clear();
         CURRENT_TIME.clear(global);
         self.active = false;
 
         self.assert_valid(AssertMode::Locked);
+        pinned
     }
 
-    fn clear(&mut self) {
+    /// Drain the fake-timer heap. Returns every `TimeoutObject` that was
+    /// linked so the caller can release the heap's `+1` ref and the `Strong`
+    /// JS pin via [`TimerObjectInternals::release_heap_pin`] *after* dropping
+    /// `&mut self` and `All.lock` — that path reaches `&mut All`, which would
+    /// alias `&mut self.fake_timers` here (same hazard `execute_next` notes).
+    ///
+    /// Marking `state = CANCELLED` alone strands the `Box<TimeoutObject>`: its
+    /// refcount sticks at 2 (wrapper +1 from `init_with`, heap +1 from
+    /// `reschedule`) and `internals.this_value` still GC-roots the wrapper, so
+    /// neither side ever frees. The Zig spec (FakeTimers.zig:81-89) has the
+    /// same gap.
+    #[must_use]
+    fn clear(&mut self) -> Vec<core::ptr::NonNull<TimerObjectInternals>> {
         self.assert_valid(AssertMode::Locked);
 
-        // Collect the popped `TimeoutObject` parents so the cancel/deref pass
-        // runs after this `&mut self` heap-drain loop ends. `cancel()` reaches
-        // `(*state).timer.increment_timer_ref()` which forms `&mut All`,
-        // aliasing `&mut self.fake_timers` under Stacked Borrows — same
-        // hazard `execute_next()`/`fire()` document above.
-        let mut to_cancel: Vec<*mut crate::timer::TimeoutObject> = Vec::new();
+        let mut pinned = Vec::new();
         while let Some(timer) = self.timers.delete_min() {
-            // SAFETY: `delete_min` returns a live `*mut EventLoopTimer` just unlinked.
+            // SAFETY: `delete_min` returns a live `*mut EventLoopTimer` just
+            // unlinked; for `TimeoutObject` the tag invariant means it IS the
+            // `event_loop_timer` field of a live `Box<TimeoutObject>` whose
+            // refcount is ≥ 1 until the caller's release pass.
             unsafe {
                 (*timer).state = EventLoopTimerState::CANCELLED;
                 (*timer).in_heap = InHeap::None;
-                if (*timer).tag == crate::timer::EventLoopTimerTag::TimeoutObject {
-                    to_cancel.push(crate::timer::TimeoutObject::from_timer_ptr(timer));
+                if (*timer).tag == EventLoopTimerTag::TimeoutObject {
+                    let parent = TimeoutObject::from_timer_ptr(timer);
+                    pinned.push(core::ptr::NonNull::new_unchecked(
+                        core::ptr::addr_of_mut!((*parent).internals),
+                    ));
                 }
             }
         }
 
         self.assert_valid(AssertMode::Locked);
-
-        // Marking `state = CANCELLED` above only detaches the node — it
-        // doesn't release the heap's `+1` taken by `reschedule()` or downgrade
-        // the `Strong` JS pin set in `set_this_value()`. Without those, the
-        // box's refcount sticks at 2 and the `Strong` roots the wrapper so GC
-        // can never sweep it: the `Box<TimeoutObject>` is unreachable from
-        // either heap and leaks. (The Zig spec, FakeTimers.zig:81-89, has the
-        // same gap — this is a pre-existing bug, not a port regression.)
-        //
-        // `cancel()` downgrades the `Strong` and clears the keep-alive flag;
-        // its own heap-removal + deref is gated on `was_active` (the state is
-        // already `CANCELLED`, so it's a no-op there). Pair the heap-side
-        // `reschedule()` `ref_()` with an explicit `deref()`.
-        if !to_cancel.is_empty() {
-            let vm = bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr();
-            for parent in to_cancel {
-                // SAFETY: `parent` is a live `Box<TimeoutObject>` (refcount ≥ 1);
-                // the JS thread is the only mutator. `cancel()` may not free it
-                // (refcount goes 2→1); `deref()` may (1→0) — never touched again.
-                unsafe {
-                    (*parent).internals.cancel(vm);
-                    crate::timer::TimeoutObject::deref(parent);
-                }
-            }
-        }
+        pinned
     }
 
     // PORT NOTE (noalias re-entrancy): `execute_*` / `fire` do NOT take
@@ -411,12 +407,16 @@ fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
 #[bun_jsc::host_fn]
 fn use_real_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let timers = timer_all();
-    // SAFETY: per-thread `timer::All`.
-    let this = unsafe { &mut (*timers).fake_timers };
 
-    {
+    let pinned = {
+        // SAFETY: per-thread `timer::All`.
+        let this = unsafe { &mut (*timers).fake_timers };
         let _g = timers_lock_guard();
-        this.deactivate(global);
+        this.deactivate(global)
+    };
+    let vm = global.bun_vm_ptr();
+    for p in pinned {
+        TimerObjectInternals::release_heap_pin(p, vm);
     }
 
     // Remove the setTimeout.clock marker when switching back to real timers.
@@ -505,13 +505,17 @@ fn get_timer_count(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSVa
 #[bun_jsc::host_fn]
 fn clear_all_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let timers = timer_all();
-    // SAFETY: per-thread `timer::All`.
-    let this = unsafe { &mut (*timers).fake_timers };
     error_unless_fake_timers(global)?;
 
-    {
+    let pinned = {
+        // SAFETY: per-thread `timer::All`.
+        let this = unsafe { &mut (*timers).fake_timers };
         let _g = timers_lock_guard();
-        this.clear();
+        this.clear()
+    };
+    let vm = global.bun_vm_ptr();
+    for p in pinned {
+        TimerObjectInternals::release_heap_pin(p, vm);
     }
 
     Ok(frame.this())

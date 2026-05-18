@@ -140,6 +140,24 @@ impl TimerObjectInternals {
         }
     }
 
+    /// Release a `TimeoutObject`/`ImmediateObject` that was unlinked from a
+    /// timer heap by something other than [`Self::cancel`] (e.g.
+    /// `FakeTimers::clear`'s `delete_min` drain). Downgrades the `Strong` JS
+    /// pin and releases the `+1` taken by `reschedule()`, so GC can collect
+    /// the wrapper and the box frees on the final deref.
+    ///
+    /// `cancel()` skips its own `remove`/`deref` because `state` is already
+    /// `CANCELLED`, which is why the explicit `deref` follows.
+    ///
+    /// `vm` is the live per-thread VM; `All.lock` must NOT be held (the
+    /// `set_enable_keeping_event_loop_alive` write reaches `&mut All`).
+    pub(crate) fn release_heap_pin(this: core::ptr::NonNull<Self>, vm: *mut VirtualMachine) {
+        // SAFETY: caller guarantees the parent box is live (refcount ≥ 1).
+        let internals = unsafe { this.as_ref() };
+        internals.cancel(vm);
+        internals.deref();
+    }
+
     /// Decrement the parent container's intrusive refcount; frees on 0.
     /// After this returns, `self` may be dangling — do not touch.
     fn deref(&self) {

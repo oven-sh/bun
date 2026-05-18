@@ -536,10 +536,21 @@ unsafe fn deinit_runtime_state(_vm: *mut VirtualMachine, state: OpaqueRuntimeSta
     if state.is_null() {
         return;
     }
+    let state = state.cast::<RuntimeState>();
+    // Still-armed `TimeoutObject`s/`ImmediateObject`s in `All.timers` are
+    // intentionally abandoned (draining them caused worker SEGVs — see git
+    // log for the reverted `cancel_all_timeout_objects`). Stash their node
+    // pointers in a process-lifetime static before the heap pointer is
+    // dropped so LSan can still trace them. Read-only walk, no JS re-entry.
+    // SAFETY: `state` is the live boxed `RuntimeState` for this thread; no
+    // other thread mutates `state.timer` once the VM is in teardown.
+    unsafe {
+        timer::All::keep_pending_timers_lsan_reachable(ptr::addr_of_mut!((*state).timer));
+    }
     // SAFETY: per fn contract — `state` is the unique `heap::alloc` result
     // from `init_runtime_state`; the TLS was just cleared so no other live
     // alias exists on this thread.
-    drop(unsafe { bun_core::heap::take(state.cast::<RuntimeState>()) });
+    drop(unsafe { bun_core::heap::take(state) });
 }
 
 /// `ServerEntryPoint.generate(watch, entry_path)` — produces the synthetic

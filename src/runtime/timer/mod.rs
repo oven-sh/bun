@@ -1124,7 +1124,65 @@ impl All {
         #[cfg(windows)]
         let _ = uws_loop;
     }
+
+    /// VM-teardown LSan anchor. The JS-managed `TimeoutObject`/`ImmediateObject`
+    /// boxes left in the heap at exit are intentionally abandoned (draining them
+    /// caused worker-thread SEGVs — see the reverted `cancel_all_timeout_objects`
+    /// attempts in git log). Once `RuntimeState` is dropped, the only pointer
+    /// chain LSan could trace (`RUNTIME_STATE` TLS → `All.timers.root` → node)
+    /// is gone, so each box reads as a leak.
+    ///
+    /// Stash the in-heap node pointers in a process-lifetime static instead.
+    /// The static lives in BSS, which LSan scans as a root, so the pointer
+    /// chain stays intact through process exit. Read-only walk: no `cancel()`,
+    /// no `deref()`, no JS re-entry, no WTFTimer mutation.
+    ///
+    /// # Safety
+    /// `this` must point at a live `All` whose heap is no longer mutated by any
+    /// other thread (i.e. inside `deinit_runtime_state` for this thread's VM).
+    pub unsafe fn keep_pending_timers_lsan_reachable(this: *mut Self) {
+        if !bun_core::asan::ENABLED {
+            return;
+        }
+        let mut anchored: Vec<usize> = Vec::new();
+        // SAFETY: `this` is live per fn contract; `root` may be null.
+        let mut stack: Vec<*mut EventLoopTimer> = vec![
+            unsafe { (*this).timers.0.root },
+            unsafe { (*this).fake_timers.timers.0.root },
+        ];
+        while let Some(node) = stack.pop() {
+            if node.is_null() {
+                continue;
+            }
+            // SAFETY: heap-membership invariant — every linked node holds a +1
+            // ref on its owning object, so it is live until removed.
+            unsafe {
+                if matches!(
+                    (*node).tag,
+                    EventLoopTimerTag::TimeoutObject | EventLoopTimerTag::ImmediateObject
+                ) {
+                    anchored.push(node as usize);
+                }
+                stack.push((*node).heap.child);
+                stack.push((*node).heap.next);
+            }
+        }
+        if anchored.is_empty() {
+            return;
+        }
+        let mut graveyard = LSAN_PENDING_TIMER_ANCHOR
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        graveyard.extend_from_slice(&anchored);
+    }
 }
+
+/// Process-lifetime anchor for timer-heap nodes abandoned at VM teardown so
+/// LSan can still trace them. Populated only by
+/// [`All::keep_pending_timers_lsan_reachable`] under `cfg(bun_asan)`; never
+/// read.
+static LSAN_PENDING_TIMER_ANCHOR: std::sync::Mutex<Vec<usize>> =
+    std::sync::Mutex::new(Vec::new());
 
 // ─── JS-facing surface (gated on bun_jsc) ────────────────────────────────────
 // `set_timeout`/`set_interval`/`set_immediate`/`sleep`/`clear_*` and the

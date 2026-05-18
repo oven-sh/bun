@@ -443,6 +443,7 @@ _bun_run_completion() {
         '--cwd[Absolute path to resolve files & entry points from. This just changes the process cwd]:cwd' \
         '--config[Config file to load bun from (e.g. -c bunfig.toml]: :->config' \
         '-c[Config file to load bun from (e.g. -c bunfig.toml]: :->config' \
+        '--check[Check the syntax of the entry point without executing it]' \
         '--env-file[Load environment variables from the specified file(s)]:env-file' \
         '--extension-order[Defaults to: .tsx,.ts,.jsx,.js,.json]:extension-order' \
         '--jsx-factory[Changes the function called when compiling JSX elements using the classic JSX runtime]:jsx-factory' \
@@ -533,7 +534,6 @@ _bun_repl_completion() {
         '(-p --print)-e[Evaluate argument as a script, then exit]:script' \
         '(-e --eval)--print[Evaluate argument as a script, print the result, then exit]:script' \
         '(-e --eval)-p[Evaluate argument as a script, print the result, then exit]:script' \
-        '(-e --eval -p --print)--check[Check the syntax of the entry point without executing it]' \
         '--preload[Import a module before other modules are loaded]:preload' \
         '-r[Import a module before other modules are loaded]:preload' \
         '--smol[Use less memory, but run garbage collection more often]' \

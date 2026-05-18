@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-describe("bun --check", () => {
+describe.concurrent("bun --check", () => {
   test("exits 0 and produces no output for a syntactically valid file", async () => {
     using dir = tempDir("check-valid", {
       "ok.js": `const x = 1;\nconsole.log("SHOULD NOT RUN");\n`,

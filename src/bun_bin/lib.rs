@@ -168,7 +168,6 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         // demangled frame is `<bun_jsc::debugger::Debugger>::…`; the previous
         // `bun_jsc::Debugger` substring missed it (capital-D after `::`).
         "leak:bun_jsc::debugger::Debugger>::start_js_debugger_thread\n",
-        "leak:bun_runtime::socket::udp_socket::UDPSocket\n",
         "leak:BSSMapInner>::get_or_put\n",
         "leak:bun_runtime::cli::test::scanner::Scanner\n",
         "\0",

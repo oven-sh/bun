@@ -142,6 +142,20 @@ describe.concurrent("bun --check", () => {
     }
   });
 
+  test("reads from stdin when the positional is `-`", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--check", "-"],
+      env: bunEnv,
+      stdin: new Blob(["let x = 1;\n"]),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   test("exits non-zero when the file does not exist", async () => {
     using dir = tempDir("check-missing", {});
     await using proc = Bun.spawn({

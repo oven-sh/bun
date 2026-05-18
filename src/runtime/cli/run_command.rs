@@ -2963,7 +2963,8 @@ impl RunCommand {
             positionals = &positionals[1..];
         }
 
-        let (path, contents): (Box<[u8]>, Vec<u8>) = if let Some(entry) = positionals.first() {
+        let entry = positionals.first().filter(|e| e.as_ref() != b"-");
+        let (path, contents): (Box<[u8]>, Vec<u8>) = if let Some(entry) = entry {
             let entry: Box<[u8]> = entry.clone();
             match sys::File::read_from(Fd::cwd(), &entry) {
                 Ok(bytes) => (entry, bytes),

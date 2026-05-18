@@ -196,7 +196,8 @@ const History = struct {
         defer self.allocator.free(content);
 
         var lines = std.mem.splitScalar(u8, content, '\n');
-        while (lines.next()) |line| {
+        while (lines.next()) |line_| {
+            const line = if (line_.len > 0 and line_[line_.len - 1] == '\r') line_[0 .. line_.len - 1] else line_;
             if (line.len > 0) {
                 const entry = try self.allocator.dupe(u8, line);
                 try self.entries.append(entry);

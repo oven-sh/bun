@@ -76,7 +76,9 @@ test/js/node/test/parallel/test-child-process-execfile.js
 test/bundler/bundler_compile.test.ts
 test/bundler/bundler_plugin.test.ts
 test/bundler/transpiler/bun-pragma.test.ts
+test/bundler/transpiler/es-decorators-esbuild.test.ts
 test/bundler/transpiler/runtime-transpiler.test.ts
+test/cli/run/transpiler-cache.test.ts
 test/cli/hot/hot.test.ts
 test/cli/install/bun-add.test.ts
 test/cli/install/bun-create.test.ts

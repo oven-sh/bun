@@ -1990,7 +1990,7 @@ pub type ConditionsMap = StringArrayHashMap<()>;
 
 pub struct ESModule<'a> {
     pub debug_logs: Option<&'a mut resolver::DebugLogs>,
-    pub conditions: ConditionsMap,
+    pub conditions: &'a ConditionsMap,
     // allocator dropped — global mimalloc
     pub module_type: &'a mut ModuleType,
 }

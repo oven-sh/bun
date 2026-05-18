@@ -2756,16 +2756,6 @@ impl<'a> Resolver<'a> {
                                 // `&mut self` call is aliased-&mut UB. Build a fresh short-lived
                                 // `ESModule` per `resolve` call so its borrow ends before
                                 // `self.handle_esm_resolution` re-borrows `self`.
-                                let conditions = match kind {
-                                    ast::ImportKind::Require | ast::ImportKind::RequireResolve => {
-                                        self.opts.conditions.require.clone().expect("oom")
-                                    }
-                                    ast::ImportKind::At | ast::ImportKind::AtConditional => {
-                                        self.opts.conditions.style.clone().expect("oom")
-                                    }
-                                    _ => self.opts.conditions.import.clone().expect("oom"),
-                                };
-
                                 // Resolve against the path "/", then join it with the absolute
                                 // directory path. This is done because ESM package resolution uses
                                 // URLs while our path resolution uses file system paths. We don't
@@ -2773,9 +2763,18 @@ impl<'a> Resolver<'a> {
                                 // paths. We also want to avoid any "%" characters in the absolute
                                 // directory path accidentally being interpreted as URL escapes.
                                 {
-                                    // PERF(port): extra conditions clone vs Zig — profile if hot.
                                     let esm_resolution = ESModule {
-                                        conditions: conditions.clone().expect("oom"),
+                                        conditions: match kind {
+                                            ast::ImportKind::Require
+                                            | ast::ImportKind::RequireResolve => {
+                                                &self.opts.conditions.require
+                                            }
+                                            ast::ImportKind::At
+                                            | ast::ImportKind::AtConditional => {
+                                                &self.opts.conditions.style
+                                            }
+                                            _ => &self.opts.conditions.import,
+                                        },
                                         debug_logs: self.debug_logs.as_mut(),
                                         module_type: &mut module_type,
                                     }
@@ -2819,7 +2818,17 @@ impl<'a> Resolver<'a> {
                                 let extname = bun_paths::extension(esm.subpath);
                                 if extname == b".js" && esm.subpath.len() > 3 {
                                     let esm_resolution = ESModule {
-                                        conditions,
+                                        conditions: match kind {
+                                            ast::ImportKind::Require
+                                            | ast::ImportKind::RequireResolve => {
+                                                &self.opts.conditions.require
+                                            }
+                                            ast::ImportKind::At
+                                            | ast::ImportKind::AtConditional => {
+                                                &self.opts.conditions.style
+                                            }
+                                            _ => &self.opts.conditions.import,
+                                        },
                                         debug_logs: self.debug_logs.as_mut(),
                                         module_type: &mut module_type,
                                     }
@@ -3202,14 +3211,6 @@ impl<'a> Resolver<'a> {
                                 if let Some(exports_map) = package_json.exports.as_ref() {
                                     // The condition set is determined by the kind of import
                                     // PORT NOTE: reshaped for borrowck — see identical note above.
-                                    let conditions = match kind {
-                                        ast::ImportKind::Require
-                                        | ast::ImportKind::RequireResolve => {
-                                            self.opts.conditions.require.clone().expect("oom")
-                                        }
-                                        _ => self.opts.conditions.import.clone().expect("oom"),
-                                    };
-
                                     // Resolve against the path "/", then join it with the absolute
                                     // directory path. This is done because ESM package resolution uses
                                     // URLs while our path resolution uses file system paths. We don't
@@ -3217,9 +3218,14 @@ impl<'a> Resolver<'a> {
                                     // paths. We also want to avoid any "%" characters in the absolute
                                     // directory path accidentally being interpreted as URL escapes.
                                     {
-                                        // PERF(port): extra conditions clone vs Zig — profile if hot.
                                         let esm_resolution = ESModule {
-                                            conditions: conditions.clone().expect("oom"),
+                                            conditions: match kind {
+                                                ast::ImportKind::Require
+                                                | ast::ImportKind::RequireResolve => {
+                                                    &self.opts.conditions.require
+                                                }
+                                                _ => &self.opts.conditions.import,
+                                            },
                                             debug_logs: self.debug_logs.as_mut(),
                                             module_type: &mut module_type,
                                         }
@@ -3249,7 +3255,13 @@ impl<'a> Resolver<'a> {
                                     let extname = bun_paths::extension(esm.subpath);
                                     if extname == b".js" && esm.subpath.len() > 3 {
                                         let esm_resolution = ESModule {
-                                            conditions,
+                                            conditions: match kind {
+                                                ast::ImportKind::Require
+                                                | ast::ImportKind::RequireResolve => {
+                                                    &self.opts.conditions.require
+                                                }
+                                                _ => &self.opts.conditions.import,
+                                            },
                                             debug_logs: self.debug_logs.as_mut(),
                                             module_type: &mut module_type,
                                         }
@@ -4828,9 +4840,9 @@ impl<'a> Resolver<'a> {
         let esm_resolution = ESModule {
             conditions: match kind {
                 ast::ImportKind::Require | ast::ImportKind::RequireResolve => {
-                    self.opts.conditions.require.clone().expect("oom")
+                    &self.opts.conditions.require
                 }
-                _ => self.opts.conditions.import.clone().expect("oom"),
+                _ => &self.opts.conditions.import,
             },
             debug_logs: self.debug_logs.as_mut(),
             module_type: &mut module_type,

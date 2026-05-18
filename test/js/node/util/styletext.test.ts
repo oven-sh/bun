@@ -34,10 +34,7 @@ test("styleText skips the 'none' format instead of throwing", () => {
 });
 
 test("styleText reapplies the style after a nested reset", () => {
-  assert.strictEqual(
-    styleText("red", "a\u001b[39mb", { validateStream: false }),
-    "\u001b[31ma\u001b[31mb\u001b[39m",
-  );
+  assert.strictEqual(styleText("red", "a\u001b[39mb", { validateStream: false }), "\u001b[31ma\u001b[31mb\u001b[39m");
 });
 
 test("styleText validates options.validateStream", () => {

@@ -285,7 +285,7 @@ mod live_workers {
     // other threads may hold `&WebWorker`, so the caller only has shared-ref
     // provenance. All writes here go through `Cell` fields
     // (`live_next`/`live_prev`), which is sound via shared provenance.
-    pub(super) fn unregister(worker: *const WebWorker) {
+    pub(super) fn unlink(worker: *const WebWorker) {
         MUTEX.lock();
         // SAFETY: MUTEX held; node was registered in `register`.
         unsafe {
@@ -303,11 +303,24 @@ mod live_workers {
             (*worker).live_next.set(core::ptr::null_mut());
         }
         MUTEX.unlock();
+    }
+
+    /// Decrement `OUTSTANDING` and wake `terminate_all_and_wait`. Split from
+    /// `unlink` so `shutdown()` can defer it until after `dispatchExit` has
+    /// posted the close task — guaranteeing `global_exit` observes that task
+    /// before draining the parent's concurrent queue. Touches no `WebWorker`
+    /// state, so it is safe even if `self` has already been freed.
+    pub(super) fn mark_exited() {
         // Wake any waiter in terminateAllAndWait when we hit zero. Waking
         // unconditionally is fine (spurious wakeups just re-check the
         // counter) and avoids a compare-before-wake race.
         OUTSTANDING.fetch_sub(1, Ordering::Release);
         Futex::wake(&OUTSTANDING, 1);
+    }
+
+    pub(super) fn unregister(worker: *const WebWorker) {
+        unlink(worker);
+        mark_exited();
     }
 }
 
@@ -1272,15 +1285,20 @@ impl WebWorker {
         }
 
         // JSC is down; no more resolver/module-loader access past this point.
-        // Unregister so the main thread's terminateAllAndWait() can proceed to
-        // free process-global resolver state. Must happen before dispatchExit
-        // because `this` may be freed once that posts.
-        live_workers::unregister(self);
+        // Unlink so the main thread's terminateAllAndWait() sweep skips us;
+        // the OUTSTANDING decrement is deferred until after dispatchExit so
+        // terminateAllAndWait() doesn't return before the close task is
+        // posted (global_exit drains the parent's concurrent queue right
+        // after). Unlink touches `self` and so must precede dispatchExit;
+        // mark_exited() does not, so the post-dispatchExit "this may be
+        // freed" window is fine.
+        live_workers::unlink(self);
 
         // ---- 4. Post close task to parent ----------------------------------
         // `cpp_worker` is the opaque C++-owned handle (snapshot taken above).
         WebWorker__dispatchExit(cpp_worker, exit_code);
         // `this` may be freed past this point.
+        live_workers::mark_exited();
 
         // ---- 5. Free worker-thread resources -------------------------------
         if let Some(loop_) = loop_ {

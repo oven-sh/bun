@@ -3156,6 +3156,14 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__performTask(Zig::GlobalObject* g
     task->performTask(*globalObject->scriptExecutionContext());
 }
 
+extern "C" void Bun__deleteEventLoopTask(WebCore::EventLoopTask* task)
+{
+    // Free without running. Destroys the captured WTF::Function (and any
+    // Ref<> it holds) so queued cross-thread tasks don't pin their owner
+    // past VM teardown.
+    delete task;
+}
+
 RefPtr<Performance> GlobalObject::performance()
 {
     if (!m_performance) {

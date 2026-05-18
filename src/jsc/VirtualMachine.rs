@@ -1557,6 +1557,15 @@ impl VirtualMachine {
                 (hooks.terminate_all_workers_and_wait)(10_000);
             }
 
+            // Every worker has now posted its close task to our concurrent
+            // queue (OUTSTANDING is decremented after dispatchExit). Drop
+            // those queued lambdas — without running them — so the captured
+            // `Ref<Worker>` releases and the final GC sweep below brings the
+            // refcount to zero (`~Worker` → `WebWorker__destroy`). Must
+            // precede `destructOnExit`: deleting after JSC VM teardown would
+            // run `~JSEventListener` against freed Weak handle storage.
+            self.event_loop_mut().drop_concurrent_cpp_tasks();
+
             // Embedded per-VM socket groups must drain while JSC is still
             // alive (closeAll() fires on_close → JS). After JSC teardown,
             // RareData's Drop only deinit()s the groups (asserts empty).
@@ -4375,6 +4384,13 @@ impl VirtualMachine {
         // PORT NOTE: Zig `proxy_env_storage.deinit()` — drops all `Arc`-held
         // proxy strings; `ProxyEnvStorage: Default` so take()+drop suffices.
         drop(core::mem::take(&mut self.proxy_env_storage));
+
+        // The VM box is `dealloc`'d raw by the worker (see `web_worker.rs`
+        // section 5) so field `Drop`s never run; reclaim the boxed
+        // `ModuleLoader` payloads explicitly. `eval_source.contents` may be
+        // mmap-backed (`MAPPED_CONTENTS_CACHE`) — `Source`'s `Drop` is a
+        // no-op, so dropping the box just frees its own allocation.
+        drop(core::mem::take(&mut self.module_loader));
 
         self.transpiler.deinit();
 

@@ -747,6 +747,45 @@ impl EventLoop {
         let _ = self.tasks.write_item(task);
     }
 
+    /// Drain `concurrent_tasks` without running them and `delete` any
+    /// `EventLoopTask*` payloads so their captured `Ref<>`s drop. Called from
+    /// `global_exit` after `terminate_all_workers_and_wait` (every worker has
+    /// posted its close task by then) and before `destructOnExit` (so
+    /// `~Worker` runs during the final GC sweep with the JSC VM still alive).
+    /// Without this, the last worker's close-task lambda — and the
+    /// `WebWorker` box reachable through its `protectedThis` — leak.
+    pub fn drop_concurrent_cpp_tasks(&mut self) {
+        unsafe extern "C" {
+            fn Bun__deleteEventLoopTask(task: *mut CppTask);
+        }
+        let mut iter = self.concurrent_tasks.pop_batch().iterator();
+        loop {
+            let node = iter.next();
+            if node.is_null() {
+                break;
+            }
+            // SAFETY: `node` is non-null and owned by the popped batch; the
+            // iterator advanced past it before returning, so reading then
+            // freeing here is sound.
+            let (task, auto_delete) = unsafe { ((*node).task, (*node).auto_delete()) };
+            if task.tag == bun_event_loop::task_tag::CppTask {
+                // SAFETY: every `CppTask` payload is a heap
+                // `WebCore::EventLoopTask*` (`ScriptExecutionContext::postTask*`
+                // → `new EventLoopTask`); we own it once popped.
+                unsafe { Bun__deleteEventLoopTask(task.ptr.cast::<CppTask>()) };
+            } else {
+                // Hand non-Cpp payloads to `self.tasks` so `deinit()`'s
+                // existing per-tag reclaim handles them.
+                let _ = self.tasks.write_item(task);
+            }
+            if auto_delete {
+                // SAFETY: heap-owned (see `ConcurrentTask::create`); not yet
+                // freed, and the iterator no longer references it.
+                drop(unsafe { bun_core::heap::take(node) });
+            }
+        }
+    }
+
     pub fn deinit(&mut self) {
         // Free (don't run — running could re-enter the dying VM) queued ManagedTask boxes.
         while let Some(task) = self.tasks.read_item() {

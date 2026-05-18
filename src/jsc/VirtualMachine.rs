@@ -1562,6 +1562,11 @@ impl VirtualMachine {
                     .close_all_socket_groups(vm_ref);
             }
 
+            // The HTTP daemon thread holds a `Box<ThreadlocalAsyncHTTP>` per
+            // in-flight request; with the JS thread exiting those never reach
+            // a terminal state. Ask it to reclaim them now (waits up to 1s).
+            bun_http::shutdown_for_exit();
+
             Zig__GlobalObject__destructOnExit(self.global());
 
             // lastChanceToFinalize() above runs Listener/Server finalize →

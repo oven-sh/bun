@@ -352,10 +352,7 @@ describe("`bun audit`", () => {
     files: fixture("express@3"),
     args: ["--json", "--audit-level", "high"],
     fn: async ({ stdout }) => {
-      const json = JSON.parse(await stdout) as Record<
-        string,
-        { severity: string }[]
-      >;
+      const json = JSON.parse(await stdout) as Record<string, { severity: string }[]>;
       const severities = Object.values(json)
         .flat()
         .map(v => v.severity);
@@ -373,10 +370,7 @@ describe("`bun audit`", () => {
     files: fixture("express@3"),
     args: ["--json", "--audit-level", "critical"],
     fn: async ({ stdout }) => {
-      const json = JSON.parse(await stdout) as Record<
-        string,
-        { severity: string }[]
-      >;
+      const json = JSON.parse(await stdout) as Record<string, { severity: string }[]>;
       const severities = Object.values(json)
         .flat()
         .map(v => v.severity);

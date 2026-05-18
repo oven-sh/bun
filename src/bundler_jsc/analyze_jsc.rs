@@ -97,15 +97,23 @@ pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
         res.flags.has_tla(),
     );
 
-    debug_assert_eq!(requested_modules_keys.len(), requested_modules_values.len());
-    debug_assert_eq!(requested_modules_keys.len(), requested_modules_phases.len());
+    if requested_modules_keys.len() != requested_modules_values.len()
+        || requested_modules_keys.len() != requested_modules_phases.len()
+    {
+        return core::ptr::null_mut();
+    }
     for ((&reqk, &reqv), &reqp) in requested_modules_keys
         .iter()
         .zip(requested_modules_values.iter())
         .zip(requested_modules_phases.iter())
     {
-        // 0 = ModulePhase::Evaluation, 1 = ModulePhase::Defer
-        let phase_defer = reqp != 0;
+        // 0 = ModulePhase::Evaluation, 1 = ModulePhase::Defer. Reject anything
+        // else — the buffer may have come from an on-disk cache.
+        let phase_defer = match reqp {
+            0 => false,
+            1 => true,
+            _ => return core::ptr::null_mut(),
+        };
         match reqv {
             RequestedModuleValue::None => module_record.add_requested_module_null_attributes_ptr(
                 identifiers,

@@ -359,7 +359,9 @@ impl ModuleInfoDeserialized {
         writer.write_all(&(rm_keys.len() as u32).to_le_bytes())?;
         writer.write_all(slice_as_bytes(rm_keys))?;
         writer.write_all(slice_as_bytes(self.requested_modules_values()))?;
-        writer.write_all(self.requested_modules_phases())?;
+        let rm_phases = self.requested_modules_phases();
+        debug_assert_eq!(rm_phases.len(), rm_keys.len());
+        writer.write_all(rm_phases)?;
         let pad = (4 - (rm_keys.len() % 4)) % 4;
         writer.write_all(&[0u8; 4][..pad])?; // alignment padding
 

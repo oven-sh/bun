@@ -119,17 +119,25 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                         // so the layouts differ. Rebuild the real list element-by-element;
                         // segments are arena-owned (`'bump`-laundered to `'static`) so the
                         // `&[u8]` reborrows below are valid for the chunk lifetime.
-                        let mut names = SmallList::<LayerName, 1>::default();
-                        for shadow in inner.slice() {
-                            let mut real = LayerName::default();
-                            for seg in shadow.v.slice() {
-                                // `seg` borrows arena-owned bytes that outlive this
-                                // stylesheet; route through `StoreStr` for the lifetime
-                                // erasure (see layer.rs TODO(port)).
-                                real.v.append(bun_ast::StoreStr::new(seg.as_ref()).slice());
-                            }
-                            names.append(real);
-                        }
+                        //
+                        // Both `SmallList` levels go into the arena-backed rule list
+                        // that `CssChunk::Drop` `set_len(0)`s without running element
+                        // destructors, so any global heap spill would leak. Build them
+                        // via `from_arena_iter` so the spill (if any) lives in `bump`.
+                        let names = SmallList::<LayerName, 1>::from_arena_iter(
+                            bump,
+                            inner.slice().iter().map(|shadow| LayerName {
+                                v: SmallList::from_arena_iter(
+                                    bump,
+                                    shadow.v.slice().iter().map(|seg| {
+                                        // `seg` borrows arena-owned bytes that outlive this
+                                        // stylesheet; route through `StoreStr` for the lifetime
+                                        // erasure (see layer.rs TODO(port)).
+                                        bun_ast::StoreStr::new(seg.as_ref()).slice()
+                                    }),
+                                ),
+                            }),
+                        );
                         arena_rule_list_one(
                             bump,
                             BundlerCssRule::LayerStatement(LayerStatementRule {

@@ -4523,11 +4523,15 @@ pub(crate) fn resolve_embedded_file_to_buf(
     // If a previous run of this binary already wrote the canonical file
     // and it's still ours with the right size, skip the write — just
     // resolve the path and cache it.
+    //
+    // `lstatat` (not `fstatat`) so an attacker-planted symlink at the
+    // canonical name points us at its target instead of being validated
+    // as the target — matches the fast-path defense at `lstat` above.
     let tmpdir = (unsafe { &mut *Fs::FileSystem::instance() })
         .tmpdir()
         .ok()?;
     let tmpdir_fd: bun_sys::Fd = tmpdir.fd;
-    if let Ok(st) = bun_sys::fstatat(tmpdir_fd, canonical_name) {
+    if let Ok(st) = bun_sys::lstatat(tmpdir_fd, canonical_name) {
         let size_ok = st.st_size as usize == file_contents.len();
         #[cfg(unix)]
         let ours = st.st_uid == uid && bun_sys::S::ISREG(st.st_mode as u32);
@@ -4585,11 +4589,12 @@ pub(crate) fn resolve_embedded_file_to_buf(
         scratch_name
     };
     let len = write_absolute(out_buf, Fs::RealFS::tmpdir_path(), final_name.as_bytes())?;
-    if rename_ok {
-        // Only cache if we successfully placed the file at the content-hashed
-        // name — that's the only path that's dedup-stable across restarts.
-        file.extracted_path = Some(path_to_nul_boxed(&out_buf[..len]));
-    }
+    // Cache both outcomes. The canonical name is dedup-stable across
+    // restarts; the scratch fallback is only stable within this process,
+    // but caching it is what keeps the Worker-amplification case from
+    // re-leaking one scratch file per call when the canonical path is
+    // squatted (the fast-path lstat accepts our scratch file).
+    file.extracted_path = Some(path_to_nul_boxed(&out_buf[..len]));
     Some(len)
 }
 

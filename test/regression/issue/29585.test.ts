@@ -41,7 +41,7 @@ test.skipIf(!isLinux || !cc)(
       "libhello.c": "int hello(void) { return 42; }\n",
 
       // Each dlopen() pre-fix wrote a fresh file to /tmp; post-fix they all
-      // share one content-hashed path inside `bun-{uid}/`.
+      // share the content-hashed path `{tmpdir}/.bun-{uid}-{hash}.so`.
       "app.ts": `
         import { dlopen, FFIType } from "bun:ffi";
         import lib from "./libhello.so" with { type: "file" };

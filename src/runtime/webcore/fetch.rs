@@ -282,8 +282,11 @@ pub fn bun_fetch_preconnect(
         ));
     }
 
-    let url_str = jsc::URL::href_from_js(arguments[0], global_object)?;
-    // PORT NOTE: `defer url_str.deref()` → BunString impls Drop.
+    // `href_from_js` returns a +1 (`Bun::toStringRef`); Zig released it via
+    // `defer url_str.deref()`. `bun_core::String` is `Copy` with no `Drop`, so
+    // wrap in `OwnedString` for the scope-exit deref.
+    let url_str =
+        bun_core::OwnedString::new(jsc::URL::href_from_js(arguments[0], global_object)?);
     // (Zig's post-hoc `hasException()` is redundant here — `href_from_js` already
     // returns `JsResult` and is `?`-propagated.)
 
@@ -563,7 +566,14 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         break 'brk None;
     };
 
-    let url_str: BunString = 'extract_url: {
+    // Every arm carries a +1 (`from_js`/`dupe_ref`/`StringOrURL::from_js`); Zig
+    // released it via `defer url_str.deref()`. `bun_core::String` is `Copy`
+    // with NO `Drop`, so wrap in `OwnedString` for the scope-exit deref —
+    // without it the +1 leaks the WTFStringImpl, and when the input JS string
+    // is a substring sharing an `ExternalStringImpl` (e.g. a slice of a
+    // `TextDecoder.decode()` result), that leaked +1 transitively pins the
+    // external buffer past `~VM`.
+    let url_str: bun_core::OwnedString = bun_core::OwnedString::new('extract_url: {
         if let Some(str) = url_str_optional {
             break 'extract_url str;
         }
@@ -582,8 +592,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
 
         break 'extract_url BunString::empty();
-    };
-    // PORT NOTE: `defer url_str.deref()` → BunString impls Drop.
+    });
 
     if global_this.has_exception() {
         is_error = true;
@@ -622,7 +631,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
         };
         let mut data_url = data_url;
-        data_url.url = url_str.clone();
+        // `data_url_response` `dupe_ref()`s this, so a borrowed view (no extra
+        // ref) is what Zig passed; `url_str`'s scope-exit deref balances it.
+        data_url.url = url_str.get();
         return Ok(data_url_response(data_url, global_this));
     }
 

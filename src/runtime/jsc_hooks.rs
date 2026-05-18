@@ -4453,8 +4453,9 @@ static EXTRACTED_PATH_LOCK: bun_core::Mutex<()> = bun_core::Mutex::new(());
 /// on-disk file instead of leaking a fresh copy per call (#29585).
 ///
 /// If another user has squatted the canonical path on a shared `/tmp`, we
-/// fall back to the scratch path we wrote for this one call — correct, but
-/// no dedup until the squatter releases it.
+/// fall back to the scratch path we wrote this call — correct, with
+/// within-process dedup via the cached scratch path but no cross-restart
+/// dedup until the squatter releases the canonical name.
 ///
 /// Returns `None` when the input is empty, not present in the graph, or a
 /// filesystem step fails.
@@ -4525,8 +4526,9 @@ pub(crate) fn resolve_embedded_file_to_buf(
     // resolve the path and cache it.
     //
     // `lstatat` (not `fstatat`) so an attacker-planted symlink at the
-    // canonical name points us at its target instead of being validated
-    // as the target — matches the fast-path defense at `lstat` above.
+    // canonical name is seen as a symlink (fails the ISREG check) rather
+    // than being followed to its target — matches the fast-path `lstat`
+    // defense above.
     let tmpdir = (unsafe { &mut *Fs::FileSystem::instance() })
         .tmpdir()
         .ok()?;
@@ -4652,10 +4654,10 @@ fn path_to_nul_boxed(path: &[u8]) -> Box<[u8]> {
     v.into_boxed_slice()
 }
 
-/// `geteuid` (not `getuid`) on POSIX because `mkdir(2)`/`open(2)` set the
-/// owner to euid — a setuid-compiled binary where euid != ruid would
-/// otherwise create a file whose owner != `getuid()` and fail the
-/// fast-path ownership check.
+/// `geteuid` (not `getuid`) on POSIX because `open(2)` sets the owner to
+/// euid — a setuid-compiled binary where euid != ruid would otherwise
+/// create a file whose owner != `getuid()` and fail the fast-path
+/// ownership check.
 #[cfg(unix)]
 fn extract_owner_uid() -> u32 {
     bun_sys::c::geteuid() as u32

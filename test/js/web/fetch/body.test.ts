@@ -677,7 +677,7 @@ function arrayBuffer(buffer: BufferSource) {
 // leak is bounded: after a warmup, a second equal block of round-trips must
 // not keep growing RSS (a linear leak adds ~block-size every block; a bounded
 // impl plateaus). Absolute RSS is intentionally not asserted — only growth.
-describe("string body consumption does not leak", () => {
+describe.concurrent("string body consumption does not leak", () => {
   // NOTE: `.text()` is intentionally excluded. It produces a large JS string
   // as its result, and discarded large JS strings are currently not reclaimed
   // by GC in this build independently of bodies — `Buffer.alloc(2e6).toString()`
@@ -694,7 +694,13 @@ describe("string body consumption does not leak", () => {
 
   for (const [name, ctor, method] of cases) {
     test(name, async () => {
-      const makeBody = method === "json" ? `() => JSON.stringify({ k: "z".repeat(SZ) })` : `() => "z".repeat(SZ)`;
+      // We need the *body string* to be large (that's the leaked ref) but the
+      // consumer to be cheap, so the JSON arm uses whitespace padding + a tiny
+      // value — valid JSON, ~SZ-byte body, near-free parse. `Buffer.alloc` is
+      // avoided for body construction per the note above (separate reclaim
+      // issue would pollute this measurement); `.repeat()` is also measurably
+      // faster than `Buffer.alloc(..).toString()` on this path in debug.
+      const makeBody = method === "json" ? `() => " ".repeat(SZ) + "0"` : `() => "z".repeat(SZ)`;
       const make =
         ctor === "Request"
           ? `b => new Request("http://example.com/", { method: "POST", body: b })`
@@ -716,7 +722,8 @@ describe("string body consumption does not leak", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
       const m = stdout.match(/BLOCK1:(-?\d+) BLOCK2:(-?\d+)/);
       expect(m).not.toBeNull();
       const block2 = Number(m![2]);

@@ -137,7 +137,6 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         "leak:bun_tcc_sys::tcc::State>::init\n",
         "leak:bun_runtime::api::bun::dynamic_library\n",
         "leak:bun_runtime::webcore::body::Value>::from_js\n",
-        "leak:bun_sys_jsc::error_jsc::error_to_system_error\n",
         "leak:bun_runtime::webcore::Blob>::get_name_string\n",
         "leak:bun_patch::patch::PatchFile>::apply\n",
         "leak:bun_jsc::runtime_transpiler_store::TranspilerJob\n",
@@ -145,10 +144,8 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         "leak:bun_runtime::webcore::s3::list_objects\n",
         "leak:bun_runtime::webcore::S3Client\n",
         "leak:bun_runtime::node::node_fs::NodeFS>::realpath_inner\n",
-        "leak:bun_sys_jsc::error_jsc::error_to_shell_system_error\n",
         "leak:bun_runtime::api::filesystem_router::FileSystemRouter\n",
         "leak:bun_runtime::dns_jsc::dns::Resolver\n",
-        "leak:bun_runtime::node::util::parse_args\n",
         "leak:bun_runtime::node::node_fs_watcher::FSWatcher\n",
         "leak:bun_jsc::web_worker::WebWorker>::create\n",
         "leak:bun_runtime::node::native_zlib_impl::Context>::init\n",
@@ -161,7 +158,6 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         // demangled frame is `<bun_jsc::debugger::Debugger>::…`; the previous
         // `bun_jsc::Debugger` substring missed it (capital-D after `::`).
         "leak:bun_jsc::debugger::Debugger>::start_js_debugger_thread\n",
-        "leak:BSSMapInner>::get_or_put\n",
         "leak:bun_runtime::cli::test::scanner::Scanner\n",
         "\0",
     )

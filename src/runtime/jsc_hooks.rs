@@ -533,6 +533,18 @@ unsafe fn configure_debugger(
 /// this thread (or null), and must not be used again after this call.
 unsafe fn deinit_runtime_state(_vm: *mut VirtualMachine, state: OpaqueRuntimeState) {
     RUNTIME_STATE.with(|c| c.set(ptr::null_mut()));
+    // Free the per-thread `TRANSPILE_PRINTER`. Workers lazy-init their own
+    // copy in `transpile_file` / `transpile_virtual_module`; without this
+    // each worker thread strands a `Box<BufferPrinter>` (mirrors the
+    // `SOURCE_CODE_PRINTER.take()` in `VirtualMachine::destroy`).
+    let printer = TRANSPILE_PRINTER.with(|c| c.replace(ptr::null_mut()));
+    if !printer.is_null() {
+        // SAFETY: `printer` was produced by `heap::into_raw` in
+        // `transpile_file`/`transpile_virtual_module` and is exclusively
+        // owned by this thread; the TLS slot was just nulled so no other
+        // alias exists.
+        drop(unsafe { bun_core::heap::take(printer) });
+    }
     if state.is_null() {
         return;
     }

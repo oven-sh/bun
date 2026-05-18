@@ -13,6 +13,7 @@
 #![allow(unused, nonstandard_style, clippy::all)]
 #![warn(unused_must_use)]
 #![feature(adt_const_params)]
+#![feature(allocator_api)]
 
 use bun_collections::VecExt;
 
@@ -7975,7 +7976,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
             )?;
         }
 
-        for part in parts.slice() {
+        for part in parts.iter() {
             minify_renamer.accumulate_symbol_use_counts(
                 &mut top_level_symbols,
                 &part.symbol_uses,
@@ -8025,7 +8026,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     let mut printer = PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::init(
         writer,
         bump,
-        tree.import_records.slice(),
+        tree.import_records.as_slice(),
         opts,
         renamer,
         source_map_builder,
@@ -8087,7 +8088,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         }
     }
 
-    for part in tree.parts.slice() {
+    for part in tree.parts.iter() {
         for stmt in slice_of(part.stmts).iter() {
             printer.print_stmt(*stmt, TopLevel::init(IsTopLevel::Yes))?;
             printer.writer.get_error()?;
@@ -8171,7 +8172,7 @@ pub fn print_json<W: WriterTrait>(
     // constructs the same empty inputs without round-tripping through `Ast`.
     let bump = bun_alloc::Arena::new();
     let mut no_op =
-        rename::NoOpRenamer::init(js_ast::symbol::Map::init_list(vec![Vec::new()]), source);
+        rename::NoOpRenamer::init(js_ast::symbol::Map::init_list(vec![Vec::new_in(bun_alloc::global_arena())]), source);
 
     let full_opts = Options {
         indent: opts.indent,
@@ -8402,7 +8403,7 @@ pub fn print_common_js<
     let mut printer = PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::init(
         writer,
         bump,
-        tree.import_records.slice(),
+        tree.import_records.as_slice(),
         opts,
         renamer.to_renamer(),
         source_map_builder,
@@ -8432,7 +8433,7 @@ pub fn print_common_js<
     // PERF(port): was stack-fallback allocator
     printer.binary_expression_stack = Vec::new();
 
-    for part in tree.parts.slice() {
+    for part in tree.parts.iter() {
         for stmt in slice_of(part.stmts).iter() {
             printer.print_stmt(*stmt, TopLevel::init(IsTopLevel::Yes))?;
             printer.writer.get_error()?;

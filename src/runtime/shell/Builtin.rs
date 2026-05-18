@@ -210,6 +210,10 @@ shell_builtins! {
         Cp       => (cp::Cp,            "cp",       b"usage: cp [-R [-H | -L | -P]] [-fi | -n] [-aclpsvXx] source_file target_file\n       cp [-R [-H | -L | -P]] [-fi | -n] [-aclpsvXx] source_file ... target_directory\n"),
         Seq      => (seq::Seq,          "seq",      b"usage: seq [-w] [-f format] [-s string] [-t string] [first [incr]] last\n"),
         Yes      => (yes::Yes,          "yes",      b"usage: yes [expletive]\n"),
+        Head     => (head::Head,        "head",     b"usage: head [-n count] [file ...]\n"),
+        Tail     => (tail::Tail,        "tail",     b"usage: tail [-n count] [file ...]\n"),
+        Printenv => (printenv::Printenv, "printenv", b"usage: printenv [-0] [name ...]\n"),
+        Realpath => (realpath::Realpath, "realpath", b"usage: realpath [file ...]\n"),
     }
     posix_disabled: [Cat, Cp]
 }

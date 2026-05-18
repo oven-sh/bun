@@ -4,7 +4,7 @@ import type { HttpsProxyAgent as HttpsProxyAgentType } from "https-proxy-agent";
 import net from "net";
 import tls from "tls";
 import WebSocket from "ws";
-import { createConnectProxy, createTLSConnectProxy, startProxy } from "../../web/websocket/proxy-test-utils";
+import { createConnectProxy, createSocksProxy, createTLSConnectProxy, startProxy } from "../../web/websocket/proxy-test-utils";
 
 // Use dynamic require to avoid linter removing the import
 const { HttpsProxyAgent } = require("https-proxy-agent") as {
@@ -14,11 +14,15 @@ const { HttpsProxyAgent } = require("https-proxy-agent") as {
 // HTTP CONNECT proxy server for WebSocket tunneling
 let proxy: net.Server;
 let authProxy: net.Server;
+let socksProxy: net.Server;
+let socksAuthProxy: net.Server;
 let httpsProxy: tls.Server;
 let wsServer: ReturnType<typeof Bun.serve>;
 let wssServer: ReturnType<typeof Bun.serve>;
 let proxyPort: number;
 let authProxyPort: number;
+let socksPort: number;
+let socksAuthPort: number;
 let httpsProxyPort: number;
 let wsPort: number;
 let wssPort: number;
@@ -31,6 +35,12 @@ beforeAll(async () => {
   // Create HTTP CONNECT proxy with auth
   authProxy = createConnectProxy({ requireAuth: true });
   authProxyPort = await startProxy(authProxy);
+
+  socksProxy = createSocksProxy();
+  socksPort = await startProxy(socksProxy);
+
+  socksAuthProxy = createSocksProxy({ requireAuth: true });
+  socksAuthPort = await startProxy(socksAuthProxy);
 
   // Create HTTPS CONNECT proxy
   httpsProxy = createTLSConnectProxy();
@@ -86,6 +96,8 @@ beforeAll(async () => {
 afterAll(() => {
   proxy?.close();
   authProxy?.close();
+  socksProxy?.close();
+  socksAuthProxy?.close();
   httpsProxy?.close();
   wsServer?.stop(true);
   wssServer?.stop(true);
@@ -140,6 +152,76 @@ describe("ws package proxy API", () => {
         proxy: "not-a-valid-url",
       });
     }).toThrow(SyntaxError);
+  });
+});
+
+describe("ws package through SOCKS5 proxy", () => {
+  test("ws:// through socks5h proxy", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+
+    const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, {
+      proxy: `socks5h://127.0.0.1:${socksPort}`,
+    });
+
+    const receivedMessages: string[] = [];
+
+    ws.on("open", () => {
+      ws.send("hello through socks from ws package");
+    });
+
+    ws.on("message", (data: Buffer) => {
+      receivedMessages.push(data.toString());
+      if (receivedMessages.length === 2) {
+        ws.close();
+      }
+    });
+
+    ws.on("close", () => {
+      resolve(receivedMessages);
+    });
+
+    ws.on("error", (err: Error) => {
+      reject(err);
+    });
+
+    const messages = await promise;
+    expect(messages).toContain("connected");
+    expect(messages).toContain("hello through socks from ws package");
+    gc();
+  });
+
+  test("ws:// through socks5 proxy with auth", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+
+    const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, {
+      proxy: `socks5://proxy_user:proxy_pa%73s@127.0.0.1:${socksAuthPort}`,
+    });
+
+    const receivedMessages: string[] = [];
+
+    ws.on("open", () => {
+      ws.send("hello through socks auth from ws package");
+    });
+
+    ws.on("message", (data: Buffer) => {
+      receivedMessages.push(data.toString());
+      if (receivedMessages.length === 2) {
+        ws.close();
+      }
+    });
+
+    ws.on("close", () => {
+      resolve(receivedMessages);
+    });
+
+    ws.on("error", (err: Error) => {
+      reject(err);
+    });
+
+    const messages = await promise;
+    expect(messages).toContain("connected");
+    expect(messages).toContain("hello through socks auth from ws package");
+    gc();
   });
 });
 

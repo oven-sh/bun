@@ -173,7 +173,7 @@ pub fn init(
         .result_callback = callback,
         .http_proxy = options.http_proxy,
         .signals = options.signals orelse .{},
-        .async_http_id = if (options.signals != null and options.signals.?.aborted != null) bun.http.async_http_id_monotonic.fetchAdd(1, .monotonic) else 0,
+        .async_http_id = if (options.signals != null and options.signals.?.aborted != null) bun.http.nextAsyncHTTPID() else 0,
     };
 
     this.client = .{
@@ -213,7 +213,9 @@ pub fn init(
     }
 
     if (options.http_proxy) |proxy| {
-        if (proxy.username.len > 0) {
+        const is_socks = strings.eqlComptime(proxy.protocol, "socks5") or strings.eqlComptime(proxy.protocol, "socks5h");
+        this.client.flags.disable_keepalive = this.client.flags.disable_keepalive or this.url.isHTTPS() or is_socks;
+        if (!is_socks and proxy.username.len > 0) {
             // Use stack fallback allocator - stack for small credentials, heap for large ones
             var username_sfb = std.heap.stackFallback(4096, allocator);
             const username_alloc = username_sfb.get();
@@ -283,14 +285,16 @@ pub fn initSync(
 }
 
 fn reset(this: *AsyncHTTP) !void {
+    const disable_keepalive = this.client.flags.disable_keepalive;
     const aborted = this.client.aborted;
     this.client = try HTTPClient.init(this.allocator, this.method, this.client.url, this.client.header_entries, this.client.header_buf, aborted);
     this.client.http_proxy = this.http_proxy;
 
     if (this.http_proxy) |proxy| {
+        const is_socks = strings.eqlComptime(proxy.protocol, "socks5") or strings.eqlComptime(proxy.protocol, "socks5h");
         //TODO: need to understand how is possible to reuse Proxy with TSL, so disable keepalive if url is HTTPS
-        this.client.flags.disable_keepalive = this.url.isHTTPS();
-        if (proxy.username.len > 0) {
+        this.client.flags.disable_keepalive = disable_keepalive or this.url.isHTTPS() or is_socks;
+        if (!is_socks and proxy.username.len > 0) {
             // Use stack fallback allocator - stack for small credentials, heap for large ones
             var username_sfb = std.heap.stackFallback(4096, this.allocator);
             const username_alloc = username_sfb.get();
@@ -475,6 +479,7 @@ const MutableString = bun.MutableString;
 const assert = bun.assert;
 const jsc = bun.jsc;
 const picohttp = bun.picohttp;
+const strings = bun.strings;
 const Channel = bun.threading.Channel;
 const SSLConfig = bun.api.server.ServerConfig.SSLConfig;
 

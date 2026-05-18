@@ -32,16 +32,21 @@ test("JSX lexer should not crash with slice bounds issues", async () => {
 test.concurrent("#30959 JSX attribute with invalid '(' value parses cleanly in debug builds", async () => {
   // Previously, parsing `<r L=((` in a debug build panicked with
   // `Scope location must be greater than previous 6 must be greater than 6`
-  // in push_scope_for_parse_pass. The recovery path after
-  // `expect(TOpenBrace)` against a TSyntaxError lexer token caused two
-  // FunctionArgs scopes to be pushed at the same source offset.
+  // in push_scope_for_parse_pass. `next_inside_jsx_element`'s TSyntaxError
+  // branch set `end = current` on the first `(` without stepping past it,
+  // so the recovery `next()` (called via `expect(TOpenBrace).next()` inside
+  // `parse_jsx_prop_value_identifier`) re-dispatched on the still-in-
+  // `code_point` byte and synthesised a zero-length `TOpenParen` at the
+  // same offset as the real `(` that followed. `parse_paren_expr` then
+  // pushed two FunctionArgs scopes at offset 6 and tripped the
+  // strict-monotonicity debug assertion.
   //
   // Release builds already reported the two parse errors and recovered;
-  // the debug assertion is now relaxed once an error has been logged so
-  // debug matches release. We assert the expected release-mode error
-  // messages instead of the absence of a panic, so the test fails cleanly
-  // both when the panic returns (exit code / hang) and when the error
-  // output regresses.
+  // the lexer now calls `step()` after setting TSyntaxError so debug
+  // matches release. We assert the expected release-mode error messages
+  // rather than the absence of a panic, so the test fails cleanly both
+  // when the panic returns (exit code / hang) and when the error output
+  // regresses.
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", "export function x(){return<r L=((}"],
     env: bunEnv,

@@ -2036,7 +2036,16 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
 
     #getInternalBuffer(chunkSize) {
       var chunk = this.$data;
-      if (!chunk || chunk.length < chunkSize) {
+      // #handleNumberResult stores the unfilled tail (view.subarray(result))
+      // here, so consecutive reads write into advancing offsets of the same
+      // backing ArrayBuffer and the enqueued chunks share it. Only rotate to
+      // a fresh allocation once less than a quarter of the buffer remains;
+      // before this the threshold was `< chunkSize`, which is true after any
+      // nonzero read, so every pull allocated a fresh 256KB-2MB Gigacage
+      // buffer while the previous one was still pinned by the consumer's
+      // subarray — on Windows that drove commit charge to tens of GB before
+      // VirtualAlloc(MEM_COMMIT) failed in pas_compact_heap_reservation.
+      if (!chunk || chunk.length * 4 < chunkSize) {
         this.$data = chunk = new Uint8Array(chunkSize);
       }
       return chunk;
@@ -2061,26 +2070,8 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
         let toEnqueue = view;
 
         if (remaining > 0) {
-          if (!isClosed && result * 4 <= view.length) {
-            // The read filled at most a quarter of the pull buffer (e.g. an
-            // SSE line or a small TTY/socket read) with more data expected.
-            // Copy the bytes out so the consumer holds a `result`-sized
-            // ArrayBuffer instead of pinning the whole autoAllocateChunkSize
-            // (256KB-2MB) buffer, and keep `view` so the next pull reuses
-            // the same allocation. Without this, every read shrank `view`
-            // below `chunkSize`, so #getInternalBuffer allocated a fresh
-            // chunkSize Uint8Array on the next pull while each enqueued
-            // subarray kept the previous one alive — on Windows that piles
-            // up MEM_COMMIT'd pages (commit charge >> RSS) until the system
-            // commit limit is hit. Skip when isClosed since there is no next
-            // pull to reuse the buffer for, and skip when the read is large
-            // (> 1/4 buffer) since the per-chunk slice allocation outweighs
-            // the at-most-4x pin amplification it would save.
-            toEnqueue = view.slice(0, result);
-          } else {
-            toEnqueue = view.subarray(0, result);
-            view = view.subarray(result);
-          }
+          toEnqueue = view.subarray(0, result);
+          view = view.subarray(result);
         } else {
           view = undefined;
         }

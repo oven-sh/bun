@@ -1,15 +1,15 @@
 import { expect, test } from "bun:test";
 import { isWindows } from "harness";
 
-test("native ReadableStream small chunks don't pin autoAllocateChunkSize ArrayBuffers", async () => {
-  // The native pull buffer is 256KB. Before the fix, every read that
-  // returned bytes enqueued a subarray of that 256KB buffer (so the
-  // consumer's chunk pinned the whole thing) and the leftover tail —
-  // now shorter than chunkSize — forced a fresh 256KB allocation on
-  // the next pull. A stream of N small chunks therefore held N×256KB
-  // of Gigacage memory. On Windows the large heap commits those pages
-  // up front and only the scavenger releases them, so commit charge
-  // ran ahead of RSS until VirtualAlloc(MEM_COMMIT) failed inside
+test("native ReadableStream reuses the pull buffer across small reads", async () => {
+  // #getInternalBuffer used to rotate to a fresh autoAllocateChunkSize
+  // (256KB) Uint8Array whenever $data.length < chunkSize — true after
+  // every nonzero read, since #handleNumberResult stores the tail
+  // subarray. So every pull allocated a fresh 256KB Gigacage buffer
+  // while the previous one was still pinned by the consumer's enqueued
+  // subarray. On Windows libpas commits those pages up front and only
+  // the scavenger releases them, so commit charge ran ahead of RSS
+  // until VirtualAlloc(MEM_COMMIT) failed in
   // pas_compact_heap_reservation_try_allocate.
   using server = Bun.serve({
     port: 0,
@@ -38,16 +38,18 @@ test("native ReadableStream small chunks don't pin autoAllocateChunkSize ArrayBu
   // of small reads through the native pull path.
   expect(chunks.length).toBeGreaterThan(20);
 
-  const dataBytes = chunks.reduce((s, c) => s + c.byteLength, 0);
-  const backingBytes = chunks.reduce((s, c) => s + c.buffer.byteLength, 0);
+  // Consecutive small reads should land in the same backing buffer (the
+  // tail subarray is reused until < ¼ remains). 2KB of ~few-byte chunks
+  // fits well inside one 256KB buffer, so the whole stream should share
+  // a handful at most. Pre-fix every chunk had its own 256KB buffer, so
+  // this was ~chunks.length.
+  const distinctBuffers = new Set(chunks.map(c => c.buffer));
+  expect(distinctBuffers.size).toBeLessThan(8);
 
-  // Each enqueued chunk should own a buffer sized to the read, not the
-  // 256KB pull buffer. Allow generous slack for the handful of larger
-  // coalesced reads, page rounding, and the one reused pull buffer that
-  // may still back the final partially-filled chunk.
-  expect(backingBytes).toBeLessThan(dataBytes + 4 * 1024 * 1024);
+  let backingBytes = 0;
+  for (const buf of distinctBuffers) backingBytes += buf.byteLength;
   // Pre-fix this was ~chunks.length * 256KB ≈ 25–250 MB.
-  expect(backingBytes).toBeLessThan(chunks.length * 64 * 1024);
+  expect(backingBytes).toBeLessThan(4 * 1024 * 1024);
 });
 
 const BYTES_TO_WRITE = 500_000;

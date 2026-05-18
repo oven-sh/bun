@@ -1,6 +1,7 @@
 #![feature(allocator_api)]
 #![feature(adt_const_params)]
 #![feature(macro_metavar_expr)] // `$$` in define_scoped_log! (nightly-2026-05-06)
+#![feature(thread_local)] // bare `__thread` slot for `thread_id::current()` cache
 #![allow(
     unused,
     non_snake_case,

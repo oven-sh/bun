@@ -300,8 +300,7 @@ fn get_argv(
 
     let mut arg_index: usize = 1;
     while let Some(value) = cmds_array.next()? {
-        let arg = value.to_bun_string(global_this)?;
-        // `arg` derefs on drop (was `defer arg.deref()`).
+        let arg = bun_core::OwnedString::new(value.to_bun_string(global_this)?);
 
         // Check for null bytes in argument (security: prevent null byte injection)
         if arg.index_of_ascii_char(0).is_some() {
@@ -2021,8 +2020,7 @@ pub fn append_envp_from_js(
             continue;
         }
 
-        let value_bunstr = value.to_bun_string(global_this)?;
-        // derefs on drop (was `defer value_bunstr.deref()`).
+        let value_bunstr = bun_core::OwnedString::new(value.to_bun_string(global_this)?);
 
         // Check for null bytes in env key and value (security: prevent null byte injection)
         if key.index_of_ascii_char(0).is_some() {

@@ -420,8 +420,24 @@ pub struct Bufs {
 // process-lifetime scratch storage). The `bufs!()` macro hands out `&mut` to a
 // single field. This relies on the caller never holding two `bufs!()` borrows
 // simultaneously across the same field; the Zig code already obeys that invariant.
+struct BufsSlot(core::cell::Cell<*mut Bufs>);
+impl Drop for BufsSlot {
+    fn drop(&mut self) {
+        // Reclaim the per-thread `Box<Bufs>` when a worker/transpiler-pool
+        // thread exits. Main-thread Bufs lives as long as the process, but
+        // every worker that touches the resolver allocates a fresh ~116 KiB
+        // box that was previously stranded.
+        let p = self.0.get();
+        if !p.is_null() {
+            // SAFETY: produced by `Box::leak` in `bufs_storage_init`; this
+            // thread is exiting so no resolver call frame holds a `bufs!()`
+            // borrow into it.
+            drop(unsafe { Box::from_raw(p) });
+        }
+    }
+}
 thread_local! {
-    static BUFS_PTR: core::cell::Cell<*mut Bufs> = const { core::cell::Cell::new(core::ptr::null_mut()) };
+    static BUFS_PTR: BufsSlot = const { BufsSlot(core::cell::Cell::new(core::ptr::null_mut())) };
 }
 
 #[inline(always)]
@@ -429,7 +445,7 @@ fn bufs_storage_get() -> *mut Bufs {
     // Fast path: single TLS pointer load + null check. `LocalKey<Cell<T>>::get`
     // (T: Copy) compiles to a plain `__tls_get_addr` + load with no
     // RefCell/Option/closure machinery on the hot path (benches: misc/require-fs).
-    let p = BUFS_PTR.get();
+    let p = BUFS_PTR.with(|s| s.0.get());
     if !p.is_null() {
         return p;
     }
@@ -447,7 +463,7 @@ fn bufs_storage_init() -> *mut Bufs {
     // including `open_dirs` which is bounded by `open_dir_count`), so
     // there is no need to pay for zero-filling ~100 KiB on first use.
     let p: *mut Bufs = Box::leak(unsafe { Box::<Bufs>::new_uninit().assume_init() });
-    BUFS_PTR.set(p);
+    BUFS_PTR.with(|s| s.0.set(p));
     p
 }
 

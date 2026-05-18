@@ -357,7 +357,7 @@ impl<'a> Parser<'a> {
 // surface lands.
 impl<'a> Parser<'a> {
     #[cfg_attr(not(target_arch = "wasm32"), allow(unused_mut))]
-    pub fn parse(mut self) -> Result<crate::Result, Error> {
+    pub fn parse(mut self) -> Result<crate::Result<'a>, Error> {
         // TODO(port): narrow error set
         #[cfg(target_arch = "wasm32")]
         {
@@ -543,8 +543,8 @@ impl<'a> Parser<'a> {
         &mut self,
         expr: Expr,
         runtime_api_call: &'static [u8],
-        symbols: js_ast::symbol::List,
-    ) -> Result<crate::Result, Error> {
+        symbols: js_ast::symbol::List<'a>,
+    ) -> Result<crate::Result<'a>, Error> {
         // TODO(port): narrow error set
         // Zig moves lexer/options by value into `P` (Parser.zig) and only
         // `defer p.lexer.deinit()` cleans up — Zig has no implicit destructor
@@ -581,13 +581,9 @@ impl<'a> Parser<'a> {
         // If we added to `p.symbols` it's going to fuck up all the indices
         // in the `symbols` array.
         debug_assert!(p.symbols.len() == 0);
-        let mut symbols_ = symbols;
-        // PORT NOTE: Zig `moveToListManaged(arena)` rebinds the same
-        // backing storage to an `ArrayList(arena)`. The Rust Vec
-        // adapter returns a `std::Vec`; `p.symbols` is a bump-backed Vec, so
-        // copy elements into the arena. TODO(perf): consider a zero-copy adapter.
-        p.symbols =
-            bun_alloc::vec_from_iter_in(symbols_.move_to_list_managed().into_iter(), p.arena);
+        // Zig: `moveToListManaged(arena)` — the buffer is already arena-backed,
+        // so this is now a plain move (matches Zig's pointer re-tag).
+        p.symbols = symbols;
 
         p.prepare_for_visit_pass()?;
 
@@ -734,7 +730,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn _parse<const TS: bool>(self) -> Result<crate::Result, Error> {
+    fn _parse<const TS: bool>(self) -> Result<crate::Result<'a>, Error> {
         // TODO(port): narrow error set
         // TODO(port): bun_crash_handler::current_action — `Action` stores
         // `&'static [u8]` but `self.source.path.text` is `'a`; widen
@@ -1424,16 +1420,13 @@ impl<'a> Parser<'a> {
                                 if let Some(id) = redirect_import_record_index {
                                     part.symbol_uses = Default::default();
                                     return Ok(crate::Result::Ast(Box::new(js_ast::Ast {
-                                        // Borrow the arena/Vec-backed records as a Vec view
-                                        // (matches `P::to_ast`); `p` is dropped immediately
-                                        // after this return so no double-ownership.
-                                        import_records: unsafe {
-                                            Vec::from_bump_slice(p.import_records.items_mut())
-                                        },
+                                        import_records: p
+                                            .import_records
+                                            .move_to_baby_list(p.arena),
                                         redirect_import_record_index: Some(id),
                                         named_imports: core::mem::take(&mut *p.named_imports),
                                         named_exports: core::mem::take(&mut p.named_exports),
-                                        ..Default::default()
+                                        ..js_ast::Ast::empty_in(p.arena)
                                     })));
                                 }
                             }
@@ -1610,15 +1603,11 @@ impl<'a> Parser<'a> {
 
                     if let Some(star) = export_star_redirect {
                         return Ok(crate::Result::Ast(Box::new(js_ast::Ast {
-                            // TODO(port): Zig set `.arena = p.arena`; arena ownership tracked elsewhere in Rust
-                            // See note on the matching arm above re double-ownership.
-                            import_records: unsafe {
-                                Vec::from_bump_slice(p.import_records.items_mut())
-                            },
+                            import_records: p.import_records.move_to_baby_list(p.arena),
                             redirect_import_record_index: Some(star.import_record_index),
                             named_imports: core::mem::take(&mut *p.named_imports),
                             named_exports: core::mem::take(&mut p.named_exports),
-                            ..Default::default()
+                            ..js_ast::Ast::empty_in(p.arena)
                         })));
                     }
                 }

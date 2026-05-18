@@ -2218,13 +2218,13 @@ impl Default for DeferredArrowArgErrors {
 
 pub fn new_lazy_export_ast<'bump>(
     bump: &'bump bun_alloc::Arena,
-    define: &mut Define,
-    opts: ParserOptions,
+    define: &'bump mut Define,
+    opts: ParserOptions<'bump>,
     log_to_copy_into: &mut bun_ast::Log,
     expr: Expr,
-    source: &bun_ast::Source,
+    source: &'bump bun_ast::Source,
     runtime_api_call: &'static [u8], // PERF(port): was comptime monomorphization
-) -> Result<Option<js_ast::Ast>, bun_core::Error> {
+) -> Result<Option<js_ast::Ast<'bump>>, bun_core::Error> {
     new_lazy_export_ast_impl(
         bump,
         define,
@@ -2233,25 +2233,31 @@ pub fn new_lazy_export_ast<'bump>(
         expr,
         source,
         runtime_api_call,
-        js_ast::symbol::List::default(),
+        js_ast::symbol::List::new_in(bump),
     )
 }
 
 pub fn new_lazy_export_ast_impl<'bump>(
     bump: &'bump bun_alloc::Arena,
-    define: &mut Define,
-    opts: ParserOptions,
+    define: &'bump mut Define,
+    opts: ParserOptions<'bump>,
     log_to_copy_into: &mut bun_ast::Log,
     expr: Expr,
-    source: &bun_ast::Source,
+    source: &'bump bun_ast::Source,
     runtime_api_call: &'static [u8], // PERF(port): was comptime monomorphization
-    symbols: js_ast::symbol::List,
-) -> Result<Option<js_ast::Ast>, bun_core::Error> {
-    let mut temp_log = bun_ast::Log::init();
+    symbols: js_ast::symbol::List<'bump>,
+) -> Result<Option<js_ast::Ast<'bump>>, bun_core::Error> {
+    // `Ast<'bump>` borrows the arena for `'bump`, so the parser's `'a` must be
+    // `'bump`. The lexer's log is fed through `Lexer<'a>::init_without_reading`
+    // (`log: &'a mut Log`), which forces the log to also live for `'bump` — a
+    // stack local cannot satisfy that. Allocate the scratch log on `bump`; the
+    // arena is leaked/reset by the caller, so no extra allocation persists past
+    // the parse session.
+    let temp_log: &'bump mut bun_ast::Log = bump.alloc(bun_ast::Log::init());
     // Zig held two aliasing `*Log` (parser.log + lexer.log). Both sides store
     // `NonNull<Log>` in Rust; copy the lexer's pointer so they share one
     // provenance chain. See `Parser::init` for the same pattern.
-    let lexer = js_lexer::Lexer::init_without_reading(&mut temp_log, source, bump);
+    let lexer = js_lexer::Lexer::init_without_reading(temp_log, source, bump);
     let log_ptr = lexer.log;
     let mut parser = Parser {
         options: opts,
@@ -2261,28 +2267,35 @@ pub fn new_lazy_export_ast_impl<'bump>(
         source,
         log: log_ptr,
     };
-    let result = match parser.to_lazy_export_ast(expr, runtime_api_call, symbols) {
-        Ok(r) => r,
-        Err(err) => {
-            let range = parser.lexer.range();
-            drop(parser);
-            if temp_log.errors == 0 {
-                log_to_copy_into.add_range_error(Some(source), range, err.name().as_bytes());
-            }
-            let _ = temp_log.append_to_maybe_recycled(log_to_copy_into, source);
-            return Ok(None);
-        }
-    };
-    drop(parser);
-
-    let _ = temp_log.append_to_maybe_recycled(log_to_copy_into, source);
+    let result = parser.to_lazy_export_ast(expr, runtime_api_call, symbols);
+    let range = parser.lexer.range();
+    // `parser.log_mut()` re-derives the same `*mut Log` the lexer was handed,
+    // letting us flush diagnostics into `log_to_copy_into` while the parser
+    // (and thus `'bump`) is still alive — the safe replacement for the old
+    // post-`drop(parser)` reads of the stack-local `temp_log`.
     match result {
-        crate::Result::Ast(mut ast) => {
+        Ok(crate::Result::Ast(mut ast)) => {
+            let _ = parser
+                .log_mut()
+                .append_to_maybe_recycled(log_to_copy_into, source);
+            drop(parser);
             ast.has_lazy_export = true;
             Ok(Some(*ast))
         }
-        // `to_lazy_export_ast` always returns `Result::Ast` (no parse pass runs).
-        _ => unreachable!("to_lazy_export_ast returns Result::Ast"),
+        Ok(_) => {
+            drop(parser);
+            // `to_lazy_export_ast` always returns `Result::Ast` (no parse pass runs).
+            unreachable!("to_lazy_export_ast returns Result::Ast")
+        }
+        Err(err) => {
+            let log = parser.log_mut();
+            if log.errors == 0 {
+                log_to_copy_into.add_range_error(Some(source), range, err.name().as_bytes());
+            }
+            let _ = log.append_to_maybe_recycled(log_to_copy_into, source);
+            drop(parser);
+            Ok(None)
+        }
     }
 }
 

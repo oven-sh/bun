@@ -1969,13 +1969,13 @@ impl Entry {
         matches!(&self.data, EntryData::Map(m) if !m.list.is_empty() && strings::starts_with_char(&m.list[0].key, b'.'))
     }
 
-    pub fn value_for_key(&self, key_: &[u8]) -> Option<Entry> {
+    pub fn value_for_key(&self, key_: &[u8]) -> Option<&Entry> {
         match &self.data {
             EntryData::Map(m) => {
                 // TODO(port): bun_collections::MultiArrayList column accessor; Vec placeholder.
                 for entry in m.list.iter() {
                     if strings::eql(&entry.key, key_) {
-                        return Some(entry.value.clone());
+                        return Some(&entry.value);
                     }
                 }
 
@@ -2487,27 +2487,19 @@ impl<'a> ESModule<'a> {
         }
 
         if subpath == b"." {
-            let mut main_export = Entry {
-                data: EntryData::Null,
-                first_token: bun_ast::Range::NONE,
+            let main_export: Option<&Entry> = match &exports.data {
+                EntryData::String(_) | EntryData::Array(_) => Some(exports),
+                EntryData::Map(_) if !exports.keys_start_with_dot() => Some(exports),
+                EntryData::Map(_) => exports.value_for_key(b"."),
+                _ => None,
             };
-            let cond = match &exports.data {
-                EntryData::String(_) | EntryData::Array(_) => true,
-                EntryData::Map(_) => !exports.keys_start_with_dot(),
-                _ => false,
-            };
-            if cond {
-                main_export = exports.clone();
-            } else if matches!(exports.data, EntryData::Map(_)) {
-                if let Some(value) = exports.value_for_key(b".") {
-                    main_export = value;
-                }
-            }
 
-            if !matches!(main_export.data, EntryData::Null) {
-                let result = self.resolve_target::<false>(package_url, &main_export, b"", false);
-                if result.status != Status::Null && result.status != Status::Undefined {
-                    return result;
+            if let Some(main_export) = main_export {
+                if !matches!(main_export.data, EntryData::Null) {
+                    let result = self.resolve_target::<false>(package_url, main_export, b"", false);
+                    if result.status != Status::Null && result.status != Status::Undefined {
+                        return result;
+                    }
                 }
             }
         } else if matches!(exports.data, EntryData::Map(_)) && exports.keys_start_with_dot() {
@@ -2566,7 +2558,7 @@ impl<'a> ESModule<'a> {
                     log.add_note_fmt(format_args!("Found \"{}\"", bstr::BStr::new(match_key)));
                 }
 
-                return self.resolve_target::<false>(package_url, &target, b"", is_imports);
+                return self.resolve_target::<false>(package_url, target, b"", is_imports);
             }
         }
 

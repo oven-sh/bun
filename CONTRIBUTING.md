@@ -148,6 +148,19 @@ $ export PATH="$PATH:/usr/lib/llvm21/bin"
 
 > ⚠️ Ubuntu distributions (<= 20.04) may require installation of the C++ standard library independently. See the [troubleshooting section](#span-file-not-found-on-ubuntu) for more information.
 
+### Running `cargo check` on macOS with Homebrew LLVM
+
+Homebrew's `llvm@21` does not support the `-fuse-ld=lld` flag on macOS. Running `cargo check --workspace` directly may fail with a linker error.
+
+In this case, run the following instead:
+
+```bash
+RUSTFLAGS="" cargo check --workspace --keep-going
+```
+
+The official build commands (`bun bd`, `bun run build`) handle this automatically.
+
+
 ## Building Bun
 
 After cloning the repository, run the following command to build. This may take a while as it will clone submodules and build dependencies.

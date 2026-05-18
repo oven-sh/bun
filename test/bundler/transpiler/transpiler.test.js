@@ -1549,18 +1549,26 @@ console.log(<div {...obj} key="after" />);`),
   // encoded the value as a UTF-16 surrogate pair. The lexer must reject the
   // entity with the same "JSX entity escape is too big" diagnostic it emits
   // for i32-overflow, instead of forwarding an invalid code point.
-  it("rejects out-of-range numeric JSX entities without panicking", () => {
-    var bun = new Bun.Transpiler({
+  describe("rejects out-of-range numeric JSX entities without panicking", () => {
+    const bun = new Bun.Transpiler({
       loader: "jsx",
       define: { "process.env.NODE_ENV": JSON.stringify("development") },
     });
 
-    for (const entity of ["&#7777707;", "&#x110000;", "&#2147483647;"]) {
-      expect(() => bun.transformSync(`export var x = <div>${entity}</div>`)).toThrow(/JSX entity escape is too big/);
-    }
+    // Covers: the original fuzzer input (0x76B22B), max+1, i32::MAX, and the
+    // negative-i32 path — parse_int::<i32> accepts a leading '-' so `&#-1;`
+    // lands as a negative CodePoint that must be rejected before it reaches
+    // the u32 cast in push_codepoint_utf16.
+    it.each(["&#7777707;", "&#x110000;", "&#2147483647;", "&#-1;"])("%s is rejected", entity => {
+      expect(() => bun.transformSync(`export var x = <div>${entity}</div>`)).toThrow(
+        /JSX entity escape is too big/,
+      );
+    });
 
     // Boundary: 0x10FFFF is the maximum valid code point and must still work.
-    expect(bun.transformSync("export var x = <div>&#x10FFFF;</div>")).toContain("jsxDEV_");
+    it("&#x10FFFF; (max valid) still transpiles", () => {
+      expect(bun.transformSync("export var x = <div>&#x10FFFF;</div>")).toContain("jsxDEV_");
+    });
   });
 
   it("require with a dynamic non-string expression", () => {

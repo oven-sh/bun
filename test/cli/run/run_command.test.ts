@@ -23,8 +23,10 @@ describe("bun", () => {
     using dir = tempDir("empty-script", {
       "package.json": JSON.stringify({ scripts: { build: "" } }),
     });
-    // npm/Zig drop empty-valued script entries; an empty `build` must report
-    // "Script not found" and exit 1, not run an empty `$ ` command and exit 0.
+    // Zig `asPropertyStringMap` drops empty-valued script entries; an empty
+    // `build` must report "Script not found" and exit 1, not run an empty
+    // `$ ` command and exit 0. (npm runs empty scripts and exits 0 — Bun
+    // intentionally diverges here to match its own prior/Zig behavior.)
     const { exitCode, stdout, stderr } = spawnSync({
       cwd: String(dir),
       cmd: [bunExe(), "run", "build"],

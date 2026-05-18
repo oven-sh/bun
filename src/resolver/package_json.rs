@@ -1688,7 +1688,9 @@ impl PackageJSON {
                         // OR the value is empty (expr.zig: `key.len > 0 and
                         // value.len > 0`). An empty-valued script
                         // (`{"scripts":{"build":""}}`) must NOT become a real
-                        // (empty) script — npm/Zig report "Script not found".
+                        // (empty) script — Zig reports "Script not found".
+                        // (npm actually runs empty scripts and exits 0; we
+                        // intentionally diverge here to match released Bun.)
                         if key.is_empty() || value.is_empty() {
                             continue;
                         }

@@ -125,7 +125,6 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         "leak:bun_runtime::cli::pack_command\n",
         "leak:bun_tcc_sys::tcc::State>::init\n",
         "leak:bun_runtime::api::bun::dynamic_library\n",
-        "leak:bun_patch::patch::PatchFile>::apply\n",
         "leak:bun_runtime::webcore::blob::Store>::init_s3\n",
         "leak:bun_runtime::webcore::s3::list_objects\n",
         "leak:bun_runtime::webcore::S3Client\n",

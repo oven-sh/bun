@@ -15,7 +15,7 @@
 // IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 import { unsortedPrereleases } from "./semver-fixture.js";
-const { satisfies, order } = Bun.semver;
+const { satisfies, order, parse } = Bun.semver;
 
 function testSatisfiesExact(left: any, right: any, expected: boolean) {
   expect(satisfies(left, right)).toBe(expected);
@@ -736,5 +736,35 @@ describe("Bun.semver.satisfies()", () => {
 
   test("pre-release snapshot", () => {
     expect(unsortedPrereleases.sort(Bun.semver.order)).toMatchSnapshot();
+  });
+});
+
+describe("Bun.semver.parse()", () => {
+  test("simple version", () => {
+    expect(parse("1.2.3")).toEqual({ major: 1, minor: 2, patch: 3, pre: null, build: null });
+  });
+
+  test("prerelease", () => {
+    expect(parse("1.2.3-beta.1")).toEqual({ major: 1, minor: 2, patch: 3, pre: "beta.1", build: null });
+  });
+
+  test("build metadata", () => {
+    expect(parse("1.2.3+build.42")).toEqual({ major: 1, minor: 2, patch: 3, pre: null, build: "build.42" });
+  });
+
+  test("prerelease + build", () => {
+    expect(parse("1.2.3-beta.1+build.42")).toEqual({ major: 1, minor: 2, patch: 3, pre: "beta.1", build: "build.42" });
+  });
+
+  test("invalid returns null", () => {
+    expect(parse("not-a-version")).toBeNull();
+    expect(parse("1.x")).toBeNull();
+    expect(parse("")).toBeNull();
+  });
+
+  test("Bun.version is parseable", () => {
+    const v = parse(Bun.version.split("-")[0]);
+    expect(v).not.toBeNull();
+    expect(v!.major).toBeGreaterThanOrEqual(0);
   });
 });

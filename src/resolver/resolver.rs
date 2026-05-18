@@ -1703,7 +1703,7 @@ impl<'a> Resolver<'a> {
             }
 
             if let Some(tsconfig) = dir.enclosing_tsconfig_json {
-                result.jsx = tsconfig.merge_jsx(result.jsx.clone());
+                result.jsx = tsconfig.merge_jsx(core::mem::take(&mut result.jsx));
                 result.flags.set_emit_decorator_metadata(
                     result.flags.emit_decorator_metadata() || tsconfig.emit_decorator_metadata,
                 );
@@ -1834,7 +1834,6 @@ impl<'a> Resolver<'a> {
                 primary: Path::empty(),
                 secondary: None,
             },
-            jsx: self.opts.jsx.clone(),
             ..Default::default()
         };
 
@@ -1891,7 +1890,7 @@ impl<'a> Resolver<'a> {
                                 package_json: res.package_json,
                                 dirname_fd: res.dirname_fd,
                                 file_fd: res.file_fd,
-                                jsx: tsconfig.merge_jsx(result.jsx),
+                                jsx: tsconfig.merge_jsx(self.opts.jsx.clone()),
                                 ..Default::default()
                             });
                         }
@@ -1981,6 +1980,7 @@ impl<'a> Resolver<'a> {
 
         if check_package {
             if self.opts.polyfill_node_globals {
+                result.jsx = self.opts.jsx.clone();
                 let had_node_prefix = import_path.starts_with(b"node:");
                 let import_path_without_node_prefix = if had_node_prefix {
                     &import_path[b"node:".len()..]
@@ -2359,7 +2359,6 @@ impl<'a> Resolver<'a> {
                 result.flags.set_is_from_node_modules(
                     result.flags.is_from_node_modules() || res.is_node_module,
                 );
-                result.jsx = self.opts.jsx.clone();
                 result.module_type = res.module_type;
                 result.flags.set_is_external(res.is_external);
                 // Potentially rewrite the import path if it's external that

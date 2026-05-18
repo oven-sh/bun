@@ -77,6 +77,8 @@ public:
         }
 
         VirtualModuleMap* _Nullable virtualModules = nullptr;
+        // Cache for jest.requireActual() results — avoids re-parsing modules on repeated calls
+        VirtualModuleMap* _Nullable requireActualCache = nullptr;
         bool mustDoExpensiveRelativeLookup = false;
         JSC::EncodedJSValue run(JSC::JSGlobalObject* globalObject, const BunString* namespaceString, const BunString* path);
 
@@ -98,6 +100,9 @@ public:
         {
             if (virtualModules) {
                 delete virtualModules;
+            }
+            if (requireActualCache) {
+                delete requireActualCache;
             }
         }
     };

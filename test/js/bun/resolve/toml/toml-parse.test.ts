@@ -32,3 +32,17 @@ test("Bun.TOML.parse rejects \\u escape in quoted key at file start without pani
   const input = '"\\u' + String.fromCodePoint(0x3945c) + '" = 1';
   expect(() => Bun.TOML.parse(input)).toThrow();
 });
+
+// https://github.com/oven-sh/bun/issues/30893
+// Off-by-one in the CRLF look-ahead of the `\r` line-continuation branch: the guard
+// checked `iter.i < text.len()` but indexed `text[iter.i + 1]`. A multiline basic
+// string ending in `\<CR>` immediately before `"""` triggers `text[len]` — and slice
+// bounds checks fire in release too, so this was a hard crash everywhere (not just
+// debug). The JS lexer already reads the index it guards on; this brings the TOML
+// copy in line.
+test("Bun.TOML.parse handles trailing backslash-CR in multiline basic string (#30893)", () => {
+  // Bytes: `key = """\<CR>"""` — a backslash line-continuation where the newline
+  // is a bare CR and the string ends immediately after it.
+  const input = 'key = """\\\r"""';
+  expect(Bun.TOML.parse(input)).toEqual({ key: "" });
+});

@@ -1157,8 +1157,13 @@ impl<'a> Lexer<'a> {
                             }
 
                             // Ignore line continuations. A line continuation is not an escaped newline.
-                            if (iter.i as usize) < text.len() && text[iter.i as usize + 1] == b'\n'
-                            {
+                            // Match the JS lexer (js_parser/lexer.rs:660-661, 937-939): guard on
+                            // the index we actually read (`iter.i + 1`), not `iter.i`. Without
+                            // this, a multiline basic string ending in `\<CR>` right before `"""`
+                            // reads `text[len]` and panics even in release (slice bounds checks
+                            // always run).
+                            let next_i: usize = iter.i as usize + 1;
+                            if next_i < text.len() && text[next_i] == b'\n' {
                                 // Make sure Windows CRLF counts as a single newline
                                 iter.i += 1;
                             }

@@ -69,8 +69,17 @@ export const bunEnv: NodeJS.Dict<string> = {
 
 const ciEnv = { ...bunEnv };
 
-if (isASAN) {
-  bunEnv.ASAN_OPTIONS ??= "allow_user_segv_handler=1:disable_coredump=0";
+if (isASAN || process.env.ASAN_OPTIONS) {
+  // Fixture subprocesses must NOT inherit `detect_leaks=1` from the test
+  // runner's environment. The runner process already does the LSan check; a
+  // subprocess that finds (suppressed) leaks at exit has to symbolize every
+  // allocation stack to match `leaksan.supp`, which spawns llvm-symbolizer
+  // against a ~1 GB binary and adds several seconds of wall-clock per child —
+  // enough to push spawn-heavy tests past their timeouts. Later flags win in
+  // ASAN_OPTIONS, so appending `detect_leaks=0` overrides whatever we got.
+  bunEnv.ASAN_OPTIONS = [process.env.ASAN_OPTIONS, "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0"]
+    .filter(Boolean)
+    .join(":");
 }
 
 if (isWindows) {

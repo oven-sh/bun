@@ -19,33 +19,36 @@
 // Run the parse in a subprocess so a reintroduction (debug-build SIGILL)
 // doesn't tear down the in-process test runner.
 
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-for (const source of ["[{static{}", "({static{}})", "({static{};})", "({static{},})"]) {
-  test(`\`static { ... }\` in an object-literal position is a syntax error, not a parser crash (${source})`, async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", source],
-      env: bunEnv,
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-      // Bound the subprocess: without the fix, the debug build panics
-      // (SIGILL) and should exit immediately; if it somehow hangs, we want
-      // a clean `signalCode` rather than a bun-test runner timeout.
-      timeout: 10_000,
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+describe.each(["[{static{}", "({static{}})", "({static{};})", "({static{},})"])(
+  "`static { ... }` in an object-literal position (%s)",
+  source => {
+    test("is a syntax error, not a parser crash", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", source],
+        env: bunEnv,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        // Bound the subprocess: without the fix, the debug build panics
+        // (SIGILL) and should exit immediately; if it somehow hangs, we want
+        // a clean `signalCode` rather than a bun-test runner timeout.
+        timeout: 10_000,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    // Before the fix, the debug build aborted with SIGILL inside the
-    // parser and never reached the syntax-error reporter — stderr carried
-    // `panic: assertion failed: prop.key.is_some() || prop.value.is_some()`
-    // and `signalCode === "SIGILL"`. After the fix the parser emits the
-    // normal user-facing syntax error and the process exits cleanly with
-    // a non-zero code.
-    expect(stderr).toContain('Expected "}" but found "{"');
-    expect(proc.signalCode).toBeNull();
-    expect(stdout).toBe("");
-    expect(exitCode).not.toBe(0);
-  }, 30_000);
-}
+      // Before the fix, the debug build aborted with SIGILL inside the
+      // parser and never reached the syntax-error reporter — stderr carried
+      // `panic: assertion failed: prop.key.is_some() || prop.value.is_some()`
+      // and `signalCode === "SIGILL"`. After the fix the parser emits the
+      // normal user-facing syntax error and the process exits cleanly with
+      // a non-zero code.
+      expect(stderr).toContain('Expected "}" but found "{"');
+      expect(proc.signalCode).toBeNull();
+      expect(stdout).toBe("");
+      expect(exitCode).not.toBe(0);
+    }, 30_000);
+  },
+);

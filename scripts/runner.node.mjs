@@ -1391,7 +1391,11 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
  */
 async function spawnBunTest(execPath, testPath, opts = { cwd }) {
   const timeout = getTestTimeout(testPath);
-  const perTestTimeout = Math.ceil(timeout / 2);
+  // ASAN builds run 5-10x slower (instrumentation + the agent only exposes
+  // 2 of its 8 vCPUs); without a wider per-test timeout, install/git tests
+  // that spawn many subprocesses time out on otherwise-healthy runs.
+  const isAsan = basename(execPath).includes("asan");
+  const perTestTimeout = Math.ceil(timeout / 2) * (isAsan ? 3 : 1);
   const absPath = join(opts["cwd"], testPath);
   const isReallyTest = isTestStrict(testPath) || absPath.includes("vendor");
   const args = opts["args"] ?? [];

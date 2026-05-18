@@ -1,5 +1,6 @@
 #include "root.h"
 #include "wtf-bindings.h"
+#include <cassert>
 #include <wtf/StackBounds.h>
 #include <wtf/StackCheck.h>
 #include <wtf/StackTrace.h>

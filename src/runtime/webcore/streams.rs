@@ -133,9 +133,6 @@ impl Start {
         if let Some(chunk_size) = value.get(global_this, b"chunkSize")? {
             if chunk_size.is_number() {
                 // Zig: `@as(Blob.SizeType, @intCast(@truncate(@as(i52, chunkSize.toInt64()))))`
-                // — `@truncate` to i52 then `@intCast` to u32. Low-32-bit wrap matches that
-                // for the in-range values JS can produce; revisit if exact i52 sign-extension
-                // semantics matter.
                 return Ok(Start::ChunkSize(
                     truncate_i52(chunk_size.to_int64()) as BlobSizeType
                 ));
@@ -1561,8 +1558,10 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         }
 
         self.buffer.clear_retaining_capacity();
-        self.buffer
-            .ensure_total_capacity_precise(self.high_water_mark as usize);
+        let need = (self.high_water_mark as usize).saturating_sub(self.buffer.len());
+        if self.buffer.try_reserve_exact(need).is_err() {
+            return bun_sys::Result::Err(SysError::oom());
+        }
 
         self.done = false;
         self.signal.start();

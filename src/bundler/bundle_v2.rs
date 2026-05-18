@@ -3285,7 +3285,7 @@ pub mod bv2_impl {
 
             // Some parts of the AST are owned by worker allocators at this point.
             // Transfer ownership to the graph heap.
-            self.linker.graph.take_ast_ownership();
+            self.linker.graph.take_ast_ownership(self.graph.heap);
             Ok(())
         }
 

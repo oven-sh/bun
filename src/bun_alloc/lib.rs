@@ -270,6 +270,33 @@ pub type Bump = bumpalo::Bump;
 pub type ArenaVec<'a, T> = Vec<T, &'a MimallocArena>;
 pub use mimalloc_arena::{ArenaString, ArenaVecExt, live_arena_heaps, vec_from_iter_in};
 
+/// Re-tag an [`ArenaVec`]'s allocator handle to `dst` without copying data.
+///
+/// Zig parity: `BabyList.transferOwnership` (collections/baby_list.zig). Zig's
+/// `BabyList` is allocator-erased — the linker passes a different allocator at
+/// each `append(allocator, ..)` call site; the Rust port stores `&'a Arena` in
+/// the `Vec`, so the equivalent is swapping that field.
+///
+/// Sound because `<&MimallocArena as Allocator>` is heap-agnostic on the
+/// existing buffer:
+/// - `deallocate` → `mi_free(ptr)`: looks up the owning heap from the pointer's
+///   page metadata; works from any thread on any heap's allocation.
+/// - `grow`/`shrink` → `mi_heap_realloc_aligned(dst, ptr, ..)`: returns `ptr`
+///   in-place if it fits (read-only `mi_usable_size`), else allocs on `dst`,
+///   `memcpy`s, then `mi_free(ptr)`.
+///
+/// The original arena is never `mi_heap_malloc`-ed from again via this `Vec`,
+/// so the [`MimallocArena`] single-thread-alloc contract is preserved.
+#[inline]
+pub fn transfer_arena<'a, T>(v: &mut ArenaVec<'a, T>, dst: &'a MimallocArena) {
+    let mut old = core::mem::ManuallyDrop::new(core::mem::replace(v, Vec::new_in(dst)));
+    let (ptr, len, cap) = (old.as_mut_ptr(), old.len(), old.capacity());
+    // SAFETY: see fn doc — `<&MimallocArena as Allocator>::{deallocate,grow}`
+    // are heap-agnostic on `ptr`; `(ptr, len, cap)` are the just-decomposed
+    // valid `Vec` triplet from `old`, whose `Drop` is suppressed.
+    *v = unsafe { Vec::from_raw_parts_in(ptr, len, cap, dst) };
+}
+
 
 /// `bumpalo::format!` parity — `arena_format!(in arena, "...", ..)` →
 /// [`ArenaString`].

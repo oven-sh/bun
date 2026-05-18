@@ -492,7 +492,6 @@ impl<'a> LinkerGraph<'a> {
 impl<'a> LinkerGraph<'a> {
     pub fn load(
         &mut self,
-        heap: &'a Arena,
         entry_points: &[Index],
         sources: &[bun_ast::Source],
         server_component_boundaries: &server_component_boundary::List,
@@ -699,35 +698,6 @@ impl<'a> LinkerGraph<'a> {
             self.symbols = symbol::Map::init_list(symbols);
         }
 
-        // Re-seat the growable arena-backed columns onto `self.bump` (the
-        // linker-thread heap). `clone_ast` left each `PartList`/import-record
-        // list bitwise-aliasing the parse-side buffer in a per-worker
-        // `mi_heap`, which `add_part_to_file` / `generate_new_symbol`-adjacent
-        // pushes cannot grow from this thread. Same bitwise-move pattern as
-        // the symbol-map copy above: the linker side becomes the post-mutation
-        // owner (`take_ast_cols!` drops it once), the parse side keeps the
-        // original handle and is slab-freed without element drop.
-        {
-            macro_rules! reseat_col {
-                ($col:ident) => {
-                    for v in self.ast.$col() {
-                        let n = v.len();
-                        let mut new = Vec::with_capacity_in(n, heap);
-                        // SAFETY: `new` has capacity `n`; `v` has `n` initialized
-                        // elements. Bitwise-moved; the parse-side alias is never
-                        // element-dropped (see `take_ast_cols!` in bundle_v2.rs).
-                        unsafe {
-                            core::ptr::copy_nonoverlapping(v.as_ptr(), new.as_mut_ptr(), n);
-                            new.set_len(n);
-                            core::ptr::write(v, new);
-                        }
-                    }
-                };
-            }
-            reseat_col!(items_parts_mut);
-            reseat_col!(items_import_records_mut);
-        }
-
         // TODO: const_values
         // {
         //     var const_values = this.const_values;
@@ -802,11 +772,28 @@ impl<'a> LinkerGraph<'a> {
         Ok(())
     }
 
-    /// No-op: with `Vec` replaced by `Vec` (cat-4, BABYLIST_REPLACEMENT.md),
-    /// the parser hands the linker globally-owned `Vec`s directly — there is
-    /// nothing to "transfer". Kept as an empty fn so the call site in
-    /// `LinkerGraph::load` stays diff-stable; delete once that caller drops it.
-    pub fn take_ast_ownership(&mut self) {}
+    /// Port of `LinkerGraph.zig:takeAstOwnership`. `clone_ast` left each
+    /// `PartList`/import-record list with its allocator handle pointing at
+    /// the per-worker `mi_heap` that built it; re-tag to `heap` (the
+    /// bundle-thread arena) so linker-side `add_part_to_file` pushes call
+    /// `mi_heap_realloc_aligned(heap, worker_ptr, ..)` from the thread that
+    /// owns `heap`. Zero-copy: only files the linker actually grows pay a
+    /// (lazy, mimalloc-internal) cross-heap migration on first realloc.
+    ///
+    /// Zig is a release no-op because `BabyList` passes the allocator at each
+    /// `append` call site; the Rust `Vec<T, &Arena>` stores it, so swap here.
+    /// Zig also transfers `part.dependencies` and `symbols`; the Rust port
+    /// keeps `DependencyList` on the global allocator and feeds new symbols
+    /// through `self.symbols: symbol::Map` (also global) — both thread-safe
+    /// to grow, so no transfer needed.
+    pub fn take_ast_ownership(&mut self, heap: &'a Arena) {
+        for v in self.ast.items_import_records_mut() {
+            bun_alloc::transfer_arena(v, heap);
+        }
+        for v in self.ast.items_parts_mut() {
+            bun_alloc::transfer_arena(v, heap);
+        }
+    }
 
     pub fn propagate_async_dependencies(&mut self) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set

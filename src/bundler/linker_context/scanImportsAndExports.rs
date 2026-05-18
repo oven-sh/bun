@@ -526,9 +526,11 @@ pub fn scan_imports_and_exports(
             );
         }
 
-        // Some parts of the AST may now be owned by worker allocators. Transfer ownership back
-        // to the graph arena.
-        this.graph.take_ast_ownership();
+        // Zig calls `takeAstOwnership` here because `doStep5` appends to
+        // `part.dependencies`/`declared_symbols` with the worker allocator.
+        // In the Rust port those are global-allocator `Vec`s (thread-safe to
+        // grow) and `do_step_5` never pushes to the arena-backed `PartList`/
+        // import-record columns, so no transfer is needed.
     }
 
     if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {

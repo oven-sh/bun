@@ -501,5 +501,19 @@ const moduleExports = {
   WebSocket,
 };
 
+function install() {
+  globalThis.fetch = fetch;
+  globalThis.Headers = Headers;
+  globalThis.Response = Response;
+  globalThis.Request = Request;
+  globalThis.FormData = FormData;
+  globalThis.WebSocket = WebSocket;
+  globalThis.CloseEvent = CloseEvent;
+  globalThis.ErrorEvent = ErrorEvent;
+  globalThis.MessageEvent = MessageEvent;
+  globalThis.EventSource = EventSource;
+}
+
+moduleExports.install = install;
 moduleExports.default = moduleExports;
 export default moduleExports;

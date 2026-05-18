@@ -519,10 +519,13 @@ impl FetchTasklet {
         core::mem::forget(core::mem::take(&mut boxed.check_server_identity));
         core::mem::forget(core::mem::take(&mut boxed.readable_stream_ref));
         core::mem::forget(core::mem::take(&mut boxed.request_body));
-        // `response: Weak`, `signal`, `native_response`, `sink`,
-        // `request_body_streaming_buffer` are raw pointers / no-Drop — their
-        // manual unref (in `clear_data`) is intentionally skipped. Remaining
-        // fields are pure-Rust allocations that drop safely off-thread.
+        // `response: jsc::Weak` has a `Drop` that calls `Bun__WeakRef__delete`
+        // (touches the VM's WeakSet free list) — JS-thread-only, so leak it.
+        core::mem::forget(core::mem::take(&mut boxed.response));
+        // `signal`, `native_response`, `sink`, `request_body_streaming_buffer`
+        // are raw pointers with no `Drop`; their manual unref (in `clear_data`)
+        // is intentionally skipped at shutdown. Remaining fields are pure-Rust
+        // allocations that drop safely off-thread.
         drop(boxed);
     }
 

@@ -547,6 +547,15 @@ impl Package<u64> {
 
         let new_package = new.append_package_with_id(pkg_value, id)?;
 
+        // `self.meta.id` is deserialized verbatim from the lockfile with no
+        // range validation; a corrupt `bun.lockb` can make it garbage. Zig's
+        // ReleaseFast does the OOB write unchecked (silent UB) and Bun recovers
+        // via re-resolution downstream, but Rust always bounds-checks and would
+        // `panic_bounds_check`. Surface it as lockfile corruption so the
+        // installer falls back to a fresh resolution, matching Zig's outcome.
+        if self.meta.id as usize >= package_id_mapping.len() {
+            return Err(bun_core::err!("InvalidLockfile"));
+        }
         package_id_mapping[self.meta.id as usize] = new_package.meta.id;
 
         if cloner.manager.preinstall_state.len() > 0 {

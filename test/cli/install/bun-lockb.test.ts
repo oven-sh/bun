@@ -1,7 +1,7 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, expect, it } from "bun:test";
 import { copyFile, exists, open, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, isWindows, runBunInstall, VerdaccioRegistry } from "harness";
+import { bunExe, bunEnv as env, isWindows, runBunInstall, tempDir, VerdaccioRegistry } from "harness";
 import { join } from "path";
 
 const registry = new VerdaccioRegistry();
@@ -113,4 +113,25 @@ it("should continue using a binary lockfile if it exists", async () => {
   expect(await exists(join(packageDir, "bun.lock"))).toBe(false);
   const thirdLockfile = await file(join(packageDir, "bun.lockb")).text();
   expect(thirdLockfile).not.toBe(secondLockfile);
+});
+
+it("recovers from a corrupted binary lockfile instead of panicking", async () => {
+  using dir = tempDir("corrupt-lockb", {});
+  const d = String(dir);
+  await copyFile(join(__dirname, "fixtures", "corrupt-lockb", "package.json"), join(d, "package.json"));
+  await copyFile(join(__dirname, "fixtures", "corrupt-lockb", "bun.lockb"), join(d, "bun.lockb"));
+  const { exited } = spawn({
+    cmd: [bunExe(), "install", "--prefer-offline", "--no-progress"],
+    cwd: d,
+    stdout: "ignore",
+    stderr: "ignore",
+    env,
+  });
+  const code = await exited;
+  // The garbage `meta.id` deserialized from the corrupt lockfile used to
+  // cause a slice OOB panic (exit 133). Released Bun tolerates it: it
+  // re-resolves and completes the install. The fix matches that.
+  expect(code).not.toBe(133);
+  expect(code).toBe(0);
+  expect(await exists(join(d, "node_modules"))).toBe(true);
 });

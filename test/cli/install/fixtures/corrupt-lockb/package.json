@@ -1,0 +1,14 @@
+{
+  "name": "cmp",
+  "version": "1.0.0",
+  "dependencies": {
+    "express": "4.18.2",
+    "debug": "^4.3.4",
+    "chalk": "^5.3.0",
+    "lodash": "~4.17.21",
+    "@babel/code-frame": "^7.22.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0"
+  }
+}

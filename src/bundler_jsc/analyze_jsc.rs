@@ -38,6 +38,7 @@ pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     let strings_lens: &[u32] = res.strings_lens();
     let requested_modules_keys: &[StringID] = res.requested_modules_keys();
     let requested_modules_values: &[RequestedModuleValue] = res.requested_modules_values();
+    let requested_modules_phases: &[u8] = res.requested_modules_phases();
     let buffer: &[StringID] = res.buffer();
     let record_kinds: &[RecordKind] = res.record_kinds();
 
@@ -73,6 +74,7 @@ pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
                 RecordKind::ImportInfoSingle
                 | RecordKind::ImportInfoSingleTypeScript
                 | RecordKind::ImportInfoNamespace
+                | RecordKind::ImportInfoNamespaceDefer
                 | RecordKind::ExportInfoIndirect
                 | RecordKind::ExportInfoLocal
                 | RecordKind::ExportInfoNamespace
@@ -96,29 +98,38 @@ pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     );
 
     debug_assert_eq!(requested_modules_keys.len(), requested_modules_values.len());
-    for (&reqk, &reqv) in requested_modules_keys
+    debug_assert_eq!(requested_modules_keys.len(), requested_modules_phases.len());
+    for ((&reqk, &reqv), &reqp) in requested_modules_keys
         .iter()
         .zip(requested_modules_values.iter())
+        .zip(requested_modules_phases.iter())
     {
+        // 0 = ModulePhase::Evaluation, 1 = ModulePhase::Defer
+        let phase_defer = reqp != 0;
         match reqv {
-            RequestedModuleValue::None => {
-                module_record.add_requested_module_null_attributes_ptr(identifiers, reqk)
-            }
+            RequestedModuleValue::None => module_record.add_requested_module_null_attributes_ptr(
+                identifiers,
+                reqk,
+                phase_defer,
+            ),
             RequestedModuleValue::Javascript => {
-                module_record.add_requested_module_java_script(identifiers, reqk)
+                module_record.add_requested_module_java_script(identifiers, reqk, phase_defer)
             }
             RequestedModuleValue::Webassembly => {
-                module_record.add_requested_module_web_assembly(identifiers, reqk)
+                module_record.add_requested_module_web_assembly(identifiers, reqk, phase_defer)
             }
             RequestedModuleValue::Json => {
-                module_record.add_requested_module_json(identifiers, reqk)
+                module_record.add_requested_module_json(identifiers, reqk, phase_defer)
             }
             // Zig open-enum tail: `else => |uv| @enumFromInt(@intFromEnum(uv))` —
             // FetchParameters and StringID are both `#[repr(transparent)] u32`, so this
             // is a bitcast of the raw discriminant back into the interned-string index.
-            uv => {
-                module_record.add_requested_module_host_defined(identifiers, reqk, StringID(uv.0))
-            }
+            uv => module_record.add_requested_module_host_defined(
+                identifiers,
+                reqk,
+                StringID(uv.0),
+                phase_defer,
+            ),
         }
     }
 
@@ -149,6 +160,13 @@ pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
                     buffer[i + 2],
                     buffer[i],
                 ),
+                RecordKind::ImportInfoNamespaceDefer => module_record
+                    .add_import_entry_namespace_defer(
+                        identifiers,
+                        buffer[i + 1],
+                        buffer[i + 2],
+                        buffer[i],
+                    ),
                 RecordKind::ExportInfoIndirect => {
                     if buffer[i + 1] == StringID::STAR_NAMESPACE {
                         module_record.add_namespace_export(
@@ -291,27 +309,32 @@ unsafe extern "C" {
         module_record: *mut JSModuleRecord,
         identifier_array: *mut IdentifierArray,
         module_name: StringID,
+        phase_defer: bool,
     );
     fn JSC_JSModuleRecord__addRequestedModuleJavaScript(
         module_record: *mut JSModuleRecord,
         identifier_array: *mut IdentifierArray,
         module_name: StringID,
+        phase_defer: bool,
     );
     fn JSC_JSModuleRecord__addRequestedModuleWebAssembly(
         module_record: *mut JSModuleRecord,
         identifier_array: *mut IdentifierArray,
         module_name: StringID,
+        phase_defer: bool,
     );
     fn JSC_JSModuleRecord__addRequestedModuleJSON(
         module_record: *mut JSModuleRecord,
         identifier_array: *mut IdentifierArray,
         module_name: StringID,
+        phase_defer: bool,
     );
     fn JSC_JSModuleRecord__addRequestedModuleHostDefined(
         module_record: *mut JSModuleRecord,
         identifier_array: *mut IdentifierArray,
         module_name: StringID,
         host_defined_import_type: StringID,
+        phase_defer: bool,
     );
 
     fn JSC_JSModuleRecord__addImportEntrySingle(
@@ -329,6 +352,13 @@ unsafe extern "C" {
         module_name: StringID,
     );
     fn JSC_JSModuleRecord__addImportEntryNamespace(
+        module_record: *mut JSModuleRecord,
+        identifier_array: *mut IdentifierArray,
+        import_name: StringID,
+        local_name: StringID,
+        module_name: StringID,
+    );
+    fn JSC_JSModuleRecord__addImportEntryNamespaceDefer(
         module_record: *mut JSModuleRecord,
         identifier_array: *mut IdentifierArray,
         import_name: StringID,
@@ -406,15 +436,32 @@ trait JSModuleRecordExt {
         self,
         ia: *mut IdentifierArray,
         module_name: StringID,
+        phase_defer: bool,
     );
-    fn add_requested_module_java_script(self, ia: *mut IdentifierArray, module_name: StringID);
-    fn add_requested_module_web_assembly(self, ia: *mut IdentifierArray, module_name: StringID);
-    fn add_requested_module_json(self, ia: *mut IdentifierArray, module_name: StringID);
+    fn add_requested_module_java_script(
+        self,
+        ia: *mut IdentifierArray,
+        module_name: StringID,
+        phase_defer: bool,
+    );
+    fn add_requested_module_web_assembly(
+        self,
+        ia: *mut IdentifierArray,
+        module_name: StringID,
+        phase_defer: bool,
+    );
+    fn add_requested_module_json(
+        self,
+        ia: *mut IdentifierArray,
+        module_name: StringID,
+        phase_defer: bool,
+    );
     fn add_requested_module_host_defined(
         self,
         ia: *mut IdentifierArray,
         module_name: StringID,
         host_defined_import_type: StringID,
+        phase_defer: bool,
     );
     fn add_import_entry_single(
         self,
@@ -431,6 +478,13 @@ trait JSModuleRecordExt {
         module_name: StringID,
     );
     fn add_import_entry_namespace(
+        self,
+        ia: *mut IdentifierArray,
+        import_name: StringID,
+        local_name: StringID,
+        module_name: StringID,
+    );
+    fn add_import_entry_namespace_defer(
         self,
         ia: *mut IdentifierArray,
         import_name: StringID,
@@ -480,20 +534,47 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         self,
         ia: *mut IdentifierArray,
         module_name: StringID,
+        phase_defer: bool,
     ) {
-        unsafe { JSC_JSModuleRecord__addRequestedModuleNullAttributesPtr(self, ia, module_name) }
+        unsafe {
+            JSC_JSModuleRecord__addRequestedModuleNullAttributesPtr(
+                self,
+                ia,
+                module_name,
+                phase_defer,
+            )
+        }
     }
     #[inline]
-    fn add_requested_module_java_script(self, ia: *mut IdentifierArray, module_name: StringID) {
-        unsafe { JSC_JSModuleRecord__addRequestedModuleJavaScript(self, ia, module_name) }
+    fn add_requested_module_java_script(
+        self,
+        ia: *mut IdentifierArray,
+        module_name: StringID,
+        phase_defer: bool,
+    ) {
+        unsafe {
+            JSC_JSModuleRecord__addRequestedModuleJavaScript(self, ia, module_name, phase_defer)
+        }
     }
     #[inline]
-    fn add_requested_module_web_assembly(self, ia: *mut IdentifierArray, module_name: StringID) {
-        unsafe { JSC_JSModuleRecord__addRequestedModuleWebAssembly(self, ia, module_name) }
+    fn add_requested_module_web_assembly(
+        self,
+        ia: *mut IdentifierArray,
+        module_name: StringID,
+        phase_defer: bool,
+    ) {
+        unsafe {
+            JSC_JSModuleRecord__addRequestedModuleWebAssembly(self, ia, module_name, phase_defer)
+        }
     }
     #[inline]
-    fn add_requested_module_json(self, ia: *mut IdentifierArray, module_name: StringID) {
-        unsafe { JSC_JSModuleRecord__addRequestedModuleJSON(self, ia, module_name) }
+    fn add_requested_module_json(
+        self,
+        ia: *mut IdentifierArray,
+        module_name: StringID,
+        phase_defer: bool,
+    ) {
+        unsafe { JSC_JSModuleRecord__addRequestedModuleJSON(self, ia, module_name, phase_defer) }
     }
     #[inline]
     fn add_requested_module_host_defined(
@@ -501,6 +582,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         ia: *mut IdentifierArray,
         module_name: StringID,
         host_defined_import_type: StringID,
+        phase_defer: bool,
     ) {
         unsafe {
             JSC_JSModuleRecord__addRequestedModuleHostDefined(
@@ -508,6 +590,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
                 ia,
                 module_name,
                 host_defined_import_type,
+                phase_defer,
             )
         }
     }
@@ -551,6 +634,24 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
     ) {
         unsafe {
             JSC_JSModuleRecord__addImportEntryNamespace(
+                self,
+                ia,
+                import_name,
+                local_name,
+                module_name,
+            )
+        }
+    }
+    #[inline]
+    fn add_import_entry_namespace_defer(
+        self,
+        ia: *mut IdentifierArray,
+        import_name: StringID,
+        local_name: StringID,
+        module_name: StringID,
+    ) {
+        unsafe {
+            JSC_JSModuleRecord__addImportEntryNamespaceDefer(
                 self,
                 ia,
                 import_name,

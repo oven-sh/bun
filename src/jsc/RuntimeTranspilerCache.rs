@@ -39,7 +39,8 @@ bun_core::declare_scope!(cache, visible);
 /// Version 18: Include ESM record (module info) with an ES Module, see #15758
 /// Version 19: Sourcemap blob is InternalSourceMap (varint stream + sync points), not VLQ.
 /// Version 20: InternalSourceMap stream is bit-packed windows.
-const EXPECTED_VERSION: u32 = 20;
+/// Version 21: ModuleInfo records a phase byte per requested module (`import defer`).
+const EXPECTED_VERSION: u32 = 21;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

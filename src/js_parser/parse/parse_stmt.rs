@@ -1468,6 +1468,32 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
                 p.lexer.next()?;
 
+                // "import defer * as ns from 'path'"
+                //
+                // https://tc39.es/proposal-defer-import-eval/
+                //
+                // `defer` is only a phase keyword when followed by `*`; in
+                // every other position (`import defer from 'x'`,
+                // `import defer, {x} from 'y'`) it is an ordinary default
+                // binding named `defer`.
+                if default_name == b"defer" && p.lexer.token == T::TAsterisk {
+                    p.lexer.next()?;
+                    p.lexer.expect_contextual_keyword(b"as")?;
+                    stmt = S::Import {
+                        namespace_ref: p.store_name_in_ref(p.lexer.identifier)?,
+                        star_name_loc: Some(p.lexer.loc()),
+                        import_record_index: u32::MAX,
+                        phase_defer: true,
+                        ..Default::default()
+                    };
+                    p.lexer.expect(T::TIdentifier)?;
+                    p.lexer.expect_contextual_keyword(b"from")?;
+
+                    let path = p.parse_path()?;
+                    p.lexer.expect_or_insert_semicolon()?;
+                    return p.process_import_statement(stmt, path, loc, false);
+                }
+
                 if Self::IS_TYPESCRIPT_ENABLED {
                     // Skip over type-only imports
                     if default_name == b"type" {

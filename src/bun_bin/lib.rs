@@ -148,8 +148,6 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
         "leak:bun_sys_jsc::error_jsc::error_to_shell_system_error\n",
         "leak:bun_runtime::api::filesystem_router::FileSystemRouter\n",
         "leak:bun_runtime::dns_jsc::dns::Resolver\n",
-        "leak:bun_runtime::node::node_os::version\n",
-        "leak:bun_runtime::node::node_os::release\n",
         "leak:bun_runtime::node::util::parse_args\n",
         "leak:bun_runtime::node::node_fs_watcher::FSWatcher\n",
         "leak:bun_jsc::web_worker::WebWorker>::create\n",

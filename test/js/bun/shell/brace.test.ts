@@ -77,3 +77,25 @@ describe("$.braces", () => {
     expect(result).toEqual(["lol 😂", "lol 🫵", "lol 🤣"]);
   });
 });
+
+// A brace expansion whose leading variants are empty must still emit one argv
+// word per variant. The shell collapsed a run of empty variants (`{,,,}` ->
+// 1 word instead of 4) because the word-boundary check used "buffer non-empty"
+// as a proxy for "a prior word exists", which is false when prior variants are
+// empty.
+describe("brace expansion emits one argv word per variant (including empty)", () => {
+  const cases: Array<[string, string]> = [
+    ["{,,,}", "[][][][]"],
+    ["{,a,b}", "[][a][b]"],
+    ["{,a}", "[][a]"],
+    ["{a,,b}", "[a][][b]"],
+    ["{a,b,}", "[a][b][]"],
+    ["x{,,}", "[x][x][x]"],
+  ];
+  for (const [pattern, expected] of cases) {
+    test(pattern, async () => {
+      const out = await $`printf "[%s]" ${{ raw: pattern }}`.text();
+      expect(out).toBe(expected);
+    });
+  }
+});

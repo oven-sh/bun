@@ -291,10 +291,16 @@ impl Expansion {
 
         // Spec lines 268-279: push each variant as its own word. The Zig
         // version NUL-terminated then `out.pushResult`; the NodeId port
-        // records word boundaries via `bounds` instead.
+        // records word boundaries via `bounds` instead. A boundary is needed
+        // before every variant except the very first word in `out`, including
+        // empty (leading) variants — the old `!buf.is_empty()` proxy collapsed
+        // a run of empty variants (`{,,,}` produced 1 word instead of 4)
+        // because an empty variant never advances `buf`.
         me.current_out.clear();
-        for s in expanded {
-            if !me.out.buf.is_empty() {
+        let had_prior_word =
+            !me.out.buf.is_empty() || !me.out.bounds.is_empty() || me.out.has_quoted_empty;
+        for (i, s) in expanded.into_iter().enumerate() {
+            if had_prior_word || i > 0 {
                 me.out.bounds.push(me.out.buf.len() as u32);
             }
             me.out.buf.extend_from_slice(&s);

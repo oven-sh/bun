@@ -799,23 +799,30 @@ impl EventLoop {
     /// so any task the HTTP thread posted after the earlier drain — its
     /// `is_shutting_down()` read is non-atomic and can lag — is forwarded into
     /// `self.tasks` for the per-tag release below.
+    ///
+    /// `ManagedTask` entries are deliberately re-queued rather than freed:
+    /// owners (e.g. `SendQueue.close_next_tick` / `after_close_task`) keep raw
+    /// back-pointers that they `cancel()` from `Drop`, and those `Drop`s fire
+    /// during `destructOnExit` (`Subprocess::finalize` → `SendQueue::drop`).
+    /// Freeing the box here would leave those pointers dangling and make
+    /// `cancel()` a heap-use-after-free. `deinit()` runs after `destructOnExit`
+    /// — every owner has cancelled and cleared its pointer by then — so it is
+    /// the correct teardown point for `ManagedTask`s.
     pub fn release_queued_tasks_for_shutdown(&mut self) {
         self.drop_concurrent_cpp_tasks();
+        let mut requeue: Vec<bun_event_loop::Task> = Vec::new();
         while let Some(task) = self.tasks.read_item() {
             if task.tag == bun_event_loop::task_tag::ManagedTask {
-                // SAFETY: every ManagedTask is heap_owned (ManagedTask::new -> heap::into_raw).
-                let managed =
-                    unsafe { bun_core::heap::take(task.ptr.cast::<ManagedTask::ManagedTask>()) };
-                if let (Some(cleanup), Some(ctx)) = (managed.cleanup, managed.ctx) {
-                    cleanup(ctx.as_ptr());
-                }
-                drop(managed);
+                requeue.push(task);
             } else {
                 // SAFETY: tag-specific release (drops JSC handles while the VM
                 // is still live); definer in `bun_runtime::dispatch` matches
                 // the same tag set `tick_queue_with_count` does.
                 unsafe { __bun_release_task_at_shutdown(task) };
             }
+        }
+        for task in requeue {
+            let _ = self.tasks.write_item(task);
         }
     }
 

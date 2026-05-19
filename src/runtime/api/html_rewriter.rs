@@ -82,7 +82,7 @@ fn eat_zig_string(iter: &mut ArgumentsSlice<'_>, global: &JSGlobalObject) -> JsR
     if value.is_undefined_or_null() {
         return Err(global.throw_invalid_arguments(format_args!("Expected string")));
     }
-    Ok(ZigString::from(value.get_zig_string(global)?))
+    Ok(value.get_zig_string(global)?)
 }
 
 /// `wrapInstanceMethod` arm for `jsc.JSValue` (required) — eat next arg or

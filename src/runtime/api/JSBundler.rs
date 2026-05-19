@@ -1138,7 +1138,7 @@ pub mod js_bundler {
             if let Some(compile) = CompileOptions::from_js(
                 global_this,
                 config,
-                this.compile.as_ref().map(|c| c.compile_target.clone()),
+                this.compile.as_ref().map(|c| c.compile_target),
             )? {
                 this.compile = Some(compile);
             }

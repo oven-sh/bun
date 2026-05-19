@@ -1784,7 +1784,7 @@ impl<'a> Repl<'a> {
 
         // Set up parser options with repl_mode enabled
         let mut opts = bun_js_parser::ParserOptions::init(
-            vm.transpiler.options.jsx.clone().into(),
+            vm.transpiler.options.jsx.clone(),
             bun_ast::Loader::Tsx,
         );
         opts.repl_mode = true;

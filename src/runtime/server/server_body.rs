@@ -1665,7 +1665,7 @@ where
         if topic_value.is_undefined_or_null() {
             return Err(global.throw_invalid_arguments(format_args!("Expected string")));
         }
-        let topic = ZigString::from(topic_value.get_zig_string(global)?);
+        let topic = topic_value.get_zig_string(global)?;
         // jsc.JSValue
         let message_value = iter
             .next_eat()

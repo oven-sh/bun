@@ -293,10 +293,7 @@ pub fn write_sourcemap_to_disk(
 
     let mut key = Vec::with_capacity(6 + without_prefix.len());
     write!(&mut key, "bake:/{}", BStr::new(without_prefix)).expect("infallible: in-memory write");
-    source_maps.put(
-        &key,
-        OutputFileIndex::init(u32::try_from(source_map_index).expect("int cast")),
-    )?;
+    source_maps.put(&key, OutputFileIndex::init(source_map_index))?;
     Ok(())
 }
 
@@ -832,7 +829,7 @@ pub fn build_with_vm(
         };
         let any_client_chunks = bundled_outputs_list.iter().any(|file| {
             file.side == Some(bun_bundler::options::Side::Client)
-                && &file.src_path.text[..] != b"bun-framework-react/client.tsx"
+                && file.src_path.text != b"bun-framework-react/client.tsx"
         });
         if any_client_chunks {
             let runtime_file: &OutputFile = &bundled_outputs_list[runtime_file_index as usize];
@@ -1676,7 +1673,7 @@ impl PerThread {
             self.loaded_files.set(id.get() as usize);
             self.all_server_files.as_ref().unwrap().get().put_index(
                 global,
-                u32::try_from(id.get()).expect("int cast"),
+                id.get(),
                 self.module_keys[id.get() as usize].to_js(global)?,
             )?;
         }

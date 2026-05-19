@@ -4936,7 +4936,7 @@ unsafe fn resolve_hook(
             specifier_utf8.slice(),
             source_utf8.slice(),
             bun_core::err!("NameTooLong"),
-            import_kind.into(),
+            import_kind,
         );
         let msg = bun_ast::Msg {
             data: bun_ast::range_data(None, bun_ast::Range::NONE, printed),
@@ -5078,13 +5078,13 @@ unsafe fn resolve_hook(
                 specifier_utf8.slice(),
                 source_utf8.slice(),
                 err,
-                import_kind.into(),
+                import_kind,
             );
             bun_ast::Msg {
                 data: bun_ast::range_data(None, bun_ast::Range::NONE, printed.clone()),
                 metadata: bun_ast::Metadata::Resolve(bun_ast::MetadataResolve {
                     specifier: bun_ast::BabyString::r#in(&printed, specifier_utf8.slice()),
-                    import_kind: import_kind.into(),
+                    import_kind,
                     err,
                 }),
                 ..Default::default()

@@ -2923,12 +2923,9 @@ pub fn pack<const FOR_PUBLISH: bool>(
     };
 
     let normalized_pkg_info: Option<Box<[u8]>> = if FOR_PUBLISH {
-        // `normalized_package` operates on the full T4 `bun_ast::Expr`
-        // (it injects new properties before printing); lift the T2 value-subset
-        // root via the `From` impl. The mutated tree is consumed inside
-        // `normalized_package` (it prints the JSON itself), so the lifted copy
-        // doesn't need to flow back into `json.root`.
-        let mut root_full = bun_ast::Expr::from(json.root);
+        // The mutated tree is consumed inside `normalized_package` (it prints
+        // the JSON itself), so the copy doesn't need to flow back into `json.root`.
+        let mut root_full = json.root;
         Some(Publish::PublishCommand::normalized_package(
             manager,
             &package_name,
@@ -3297,7 +3294,7 @@ fn add_archive_entry(
     if is_package_bin(bins, filename.as_bytes()) {
         perm |= 0o111;
     }
-    entry.set_perm(u32::try_from(perm).expect("int cast"));
+    entry.set_perm(perm);
 
     // '1985-10-26T08:15:00.000Z'
     // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L28
@@ -3564,9 +3561,7 @@ fn edit_root_package_json(
 
     let written = match js_printer::print_json(
         &mut package_json_writer,
-        // `print_json` is monomorphized over the full T4 `Expr`; lift the T2
-        // value-subset root (lossless — every T2 variant maps 1:1).
-        bun_ast::Expr::from(json.root),
+        json.root,
         // shouldn't be used
         &json.source,
         js_printer::PrintJsonOptions {

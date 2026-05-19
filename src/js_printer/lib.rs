@@ -738,6 +738,43 @@ pub fn write_module_id(writer: &mut impl core::fmt::Write, module_id: u32) {
     write!(writer, "{:x}", module_id).expect("unreachable");
 }
 
+/// Pick the shorter of decimal or `<prefix>e<exp>` scientific form for a
+/// non-negative integer. `digits` is the base-10 ASCII of the value (as
+/// produced by [`bun_core::fmt::itoa`]); `scratch` holds the scientific form
+/// and must be large enough for `digits.len() + 1` bytes (one more digit is
+/// replaced by `'e'`, and the exponent is always strictly shorter than the
+/// trailing-zero run it represents when we pick this branch). Returns a
+/// slice into `digits` or `scratch` — whichever is shorter.
+///
+/// This is the sole JS-integer formatting shortener and runs unconditionally;
+/// scientific form is a legal integer literal at every JS target we support.
+pub fn shortest_integer_form<'a>(digits: &'a [u8], scratch: &'a mut [u8]) -> &'a [u8] {
+    // Find the largest `exp` such that `val == prefix * 10^exp`.
+    let trailing_zeros = digits.iter().rev().take_while(|&&c| c == b'0').count();
+    // A lone "0" has no mantissa to strip; anything with <=2 trailing zeros
+    // can't be made shorter (`100` = `1e2`, both 3 chars).
+    if trailing_zeros < 3 || trailing_zeros == digits.len() {
+        return digits;
+    }
+    let prefix = &digits[..digits.len() - trailing_zeros];
+
+    // `<prefix>e<exp>` is `prefix.len() + 1 + exp_digits`. Shorter than
+    // `<prefix><zeros>` (prefix.len() + trailing_zeros) when
+    // `trailing_zeros > 1 + exp_digits`. For an f64-backed u52, `exp ≤ 15`.
+    let mut exp_buf = bun_core::fmt::ItoaBuf::new();
+    let exp_bytes = bun_core::fmt::itoa(&mut exp_buf, trailing_zeros as u64);
+    if exp_bytes.len() + 1 >= trailing_zeros {
+        return digits;
+    }
+
+    debug_assert!(scratch.len() >= prefix.len() + 1 + exp_bytes.len());
+    let (pre, rest) = scratch.split_at_mut(prefix.len());
+    pre.copy_from_slice(prefix);
+    rest[0] = b'e';
+    rest[1..1 + exp_bytes.len()].copy_from_slice(exp_bytes);
+    &scratch[..prefix.len() + 1 + exp_bytes.len()]
+}
+
 // PERF(port): was comptime monomorphization (`comptime CodePointType: type`) — Zig
 // instantiated per code-unit type; Rust callers widen to i32 at the boundary.
 // PERF(port): `ascii_only` is a *runtime* arg (was `const ASCII_ONLY`) so the large
@@ -2672,13 +2709,10 @@ pub mod __gated_printer {
                 // However, they could also be signed or unsigned int 32 (when doing bit shifts)
                 // In this case, it's always going to unsigned since that conversion has already happened.
                 let val = float as u64;
-                if let Some(e) = bun_core::fmt::pow10_exp_1e4_to_1e9(val) {
-                    self.print(b"1e");
-                    self.print(&[b'0' + e]);
-                    return;
-                }
                 let mut buf = bun_core::fmt::ItoaBuf::new();
-                self.print(bun_core::fmt::itoa(&mut buf, val));
+                let digits = bun_core::fmt::itoa(&mut buf, val);
+                let mut sci_buf = [0u8; 24];
+                self.print(shortest_integer_form(digits, &mut sci_buf));
                 return;
             }
 

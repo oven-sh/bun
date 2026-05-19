@@ -1126,12 +1126,20 @@ class Dir {
   }
 
   async *[Symbol.asyncIterator]() {
-    let entries = (this.#entries ??= (await fs.readdir(this.#path, {
-      withFileTypes: true,
-      encoding: this.#options?.encoding,
-      recursive: this.#options?.recursive,
-    })) as DirentType[]);
-    yield* entries;
+    if (this.#handle < 0) throw $ERR_DIR_CLOSED();
+    try {
+      let entries = (this.#entries ??= (await fs.readdir(this.#path, {
+        withFileTypes: true,
+        encoding: this.#options?.encoding,
+        recursive: this.#options?.recursive,
+      })) as DirentType[]);
+      yield* entries;
+    } finally {
+      // Matches Node (lib/internal/fs/dir.js): the iterator always closes the
+      // handle on exit and lets errors (including ERR_DIR_CLOSED from a manual
+      // close inside the loop) propagate out of the iterator.
+      this.closeSync();
+    }
   }
 }
 

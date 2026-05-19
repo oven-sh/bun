@@ -670,3 +670,40 @@ describe("Bun.serve unix socket validation", () => {
     }
   });
 });
+
+describe("app.bundlerOptions validation", () => {
+  test.each([
+    ["bundlerOptions is a string", { bundlerOptions: "hello" }, "'app.bundlerOptions' must be an object"],
+    ["bundlerOptions is a number", { bundlerOptions: 123 }, "'app.bundlerOptions' must be an object"],
+    [
+      "bundlerOptions.server is a number",
+      { bundlerOptions: { server: 123 } },
+      "'app.bundlerOptions.server' must be an object",
+    ],
+    [
+      "bundlerOptions.client is a string",
+      { bundlerOptions: { client: "x" } },
+      "'app.bundlerOptions.client' must be an object",
+    ],
+    ["bundlerOptions.ssr is a bigint", { bundlerOptions: { ssr: 1n } }, "'app.bundlerOptions.ssr' must be an object"],
+    [
+      "bundlerOptions.server.minify is a number",
+      { bundlerOptions: { server: { minify: 123 } } },
+      "'app.bundlerOptions.server.minify' must be a boolean or an object",
+    ],
+  ])("throws when %s", (_, app, message) => {
+    expect(() => {
+      // @ts-expect-error - Testing runtime validation of invalid types
+      using server = serve({ port: 0, app });
+      server.stop();
+    }).toThrow(message);
+  });
+
+  test("does not throw when minify is false", () => {
+    expect(() => {
+      // @ts-expect-error - Testing runtime validation
+      using server = serve({ port: 0, app: { bundlerOptions: { server: { minify: false } } } });
+      server.stop();
+    }).toThrow("'app' is missing 'framework'");
+  });
+});

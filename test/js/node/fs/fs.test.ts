@@ -6,6 +6,7 @@ import {
   getMaxFD,
   isBroken,
   isIntelMacOS,
+  isMacOS,
   isPosix,
   isWindows,
   tempDir,
@@ -2728,6 +2729,229 @@ describe("fs/promises", () => {
     },
     100000,
   );
+
+  // https://github.com/oven-sh/bun/issues/30482 — readdir with
+  // { withFileTypes: true, encoding: "buffer" } previously ignored withFileTypes
+  // and returned a flat Uint8Array[] instead of Dirent[] with Buffer names.
+  describe.concurrent("readdir({ withFileTypes: true, encoding: 'buffer' })", () => {
+    it("readdirSync(string path): Dirent with Buffer name, string parentPath", () => {
+      using dir = tempDir("readdir-buf-dirent-sync-str", {
+        "a.txt": "a",
+        "b.txt": "b",
+      });
+
+      const entries = readdirSync(String(dir), { withFileTypes: true, encoding: "buffer" });
+      expect(entries).toHaveLength(2);
+      for (const entry of entries) {
+        expect(entry).toBeInstanceOf(Dirent);
+        expect(entry.name).toBeInstanceOf(Buffer);
+        // Path was a string → parentPath stays a string.
+        expect(typeof entry.parentPath).toBe("string");
+        expect(entry.parentPath).toBe(String(dir));
+        expect(entry.isFile()).toBe(true);
+      }
+      expect(entries.map(e => (e.name as unknown as Buffer).toString()).sort()).toEqual(["a.txt", "b.txt"]);
+    });
+
+    it("readdirSync(Buffer path): Dirent with Buffer name and Buffer parentPath", () => {
+      using dir = tempDir("readdir-buf-dirent-sync-buf", {
+        "only.txt": "x",
+      });
+
+      const entries = readdirSync(Buffer.from(String(dir)), {
+        withFileTypes: true,
+        encoding: "buffer",
+      });
+      expect(entries).toHaveLength(1);
+      const [entry] = entries;
+      expect(entry).toBeInstanceOf(Dirent);
+      expect(entry.name).toBeInstanceOf(Buffer);
+      expect((entry.name as unknown as Buffer).toString()).toBe("only.txt");
+      // Path was a Buffer → parentPath is a Buffer (independent of encoding).
+      expect(entry.parentPath).toBeInstanceOf(Buffer);
+      expect((entry.parentPath as unknown as Buffer).toString()).toBe(String(dir));
+      expect(entry.isFile()).toBe(true);
+    });
+
+    it("readdir (async callback): Dirent with Buffer name", async () => {
+      using dir = tempDir("readdir-buf-dirent-cb", { "foo.js": "1" });
+      const { promise, resolve, reject } = Promise.withResolvers<Dirent[]>();
+      fs.readdir(String(dir), { withFileTypes: true, encoding: "buffer" }, (err, entries) => {
+        if (err) reject(err);
+        else resolve(entries);
+      });
+      const entries = await promise;
+      expect(entries).toHaveLength(1);
+      expect(entries[0]).toBeInstanceOf(Dirent);
+      expect(entries[0].name).toBeInstanceOf(Buffer);
+      expect((entries[0].name as unknown as Buffer).toString()).toBe("foo.js");
+      expect(typeof entries[0].parentPath).toBe("string");
+      expect(entries[0].parentPath).toBe(String(dir));
+    });
+
+    it("readdir (async callback, Buffer path): Buffer parentPath", async () => {
+      using dir = tempDir("readdir-buf-dirent-cb-buf-path", { "foo.js": "1" });
+      const pathBytes = Buffer.from(String(dir));
+      const { promise, resolve, reject } = Promise.withResolvers<Dirent[]>();
+      fs.readdir(pathBytes, { withFileTypes: true, encoding: "buffer" }, (err, entries) => {
+        if (err) reject(err);
+        else resolve(entries);
+      });
+      const [entry] = await promise;
+      expect(entry).toBeInstanceOf(Dirent);
+      expect(entry.parentPath).toBeInstanceOf(Buffer);
+      expect((entry.parentPath as unknown as Buffer).equals(pathBytes)).toBe(true);
+      expect(entry.name).toBeInstanceOf(Buffer);
+      expect((entry.name as unknown as Buffer).toString()).toBe("foo.js");
+    });
+
+    it("promises.readdir: Dirent with Buffer name", async () => {
+      using dir = tempDir("readdir-buf-dirent-promises", { "bar.ts": "1" });
+      const entries = await promises.readdir(String(dir), {
+        withFileTypes: true,
+        encoding: "buffer",
+      });
+      expect(entries).toHaveLength(1);
+      expect(entries[0]).toBeInstanceOf(Dirent);
+      expect(entries[0].name).toBeInstanceOf(Buffer);
+      expect((entries[0].name as unknown as Buffer).toString()).toBe("bar.ts");
+      expect(typeof entries[0].parentPath).toBe("string");
+      expect(entries[0].parentPath).toBe(String(dir));
+    });
+
+    it("promises.readdir (Buffer path): Buffer parentPath", async () => {
+      using dir = tempDir("readdir-buf-dirent-prom-buf-path", { "bar.ts": "1" });
+      const pathBytes = Buffer.from(String(dir));
+      const [entry] = await promises.readdir(pathBytes, {
+        withFileTypes: true,
+        encoding: "buffer",
+      });
+      expect(entry).toBeInstanceOf(Dirent);
+      expect(entry.parentPath).toBeInstanceOf(Buffer);
+      expect((entry.parentPath as unknown as Buffer).equals(pathBytes)).toBe(true);
+      expect(entry.name).toBeInstanceOf(Buffer);
+      expect((entry.name as unknown as Buffer).toString()).toBe("bar.ts");
+    });
+
+    it("readdirSync recursive: Dirent with Buffer name", () => {
+      using dir = tempDir("readdir-buf-dirent-recursive", {
+        "a.txt": "a",
+        "sub/b.txt": "b",
+      });
+
+      const entries = readdirSync(String(dir), {
+        withFileTypes: true,
+        encoding: "buffer",
+        recursive: true,
+      });
+      expect(entries.length).toBeGreaterThanOrEqual(3);
+      for (const entry of entries) {
+        expect(entry).toBeInstanceOf(Dirent);
+        expect(entry.name).toBeInstanceOf(Buffer);
+        expect(typeof entry.parentPath).toBe("string");
+      }
+      const names = entries.map(e => (e.name as unknown as Buffer).toString()).sort();
+      expect(names).toEqual(["a.txt", "b.txt", "sub"]);
+    });
+
+    it("promises.readdir recursive: Dirent with Buffer name", async () => {
+      using dir = tempDir("readdir-buf-dirent-promises-recursive", {
+        "a.txt": "a",
+        "sub/b.txt": "b",
+      });
+
+      const entries = await promises.readdir(String(dir), {
+        withFileTypes: true,
+        encoding: "buffer",
+        recursive: true,
+      });
+      expect(entries.length).toBeGreaterThanOrEqual(3);
+      for (const entry of entries) {
+        expect(entry).toBeInstanceOf(Dirent);
+        expect(entry.name).toBeInstanceOf(Buffer);
+        expect(typeof entry.parentPath).toBe("string");
+      }
+      const names = entries.map(e => (e.name as unknown as Buffer).toString()).sort();
+      expect(names).toEqual(["a.txt", "b.txt", "sub"]);
+    });
+
+    // Control: the two options independently still behave correctly.
+    it("withFileTypes only (default encoding) still returns Dirent with string name", () => {
+      using dir = tempDir("readdir-dirent-string", { "hello.txt": "h" });
+      const entries = readdirSync(String(dir), { withFileTypes: true });
+      expect(entries).toHaveLength(1);
+      expect(entries[0]).toBeInstanceOf(Dirent);
+      expect(typeof entries[0].name).toBe("string");
+      expect(entries[0].name).toBe("hello.txt");
+    });
+
+    it("encoding=buffer only (no withFileTypes) still returns a Uint8Array[]", () => {
+      using dir = tempDir("readdir-buf-no-dirent", { "hello.txt": "h" });
+      const entries = readdirSync(String(dir), { encoding: "buffer" });
+      expect(entries).toHaveLength(1);
+      expect(entries[0]).toBeInstanceOf(Uint8Array);
+      expect(entries[0]).not.toBeInstanceOf(Dirent as any);
+      expect(Buffer.from(entries[0]).toString()).toBe("hello.txt");
+    });
+
+    // name-as-buffer (encoding option) and path-as-buffer (path arg type) are
+    // independent flags. Storage representation must track `path_is_buffer`,
+    // not `encoding`, or non-ASCII paths produce mojibake / lossy output.
+    it.skipIf(isWindows)("non-ASCII string path + encoding='buffer' → parentPath is the original string", () => {
+      using dir = tempDir("readdir-café-", { "a.txt": "x" });
+      const [entry] = readdirSync(String(dir), { withFileTypes: true, encoding: "buffer" });
+      expect(entry).toBeInstanceOf(Dirent);
+      expect(typeof entry.parentPath).toBe("string");
+      expect(entry.parentPath).toBe(String(dir));
+      expect(entry.name).toBeInstanceOf(Buffer);
+      expect((entry.name as unknown as Buffer).toString()).toBe("a.txt");
+    });
+
+    it.skipIf(isWindows)("non-ASCII Buffer path + encoding='buffer' → parentPath has original bytes", () => {
+      using dir = tempDir("readdir-ünïcode-", { "a.txt": "x" });
+      const pathBytes = Buffer.from(String(dir));
+      const [entry] = readdirSync(pathBytes, { withFileTypes: true, encoding: "buffer" });
+      expect(entry).toBeInstanceOf(Dirent);
+      expect(entry.parentPath).toBeInstanceOf(Buffer);
+      expect(entry.parentPath.equals(pathBytes)).toBe(true);
+      expect(entry.name).toBeInstanceOf(Buffer);
+      expect((entry.name as unknown as Buffer).toString()).toBe("a.txt");
+    });
+
+    it.skipIf(isWindows)("non-ASCII Buffer path + default encoding → parentPath is a Buffer, name is a string", () => {
+      using dir = tempDir("readdir-ünïcode2-", { "a.txt": "x" });
+      const pathBytes = Buffer.from(String(dir));
+      const [entry] = readdirSync(pathBytes, { withFileTypes: true });
+      expect(entry).toBeInstanceOf(Dirent);
+      // Path arg was a Buffer → parentPath is a Buffer, independent of encoding.
+      expect(entry.parentPath).toBeInstanceOf(Buffer);
+      expect(entry.parentPath.equals(pathBytes)).toBe(true);
+      // encoding defaulted to utf8 → name is a string.
+      expect(typeof entry.name).toBe("string");
+      expect(entry.name).toBe("a.txt");
+    });
+
+    // Only Linux/BSD filesystems accept arbitrary bytes in paths. Windows
+    // paths are UTF-16 and macOS APFS/HFS+ require valid UTF-8 (the kernel
+    // rejects invalid sequences with EILSEQ), so skip on both.
+    it.skipIf(isWindows || isMacOS)("Buffer path with raw non-UTF-8 bytes → parentPath preserves bytes 1:1", () => {
+      using parent = tempDir("readdir-raw-", {});
+      // Create a subdirectory whose name contains a raw 0xFF byte (not valid UTF-8).
+      const rawSub = Buffer.concat([Buffer.from(String(parent) + "/"), Buffer.from([0xff, 0x41, 0x42])]);
+      fs.mkdirSync(rawSub);
+      fs.writeFileSync(Buffer.concat([rawSub, Buffer.from("/a.txt")]), "x");
+
+      const [entry] = readdirSync(rawSub, { withFileTypes: true });
+      expect(entry).toBeInstanceOf(Dirent);
+      expect(entry.parentPath).toBeInstanceOf(Buffer);
+      expect(entry.parentPath.equals(rawSub)).toBe(true);
+      expect(entry.name).toBe("a.txt");
+
+      try {
+        fs.rmSync(rawSub, { recursive: true, force: true });
+      } catch {}
+    });
+  });
 
   for (let withFileTypes of [false, true] as const) {
     const iterCount = 200;

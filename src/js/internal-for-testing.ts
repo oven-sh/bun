@@ -313,3 +313,25 @@ export const fetchH3Internals = {
 export const fileSinkInternals = {
   liveCount: $newZigFunction("runtime/webcore/FileSink.zig", "TestingAPIs.fileSinkLiveCount", 0) as () => number,
 };
+
+export const packageJsonInternals = {
+  /**
+   * Drives `SideEffects::has_side_effects` on a synthetic `(package_dir,
+   * patterns, runtime_path)` triple so tests can exercise the Windows-path
+   * matching fix for #30320 on any platform.
+   *
+   * Pass a Windows-style `dir` (e.g. `C:\\pkg\\`) and `path` to simulate
+   * Windows behavior — on Linux `path.text` is all `/`, so the bug can
+   * only be reproduced by feeding synthesised strings directly.
+   *
+   * `usePreFix: true` routes through the pre-#30320 `r_fs.join` code path
+   * so tests can assert the bug actually regressed before the fix.
+   *
+   * Returns `true` iff `path` matches any pattern.
+   */
+  sideEffectsHasSideEffects: $newZigFunction(
+    "resolver/package_json.zig",
+    "PackageJSON.SideEffects.TestingAPIs.sideEffectsHasSideEffects",
+    3,
+  ) as (dir: string, patterns: string[], path: string, usePreFix?: boolean) => boolean,
+};

@@ -62,6 +62,12 @@ pub use bun_patch_jsc::testing::patch_apply as patch_patch_testing_ap_is_apply;
 pub use bun_patch_jsc::testing::patch_make_diff as patch_patch_testing_ap_is_make_diff;
 pub use bun_patch_jsc::testing::patch_parse as patch_patch_testing_ap_is_parse;
 
+// ── src/resolver/package_json.zig SideEffects TestingAPIs ───────────────────
+// Drives `SideEffects::has_side_effects` with synthetic Windows-style paths
+// from `bun:internal-for-testing` so #30320's regression test can reproduce
+// the Windows-path mismatch on any host. See `jsc/resolver_jsc.rs`.
+pub use bun_jsc::resolver_jsc::side_effects_testing::side_effects_has_side_effects as resolver_package_json_package_json_side_effects_testing_ap_is_side_effects_has_side_effects;
+
 // ── src/sourcemap/InternalSourceMap.zig TestingAPIs ─────────────────────────
 pub use bun_sourcemap_jsc::internal_jsc::testing_find as sourcemap_internal_source_map_testing_ap_is_find;
 pub use bun_sourcemap_jsc::internal_jsc::testing_from_vlq as sourcemap_internal_source_map_testing_ap_is_from_vlq;

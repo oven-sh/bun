@@ -1635,23 +1635,13 @@ impl<'a> Resolver<'a> {
                 result.primary_side_effects_data = match &existing.side_effects {
                     PJSideEffects::Unspecified => SideEffects::HasSideEffects,
                     PJSideEffects::False => SideEffects::NoSideEffectsPackageJson,
-                    PJSideEffects::Map(map) => {
-                        if map.contains_key(&crate::package_json::StringHashMapUnownedKey::init(
-                            path.text(),
-                        )) {
-                            SideEffects::HasSideEffects
-                        } else {
-                            SideEffects::NoSideEffectsPackageJson
-                        }
-                    }
-                    PJSideEffects::Glob(_) => {
-                        if existing.side_effects.has_side_effects(path.text()) {
-                            SideEffects::HasSideEffects
-                        } else {
-                            SideEffects::NoSideEffectsPackageJson
-                        }
-                    }
-                    PJSideEffects::Mixed(_) => {
+                    // Route all three Map/Glob/Mixed branches through
+                    // `has_side_effects`. Stored pattern keys are slash-
+                    // normalized at parse time, so the runtime lookup must
+                    // normalize `path.text` the same way — bypassing that
+                    // call was the bug that dropped every matched file on
+                    // Windows. See #30320.
+                    PJSideEffects::Map(_) | PJSideEffects::Glob(_) | PJSideEffects::Mixed(_) => {
                         if existing.side_effects.has_side_effects(path.text()) {
                             SideEffects::HasSideEffects
                         } else {
@@ -1675,23 +1665,9 @@ impl<'a> Resolver<'a> {
                     result.primary_side_effects_data = match &package_json.side_effects {
                         PJSideEffects::Unspecified => SideEffects::HasSideEffects,
                         PJSideEffects::False => SideEffects::NoSideEffectsPackageJson,
-                        PJSideEffects::Map(map) => {
-                            if map.contains_key(
-                                &crate::package_json::StringHashMapUnownedKey::init(path.text()),
-                            ) {
-                                SideEffects::HasSideEffects
-                            } else {
-                                SideEffects::NoSideEffectsPackageJson
-                            }
-                        }
-                        PJSideEffects::Glob(_) => {
-                            if package_json.side_effects.has_side_effects(path.text()) {
-                                SideEffects::HasSideEffects
-                            } else {
-                                SideEffects::NoSideEffectsPackageJson
-                            }
-                        }
-                        PJSideEffects::Mixed(_) => {
+                        PJSideEffects::Map(_)
+                        | PJSideEffects::Glob(_)
+                        | PJSideEffects::Mixed(_) => {
                             if package_json.side_effects.has_side_effects(path.text()) {
                                 SideEffects::HasSideEffects
                             } else {

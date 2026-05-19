@@ -19,6 +19,8 @@
 #define UWS_HTTPROUTER_HPP
 
 #include <map>
+#include <unordered_map>
+#include <array>
 #include <vector>
 #include <cstring>
 #include <string_view>
@@ -53,14 +55,69 @@ private:
     std::string_view urlSegmentVector[MAX_URL_SEGMENTS] = {};
     int urlSegmentTop = -1;
 
+    /* Once a node reaches this many children, getNode()/findHandler() build a hash
+     * index over them so route registration stays linear instead of quadratic when
+     * many routes share a parent (e.g. thousands of top-level or same-prefix routes). */
+    static constexpr size_t CHILD_INDEX_THRESHOLD = 16;
+
     /* The matching tree */
     struct Node {
         std::string name = {};
         std::vector<std::unique_ptr<Node>> children = {};
         std::vector<uint32_t> handlers = {};
         bool isHighPriority = false;
+        /* Lazily built once `children` reaches CHILD_INDEX_THRESHOLD. Maps a child's
+         * name to {normal-priority child, high-priority child} (either may be null).
+         * Kept in sync with `children`; reordering `children` does not invalidate it. */
+        std::unique_ptr<std::unordered_map<std::string, std::array<Node *, 2>>> childIndex;
 
-        explicit constexpr Node(std::string name) noexcept : name(std::move(name)) {}
+        explicit Node(std::string name) noexcept : name(std::move(name)) {}
+
+        Node *findChild(std::string_view childName, bool isHighPriority) const {
+            if (childIndex) {
+                auto it = childIndex->find(std::string(childName));
+                return it != childIndex->end() ? it->second[isHighPriority] : nullptr;
+            }
+            for (const std::unique_ptr<Node> &child : children) {
+                if (child->name == childName && child->isHighPriority == isHighPriority) {
+                    return child.get();
+                }
+            }
+            return nullptr;
+        }
+
+        /* Call after `child` has been inserted into `children`. */
+        void registerChild(Node *child) {
+            if (!childIndex) {
+                if (children.size() < CHILD_INDEX_THRESHOLD) {
+                    return;
+                }
+                childIndex = std::make_unique<std::unordered_map<std::string, std::array<Node *, 2>>>();
+                childIndex->reserve(children.size());
+                for (const std::unique_ptr<Node> &existing : children) {
+                    (*childIndex)[existing->name][existing->isHighPriority] = existing.get();
+                }
+                return;
+            }
+            (*childIndex)[child->name][child->isHighPriority] = child;
+        }
+
+        /* Call before `child` is erased from `children`. */
+        void unregisterChild(Node *child) {
+            if (!childIndex) {
+                return;
+            }
+            auto it = childIndex->find(child->name);
+            if (it == childIndex->end()) {
+                return;
+            }
+            if (it->second[child->isHighPriority] == child) {
+                it->second[child->isHighPriority] = nullptr;
+            }
+            if (!it->second[0] && !it->second[1]) {
+                childIndex->erase(it);
+            }
+        }
     } root {"rootNode"};
 
     /* Sort wildcards after alphanum */
@@ -79,22 +136,23 @@ private:
 
     /* Advance from parent to child, adding child if necessary */
     Node *getNode(Node *parent, std::string_view child, bool isHighPriority) {
-        for (const std::unique_ptr<Node> &node : parent->children) {
-            if (node->name == child && node->isHighPriority == isHighPriority) {
-                return node.get();
-            }
+        if (Node *existing = parent->findChild(child, isHighPriority)) {
+            return existing;
         }
 
         /* Insert sorted, but keep order if parent is root (we sort methods by priority elsewhere) */
         auto newNode = std::make_unique<Node>(std::string(child));
         newNode->isHighPriority = isHighPriority;
+        Node *newNodePtr = newNode.get();
         auto iter = std::upper_bound(parent->children.begin(), parent->children.end(), newNode, [parent, this](auto &a, auto &b) {
             if (a->isHighPriority != b->isHighPriority) {
                 return a->isHighPriority;
             }
             return !b->name.empty() && (parent != &root) && (lexicalOrder(b->name) < lexicalOrder(a->name));
         });
-        return parent->children.emplace(iter, std::move(newNode))->get();
+        parent->children.emplace(iter, std::move(newNode));
+        parent->registerChild(newNodePtr);
+        return newNodePtr;
     }
 
     /* Basically a pre-allocated stack */
@@ -213,14 +271,9 @@ private:
                 Node *n = node.get();
                 for (int i = 0; !getUrlSegment(i).second; i++) {
                     /* Go to next segment or quit */
-                    std::string segment(getUrlSegment(i).first);
-                    Node *next = nullptr;
-                    for (const std::unique_ptr<Node> &child : n->children) {
-                        if (((segment.starts_with(':') && child->name.starts_with(':')) || child->name == segment) && child->isHighPriority == (priority == HIGH_PRIORITY)) {
-                            next = child.get();
-                            break;
-                        }
-                    }
+                    std::string_view segment = getUrlSegment(i).first;
+                    /* add() strips parameter segments down to ":", so look that up directly */
+                    Node *next = n->findChild(segment.starts_with(':') ? std::string_view(":") : segment, priority == HIGH_PRIORITY);
                     if (!next) {
                         return UINT32_MAX;
                     }
@@ -345,6 +398,7 @@ public:
 
             /* If we have no children and no handlers, remove us from the parent->children list */
             if (!node->handlers.size() && !node->children.size()) {
+                parent->unregisterChild(node);
                 parent->children.erase(std::find_if(parent->children.begin(), parent->children.end(), [node](const std::unique_ptr<Node> &a) {
                     return a.get() == node;
                 }));

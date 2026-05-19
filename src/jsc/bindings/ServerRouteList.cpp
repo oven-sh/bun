@@ -100,7 +100,7 @@ private:
         : Base(vm, structure)
         , m_routes(callbacks.size())
         , m_paramsObjectStructures(paths.size())
-        , m_pathIdentifierRanges(paths.size() * 2)
+        , m_pathIdentifierRanges(paths.size())
     {
         ASSERT(callbacks.size() == paths.size());
     }

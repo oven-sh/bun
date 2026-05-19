@@ -1484,6 +1484,19 @@ fn NewPrinter(
             const floored: f64 = @floor(float);
             const remainder: f64 = (float - floored);
             const is_integer = remainder == 0;
+
+            // When minifying JS, let printFloatSmart compare `{d}` and `{e}`
+            // forms for every value — otherwise integer fast-paths below
+            // (e.g. `2000000000` → 10 chars) would bypass the `{e}` option
+            // (`2e9` → 3 chars). The explicit switch only shortens a handful
+            // of round powers of ten, missing the general case.
+            if ((p.options.minify_whitespace or p.options.minify_syntax) and
+                comptime !is_json)
+            {
+                p.printFloatSmart(float);
+                return;
+            }
+
             if (float < std.math.maxInt(u52) and is_integer) {
                 @setFloatMode(.optimized);
                 // In JavaScript, numbers are represented as 64 bit floats
@@ -1572,13 +1585,79 @@ fn NewPrinter(
                         formatUnsignedIntegerBetween(10, buf, val);
                         p.writer.advance(10);
                     },
-                    else => p.fmt("{d}", .{val}) catch unreachable,
+                    else => p.printFloatSmart(float),
                 }
 
                 return;
             }
 
-            p.fmt("{d}", .{float}) catch {};
+            p.printFloatSmart(float);
+        }
+
+        /// Print a non-negative f64 using the default decimal formatter, but
+        /// when minifying switch to scientific notation (or drop a leading
+        /// `0.`) whenever the alternative form is strictly shorter. Mirrors
+        /// what esbuild does in its printer — without this, `1e300` expands
+        /// to 301 digits.
+        fn printFloatSmart(p: *Printer, float: f64) void {
+            // JSON numbers can't have a bare leading `.` (`.5` is not valid
+            // JSON) and our JSON callers don't need the extra byte savings,
+            // so the optimisation is limited to JS output. Non-minified JS
+            // also keeps the historical `{d}` shape so source maps / test
+            // snapshots that assume decimal form still match.
+            if (comptime is_json) {
+                p.fmt("{d}", .{float}) catch {};
+                return;
+            }
+            if (!p.options.minify_whitespace and !p.options.minify_syntax) {
+                p.fmt("{d}", .{float}) catch {};
+                return;
+            }
+
+            // 64 bytes fits any f64 scientific form ("-1.7976...e308" etc.).
+            // `{d}` can be longer for huge integer-valued floats (up to ~310
+            // digits for f64::MAX), so size the decimal buffer accordingly.
+            var dec_buf: [512]u8 = undefined;
+            var sci_buf: [64]u8 = undefined;
+
+            const dec_full = std.fmt.bufPrint(&dec_buf, "{d}", .{float}) catch {
+                // Unreachable in practice — the buffer is larger than any
+                // shortest round-trip decimal for f64. Fall back to the
+                // existing formatter rather than crashing the printer.
+                p.fmt("{d}", .{float}) catch {};
+                return;
+            };
+            const sci_full = std.fmt.bufPrint(&sci_buf, "{e}", .{float}) catch {
+                p.print(dec_full);
+                return;
+            };
+
+            // Transform the decimal form: "0.5" → ".5". Saves one byte with
+            // no behavioural change. JS tokenises `.5` identically to `0.5`.
+            const dec = if (dec_full.len >= 2 and dec_full[0] == '0' and dec_full[1] == '.')
+                dec_full[1..]
+            else
+                dec_full;
+
+            // Transform Zig's scientific form into JS-canonical scientific.
+            // Zig writes `3.14159e0`, but a JS integer `3` shouldn't become
+            // `3e0` (3 vs 4 bytes) — drop a trailing `e0`. Everything else
+            // (`1e300`, `1.5e20`, `1e-5`) already lines up with JS syntax.
+            var sci: []const u8 = sci_full;
+            if (bun.strings.indexOfChar(sci, 'e')) |e_pos| {
+                const exponent = sci[e_pos + 1 ..];
+                if (bun.strings.eqlComptime(exponent, "0")) {
+                    // `3.14159e0` → `3.14159`, `5e0` → `5`
+                    sci = sci[0..e_pos];
+                }
+            }
+
+            // Prefer decimal on ties to match esbuild and keep output stable.
+            if (sci.len < dec.len) {
+                p.print(sci);
+            } else {
+                p.print(dec);
+            }
         }
 
         pub fn printStringCharactersUTF8(e: *Printer, text: []const u8, quote: u8) void {

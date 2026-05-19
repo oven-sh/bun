@@ -11,7 +11,9 @@ const {
   isAbortError,
   emitErrorNextTickIfErrorListenerNT,
   kEmptyObject,
+  getIsNextIncomingMessageAuthorized,
   getIsNextIncomingMessageHTTPS,
+  setIsNextIncomingMessageAuthorized,
   setIsNextIncomingMessageHTTPS,
   NodeHTTPBodyReadState,
   emitEOFIncomingMessage,
@@ -161,8 +163,11 @@ function IncomingMessage(req, options = defaultIncomingOpts) {
         : false;
 
     if (getIsNextIncomingMessageHTTPS()) {
-      this.socket.encrypted = true;
+      const sock = this.socket;
+      sock.encrypted = true;
+      sock.authorized = getIsNextIncomingMessageAuthorized();
       setIsNextIncomingMessageHTTPS(false);
+      setIsNextIncomingMessageAuthorized(false);
     }
   }
 

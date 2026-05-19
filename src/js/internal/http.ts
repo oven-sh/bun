@@ -160,6 +160,15 @@ function setIsNextIncomingMessageHTTPS(value) {
   isNextIncomingMessageHTTPS = value;
 }
 
+// Tracks whether the next HTTPS IncomingMessage had its certificate validated
+let isNextIncomingMessageAuthorized = false;
+function getIsNextIncomingMessageAuthorized() {
+  return isNextIncomingMessageAuthorized;
+}
+function setIsNextIncomingMessageAuthorized(value) {
+  isNextIncomingMessageAuthorized = value;
+}
+
 function callCloseCallback(self) {
   if (self[kCloseCallback]) {
     self[kCloseCallback]();
@@ -500,6 +509,7 @@ export {
   firstWriteSymbol,
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
   getHeader,
+  getIsNextIncomingMessageAuthorized,
   getIsNextIncomingMessageHTTPS,
   getMaxHTTPHeaderSize,
   getRawKeys,
@@ -549,6 +559,7 @@ export {
   runSymbol,
   serverSymbol,
   setHeader,
+  setIsNextIncomingMessageAuthorized,
   setIsNextIncomingMessageHTTPS,
   setMaxHTTPHeaderSize,
   setRequestTimeout,

@@ -376,12 +376,7 @@ mod darwin {
             | DISPATCH_MEMORYPRESSURE_PROC_LIMIT_WARN
             | DISPATCH_MEMORYPRESSURE_PROC_LIMIT_CRITICAL;
         let src_type = core::ptr::addr_of!(_dispatch_source_type_memorypressure);
-        install_source(
-            vm,
-            src_type,
-            mask,
-            "DISPATCH_SOURCE_TYPE_MEMORYPRESSURE",
-        );
+        install_source(vm, src_type, mask, "DISPATCH_SOURCE_TYPE_MEMORYPRESSURE");
     }
 
     fn install_source(

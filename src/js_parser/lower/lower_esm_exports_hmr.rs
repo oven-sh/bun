@@ -561,6 +561,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 items,
                 namespace_ref,
                 star_name_loc,
+                phase_defer: false,
             },
             loc,
         ));

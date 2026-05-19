@@ -230,7 +230,7 @@ pub fn filter<'a>(
 
     for (idx, records) in import_records.iter().enumerate() {
         let importer = u32::try_from(idx).unwrap();
-        for record in records.slice() {
+        for record in records.as_slice() {
             let dep = record.source_index;
             if !dep.is_valid() || dep.is_runtime() {
                 continue;

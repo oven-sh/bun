@@ -390,15 +390,15 @@ pub mod registry {
                             // Bearer Token
                             if segment == b"_authToken" {
                                 registry.token = value.into();
-                                url.pathname = pathname.into();
-                                url.path = pathname.into();
+                                url.pathname = pathname;
+                                url.path = pathname;
                                 break 'outer;
                             }
 
                             if segment == b"_auth" {
                                 auth = value;
-                                url.pathname = pathname.into();
-                                url.path = pathname.into();
+                                url.pathname = pathname;
+                                url.path = pathname;
                                 break 'outer;
                             }
 
@@ -427,8 +427,8 @@ pub mod registry {
                                         registry.token = value.into();
                                         pathname = &pathname[..last_slash as usize + 1];
                                         needs_normalize = true;
-                                        url.pathname = pathname.into();
-                                        url.path = pathname.into();
+                                        url.pathname = pathname;
+                                        url.path = pathname;
                                         break 'outer;
                                     }
 
@@ -436,8 +436,8 @@ pub mod registry {
                                         auth = value;
                                         pathname = &pathname[..last_slash as usize + 1];
                                         needs_normalize = true;
-                                        url.pathname = pathname.into();
-                                        url.path = pathname.into();
+                                        url.pathname = pathname;
+                                        url.path = pathname;
                                         break 'outer;
                                     }
 
@@ -445,8 +445,8 @@ pub mod registry {
                                         registry.username = value.into();
                                         pathname = &pathname[..last_slash as usize + 1];
                                         needs_normalize = true;
-                                        url.pathname = pathname.into();
-                                        url.path = pathname.into();
+                                        url.pathname = pathname;
+                                        url.path = pathname;
                                         break 'outer;
                                     }
 
@@ -454,8 +454,8 @@ pub mod registry {
                                         registry.password = value.into();
                                         pathname = &pathname[..last_slash as usize + 1];
                                         needs_normalize = true;
-                                        url.pathname = pathname.into();
-                                        url.path = pathname.into();
+                                        url.pathname = pathname;
+                                        url.path = pathname;
                                         break 'outer;
                                     }
                                 }
@@ -464,8 +464,8 @@ pub mod registry {
 
                         // PORT NOTE: reshaped for borrowck — Zig's `defer { url.pathname = pathname; url.path = pathname; }`
                         // is applied at every `break 'outer` above and once more here at fallthrough.
-                        url.pathname = pathname.into();
-                        url.path = pathname.into();
+                        url.pathname = pathname;
+                        url.path = pathname;
                     }
 
                     registry.username = env.get_auto(&registry.username).into();
@@ -3248,7 +3248,7 @@ impl PackageManifest {
         );
         result.pkg.releases.values = PackageVersionList::init(
             &versioned_packages,
-            &versioned_packages[all_versioned_package_releases_range.clone()],
+            &versioned_packages[all_versioned_package_releases_range],
         );
 
         result.pkg.prereleases.keys = VersionSlice::init(
@@ -3257,7 +3257,7 @@ impl PackageManifest {
         );
         result.pkg.prereleases.values = PackageVersionList::init(
             &versioned_packages,
-            &versioned_packages[all_versioned_package_prereleases_range.clone()],
+            &versioned_packages[all_versioned_package_prereleases_range],
         );
 
         let max_versions_count = all_release_versions_range

@@ -7,7 +7,6 @@ leak:JSC::Identifier::fromString
 leak:jsc.JSGlobalObject.JSGlobalObject.create
 leak:Zig__GlobalObject__create
 leak:_objc_msgSend_uncached
-leak:WTF::fastMalloc
 leak:WTF::AutomaticThread::start
 leak:Bun__transpileFile
 leak:WTF::SymbolRegistry::symbolForKey
@@ -47,12 +46,10 @@ leak:Bun__Path__resolve
 leak:Zig::GlobalObject::moduleLoaderImportModule
 leak:bake.FrameworkRouter.JSFrameworkRouter.getFileIdForRouter
 leak:runtime.webcore.Blob.findOrCreateFileFromPath__anon
-leak:BunString::toWTFString(BunString::ZeroCopyTag)
 leak:runtime.node.node_fs_binding.Bindings(.mkdtemp).runSync
 leak:jsc.ModuleLoader.fetchBuiltinModule
 leak:boringssl.boringssl.checkX509ServerIdentity
 leak:cli.pack_command.bindings.jsReadTarball
-leak:ZigString__toErrorInstance
 leak:JSC::moduleLoaderModuleDeclarationInstantiation
 leak:JSC::arrayProtoFuncSort
 leak:bindgen_Fmt_jsFmtString

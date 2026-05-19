@@ -840,7 +840,7 @@ pub fn setup_global_dir(manager: &mut PackageManager, ctx: &Command::Context) ->
         .append(result.as_bytes_with_nul())?;
     // SAFETY: `path` includes the trailing NUL (we appended `as_bytes_with_nul`)
     // and lives for program lifetime in the dirname store.
-    manager.options.bin_path = ZStr::from_slice_with_nul(&path[..]);
+    manager.options.bin_path = ZStr::from_slice_with_nul(path);
     Ok(())
 }
 

@@ -223,7 +223,7 @@ impl<'a> Snapshots<'a> {
         // duration of the runner. Per `VirtualMachine::get` doc, callers form a short-lived borrow.
         let vm = VirtualMachine::get().as_mut();
         let opts = js_parser::ParserOptions::init(
-            vm.transpiler.options.jsx.clone().into(),
+            vm.transpiler.options.jsx.clone(),
             bun_ast::Loader::Js,
         );
         // PERF(port): Zig used `this.allocator` (default_allocator). Thread a per-call arena
@@ -286,7 +286,7 @@ impl<'a> Snapshots<'a> {
 
         // TODO: when common js transform changes, keep this updated or add flag to support this version
 
-        for part in ast.parts.slice_mut() {
+        for part in ast.parts.as_mut_slice() {
             // `part.stmts` is an arena-owned `StoreSlice<Stmt>`; arena outlives this
             // loop and `ast` is owned here, so unique access is upheld.
             for stmt in part.stmts.slice_mut() {
@@ -491,6 +491,8 @@ impl<'a> Snapshots<'a> {
                 }
 
                 bun_core::scoped_log!(inline_snapshot, "Finding byte for {}/{}", ils.line, ils.col);
+                // c_ulong is u32 on Windows (LLP64); widen explicitly.
+                #[allow(clippy::useless_conversion)]
                 let Some(byte_offset_add) = bun_ast::Source::line_col_to_byte_offset(
                     &file_text[last_byte..],
                     u64::from(last_line),
@@ -571,7 +573,7 @@ impl<'a> Snapshots<'a> {
                     // PORT NOTE: `ParserOptions` isn't `Clone`; rebuild per-iteration
                     // (Zig passed by value-copy).
                     let opts = js_parser::ParserOptions::init(
-                        vm.transpiler.options.jsx.clone().into(),
+                        vm.transpiler.options.jsx.clone(),
                         bun_ast::Loader::Js,
                     );
                     // PORT NOTE: `P::init` takes an out-param (Zig:

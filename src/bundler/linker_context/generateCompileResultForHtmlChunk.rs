@@ -424,7 +424,7 @@ fn generate_compile_result_for_html_chunk_impl<'a>(
     let compile_to_standalone_html = c.options.compile_to_standalone_html;
     let has_dev_server = c.dev_server.is_some();
     let contents: &[u8] = &sources[source_index as usize].contents;
-    let records = import_records[source_index as usize].slice();
+    let records = import_records[source_index as usize].as_slice();
 
     let mut html_loader = HTMLLoader {
         linker: c,

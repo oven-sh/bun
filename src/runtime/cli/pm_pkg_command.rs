@@ -178,7 +178,7 @@ impl PmPkgCommand {
         };
 
         Ok(PackageJson {
-            root: result.root.into(),
+            root: result.root,
             contents,
             source,
             indentation: result.indentation,
@@ -791,7 +791,7 @@ impl PmPkgCommand {
             if let Ok(json_expr) =
                 json::parse_package_json_utf8(&temp_source, &mut temp_log, dummy_bump())
             {
-                return Ok(json_expr.into());
+                return Ok(json_expr);
             } else {
                 let data: &[u8] = dummy_bump().alloc_slice_copy(value);
                 return Ok(Expr::init(E::String::init(data), Loc::EMPTY));

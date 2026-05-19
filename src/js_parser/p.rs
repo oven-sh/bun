@@ -156,10 +156,12 @@ impl<'a> ImportRecordList<'a> {
     /// Drop then ran element destructors on records the returned `Ast` still
     /// pointed at. This adapter restores Zig's move-and-zero semantics for both
     /// the bump-backed and externally-borrowed variants.
-    pub fn move_to_baby_list(&mut self, arena: &'a Bump) -> Vec<ImportRecord> {
+    pub fn move_to_baby_list(&mut self, arena: &'a Bump) -> BumpVec<'a, ImportRecord> {
         match core::mem::replace(self, Self::Owned(BumpVec::new_in(arena))) {
-            Self::Owned(v) => Vec::from_bump_vec(v),
-            Self::Borrowed(v) => core::mem::take(v),
+            Self::Owned(v) => v,
+            // SCAN_ONLY path never reaches `to_ast`, so `Borrowed` never hits
+            // this arm at runtime; the copy keeps the type checker happy.
+            Self::Borrowed(v) => bun_alloc::vec_from_iter_in(v.drain(..), arena),
         }
     }
 }
@@ -2095,6 +2097,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 is_single_line: true,
                 default_name: None,
                 star_name_loc: None,
+                phase_defer: false,
             },
             bun_ast::Loc::default(),
         );
@@ -2233,6 +2236,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 is_single_line: true,
                 default_name: None,
                 star_name_loc: None,
+                phase_defer: false,
             },
             bun_ast::Loc::default(),
         );
@@ -2396,6 +2400,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     is_single_line: false,
                     default_name: None,
                     star_name_loc: None,
+                    phase_defer: false,
                 },
                 bun_ast::Loc::EMPTY,
             )
@@ -4096,6 +4101,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             None
         };
 
+        // `import defer` grammatically admits only `* as ns` — no default
+        // binding, no named clause. The parser guarantees this by
+        // construction; assert it here so any future S::Import producer
+        // that sets `phase_defer` without upholding the shape is caught
+        // immediately rather than surfacing as odd printer output.
+        debug_assert!(
+            !stmt.phase_defer
+                || (stmt.star_name_loc.is_some()
+                    && stmt.default_name.is_none()
+                    && stmt.items.is_empty())
+        );
+
         stmt.import_record_index = self.add_import_record(ImportKind::Stmt, path.loc, path.text);
         self.import_records.items_mut()[stmt.import_record_index as usize]
             .flags
@@ -4103,6 +4120,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 bun_ast::ImportRecordFlags::WAS_ORIGINALLY_BARE_IMPORT,
                 was_originally_bare_import,
             );
+        self.import_records.items_mut()[stmt.import_record_index as usize]
+            .flags
+            .set(bun_ast::ImportRecordFlags::PHASE_DEFER, stmt.phase_defer);
 
         if let Some(star) = stmt.star_name_loc {
             let name = self.load_name_from_ref(stmt.namespace_ref);
@@ -8133,9 +8153,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 user_hooks: Default::default(),
             });
 
-            // TODO(paperclover): fix the renamer bug. this bug
-            // theoretically affects all usages of temp refs, but i cannot
-            // find another example of it breaking (like with `using`)
+            // TODO: fix the renamer bug. this bug theoretically affects all
+            // usages of temp refs, but i cannot find another example of it
+            // breaking (like with `using`)
             self.declared_symbols
                 .append(DeclaredSymbol {
                     is_top_level: true,
@@ -8356,7 +8376,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         exports_kind: js_ast::ExportsKind,
         wrap_mode: WrapMode,
         hashbang: &'a [u8],
-    ) -> Result<Box<js_ast::Ast>, bun_core::Error> {
+    ) -> Result<Box<js_ast::Ast<'a>>, bun_core::Error> {
         use crate::lower::lower_esm_exports_hmr::ConvertESMExportsForHmr;
         use crate::scan::scan_imports::ImportScanner;
 
@@ -8861,28 +8881,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let require_ref = self.runtime_imports.__require.unwrap_or(self.require_ref);
         let runtime_imports = core::mem::take(&mut self.runtime_imports);
 
-        // PORT NOTE: BumpVec<'a, T> can't be moved into a global-arena Vec;
-        // wrap the bump-backed storage as a Borrowed Vec (Drop is no-op).
-        // Spec P.zig:6695-6696 uses `moveFromList`, which transfers storage and
-        // *zeroes the source*. Mirror that move-and-zero with
-        // `mem::replace(.., new_in)` + `into_bump_slice_mut()` so the leftover
-        // BumpVec is empty when `P`/the caller's `parts` drops — `Part` carries
-        // owning fields (`symbol_uses`, `declared_symbols`,
-        // `import_record_indices`) and aliasing the live BumpVec slice (the old
-        // `as_mut_slice()` shape) double-dropped them once the parser fell out
-        // of scope. Same fix `ImportRecordList::move_to_baby_list` applies.
-        let symbols = js_ast::symbol::List::from_bump_vec(core::mem::replace(
-            &mut self.symbols,
-            BumpVec::new_in(arena),
-        ));
-        let parts_list =
-            Vec::<js_ast::Part>::from_bump_vec(core::mem::replace(parts, BumpVec::new_in(arena)));
-        // Spec P.zig:6697: `ImportRecord.List.moveFromList(&p.import_records)`.
-        // Round-G fix: use the dedicated adapter so the parser-side list is
-        // left empty (Zig move-and-zero) and the BumpVec is leaked into the
-        // arena rather than dropped — downstream (printer, linker) resolves
-        // every `S.Import`/`E.RequireString`/`E.Import` by index against this.
-        let import_records: Vec<ImportRecord> = self.import_records.move_to_baby_list(arena);
+        // Spec P.zig:6695-6697 (`moveFromList`): re-tag the arena-backed buffer
+        // into the `Ast` and leave the parser-side slot empty — a pointer move,
+        // no realloc/memcpy. `Ast.{symbols,parts,import_records}` are now
+        // `ArenaVec<'a, T>` so the move is type-checked.
+        let symbols = core::mem::replace(&mut self.symbols, BumpVec::new_in(arena));
+        let parts_list = core::mem::replace(parts, BumpVec::new_in(arena));
+        let import_records = self.import_records.move_to_baby_list(arena);
 
         // PERF: box at the construction site so the ~1 KB `Ast` is written
         // straight into the heap allocation and only the thin `Box` pointer is

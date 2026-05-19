@@ -39,7 +39,8 @@ bun_core::declare_scope!(cache, visible);
 /// Version 18: Include ESM record (module info) with an ES Module, see #15758
 /// Version 19: Sourcemap blob is InternalSourceMap (varint stream + sync points), not VLQ.
 /// Version 20: InternalSourceMap stream is bit-packed windows.
-const EXPECTED_VERSION: u32 = 20;
+/// Version 21: ModuleInfo records a phase byte per requested module (`import defer`).
+const EXPECTED_VERSION: u32 = 21;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a
@@ -79,7 +80,9 @@ impl Encoding {
     pub const LATIN1: Encoding = Encoding(3);
 }
 
-#[derive(Clone, PartialEq, Eq)]
+// Copy is intentional despite the ~120-byte size: Metadata is the
+// fixed-layout cache-entry header passed by value through encode/decode/verify.
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub struct Metadata {
     pub cache_version: u32,
     pub output_encoding: Encoding,
@@ -1105,9 +1108,11 @@ bun_ast::link_impl_TranspilerCacheImpl! {
                 return;
             }
             debug_assert!(this.entry.is_none());
-            this.output_code = Some(Box::<[u8]>::from(output_code_bytes));
 
-            let output_code = BunString::clone_latin1(output_code_bytes);
+            // Borrowed Latin-1 view: `to_file` only reads `byte_slice()` + the encoding
+            // tag (unmarked 8-bit ZigString -> Encoding::LATIN1, same as clone_latin1),
+            // and `output_code_bytes` outlives the synchronous `to_file` call.
+            let output_code = BunString::ascii(output_code_bytes);
             let result = RuntimeTranspilerCache::to_file(
                 this.input_byte_length.unwrap(),
                 this.input_hash.unwrap(),
@@ -1117,7 +1122,6 @@ bun_ast::link_impl_TranspilerCacheImpl! {
                 &output_code,
                 this.exports_kind,
             );
-            output_code.deref();
             if let Err(err) = result {
                 bun_core::scoped_log!(cache, "put() = {}", err.name());
             }

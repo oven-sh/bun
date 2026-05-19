@@ -2965,7 +2965,7 @@ pub mod args {
                     ctx,
                     arguments.next().unwrap_or(JSValue::js_number(0.0)),
                     "len",
-                    Some(i64::from(i52::MIN)),
+                    Some(i52::MIN),
                     Some(BLOB_SIZE_MAX as i64),
                 )?
                 .max(0),
@@ -7368,6 +7368,13 @@ impl NodeFS {
 
                     // There are cases where stat()'s size is wrong or out of date
                     if (total as u64) > size && amt != 0 && !has_max_size {
+                        // Reset len to the bytes actually read (Zig:
+                        // `buf.items.len = total;`). `expand_to_capacity` left
+                        // `len == capacity`, so without this `try_reserve(8192)`
+                        // would reallocate every read and RawVec doubling grows
+                        // the buffer exponentially (a >256 KB FIFO / proc file
+                        // balloons to multi-GB RSS).
+                        buf.truncate(total);
                         if buf.try_reserve(8192).is_err() {
                             return Err(with_path_like(
                                 sys::Error::from_code(E::ENOMEM, sys::Tag::read),

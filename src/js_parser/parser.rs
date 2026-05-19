@@ -2218,13 +2218,13 @@ impl Default for DeferredArrowArgErrors {
 
 pub fn new_lazy_export_ast<'bump>(
     bump: &'bump bun_alloc::Arena,
-    define: &mut Define,
-    opts: ParserOptions,
+    define: &'bump mut Define,
+    opts: ParserOptions<'bump>,
     log_to_copy_into: &mut bun_ast::Log,
     expr: Expr,
-    source: &bun_ast::Source,
+    source: &'bump bun_ast::Source,
     runtime_api_call: &'static [u8], // PERF(port): was comptime monomorphization
-) -> Result<Option<js_ast::Ast>, bun_core::Error> {
+) -> Result<Option<js_ast::Ast<'bump>>, bun_core::Error> {
     new_lazy_export_ast_impl(
         bump,
         define,
@@ -2233,20 +2233,20 @@ pub fn new_lazy_export_ast<'bump>(
         expr,
         source,
         runtime_api_call,
-        js_ast::symbol::List::default(),
+        js_ast::symbol::List::new_in(bump),
     )
 }
 
 pub fn new_lazy_export_ast_impl<'bump>(
     bump: &'bump bun_alloc::Arena,
-    define: &mut Define,
-    opts: ParserOptions,
+    define: &'bump mut Define,
+    opts: ParserOptions<'bump>,
     log_to_copy_into: &mut bun_ast::Log,
     expr: Expr,
-    source: &bun_ast::Source,
+    source: &'bump bun_ast::Source,
     runtime_api_call: &'static [u8], // PERF(port): was comptime monomorphization
-    symbols: js_ast::symbol::List,
-) -> Result<Option<js_ast::Ast>, bun_core::Error> {
+    symbols: js_ast::symbol::List<'bump>,
+) -> Result<Option<js_ast::Ast<'bump>>, bun_core::Error> {
     let mut temp_log = bun_ast::Log::init();
     // Zig held two aliasing `*Log` (parser.log + lexer.log). Both sides store
     // `NonNull<Log>` in Rust; copy the lexer's pointer so they share one

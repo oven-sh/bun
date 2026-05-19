@@ -164,7 +164,7 @@ impl WatcherData {
 }
 
 pub struct Success {
-    pub ast: JSAst,
+    pub ast: JSAst<'static>,
     pub source: Source,
     pub log: Log,
     pub use_directive: UseDirective,
@@ -251,7 +251,7 @@ impl ParseTask {
             // SAFETY: lifetime erased — `ctx` outlives the ParseTask (BACKREF);
             // write provenance from the `*mut BundleV2` parameter.
             ctx: Some(unsafe { bun_ptr::ParentRef::from_raw_mut(ctx.cast::<BundleV2<'static>>()) }),
-            path: resolve_result.path_pair.primary.clone(),
+            path: resolve_result.path_pair.primary,
             contents_or_fd: ContentsOrFd::Fd {
                 dir: resolve_result.dirname_fd,
                 file: resolve_result.file_fd,
@@ -612,10 +612,10 @@ pub mod parse_worker {
     fn get_empty_css_ast(
         log: &mut Log,
         transpiler: *mut Transpiler,
-        opts: ParserOptions,
+        opts: ParserOptions<'static>,
         bump: &'static Bump,
-        source: &Source,
-    ) -> core::result::Result<JSAst, AnyError> {
+        source: &'static Source,
+    ) -> core::result::Result<JSAst<'static>, AnyError> {
         let root = Expr::init(E::Object::default(), Loc { start: 0 });
         // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`; `options`
         // is disjoint from any other field the caller may hold a pointer to.
@@ -632,10 +632,10 @@ pub mod parse_worker {
     fn get_empty_ast<RootType: Default + bun_ast::expr::IntoExprData>(
         log: &mut Log,
         transpiler: *mut Transpiler,
-        opts: ParserOptions,
+        opts: ParserOptions<'static>,
         bump: &'static Bump,
-        source: &Source,
-    ) -> core::result::Result<JSAst, AnyError> {
+        source: &'static Source,
+    ) -> core::result::Result<JSAst<'static>, AnyError> {
         let root = Expr::init(RootType::default(), Loc::EMPTY);
         // SAFETY: see `get_empty_css_ast` — disjoint field of a live `*mut Transpiler`.
         let define = unsafe { &mut (*transpiler).options.define };
@@ -663,9 +663,12 @@ pub mod parse_worker {
     // populated symbol table (.zig:613).
     // ───────────────────────────────────────────────────────────────────────────
 
-    fn css_symbols_to_parser_symbols(src: Vec<bun_ast::Symbol>) -> bun_ast::symbol::List {
+    fn css_symbols_to_parser_symbols(
+        src: Vec<bun_ast::Symbol>,
+        bump: &'static Bump,
+    ) -> bun_ast::symbol::List<'static> {
         use bun_ast::symbol::{Kind as PKind, Symbol as PSym};
-        let mut out = Vec::<PSym>::init_capacity(src.len() as usize);
+        let mut out = bun_ast::symbol::List::with_capacity_in(src.len(), bump);
         for s in src.slice() {
             // Post-dedup `bun_ast::Symbol` IS `bun_ast::symbol::Symbol`, so
             // `s.kind`/`s.import_item_status` are already the target nominal types
@@ -675,7 +678,7 @@ pub mod parse_worker {
             // `bun_ast::Ref` is a re-export of `bun_ast::Ref` (ast/base.rs:172)
             // — same nominal type, no bridge needed.
             let link: bun_ast::Ref = s.link.get();
-            out.append_assume_capacity(PSym {
+            out.push(PSym {
                 original_name: bun_ast::StoreStr::new(s.original_name.slice()),
                 // CSS-module locals are never ES6 namespace-aliased (the CSS parser
                 // never assigns `namespace_alias`); drop rather than bridge the
@@ -724,15 +727,15 @@ pub mod parse_worker {
     fn get_ast(
         log: &mut Log,
         transpiler: *mut Transpiler,
-        opts: ParserOptions,
+        opts: ParserOptions<'static>,
         bump: &'static Bump,
         resolver: *mut Resolver,
-        source: &Source,
+        source: &'static Source,
         loader: Loader,
         unique_key_prefix: u64,
         unique_key_for_additional_file: &mut FileLoaderHash,
         has_any_css_locals: &AtomicU32,
-    ) -> core::result::Result<JSAst, AnyError> {
+    ) -> core::result::Result<JSAst<'static>, AnyError> {
         use core::fmt::Write as _;
 
         // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`.
@@ -788,7 +791,6 @@ pub mod parse_worker {
                 // `caches` is disjoint from `(*transpiler).options` reborrowed above.
                 let root: Expr = unsafe { &mut (*resolver).caches.json }
                     .parse_json(log, source, mode, true)?
-                    .map(Into::into)
                     .unwrap_or_else(|| Expr::init(E::Object::default(), Loc::EMPTY));
                 return Ok(JSAst::init(
                     js_parser::new_lazy_export_ast(
@@ -811,9 +813,9 @@ pub mod parse_worker {
                 // scopeguard would alias `log`/`temp_log` (both borrowed mutably
                 // below); reshape as a closure so every `?` exits through one
                 // post-amble that flushes `temp_log`.
-                let result = (|| -> core::result::Result<JSAst, AnyError> {
+                let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
                     let root: Expr =
-                        bun_parsers::toml::TOML::parse(source, &mut temp_log, bump, false)?.into();
+                        bun_parsers::toml::TOML::parse(source, &mut temp_log, bump, false)?;
                     Ok(JSAst::init(
                         js_parser::new_lazy_export_ast(
                             bump,
@@ -833,9 +835,8 @@ pub mod parse_worker {
             Loader::Yaml => {
                 let _trace = perf::trace("Bundler.ParseYAML");
                 let mut temp_log = Log::init();
-                let result = (|| -> core::result::Result<JSAst, AnyError> {
-                    let root: Expr =
-                        bun_parsers::yaml::YAML::parse(source, &mut temp_log, bump)?.into();
+                let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
+                    let root: Expr = bun_parsers::yaml::YAML::parse(source, &mut temp_log, bump)?;
                     Ok(JSAst::init(
                         js_parser::new_lazy_export_ast(
                             bump,
@@ -855,9 +856,9 @@ pub mod parse_worker {
             Loader::Json5 => {
                 let _trace = perf::trace("Bundler.ParseJSON5");
                 let mut temp_log = Log::init();
-                let result = (|| -> core::result::Result<JSAst, AnyError> {
+                let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
                     let root: Expr =
-                        bun_parsers::json5::JSON5Parser::parse(source, &mut temp_log, bump)?.into();
+                        bun_parsers::json5::JSON5Parser::parse(source, &mut temp_log, bump)?;
                     Ok(JSAst::init(
                         js_parser::new_lazy_export_ast(
                             bump,
@@ -1158,7 +1159,7 @@ pub mod parse_worker {
                     b"",
                 )?
                 .unwrap();
-                ast.import_records = import_records;
+                ast.import_records = bun_alloc::vec_from_iter_in(import_records, bump);
 
                 // We're banning import default of html loader files for now.
                 //
@@ -1170,7 +1171,7 @@ pub mod parse_worker {
                 // gave up on figuring out how to fix it so that
                 // this feature could ship.
                 ast.has_lazy_export = false;
-                ast.parts.slice_mut()[1] = Part {
+                ast.parts.as_mut_slice()[1] = Part {
                     stmts: ast::StoreSlice::EMPTY,
                     is_live: true,
                     import_record_indices: {
@@ -1267,7 +1268,7 @@ pub mod parse_worker {
                 // `Vec<bun_ast::Symbol>`. Both port the same Zig
                 // `js_ast.Symbol`; convert field-by-field so CSS-module local refs
                 // index a populated symbol table (.zig:613).
-                let symbols = css_symbols_to_parser_symbols(extra.symbols);
+                let symbols = css_symbols_to_parser_symbols(extra.symbols, bump);
                 // PORT NOTE: Zig `defer temp_log.appendToMaybeRecycled(log, source)`
                 // (.zig:564-566) flushes on EVERY exit including this `try`; mirror
                 // by matching explicitly so accumulated CSS-module diagnostics are
@@ -1286,7 +1287,7 @@ pub mod parse_worker {
                 let mut ast = JSAst::init(lazy?.unwrap());
                 let css_ast_heap = crate::bundled_ast::CssAstRef::from_bump(bump.alloc(css_ast));
                 ast.css = Some(css_ast_heap);
-                ast.import_records = import_records;
+                ast.import_records = bun_alloc::vec_from_iter_in(import_records, bump);
                 return Ok(ast);
             }
             // TODO:
@@ -2203,7 +2204,7 @@ pub mod parse_worker {
         // path explicitly (scopeguard would alias `transpiler` access below).
         // SAFETY: `transpiler` is live; `resolver` projects a field of it.
         let resolver: *mut Resolver = unsafe { core::ptr::addr_of_mut!((*transpiler).resolver) };
-        let mut file_path = task.path.clone();
+        let mut file_path = task.path;
         let mut loader = task
             .loader
             // SAFETY: `options` is a disjoint field of the live `*transpiler`.
@@ -2370,7 +2371,9 @@ pub mod parse_worker {
         // reassigned above); reborrow only the disjoint `options` field.
         let topts = unsafe { &(*transpiler).options };
 
-        let source = Source {
+        // Allocated in the worker arena so `js_parser::new_lazy_export_ast`'s
+        // `&'bump Source` parameter is satisfied (`bump` is the same arena).
+        let source: &'static Source = bump.alloc(Source {
             // PORT NOTE: `Source.path` is `bun_paths::fs::Path<'static>`, distinct from
             // `bun_resolver::fs::Path` (TYPE_ONLY mirror). Construct
             // field-by-field across the type boundary.
@@ -2392,7 +2395,7 @@ pub mod parse_worker {
             contents: std::borrow::Cow::Borrowed(ast::StoreStr::new(entry_contents).slice()),
             contents_is_recycled: false,
             ..Default::default()
-        };
+        });
 
         let target = (if task.source_index.get() == 1 {
             target_from_hashbang(entry_contents)
@@ -2601,18 +2604,18 @@ pub mod parse_worker {
                     opts,
                     bump,
                     resolver,
-                    &source,
+                    source,
                     loader,
                     task_ctx.unique_key,
                     &mut unique_key_for_additional_file,
                     &task_ctx.linker.has_any_css_locals,
                 )
             } else if loader.is_css() {
-                get_empty_css_ast(log, transpiler, opts, bump, &source)
+                get_empty_css_ast(log, transpiler, opts, bump, source)
             } else if module_type == options::ModuleType::Esm {
-                get_empty_ast::<E::Undefined>(log, transpiler, opts, bump, &source)
+                get_empty_ast::<E::Undefined>(log, transpiler, opts, bump, source)
             } else {
-                get_empty_ast::<E::Object>(log, transpiler, opts, bump, &source)
+                get_empty_ast::<E::Object>(log, transpiler, opts, bump, source)
             };
         // PERF(port): Zig used `switch (bool) { inline else => |as_undefined| ... }`
         // to monomorphize. Expanded to if/else.
@@ -2654,7 +2657,7 @@ pub mod parse_worker {
 
         Ok(Success {
             ast,
-            source,
+            source: source.clone(),
             log: core::mem::take(log),
             // PORT NOTE: Zig returned `log.*` by value; here we take ownership.
             use_directive,

@@ -935,7 +935,7 @@ impl CreateCommand {
                             > 0
                         {
                             has_dependencies = true;
-                            dev_dependencies = Some(q.expr.into());
+                            dev_dependencies = Some(q.expr);
 
                             // has_bun_framework_next = has_bun_framework_next or property.hasAnyPropertyNamed(&.{"bun-framework-next"});
                             // has_react = has_react or property.hasAnyPropertyNamed(&.{ "react", "react-dom", "react-relay", "@emotion/react" });
@@ -970,7 +970,7 @@ impl CreateCommand {
                             > 0
                         {
                             has_dependencies = true;
-                            dependencies = Some(q.expr.into());
+                            dependencies = Some(q.expr);
 
                             // if (property.asProperty("next")) |next_q| {
                             //     is_nextjs = true;
@@ -1447,7 +1447,7 @@ impl CreateCommand {
 
                 if let Err(err) = JSPrinter::print_json(
                     &mut package_json_writer,
-                    package_json_expr.into(),
+                    package_json_expr,
                     &source,
                     JSPrinter::PrintJsonOptions {
                         mangled_props: None,
@@ -1515,7 +1515,7 @@ impl CreateCommand {
 
         if npm_client_.is_some() && !preinstall_tasks.is_empty() {
             for task in &preinstall_tasks {
-                exec_task(task, destination, path_env, npm_client_.clone());
+                exec_task(task, destination, path_env, npm_client_);
             }
         }
 
@@ -1575,7 +1575,7 @@ impl CreateCommand {
 
         if !postinstall_tasks.is_empty() {
             for task in &postinstall_tasks {
-                exec_task(task, destination, path_env, npm_client_.clone());
+                exec_task(task, destination, path_env, npm_client_);
             }
         }
 

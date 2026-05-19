@@ -1280,9 +1280,8 @@ impl<'a> PackageInstaller<'a> {
             destination_dir_subpath_buf: unsafe { (*subpath_buf_ptr).as_mut_slice() },
             // PORT NOTE: zig `arena: this.lockfile.allocator` dropped — global mimalloc.
             package_name: pkg_name,
-            patch: patch_patch.map(|p| package_install::Patch {
+            patch: patch_patch.map(|_| package_install::Patch {
                 contents_hash: patch_contents_hash.unwrap(),
-                path: Box::<[u8]>::from(p),
             }),
             package_version,
             node_modules: node_modules_ref.get(),

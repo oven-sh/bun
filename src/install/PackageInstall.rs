@@ -50,8 +50,8 @@ pub struct PackageInstall<'a> {
     pub lockfile: &'a Lockfile,
 }
 
+#[derive(Clone, Copy)]
 pub struct Patch {
-    pub path: Box<[u8]>,
     pub contents_hash: u64,
 }
 
@@ -870,17 +870,11 @@ impl<'a> PackageInstall<'a> {
             _ => self.verify_package_json_name_and_version(root_node_modules_dir, resolution.tag),
         };
 
-        if let Some(patch) = &self.patch {
+        if let Some(patch) = self.patch {
             if !verified {
                 return false;
             }
-            // TODO(port): borrowck — patch borrowed from self while calling &mut self method.
-            // Clone the small Patch fields or restructure.
-            let patch_copy = Patch {
-                path: patch.path.clone(),
-                contents_hash: patch.contents_hash,
-            };
-            return self.verify_patch_hash(&patch_copy, root_node_modules_dir);
+            return self.verify_patch_hash(&patch, root_node_modules_dir);
         }
         verified
     }

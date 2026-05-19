@@ -265,10 +265,50 @@ pub use mimalloc_arena::MimallocArena;
 pub type Arena = MimallocArena;
 /// `bumpalo::Bump` — kept for genuinely bump-only scratch that's never resized.
 pub type Bump = bumpalo::Bump;
-/// Arena-backed `Vec` — `Vec<T, &'a MimallocArena>`. Real `deallocate`/`grow`
-/// via `mi_free`/`mi_heap_realloc_aligned`; reclaimed on arena `reset`/`Drop`.
-pub type ArenaVec<'a, T> = Vec<T, &'a MimallocArena>;
-pub use mimalloc_arena::{ArenaString, ArenaVecExt, live_arena_heaps, vec_from_iter_in};
+mod baby_vec;
+pub use baby_vec::BabyVec;
+/// Arena-backed `Vec` with `u32` length/capacity — port of Zig's
+/// `BabyList(T)`. 24 B (vs 32 B for `Vec<T, &'a MimallocArena>`); the
+/// allocator handle is kept inline for lifetime checking. Growth/free route
+/// through `<&MimallocArena as Allocator>` (= `mi_heap_realloc_aligned` /
+/// `mi_free`); reclaimed on arena `reset`/`Drop`.
+pub type ArenaVec<'a, T> = BabyVec<'a, T>;
+pub use mimalloc_arena::{ArenaString, ArenaVecExt, live_arena_heaps};
+
+/// `bumpalo::collections::Vec::from_iter_in` parity for [`ArenaVec`].
+#[inline]
+pub fn vec_from_iter_in<'a, T, I>(iter: I, arena: &'a MimallocArena) -> ArenaVec<'a, T>
+where
+    I: IntoIterator<Item = T>,
+{
+    let iter = iter.into_iter();
+    let (lo, _) = iter.size_hint();
+    let mut v = ArenaVec::with_capacity_in(lo, arena);
+    v.extend(iter);
+    v
+}
+
+/// Re-tag an [`ArenaVec`]'s allocator handle to `dst` without copying data.
+///
+/// Zig parity: `BabyList.transferOwnership` (collections/baby_list.zig). Zig's
+/// `BabyList` is allocator-erased — the linker passes a different allocator at
+/// each `append(allocator, ..)` call site; the Rust port stores `&'a Arena` in
+/// the `Vec`, so the equivalent is swapping that field.
+///
+/// Sound because `<&MimallocArena as Allocator>` is heap-agnostic on the
+/// existing buffer:
+/// - `deallocate` → `mi_free(ptr)`: looks up the owning heap from the pointer's
+///   page metadata; works from any thread on any heap's allocation.
+/// - `grow`/`shrink` → `mi_heap_realloc_aligned(dst, ptr, ..)`: returns `ptr`
+///   in-place if it fits (read-only `mi_usable_size`), else allocs on `dst`,
+///   `memcpy`s, then `mi_free(ptr)`.
+///
+/// The original arena is never `mi_heap_malloc`-ed from again via this `Vec`,
+/// so the [`MimallocArena`] single-thread-alloc contract is preserved.
+#[inline]
+pub fn transfer_arena<'a, T>(v: &mut ArenaVec<'a, T>, dst: &'a MimallocArena) {
+    v.set_allocator(dst);
+}
 
 /// `bumpalo::format!` parity — `arena_format!(in arena, "...", ..)` →
 /// [`ArenaString`].

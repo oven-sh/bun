@@ -686,7 +686,7 @@ impl BlobExt for Blob {
         writer: &mut W,
     ) -> Result<(), bun_core::Error> {
         writer.write_int_le::<u8>(SERIALIZATION_VERSION)?;
-        writer.write_int_le::<u64>(u64::try_from(self.offset.get()).expect("int cast"))?;
+        writer.write_int_le::<u64>(self.offset.get())?;
 
         let ct = self.content_type_slice();
         writer.write_int_le::<u32>(ct.len() as u32)?;
@@ -6386,8 +6386,12 @@ impl Any {
                 Ok(str)
             }
             Any::WTFStringImpl(impl_) => {
-                let mut str =
-                    BunString::adopt_wtf_impl(core::mem::replace(impl_, core::ptr::null_mut()));
+                // Adopts a +1 WTF ref; `OwnedString` releases it on every exit
+                // path (Zig: `defer str.deref()`).
+                let mut str = OwnedString::new(BunString::adopt_wtf_impl(core::mem::replace(
+                    impl_,
+                    core::ptr::null_mut(),
+                )));
                 *self = Any::Blob(Blob::default());
                 if str.length() == 0 {
                     return Ok(JSValue::NULL);
@@ -6424,7 +6428,10 @@ impl Any {
 
         if let Any::WTFStringImpl(_) = self {
             let blob = Blob::create(self.slice(), global, true);
-            *self = Any::Blob(Blob::default());
+            // `Blob::create(.., true)` copied the bytes; `Any` still owns the
+            // +1 WTF ref. `detach()` releases it and resets `*self` (the bare
+            // `*self = Any::Blob(default)` here previously leaked that ref).
+            self.detach();
             return blob;
         }
 
@@ -6448,8 +6455,12 @@ impl Any {
                 Ok(owned)
             }
             Any::WTFStringImpl(impl_) => {
-                let str =
-                    BunString::adopt_wtf_impl(core::mem::replace(impl_, core::ptr::null_mut()));
+                // Adopts a +1 WTF ref; `OwnedString` releases it on scope exit
+                // (Zig: `defer str.deref()`).
+                let str = OwnedString::new(BunString::adopt_wtf_impl(core::mem::replace(
+                    impl_,
+                    core::ptr::null_mut(),
+                )));
                 *self = Any::Blob(Blob::default());
                 str.to_js(global)
             }
@@ -6490,8 +6501,13 @@ impl Any {
                 ))
             }
             Any::WTFStringImpl(impl_) => {
-                let str =
-                    BunString::adopt_wtf_impl(core::mem::replace(impl_, core::ptr::null_mut()));
+                // Adopts a +1 WTF ref; `OwnedString` releases it on scope exit,
+                // after `out_bytes` (which borrows it) is consumed below
+                // (Zig: `defer str.deref()`).
+                let str = OwnedString::new(BunString::adopt_wtf_impl(core::mem::replace(
+                    impl_,
+                    core::ptr::null_mut(),
+                )));
                 *self = Any::Blob(Blob::default());
 
                 let out_bytes = str.to_utf8_without_ref();

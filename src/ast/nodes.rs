@@ -1137,7 +1137,7 @@ pub struct Part {
 }
 
 pub type PartImportRecordIndices = Vec<u32, bun_alloc::AstAlloc>;
-pub type PartList = Vec<Part>;
+pub type PartList<'a> = bun_alloc::ArenaVec<'a, Part>;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PartTag {

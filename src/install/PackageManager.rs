@@ -1161,7 +1161,6 @@ fn configure_env_for_scripts_run(
 
     let init_cwd_entry = this.env_mut().map.get_or_put_without_value(b"INIT_CWD")?;
     if !init_cwd_entry.found_existing {
-        *init_cwd_entry.key_ptr = Box::<[u8]>::from(&**init_cwd_entry.key_ptr);
         *init_cwd_entry.value_ptr = dot_env::HashTableValue {
             value: Box::<[u8]>::from(strings::without_trailing_slash(
                 FileSystem::instance().top_level_dir(),
@@ -1195,10 +1194,9 @@ fn configure_env_for_scripts_run(
     {
         let mut node_path = PathBuffer::uninit();
         if let Some(node_path_z) = this.env_mut().get_node_path(paths_fs, &mut node_path) {
-            let node_path_owned: Box<[u8]> = Box::<[u8]>::from(node_path_z.as_ref());
             let _ = this
                 .env_mut()
-                .load_node_js_config(paths_fs, &node_path_owned)?;
+                .load_node_js_config(paths_fs, node_path_z.as_ref())?;
         } else {
             'brk: {
                 let current_path = this.env().get(b"PATH").unwrap_or(b"");

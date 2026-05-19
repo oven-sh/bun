@@ -150,8 +150,8 @@ fn run_visits<const WITH_CODE_SPLITTING: bool, const WITH_SCB: bool>(
 pub struct FindImportedPartsVisitor<'a, 'ctx> {
     pub entry_bits: &'a AutoBitSet,
     pub flags: &'a [crate::js_meta::Flags],
-    pub parts: &'a [Vec<Part>],
-    pub import_records: &'a [Vec<ImportRecord>],
+    pub parts: &'a [bun_ast::PartList<'ctx>],
+    pub import_records: &'a [bun_ast::import_record::List<'ctx>],
     pub files: Vec<IndexInt>,
     pub part_ranges: Vec<PartRange>,
     pub visited: HashMap<IndexInt, ()>,
@@ -215,7 +215,7 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
         // Wrapped files can't be split because they are all inside the wrapper
         let can_be_split = self.flags[source_index as usize].wrap == Wrap::None;
 
-        let parts = self.parts[source_index as usize].slice();
+        let parts = self.parts[source_index as usize].as_slice();
         if can_be_split
             && is_file_in_chunk
             && parts[bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize].is_live
@@ -227,7 +227,7 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
             );
         }
 
-        let records = self.import_records[source_index as usize].slice();
+        let records = self.import_records[source_index as usize].as_slice();
 
         for part_index_ in 0..parts.len() {
             let part = &parts[part_index_];

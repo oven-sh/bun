@@ -1,12 +1,13 @@
 //! Instance of the development server. Attaches to an instance of `Bun.serve`,
-//! controlling bundler, routing, and hot module reloading.
+//! controlling bundler, routing, and hot module reloading. All work is held
+//! in-memory, with hardcore data-oriented-design.
 //!
 //! Reprocessing files that did not change is banned; by having perfect
 //! incremental tracking over the project, editing a file's contents (asides
 //! adjusting imports) must always rebundle only that one file.
 //!
-//! All work is held in-memory, using manually managed data-oriented design.
-//! For questions about DevServer, please consult the delusional @paperclover
+//! Theorized and designed over 2 years out of pure love —— paper clover <3
+//! For questions about its core philosophy, email `devserver@paperclover.net`
 
 #![allow(unexpected_cfgs)] // `feature = "bake_debugging_features"` mirrors Zig `bun.FeatureFlags.bake_debugging_features`; not yet a declared cargo feature.
 
@@ -276,6 +277,9 @@ pub struct CurrentBundle {
     /// make `DevServer` self-referential; raw-ptr aliasing inside `BundleV2`
     /// already encodes that contract.
     pub bv2: Box<BundleV2<'static>>,
+    /// Owns the arena that `bv2.graph.heap` borrows (`'static` self-ref via the
+    /// boxed allocation's stable address; same erasure as `bv2` above).
+    pub heap: Box<bun_alloc::MimallocArena>,
     /// Information BundleV2 needs to finalize the bundle
     pub start_data: bundler::bundle_v2::DevServerInput,
     /// Started when the bundle was queued
@@ -892,12 +896,10 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         let mut h = Wyhash::init(128);
 
         if cfg!(debug_assertions) {
-            // PORT NOTE: `sys::stat` returns `Maybe<Stat>` (no `unwrap_or_else`);
-            // go through `Result` for the panic-on-error path.
-            let stat = match ::core::result::Result::from(sys::stat(
+            let stat = match sys::stat(
                 bun_core::self_exe_path()
                     .unwrap_or_else(|e| Output::panic(format_args!("unhandled {}", e))),
-            )) {
+            ) {
                 Ok(s) => s,
                 Err(e) => Output::panic(format_args!("unhandled {}", e)),
             };
@@ -2857,7 +2859,7 @@ impl DevServer {
     fn generate_javascript_code_for_html_file(
         &mut self,
         index: bun_ast::Index,
-        import_records: &[Vec<ImportRecord>],
+        import_records: &[bun_ast::import_record::List<'_>],
         input_file_sources: &[bun_ast::Source],
         loaders: &[Loader],
     ) -> Result<Box<[u8]>, bun_core::Error> {
@@ -2872,7 +2874,7 @@ impl DevServer {
         )?;
         w.extend_from_slice(b": [ [");
         let mut any = false;
-        for import in import_records[index.get() as usize].slice() {
+        for import in import_records[index.get() as usize].as_slice() {
             if import.source_index.is_valid() {
                 if !loaders[import.source_index.get() as usize].is_javascript_like() {
                     continue; // ignore non-JavaScript imports
@@ -3165,16 +3167,11 @@ impl DevServer {
             server.on_pending_request();
         }
 
-        let heap = bun_alloc::MimallocArena::new();
-        // TODO(port): heap is moved into BundleV2; errdefer heap.deinit()
-        // PORT NOTE: `MimallocArena = bumpalo::Bump` (no `.arena()` accessor);
-        // `Bump::alloc` is the inherent method, and `BundleV2::init`'s `alloc`
-        // param is `&bun_alloc::Arena` (== `&Bump`).
+        // Boxed so its address is stable: `bv2.graph.heap: &'static Arena`
+        // borrows it (self-ref via `CurrentBundle`, see PORT NOTE on
+        // `CurrentBundle.bv2`).
+        let heap: Box<bun_alloc::MimallocArena> = Box::new(bun_alloc::MimallocArena::new());
         // TODO(port): ASTMemoryAllocator scope — bake is an AST crate; arena threading required
-        // PORT NOTE: `heap.alloc` returns `&mut T` borrowing `heap`, but `heap` is
-        // later moved into `bv2.graph.heap`. Bumpalo chunk storage is heap-allocated
-        // and stable across the move of the `Bump` handle, so erase the borrow to a
-        // raw pointer (same rationale as `event_loop` below).
         let ast_memory_store: *mut bun_ast::ASTMemoryAllocator =
             heap.alloc(bun_ast::ASTMemoryAllocator::default());
         // SAFETY: the `ASTMemoryAllocator` lives in a bumpalo chunk owned by
@@ -3193,20 +3190,10 @@ impl DevServer {
                 bun_event_loop::AnyEventLoop::js(self.vm().event_loop().cast()),
             )));
 
-        // PORT NOTE: `BundleV2::init` consumes `heap` and also wants
-        // `alloc: &Arena` derived from it. Zig's `heap.arena()` is a
-        // `Copy` vtable handle that survives the move; in Rust the `Bump` is
-        // moved into `bv2.graph.heap`, so any pre-move borrow would dangle.
-        // `BundleV2::init` itself re-derives `linker.graph.bump = &this.graph
-        // .heap` internally and only uses `alloc` for short-lived setup —
-        // pass the heap's address via raw pointer (it lives at a stable
-        // `Box`-interior slot once `init` writes it).
-        //
-        // SAFETY: `heap_ptr` is read by `BundleV2::init` only after `heap` is
-        // moved into `this.graph.heap` (same allocation, stable address inside
-        // the freshly-`Box::new`'d `BundleV2`). The borrow is scoped to the
-        // call; we never reuse `heap_ptr` after `init` returns.
-        let heap_ptr: *const bun_alloc::Arena = &raw const heap;
+        // SAFETY: `heap` is `Box`-allocated above and moved into
+        // `CurrentBundle` (which also owns `bv2`); the boxed arena's address
+        // is stable for the lifetime of `bv2.graph.heap`'s borrow.
+        let heap_ptr: *const bun_alloc::Arena = &raw const *heap;
         // PORT NOTE: split `&mut self` into disjoint field reborrows so
         // `server_transpiler` (`&'a mut`) and `client/ssr_transpiler`
         // (NonNull) don't trip the single-`&mut self` rule.
@@ -3233,7 +3220,8 @@ impl DevServer {
             Some(::core::ptr::NonNull::from(
                 bun_threading::work_pool::WorkPool::get(),
             )),
-            heap,
+            // SAFETY: see `heap_ptr` note above.
+            unsafe { &*heap_ptr },
         )?;
         bv2.bun_watcher = Some(::core::ptr::NonNull::from(&mut **self.bun_watcher));
         bv2.asynchronous = true;
@@ -3266,6 +3254,7 @@ impl DevServer {
         drop(entry_points);
         self.current_bundle = Some(CurrentBundle {
             bv2,
+            heap,
             timer,
             start_data,
             had_reload_event,
@@ -3680,7 +3669,7 @@ pub struct HotUpdateContext<'a> {
     /// bundle_v2.Graph.input_files.items(.source)
     pub sources: &'a [bun_ast::Source],
     /// bundle_v2.Graph.ast.items(.import_records)
-    pub import_records: &'a [Vec<ImportRecord>],
+    pub import_records: &'a [bun_ast::import_record::List<'a>],
     /// bundle_v2.Graph.server_component_boundaries.slice()
     pub scbs: bun_ast::server_component_boundary::Slice<'a>,
     /// bundle_v2.Graph.input_files.items(.loader)
@@ -3771,15 +3760,13 @@ pub fn finalize_bundle(
         // SAFETY: `dev`/`bv2` are `&mut` params; both outlive this fn-scoped guard.
         let dev = unsafe { &mut *dev_ptr_outer };
         let bv2 = unsafe { &mut *bv2_ptr_outer };
-        // TODO(port): heap moved out before deinit
-        let mut heap = ::core::mem::replace(&mut bv2.graph.heap, bun_alloc::Arena::new());
         bv2.deinit_without_freeing_arena();
         if let Some(cb) = &mut dev.current_bundle {
             cb.promise.deinit_idempotently();
         }
+        // Drops `CurrentBundle.heap` (the arena `bv2.graph.heap` borrows).
         dev.current_bundle = None;
         dev.log.clear_and_free();
-        drop(heap);
 
         let _ = dev.assets.reindex_if_needed(); // not fatal
 
@@ -4119,7 +4106,7 @@ pub fn finalize_bundle(
 
         chunk
             .entry_point
-            .set_entry_point_id(u32::try_from(route_bundle_index.get()).expect("int cast"));
+            .set_entry_point_id(route_bundle_index.get());
     }
 
     // Zig: `var gts = try dev.initGraphTraceState(...); ctx.gts = &gts;` — sized AFTER
@@ -5167,7 +5154,7 @@ impl DevServer {
             // Found a matching route, bundle it and handle the request
             match ensure_route_is_bundled(self, rbi, &mut ctx) {
                 Ok(()) => {}
-                Err(jsc::JsError::OutOfMemory) => return Err(bun_core::err!(OutOfMemory).into()),
+                Err(jsc::JsError::OutOfMemory) => return Err(bun_core::err!(OutOfMemory)),
                 Err(e @ (jsc::JsError::Thrown | jsc::JsError::Terminated)) => {
                     self.vm().global().report_active_exception_as_unhandled(e);
                 }
@@ -6250,7 +6237,7 @@ fn from_opaque_file_id<const SIDE: bake::Side>(
         debug_assert!(SIDE == safe.side());
         return incremental_graph::FileIndex::<SIDE>::init(safe.index());
     }
-    incremental_graph::FileIndex::<SIDE>::init(u32::try_from(id.get()).expect("int cast"))
+    incremental_graph::FileIndex::<SIDE>::init(id.get())
 }
 
 impl DevServer {

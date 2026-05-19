@@ -207,7 +207,7 @@ impl UpdateInteractiveCommand {
         // re-read — only `source.contents` is written back below.
         if let Err(err) = js_printer::print_json(
             &mut package_json_writer,
-            package_json.root.into(),
+            package_json.root,
             &package_json.source,
             PrintJsonOptions {
                 indent: package_json.indentation,

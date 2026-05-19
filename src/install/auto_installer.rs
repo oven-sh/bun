@@ -184,7 +184,6 @@ impl hooks::AutoInstaller for PackageManager {
         self.lockfile
             .buffers
             .legacy_package_to_dependency_id(None, package_id)
-            .map_err(Into::into)
     }
 
     fn lockfile_str<'a>(&'a self, s: &'a SemverString) -> &'a [u8] {

@@ -1399,7 +1399,7 @@ pub struct TaskCallbackContext {
 /// lives in this crate — so callers pass the borrow directly.
 // Clone: bitwise OK — `context` is a non-owning opaque backref the runtime
 // installed; the handler fn-ptrs are POD.
-#[derive(Default, Clone)]
+#[derive(Default, Copy, Clone)]
 pub struct WakeHandler {
     pub context: Option<NonNull<c_void>>,
     /// Zig: `fn(ctx: *anyopaque, pm: *PackageManager) void`.

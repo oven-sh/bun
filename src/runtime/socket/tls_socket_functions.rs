@@ -496,7 +496,7 @@ pub fn get_tls_finished_message(
         return Ok(JSValue::UNDEFINED);
     }
 
-    let buffer_size = usize::try_from(size).expect("int cast");
+    let buffer_size = size;
     let buffer = JSValue::create_buffer_from_length(global, buffer_size)?;
     let buffer_ptr = buffer.as_array_buffer(global).unwrap().ptr.cast::<c_void>();
 
@@ -684,7 +684,7 @@ pub fn get_tls_peer_finished_message(
         return Ok(JSValue::UNDEFINED);
     }
 
-    let buffer_size = usize::try_from(size).expect("int cast");
+    let buffer_size = size;
     let buffer = JSValue::create_buffer_from_length(global, buffer_size)?;
     let buffer_ptr = buffer.as_array_buffer(global).unwrap().ptr.cast::<c_void>();
 

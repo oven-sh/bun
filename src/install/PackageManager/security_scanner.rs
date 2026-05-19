@@ -228,7 +228,7 @@ pub fn perform_security_scan_after_resolution(
     command_ctx: CommandContext,
     original_cwd: &[u8],
 ) -> Result<Option<SecurityScanResults>, Error> {
-    let Some(security_scanner) = manager.options.security_scanner.clone() else {
+    let Some(security_scanner) = manager.options.security_scanner else {
         return Ok(None);
     };
 
@@ -289,7 +289,7 @@ pub fn perform_security_scan_for_all(
     command_ctx: CommandContext,
     original_cwd: &[u8],
 ) -> Result<Option<SecurityScanResults>, Error> {
-    let Some(security_scanner) = manager.options.security_scanner.clone() else {
+    let Some(security_scanner) = manager.options.security_scanner else {
         return Ok(None);
     };
 

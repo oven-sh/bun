@@ -2595,7 +2595,7 @@ pub mod cache {
     #[derive(Default)]
     pub struct JavaScript {}
 
-    pub type JavaScriptResult = bun_js_parser::Result;
+    pub type JavaScriptResult<'a> = bun_js_parser::Result<'a>;
 
     impl JavaScript {
         #[inline]

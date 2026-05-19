@@ -282,7 +282,7 @@ pub fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> Result<Box<[u8]>
         if (source_index as usize) < import_records_list.len() {
             let import_records = &import_records_list[source_index as usize];
             let mut first_import = true;
-            for record in import_records.slice() {
+            for record in import_records.as_slice() {
                 if record.kind == ImportKind::Internal {
                     continue;
                 }

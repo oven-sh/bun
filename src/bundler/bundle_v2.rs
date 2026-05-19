@@ -6627,8 +6627,7 @@ pub mod bv2_impl {
 
                 let resolve_entry = resolve_queue.get_or_put(&path.text).expect("oom");
                 if resolve_entry.found_existing {
-                    import_record.path =
-                        path_as_static(unsafe { &**resolve_entry.value_ptr }.path);
+                    import_record.path = path_as_static(unsafe { &**resolve_entry.value_ptr }.path);
                     continue;
                 }
 

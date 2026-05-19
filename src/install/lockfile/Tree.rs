@@ -1064,16 +1064,86 @@ impl Tree {
             }
 
             // now we either keep the dependency at this place in the tree,
-            // or hoist if peer version allows it
+            // or hoist if version allows it
+
+            // Peer collapse: when either side is a peer and the npm range
+            // satisfies the placed resolution, collapse silently. Symmetric
+            // check so an incoming non-peer can also dedup with an existing
+            // peer at this tree level when the range allows.
+            if (dependency.behavior.is_peer() || dep.behavior.is_peer())
+                && dependency.version.tag == crate::dependency::VersionTag::Npm
+            {
+                let pkg_resolutions = builder.lockfile().packages.items_resolution();
+                let existing_res = pkg_resolutions[res_id as usize];
+                if pkg_resolutions[package_id as usize].tag == crate::resolution::Tag::Npm
+                    && existing_res.tag == crate::resolution::Tag::Npm
+                    && dependency.version.npm().version.satisfies(
+                        existing_res.npm().version,
+                        builder.buf(),
+                        builder.buf(),
+                    )
+                {
+                    return Ok(HoistDependencyResult::Hoisted); // 1
+                }
+            }
 
             if dependency.behavior.is_peer() {
-                if dependency.version.tag == crate::dependency::VersionTag::Npm {
-                    let resolution: Resolution =
-                        builder.lockfile().packages.items_resolution()[res_id as usize];
-                    let version = &dependency.version.npm().version;
-                    if resolution.tag == crate::resolution::Tag::Npm
-                        && version.satisfies(resolution.npm().version, builder.buf(), builder.buf())
-                    {
+                // A peer that reaches a same-name ancestor whose version does
+                // not satisfy still collapses into it (yarn v1 and pnpm
+                // semantics). The peer sees what the tree provides, with a
+                // warning. But only when no satisfying version exists anywhere
+                // in the lockfile: if one does (e.g. `ajv@8` brought in by
+                // `schema-utils` while root has `ajv@6`), the peer already
+                // resolved to it and should nest with that version instead.
+                let pkg_resolutions = builder.lockfile().packages.items_resolution();
+                let existing_tag = pkg_resolutions[res_id as usize].tag;
+                let target_tag = pkg_resolutions[package_id as usize].tag;
+                if existing_tag == target_tag
+                    && (existing_tag == crate::resolution::Tag::Npm
+                        || existing_tag == crate::resolution::Tag::Git
+                        || existing_tag == crate::resolution::Tag::Github)
+                {
+                    let has_satisfying_non_peer =
+                        dependency.version.tag == crate::dependency::VersionTag::Npm && {
+                            let range = &dependency.version.npm().version;
+                            builder
+                                .dependencies
+                                .iter()
+                                .zip(builder.resolutions.iter())
+                                .any(|(other_dep, &other_res_id)| {
+                                    other_dep.name_hash == dependency.name_hash
+                                        && !other_dep.behavior.is_peer()
+                                        && (other_res_id as usize) < pkg_resolutions.len()
+                                        && pkg_resolutions[other_res_id as usize].tag
+                                            == crate::resolution::Tag::Npm
+                                        && range.satisfies(
+                                            pkg_resolutions[other_res_id as usize].npm().version,
+                                            builder.buf(),
+                                            builder.buf(),
+                                        )
+                                })
+                        };
+                    if !has_satisfying_non_peer {
+                        if METHOD == BuilderMethod::Resolvable {
+                            // PORT NOTE: mirrors the borrowck reshape below.
+                            // Copy the ParentRef so the &Lockfile detaches
+                            // from &builder before taking &mut builder.log.
+                            let lockfile_ref = builder.lockfile;
+                            let lockfile: &Lockfile = lockfile_ref.get();
+                            let buf = lockfile.buffers.string_bytes.as_slice();
+                            let names = lockfile.packages.items_name();
+                            let resolutions = lockfile.packages.items_resolution();
+                            let _ = builder.log.add_warning_fmt(
+                                None,
+                                bun_ast::Loc::EMPTY,
+                                format_args!(
+                                    "incorrect peer dependency \"{}@{}\"",
+                                    names[res_id as usize].fmt(buf),
+                                    resolutions[res_id as usize]
+                                        .fmt(buf, bun_core::fmt::PathSep::Auto),
+                                ),
+                            );
+                        }
                         return Ok(HoistDependencyResult::Hoisted); // 1
                     }
                 }
@@ -1081,7 +1151,6 @@ impl Tree {
                 // Root dependencies are manually chosen by the user. Allow them
                 // to hoist other peers even if they don't satisfy the version
                 if builder.lockfile().is_workspace_root_dependency(dep_id) {
-                    // TODO: warning about peer dependency version mismatch
                     return Ok(HoistDependencyResult::Hoisted); // 1
                 }
             }

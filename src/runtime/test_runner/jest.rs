@@ -4,7 +4,7 @@ use std::io::Write as _;
 
 use crate::cli::command::TestOptions;
 use crate::cli::test_command::CommandLineReporter;
-use bun_collections::{ArrayHashMap, MultiArrayList};
+use bun_collections::{MultiArrayList, StringArrayHashMap};
 use bun_core::Output;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
@@ -227,11 +227,14 @@ impl<'a> TestRunner<'a> {
     }
 
     pub fn get_or_put_file(&mut self, file_path: &'static [u8]) -> GetOrPutFileResult {
-        // TODO: this is wrong. you can't put a hash as the key in a hashmap.
-        let entry = self
-            .index
-            .get_or_put(bun_wyhash::hash(file_path) as u32)
-            .expect("unreachable");
+        // Key on the full path string. A prior version truncated
+        // `bun_wyhash::hash(file_path)` to u32 and used that as the key; two
+        // distinct paths whose wyhash lower-32-bits collided would share a
+        // file_id, silently dropping the second file's Source and corrupting
+        // downstream per-file state (--randomize PRNG seed, --concurrent
+        // glob match). Callers pass paths interned in FileSystem's
+        // filename_store, so the slice outlives this map.
+        let entry = self.index.get_or_put(file_path).expect("unreachable");
         if entry.found_existing {
             return GetOrPutFileResult {
                 file_id: *entry.value_ptr,
@@ -298,8 +301,8 @@ bun_collections::multi_array_columns! {
         log: bun_ast::Log,
     }
 }
-// PORT NOTE: Zig used ArrayIdentityContext; u32 keys hash as identity in bun_collections.
-pub type FileMap = ArrayHashMap<u32, u32>;
+// Key on the full path string (see `get_or_put_file` for the rationale).
+pub type FileMap = StringArrayHashMap<FileId>;
 
 #[allow(non_snake_case)]
 pub mod Jest {

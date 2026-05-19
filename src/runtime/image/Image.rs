@@ -903,6 +903,21 @@ impl Image {
         // in memory it's cheaper to do it inline than to bounce off the WorkPool
         // (~0.4 ms roundtrip). Path-backed sources still go async for the file I/O.
         if let Some(buf) = self.js_thread_bytes(callframe.this(), global) {
+            // AVIF's probe is via dlopen'd libavif — the first call triggers
+            // a synchronous `dlopen("libavif.so.16", RTLD_NOW)` that also
+            // eagerly resolves dav1d + aom/rav1e/SvtAv1Enc. Doing that on
+            // the JS thread would stall the event loop on first use; force
+            // AVIF through the async path even with inline bytes. JPEG/PNG/
+            // WebP/BMP/GIF probes are pure Rust and stay sync.
+            // `Format::sniff` is just byte reads.
+            if codecs::Format::sniff(buf) == Some(codecs::Format::Avif) {
+                return self.schedule(
+                    global,
+                    callframe.this(),
+                    Kind::Metadata,
+                    Deliver::Uint8Array,
+                );
+            }
             match codecs::probe(buf, self.max_pixels) {
                 Ok(p) => {
                     let mut w = p.width;
@@ -928,7 +943,9 @@ impl Image {
                     );
                     return Ok(JSPromise::resolved_promise_value(global, obj));
                 }
-                // HEIC/AVIF need the system backend → fall through to async.
+                // HEIC/TIFF need the system backend → fall through to async.
+                // AVIF was diverted to async above via the pre-sniff, so it
+                // never reaches this arm.
                 Err(codecs::Error::UnsupportedOnPlatform) => {}
                 Err(e) => {
                     return Ok(JSPromise::rejected_promise(global, reject_error(global, e))
@@ -1579,8 +1596,10 @@ impl<'a> PipelineTask<'a> {
                     };
                     return;
                 }
-                // HEIC/AVIF have no header probe — fall through to full decode
-                // via the system backend.
+                // HEIC/TIFF have no header probe — fall through to full
+                // decode via the system backend. AVIF goes this route too
+                // on hosts without libavif.so.16 (the dlopen'd probe path
+                // returns UnsupportedOnPlatform there).
                 Err(codecs::Error::UnsupportedOnPlatform) => {}
                 Err(e) => {
                     self.result = TaskResult::Err(e);
@@ -1639,7 +1658,9 @@ impl<'a> PipelineTask<'a> {
         }
 
         if matches!(self.kind, Kind::Metadata) {
-            // Reached only for HEIC/AVIF (probe fell through).
+            // Reached for HEIC/TIFF (and AVIF on hosts without libavif's
+            // header probe) — the cheap probe() fell through so we're
+            // reading dims out of the full decode.
             self.result = TaskResult::Meta {
                 w: decoded.width,
                 h: decoded.height,
@@ -1683,7 +1704,9 @@ impl<'a> PipelineTask<'a> {
         // method). The pipeline doesn't colour-convert the RGBA, so dropping
         // the profile reinterprets a non-sRGB source (Display-P3, Adobe RGB,
         // Jpegli XYB) as sRGB and visibly shifts the colours — see #30197.
-        // JPEG/PNG/WebP embed it; HEIC/AVIF via the system backend do not.
+        // JPEG/PNG/WebP embed it; AVIF on Linux via the dlopen'd libavif
+        // embeds it too (avifImageSetProfileICC). HEIC via the system
+        // backend, and AVIF via the system backend, currently do not.
         if enc.icc_profile.is_none() {
             // `EncodeOptions.icc_profile` borrows for the duration of `encode()`
             // (raw `NonNull<[u8]>`); `decoded` outlives the call below.

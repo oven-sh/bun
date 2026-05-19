@@ -501,6 +501,9 @@ pub mod registry {
 
             registry.token = env.get_auto(&registry.token).into();
 
+            registry.certfile = env.get_auto(&registry.certfile).into();
+            registry.keyfile = env.get_auto(&registry.keyfile).into();
+
             // Copy `auth`/`user` into owned buffers now so the borrows of
             // `registry_url` / `output_buf_owned` are released before
             // `registry_url` is moved into `final_href` below.
@@ -532,9 +535,8 @@ pub mod registry {
         }
     }
 
-<<<<<<< HEAD
-    // TODO(port): Zig used `IdentityContext(u64)` hasher; std HashMap is fine for now.
-=======
+// TODO(port): Zig used `IdentityContext(u64)` hasher; std HashMap is fine for now.
+
     pub fn registry_tls_config(registry: &Scope) -> Option<http::ssl_config::SharedPtr> {
         let certfile = &registry.certfile;
         let keyfile = &registry.keyfile;
@@ -553,8 +555,6 @@ pub mod registry {
         Some(http::ssl_config::SharedPtr::new(config))
     }
 
-    // TODO(b2): Zig used `IdentityContext(u64)` hasher; std HashMap is fine for now.
->>>>>>> db7a5c1cfa (install: support certfile and keyfile from .npmrc for client TLS auth)
     pub type Map = HashMap<u64, Scope>;
 
     pub enum PackageVersionResponse {

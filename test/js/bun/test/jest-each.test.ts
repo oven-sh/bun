@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
 
 const NUMBERS = [
   [1, 1, 2],
@@ -56,4 +56,50 @@ describe.each(["some", "cool", "strings"])("works with describe: %s", s => {
 
 describe("does not return zero", () => {
   expect(it.each([1, 2])("wat", () => {})).toBeUndefined();
+});
+
+describe("tagged template literal format", () => {
+  it.each`
+    a    | b    | expected
+    ${1} | ${2} | ${3}
+    ${4} | ${5} | ${9}
+  `("$a + $b = $expected", ({ a, b, expected }) => {
+    expect(a + b).toBe(expected);
+  });
+
+  it.each`
+    name       | value
+    ${"hello"} | ${42}
+    ${"world"} | ${0}
+  `("$name has value $value", ({ name, value }) => {
+    expect(typeof name).toBe("string");
+    expect(typeof value).toBe("number");
+  });
+
+  it.each`
+    input        | expected
+    ${null}      | ${null}
+    ${undefined} | ${undefined}
+    ${0}         | ${0}
+  `("handles falsy value: $input", ({ input, expected }) => {
+    expect(input).toBe(expected);
+  });
+});
+
+describe.each`
+  multiplier | value | expected
+  ${2}       | ${3}  | ${6}
+  ${3}       | ${4}  | ${12}
+`("describe.each tagged template: multiplier $multiplier", ({ multiplier, value, expected }) => {
+  it("computes correctly", () => {
+    expect(multiplier * value).toBe(expected);
+  });
+});
+
+test.each`
+  input | output
+  ${1}  | ${2}
+  ${2}  | ${4}
+`("test.each tagged template: $input -> $output", ({ input, output }) => {
+  expect(input * 2).toBe(output);
 });

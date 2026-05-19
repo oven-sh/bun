@@ -151,6 +151,29 @@ impl ScopeFunctions {
         if !this.each.is_empty() {
             return Err(global.throw(format_args!("Cannot {} on {}", "each", this)));
         }
+
+        // For tagged templates, collect the interpolated values (args[1..]) into a JS array
+        // and store it as a property on the strings array so call_as_function can access them.
+        let args_raw = frame.arguments_old::<16>();
+        let args_slice = args_raw.slice();
+        if args_slice.len() > 1 {
+            // Check if this looks like a tagged template (first arg is array with .raw)
+            if let Some(raw) = array.get(global, "raw")? {
+                if raw.is_array() {
+                    // Template string arrays are frozen per ECMAScript spec, so we can't
+                    // mutate them. Create a wrapper array [strings, values...] to pass both.
+                    let wrapper = JSValue::create_empty_array(global, args_slice.len())?;
+                    wrapper.put_index(global, 0, array)?;
+                    for (i, val) in args_slice[1..].iter().enumerate() {
+                        wrapper.put_index(global, (i + 1) as u32, *val)?;
+                    }
+                    // Mark it as a tagged template wrapper
+                    wrapper.put(global, b"__tagged", JSValue::TRUE);
+                    return create_bound(global, this.mode, wrapper, this.cfg, strings::EACH());
+                }
+            }
+        }
+
         create_bound(global, this.mode, array, this.cfg, strings::EACH())
     }
 }
@@ -202,6 +225,57 @@ pub fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
             let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global);
             return Err(global.throw(format_args!("Expected array, got {}", this.each.to_fmt(&mut formatter))));
         }
+
+        // Detect tagged template literal: wrapper array has __tagged=true property
+        // (set by fn_each when it detects a tagged template call)
+        let is_tagged_template = if let Some(tagged) = this.each.get(global, "__tagged")? {
+            tagged == JSValue::TRUE
+        } else {
+            false
+        };
+
+        if is_tagged_template {
+            // Tagged template: wrapper is [strings, val1, val2, ...] with __tagged=true
+            // Extract strings (index 0) and build values array from indices 1+
+            let strings = this.each.get_index(global, 0)?;
+            let wrapper_len = this.each.get_length(global)? as usize;
+            let values = if wrapper_len > 1 {
+                let vals = JSValue::create_empty_array(global, wrapper_len - 1)?;
+                for i in 1..wrapper_len {
+                    let v = this.each.get_index(global, i as u32)?;
+                    vals.put_index(global, (i - 1) as u32, v)?;
+                }
+                vals
+            } else {
+                JSValue::UNDEFINED
+            };
+            let each_table = parse_tagged_template_table(global, strings, values)?;
+            let mut test_idx: usize = 0;
+            for row in &each_table {
+                let args_list: [JSValue; 1] = [*row];
+                let formatted_label: Option<Vec<u8>> = if let Some(desc) = args.description.as_deref() {
+                    Some(jest::format_label(global, desc, &args_list, test_idx)?.into_vec())
+                } else {
+                    None
+                };
+                let bound = if let Some(cb) = args.callback {
+                    Some(JSValueTestExt::bind(cb, global, *row, &BunString::static_str("cb"), 0.0, &args_list)?)
+                } else {
+                    None
+                };
+                this.enqueue_describe_or_test_callback(
+                    bun_test_ptr,
+                    global,
+                    frame,
+                    bound,
+                    formatted_label.as_deref(),
+                    &args.options,
+                    callback_length.saturating_sub(1),
+                    line_no,
+                )?;
+                test_idx += 1;
+            }
+        } else {
         let mut iter = this.each.array_iterator(global)?;
         let mut test_idx: usize = 0;
         while let Some(item) = iter.next()? {
@@ -255,6 +329,7 @@ pub fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
 
             test_idx += 1;
         }
+        } // close else (non-tagged-template array path)
     } else {
         this.enqueue_describe_or_test_callback(
             bun_test_ptr,
@@ -871,3 +946,64 @@ fn scope_mode_str(m: SelfMode) -> &'static str {
 }
 
 // ported from: src/test_runner/ScopeFunctions.zig
+
+/// Parse a tagged template table into row objects.
+/// `strings` is the template strings array (with .raw), `values` is the JS array of interpolated values.
+/// Returns a Vec of JSValue objects, each with properties named by the header columns.
+fn parse_tagged_template_table(
+    global: &JSGlobalObject,
+    strings: JSValue,
+    values: JSValue,
+) -> JsResult<Vec<JSValue>> {
+    // Get the first template string to extract column headers
+    let first_str = strings.get_index(global, 0)?;
+    let first_slice = first_str.to_slice(global)?;
+    let first_bytes = first_slice.slice();
+
+    // Find the first non-empty line (skip leading newlines)
+    let header_line = first_bytes
+        .split(|&b| b == b'\n')
+        .find(|line| line.iter().any(|&b| b != b' ' && b != b'\t' && b != b'\r'))
+        .unwrap_or(b"");
+
+    // Split on '|' and trim to get column names
+    let col_names: Vec<&[u8]> = header_line
+        .split(|&b| b == b'|')
+        .map(|s| {
+            let start = s.iter().position(|&b| b != b' ' && b != b'\t').unwrap_or(s.len());
+            let end = s.iter().rposition(|&b| b != b' ' && b != b'\t').map(|p| p + 1).unwrap_or(start);
+            &s[start..end]
+        })
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if col_names.is_empty() {
+        return Ok(Vec::new());
+    }
+    if col_names.len() > 16 {
+        return Err(global.throw(format_args!("Tagged template table cannot have more than 16 columns")));
+    }
+
+    // Count values and compute rows
+    let num_values = if values.is_array() {
+        values.get_length(global)? as usize
+    } else {
+        0
+    };
+    let num_cols = col_names.len();
+    let num_rows = num_values / num_cols;
+
+    // Build row objects
+    let mut rows: Vec<JSValue> = Vec::with_capacity(num_rows);
+    for row_idx in 0..num_rows {
+        let obj = JSValue::create_empty_object(global, num_cols);
+        for col_idx in 0..num_cols {
+            let val_idx = (row_idx * num_cols + col_idx) as u32;
+            let val = values.get_index(global, val_idx)?;
+            obj.put(global, col_names[col_idx], val);
+        }
+        rows.push(obj);
+    }
+
+    Ok(rows)
+}

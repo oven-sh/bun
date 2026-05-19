@@ -512,7 +512,7 @@ impl Queue {
                         import_record_id,
                         PackageDownloadError {
                             name,
-                            resolution: resolution.clone(),
+                            resolution: *resolution,
                             err,
                             url,
                         },

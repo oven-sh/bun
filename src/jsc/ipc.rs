@@ -559,11 +559,11 @@ mod json {
 
         match kind {
             Kind::Regular => Ok(DecodeIPCMessageResult {
-                bytes_consumed: u32::try_from(idx + 1).expect("int cast"),
+                bytes_consumed: idx + 1,
                 message: DecodedIPCMessage::Data(deserialized),
             }),
             Kind::Internal => Ok(DecodeIPCMessageResult {
-                bytes_consumed: u32::try_from(idx + 1).expect("int cast"),
+                bytes_consumed: idx + 1,
                 message: DecodedIPCMessage::Internal(deserialized),
             }),
         }

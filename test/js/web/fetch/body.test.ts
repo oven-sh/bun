@@ -1,5 +1,8 @@
 import { file, spawn, version } from "bun";
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, exampleSite } from "harness";
+
+const exampleServer = exampleSite("http");
 
 const bodyTypes = [
   {
@@ -207,7 +210,7 @@ for (const { body, fn } of bodyTypes) {
           {
             label: "fetch() stream",
             stream: async () => {
-              const { body } = await fetch("http://example.com/");
+              const { body } = await fetch(exampleServer.url);
               expect(body).not.toBeNull();
               return body as ReadableStream;
             },
@@ -668,3 +671,68 @@ function arrayBuffer(buffer: BufferSource) {
   }
   return buffer.buffer;
 }
+
+// Consuming a string body via .text()/.json()/.arrayBuffer()/.bytes() used to
+// permanently leak the whole body string (the adopted WTF::StringImpl +1 ref
+// was never released), so RSS grew *linearly and never plateaued* across
+// round-trips. The fix mirrors the Zig `defer str.deref()`. This asserts the
+// leak is bounded: after a warmup, a second equal block of round-trips must
+// not keep growing RSS (a linear leak adds ~block-size every block; a bounded
+// impl plateaus). Absolute RSS is intentionally not asserted — only growth.
+describe.concurrent("string body consumption does not leak", () => {
+  // NOTE: `.text()` is intentionally excluded. It produces a large JS string
+  // as its result, and discarded large JS strings are currently not reclaimed
+  // by GC in this build independently of bodies — `Buffer.alloc(2e6).toString()`
+  // in a loop leaks identically with no Blob/Response involved. That is a
+  // separate bug from the missing body-string `deref`; mixing it in here would
+  // test the wrong thing. These four consume into a parsed value / byte buffer
+  // and measure the body-string lifetime cleanly.
+  const cases: Array<[string, "Response" | "Request", string]> = [
+    ["Response.json", "Response", "json"],
+    ["Response.arrayBuffer", "Response", "arrayBuffer"],
+    ["Response.bytes", "Response", "bytes"],
+    ["Request.json", "Request", "json"],
+  ];
+
+  for (const [name, ctor, method] of cases) {
+    test(name, async () => {
+      // We need the *body string* to be large (that's the leaked ref) but the
+      // consumer to be cheap, so the JSON arm uses whitespace padding + a tiny
+      // value — valid JSON, ~SZ-byte body, near-free parse. `Buffer.alloc` is
+      // avoided for body construction per the note above (separate reclaim
+      // issue would pollute this measurement); `.repeat()` is also measurably
+      // faster than `Buffer.alloc(..).toString()` on this path in debug.
+      const makeBody = method === "json" ? `() => " ".repeat(SZ) + "0"` : `() => "z".repeat(SZ)`;
+      const make =
+        ctor === "Request"
+          ? `b => new Request("http://example.com/", { method: "POST", body: b })`
+          : `b => new Response(b)`;
+      const src = `
+        const SZ = 2_000_000, WARM = 50, BLOCK = 40;
+        const rss = () => (process.memoryUsage().rss / 1048576) | 0;
+        const body = ${makeBody};
+        const make = ${make};
+        const run = async n => { for (let i = 0; i < n; i++) await make(body())[${JSON.stringify(method)}](); };
+        await run(WARM); Bun.gc(true); const a = rss();
+        await run(BLOCK); Bun.gc(true); const b = rss();
+        await run(BLOCK); Bun.gc(true); const c = rss();
+        console.log("BLOCK1:" + (b - a) + " BLOCK2:" + (c - b));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const m = stdout.match(/BLOCK1:(-?\d+) BLOCK2:(-?\d+)/);
+      expect(m).not.toBeNull();
+      const block2 = Number(m![2]);
+      // Bounded: BLOCK2 ≈ 0 (plateaued). Leaking: BLOCK2 ≈ 40 × ~3 MB ≈ 100+ MB
+      // and keeps growing every block. 50 MB cleanly separates the two.
+      expect(block2).toBeLessThan(50);
+      expect(exitCode).toBe(0);
+    });
+  }
+});

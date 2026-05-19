@@ -504,13 +504,22 @@ pub fn installIsolatedPackages(
 
                             const res = pkg_resolutions[ids.pkg_id];
 
-                            if (peer_dep.version.tag != .npm or res.tag != .npm) {
+                            // `catalog:` peer dependencies only carry the catalog
+                            // name; resolve to the underlying version so the
+                            // satisfies check below behaves the same as if the
+                            // npm range had been written directly.
+                            const peer_version = if (peer_dep.version.tag == .catalog)
+                                lockfile.resolveCatalogDependency(&peer_dep) orelse peer_dep.version
+                            else
+                                peer_dep.version;
+
+                            if (peer_version.tag != .npm or res.tag != .npm) {
                                 // TODO: print warning for this? we don't have a version
                                 // to compare to say if this satisfies or not.
                                 break :resolved_pkg_id .{ ids.pkg_id, false };
                             }
 
-                            const peer_dep_version = peer_dep.version.value.npm.version;
+                            const peer_dep_version = peer_version.value.npm.version;
                             const res_version = res.value.npm.version;
 
                             if (!peer_dep_version.satisfies(res_version, string_buf, string_buf)) {

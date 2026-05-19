@@ -571,7 +571,7 @@ pub fn clean(
     return old.cleanWithLogger(manager, updates, &log, exact_versions, log_level);
 }
 
-pub fn resolveCatalogDependency(this: *Lockfile, dep: *const Dependency) ?Dependency.Version {
+pub fn resolveCatalogDependency(this: *const Lockfile, dep: *const Dependency) ?Dependency.Version {
     if (dep.version.tag != .catalog) {
         return dep.version;
     }

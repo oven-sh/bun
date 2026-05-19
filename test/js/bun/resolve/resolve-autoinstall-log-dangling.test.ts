@@ -37,15 +37,14 @@ test("repeated failing auto-install resolves at varying stack depth don't read a
   `;
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", src],
+    // Force the auto-install path (PackageManager lazy init inside the
+    // resolver) without hitting the network — the registry hostname is
+    // unroutable, so every enqueued manifest fetch fails fast and routes
+    // through `manager.log_mut()`.
+    cmd: [bunExe(), "--install=fallback", "-e", src],
     cwd: String(dir),
     env: {
       ...bunEnv,
-      // Force the auto-install path (PackageManager lazy init inside the
-      // resolver) without hitting the network — the registry hostname is
-      // unroutable, so every enqueued manifest fetch fails fast and routes
-      // through `manager.log_mut()`.
-      BUN_CONFIG_INSTALL: "fallback",
       BUN_CONFIG_REGISTRY: "http://127.0.0.1:1",
     },
     stdout: "pipe",

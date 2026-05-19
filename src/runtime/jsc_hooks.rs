@@ -2157,31 +2157,18 @@ fn transpile_source_code_inner(
             let args_log_nn = core::ptr::NonNull::new(args.log).expect("args.log is non-null");
             unsafe {
                 (*jsc_vm).transpiler.log = args.log;
-                {
-                    (*jsc_vm).transpiler.resolver.log = args_log_nn;
-                }
-                // TODO(b2-blocked): `Linker` is a unit stub in `bun_bundler`
-                // — `.log` field un-gates with `linker.rs`.
-
-                {
-                    (*jsc_vm).transpiler.linker.log = args.log;
-                    if let Some(pm) = (*jsc_vm).transpiler.resolver.package_manager {
-                        // TODO(blocked_on): bun_resolver::package_json::PackageManager::log
-                        // — the resolver-side stub only exposes `lockfile`/`on_wake`.
-                        let _ = pm;
-                    }
+                (*jsc_vm).transpiler.resolver.log = args_log_nn;
+                (*jsc_vm).transpiler.linker.log = args.log;
+                if let Some(pm) = (*jsc_vm).transpiler.resolver.package_manager {
+                    (*pm.cast::<bun_install::PackageManager>().as_ptr()).log = args.log;
                 }
             }
             let _log_guard = scopeguard::guard(jsc_vm, move |jsc_vm| unsafe {
                 (*jsc_vm).transpiler.log = old_log;
-
-                {
-                    (*jsc_vm).transpiler.resolver.log = old_log_nn;
-                    (*jsc_vm).transpiler.linker.log = old_log;
-                    if let Some(pm) = (*jsc_vm).transpiler.resolver.package_manager {
-                        // TODO(blocked_on): bun_resolver::package_json::PackageManager::log
-                        let _ = pm;
-                    }
+                (*jsc_vm).transpiler.resolver.log = old_log_nn;
+                (*jsc_vm).transpiler.linker.log = old_log;
+                if let Some(pm) = (*jsc_vm).transpiler.resolver.package_manager {
+                    (*pm.cast::<bun_install::PackageManager>().as_ptr()).log = old_log;
                 }
             });
 

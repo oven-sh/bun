@@ -1,6 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 
+// Safe JSON parse for subprocess stdout. An unguarded `JSON.parse` throws
+// on malformed output *before* the test's final assertion runs, hiding
+// stderr/exitCode context — we want failures to surface the raw subprocess
+// output next to the parse result for diagnosis.
+function parseJSON(text: string): unknown {
+  try {
+    return JSON.parse(text.trim() || "null");
+  } catch {
+    return null;
+  }
+}
+
 // When `Bun.listen()` on a Windows named pipe fails (e.g. the pipe name is
 // already in use), the cleanup path must:
 //   - not double-unprotect the socket handler callbacks (previously both
@@ -8,7 +20,10 @@ import { bunEnv, bunExe, isWindows } from "harness";
 //     same JSValues, tripping a debug assertion)
 //   - free the heap-allocated `WindowsNamedPipeListeningContext` and close the
 //     libuv pipe handle, so the event loop can drain and the process exits
-describe.skipIf(!isWindows)("Bun.listen named-pipe error path", () => {
+//
+// Each test spawns an independent subprocess with a randomized pipe name and
+// no shared state, so they're safe to run concurrently.
+describe.skipIf(!isWindows).concurrent("Bun.listen named-pipe error path", () => {
   test("failed listen on in-use pipe throws, cleans up, and does not hang", async () => {
     const src = /* js */ `
       const pipe = "\\\\\\\\.\\\\pipe\\\\bun-test-named-pipe-" + Math.random().toString(36).slice(2);
@@ -18,14 +33,14 @@ describe.skipIf(!isWindows)("Bun.listen named-pipe error path", () => {
         socket: { data() {}, open() {}, close() {}, error() {} },
       });
 
-      let threw = false;
+      let threw;
       try {
         Bun.listen({
           unix: pipe,
           socket: { data() {}, open() {}, close() {}, error() {} },
         });
       } catch (e) {
-        threw = true;
+        threw = e;
       }
 
       first.stop(true);
@@ -35,8 +50,17 @@ describe.skipIf(!isWindows)("Bun.listen named-pipe error path", () => {
         process.exit(1);
       }
 
+      // The thrown error must match Node's 'listen EADDRINUSE' shape so
+      // node:net can re-emit it on the 'error' event with the right code.
+      const result = {
+        code: threw.code,
+        syscall: threw.syscall,
+        address: threw.address,
+        errnoType: typeof threw.errno,
+      };
+      console.log(JSON.stringify(result));
+
       Bun.gc(true);
-      console.log("OK");
     `;
 
     await using proc = Bun.spawn({
@@ -53,12 +77,161 @@ describe.skipIf(!isWindows)("Bun.listen named-pipe error path", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect({
-      stdout: stdout.trim(),
+      shape: parseJSON(stdout),
+      rawStdout: stdout.trim(),
       stderr: stderr.trim(),
       exitCode,
       signalCode: proc.signalCode ?? null,
-    }).toMatchObject({
-      stdout: "OK",
+    }).toEqual({
+      shape: {
+        code: "EADDRINUSE",
+        syscall: "listen",
+        address: expect.stringMatching(/^\\\\\.\\pipe\\bun-test-named-pipe-/),
+        errnoType: "number",
+      },
+      rawStdout: expect.any(String),
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  // Regression test for https://github.com/oven-sh/bun/issues/30265 — a second
+  // `net.createServer().listen(<named-pipe>)` against an already-owned pipe
+  // used to panic with "Internal assertion failure" (Zig tagged-union partial
+  // write in the errdefer cleanup path). After that was fixed, the error
+  // arrived on `'error'` but as a generic `TypeError: Failed to listen at …`,
+  // missing `.code`, `.errno`, `.syscall`, `.address`. Node delivers
+  // `listen EADDRINUSE: address already in use <pipe>` with those fields;
+  // this test locks that contract down.
+  test("net.createServer().listen(pipe) emits 'error' with EADDRINUSE on busy pipe", async () => {
+    const src = /* js */ `
+      const { createServer } = require("node:net");
+      const pipe = "\\\\\\\\.\\\\pipe\\\\bun-test-net-listen-" + Math.random().toString(36).slice(2);
+
+      const first = createServer(() => {});
+      first.on("error", err => {
+        console.error("first listen errored:", err);
+        process.exit(2);
+      });
+      first.listen(pipe, () => {
+        const second = createServer(() => {});
+        second.on("error", err => {
+          const result = {
+            code: err.code,
+            syscall: err.syscall,
+            address: err.address,
+            errnoType: typeof err.errno,
+            message: err.message,
+            // Node's net.Server listen error (built via uvExceptionWithHostPort)
+            // has .address but no .path — keep parity here so user code that
+            // discriminates between filesystem errors and address-in-use
+            // errors by presence of .path keeps working.
+            hasPath: "path" in err,
+          };
+          console.log(JSON.stringify(result));
+          first.close();
+        });
+        second.listen(pipe);
+      });
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 15_000,
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({
+      shape: parseJSON(stdout),
+      rawStdout: stdout.trim(),
+      stderr: stderr.trim(),
+      exitCode,
+      signalCode: proc.signalCode ?? null,
+    }).toEqual({
+      shape: {
+        code: "EADDRINUSE",
+        syscall: "listen",
+        address: expect.stringMatching(/^\\\\\.\\pipe\\bun-test-net-listen-/),
+        errnoType: "number",
+        // Node's exact format: "listen EADDRINUSE: address already in use \\.\pipe\..."
+        message: expect.stringMatching(/^listen EADDRINUSE: address already in use \\\\\.\\pipe\\bun-test-net-listen-/),
+        hasPath: false,
+      },
+      rawStdout: expect.any(String),
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  // `normalizePipeName` accepts `//./pipe/`, `//?/pipe/`, `\\?\pipe\`, or any
+  // mixed-slash variant — but internally rewrites to the canonical
+  // `\\.\pipe\` form before handing off to libuv. Node's convention is that
+  // `err.address` echoes the user's input verbatim, so the two must stay
+  // decoupled: the uv bind call uses the canonical form, but the error
+  // object (and its message) use whatever the user passed.
+  test("error .address preserves the user's original pipe prefix form", async () => {
+    const src = /* js */ `
+      const forward = "//./pipe/bun-test-forward-slash-" + Math.random().toString(36).slice(2);
+
+      const first = Bun.listen({
+        unix: forward,
+        socket: { data() {}, open() {}, close() {}, error() {} },
+      });
+
+      let threw;
+      try {
+        Bun.listen({
+          unix: forward,
+          socket: { data() {}, open() {}, close() {}, error() {} },
+        });
+      } catch (e) {
+        threw = e;
+      }
+
+      first.stop(true);
+
+      if (!threw) {
+        console.error("expected second Bun.listen to throw");
+        process.exit(1);
+      }
+
+      console.log(JSON.stringify({
+        code: threw.code,
+        address: threw.address,
+        messageContainsForward: threw.message.includes(forward),
+      }));
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 15_000,
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({
+      shape: parseJSON(stdout),
+      rawStdout: stdout.trim(),
+      stderr: stderr.trim(),
+      exitCode,
+      signalCode: proc.signalCode ?? null,
+    }).toEqual({
+      shape: {
+        code: "EADDRINUSE",
+        address: expect.stringMatching(/^\/\/\.\/pipe\/bun-test-forward-slash-/),
+        messageContainsForward: true,
+      },
+      rawStdout: expect.any(String),
+      stderr: "",
       exitCode: 0,
       signalCode: null,
     });

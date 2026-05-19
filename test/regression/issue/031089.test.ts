@@ -43,18 +43,19 @@ test.skipIf(!cargo)(
 
     // Both fixture types must fail the AtomCrossThread bound. Losing
     // either pair of errors means a soundness hole has reopened.
+    // Check the content first, exit code last — a missing-text failure
+    // is a more useful signal than "cargo returned 0".
     expect({
-      exitCode,
       mentionsE0277: out.includes("E0277"),
       mentionsAtomCrossThread: out.includes("AtomCrossThread"),
       rejectsEvil: out.includes("Evil: AtomCrossThread"),
       rejectsEvilAtom: out.includes("EvilAtom: AtomCrossThread"),
     }).toEqual({
-      exitCode: 101, // cargo check exits 101 on type errors
       mentionsE0277: true,
       mentionsAtomCrossThread: true,
       rejectsEvil: true,
       rejectsEvilAtom: true,
     });
+    expect(exitCode).toBe(101); // cargo check exits 101 on type errors
   },
 );

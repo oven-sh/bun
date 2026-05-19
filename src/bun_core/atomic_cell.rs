@@ -58,10 +58,10 @@ pub struct AtomicCell<T: Copy> {
 
 // SAFETY: every access goes through an atomic op and `T: Copy` so no drop
 // glue can race. The [`AtomCrossThread`] bound is what keeps a user-defined
-// `Copy + !Send` type (e.g. a wrapper around `Cell<_>` or `PhantomData<*const
-// ()>`) from being laundered across threads by implementing [`Atom`] alone:
-// the primitives and pointer types below opt in explicitly, nothing else
-// does.
+// `Copy + !Send` type (the canonical shape is a struct holding a
+// `PhantomData<*const ()>` — see the `Evil` test fixture) from being
+// laundered across threads: the primitives and pointer types below opt in
+// explicitly, and no blanket impl exists.
 unsafe impl<T: Copy + AtomCrossThread> Sync for AtomicCell<T> {}
 unsafe impl<T: Copy + AtomCrossThread> Send for AtomicCell<T> {}
 

@@ -3259,7 +3259,7 @@ impl PackageManifest {
         );
         result.pkg.releases.values = PackageVersionList::init(
             &versioned_packages,
-            &versioned_packages[all_versioned_package_releases_range.clone()],
+            &versioned_packages[all_versioned_package_releases_range],
         );
 
         result.pkg.prereleases.keys = VersionSlice::init(
@@ -3268,7 +3268,7 @@ impl PackageManifest {
         );
         result.pkg.prereleases.values = PackageVersionList::init(
             &versioned_packages,
-            &versioned_packages[all_versioned_package_prereleases_range.clone()],
+            &versioned_packages[all_versioned_package_prereleases_range],
         );
 
         let max_versions_count = all_release_versions_range

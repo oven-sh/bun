@@ -862,6 +862,24 @@ pub fn enterUWSLoop(this: *VirtualMachine) void {
     loop.run();
 }
 
+extern fn Bun__findStalledTopLevelAwait(*JSGlobalObject) bun.String;
+
+/// Print a warning naming the module(s) whose body is suspended on its own
+/// top-level await. Walks the JSC module registry to find EvaluatingAsync
+/// records with `hasTLA` and no pending async dependencies; falls back to
+/// the entry path if nothing is found (e.g. eval mode).
+pub fn reportUnsettledTopLevelAwait(this: *VirtualMachine) void {
+    var stalled = Bun__findStalledTopLevelAwait(this.global);
+    defer stalled.deref();
+    const stalled_utf8 = stalled.toUTF8(bun.default_allocator);
+    defer stalled_utf8.deinit();
+    Output.prettyErrorln(
+        "<r><yellow>Warning<r><d>:<r> Detected unsettled top-level await at <b>{s}<r>",
+        .{if (stalled_utf8.len > 0) stalled_utf8.slice() else this.main},
+    );
+    Output.flush();
+}
+
 pub fn onBeforeExit(this: *VirtualMachine) void {
     this.exit_handler.dispatchOnBeforeExit();
     var dispatch = false;
@@ -1037,6 +1055,49 @@ pub fn waitFor(this: *VirtualMachine, cond: *bool) void {
 
 pub fn waitForPromise(this: *VirtualMachine, promise: jsc.AnyPromise) void {
     this.eventLoop().waitForPromise(promise);
+}
+
+/// Wait for a module's top-level await promise to settle.
+///
+/// Unlike `waitForPromise`, this breaks out when nothing remains that could
+/// settle the promise (no active handles/refs, no pending tasks or
+/// immediates). Without this, a module containing e.g.
+/// `await new Promise(() => {})` causes the loader to busy-spin forever in
+/// `tick()` + `autoTick()` once the last timer fires and `autoTick` degrades
+/// to a non-blocking `tickWithoutIdle`.
+///
+/// The liveness check deliberately does NOT use `isEventLoopAlive()`: that
+/// predicate short-circuits to `false` on `unhandled_error_counter != 0`,
+/// which for `bun test` persists across files. An unhandled rejection in an
+/// earlier file would then make every later file with ordinary async TLA
+/// bail here with a spurious "never resolved" error even though ref'd work
+/// would settle it.
+///
+/// Callers must handle a still-`.pending` status on return: for `bun run` this
+/// matches Node's exit code 13 behavior; for `bun test` the file is reported
+/// as a load error.
+fn waitForModulePromise(this: *VirtualMachine, promise: *JSInternalPromise) void {
+    while (promise.status() == .pending) {
+        this.eventLoop().tick();
+
+        if (promise.status() != .pending) return;
+
+        // After draining tasks + microtasks, if nothing could still wake the
+        // loop the promise can never settle. Break instead of busy-spinning.
+        // `concurrent_tasks` closes a narrow race where another thread pushed
+        // to the queue after `tick()`'s `tickConcurrent()` ran.
+        const loop = this.event_loop;
+        const has_work = this.event_loop_handle.?.isActive() or
+            this.active_tasks > 0 or
+            loop.tasks.count > 0 or
+            loop.hasPendingRefs() or
+            !loop.concurrent_tasks.isEmpty() or
+            loop.immediate_tasks.items.len > 0 or
+            loop.next_immediate_tasks.items.len > 0;
+        if (!has_work) return;
+
+        this.eventLoop().autoTick();
+    }
 }
 
 pub fn waitForTasks(this: *VirtualMachine) void {
@@ -2262,13 +2323,27 @@ fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
             }
         } else {
             this.eventLoop().performGC();
-            this.waitForPromise(jsc.AnyPromise{
-                .internal = promise,
-            });
+            this.waitForModulePromise(promise);
         }
 
-        if (promise.status() == .rejected)
-            return promise;
+        // Propagate both rejection and still-pending (unsettled TLA on an
+        // idle loop) so callers report it instead of silently continuing to
+        // later preloads / the entry point. For `.pending`, name the preload
+        // here — downstream reporting only knows the entry path.
+        switch (promise.status()) {
+            .fulfilled => {},
+            .rejected => return promise,
+            .pending => {
+                this.log.addErrorFmt(
+                    null,
+                    logger.Loc.Empty,
+                    this.allocator,
+                    "Top-level await in preload {f} never resolved",
+                    .{bun.fmt.formatJSONStringLatin1(preload)},
+                ) catch unreachable;
+                return promise;
+            },
+        }
     }
 
     // Under --isolate each test file gets a fresh global, so preloads must
@@ -2445,7 +2520,7 @@ pub fn loadEntryPointForTestRunner(this: *VirtualMachine, entry_path: string) an
         }
 
         this.eventLoop().performGC();
-        this.waitForPromise(.{ .internal = promise });
+        this.waitForModulePromise(promise);
     }
 
     this.eventLoop().autoTick();
@@ -2477,7 +2552,7 @@ pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInt
         }
 
         this.eventLoop().performGC();
-        this.waitForPromise(.{ .internal = promise });
+        this.waitForModulePromise(promise);
     }
 
     return this.pending_internal_promise.?;

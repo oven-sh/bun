@@ -495,9 +495,31 @@ pub const Run = struct {
                     vm.eventLoop().tickPossiblyForever();
                 }
             } else {
-                while (vm.isEventLoopAlive()) {
-                    vm.tick();
-                    vm.eventLoop().autoTickActive();
+                // Main loop + beforeExit, with handling for a still-pending entry
+                // module promise (top-level await that `waitForModulePromise`
+                // bailed on because the loop was idle). A `beforeExit` handler
+                // may resolve the stuck await, and the resumed body may
+                // schedule more work and then suspend again — `continue`
+                // re-enters the whole cycle so Node's "beforeExit fires every
+                // time the loop drains" semantics hold for any number of rounds.
+                while (true) {
+                    while (vm.isEventLoopAlive()) {
+                        vm.tick();
+                        vm.eventLoop().autoTickActive();
+                    }
+
+                    vm.onBeforeExit();
+
+                    if (vm.pending_internal_promise) |p| {
+                        if (p.status() == .pending) {
+                            // A bare `resolve()` inside the handler queues a
+                            // JSC microtask that `isEventLoopAlive()` doesn't
+                            // count. Drain it so the module body resumes.
+                            vm.tick();
+                            if (vm.isEventLoopAlive()) continue;
+                        }
+                    }
+                    break;
                 }
 
                 if (this.ctx.runtime_options.eval.eval_and_print) {
@@ -528,7 +550,26 @@ pub const Run = struct {
                     to_print.print(vm.global, .Log, .Log);
                 }
 
-                vm.onBeforeExit();
+                // The entry module's top-level await never settled and nothing
+                // is keeping the event loop alive. Match Node.js: warn + exit 13.
+                // Late `.rejected` (the resumed body threw) is reported here
+                // because the module-loader pipeline promise is pre-marked
+                // handled and never reaches `handleRejectedPromises()`; gate
+                // on `pending_internal_promise_reported_at` so an initial-load
+                // rejection already handled above isn't double-reported.
+                if (vm.pending_internal_promise) |p| switch (p.status()) {
+                    .pending => {
+                        vm.reportUnsettledTopLevelAwait();
+                        if (vm.exit_handler.exit_code == 0) vm.exit_handler.exit_code = 13;
+                    },
+                    .rejected => if (vm.pending_internal_promise_reported_at != vm.hot_reload_counter) {
+                        vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
+                        const handled = vm.uncaughtException(vm.global, p.result(vm.global.vm()), true);
+                        p.setHandled();
+                        if (!handled and vm.exit_handler.exit_code == 0) vm.exit_handler.exit_code = 1;
+                    },
+                    .fulfilled => {},
+                };
             }
 
             if (vm.log.msgs.items.len > 0) {

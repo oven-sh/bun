@@ -3265,6 +3265,50 @@ impl TestCommand {
 
                     return Ok(());
                 }
+                jsc::js_promise::Status::Pending => {
+                    // Top-level await never settled and the event loop drained.
+                    // Report it as a load error for this file and move on
+                    // instead of hanging forever. If the pending promise came
+                    // from a --preload, `load_preloads` put a "Top-level await
+                    // in preload ..." entry in `vm.log` — print that first so
+                    // the user sees which file is actually stuck.
+                    reporter.jest.current_file.print_if_needed();
+                    if let Some(log) = vm.log {
+                        // SAFETY: `vm.log` is the unique per-VM `Box<Log>`.
+                        let log = unsafe { &mut *log.as_ptr() };
+                        if log.errors > 0 {
+                            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                            log.msgs.clear();
+                            log.errors = 0;
+                        }
+                    }
+                    pretty_errorln!(
+                        "<r><red>error<r><d>:<r> Top-level await never resolved while \
+                         loading <b>{}<r> and nothing is keeping the event loop alive.",
+                        bstr::BStr::new(file_title)
+                    );
+                    Output::flush();
+                    reporter.summary().fail += 1;
+
+                    if reporter.jest.bail == reporter.summary().fail {
+                        reporter.print_summary();
+                        pretty_error!(
+                            "\nBailed out after {} failure{}<r>\n",
+                            reporter.jest.bail,
+                            if reporter.jest.bail == 1 { "" } else { "s" }
+                        );
+                        reporter.write_junit_report_if_needed();
+
+                        vm.exit_handler.exit_code = 1;
+                        vm.is_shutting_down = true;
+                        // SAFETY: global_exit diverges; raw-ptr reborrow mirrors Zig
+                        // runWithAPILock(*VM, vm, globalExit).
+                        let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm);
+                        unsafe { (*vm_ptr).run_with_api_lock(|| (&mut *vm_ptr).global_exit()) };
+                    }
+
+                    return Ok(());
+                }
                 _ => {}
             }
 

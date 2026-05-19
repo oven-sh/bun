@@ -91,11 +91,7 @@ scanner = "test-security-scanner"`,
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    runProc.stdout.text(),
-    runProc.stderr.text(),
-    runProc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([runProc.stdout.text(), runProc.stderr.text(), runProc.exited]);
 
   return { dir, stdout, stderr, exitCode, combined: stdout + stderr };
 }

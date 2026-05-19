@@ -1671,6 +1671,7 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         ctx.test_options.path_ignore_patterns =
             slice_to_owned(args.options(b"--path-ignore-patterns"));
         ctx.test_options.path_ignore_patterns_from_cli = true;
+        ctx.test_options.path_ignore_patterns_configured = true;
     }
 
     if let Some(bail) = args.option(b"--bail") {

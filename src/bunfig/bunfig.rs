@@ -687,9 +687,13 @@ impl<'a> Parser<'a> {
                             ExprData::EString(s) => {
                                 self.ctx.test_options.path_ignore_patterns =
                                     vec![estring_to_owned(s, self.bump)];
+                                self.ctx.test_options.path_ignore_patterns_configured = true;
                             }
                             ExprData::EArray(arr) => {
                                 let items = arr.items.slice();
+                                // An explicit empty array opts out of the default
+                                // ignore patterns without supplying any of its own.
+                                self.ctx.test_options.path_ignore_patterns_configured = true;
                                 if items.is_empty() {
                                     break 'brk;
                                 }

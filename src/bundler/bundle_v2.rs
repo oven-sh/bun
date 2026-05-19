@@ -4935,6 +4935,13 @@ pub mod bv2_impl {
                 {
                     drop(core::mem::take(v));
                 }
+                // `input_source_map` columns hold owned `Box<InputSourceMap>`
+                // (inner `Arc<ParsedSourceMap>` + owned `sources_content` Vec).
+                // `MultiArrayList::drop` is slab-only, so drain explicitly
+                // before the slab is released.
+                for m in self.graph.input_files.items_input_source_map_mut() {
+                    drop(m.take());
+                }
                 for q in self.linker.graph.files.items_quoted_source_contents_mut() {
                     drop(q.take());
                 }
@@ -7178,6 +7185,18 @@ pub mod bv2_impl {
 
                     // Record which loader we used for this file
                     this.graph.input_files.items_loader_mut()[result_source_index] = result.loader;
+
+                    // Transfer ownership of any decoded inline input sourcemap
+                    // from the parse result onto the SoA slot. An earlier
+                    // occupant (e.g. incremental reparse of a previously-loaded
+                    // file) is dropped here — the `Box<InputSourceMap>`'s Drop
+                    // releases the inner `Arc<ParsedSourceMap>` and the owned
+                    // `sources_content` buffers.
+                    {
+                        let slot = &mut this.graph.input_files.items_input_source_map_mut()
+                            [result_source_index];
+                        *slot = core::mem::take(&mut result.input_source_map);
+                    }
 
                     bun_core::scoped_log!(
                         Bundle,

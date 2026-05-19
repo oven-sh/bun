@@ -1717,6 +1717,18 @@ fn normalizeSpecifierForResolution(specifier_: []const u8, query_string: *[]cons
         specifier = specifier[0..i];
     }
 
+    // Playwright appends ".esm.preflight" to file:// URLs for ESM preflight
+    // checks that rely on Node.js ESM loader hooks (module.register()).
+    // Under Node, the loader intercepts this synthetic import and returns
+    // an empty module. Since Bun handles TypeScript/ESM natively and does
+    // not support loader hooks, strip the suffix so the underlying file
+    // resolves directly. Scoped to absolute paths because file:// URLs are
+    // converted to absolute filesystem paths by the C++ layer before
+    // reaching here.
+    if (std.fs.path.isAbsolute(specifier) and strings.hasSuffixComptime(specifier, ".esm.preflight")) {
+        specifier = specifier[0 .. specifier.len - ".esm.preflight".len];
+    }
+
     return specifier;
 }
 

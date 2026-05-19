@@ -21,6 +21,8 @@ pub const BunxCommand = struct {
         /// Skip installing the package, only running the target command if its
         /// already downloaded. If its not, `bunx` exits with an error.
         no_install: bool = false,
+        /// Working directory override (`--cwd <path>`).
+        cwd: ?string = null,
         allocator: Allocator,
 
         /// Create a new `Options` instance by parsing CLI arguments. `ctx` may be mutated.
@@ -87,6 +89,24 @@ pub const BunxCommand = struct {
                             Global.exit(1);
                         }
                         opts.specified_package = package_value;
+                    } else if (strings.eqlComptime(positional, "--cwd")) {
+                        i += 1;
+                        if (i >= argv.len) {
+                            Output.errGeneric("--cwd requires a path argument", .{});
+                            Global.exit(1);
+                        }
+                        if (argv[i].len == 0) {
+                            Output.errGeneric("--cwd requires a non-empty path", .{});
+                            Global.exit(1);
+                        }
+                        opts.cwd = argv[i];
+                    } else if (strings.hasPrefixComptime(positional, "--cwd=")) {
+                        const cwd_value = positional["--cwd=".len..];
+                        if (cwd_value.len == 0) {
+                            Output.errGeneric("--cwd requires a non-empty path", .{});
+                            Global.exit(1);
+                        }
+                        opts.cwd = cwd_value;
                     }
                 } else {
                     if (!found_subcommand_name) {
@@ -393,6 +413,19 @@ pub const BunxCommand = struct {
             break :blk update_request.name[index + 1 ..];
         } else update_request.name;
         debug("initial_bin_name: {s}", .{initial_bin_name});
+
+        if (opts.cwd) |cwd_arg| {
+            var outbuf: bun.PathBuffer = undefined;
+            const cwd = bun.getcwd(&outbuf) catch {
+                Output.errGeneric("Could not get current directory\n", .{});
+                Global.exit(1);
+            };
+            const resolved = bun.path.joinAbs(cwd, .loose, cwd_arg);
+            bun.sys.chdir("", resolved).unwrap() catch |err| {
+                Output.err(err, "Could not change directory to \"{s}\"\n", .{cwd_arg});
+                Global.exit(1);
+            };
+        }
 
         // fast path: they're actually using this interchangeably with `bun run`
         // so we use Bun.which to check

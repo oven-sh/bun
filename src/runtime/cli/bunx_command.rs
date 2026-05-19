@@ -19,7 +19,7 @@ use bun_core::{ZStr, strings};
 use bun_install::dependency::VersionTag;
 use bun_install::update_request::{self, UpdateRequest};
 use bun_parsers::json;
-use bun_paths::{self, DELIMITER, PathBuffer};
+use bun_paths::{self, DELIMITER, PathBuffer, platform, resolve_path};
 use bun_resolver::fs::RealFS;
 use bun_sys::{self, Fd, FdDirExt as _, FdExt as _, O};
 use bun_wyhash::hash;
@@ -56,6 +56,8 @@ pub struct Options {
     /// Skip installing the package, only running the target command if its
     /// already downloaded. If its not, `bunx` exits with an error.
     pub no_install: bool,
+    /// Working directory override (`--cwd <path>`).
+    pub cwd: Option<&'static [u8]>,
     // PORT NOTE: `std.mem.Allocator` param field dropped — global mimalloc.
 }
 
@@ -69,6 +71,7 @@ impl Default for Options {
             verbose_install: false,
             silent_install: false,
             no_install: false,
+            cwd: None,
         }
     }
 }
@@ -152,6 +155,24 @@ impl Options {
                         Global::exit(1);
                     }
                     opts.specified_package = Some(package_value);
+                } else if positional == b"--cwd" {
+                    i += 1;
+                    if i >= argv.len() {
+                        Output::err_generic("--cwd requires a path argument", format_args!(""));
+                        Global::exit(1);
+                    }
+                    if argv[i].as_bytes().is_empty() {
+                        Output::err_generic("--cwd requires a non-empty path", format_args!(""));
+                        Global::exit(1);
+                    }
+                    opts.cwd = Some(argv[i].as_bytes());
+                } else if positional.starts_with(b"--cwd=") {
+                    let cwd_value = &positional[b"--cwd=".len()..];
+                    if cwd_value.is_empty() {
+                        Output::err_generic("--cwd requires a non-empty path", format_args!(""));
+                        Global::exit(1);
+                    }
+                    opts.cwd = Some(cwd_value);
                 }
             } else {
                 if !found_subcommand_name {
@@ -641,6 +662,27 @@ impl BunxCommand {
             &update_request.name
         };
         bun_output::scoped_log!(bunx, "initial_bin_name: {}", BStr::new(initial_bin_name));
+
+        if let Some(cwd_arg) = opts.cwd {
+            let mut outbuf = PathBuffer::uninit();
+            let cwd_len = match bun_sys::getcwd(&mut *outbuf) {
+                Ok(len) => len,
+                Err(_) => {
+                    Output::err_generic("Could not get current directory", format_args!(""));
+                    Global::exit(1);
+                }
+            };
+            let out = resolve_path::join_abs::<platform::Loose>(&outbuf[..cwd_len], cwd_arg);
+            let out_z = bun_core::ZBox::from_bytes(out);
+            if let Err(err) = bun_sys::chdir(&out_z) {
+                Output::err(
+                    err,
+                    "Could not change directory to \"{}\"\n",
+                    format_args!("{}", BStr::new(cwd_arg)),
+                );
+                Global::exit(1);
+            }
+        }
 
         // fast path: they're actually using this interchangeably with `bun run`
         // so we use Bun.which to check

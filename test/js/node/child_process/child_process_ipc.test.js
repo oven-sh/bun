@@ -1,5 +1,5 @@
 import { $ } from "bun";
-import { bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 
 test("child_process ipc", async () => {
   const output = await $`${bunExe()} ${import.meta.dir}/fixtures/ipc_fixture.js`.text();
@@ -12,4 +12,53 @@ test("child_process ipc", async () => {
     cb ERR_IPC_CHANNEL_CLOSED
     "
   `);
+});
+
+// https://github.com/oven-sh/bun/issues/30569
+// Skipped on Windows: the backpressure fix itself (byte threshold in
+// `SendQueue.serializeAndSend` in `src/jsc/ipc.zig`) works identically on
+// Windows — the existing advanced-mode IPC tests cover it — but the fixture's
+// "flood until send() returns false, then wait for drain" pattern is timing
+// sensitive against the Windows named-pipe buffer (~64 KiB by default) and
+// flakes intermittently in CI on this host. The POSIX run is the real
+// regression check for #30569.
+test.skipIf(isWindows)("process.send() returns false under IPC backpressure", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), import.meta.dir + "/fixtures/ipc-backpressure-fixture.js"],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // `bunEnv` enables ASAN in debug builds, which prints one-off warnings to
+  // stderr on some hosts. Strip those before asserting the child was silent.
+  const stderrLines = stderr
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  expect(stderrLines).toBe("");
+
+  expect(stdout).not.toContain("NEVER_BACKPRESSURED");
+  // Child ran out of kernel buffer and process.send() returned false.
+  // `firstFalseAt > 1` is deliberately tight: `count` is pre-incremented,
+  // so the smallest value printed is 1 — a bogus "every send returns false"
+  // implementation would still satisfy `>= 1`. A real backpressure fix has
+  // to accept at least one message before signalling, so we require >= 2.
+  const firstFalse = stdout.match(/firstFalseAt=(\d+)/);
+  expect(firstFalse).not.toBeNull();
+  expect(Number(firstFalse[1])).toBeGreaterThan(1);
+  // The drain callback (3rd arg to process.send) fired, which is the only
+  // way the child could unref the channel and exit cleanly.
+  expect(stdout).toContain("drained");
+  const drained = stdout.match(/drained maxCount=(\d+) falseReturns=(\d+)/);
+  expect(drained).not.toBeNull();
+  expect(Number(drained[2])).toBeGreaterThan(0);
+  // The parent received every message the child sent.
+  const parent = stdout.match(/parent received=(\d+) exit=0/);
+  expect(parent).not.toBeNull();
+  expect(Number(parent[1])).toBe(Number(drained[1]));
+
+  expect(exitCode).toBe(0);
 });

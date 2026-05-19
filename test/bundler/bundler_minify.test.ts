@@ -630,6 +630,42 @@ describe("bundler", () => {
       '+"æ"',
     ],
   });
+  // https://github.com/oven-sh/bun/issues/31074
+  // Integers with trailing zeros should print in `<prefix>e<exp>` form when
+  // shorter than the full decimal. The old integer fast path only recognised
+  // exact powers of ten (10000 → 1e4), so 160000 stayed `160000` instead of
+  // shrinking to `16e4`, and 320000000 stayed 9 chars instead of 4 (`32e7`).
+  itBundled("minify/IntegerTrailingZeroScientificNotation", {
+    files: {
+      "/entry.ts": `
+        capture(160000);
+        capture(10000);
+        capture(50000);
+        capture(2048000);
+        capture(320000000);
+        capture(1000);
+        capture(100);
+        capture(999);
+        capture(0);
+        capture(1);
+        capture(10);
+      `,
+    },
+    minifySyntax: true,
+    capture: [
+      "16e4",
+      "1e4",
+      "5e4",
+      "2048e3",
+      "32e7",
+      "1e3",
+      "100", // 3 chars == "1e2" 3 chars; keep decimal on tie
+      "999",
+      "0",
+      "1",
+      "10",
+    ],
+  });
   itBundled("minify/ImportMetaHotTreeShaking", {
     files: {
       "/entry.ts": `

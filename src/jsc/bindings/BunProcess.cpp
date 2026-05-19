@@ -386,6 +386,10 @@ extern "C" void Bun__unlink(const char*, size_t);
 
 extern "C" void CrashHandler__setDlOpenAction(const char* action);
 extern "C" bool Bun__VM__allowAddons(void* vm);
+#if !OS(WINDOWS)
+extern "C" void Bun__saveSignalHandlersForDlopen();
+extern "C" void Bun__restoreSignalHandlersAfterDlopen();
+#endif
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
@@ -532,7 +536,13 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 // On Windows, we use GetLastError() for error messages, so we can only delete after checking for errors
 #else
     CrashHandler__setDlOpenAction(utf8.data());
+    // Some shared libraries (notably Go `-buildmode=c-shared`) install
+    // their own signal handlers at dlopen time, overwriting Bun's. Save
+    // and restore around the call. See issue #29843 and
+    // Bun__saveSignalHandlersForDlopen in c-bindings.cpp.
+    Bun__saveSignalHandlersForDlopen();
     void* handle = dlopen(utf8.data(), RTLD_LAZY);
+    Bun__restoreSignalHandlersAfterDlopen();
     CrashHandler__setDlOpenAction(nullptr);
 
     tryToDeleteIfNecessary();

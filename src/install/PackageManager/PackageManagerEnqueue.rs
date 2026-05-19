@@ -742,7 +742,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             .catalogs
                             .get(&this.lockfile, *new.catalog(), name)
                     {
-                        let v = catalog_dep.version.clone();
+                        let v = catalog_dep.version;
                         (name, name_hash) = update_name_and_name_hash_from_version_replacement(
                             &this.lockfile,
                             name,

@@ -79,7 +79,9 @@ impl Encoding {
     pub const LATIN1: Encoding = Encoding(3);
 }
 
-#[derive(Clone, PartialEq, Eq)]
+// Copy is intentional despite the ~120-byte size: Metadata is the
+// fixed-layout cache-entry header passed by value through encode/decode/verify.
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub struct Metadata {
     pub cache_version: u32,
     pub output_encoding: Encoding,

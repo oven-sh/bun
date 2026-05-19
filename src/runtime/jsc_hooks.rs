@@ -4435,71 +4435,132 @@ unsafe fn transpile_virtual_module(
     }
 }
 
-/// Core of `ModuleLoader.resolveEmbeddedFile` (spec ModuleLoader.zig:33-71):
-/// finds an embedded file in the standalone module graph, materializes it to
-/// a real on-disk temp file with `extname`, and writes the resulting absolute
-/// path into `out_buf`. Returns the number of bytes written.
+/// Serializes lazy init of `File.extracted_path` across Worker VMs.
+/// Extraction is rare and off the hot path, so one global lock is fine.
+static EXTRACTED_PATH_LOCK: bun_core::Mutex<()> = bun_core::Mutex::new(());
+
+/// Materialise an embedded file (`.node`/`.so`/`.dylib`/`.dll` from
+/// `bun build --compile`) to a real on-disk path `dlopen(2)` can open.
 ///
-/// Called from two paths:
-///   - `resolve_embedded_node_file_hook` (`process.dlopen()` on a compiled
-///     executable; extname = `"node"`).
-///   - `bun:ffi` `dlopen()` on an embedded `with { type: "file" }` shared
-///     library (`ffi_body::FFI::open`; extname = `"so"` / `"dylib"` / `"dll"`).
+/// Called from:
+///   - `resolve_embedded_node_file_hook` (`process.dlopen()`, extname `"node"`)
+///   - `bun:ffi` `dlopen()` on an embedded `with { type: "file" }` library
+///     (`ffi_body::FFI::open`, extname `"so"`/`"dylib"`/`"dll"`)
 ///
-/// Returns `None` when the path is empty, not present in the graph, or any
+/// The extracted filename is a content hash, so repeated `dlopen()`s of the
+/// same embedded library — within one process, across Worker VMs that share
+/// the graph, and across restarts of the same compiled binary — share one
+/// on-disk file instead of leaking a fresh copy per call (#29585).
+///
+/// If another user has squatted the canonical path on a shared `/tmp`, we
+/// fall back to the scratch path we wrote this call — correct, with
+/// within-process dedup via the cached scratch path but no cross-restart
+/// dedup until the squatter releases the canonical name.
+///
+/// Returns `None` when the input is empty, not present in the graph, or a
 /// filesystem step fails.
 pub(crate) fn resolve_embedded_file_to_buf(
     input_path: &[u8],
     extname: &[u8],
     out_buf: &mut [u8],
 ) -> Option<usize> {
-    // Spec ModuleLoader.zig:34 — `if (input_path.len == 0) return null`.
     if input_path.is_empty() {
         return None;
     }
 
-    // Spec ModuleLoader.zig:35-36 — `vm.standalone_module_graph orelse return
-    // null` + `graph.find(input_path) orelse return null`.
-    //
-    // PORT NOTE: do NOT downcast the `&'static dyn StandaloneModuleGraph`
-    // stored on `vm` to `&mut Graph` — that shared-ref provenance is
-    // read-only (instant UB under Stacked Borrows). Reach the concrete graph
-    // via `Graph::get()` which hands out the `UnsafeCell` `*mut` (same path
-    // as `load_standalone_sourcemap` / `node_fs`).
+    // Reach the graph via its `UnsafeCell` `*mut` (the `&'static dyn` on
+    // `vm` has read-only provenance — downcasting to `&mut Graph` is
+    // instant UB under Stacked Borrows).
     let graph = bun_standalone_graph::Graph::get()?;
-    // SAFETY: `graph` is the `UnsafeCell::get()` pointer to the
-    // process-lifetime singleton; this hook runs on the JS thread and `find`
-    // is read-only over the post-init `files` table.
+
+    // Acquire the lock BEFORE forming `&mut File` below — two Workers can
+    // reach this concurrently and the `&mut File` lives across blocking
+    // I/O, so forming it inside the locked region is the only way to
+    // serialise its lifetime.
+    let _guard = EXTRACTED_PATH_LOCK.lock();
+
     let file = (unsafe { &mut *graph }).find(input_path)?;
-    let file_name: &[u8] = file.name;
     let file_contents: &[u8] = file.contents.as_bytes();
 
-    // Spec ModuleLoader.zig:43-45 — `tmpname(extname, buf, bun.hash(file.name))`.
-    let mut tmpname_buf = bun_paths::path_buffer_pool::get();
-    let tmpfilename =
-        Fs::FileSystem::tmpname(extname, &mut tmpname_buf[..], bun_wyhash::hash(file_name)).ok()?;
+    // Fast path: already extracted. Validate the cached path still points at
+    // a file we own with the right size — plain existence isn't enough, a
+    // shared-host squatter could have replaced it after a tmpfiles sweep.
+    // Using lstat rejects an attacker-planted symlink too.
+    if let Some(cached) = file.extracted_path.as_ref() {
+        let cached_z = bun_core::ZStr::from_slice_with_nul(cached);
+        let ok = bun_sys::lstat(cached_z).ok().is_some_and(|st| {
+            let size_ok = st.st_size as usize == file_contents.len();
+            #[cfg(unix)]
+            {
+                size_ok && st.st_uid == extract_owner_uid() && bun_sys::S::ISREG(st.st_mode as u32)
+            }
+            #[cfg(windows)]
+            {
+                size_ok
+            }
+        });
+        if ok {
+            let bytes = &cached[..cached.len() - 1];
+            out_buf[..bytes.len()].copy_from_slice(bytes);
+            return Some(bytes.len());
+        }
+        file.extracted_path = None;
+    }
 
-    // Spec ModuleLoader.zig:47 — `bun.fs.FileSystem.instance.tmpdir()`.
-    // SAFETY: `FileSystem::instance()` returns the process-global singleton
-    // pointer (initialized at startup).
+    // Canonical deterministic name: `.bun-{uid}-{wyhash(contents)}.{ext}`.
+    // The uid in the filename makes names uid-specific so a multi-user
+    // `/tmp` doesn't silently collide between users; the content hash does
+    // the dedup.
+    let content_hash = bun_wyhash::hash(file_contents);
+    let uid = extract_owner_uid();
+    let mut canonical_name_buf = [0u8; 64];
+    let canonical_name_len =
+        format_canonical_name(&mut canonical_name_buf, uid, content_hash, extname)?;
+    let canonical_name = bun_core::ZStr::from_buf(
+        &canonical_name_buf[..canonical_name_len],
+        canonical_name_len - 1,
+    );
+
+    // If a previous run of this binary already wrote the canonical file
+    // and it's still ours with the right size, skip the write — just
+    // resolve the path and cache it.
+    //
+    // `lstatat` (not `fstatat`) so an attacker-planted symlink at the
+    // canonical name is seen as a symlink (fails the ISREG check) rather
+    // than being followed to its target — matches the fast-path `lstat`
+    // defense above.
     let tmpdir = (unsafe { &mut *Fs::FileSystem::instance() })
         .tmpdir()
         .ok()?;
     let tmpdir_fd: bun_sys::Fd = tmpdir.fd;
-
-    // Spec ModuleLoader.zig:50-51 — `bun.Tmpfile.create(tmpdir, tmpfilename)`.
-    let tmpfile = bun_sys::Tmpfile::create(tmpdir_fd, tmpfilename).ok()?;
-    let tmpfile_fd = tmpfile.fd;
-    scopeguard::defer! {
-        let _ = bun_sys::close(tmpfile_fd);
+    if let Ok(st) = bun_sys::lstatat(tmpdir_fd, canonical_name) {
+        let size_ok = st.st_size as usize == file_contents.len();
+        #[cfg(unix)]
+        let ours = st.st_uid == uid && bun_sys::S::ISREG(st.st_mode as u32);
+        #[cfg(windows)]
+        let ours = true;
+        if size_ok && ours {
+            let len = write_absolute(
+                out_buf,
+                Fs::RealFS::tmpdir_path(),
+                canonical_name.as_bytes(),
+            )?;
+            file.extracted_path = Some(path_to_nul_boxed(&out_buf[..len]));
+            return Some(len);
+        }
     }
 
-    // Spec ModuleLoader.zig:53-67 — `NodeFS.writeFileWithPathBuffer(.{ .data
-    // = .encoded_slice(file.contents), .dirfd = tmpdir, .file = .{ .fd =
-    // tmpfile.fd }, .encoding = .buffer })`.
-    let mut scratch = bun_paths::path_buffer_pool::get();
-    if bun_sys::write_file_with_path_buffer(
-        &mut scratch,
+    // Write to a unique scratch name, then atomically rename it into place.
+    // The scratch name is safe even if the canonical path is squatted.
+    let mut scratch_buf = bun_paths::path_buffer_pool::get();
+    let scratch_name = Fs::FileSystem::tmpname(extname, &mut scratch_buf[..], content_hash).ok()?;
+
+    let mut tmpfile = bun_sys::Tmpfile::create(tmpdir_fd, scratch_name).ok()?;
+    let tmpfile_fd = tmpfile.fd;
+
+    let mut write_scratch = bun_paths::path_buffer_pool::get();
+    let write_ok = bun_sys::write_file_with_path_buffer(
+        &mut write_scratch,
         bun_sys::WriteFileArgs {
             data: bun_sys::WriteFileData::Buffer {
                 buffer: file_contents,
@@ -4510,21 +4571,102 @@ pub(crate) fn resolve_embedded_file_to_buf(
             ..Default::default()
         },
     )
-    .is_err()
-    {
+    .is_ok();
+    if !write_ok {
+        let _ = bun_sys::close(tmpfile_fd);
+        let _ = bun_sys::unlinkat(tmpdir_fd, scratch_name);
         return None;
     }
 
-    // Spec ModuleLoader.zig:69 — `joinAbsStringBuf(RealFS.tmpdirPath(),
-    // path_buf, &.{tmpfilename}, .auto)`. `join_abs_string_buf` writes into
-    // `out_buf` and returns a slice pointing into it; capture the length so
-    // the caller knows how many bytes are live.
+    // Try to rename the scratch file to the content-hashed canonical path.
+    // On a shared `/tmp` with the sticky bit, this will fail EACCES/EPERM
+    // if another user owns a file at the destination — in which case we
+    // just use the scratch file directly. Within-process dedup still works
+    // (we cache the scratch path below); only cross-restart dedup is lost.
+    let rename_ok = tmpfile.finish(canonical_name).is_ok();
+    let _ = bun_sys::close(tmpfile_fd);
+
+    let final_name = if rename_ok {
+        canonical_name
+    } else {
+        scratch_name
+    };
+    let len = write_absolute(out_buf, Fs::RealFS::tmpdir_path(), final_name.as_bytes())?;
+    // Cache both outcomes. The canonical name is dedup-stable across
+    // restarts; the scratch fallback is only stable within this process,
+    // but caching it is what keeps the Worker-amplification case from
+    // re-leaking one scratch file per call when the canonical path is
+    // squatted (the fast-path lstat accepts our scratch file).
+    file.extracted_path = Some(path_to_nul_boxed(&out_buf[..len]));
+    Some(len)
+}
+
+/// Writes `{tmpdir}/{name}` into `out_buf` and returns the length.
+fn write_absolute(out_buf: &mut [u8], tmpdir: &[u8], name: &[u8]) -> Option<usize> {
     let result = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
-        Fs::RealFS::tmpdir_path(),
+        tmpdir,
         out_buf,
-        &[tmpfilename.as_bytes()],
+        &[name],
     );
     Some(result.len())
+}
+
+/// `.bun-{uid}-{hash:x}.{ext}\0` into `buf`. Returns the written length
+/// including the trailing NUL.
+fn format_canonical_name(
+    buf: &mut [u8],
+    uid: u32,
+    content_hash: u64,
+    extname: &[u8],
+) -> Option<usize> {
+    use core::fmt::Write as _;
+    struct Cursor<'a> {
+        buf: &'a mut [u8],
+        len: usize,
+    }
+    impl Cursor<'_> {
+        fn push(&mut self, bytes: &[u8]) -> Option<()> {
+            if self.len + bytes.len() > self.buf.len() {
+                return None;
+            }
+            self.buf[self.len..self.len + bytes.len()].copy_from_slice(bytes);
+            self.len += bytes.len();
+            Some(())
+        }
+    }
+    impl core::fmt::Write for Cursor<'_> {
+        fn write_str(&mut self, s: &str) -> core::fmt::Result {
+            self.push(s.as_bytes()).ok_or(core::fmt::Error)
+        }
+    }
+    let mut cursor = Cursor { buf, len: 0 };
+    write!(&mut cursor, ".bun-{}-{:x}.", uid, content_hash).ok()?;
+    cursor.push(extname)?;
+    cursor.push(&[0u8])?;
+    Some(cursor.len)
+}
+
+/// Materialise an absolute path slice into a NUL-terminated boxed buffer
+/// for caching on `File.extracted_path`.
+fn path_to_nul_boxed(path: &[u8]) -> Box<[u8]> {
+    let mut v: Vec<u8> = Vec::with_capacity(path.len() + 1);
+    v.extend_from_slice(path);
+    v.push(0);
+    v.into_boxed_slice()
+}
+
+/// `geteuid` (not `getuid`) on POSIX because `open(2)` sets the owner to
+/// euid — a setuid-compiled binary where euid != ruid would otherwise
+/// create a file whose owner != `getuid()` and fail the fast-path
+/// ownership check.
+#[cfg(unix)]
+fn extract_owner_uid() -> u32 {
+    bun_sys::c::geteuid() as u32
+}
+
+#[cfg(windows)]
+fn extract_owner_uid() -> u32 {
+    bun_sys::windows::user_unique_id()
 }
 
 /// `LoaderHooks::resolve_embedded_node_file` body — port of

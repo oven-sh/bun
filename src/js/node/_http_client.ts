@@ -113,7 +113,12 @@ function ClientRequest(input, options, cb) {
 
   const pushChunk = chunk => {
     this[kBodyChunks].push(chunk);
-    if (writeCount > 1) {
+    if (!socketAssigned) {
+      // Request is queued in the agent waiting for a socket slot
+      // (maxSockets). Buffer the chunk; onSocket() will flush and start
+      // the fetch once a slot opens.
+      deferredFlush = true;
+    } else if (writeCount > 1) {
       startFetch();
     } else if (writeCount === 1) {
       process.nextTick(startFetchAfterFirstWriteNT, this);
@@ -206,6 +211,10 @@ function ClientRequest(input, options, cb) {
 
   this.flushHeaders = function () {
     if (!fetching) {
+      if (!socketAssigned) {
+        deferredFlush = true;
+        return;
+      }
       startFetch();
     }
   };
@@ -228,8 +237,39 @@ function ClientRequest(input, options, cb) {
     }
 
     // If request is destroyed we abort the current response
+    const hadAbortController = this[kAbortController] != null;
     this[kAbortController]?.abort?.();
     this.socket.destroy(err);
+
+    // Remove from agent bookkeeping. If the request was still queued
+    // (never got a socket slot), drop it from agent.requests so it won't
+    // be dispatched later.
+    if (!socketAssigned) {
+      const agent = this[kAgent];
+      const requests = agent?.requests;
+      if (requests) {
+        // agent.requests is created with { __proto__: null } so for...in is
+        // safe and avoids the (tamperable) global Object.keys lookup.
+        for (const key in requests) {
+          const reqs = requests[key];
+          const idx = reqs.indexOf(this);
+          if (idx !== -1) {
+            reqs.splice(idx, 1);
+            if (reqs.length === 0) delete requests[key];
+            break;
+          }
+        }
+      }
+    }
+    releaseAgentSocket();
+
+    // If there was no AbortController (request was queued behind maxSockets
+    // and never reached send()/flushHeaders(), or was never ended), the
+    // abort() → onAbort → socketCloseListener() path above was a no-op.
+    // Emit 'close' directly so consumers awaiting it don't hang.
+    if (!hadAbortController) {
+      socketCloseListener();
+    }
 
     return this;
   };
@@ -267,6 +307,11 @@ function ClientRequest(input, options, cb) {
 
   const onAbort = (_err?: Error) => {
     this[kClearTimeout]?.();
+    // Release the agent slot before socketCloseListener() emits 'close' on
+    // the socket. The 'agentRemove' listener (see installListeners in
+    // _http_agent.ts) removes the agent's 'close' listener, so doing this
+    // first prevents both listeners from decrementing totalSocketCount.
+    releaseAgentSocket();
     socketCloseListener();
     if (!this[abortedSymbol] && !this?.res?.complete) {
       process.nextTick(emitAbortNextTick, this);
@@ -413,6 +458,10 @@ function ClientRequest(input, options, cb) {
       //@ts-ignore
       this[kFetchRequest] = nodeHttpClient(url, fetchOptions).then(response => {
         if (this.aborted) {
+          // The res 'end'/'close' release hooks below are never installed on
+          // this path, and .catch→finally won't run (promise resolved), so
+          // release the agent slot directly.
+          releaseAgentSocket();
           maybeEmitClose();
           return;
         }
@@ -431,6 +480,12 @@ function ClientRequest(input, options, cb) {
           setIsNextIncomingMessageHTTPS(prevIsHTTPS);
           res.req = this;
           res.setTimeout = clientResponseSetTimeout;
+          // Once the response body is fully consumed, release the agent
+          // socket slot so the next queued request can proceed. Do this on
+          // the next tick so user 'end' listeners see the socket still
+          // tracked in agent.sockets[name] (Node.js behavior).
+          res.once("end", () => process.nextTick(releaseAgentSocket));
+          res.once("close", releaseAgentSocket);
           process.nextTick(
             (self, res) => {
               // If the user did not listen for the 'response' event, then they
@@ -441,6 +496,10 @@ function ClientRequest(input, options, cb) {
                 emitErrorEventNT(self, $HPE_UNEXPECTED_CONTENT_LENGTH("Parse Error"));
 
                 res.complete = true;
+                // res is never handed to the user on this path, so the
+                // res 'end'/'close' hooks above won't fire. Release the
+                // agent slot directly so it doesn't leak.
+                releaseAgentSocket();
                 maybeEmitClose();
                 return;
               }
@@ -501,6 +560,8 @@ function ClientRequest(input, options, cb) {
               this.emit("error", err);
             } catch (_err) {
               void _err;
+            } finally {
+              releaseAgentSocket();
             }
           })
           .finally(() => {
@@ -527,6 +588,7 @@ function ClientRequest(input, options, cb) {
         if (err) {
           if (!!$debug) globalReportError(err);
           process.nextTick((self, err) => self.emit("error", err), this, err);
+          releaseAgentSocket();
           return;
         }
 
@@ -539,6 +601,7 @@ function ClientRequest(input, options, cb) {
           error.syscall = syscall;
           if (!!$debug) globalReportError(error);
           process.nextTick((self, err) => self.emit("error", err), this, error);
+          releaseAgentSocket();
         };
 
         if (candidates.length === 0) {
@@ -579,6 +642,7 @@ function ClientRequest(input, options, cb) {
     } catch (err) {
       if (!!$debug) globalReportError(err);
       process.nextTick((self, err) => self.emit("error", err), this, err);
+      releaseAgentSocket();
       return false;
     }
   };
@@ -589,6 +653,22 @@ function ClientRequest(input, options, cb) {
   // still open; send() uses this to emit 'close' in the correct order after
   // 'finish' once req.end() is eventually called.
   let deferredRequestClose = false;
+  let socketAssigned = false;
+  let deferredSend = false;
+  let deferredFlush = false;
+  let socketReleased = false;
+
+  const releaseAgentSocket = () => {
+    if (socketReleased) return;
+    socketReleased = true;
+    if (!socketAssigned) return;
+    const socket = this.socket;
+    // Signal to the Agent that this slot is free. The 'agentRemove' listener
+    // (installed by Agent#addRequest via installListeners) decrements
+    // totalSocketCount, removes the socket from agent.sockets[name], and
+    // dispatches the next queued request if any.
+    socket?.emit?.("agentRemove");
+  };
 
   function emitFinishAndDeferredCloseNT() {
     maybeEmitFinish();
@@ -600,6 +680,12 @@ function ClientRequest(input, options, cb) {
 
   const send = () => {
     this.finished = true;
+    if (!socketAssigned) {
+      // Request is queued in the agent waiting for a socket slot
+      // (maxSockets). onSocket() will call send() again once a slot opens.
+      deferredSend = true;
+      return;
+    }
 
     var body = this[kBodyChunks] && this[kBodyChunks].length > 1 ? new Blob(this[kBodyChunks]) : this[kBodyChunks]?.[0];
 
@@ -611,6 +697,7 @@ function ClientRequest(input, options, cb) {
     } catch (err) {
       if (!!$debug) globalReportError(err);
       this.emit("error", err);
+      releaseAgentSocket();
     } finally {
       process.nextTick(emitFinishAndDeferredCloseNT);
     }
@@ -717,7 +804,11 @@ function ClientRequest(input, options, cb) {
   }
 
   const defaultPort = options.defaultPort || this[kAgent].defaultPort;
-  const port = (this[kPort] = options.port || defaultPort || 80);
+  // Write the resolved port back onto options so agent.addRequest() →
+  // getName(options) keys on 'host:80:' (matching Node.js) rather than
+  // 'host::', which would split maxSockets pooling between requests that
+  // pass port: 80 explicitly and those that omit it.
+  const port = (this[kPort] = options.port = options.port || defaultPort || 80);
   this[kUseDefaultPort] = this[kPort] === defaultPort;
   const host =
     (this[kHost] =
@@ -953,9 +1044,54 @@ function ClientRequest(input, options, cb) {
 
   this._httpMessage = this;
 
-  process.nextTick(emitContinueAndSocketNT, this);
-
   this[kEmitState] = 0;
+
+  this.onSocket = function (socket, err) {
+    if (this.destroyed || err) {
+      const wasDestroyed = this.destroyed;
+      this.destroyed = true;
+      socketAssigned = true;
+      releaseAgentSocket();
+      // Match Node.js onSocketNT: don't orphan a socket handed over by a
+      // custom agent when the request is already destroyed or errored.
+      // Skip the built-in path where socket is this request's own FakeSocket
+      // (that one is handled by releaseAgentSocket / socketCloseListener).
+      if (socket && socket !== this.socket) {
+        if (!err && this[kAgent] && !socket.destroyed) {
+          socket.emit?.("free");
+        } else {
+          socket.destroy?.(err);
+        }
+      }
+      process.nextTick(() => {
+        if (err != null && !this[abortedSymbol]) this.emit("error", err);
+        // Match Node.js: 'close' always follows, even on the destroyed/err
+        // path. destroy() can't do it later because destroyed is now true.
+        if (!wasDestroyed) socketCloseListener();
+      });
+      return;
+    }
+    if (socket) {
+      socket._httpMessage = this;
+      this.socket = socket;
+    }
+    socketAssigned = true;
+    process.nextTick(emitContinueAndSocketNT, this);
+    if (deferredSend) {
+      deferredSend = false;
+      send();
+    } else if (deferredFlush) {
+      deferredFlush = false;
+      this.flushHeaders();
+    }
+  };
+
+  if (typeof agent.addRequest === "function") {
+    agent.addRequest(this, optsWithoutSignal);
+  } else {
+    socketAssigned = true;
+    process.nextTick(emitContinueAndSocketNT, this);
+  }
 
   this.setSocketKeepAlive = (_enable = true, _initialDelay = 0) => {};
 
@@ -994,15 +1130,30 @@ const ClientRequestPrototype = {
 
       this[kTimeoutTimer] = undefined;
     } else {
-      this[kTimeoutTimer] = setTimeout(() => {
-        this[kTimeoutTimer] = undefined;
-        this[kAbortController]?.abort();
-        this.emit("timeout");
-      }, msecs).unref();
-
       if (callback !== undefined) {
         validateFunction(callback, "callback");
         this.once("timeout", callback);
+      }
+
+      const startTimer = () => {
+        // Re-check: setTimeout(0) may have been called while waiting for the
+        // socket, or a later setTimeout() call may have superseded this one.
+        if (this.destroyed || this.timeout !== msecs) return;
+        clearTimeout(this[kTimeoutTimer]!);
+        this[kTimeoutTimer] = setTimeout(() => {
+          this[kTimeoutTimer] = undefined;
+          this[kAbortController]?.abort();
+          this.emit("timeout");
+        }, msecs).unref();
+      };
+
+      // Match Node.js: the timeout applies to the socket, so don't start the
+      // timer until a socket slot has been assigned by the agent. Otherwise
+      // requests queued behind maxSockets would time out while waiting.
+      if (this[kEmitState] & (1 << ClientRequestEmitState.socket)) {
+        startTimer();
+      } else {
+        this.once("socket", startTimer);
       }
     }
 
@@ -1069,13 +1220,26 @@ function emitContinueAndSocketNT(self) {
   // Ref: https://github.com/nodejs/node/blob/f63e8b7fa7a4b5e041ddec67307609ec8837154f/lib/_http_client.js#L803-L839
   if (!(self[kEmitState] & (1 << ClientRequestEmitState.socket))) {
     self[kEmitState] |= 1 << ClientRequestEmitState.socket;
-    self.emit("socket", self.socket);
+    const socket = self.socket;
+    self.emit("socket", socket);
+    // The client uses an internal fetch-based transport, so the socket is
+    // normally a FakeSocket with no real TCP handshake. Emit 'connect' so
+    // user code listening for it (in the 'socket' handler) observes Node.js
+    // behavior. Skip when a custom agent supplied a real net.Socket: if
+    // it's still connecting it will emit its own 'connect', and if it's
+    // already connected Node's tickOnSocket would emit none. FakeSocket
+    // has neither `connecting` nor `_handle` set.
+    if (socket && !socket.connecting && !socket._handle) process.nextTick(emitConnectNT, socket);
   }
 
   // Emit continue event for the client (internally we auto handle it)
   if (!self._closed && self.getHeader("expect") === "100-continue") {
     self.emit("continue");
   }
+}
+
+function emitConnectNT(socket) {
+  socket?.emit?.("connect");
 }
 
 function emitAbortNextTick(self) {

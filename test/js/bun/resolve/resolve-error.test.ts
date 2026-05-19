@@ -182,3 +182,56 @@ describe.concurrent("long import path overflow", () => {
     await run(String(dir), `\`/\${"a/".repeat(300)}x\``);
   });
 });
+
+describe.concurrent("tsconfig paths wildcard overlap", () => {
+  // A pattern like "ab*ba" has prefix "ab" and suffix "ba". The import path
+  // "aba" both startsWith "ab" and endsWith "ba", but the two overlap — the
+  // path is shorter than prefix+suffix. matchTSConfigPaths used to accept this
+  // and then compute matched_text = path[2..1], underflowing the slice length.
+  async function run(files: Record<string, string>, entry: string) {
+    using dir = tempDir("tsconfig-paths-overlap", {
+      "package.json": `{"name": "test", "version": "0.0.0"}`,
+      "node_modules/.keep": "",
+      ...files,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", entry],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it("does not underflow when prefix+suffix overlap in the import path", async () => {
+    const { stderr, exitCode } = await run(
+      {
+        "tsconfig.json": `{"compilerOptions": {"baseUrl": ".", "paths": {"ab*ba": ["./src/*.ts"]}}}`,
+        "index.ts": `import "aba";`,
+      },
+      "./index.ts",
+    );
+    // "aba" must NOT match "ab*ba" — it falls through to a normal resolve error.
+    expect(stderr).toContain(`Could not resolve: "aba"`);
+    expect(exitCode).toBe(1);
+  });
+
+  it("still matches when the wildcard captures the empty string", async () => {
+    // "lib" vs "lib*": prefix exactly covers the path, '*' captures "".
+    // This is the `path.len == prefix.len + suffix.len` boundary of the
+    // length check above and must keep working.
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "tsconfig.json": `{"compilerOptions": {"baseUrl": ".", "paths": {"lib*": ["./src/*"]}}}`,
+        "src/index.ts": `export const v = 1;`,
+        "index.ts": `import { v } from "lib"; console.log(v);`,
+      },
+      "./index.ts",
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toContain("var v = 1");
+    expect(exitCode).toBe(0);
+  });
+});

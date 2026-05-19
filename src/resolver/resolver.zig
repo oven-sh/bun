@@ -3118,7 +3118,13 @@ pub const Resolver = struct {
                 // prefix length, pick the one with the longest suffix. This second edge
                 // case isn't handled by the TypeScript compiler, but we handle it
                 // because we want the output to always be deterministic
-                if (strings.startsWith(path, prefix) and
+                //
+                // Require `path.len >= prefix.len + suffix.len` so the prefix and
+                // suffix don't overlap in the import path. Without this, a pattern
+                // like "ab*ba" would "match" the path "aba" (startsWith "ab" and
+                // endsWith "ba" both pass) and the slice below would underflow.
+                if (path.len >= prefix.len + suffix.len and
+                    strings.startsWith(path, prefix) and
                     strings.endsWith(path, suffix) and
                     (prefix.len > longest_match_prefix_length or
                         (prefix.len == longest_match_prefix_length and suffix.len > longest_match_suffix_length)))

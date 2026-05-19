@@ -60,23 +60,31 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
                 quote_strings: true,
             };
             // Zig: @as([*]const JSValue, @ptrCast(&received)), 1  → 1-element slice
-            let _ = JestPrettyFormat::format(
+            if JestPrettyFormat::format(
                 MessageLevel::Debug,
                 global_this,
                 core::slice::from_ref(&received),
                 1,
                 &mut received_buf,
                 fmt_options,
-            ); // TODO:
+            )
+            .is_err()
+            {
+                let _ = global_this.clear_exception_except_termination();
+            }
 
-            let _ = JestPrettyFormat::format(
+            if JestPrettyFormat::format(
                 MessageLevel::Debug,
                 global_this,
                 core::slice::from_ref(&expected),
                 1,
                 &mut expected_buf,
                 fmt_options,
-            ); // TODO:
+            )
+            .is_err()
+            {
+                let _ = global_this.clear_exception_except_termination();
+            }
         }
 
         let mut received_slice: &[u8] = received_buf.as_slice();

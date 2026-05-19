@@ -628,4 +628,3 @@ test("FileHandles nested in Map and Set workerData are transferred", async () =>
   expect(fh.fd).toBe(-1);
   expect(message).toEqual({ sameInstance: true, text: "hello" });
 });
-

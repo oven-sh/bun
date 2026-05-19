@@ -170,10 +170,22 @@ describe("worker stdio", () => {
         });
       `,
     });
+    // This scenario intentionally leaks the inner worker's WebWorker box:
+    // when dispatchExit's postTaskToParent finds the middle context already
+    // torn down it returns false and the Ref<Worker> (and thus impl_) is
+    // deliberately not dropped — see the comment on Worker::dispatchExit.
+    // That's a pre-existing, documented tradeoff; this test guards the
+    // panic/validateExceptionChecks regressions, not that leak, so turn off
+    // LSAN and VM-destruct-on-exit for the subprocess.
+    const nestedEnv = {
+      ...bunEnv,
+      BUN_DESTRUCT_VM_ON_EXIT: undefined,
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+    };
     for (let i = 0; i < 5; i++) {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "outer.js"],
-        env: bunEnv,
+        env: nestedEnv,
         cwd: String(dir),
         stdio: ["ignore", "pipe", "pipe"],
       });

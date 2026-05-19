@@ -1717,6 +1717,7 @@ pub const TestCommand = struct {
         // state and editing a source file should kick off a run.
         if (test_files.len > 0 or (ctx.test_options.changed != null and all_test_files.len > 0)) {
             vm.hot_reload = ctx.debug.hot_reload;
+            vm.watch_excludes = ctx.debug.watch_excludes;
 
             // Install the --changed trigger collector BEFORE the watcher
             // thread starts so a file edit during runAllTests is still

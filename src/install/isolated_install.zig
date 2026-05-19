@@ -10,6 +10,15 @@ pub fn installIsolatedPackages(
 ) OOM!PackageInstall.Summary {
     bun.analytics.Features.isolated_bun_install += 1;
 
+    // Populate the linked-names cache once, on the main thread, before
+    // any install worker calls `manager.linkedPackagePath()`. Replaces a
+    // per-dependency `lstat` with a single readdir of the global link
+    // dir; short-circuits every subsequent lookup when nothing is
+    // linked (the common case on CI and dev machines without active
+    // links). See populateLinkedNamesCache in
+    // PackageManager/PackageManagerDirectories.zig.
+    manager.populateLinkedNamesCache();
+
     const lockfile = manager.lockfile;
 
     const store: Store = store: {
@@ -976,6 +985,34 @@ pub fn installIsolatedPackages(
                             {
                                 break :eligible false;
                             }
+                            // An active `bun link` sources the body from the
+                            // producer's live working tree, which is mutable
+                            // by design. Hardlinking that into the shared
+                            // content-addressed <cache>/links/<hash>/ would
+                            // poison every other consumer on the machine
+                            // that resolves the same lockfile closure: they
+                            // warm-hit the entry, run producer code instead
+                            // of the npm tarball, and stay poisoned after
+                            // `bun unlink` (collision-is-success keeps the
+                            // stale entry). Force linked packages
+                            // project-local.
+                            //
+                            // Gate on the backend: `--backend=symlink` skips
+                            // the override entirely (see Installer.zig:571
+                            // and the `has_active_link` guard below), so
+                            // the producer-body-into-shared-cache risk
+                            // doesn't exist. Marking linked packages
+                            // ineligible here would still cascade through
+                            // the dep-propagation below and force every
+                            // transitive consumer project-local, losing
+                            // GVS warm-hits for no protective benefit.
+                            if (PackageInstall.supported_method != .symlink) {
+                                var link_buf: bun.PathBuffer = undefined;
+                                const pkg_name_slice = pkg_names[pkg_id].slice(string_buf);
+                                if (manager.linkedPackagePath(pkg_name_slice, &link_buf) != null) {
+                                    break :eligible false;
+                                }
+                            }
                             break :eligible true;
                         },
                         else => false,
@@ -1577,6 +1614,17 @@ pub fn installIsolatedPackages(
                     // write the new project-local tree through the link into
                     // the shared cache). Treat the stale link as
                     // needs-install so `link_package` detaches and rebuilds.
+                    // An active `bun link` for this package name means the
+                    // producer dir is the source of truth — override the
+                    // cache-based materialization regardless of whether the
+                    // store dir already exists. The existence check below
+                    // would otherwise short-circuit and leave the body stale.
+                    // Only fires when the user didn't opt into the
+                    // symlink-only backend.
+                    var link_buf: bun.PathBuffer = undefined;
+                    const has_active_link = PackageInstall.supported_method != .symlink and
+                        manager.linkedPackagePath(pkg_name.slice(string_buf), &link_buf) != null;
+
                     const has_stale_gvs_link = !uses_global_store and stale: {
                         if (installer.global_store_path == null) break :stale false;
                         var local: bun.Path(.{ .sep = .auto }) = .initTopLevelDir();
@@ -1599,6 +1647,7 @@ pub fn installIsolatedPackages(
                         // should still take the cheap symlink-only path.
                         (is_new_bun_modules and !uses_global_store) or
                         has_stale_gvs_link or
+                        has_active_link or
                         patch_info == .remove or
                         needs_install: {
                             var store_path: bun.AbsPath(.{}) = .initTopLevelDir();
@@ -1654,6 +1703,15 @@ pub fn installIsolatedPackages(
                         // .monotonic is okay because the task isn't running on another thread.
                         entry_steps[entry_id.get()].store(.done, .monotonic);
                         installer.onTaskComplete(entry_id, .skipped);
+                        continue;
+                    }
+
+                    // `link_package` will source from the producer dir via
+                    // `linkedPackagePath`; skip the cache-fetch dance entirely
+                    // (mirrors how `.folder` is handled — no registry traffic
+                    // needed when the body comes from an on-disk producer).
+                    if (has_active_link) {
+                        installer.startTask(entry_id);
                         continue;
                     }
 

@@ -410,6 +410,238 @@ pub fn globalLinkDirAndPath(this: *PackageManager) struct { std.fs.Dir, []const 
     return .{ dir, this.global_link_dir_path };
 }
 
+/// Read the global link dir once and populate
+/// `this.linked_names` with every registered package name (including
+/// scoped names as `@scope/name`). Must be called on the main thread
+/// before any install worker touches `linkedPackagePath`; after that
+/// the map is read-only and lock-free.
+///
+/// Safe to call repeatedly; subsequent calls are no-ops.
+pub fn populateLinkedNamesCache(this: *PackageManager) void {
+    if (this.linked_names_populated) return;
+    this.linked_names_populated = true;
+
+    // Best-effort: for users who have never run `bun link`, the global
+    // link dir may not exist (or may be unreadable). `globalLinkDirPath`
+    // would `Global.exit(1)` on setup failure — treat that same failure
+    // here as "no links on this machine" instead, and leave the cache
+    // empty so `linkedPackagePath` short-circuits to null. If a later
+    // code path really does need the global dir (e.g. `bun link`
+    // itself), `globalLinkDirPath` will be called on that path and
+    // surface the error there.
+    //
+    // Publish the `global_dir` / `global_link_dir` fields only *after*
+    // the path lookup has succeeded — `globalLinkDir` uses those fields
+    // as an "already initialized" fast-path and returns
+    // `global_link_dir_path` without re-running the init block, so a
+    // half-initialized state (dir handles cached but path empty) would
+    // make every subsequent `globalLinkDirPath()` call resolve to `""`.
+    const dir_path = dir_path: {
+        if (this.global_link_dir_path.len != 0) break :dir_path this.global_link_dir_path;
+        var global_dir = Options.openGlobalDir(this.options.explicit_global_directory) catch return;
+        var link_dir = global_dir.makeOpenPath("node_modules", .{}) catch {
+            global_dir.close();
+            return;
+        };
+        var buf: bun.PathBuffer = undefined;
+        const path_slice = bun.getFdPath(.fromStdDir(link_dir), &buf) catch {
+            link_dir.close();
+            global_dir.close();
+            return;
+        };
+        this.global_link_dir_path = bun.handleOom(Fs.FileSystem.DirnameStore.instance.append([]const u8, path_slice));
+        this.global_dir = global_dir;
+        this.global_link_dir = link_dir;
+        break :dir_path this.global_link_dir_path;
+    };
+    const root_fd = switch (bun.openDirForIteration(bun.FD.cwd(), dir_path)) {
+        .result => |fd| fd,
+        // Dir missing / unreadable → empty set. Every linkedPackagePath
+        // lookup will short-circuit to null with no further syscalls.
+        .err => return,
+    };
+    defer root_fd.close();
+
+    var iter = bun.DirIterator.iterate(root_fd, if (bun.Environment.isWindows) .u16 else .u8);
+    while (iter.next().unwrap() catch null) |entry| {
+        const name = entry.name.slice();
+        if (name.len == 0) continue;
+
+        // Scope dirs (`@scope`) contain the actual links nested one
+        // level deeper; flatten to `@scope/name` in the cache. Accept
+        // `.unknown` too: readdir on NFS / FUSE / XFS-ftype=0 returns
+        // `DT_UNKNOWN` for every entry, and rejecting it here would
+        // drop real scope dirs. `openDirForIteration` below will reject
+        // non-dirs as EACCES/ENOTDIR and we'll just skip them.
+        if (name.len > 0 and name[0] == '@' and (entry.kind == .directory or entry.kind == .unknown)) {
+            if (comptime bun.Environment.isWindows) {
+                // WTF-16 name; skip scope flattening on Windows for now.
+                // Falls through to the lstat path in linkedPackagePath.
+                // The scope dir itself counts as a potential link
+                // parent, so record it for the Windows fast path.
+                this.linked_names_any_on_windows = true;
+                continue;
+            }
+            const scope_fd = switch (bun.openDirForIteration(root_fd, name)) {
+                .result => |fd| fd,
+                .err => continue,
+            };
+            defer scope_fd.close();
+
+            var scope_iter = bun.DirIterator.iterate(scope_fd, .u8);
+            while (scope_iter.next().unwrap() catch null) |scope_entry| {
+                const sub_name = scope_entry.name.slice();
+                if (sub_name.len == 0) continue;
+                // Only symlinks — the global link dir is shared with
+                // `bun add -g`, which drops real directories under the
+                // same path when the hoisted linker is in use. A real
+                // directory there means a global install, not a link,
+                // and must not trigger the linked-package override.
+                //
+                // On filesystems where readdir doesn't populate d_type
+                // (NFS / FUSE / XFS-ftype=0) `entry.kind == .unknown`;
+                // lstat as a fallback. The DirIterator docs call this
+                // the lazy-stat pattern; walker_skippable.zig uses it
+                // the same way.
+                if (!isLinkedEntry(scope_entry.kind, scope_fd, scope_entry.name.sliceAssumeZ())) continue;
+                const full = bun.handleOom(std.fmt.allocPrint(this.allocator, "{s}/{s}", .{ name, sub_name }));
+                bun.handleOom(this.linked_names.put(this.allocator, full, {}));
+            }
+            continue;
+        }
+
+        if (comptime bun.Environment.isWindows) {
+            // Over-approximate: any reparse-point entry at this level
+            // is a candidate link. `linkedPackagePath`'s per-call
+            // `GetFileAttributesW` will still reject false positives
+            // by path (non-matching pkg name → ENOENT). We just need
+            // enough signal to skip the syscall when zero links exist.
+            if (entry.kind == .sym_link) this.linked_names_any_on_windows = true;
+            continue;
+        }
+        // See notes above — symlink-only filter with `.unknown` lstat
+        // fallback so NFS / FUSE / ftype=0 hosts don't silently drop
+        // every entry.
+        if (!isLinkedEntry(entry.kind, root_fd, entry.name.sliceAssumeZ())) continue;
+        const dup = bun.handleOom(this.allocator.dupe(u8, name));
+        bun.handleOom(this.linked_names.put(this.allocator, dup, {}));
+    }
+}
+
+/// Returns true when `entry` at `dir_fd` should be treated as a
+/// `bun link` registration: a symlink whose target is an existing
+/// directory. On filesystems that don't populate `getdents64`'s
+/// `d_type` field (NFS / FUSE / XFS with ftype=0), `kind` arrives as
+/// `.unknown`; disambiguate with `lstatat` before following. A
+/// dangling link (producer dir moved/deleted without `bun unlink`)
+/// would otherwise make the installer skip the registry download
+/// and then fail ENOENT in the worker with no fallback.
+fn isLinkedEntry(kind: std.fs.File.Kind, dir_fd: bun.FD, name: [:0]const u8) bool {
+    const is_symlink = switch (kind) {
+        .sym_link => true,
+        .unknown => switch (bun.sys.lstatat(dir_fd, name)) {
+            .result => |st| std.posix.S.ISLNK(@intCast(st.mode)),
+            .err => false,
+        },
+        else => return false,
+    };
+    if (!is_symlink) return false;
+
+    // Follow the symlink and confirm it resolves to a readable
+    // directory. This matches what the installer's worker will do
+    // (`openDirForIteration(producer_path)`) — if that succeeds here,
+    // it'll succeed there too; if it fails, we want the main thread
+    // to treat the link as absent and queue the registry download.
+    const target_fd = switch (bun.sys.openat(dir_fd, name, bun.O.DIRECTORY | bun.O.RDONLY, 0)) {
+        .result => |fd| fd,
+        .err => return false,
+    };
+    target_fd.close();
+    return true;
+}
+
+/// If `<globalLinkDir>/<pkg_name>` exists (typically a symlink created by
+/// `bun link` from the producer dir), write its absolute path into `buf` and
+/// return it. Otherwise `null`. Scoped names (`@scope/name`) are handled
+/// because `joinAbsStringBufZ` preserves the `/`.
+///
+/// Performance: when `linked_names` has been populated (via
+/// `populateLinkedNamesCache` at install start), this is a single
+/// hashmap check with no syscalls on POSIX. On Windows the readdir
+/// yields WTF-16 names we can't key into the UTF-8 map, but
+/// `linked_names_any_on_windows` preserves the zero-syscall fast
+/// path for the "no links on this machine" case. Falls back to a
+/// per-call `lstat` / `GetFileAttributesW` when the cache was not
+/// populated (e.g. a caller outside the isolated-install flow).
+pub fn linkedPackagePath(
+    this: *PackageManager,
+    pkg_name: []const u8,
+    buf: *bun.PathBuffer,
+) ?[:0]const u8 {
+    if (pkg_name.len == 0) return null;
+
+    const use_cache = this.linked_names_populated and !bun.Environment.isWindows;
+    if (use_cache) {
+        if (this.linked_names.count() == 0) return null;
+        if (!this.linked_names.contains(pkg_name)) return null;
+        const dir_path = this.globalLinkDirPath();
+        return bun.path.joinAbsStringBufZ(dir_path, buf, &.{pkg_name}, .auto);
+    }
+
+    // If populate ran and left the cache empty because the global link
+    // dir couldn't be set up (no writable profile, locked-down container,
+    // etc.), don't re-attempt via globalLinkDirPath — that path
+    // `Global.exit(1)`s on setup failure, which would turn a plain
+    // npm-only install on Windows into a hard exit. Honor populate's
+    // "no links on this machine" result.
+    if (this.linked_names_populated and this.global_link_dir_path.len == 0) return null;
+
+    // Windows fast path. `use_cache` is always false on Windows (the
+    // readdir yields WTF-16 names we can't key into the UTF-8 set),
+    // so without this every call falls through to GetFileAttributesW
+    // — one syscall per npm package per install, even on machines
+    // with zero registered links. `populateLinkedNamesCache` already
+    // paid the readdir cost and recorded whether any link-shaped
+    // entry exists; honor it here.
+    if (comptime bun.Environment.isWindows) {
+        if (this.linked_names_populated and !this.linked_names_any_on_windows) return null;
+    }
+
+    const dir_path = this.globalLinkDirPath();
+    const joined = bun.path.joinAbsStringBufZ(dir_path, buf, &.{pkg_name}, .auto);
+    // The global link dir is shared with `bun add -g` (same root —
+    // `<globalDir>/node_modules/`), and on POSIX a hoisted global
+    // install lands here as a real directory. Treat only symlinks /
+    // reparse-points as registered links; real directories are global
+    // installs that must not trigger the linked-package override.
+    //
+    // After the kind check, follow the link and confirm the target
+    // resolves to a readable directory. A dangling symlink (producer
+    // deleted without `bun unlink`) would otherwise make the installer
+    // skip the registry download and fail ENOENT in the worker — same
+    // guarantee as `isLinkedEntry` above, restated for callers that
+    // reach this non-cached fallback (Windows, or callers outside the
+    // isolated-install flow that didn't run populateLinkedNamesCache).
+    const is_link: bool = if (comptime bun.Environment.isWindows) link: {
+        const attrs = bun.sys.getFileAttributes(joined) orelse return null;
+        break :link attrs.is_reparse_point;
+    } else link: {
+        const st = switch (bun.sys.lstat(joined)) {
+            .result => |s| s,
+            .err => return null,
+        };
+        break :link std.posix.S.ISLNK(@intCast(st.mode));
+    };
+    if (!is_link) return null;
+
+    const target_fd = switch (bun.openDirForIteration(bun.FD.cwd(), joined)) {
+        .result => |fd| fd,
+        .err => return null,
+    };
+    target_fd.close();
+    return joined;
+}
+
 pub fn pathForCachedNPMPath(
     this: *PackageManager,
     buf: *bun.PathBuffer,

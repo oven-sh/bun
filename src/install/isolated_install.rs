@@ -232,6 +232,14 @@ pub fn install_isolated_packages(
 ) -> Result<crate::package_install::Summary, AllocError> {
     analytics::features::isolated_bun_install.fetch_add(1, Ordering::Relaxed);
 
+    // Populate the linked-names cache once, on the main thread, before any
+    // install worker calls `linked_package_path`. Replaces a per-dependency
+    // `lstat` with a single readdir of the global link dir; short-circuits
+    // every subsequent lookup when nothing is linked (the common case on
+    // CI and dev machines without active links). See
+    // `populate_linked_names_cache` in PackageManager/PackageManagerDirectories.rs.
+    crate::package_manager_real::directories::populate_linked_names_cache(manager);
+
     // PORT NOTE: reshaped for borrowck — Zig holds `*Lockfile` while also
     // passing `*PackageManager` (which owns it); take a raw pointer so column
     // borrows below don't tie up `&mut manager`.
@@ -2213,6 +2221,31 @@ pub fn install_isolated_packages(
                     // write the new project-local tree through the link into
                     // the shared cache). Treat the stale link as
                     // needs-install so `link_package` detaches and rebuilds.
+                    // An active `bun link` for this package name means the
+                    // producer dir is the source of truth — override the
+                    // cache-based materialization regardless of whether the
+                    // store dir already exists. Only fires when the user
+                    // didn't opt into the symlink-only backend.
+                    let has_active_link = {
+                        if PackageInstall::supported_method()
+                            == crate::package_install::Method::Symlink
+                        {
+                            false
+                        } else {
+                            let mut link_buf = paths::PathBuffer::uninit();
+                            // Main-thread path: use the `&mut` entry point so
+                            // the Windows GetFileAttributesW fallback can
+                            // lazy-initialize the global link dir if needed.
+                            // Worker threads use the read-only companion.
+                            crate::package_manager_real::directories::linked_package_path_mut(
+                                manager,
+                                lockfile.str(&pkg_name),
+                                &mut link_buf,
+                            )
+                            .is_some()
+                        }
+                    };
+
                     let has_stale_gvs_link = !uses_global_store
                         && 'stale: {
                             if installer.global_store_path.is_none() {
@@ -2250,6 +2283,7 @@ pub fn install_isolated_packages(
                         // should still take the cheap symlink-only path.
                         || (is_new_bun_modules && !uses_global_store)
                         || has_stale_gvs_link
+                        || has_active_link
                         || matches!(patch_info, installer::PatchInfo::Remove(_))
                         || 'needs_install: {
                             let mut store_path: AbsPath = AbsPath::init_top_level_dir();
@@ -2315,6 +2349,20 @@ pub fn install_isolated_packages(
                         entry_steps[entry_id.get() as usize]
                             .store(installer::Step::Done as u32, Ordering::Relaxed);
                         installer.on_task_complete(entry_id, installer::CompleteState::Skipped);
+                        continue;
+                    }
+
+                    // `link_package` will source from the producer dir via
+                    // `linked_package_path`; skip the cache-fetch dance entirely
+                    // (mirrors how `.folder` is handled — no registry traffic
+                    // needed when the body comes from an on-disk producer).
+                    // Without this, the main thread still enqueues a download
+                    // whose extracted bytes the worker never reads, and an
+                    // offline / unpublished-package install (the canonical
+                    // `bun link` case) would fail at the fetch step instead of
+                    // succeeding from the producer on disk.
+                    if has_active_link {
+                        installer.start_task(entry_id);
                         continue;
                     }
 

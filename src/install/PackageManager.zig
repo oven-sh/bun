@@ -95,6 +95,24 @@ global_link_dir: ?std.fs.Dir = null,
 global_dir: ?std.fs.Dir = null,
 global_link_dir_path: string = "",
 
+/// Names of packages registered via `bun link`, read from
+/// `<globalLinkDir>/` once per install. Populated on the main thread
+/// before any install worker starts; after that it's read-only and can
+/// be accessed lock-free from worker threads. Lookups return early
+/// when the set is empty (no active links) — the common case on dev
+/// machines without `bun link` configured, and unconditional on CI.
+/// See `populateLinkedNamesCache` / `linkedPackagePath`.
+linked_names: bun.StringHashMapUnmanaged(void) = .{},
+linked_names_populated: bool = false,
+/// Windows-only fast-path companion to `linked_names`: on Windows the
+/// readdir entry is WTF-16 so we can't key it into the UTF-8 hashmap,
+/// but we *can* record whether the global link dir is nonempty during
+/// the same readdir pass. `linkedPackagePath` consults this to skip
+/// the per-call `GetFileAttributesW` when no links exist — restoring
+/// the "zero syscalls when no packages are linked" guarantee that the
+/// POSIX fast path in `linked_names` provides.
+linked_names_any_on_windows: bool = false,
+
 onWake: WakeHandler = .{},
 ci_mode: bun.LazyBool(computeIsContinuousIntegration, @This(), "ci_mode") = .{},
 
@@ -1179,6 +1197,8 @@ pub const getTemporaryDirectory = directories.getTemporaryDirectory;
 pub const globalLinkDir = directories.globalLinkDir;
 pub const globalLinkDirAndPath = directories.globalLinkDirAndPath;
 pub const globalLinkDirPath = directories.globalLinkDirPath;
+pub const linkedPackagePath = directories.linkedPackagePath;
+pub const populateLinkedNamesCache = directories.populateLinkedNamesCache;
 pub const isFolderInCache = directories.isFolderInCache;
 pub const pathForCachedNPMPath = directories.pathForCachedNPMPath;
 pub const pathForResolution = directories.pathForResolution;

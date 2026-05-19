@@ -32,16 +32,21 @@ impl FileCopier {
         dest_subpath: PathAutoOs,
         skip_dirnames: &[&OSPathSlice],
     ) -> Result<FileCopier, AllocError> {
+        Self::init_with_skip(src_dir, src_path, dest_subpath, &[], skip_dirnames)
+    }
+
+    pub fn init_with_skip(
+        src_dir: Fd,
+        src_path: AbsPathAutoOs,
+        dest_subpath: PathAutoOs,
+        skip_filenames: &[&OSPathSlice],
+        skip_dirnames: &[&OSPathSlice],
+    ) -> Result<FileCopier, AllocError> {
         Ok(FileCopier {
             src_path,
             dest_subpath,
             walker: {
-                let mut w = walker_skippable::walk(
-                    src_dir,
-                    // bun.default_allocator → deleted (global mimalloc)
-                    &[],
-                    skip_dirnames,
-                )?;
+                let mut w = walker_skippable::walk(src_dir, skip_filenames, skip_dirnames)?;
                 w.resolve_unknown_entry_types = true;
                 w
             },

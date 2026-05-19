@@ -4046,8 +4046,8 @@ pub fn parse_qualified_name<Impl: BunSelectorImpl>(
             };
             if n {
                 let prefix: Impl::NamespacePrefix = Ident { v: value };
-                let result: Option<Impl::NamespaceUrl> = parser
-                    .namespace_for_prefix(Ident { v: value });
+                let result: Option<Impl::NamespaceUrl> =
+                    parser.namespace_for_prefix(Ident { v: value });
                 let url: Impl::NamespaceUrl = match result {
                     Some(url) => url,
                     None => {

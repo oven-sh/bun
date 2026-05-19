@@ -615,4 +615,198 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
   });
+
+  // Regression coverage for #30326 / #28316: decorator lowering used to
+  // emit a fresh `var _init = …` at module scope for every decorated
+  // class with the same `original_name`. `var` hoisting then collapsed
+  // them into a single binding, so an earlier class's constructor would
+  // end up running the last class's initializers.
+  describe.concurrent("symbol names stay unique across classes", () => {
+    async function runBundled(
+      dir: string,
+      extraBuildArgs: string[],
+      entry: string,
+    ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", ...extraBuildArgs, "--outfile=out.js", entry],
+        env: bunEnv,
+        cwd: dir,
+        stderr: "pipe",
+      });
+      const [buildStderr, buildExit] = await Promise.all([build.stderr.text(), build.exited]);
+      // Assert on stderr BEFORE exit so a compiler diagnostic shows up in
+      // the failure message instead of just "expected 0, received 1".
+      expect(filterStderr(buildStderr)).toBe("");
+      expect(buildExit).toBe(0);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "out.js"],
+        env: bunEnv,
+        cwd: dir,
+        stderr: "pipe",
+      });
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(filterStderr(rawStderr)).toBe("");
+      return { stdout, stderr: filterStderr(rawStderr), exitCode };
+    }
+
+    test("accessor init callbacks fire on the correct class (browser bundle)", async () => {
+      using dir = tempDir("es-dec-init-unique-bundle", {
+        "entry.ts": `
+          const log: string[] = [];
+          function dec(name: string) {
+            return function (_t: any, _c: any) {
+              return { init(v: any) { log.push(\`\${name}:\${v}\`); return v; } };
+            };
+          }
+          class Foo { @dec("foo") accessor x = "X"; }
+          class Bar { @dec("bar") accessor y = "Y"; }
+          new Foo(); new Bar();
+          console.log(log.join("|"));
+        `,
+      });
+
+      const { stdout, exitCode } = await runBundled(String(dir), ["--target=browser", "--format=esm"], "entry.ts");
+      expect(stdout).toBe("foo:X|bar:Y\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("field decorator initializers fire on their own class (no-bundle)", async () => {
+      using dir = tempDir("es-dec-init-unique-nobundle", {
+        "entry.ts": `
+          const log: string[] = [];
+          function dec(tag: string) {
+            return function (_v: any, ctx: any) {
+              return function (init: any) { log.push(\`\${tag}:\${ctx.name}:\${init}\`); return init; };
+            };
+          }
+          class A { @dec("A") a = "a"; }
+          class B { @dec("B") b = "b"; }
+          new A(); new B();
+          console.log(log.join("|"));
+        `,
+      });
+
+      const { stdout, exitCode } = await runBundled(String(dir), ["--no-bundle"], "entry.ts");
+      expect(stdout).toBe("A:a:a|B:b:b\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("three decorated classes with extends keep initializers separate", async () => {
+      using dir = tempDir("es-dec-three-classes", {
+        "entry.ts": `
+          const log: string[] = [];
+          function tag(name: string) {
+            return function (_t: any, _c: any) {
+              return { init(v: any) { log.push(\`\${name}=\${v}\`); return v; } };
+            };
+          }
+          class Base { base = 0; }
+          class A extends Base { @tag("A") accessor x = 1; }
+          class B extends Base { @tag("B") accessor x = 2; }
+          class C extends Base { @tag("C") accessor x = 3; }
+          new A(); new B(); new C();
+          console.log(log.join(","));
+        `,
+      });
+
+      const { stdout, exitCode } = await runBundled(String(dir), ["--target=browser", "--format=esm"], "entry.ts");
+      expect(stdout).toBe("A=1,B=2,C=3\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("class decorator addInitializer + accessor initializer in same class", async () => {
+      // Class decorators alone don't exhibit the collision: their
+      // `__decorateElement` / `__runInitializers(_init, 1, …)` emit at
+      // module top between the two `var _init = …` lines, so each one
+      // binds to the right `_init` at execution time. Adding a per-
+      // instance accessor forces a reference to `_init` from *inside*
+      // the constructor — which runs after both `var _init` have been
+      // reassigned. That's the code path the collision breaks.
+      using dir = tempDir("es-dec-mixed", {
+        "entry.ts": `
+          const log: string[] = [];
+          function mark(tag: string) {
+            return function (target: any, ctx: any) {
+              ctx.addInitializer(function (this: any) { log.push(\`cls:\${tag}\`); });
+              return target;
+            };
+          }
+          function acc(tag: string) {
+            return function (_v: any, _c: any) {
+              return { init(v: any) { log.push(\`acc:\${tag}:\${v}\`); return v; } };
+            };
+          }
+          @mark("Foo") class Foo { @acc("Foo") accessor x = 1; }
+          @mark("Bar") class Bar { @acc("Bar") accessor y = 2; }
+          new Foo(); new Bar();
+          console.log(log.join("|"));
+        `,
+      });
+
+      const { stdout, exitCode } = await runBundled(String(dir), ["--target=browser", "--format=esm"], "entry.ts");
+      // @mark's class-level initializers both fire at definition time
+      // (in declaration order), then @acc's per-instance init fires
+      // when each class is constructed.
+      expect(stdout).toBe("cls:Foo|cls:Bar|acc:Foo:1|acc:Bar:2\n");
+      expect(exitCode).toBe(0);
+    });
+
+    // #28010: a parent class's field decorators ran with the child class's
+    // `_dec` array because both classes shared a hoisted `var _dec` at
+    // module scope — so parent-class `context.name` reported child
+    // property names.
+    test("parent-class field decorators keep their own _dec array (#28010)", async () => {
+      using dir = tempDir("es-dec-28010", {
+        "entry.ts": `
+          const logs: string[] = [];
+          function decorate(name: string) {
+            return function (_v: undefined, ctx: any) {
+              return function (init: any) {
+                logs.push(\`\${name}:\${String(ctx.name)}=\${init}\`);
+                return init;
+              };
+            };
+          }
+          class Parent {
+            @decorate("Parent.foo") foo = "parent_foo";
+            @decorate("Parent.shared") shared = "parent_shared";
+          }
+          class Child extends Parent {
+            @decorate("Child.foo") foo = "child_foo";
+            @decorate("Child.childOnly") childOnly = "child_childOnly";
+          }
+          new Child();
+          console.log(logs.join("|"));
+        `,
+      });
+
+      const { stdout, exitCode } = await runBundled(String(dir), ["--target=browser", "--format=esm"], "entry.ts");
+      expect(stdout).toBe(
+        "Parent.foo:foo=parent_foo|Parent.shared:shared=parent_shared|Child.foo:foo=child_foo|Child.childOnly:childOnly=child_childOnly\n",
+      );
+      expect(exitCode).toBe(0);
+    });
+
+    // #29837: overriding an auto-accessor with the same name in a subclass
+    // threw "Cannot add the same private member more than once" because
+    // both classes' WeakMap-backed storage was allocated as `var _name`
+    // at module scope and collapsed onto one binding.
+    test("subclass can override an auto-accessor of the same name (#29837)", async () => {
+      using dir = tempDir("es-dec-29837", {
+        "entry.js": `
+          class A { accessor name = "A"; }
+          class B extends A {
+            accessor name = "B";
+            logNames() { console.log(this.name); console.log(super.name); }
+          }
+          new B().logNames();
+        `,
+      });
+
+      const { stdout, exitCode } = await runBundled(String(dir), ["--target=browser", "--format=esm"], "entry.js");
+      expect(stdout).toBe("B\nA\n");
+      expect(exitCode).toBe(0);
+    });
+  });
 });

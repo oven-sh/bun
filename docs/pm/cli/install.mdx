@@ -318,7 +318,11 @@ production = false
 # equivalent to `--save-text-lockfile` flag
 saveTextLockfile = false
 
-# equivalent to `--frozen-lockfile` flag
+# when true, plain `bun install` (with no package arguments) behaves as if
+# `--frozen-lockfile` was passed. Explicit mutation commands
+# (`bun add`, `bun remove`, `bun update`, `bun install <pkg>`)
+# ignore this setting so they can still change the lockfile.
+# Use the `--frozen-lockfile` CLI flag to force the behavior on any subcommand.
 frozenLockfile = false
 
 # equivalent to `--dry-run` flag

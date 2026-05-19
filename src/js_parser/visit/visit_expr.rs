@@ -1848,8 +1848,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // const binding = await import(`./${process.platform}-${process.arch}.node`);
         //
         // PORT NOTE: Zig `defer` restores at scope exit; restored manually before each return.
-        let prev_should_fold_typescript_constant_expressions = true;
+        let prev_should_fold_typescript_constant_expressions =
+            p.should_fold_typescript_constant_expressions;
+        let prev_fold_numeric_constants_unconditionally = p.fold_numeric_constants_unconditionally;
         p.should_fold_typescript_constant_expressions = true;
+        // Import path arithmetic (rare but legal: `import("./a" + 1)`) must
+        // reach the module resolver as a string, not a size-preserved
+        // `E::Binary` that the transposer can't interpret.
+        p.fold_numeric_constants_unconditionally = true;
 
         p.visit_expr(&mut e_.expr);
         p.visit_expr(&mut e_.options);
@@ -1878,11 +1884,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             p.should_fold_typescript_constant_expressions =
                 prev_should_fold_typescript_constant_expressions;
+            p.fold_numeric_constants_unconditionally = prev_fold_numeric_constants_unconditionally;
             *e = p.maybe_transpose_if_import(e_.expr, &state);
             return;
         }
         p.should_fold_typescript_constant_expressions =
             prev_should_fold_typescript_constant_expressions;
+        p.fold_numeric_constants_unconditionally = prev_fold_numeric_constants_unconditionally;
     }
     fn e_call(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;
@@ -1990,6 +1998,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // PORT NOTE: Zig `defer` restores at scope exit; do it manually below.
             let old_should_fold_typescript_constant_expressions =
                 p.should_fold_typescript_constant_expressions;
+            let old_fold_numeric_constants_unconditionally =
+                p.fold_numeric_constants_unconditionally;
             let old_is_control_flow_dead = p.is_control_flow_dead;
 
             // We want to forcefully fold constants inside of
@@ -2005,6 +2015,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             {
                 p.options.ignore_dce_annotations = true;
                 p.should_fold_typescript_constant_expressions = true;
+                // These callers consume the arg as a concrete value (macros
+                // feed Expr→JSValue conversion; require/import feed the
+                // module resolver as a string). A size-preserved `E::Binary`
+                // breaks both — always fold here.
+                p.fold_numeric_constants_unconditionally = true;
             }
 
             // When a value is targeted by `--drop`, it will be removed.
@@ -2036,6 +2051,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.options.ignore_dce_annotations = old_ce;
             p.should_fold_typescript_constant_expressions =
                 old_should_fold_typescript_constant_expressions;
+            p.fold_numeric_constants_unconditionally = old_fold_numeric_constants_unconditionally;
 
             if method_call_should_be_replaced_with_undefined {
                 p.is_control_flow_dead = old_is_control_flow_dead;
@@ -2508,6 +2524,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.fn_only_data_visit.is_inside_async_arrow_fn =
             e_.is_async || p.fn_only_data_visit.is_inside_async_arrow_fn;
 
+        // Callers that force-fold (enum body, macro/require args, const-decl
+        // inlining) want that override for the immediate initializer only,
+        // not for arithmetic inside a nested arrow body that runs at call
+        // time under the normal size-aware gate.
+        let old_fold_numeric_constants_unconditionally = p.fold_numeric_constants_unconditionally;
+        p.fold_numeric_constants_unconditionally = false;
+
         p.push_scope_for_visit_pass(js_ast::scope::Kind::FunctionArgs, expr.loc)
             .expect("unreachable");
         // PERF(port): was arena dupe — profile if it shows up on a hot path
@@ -2549,6 +2572,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.fn_only_data_visit.is_inside_async_arrow_fn = old_inside_async_arrow_fn;
         p.fn_or_arrow_data_visit = old_fn_or_arrow_data;
+        p.fold_numeric_constants_unconditionally = old_fold_numeric_constants_unconditionally;
 
         // Zig: defer p.react_refresh.hook_ctx_storage = prev — restore before any further `p.*`
         // call so the stack-local pointer never escapes this frame.

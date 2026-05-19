@@ -34,6 +34,42 @@ pub fn canPrintWithoutEscape(comptime CodePointType: type, c: CodePointType, com
     }
 }
 
+/// Number of bytes the printer would emit for `value` via
+/// `printNonNegativeFloat` plus one extra byte for the leading `-` when
+/// `value` is negative. Mirrors the special cases in `printNonNegativeFloat`
+/// (e.g. `1e4` instead of `10000`) so comparisons for size-aware constant
+/// folding line up with the actual output.
+pub fn lenOfNumber(value: f64) u32 {
+    if (std.math.isNan(value)) return 3; // "NaN"
+    if (std.math.isInf(value)) return if (std.math.isNegativeInf(value)) 4 else 3; // "1/0" or "-1/0"
+
+    const neg_prefix: u32 = if (std.math.signbit(value)) 1 else 0;
+    const abs_value = @abs(value);
+
+    const floored: f64 = @floor(abs_value);
+    const is_integer = (abs_value - floored) == 0;
+    if (abs_value < std.math.maxInt(u52) and is_integer) {
+        const val: u64 = @intFromFloat(abs_value);
+        // Powers of ten from 10^4..10^9 print as `1eN` (3 bytes) instead
+        // of their decimal form — see `printNonNegativeFloat`.
+        const int_len: u32 = switch (val) {
+            10_000, 100_000, 1_000_000, 10_000_000, 100_000_000, 1_000_000_000 => 3,
+            // https://lemire.me/blog/2021/06/03/computing-the-number-of-digits-of-an-integer-even-faster/
+            else => @intCast(bun.fmt.fastDigitCount(val)),
+        };
+        return neg_prefix + int_len;
+    }
+
+    // Zig's `{d}` for f64 emits fixed-point (no exponent) — worst-case
+    // f64 (~1.8e308) is 309 integer digits, plus room for a decimal point
+    // and 17 significant digits. 350 bytes clears that with headroom so
+    // `bufPrint` never truncates and hands us back a misleadingly short
+    // length. If it somehow did, bias toward rejecting the fold.
+    var buf: [350]u8 = undefined;
+    const s = std.fmt.bufPrint(&buf, "{d}", .{abs_value}) catch return neg_prefix + @as(u32, buf.len);
+    return neg_prefix + @as(u32, @intCast(s.len));
+}
+
 const indentation_space_buf = [_]u8{' '} ** 128;
 const indentation_tab_buf = [_]u8{'\t'} ** 128;
 

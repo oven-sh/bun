@@ -572,6 +572,187 @@ describe("bundler", () => {
       '+"æ"',
     ],
   });
+  // https://github.com/oven-sh/bun/issues/30203
+  // Only fold numeric arithmetic when the folded literal is no longer than
+  // the source expression — `1/3` is shorter than `0.3333333333333333`.
+  itBundled("minify/ConstantFoldingNumericBinarySizeAware", {
+    files: {
+      "/entry.js": `
+        // Expansive folds must be kept as-is
+        capture(1 / 3);
+        capture(2 / 3);
+        capture(1 / 7);
+        capture(10 / 3);
+        // Integer math still folds when it shrinks
+        capture(1 + 2);
+        capture(10 * 10);
+        capture(100 - 50);
+        capture(3 ** 4);
+        // Equal-length folds are allowed (result is <= source)
+        capture(1.1 + 0.2);
+        // Large powers that would inflate should be preserved
+        capture(10 ** 20);
+        // \`2 ** 32\` produced a u64 value outside the lemire table range in
+        // \`fastDigitCount\` and panicked the ASAN build on everything that
+        // imported readable-stream. Guard it explicitly.
+        capture(2 ** 32);
+      `,
+    },
+    minifySyntax: true,
+    capture: ["1 / 3", "2 / 3", "1 / 7", "10 / 3", "3", "100", "50", "81", "1.3", "10 ** 20", "2 ** 32"],
+  });
+  // https://github.com/oven-sh/bun/issues/30203
+  // With `minify_syntax` on but `minify_whitespace` off, the printer emits
+  // a space on either side of a binary operator (`5 / 4`, not `5/4`), so
+  // the source-length model must account for those two extra bytes — or
+  // folds that would shrink output (here `5 / 4` → `1.25`, saving a byte)
+  // get wrongly rejected.
+  itBundled("minify/ConstantFoldingNumericBinaryWithoutMinifyWhitespace", {
+    files: {
+      "/entry.js": `
+        // Shrinking fold: source is 5 chars with spaces, folded is 4.
+        capture(5 / 4);
+        // Inflating fold stays as-is.
+        capture(1 / 3);
+      `,
+    },
+    minifySyntax: true,
+    capture: ["1.25", "1 / 3"],
+  });
+  // https://github.com/oven-sh/bun/issues/30203
+  // Macro args must always fold to a concrete value, even under `--minify`
+  // where the size-aware check would otherwise reject the fold — the macro
+  // runner calls `Expr.Data.toJS` which only handles literal AST nodes.
+  // Size-aware folding at the call-site itself (outside the macro) still
+  // applies.
+  itBundled("minify/ConstantFoldingMacroArgsAlwaysFold", {
+    files: {
+      "/entry.ts": `
+        import { show } from "./macro" with { type: "macro" };
+        capture(show(1 / 3));
+        capture(1 / 3);
+      `,
+      "/macro.ts": `export function show(x: number): number { return x; }`,
+    },
+    minifySyntax: true,
+    capture: ["0.3333333333333333", "1 / 3"],
+  });
+  // https://github.com/oven-sh/bun/issues/30203
+  // A `const` initializer that loses the size-aware check would stay as
+  // `E.Binary`, which `canBeConstValue` rejects — so the ref wouldn't make
+  // it into `const_values` and use-site inlining + the DCE it enables
+  // would silently stop working. Force the fold for const decls when
+  // `features.inlining` is on so DCE of the else branch still happens.
+  itBundled("minify/ConstantFoldingConstInitializerFoldsForInlining", {
+    files: {
+      "/entry.ts": `
+        const RATIO = 16 / 9;
+        if (RATIO > 1) capture("big"); else capture("small");
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    capture: [`"big"`],
+  });
+  // https://github.com/oven-sh/bun/issues/30203
+  // The const-decl force-fold flag must not leak through the function or
+  // arrow body. A nested `() => 1/3` runs at call time, not when the
+  // surrounding `const` is visited, so its arithmetic should obey the
+  // ordinary size-aware gate and stay unfolded.
+  itBundled("minify/ConstantFoldingConstArrowBodyDoesNotForceFold", {
+    files: {
+      "/entry.ts": `
+        const arrowRatio = () => 1 / 3;
+        const funcRatio = function () { return 1 / 3; };
+        export { arrowRatio, funcRatio };
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Arrow/function bodies are visited with
+      // fold_numeric_constants_unconditionally reset to false, so 1/3 stays
+      // as a binary expression (18-byte fold > 3-byte source).
+      expect(code).toContain("1 / 3");
+      expect(code).not.toContain("0.3333333333333333");
+    },
+  });
+  // https://github.com/oven-sh/bun/issues/30203
+  // Class bodies — field initializers and static blocks — don't route
+  // through `visitFunc` or the arrow visitor, so they need their own
+  // reset of `fold_numeric_constants_unconditionally`. Without it, a
+  // caller (e.g. const-decl inlining) that force-folded would leak into
+  // the class body and re-introduce the #30203 inflation.
+  itBundled("minify/ConstantFoldingConstClassBodyDoesNotForceFold", {
+    files: {
+      // `const C` must come first so `is_after_const_local_prefix` is still
+      // false when it's visited and `want_unconditional_numeric_fold` fires;
+      // otherwise the visitClass reset has nothing to reset and the test
+      // passes via the ordinary size-aware path instead of exercising the
+      // fix. `function mixin` is hoisted, so the extends reference still
+      // resolves.
+      "/entry.ts": `
+        const C = class extends mixin(1 / 3) {
+          ratio = 1 / 3;
+          static { globalThis.staticRatio = 1 / 3; }
+        };
+        function mixin(x: number) { return class { rate = x; }; }
+        export { C };
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("1 / 3");
+      expect(code).not.toContain("0.3333333333333333");
+    },
+  });
+  // https://github.com/oven-sh/bun/issues/30203
+  // Unused exports whose initializer arithmetic no longer folds to a number
+  // literal (e.g. `1/3` rejected by the size-aware check) must still be
+  // tree-shakable. `exprCanBeRemovedIfUnusedWithoutDCECheck` /
+  // `simplifyUnusedExpr` treat `number op number` arithmetic as
+  // side-effect-free so `classCanBeRemovedIfUnused` /
+  // `stmtsCanBeRemovedIfUnused` still answer true.
+  itBundled("minify/ConstantFoldingTreeShakesUnusedArithmetic", {
+    files: {
+      "/entry.ts": `
+        import { used } from "./lib";
+        console.log(used);
+      `,
+      "/lib.ts": `
+        export class Unused { ratio = 1 / 3; }
+        export let unusedLet = 1 / 3;
+        export var unusedVar = 16 / 9;
+        export const used = "hello";
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).not.toContain("Unused");
+      expect(code).not.toContain("unusedLet");
+      expect(code).not.toContain("unusedVar");
+      expect(code).toContain("hello");
+    },
+  });
+  // https://github.com/oven-sh/bun/issues/30203
+  // Enum bodies must still fully fold so the emitted table has numeric
+  // values, and so later members can reference earlier numeric members.
+  itBundled("minify/ConstantFoldingEnumBodyAlwaysFolds", {
+    files: {
+      "/entry.ts": `
+        enum E { A = 1 / 3, B = A + 1 }
+        capture(E.A);
+        capture(E.B);
+      `,
+    },
+    minifySyntax: true,
+    capture: ["0.3333333333333333 /* A */", "1.3333333333333333 /* B */"],
+  });
   itBundled("minify/ImportMetaHotTreeShaking", {
     files: {
       "/entry.ts": `

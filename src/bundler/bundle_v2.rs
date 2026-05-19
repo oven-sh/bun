@@ -783,8 +783,8 @@ pub mod bv2_impl {
                 #[link_name = "JSBundlerPlugin__anyMatches"]
                 safe fn JSBundlerPlugin__anyMatches(
                     this: &Plugin,
-                    namespace: &BunString,
-                    path: &BunString,
+                    namespace: &mut BunString,
+                    path: &mut BunString,
                     is_on_load: bool,
                 ) -> bool;
                 // `context` is an opaque cookie C++ round-trips back to a Rust
@@ -875,13 +875,13 @@ pub mod bv2_impl {
                     path: &crate::ungate_support::bun_fs::Path,
                     is_on_load: bool,
                 ) -> bool {
-                    let namespace_string = bun_core::OwnedString::new(if path.is_file() {
+                    let mut namespace_string = if path.is_file() {
                         BunString::empty()
                     } else {
                         BunString::clone_utf8(path.namespace)
-                    });
-                    let path_string = bun_core::OwnedString::new(BunString::clone_utf8(path.text));
-                    JSBundlerPlugin__anyMatches(self, &namespace_string, &path_string, is_on_load)
+                    };
+                    let mut path_string = BunString::clone_utf8(path.text);
+                    JSBundlerPlugin__anyMatches(self, &mut namespace_string, &mut path_string, is_on_load)
                 }
 
                 pub fn match_on_load(
@@ -893,13 +893,12 @@ pub mod bv2_impl {
                     is_server_side: bool,
                 ) {
                     let _tracer = bun_core::perf::trace("JSBundler.matchOnLoad");
-                    let mut namespace_string =
-                        bun_core::OwnedString::new(if namespace.is_empty() {
-                            BunString::static_(b"file")
-                        } else {
-                            BunString::clone_utf8(namespace)
-                        });
-                    let mut path_string = bun_core::OwnedString::new(BunString::clone_utf8(path));
+                    let mut namespace_string = if namespace.is_empty() {
+                        BunString::static_(b"file")
+                    } else {
+                        BunString::clone_utf8(namespace)
+                    };
+                    let mut path_string = BunString::clone_utf8(path);
                     JSBundlerPlugin__matchOnLoad(
                         self,
                         &mut namespace_string,
@@ -919,16 +918,13 @@ pub mod bv2_impl {
                     import_record_kind: ImportKind,
                 ) {
                     let _tracer = bun_core::perf::trace("JSBundler.matchOnResolve");
-                    let mut namespace_string = bun_core::OwnedString::new(
-                        if namespace.is_empty() || namespace == b"file" {
-                            BunString::static_(b"file")
-                        } else {
-                            BunString::clone_utf8(namespace)
-                        },
-                    );
-                    let mut path_string = bun_core::OwnedString::new(BunString::clone_utf8(path));
-                    let mut importer_string =
-                        bun_core::OwnedString::new(BunString::clone_utf8(importer));
+                    let mut namespace_string = if namespace.is_empty() || namespace == b"file" {
+                        BunString::static_(b"file")
+                    } else {
+                        BunString::clone_utf8(namespace)
+                    };
+                    let mut path_string = BunString::clone_utf8(path);
+                    let mut importer_string = BunString::clone_utf8(importer);
                     JSBundlerPlugin__matchOnResolve(
                         self,
                         &mut namespace_string,

@@ -433,6 +433,15 @@ pub fn NewParser_(
         temp_refs_to_declare: List(TempRef) = .{},
         temp_ref_count: i32 = 0,
 
+        // Counter used to generate unique storage names for auto-accessor
+        // WeakMaps created during decorator lowering. Must be module-scoped
+        // because each `accessor foo` in a subclass needs its own WeakMap
+        // binding — reusing `_foo` for both a base and derived class causes
+        // `super()` to populate the same WeakMap that the subclass then
+        // tries to add to (collision: "Cannot add the same private member
+        // more than once").
+        accessor_storage_counter: usize = 0,
+
         // When bundling, hoisted top-level local variables declared with "var" in
         // nested scopes are moved up to be declared in the top-level scope instead.
         // The old "var" statements are turned into regular assignments instead. This

@@ -718,7 +718,6 @@ pub fn LowerDecorators(
             var extracted_static_blocks = ListManaged(*G.ClassStaticBlock).init(p.allocator);
             var prefix_stmts = ListManaged(Stmt).init(p.allocator);
             var private_lowered_map = PrivateLoweredMap{};
-            var accessor_storage_counter: usize = 0;
             var emitted_private_adds = std.AutoHashMapUnmanaged(u32, void){};
             var static_private_add_blocks = ListManaged(Property).init(p.allocator);
 
@@ -818,12 +817,28 @@ pub fn LowerDecorators(
                     }
                     // Undecorated auto-accessor → WeakMap + getter/setter
                     if (prop.kind == .auto_accessor) {
+                        // Bump the module-scoped counter once per accessor so
+                        // the generated WeakMap binding doesn't collide with
+                        // another `accessor <same-name>` elsewhere in the file
+                        // (most visibly, a subclass overriding a base-class
+                        // accessor — see note on `P.accessor_storage_counter`).
+                        const storage_id = p.accessor_storage_counter;
+                        p.accessor_storage_counter += 1;
                         const accessor_name = brk: {
-                            if (prop.key.?.data == .e_string)
-                                break :brk std.fmt.allocPrint(p.allocator, "_{s}", .{prop.key.?.data.e_string.data}) catch unreachable;
-                            const name = std.fmt.allocPrint(p.allocator, "_accessor_storage{d}", .{accessor_storage_counter}) catch unreachable;
-                            accessor_storage_counter += 1;
-                            break :brk name;
+                            // `accessor "foo"` → `_foo_0`, but only when the key is
+                            // UTF-8 bytes and a valid identifier. `accessor "foo-bar"`
+                            // would produce `_foo-bar_0` (unparseable); a UTF-16
+                            // `E.String` (any non-ASCII quoted key) would splice raw
+                            // UTF-16 bytes into `{s}` via `@ptrCast` and print
+                            // embedded NULs. Fall back to the synthetic name in both
+                            // cases. The `_` between key and counter is load-bearing:
+                            // without it, `accessor x1` at counter=0 and `accessor x`
+                            // at counter=10 both produce `_x10`, recreating #29837.
+                            if (prop.key.?.data == .e_string and
+                                prop.key.?.data.e_string.isUTF8() and
+                                prop.key.?.data.e_string.isIdentifier(p.allocator))
+                                break :brk std.fmt.allocPrint(p.allocator, "_{s}_{d}", .{ prop.key.?.data.e_string.data, storage_id }) catch unreachable;
+                            break :brk std.fmt.allocPrint(p.allocator, "_accessor_storage_{d}", .{storage_id}) catch unreachable;
                         };
                         const wm_ref = newSym(p, .other, accessor_name);
                         prefix_stmts.append(varDecl(p, wm_ref, newWeakMapExpr(p, loc), loc)) catch unreachable;
@@ -956,10 +971,18 @@ pub fn LowerDecorators(
                         prefix_stmts.append(varDecl(p, wm_ref, newWeakMapExpr(p, loc), loc)) catch unreachable;
                         dec_arg_count = 5;
                     } else if (k == 4) {
-                        // Decorated private auto-accessor → WeakMap + descriptor
-                        const wm_ref = newSym(p, .other, std.fmt.allocPrint(p.allocator, "_{s}", .{private_orig[1..]}) catch unreachable);
+                        // Decorated private auto-accessor → WeakMap + descriptor.
+                        // Private accessors hit the same module-scope collision as
+                        // public accessors (two classes both declaring `accessor #x`
+                        // would emit two `var _x = new WeakMap` bound to the same
+                        // symbol under `NoOpRenamer`), so share the same counter.
+                        const storage_id = p.accessor_storage_counter;
+                        p.accessor_storage_counter += 1;
+                        // `_` between key and counter for injectivity — otherwise
+                        // `#x1` at counter=0 and `#x` at counter=10 both yield `_x10`.
+                        const wm_ref = newSym(p, .other, std.fmt.allocPrint(p.allocator, "_{s}_{d}", .{ private_orig[1..], storage_id }) catch unreachable);
                         private_storage_ref = wm_ref;
-                        const acc_ref = newSym(p, .other, std.fmt.allocPrint(p.allocator, "_{s}_acc", .{private_orig[1..]}) catch unreachable);
+                        const acc_ref = newSym(p, .other, std.fmt.allocPrint(p.allocator, "_{s}_acc_{d}", .{ private_orig[1..], storage_id }) catch unreachable);
                         private_method_fn_ref = acc_ref;
                         private_lowered_map.put(p.allocator, priv_inner, .{
                             .storage_ref = wm_ref,
@@ -970,12 +993,18 @@ pub fn LowerDecorators(
                     }
                 } else if (k == 4) {
                     // Decorated public auto-accessor → WeakMap
+                    const storage_id = p.accessor_storage_counter;
+                    p.accessor_storage_counter += 1;
                     const accessor_name = brk: {
-                        if (key_expr.data == .e_string)
-                            break :brk std.fmt.allocPrint(p.allocator, "_{s}", .{key_expr.data.e_string.data}) catch unreachable;
-                        const name = std.fmt.allocPrint(p.allocator, "_accessor_storage{d}", .{accessor_storage_counter}) catch unreachable;
-                        accessor_storage_counter += 1;
-                        break :brk name;
+                        // See the note on the undecorated path for the `_` between
+                        // key and counter, and for why `isUTF8()` must gate the
+                        // embed (UTF-16 keys pass `isIdentifier` but `{s}` prints
+                        // their raw bytes with embedded NULs).
+                        if (key_expr.data == .e_string and
+                            key_expr.data.e_string.isUTF8() and
+                            key_expr.data.e_string.isIdentifier(p.allocator))
+                            break :brk std.fmt.allocPrint(p.allocator, "_{s}_{d}", .{ key_expr.data.e_string.data, storage_id }) catch unreachable;
+                        break :brk std.fmt.allocPrint(p.allocator, "_accessor_storage_{d}", .{storage_id}) catch unreachable;
                     };
                     const wm_ref = newSym(p, .other, accessor_name);
                     private_extra_ref = wm_ref;

@@ -507,7 +507,11 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
         }
     }
 
-    JSArray* callSitesArray = JSC::constructArray(globalObject, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), callSites);
+    // Allocate the sites array in the lexical (error's) realm. When running
+    // inside node:vm, lexicalGlobalObject is the vm's NodeVMGlobalObject, not
+    // the host Zig::GlobalObject — using the host here would leak host-realm
+    // Array/Function into the sandbox via sites.constructor.
+    JSArray* callSitesArray = JSC::constructArray(lexicalGlobalObject, lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), callSites);
     RETURN_IF_EXCEPTION(scope, {});
 
     RELEASE_AND_RETURN(scope, formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSitesArray, prepareStackTrace));
@@ -795,8 +799,13 @@ void createCallSitesFromFrames(Zig::GlobalObject* globalObject, JSC::JSGlobalObj
      * will return undefined."." */
     bool encounteredStrictFrame = false;
 
-    // TODO: is it safe to use CallSite structure from a different JSGlobalObject? This case would happen within a node:vm
-    JSC::Structure* callSiteStructure = globalObject->callSiteStructure();
+    // Use the lexical (error's) realm for the CallSite structure so that
+    // inside node:vm the prototype chain terminates at the vm's
+    // Object.prototype, not the host's. Both Zig::GlobalObject and
+    // NodeVMGlobalObject derive from Bun::GlobalScope, which owns the
+    // per-realm CallSite structure.
+    auto* lexicalScope = dynamicDowncast<Bun::GlobalScope>(lexicalGlobalObject);
+    JSC::Structure* callSiteStructure = lexicalScope ? lexicalScope->callSiteStructure() : globalObject->callSiteStructure();
     size_t framesCount = stackTrace.size();
 
     for (size_t i = 0; i < framesCount; i++) {

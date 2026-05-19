@@ -872,3 +872,69 @@ test("Loader is not defined in vm context", () => {
   // Ensure internal JSC Loader properties are not leaking through
   expect(runInContext("typeof Loader.registry;", customContext)).toBe("undefined");
 });
+
+test("Error.prepareStackTrace sites array uses the vm realm", () => {
+  // The array and CallSite objects passed to a user-installed
+  // Error.prepareStackTrace must be allocated in the vm's realm, not the
+  // host realm. Otherwise `sites.constructor.constructor` is the host
+  // Function constructor and can be used to escape the sandbox.
+  const context = createContext({});
+  const result = runInContext(
+    `
+    let captured;
+    Error.prepareStackTrace = (err, sites) => {
+      captured = sites;
+      return "";
+    };
+    new Error().stack;
+
+    let escaped;
+    try {
+      escaped = captured.constructor.constructor("return typeof process")();
+    } catch {
+      escaped = "undefined";
+    }
+
+    const site = captured[0];
+    ({
+      sitesCtorIsVmArray: captured.constructor === Array,
+      sitesProtoIsVmArrayProto: Object.getPrototypeOf(captured) === Array.prototype,
+      callSiteProtoProtoIsVmObjectProto:
+        Object.getPrototypeOf(Object.getPrototypeOf(site)) === Object.prototype,
+      callSiteCtorIsVmObject: site.constructor === Object,
+      escapedProcessType: escaped,
+      getLineNumberWorks: typeof site.getLineNumber() === "number",
+    });
+    `,
+    context,
+  );
+
+  expect(result).toEqual({
+    sitesCtorIsVmArray: true,
+    sitesProtoIsVmArrayProto: true,
+    callSiteProtoProtoIsVmObjectProto: true,
+    callSiteCtorIsVmObject: true,
+    escapedProcessType: "undefined",
+    getLineNumberWorks: true,
+  });
+});
+
+test("Error.prepareStackTrace sites do not leak host Array into vm", () => {
+  const context = createContext({});
+  const sites = runInContext(
+    `
+    let captured;
+    Error.prepareStackTrace = (err, sites) => {
+      captured = sites;
+      return "";
+    };
+    new Error().stack;
+    captured;
+    `,
+    context,
+  );
+  // From the host's perspective the array must not be a host Array instance.
+  expect(sites.constructor === Array).toBe(false);
+  expect(Object.getPrototypeOf(sites) === Array.prototype).toBe(false);
+  expect(Object.getPrototypeOf(Object.getPrototypeOf(sites[0])) === Object.prototype).toBe(false);
+});

@@ -2480,13 +2480,16 @@ where
 
             let mut url = URL::parse(temp_url_str);
 
-            // Both branches produce a heap-owned buffer that `url.href` borrows.
-            // `bun.String.cloneUTF8(url.href)` below makes its own copy, so this
-            // buffer must be freed before we leave the block.
-            let owned_url_buf: Vec<u8> = if url.hostname.is_empty() {
-                strings::append(&self.base_url_string_for_joining, url.pathname).into_vec()
+            // `bun.String.cloneUTF8(url.href)` below makes its own copy, so the
+            // joined buffer only needs to live through this block. The else arm
+            // borrows `temp_url_str` (kept alive by `url_zig_str`) instead of
+            // duping it just to satisfy a uniform `defer free` like the Zig did.
+            let owned_url_buf: std::borrow::Cow<'_, [u8]> = if url.hostname.is_empty() {
+                std::borrow::Cow::Owned(
+                    strings::append(&self.base_url_string_for_joining, url.pathname).into_vec(),
+                )
             } else {
-                temp_url_str.to_vec()
+                std::borrow::Cow::Borrowed(temp_url_str)
             };
             url = URL::parse(&owned_url_buf);
 

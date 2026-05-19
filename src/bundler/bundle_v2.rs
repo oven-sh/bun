@@ -3355,11 +3355,10 @@ pub mod bv2_impl {
                 .zip(scbs.items_ssr_source_index().iter())
             {
                 if *r#use == bun_ast::UseDirective::Client {
-                    // TODO(@paperclover/bake): this file is being generated far too
-                    // early. we don't know which exports are dead and which exports
-                    // are live. Tree-shaking figures that out. However,
-                    // tree-shaking happens after import binding, which would
-                    // require this ast.
+                    // TODO: this file is being generated far too early. we
+                    // don't know which exports are dead and which exports are
+                    // live. Tree-shaking figures that out. However, tree-shaking
+                    // happens after import binding, which would require this ast.
                     //
                     // The plan: change this to generate a stub ast which only has
                     // `export const serverManifest = undefined;`, and then
@@ -5576,7 +5575,6 @@ pub mod bv2_impl {
                 entry_point: chunk::EntryPoint::new(0, 0, true, false),
                 content: chunk::Content::Javascript({
                     let mut js = chunk::JavaScriptChunk::default();
-                    // TODO(@paperclover): remove this ptrCast when Source Index is fixed
                     js.files_in_chunk_order = js_reachable_files
                         .iter()
                         .map(|i| i.get())

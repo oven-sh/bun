@@ -2016,6 +2016,19 @@ interface BunFetchRequestInit extends RequestInit {
   protocol?: "http2" | "http1.1" | "h2" | "h1";
 
   /**
+   * Make a gRPC unary request. The request body is wrapped in a gRPC
+   * Length-Prefixed Message, `te: trailers` and
+   * `content-type: application/grpc` are injected, response trailers
+   * (`grpc-status`, `grpc-message`) are merged into `response.headers`,
+   * and the response body is unwrapped to the bare message payload.
+   *
+   * Implies `protocol: "http2"`. Requires `https`. This is a custom
+   * property that is not part of the Fetch API specification.
+   * @experimental
+   */
+  grpc?: boolean;
+
+  /**
    * Control automatic decompression of the response body.
    * When set to `false`, the response body will not be automatically decompressed,
    * and the `Content-Encoding` header will be preserved. This can improve performance

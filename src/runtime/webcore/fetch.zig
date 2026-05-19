@@ -201,6 +201,7 @@ fn fetchImpl(
     var force_http2 = false;
     var force_http3 = false;
     var force_http1 = false;
+    var grpc = false;
     var allocator = bun.default_allocator;
 
     if (arguments.len == 0) {
@@ -543,6 +544,30 @@ fn fetchImpl(
                         }
                         break :extract_protocol;
                     }
+                }
+            }
+        }
+    }
+
+    // grpc: true | undefined — make a gRPC unary request. Implies
+    // protocol: "h2"; the body is wrapped in a gRPC Length-Prefixed
+    // Message and the response trailers are merged into the headers so
+    // `response.headers.get("grpc-status")` works.
+    extract_grpc: {
+        const objects_to_try = [_]JSValue{
+            options_object orelse .zero,
+            request_init_object orelse .zero,
+        };
+        inline for (0..2) |i| {
+            if (objects_to_try[i] != .zero) {
+                if (try objects_to_try[i].get(globalThis, "grpc")) |grpc_val| {
+                    if (grpc_val.isBoolean() and grpc_val.asBoolean()) {
+                        grpc = true;
+                        force_http2 = true;
+                        force_http1 = false;
+                        force_http3 = false;
+                    }
+                    break :extract_grpc;
                 }
             }
         }
@@ -1444,6 +1469,7 @@ fn fetchImpl(
             .force_http2 = force_http2,
             .force_http3 = force_http3,
             .force_http1 = force_http1,
+            .grpc = grpc,
             .check_server_identity = if (check_server_identity.isEmptyOrUndefinedOrNull()) .empty else .create(check_server_identity, globalThis),
             .unix_socket_path = unix_socket_path,
         },

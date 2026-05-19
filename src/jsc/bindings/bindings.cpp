@@ -1626,6 +1626,10 @@ bool Bun__deepMatch(
     // fast path for reference equality.
     if (objValue == subsetValue) return true;
     VM& vm = globalObject->vm();
+    if (!vm.isSafeToRecurse()) [[unlikely]] {
+        throwStackOverflowError(globalObject, throwScope);
+        return false;
+    }
     JSObject* obj = objValue.getObject();
     JSObject* subsetObj = subsetValue.getObject();
 

@@ -1,5 +1,9 @@
 const FieldDescription = @This();
 
+/// Column name exactly as sent by PostgreSQL in RowDescription. Unlike
+/// `name_or_index`, this is never rewritten to `.duplicate` and is always
+/// the original string, so it can be surfaced to JS in result `.columns`.
+name: Data = .{ .empty = {} },
 /// JavaScriptCore treats numeric property names differently than string property names.
 /// so we do the work to figure out if the property name is a number ahead of time.
 name_or_index: ColumnIdentifier = .{
@@ -14,7 +18,20 @@ pub fn typeTag(this: @This()) types.Tag {
 }
 
 pub fn deinit(this: *@This()) void {
+    this.name.deinit();
     this.name_or_index.deinit();
+}
+
+pub fn toJS(this: *const @This(), globalObject: *jsc.JSGlobalObject) bun.JSError!JSValue {
+    const obj = JSValue.createEmptyObject(globalObject, 4);
+    obj.put(globalObject, jsc.ZigString.static("name"), try bun.String.createUTF8ForJS(globalObject, this.name.slice()));
+    obj.put(globalObject, jsc.ZigString.static("type"), JSValue.jsNumber(this.type_oid));
+    obj.put(globalObject, jsc.ZigString.static("table"), JSValue.jsNumber(this.table_oid));
+    // Wire protocol defines the column attribute number as signed Int16
+    // (system columns like ctid have negative attnums); `short` is u16 so
+    // bitcast to match postgres.js' readInt16BE behaviour.
+    obj.put(globalObject, jsc.ZigString.static("number"), JSValue.jsNumber(@as(i16, @bitCast(this.column_index))));
+    return obj;
 }
 
 pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReader(Container)) AnyPostgresError!void {
@@ -24,7 +41,8 @@ pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReade
     }
 
     // Field name (null-terminated string)
-    const field_name = try ColumnIdentifier.init(name);
+    var field_name = try ColumnIdentifier.init(name);
+    errdefer field_name.deinit();
     // Table OID (4 bytes)
     // If the field can be identified as a column of a specific table, the object ID of the table; otherwise zero.
     const table_oid = try reader.int4();
@@ -49,6 +67,7 @@ pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReade
         else => return error.UnknownFormatCode,
     };
     this.* = .{
+        .name = try Data.create(name.slice(), bun.default_allocator),
         .table_oid = table_oid,
         .column_index = column_index,
         .type_oid = type_oid,
@@ -59,11 +78,16 @@ pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReade
 
 pub const decode = DecoderWrap(FieldDescription, decodeInternal).decode;
 
+const bun = @import("bun");
 const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
 const ColumnIdentifier = @import("../../shared/ColumnIdentifier.zig").ColumnIdentifier;
+const Data = @import("../../shared/Data.zig").Data;
 const DecoderWrap = @import("./DecoderWrap.zig").DecoderWrap;
 const NewReader = @import("./NewReader.zig").NewReader;
 
 const types = @import("../PostgresTypes.zig");
 const int4 = types.int4;
 const short = types.short;
+
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;

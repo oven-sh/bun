@@ -268,6 +268,56 @@ impl JSMySQLQuery {
         Ok(JSValue::UNDEFINED)
     }
 
+    /// Build the `{ string, columns: [{ name, type, table, length, flags }, ...] }`
+    /// object exposed as `result.statement` / `result.columns` in JS.
+    fn build_statement_js(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+        use crate::jsc::bun_string_jsc;
+        self.query.with_mut(|q| {
+            let Some(statement) = q.get_statement() else {
+                return Ok(JSValue::UNDEFINED);
+            };
+            let received = statement.columns_received as usize;
+            let columns = JSValue::create_empty_array(global_object, received)?;
+            for (i, column) in statement.columns[..received].iter().enumerate() {
+                let col = JSValue::create_empty_object(global_object, 5);
+                col.put(
+                    global_object,
+                    b"name",
+                    bun_string_jsc::create_utf8_for_js(global_object, column.name.slice())?,
+                );
+                col.put(
+                    global_object,
+                    b"type",
+                    JSValue::js_number(column.column_type as u8 as f64),
+                );
+                col.put(
+                    global_object,
+                    b"table",
+                    bun_string_jsc::create_utf8_for_js(global_object, column.table.slice())?,
+                );
+                col.put(
+                    global_object,
+                    b"length",
+                    JSValue::js_number(column.column_length as f64),
+                );
+                col.put(
+                    global_object,
+                    b"flags",
+                    JSValue::js_number(column.flags.to_int() as f64),
+                );
+                columns.put_index(global_object, i as u32, col)?;
+            }
+            let obj = JSValue::create_empty_object(global_object, 2);
+            obj.put(
+                global_object,
+                b"string",
+                bun_string_jsc::to_js(q.get_query_string(), global_object)?,
+            );
+            obj.put(global_object, b"columns", columns);
+            Ok(obj)
+        })
+    }
+
     pub fn resolve(&self, queries_array: JSValue, result: MySQLQueryResult) {
         // `ref_guard` brackets re-entry; drops *after* `_downgrade` so the
         // allocation outlives the closure body.
@@ -317,6 +367,20 @@ impl JSMySQLQuery {
         pending_value.ensure_still_alive();
         self.set_pending_value(JSValue::UNDEFINED);
 
+        // Capture column metadata for this result set before MySQLStatement.reset()
+        // zeroes columns_received and the next header overwrites the definitions.
+        // If building the metadata fails (e.g. JS-heap OOM), swallow the exception
+        // and resolve without it: the query itself succeeded, and by this point
+        // q.result() has already set status to .success so reject_with_js_value
+        // would be a no-op and the promise would hang.
+        let statement_js = self
+            .build_statement_js(self.global_object())
+            .unwrap_or_else(|_| {
+                let _ = self.global_object().try_take_exception();
+                JSValue::UNDEFINED
+            });
+        statement_js.ensure_still_alive();
+
         let event_loop = self.event_loop();
 
         event_loop.run_callback(
@@ -336,6 +400,7 @@ impl JSMySQLQuery {
                 JSValue::js_boolean(is_last_result),
                 JSValue::js_number(result.last_insert_id as f64),
                 JSValue::js_number(result.affected_rows as f64),
+                statement_js,
             ],
         );
     }

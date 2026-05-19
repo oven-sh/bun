@@ -1859,7 +1859,27 @@ fn startProxyHandshake(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTP
     log("startProxyHandshake", .{});
     // if we have options we pass them (ca, reject_unauthorized, etc) otherwise use the default
     const ssl_options = if (this.tls_props) |tls| tls.get().* else jsc.API.ServerConfig.SSLConfig.zero;
+    // Take ownership of the CONNECT accumulation buffer BEFORE entering
+    // ProxyTunnel.start. The envelope has been fully consumed by the caller
+    // (handleOnDataHeaders), and we want the buffer empty so that when the
+    // tunnel later re-enters handleOnDataHeaders with decrypted upstream
+    // bytes, the stale envelope isn't re-parsed as the user-facing response
+    // (see #30381). start_payload aliases into this buffer, but
+    // ProxyTunnel.start copies it into the TLS BIO via startWithPayload →
+    // BIO_write, so freeing the backing storage once start() returns is
+    // safe for that alias.
+    //
+    // We hoist the deinit to a local rather than touching `this.state` after
+    // start(): ProxyTunnel.start has synchronous failure paths (SSLWrapper
+    // init error, or handshake-traffic error that synchronously triggers
+    // onClose) that call closeAndFail → fail → result callback →
+    // ThreadlocalAsyncHTTP.deinit, which destroys the allocation that
+    // embeds *this. Any load through `this` after start() would be a UAF.
+    var envelope_buf = this.state.response_message_buffer;
+    this.state.response_message_buffer = .{ .allocator = envelope_buf.allocator, .list = .{} };
     ProxyTunnel.start(this, is_ssl, socket, ssl_options, start_payload);
+    // Must not reference `this` past this point — see comment above.
+    envelope_buf.deinit();
 }
 
 inline fn handleShortRead(

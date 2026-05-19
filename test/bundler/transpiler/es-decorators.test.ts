@@ -312,35 +312,104 @@ describe("ES Decorators", () => {
   });
 
   describe("metadata", () => {
+    test("Symbol.metadata is exposed as a well-known symbol", async () => {
+      // https://github.com/oven-sh/bun/issues/29724 — Symbol.metadata must be
+      // exposed globally so `class[Symbol.metadata]` works per TC39 spec.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        console.log(typeof Symbol.metadata);
+        console.log(Symbol.metadata.toString());
+        const d = Object.getOwnPropertyDescriptor(Symbol, "metadata");
+        console.log(d.writable, d.enumerable, d.configurable);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("symbol\nSymbol(Symbol.metadata)\nfalse false false\n");
+      expect(exitCode).toBe(0);
+    });
+
     test("Symbol.metadata is set on decorated class", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`
-        // Symbol.metadata may not exist natively, use the same fallback as the runtime
-        const metadataKey = Symbol.metadata || Symbol.for("Symbol.metadata");
         function dec(cls, ctx) { return cls; }
         @dec class Foo {}
-        console.log(typeof Foo[metadataKey]);
-        console.log(Foo[metadataKey] !== null);
+        console.log(typeof Foo[Symbol.metadata]);
+        console.log(Foo[Symbol.metadata] !== null);
       `);
       expect(stderr).toBe("");
       expect(stdout).toBe("object\ntrue\n");
       expect(exitCode).toBe(0);
     });
 
+    test("class field decorator writes and reads metadata via Symbol.metadata", async () => {
+      // https://github.com/oven-sh/bun/issues/29724
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, context) {
+          context.metadata["test"] = "works";
+        }
+        class Foo {
+          @dec name;
+        }
+        console.log(Foo[Symbol.metadata].test);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("works\n");
+      expect(exitCode).toBe(0);
+    });
+
     test("metadata inherits from parent class", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`
-        const metadataKey = Symbol.metadata || Symbol.for("Symbol.metadata");
         function dec(cls, ctx) {
           ctx.metadata.decorated = true;
           return cls;
         }
         @dec class Base {}
         @dec class Child extends Base {}
-        console.log(Base[metadataKey].decorated);
-        console.log(Child[metadataKey].decorated);
-        console.log(Object.getPrototypeOf(Child[metadataKey]) === Base[metadataKey]);
+        console.log(Base[Symbol.metadata].decorated);
+        console.log(Child[Symbol.metadata].decorated);
+        console.log(Object.getPrototypeOf(Child[Symbol.metadata]) === Base[Symbol.metadata]);
       `);
       expect(stderr).toBe("");
       expect(stdout).toBe("true\ntrue\ntrue\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("Symbol.metadata is shared across realms (ShadowRealm)", async () => {
+      // ECMA-262 §6.1.5.1 — well-known symbols are shared by all realms in the VM.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const r = new ShadowRealm();
+        const cross = r.evaluate("() => Symbol.metadata")();
+        console.log(cross === Symbol.metadata);
+        console.log(cross === Symbol.iterator);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true\nfalse\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("Symbol.metadata is exposed inside node:vm contexts", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const { runInNewContext } = require("node:vm");
+        console.log(runInNewContext("typeof Symbol.metadata"));
+        console.log(runInNewContext("Symbol.metadata.toString()"));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("symbol\nSymbol(Symbol.metadata)\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("Function.prototype[Symbol.metadata] is null for undecorated classes", async () => {
+      // Per the Decorator Metadata proposal, undecorated classes resolve
+      // Foo[Symbol.metadata] to null via Function.prototype, not undefined.
+      // The proposal specifies `{ writable: false, enumerable: false,
+      // configurable: true }` — configurable is deliberately true so
+      // polyfills can redefine it.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class Plain {}
+        console.log(Plain[Symbol.metadata]);
+        console.log(Function.prototype[Symbol.metadata]);
+        const d = Object.getOwnPropertyDescriptor(Function.prototype, Symbol.metadata);
+        console.log(d.value, d.writable, d.enumerable, d.configurable);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("null\nnull\nnull false false true\n");
       expect(exitCode).toBe(0);
     });
   });

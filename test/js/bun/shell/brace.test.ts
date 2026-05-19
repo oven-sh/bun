@@ -84,14 +84,15 @@ describe("$.braces", () => {
     // before the first `Close`, which used to overflow a `u8` counter and
     // panic the debug build (released Bun silently wrapped).
     const depth = 300;
-    const input = "{" + "{".repeat(depth) + "x" + "}".repeat(depth);
+    const input = "{" + Buffer.alloc(depth, "{").toString() + "x" + Buffer.alloc(depth, "}").toString();
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", `import { $ } from "bun"; $.braces(${JSON.stringify(input)});`],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });

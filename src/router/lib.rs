@@ -1249,7 +1249,10 @@ impl Route {
                 // Zig: `entry.abs_path = PathString.init(abs_path_str)`.
                 // SAFETY: sole mutation; `base_`/`extname` (which may borrow
                 // `(*entry).base_.remainder_buf`) are not used after this.
-                unsafe { &mut *entry }.set_abs_path(bun_core::PathString::init(abs_path_str));
+                // SAFETY (PathString::init): `abs_path_str` is interned into
+                // `DirnameStore`, a process-lifetime arena.
+                unsafe { &mut *entry }
+                    .set_abs_path(unsafe { bun_core::PathString::init(abs_path_str) });
             }
 
             #[cfg(windows)]
@@ -1265,10 +1268,14 @@ impl Route {
                     .dirname_store()
                     .append(normalized)
                     .expect("unreachable");
-                PathString::init(interned)
+                // SAFETY: `interned` is `&'static [u8]` (process-lifetime
+                // DirnameStore).
+                unsafe { PathString::init(interned) }
             };
             #[cfg(not(windows))]
-            let abs_path = PathString::init(abs_path_str);
+            // SAFETY: `abs_path_str` is interned into `DirnameStore` upstream,
+            // a process-lifetime arena.
+            let abs_path = unsafe { PathString::init(abs_path_str) };
 
             #[cfg(all(debug_assertions, windows))]
             {
@@ -1293,8 +1300,11 @@ impl Route {
             Some(Route {
                 name,
                 basename,
-                public_path: PathString::init(public_path),
-                match_name: PathString::init(match_name),
+                // SAFETY: `public_path` and `match_name` are `&'static [u8]`
+                // slices interned into `DirnameStore` (process-lifetime arena,
+                // see the `name`/`match_name`/`public_path` comment above).
+                public_path: unsafe { PathString::init(public_path) },
+                match_name: unsafe { PathString::init(match_name) },
                 full_hash: if is_index {
                     index_route_hash()
                 } else {

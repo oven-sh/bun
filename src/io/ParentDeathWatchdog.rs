@@ -688,7 +688,9 @@ fn list_child_pids_linux(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option
     let mut it = bun_sys::dir_iterator::iterate(task_fd);
     loop {
         // `it.next()` → `Maybe(?Entry)`; `.unwrap() catch null` → error/None both stop.
-        let entry = match it.next() {
+        // SAFETY: `entry.name` borrows the iterator's scratch — parsed into
+        // `tid` (owned numeric) before the next `it.next()` call.
+        let entry = match unsafe { it.next() } {
             Ok(Some(e)) => e,
             _ => break,
         };

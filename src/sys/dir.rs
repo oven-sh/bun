@@ -99,7 +99,10 @@ impl Dir {
         });
 
         'process_stack: while let Some(top) = stack.last_mut() {
-            while let Some(entry) = top.iter.next().map_err(bun_core::Error::from)? {
+            // SAFETY: `entry.name` borrows the iterator's scratch buffer; we
+            // consume (openat_a via `entry.name.slice_u8()` then copy via
+            // `to_vec` below) before the next `next()` call.
+            while let Some(entry) = unsafe { top.iter.next() }.map_err(bun_core::Error::from)? {
                 let mut treat_as_dir = matches!(entry.kind, EntryKind::Directory);
                 'handle_entry: loop {
                     if treat_as_dir {

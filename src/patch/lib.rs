@@ -143,7 +143,9 @@ impl<'a> PatchFile<'a> {
                         return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open));
                     }
                     let filepath_z = ZBox::from_vec_with_nul(file_creation.path.to_vec());
-                    let filepath = PathString::init(filepath_z.as_bytes());
+                    // SAFETY: `filepath_z` is a local `ZBox` that outlives
+                    // `filepath` (this match arm's body).
+                    let filepath = unsafe { PathString::init(filepath_z.as_bytes()) };
                     let filedir = paths::dirname_simple(filepath.slice());
                     let mode = file_creation.mode;
 

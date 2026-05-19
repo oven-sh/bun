@@ -77,8 +77,10 @@ impl FileJsc for File {
 
             // The real name goes here:
             // SAFETY: see above; `data` is `Bytes` by construction.
+            // SAFETY (PathString::init): `self.name` points into the standalone
+            // module graph, which is leaked for the process lifetime.
             if let Data::Bytes(bytes) = unsafe { &mut (*store_ptr).data } {
-                bytes.stored_name = PathString::init(self.name);
+                bytes.stored_name = unsafe { PathString::init(self.name) };
             }
 
             // The pretty name goes here:

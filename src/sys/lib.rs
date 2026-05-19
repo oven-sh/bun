@@ -797,15 +797,23 @@ pub mod dir_iterator {
                 self.name_filter = filter.map(|f| f.to_vec());
             }
         }
-        /// Memory such as file names referenced in this returned entry becomes
-        /// invalid with subsequent calls to `next`, as well as when this
-        /// iterator is moved or dropped.
+        /// # Safety
+        /// The returned [`IteratorResult::name`] is a lifetime-erased borrow
+        /// into this iterator's inline `buf` (POSIX: Zig parity with
+        /// `PathString.init(d_name)`). It is invalidated by the next call to
+        /// [`next`](Self::next) and by this iterator's move or drop. The
+        /// caller must consume (e.g. `.slice_u8().to_vec()`) the name before
+        /// either.
         ///
-        /// On POSIX `IteratorResult::name` is a lifetime-erased borrow into
-        /// this iterator's inline `buf` (Zig parity: `PathString.init(d_name)`).
-        /// Copy it out before pushing the iterator into a `Vec` etc.
+        /// Regression guard for oven-sh/bun#30719 — calling `next()` outside
+        /// an `unsafe { }` block is a compile error:
+        /// ```compile_fail
+        /// use bun_sys::Fd;
+        /// let mut it = bun_sys::iterate_dir(Fd::cwd());
+        /// let _ = it.next(); // E0133: call to unsafe function
+        /// ```
         #[inline]
-        pub fn next(&mut self) -> Result<Option<IteratorResult>> {
+        pub unsafe fn next(&mut self) -> Result<Option<IteratorResult>> {
             self.state.next(self.dir)
         }
     }

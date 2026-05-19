@@ -1765,7 +1765,10 @@ pub fn install_isolated_packages(
                     // 2
                     let mut node_modules_iter = sys::iterate_dir(node_modules);
                     loop {
-                        let Some(entry) = (match node_modules_iter.next() {
+                        // SAFETY: `entry.name` borrows the iterator's scratch
+                        // buffer; it is copied into `entry_path` / `rename_path`
+                        // within this iteration before the next `next()` call.
+                        let Some(entry) = (match unsafe { node_modules_iter.next() } {
                             Ok(v) => v,
                             Err(_) => break 'is_new_bun_modules true,
                         }) else {

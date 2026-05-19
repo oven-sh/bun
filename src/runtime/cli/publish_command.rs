@@ -1610,7 +1610,10 @@ impl PublishCommand {
         });
 
         let mut iter = DirIterator::iterate(workspace_dir);
-        while let Some(entry) = iter.next().ok().flatten() {
+        // SAFETY: `entry.name` borrows the iterator's scratch buffer; read via
+        // `name = entry.name.slice_u8()` and consumed within this iteration
+        // before the next `next()` call.
+        while let Some(entry) = unsafe { iter.next() }.ok().flatten() {
             if entry.kind == bun_sys::EntryKind::Directory {
                 continue;
             }
@@ -1835,7 +1838,10 @@ impl PublishCommand {
                     });
 
                     let mut iter = DirIterator::iterate(dir);
-                    while let Some(entry) = iter.next().ok().flatten() {
+                    // SAFETY: `entry.name` borrows the iterator's scratch
+                    // buffer; copied into `join` / `leak`-interned below
+                    // before the next `iter.next()` call.
+                    while let Some(entry) = unsafe { iter.next() }.ok().flatten() {
                         let (name, subpath): (&'static ZStr, &'static ZStr) = {
                             // Zig: `DirIterator.iterate(dir, .u8)` — UTF-8 entry name on every platform.
                             let name = entry.name.slice_u8();

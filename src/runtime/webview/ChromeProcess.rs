@@ -299,7 +299,10 @@ fn find_playwright_shell() -> Option<ZBox> {
 
     let mut iter = bun_sys::iterate_dir(fd);
     loop {
-        let entry = match iter.next() {
+        // SAFETY: `entry.name` borrows the iterator's scratch buffer;
+        // copied into `best` (only winning candidate is retained) before
+        // the next `iter.next()` call.
+        let entry = match unsafe { iter.next() } {
             Ok(Some(e)) => e,
             Ok(None) => break,
             Err(_) => return None,

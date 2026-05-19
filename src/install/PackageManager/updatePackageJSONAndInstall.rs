@@ -716,7 +716,12 @@ fn update_package_json_and_install_with_manager_with_updates(
                     // `defer node_modules_bin.close()` — explicit close below (Fd is Copy, no Drop).
                     let mut iter = bun_sys::iterate_dir(node_modules_bin);
                     'iterator: loop {
-                        let Ok(Some(entry)) = iter.next() else { break };
+                        // SAFETY: `entry.name` borrows the iterator's scratch
+                        // buffer; copied into `node_modules_buf` below before
+                        // the next `iter.next()` call.
+                        let Ok(Some(entry)) = (unsafe { iter.next() }) else {
+                            break;
+                        };
                         match entry.kind {
                             bun_sys::EntryKind::SymLink => {
                                 // any symlinks which we are unable to open are assumed to be dangling

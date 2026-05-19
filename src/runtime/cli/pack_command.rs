@@ -541,7 +541,10 @@ fn iterate_included_project_tree(
         let close_guard = (dir_depth != 1).then(|| CloseOnDrop::dir(dir));
 
         let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(&dir));
-        'next_entry: while let Some(entry) = dir_iter.next().ok().flatten() {
+        // SAFETY: `entry.name` borrows the iterator's scratch buffer; the
+        // entry is consumed within this loop iteration before the next
+        // `next()` call.
+        'next_entry: while let Some(entry) = unsafe { dir_iter.next() }.ok().flatten() {
             // PORT NOTE: `.unwrap() catch null` → on iterator error, treat as end
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;
@@ -769,7 +772,10 @@ fn add_entire_tree(
         }
 
         let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
-        'next_entry: while let Some(entry) = iter.next().ok().flatten() {
+        // SAFETY: `entry.name` borrows the iterator's scratch buffer; the
+        // entry is consumed within this loop iteration before the next
+        // `next()` call.
+        'next_entry: while let Some(entry) = unsafe { iter.next() }.ok().flatten() {
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;
             }
@@ -937,7 +943,10 @@ fn iterate_bundled_deps(
     let mut additional_bundled_deps: Vec<DirInfo> = Vec::new();
 
     let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
-    while let Some(entry) = iter.next().ok().flatten() {
+    // SAFETY: `entry.name` borrows the iterator's scratch buffer; the
+    // entry is consumed within this loop iteration before the next
+    // `next()` call.
+    while let Some(entry) = unsafe { iter.next() }.ok().flatten() {
         if entry.kind != bun_sys::FileKind::Directory {
             continue;
         }
@@ -961,7 +970,11 @@ fn iterate_bundled_deps(
             let _close_scoped = CloseOnDrop::dir(scoped_dir);
 
             let mut scoped_iter = DirIterator::iterate(Fd::from_std_dir(&scoped_dir));
-            while let Some(sub_entry) = scoped_iter.next().ok().flatten() {
+            // SAFETY: `sub_entry.name` borrows `scoped_iter`'s scratch buffer;
+            // it is copied via `entry_subpath(_entry_name, sub_entry.name.slice_u8())`
+            // (which allocates a new path string) before the next
+            // `scoped_iter.next()` call.
+            while let Some(sub_entry) = unsafe { scoped_iter.next() }.ok().flatten() {
                 let entry_name = entry_subpath(_entry_name, sub_entry.name.slice_u8())?;
 
                 // PORT NOTE: reshaped for borrowck — Zig iterates `*dep` and
@@ -1077,7 +1090,10 @@ fn add_bundled_dep(
         let _close = CloseOnDrop::dir(dir);
 
         let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
-        while let Some(entry) = iter.next().ok().flatten() {
+        // SAFETY: `entry.name` borrows the iterator's scratch buffer; the
+        // entry is consumed within this loop iteration before the next
+        // `next()` call.
+        while let Some(entry) = unsafe { iter.next() }.ok().flatten() {
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;
             }
@@ -1341,7 +1357,10 @@ fn iterate_project_tree(
         }
 
         let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(&dir));
-        'next_entry: while let Some(entry) = dir_iter.next().ok().flatten() {
+        // SAFETY: `entry.name` borrows the iterator's scratch buffer; the
+        // entry is consumed within this loop iteration before the next
+        // `next()` call.
+        'next_entry: while let Some(entry) = unsafe { dir_iter.next() }.ok().flatten() {
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;
             }

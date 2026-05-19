@@ -803,7 +803,9 @@ impl RuntimeTranspilerCache {
         let cache_file_path = Self::get_cache_file_path(&mut cache_file_path_buf, input_hash)?;
         debug_assert!(!cache_file_path.is_empty());
         Self::from_file_with_cache_file_path(
-            PathString::init(cache_file_path.as_bytes()),
+            // SAFETY: `cache_file_path` borrows `cache_file_path_buf` which
+            // outlives the synchronous `from_file_with_cache_file_path` call.
+            unsafe { PathString::init(cache_file_path.as_bytes()) },
             input_hash,
             feature_hash,
             input_stat_size,
@@ -932,7 +934,9 @@ impl RuntimeTranspilerCache {
 
         Entry::save(
             cache_dir_fd,
-            PathString::init(cache_file_path.as_bytes()),
+            // SAFETY: `cache_file_path` borrows `cache_file_path_buf` (local to
+            // this fn) which outlives the synchronous `Entry::save` call.
+            unsafe { PathString::init(cache_file_path.as_bytes()) },
             input_byte_length,
             input_hash,
             features_hash,

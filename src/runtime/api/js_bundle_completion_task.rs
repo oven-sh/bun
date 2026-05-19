@@ -507,9 +507,12 @@ impl JSBundleCompletionTask {
                         encoding: Encoding::Buffer,
                         flag: FileSystemFlags::W,
                         mode: node_fs::DEFAULT_PERMISSION,
-                        file: PathOrFileDescriptor::Path(PathLike::String(
-                            bun_core::PathString::init(write_path),
-                        )),
+                        // SAFETY: `write_path` borrows the caller-owned buffer
+                        // which outlives the synchronous `write_file_with_path_buffer`
+                        // call; `write_args` (and its PathString) does not escape.
+                        file: PathOrFileDescriptor::Path(PathLike::String(unsafe {
+                            bun_core::PathString::init(write_path)
+                        })),
                         flush: false,
                         data: StringOrBuffer::EncodedSlice(
                             bun_core::zig_string::Slice::from_utf8_never_free(bytes),

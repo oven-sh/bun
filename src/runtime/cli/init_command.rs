@@ -559,7 +559,10 @@ impl InitCommand {
                 });
                 // Zig: bun.DirIterator.iterate(.fromStdDir(dir), .u8)
                 let mut it = bun_sys::iterate_dir(dir);
-                while let Some(file) = it.next().map_err(bun_core::Error::from)? {
+                // SAFETY: `file.name` borrows the iterator's scratch buffer;
+                // only `file.name.slice_u8()` is read during this iteration
+                // (for the extension lookup) before the next `next()`.
+                while let Some(file) = unsafe { it.next() }.map_err(bun_core::Error::from)? {
                     if file.kind != bun_sys::FileKind::File {
                         continue;
                     }

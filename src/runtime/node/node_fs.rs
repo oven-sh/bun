@@ -650,7 +650,10 @@ mod _async_tasks {
                 // SAFETY: caller keeps `path` alive until completion
                 let path = unsafe { &*this.path };
                 let result = node_fs.mkdir_recursive(&args::Mkdir {
-                    path: PathLike::String(PathString::init(path)),
+                    // SAFETY: `path` is kept alive by the caller for the duration
+                    // of this synchronous `mkdir_recursive` call; PathString does
+                    // not escape.
+                    path: PathLike::String(unsafe { PathString::init(path) }),
                     recursive: true,
                     ..Default::default()
                 });
@@ -2133,7 +2136,10 @@ mod _async_tasks {
             let mut iterator = DirIterator::iterate::<true>(fd);
             #[cfg(not(windows))]
             let mut iterator = DirIterator::iterate::<false>(fd);
-            let mut entry = iterator.next();
+            // SAFETY: `entry.name` borrows the iterator's scratch buffer and is
+            // consumed (via `CpSingleTask::create` / the `.name.slice()` below)
+            // before the next `iterator.next()` overwrites it.
+            let mut entry = unsafe { iterator.next() };
             loop {
                 let current = match entry {
                     Err(err) => {
@@ -2218,7 +2224,8 @@ mod _async_tasks {
                         );
                     }
                 }
-                entry = iterator.next();
+                // SAFETY: previous `entry` has already been consumed above.
+                entry = unsafe { iterator.next() };
             }
 
             true
@@ -2413,7 +2420,13 @@ mod _async_tasks {
             // Leak the boxed `[bytes.., 0]` allocation; the Box<[u8]> backing is
             // reconstructed and freed in `ReaddirSubtask::run_owned`.
             let leaked: &'static mut [u8] = Box::leak(owned);
-            let basename_ps = PathString::init(&leaked[..len]);
+            // SAFETY: `basename_ps` is moved into the `ReaddirSubtask` below
+            // and read exactly once in `run_owned` (`basename.slice_assume_z()`)
+            // before the scopeguard in that same function reconstructs the
+            // `Box<[u8]>` and drops it. No `PathString` copy escapes that scope,
+            // so the `leaked` buffer is live for every `slice()` / `slice_assume_z()`
+            // call against this PathString.
+            let basename_ps = unsafe { PathString::init(&leaked[..len]) };
             // Spec (node_fs.zig:1061) `bun.assert(subtask_count.fetchAdd(1, .monotonic) > 0)`
             // — the fetch_add is load-bearing (refcounts the in-flight subtask). It
             // MUST run in release builds; only the `> 0` invariant check is debug-only.
@@ -2455,7 +2468,16 @@ mod _async_tasks {
                 // Leak the boxed `[bytes.., 0]` allocation; reconstructed and freed
                 // in `free_root_path()`.
                 let leaked: &'static mut [u8] = Box::leak(owned.into_boxed_slice());
-                PathString::init(&leaked[..len])
+                // SAFETY: the returned PathString is stored as `self.root_path`
+                // on the `AsyncReaddirRecursiveTask`. `free_root_path` is the
+                // only function that reconstructs and drops the `Box<[u8]>`,
+                // and it runs only from `destroy()` / `finish_concurrently()`
+                // — by which point every subtask / `perform_work` path that
+                // reads `root_path.slice[_assume_z]()` has completed (gated
+                // on `subtask_count == 0`). Copies made in subtasks (Copy
+                // bound on PathString) share the same allocation and do not
+                // outlive their subtask's `slice_assume_z()` read.
+                unsafe { PathString::init(&leaked[..len]) }
             };
             let mut task = Self::new(AsyncReaddirRecursiveTask {
                 promise: JSPromiseStrong::init(global_object),
@@ -6499,7 +6521,10 @@ impl NodeFS {
 
         let mut iterator = DirIterator::WrappedIterator::init(fd);
         loop {
-            let current = match iterator.next() {
+            // SAFETY: `current.name` borrows the iterator's scratch buffer and
+            // is consumed (via `T::append_entry`, which copies) before the
+            // next loop iteration calls `iterator.next()`.
+            let current = match unsafe { iterator.next() } {
                 Err(err) => {
                     for item in entries.iter_mut() {
                         item.destroy_entry();
@@ -6563,7 +6588,10 @@ impl NodeFS {
         };
 
         loop {
-            let current = match iterator.next() {
+            // SAFETY: `current.name` borrows the iterator's scratch buffer and
+            // is consumed (via `T::append_entry_w`, which copies) before the
+            // next loop iteration calls `iterator.next()`.
+            let current = match unsafe { iterator.next() } {
                 Err(err) => {
                     for item in entries.iter_mut() {
                         item.destroy_entry();
@@ -6670,7 +6698,10 @@ impl NodeFS {
         let mut dirent_path_prev = BunString::EMPTY;
 
         loop {
-            let current = match iterator.next() {
+            // SAFETY: `current.name` borrows the iterator's scratch buffer and
+            // is copied via `name_to_copy.to_vec()` / similar before this loop
+            // iteration ends and the next `iterator.next()` overwrites it.
+            let current = match unsafe { iterator.next() } {
                 Err(err) => {
                     dirent_path_prev.deref();
                     if !is_root {
@@ -6867,7 +6898,9 @@ impl NodeFS {
             let mut dirent_path_prev = BunString::DEAD;
 
             loop {
-                let current = match iterator.next() {
+                // SAFETY: `current.name` borrows the iterator's scratch buffer
+                // and is copied via `append_entry` before the next `next()`.
+                let current = match unsafe { iterator.next() } {
                     Err(err) => {
                         dirent_path_prev.deref();
                         return Err(err.with_path(args.path.slice()));
@@ -8409,7 +8442,9 @@ impl NodeFS {
         let mut iterator = DirIterator::WrappedIterator::init(fd);
 
         loop {
-            let current = match iterator.next() {
+            // SAFETY: `current.name` borrows the iterator's scratch buffer and
+            // is copied into `src_buf` / `dest_buf` before the next `next()`.
+            let current = match unsafe { iterator.next() } {
                 Err(err) => {
                     return Err(err.with_path(self.os_path_into_sync_error_buf(&src_buf[..sd])));
                 }
@@ -9178,7 +9213,9 @@ impl NodeFS {
                         len -= 1;
                     }
                     let mkdir_result = self.mkdir_recursive(&args::Mkdir {
-                        path: PathLike::String(PathString::init(&bytes[..len])),
+                        // SAFETY: `bytes` borrows `dest`, which outlives this
+                        // synchronous `mkdir_recursive` call.
+                        path: PathLike::String(unsafe { PathString::init(&bytes[..len]) }),
                         recursive: true,
                         ..Default::default()
                     });
@@ -9676,7 +9713,9 @@ pub extern "C" fn Bun__mkdirp(global_this: &JSGlobalObject, path: *const c_char)
         unsafe { &mut *global_this.bun_vm().as_mut().node_fs().cast::<NodeFS>() };
     !matches!(
         node_fs.mkdir_recursive(&args::Mkdir {
-            path: PathLike::String(PathString::init(path_bytes)),
+            // SAFETY: `path_bytes` is the C string passed in by the caller; it
+            // outlives this synchronous `mkdir_recursive` call.
+            path: PathLike::String(unsafe { PathString::init(path_bytes) }),
             recursive: true,
             ..Default::default()
         }),
@@ -9847,7 +9886,9 @@ pub fn zig_delete_tree(
         let top_idx = stack.len() - 1;
         loop {
             // Re-borrow `top` each iteration so pushing to `stack` below is allowed.
-            let entry = match stack[top_idx].iter.next() {
+            // SAFETY: `entry.name` borrows the iterator's scratch buffer — we
+            // copy it out below (`entry_name`) before the next `next()` call.
+            let entry = match unsafe { stack[top_idx].iter.next() } {
                 Ok(Some(e)) => e,
                 Ok(None) => break,
                 Err(err) => return Err(dt_err(err.get_errno())),
@@ -10043,7 +10084,9 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
         let result: Result<(), bun_core::Error> = 'scan_dir: loop {
             let mut dir_it = DirIterator::WrappedIterator::init(dir.fd);
             'dir_it: loop {
-                let entry = match dir_it.next() {
+                // SAFETY: `entry.name` borrows the iterator's scratch buffer —
+                // copied to `entry_name` below before the next `next()`.
+                let entry = match unsafe { dir_it.next() } {
                     Ok(Some(e)) => e,
                     Ok(None) => break 'dir_it,
                     Err(err) => break 'scan_dir Err(dt_err(err.get_errno())),

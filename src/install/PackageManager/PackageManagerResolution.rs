@@ -165,7 +165,10 @@ impl PackageManager {
         let mut iter = bun_sys::iterate_dir(dir.fd);
 
         loop {
-            let entry = match iter.next() {
+            // SAFETY: `entry.name` borrows the iterator's scratch buffer and
+            // is consumed (`entry.kind` check, then `name.slice_u8()` copy
+            // below) within this iteration before the next `iter.next()`.
+            let entry = match unsafe { iter.next() } {
                 Ok(Some(e)) => e,
                 Ok(None) => break,
                 Err(e) => {

@@ -82,6 +82,15 @@ impl PathString {
         self.len()
     }
 
+    /// Reconstruct the borrowed byte slice.
+    ///
+    /// The returned slice is bound to `&self`'s lifetime. This is sound as
+    /// long as the `PathString` was created via [`init`](Self::init) with
+    /// its safety contract upheld (backing memory outlives the PathString)
+    /// or via [`init_owned`](Self::init_owned) (backing memory is the
+    /// PathString's). Since `PathString: Copy`, `self` is typically a
+    /// `*const PathString` — callers are still responsible for not outliving
+    /// the backing allocation.
     #[inline]
     pub fn slice(&self) -> &[u8] {
         // Zig: @setRuntimeSafety(false) — "cast causes pointer to be null" is
@@ -91,8 +100,9 @@ impl PathString {
             // Rust forbids slice::from_raw_parts(null, 0); return a valid empty slice.
             return &[];
         }
-        // SAFETY: PathString::init was given a live &[u8] of this len; caller
-        // guarantees the borrowed memory outlives this PathString.
+        // SAFETY: unsafe-init's caller signed the outlives contract for the
+        // backing buffer; init_owned manages the allocation itself. The
+        // returned borrow is bound to `&self`, which does not escape it.
         unsafe { core::slice::from_raw_parts(ptr as *const u8, self.len()) }
     }
 
@@ -109,8 +119,34 @@ impl PathString {
     }
 
     /// Create a PathString from a borrowed slice. No allocation occurs.
+    ///
+    /// Packs the pointer and length of `str` into the backing int and erases
+    /// the lifetime. Safe construction is via [`init_owned`] (takes ownership)
+    /// or [`EMPTY`].
+    ///
+    /// # Safety
+    /// The backing memory of `str` must outlive every [`PathString`] derived
+    /// from the returned value (directly or by `Copy`). `PathString` is
+    /// `Copy + 'static`, so the compiler CANNOT check this — the caller is
+    /// responsible for ensuring that no `PathString` produced here is read
+    /// via [`slice`](Self::slice) / [`slice_assume_z`](Self::slice_assume_z)
+    /// / Display after the backing allocation is freed.
+    ///
+    /// Typical sound producers: slices into a `'static` buffer, into a
+    /// process-lifetime arena (e.g. `FilenameStore`), or into a buffer whose
+    /// drop happens after the containing struct's drop.
+    ///
+    /// Regression test for oven-sh/bun#30719 — this reproducer used to
+    /// compile as safe Rust and produced a dangling `&[u8]`:
+    /// ```compile_fail
+    /// use bun_core::PathString;
+    /// let test = Box::new(*b"Hello World");
+    /// let ps = PathString::init(&*test); // E0133: call to unsafe function
+    /// drop(test);
+    /// let _ = ps.slice();
+    /// ```
     #[inline]
-    pub fn init(str: &[u8]) -> Self {
+    pub unsafe fn init(str: &[u8]) -> Self {
         // Zig: @setRuntimeSafety(false) — "cast causes pointer to be null" is
         // fine here. if it is null, the len will be 0.
         let ptr = (str.as_ptr() as usize as PathStringBackingInt) & Self::PTR_MASK; // @truncate
@@ -138,8 +174,9 @@ impl PathString {
         // in `deinit_owned`.
         let raw: *mut [u8] = crate::heap::into_raw(bytes.into_boxed_slice());
         // SAFETY: `raw` is a fresh non-null allocation; reborrow only to pack
-        // ptr+len into the backing int.
-        Self::init(unsafe { &*raw })
+        // ptr+len into the backing int. The allocation's lifetime is the
+        // returned PathString's — the matching `deinit_owned` owns the drop.
+        unsafe { Self::init(&*raw) }
     }
 
     /// Free a heap allocation previously adopted by [`init_owned`]. No-op for

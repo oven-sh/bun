@@ -4649,6 +4649,23 @@ declare module "bun" {
      * Throws an error if either version is invalid.
      */
     function order(v1: StringLike, v2: StringLike): -1 | 0 | 1;
+
+    /**
+     * Parse a semver string into its component parts.
+     *
+     * Returns `null` if the input is not a valid semver string.
+     *
+     * @example
+     * ```ts
+     * Bun.semver.parse("1.2.3-beta.1+build.42");
+     * // { major: 1, minor: 2, patch: 3, pre: "beta.1", build: "build.42" }
+     *
+     * Bun.semver.parse("not-a-version"); // null
+     * ```
+     */
+    function parse(
+      version: StringLike,
+    ): { major: number; minor: number; patch: number; pre: string | null; build: string | null } | null;
   }
 
   namespace unsafe {

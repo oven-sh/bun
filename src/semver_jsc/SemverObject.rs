@@ -1,9 +1,9 @@
-//! `Bun.semver` — `{ satisfies, order }` host-function table.
+//! `Bun.semver` — `{ satisfies, order, parse }` host-function table.
 
 use core::cmp::Ordering;
 
 use bun_core::strings;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, bun_string_jsc};
 use bun_semver::{SlicedString, Version, query};
 
 pub fn create(global: &JSGlobalObject) -> JSValue {
@@ -12,6 +12,7 @@ pub fn create(global: &JSGlobalObject) -> JSValue {
         &[
             ("satisfies", __jsc_host_satisfies, 2),
             ("order", __jsc_host_order, 2),
+            ("parse", __jsc_host_parse, 1),
         ],
     )
 }
@@ -117,6 +118,56 @@ pub fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
         right.slice(),
         left.slice(),
     )))
+}
+
+#[bun_jsc::host_fn]
+pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let arguments = frame.arguments_old::<1>();
+    let arguments = arguments.slice();
+    if arguments.is_empty() {
+        return Ok(JSValue::NULL);
+    }
+
+    let input_str = arguments[0].to_js_string(global)?;
+    let input = input_str.to_slice(global);
+    let buf = input.slice();
+
+    if !strings::is_all_ascii(buf) {
+        return Ok(JSValue::NULL);
+    }
+
+    let result = Version::parse(SlicedString::init(buf, buf));
+    if !result.valid || result.wildcard != query::token::Wildcard::None {
+        return Ok(JSValue::NULL);
+    }
+
+    let v = result.version.min();
+    let obj = JSValue::create_empty_object(global, 5);
+    obj.put(global, b"major", JSValue::js_number(v.major as f64));
+    obj.put(global, b"minor", JSValue::js_number(v.minor as f64));
+    obj.put(global, b"patch", JSValue::js_number(v.patch as f64));
+
+    if v.tag.has_pre() {
+        obj.put(
+            global,
+            b"pre",
+            bun_string_jsc::create_utf8_for_js(global, v.tag.pre.slice(buf))?,
+        );
+    } else {
+        obj.put(global, b"pre", JSValue::NULL);
+    }
+
+    if v.tag.has_build() {
+        obj.put(
+            global,
+            b"build",
+            bun_string_jsc::create_utf8_for_js(global, v.tag.build.slice(buf))?,
+        );
+    } else {
+        obj.put(global, b"build", JSValue::NULL);
+    }
+
+    Ok(obj)
 }
 
 // ported from: src/semver_jsc/SemverObject.zig

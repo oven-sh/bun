@@ -600,7 +600,7 @@ impl Linker {
                         bstr::BStr::new(import_record.path.text)
                     ),
                     import_record.path.text,
-                    import_record.kind.into(),
+                    import_record.kind,
                     bun_core::err!("ModuleNotFound"),
                 );
             } else {
@@ -612,7 +612,7 @@ impl Linker {
                         bstr::BStr::new(import_record.path.text)
                     ),
                     import_record.path.text,
-                    import_record.kind.into(),
+                    import_record.kind,
                     bun_core::err!("ModuleNotFound"),
                 );
             }
@@ -625,7 +625,7 @@ impl Linker {
                     bstr::BStr::new(import_record.path.text)
                 ),
                 import_record.path.text,
-                import_record.kind.into(),
+                import_record.kind,
                 bun_core::err!("ModuleNotFound"),
             );
         }

@@ -1149,8 +1149,7 @@ pub fn generate_entry_point_tail_js<'a>(
                         // collected Vec into the linker arena (Zig used
                         // `c.arena().alloc`). The arena slice is also iterated
                         // below for the synthetic-default-export path.
-                        let items: &mut [bun_ast::ClauseItem] =
-                            arena.alloc_slice_fill_iter(items.into_iter());
+                        let items: &mut [bun_ast::ClauseItem] = arena.alloc_slice_fill_iter(items);
                         stmts.push(Stmt::alloc(
                             S::ExportClause {
                                 items: bun_ast::StoreSlice::new_mut(items),

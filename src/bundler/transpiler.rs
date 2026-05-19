@@ -1954,7 +1954,7 @@ fn parse_data_loader<'a>(
         // SAFETY: outer match arm guarantees one of the five.
         _ => unsafe { core::hint::unreachable_unchecked() },
     };
-    let mut expr = bun_ast::Expr::from(value_expr);
+    let mut expr = value_expr;
 
     let mut symbols: Vec<bun_ast::Symbol> = Vec::new();
 
@@ -2139,7 +2139,7 @@ fn parse_data_loader<'a>(
         }
     };
     let mut ast = bun_ast::Ast::from_parts(parts, arena);
-    ast.symbols = bun_alloc::vec_from_iter_in(symbols.into_iter(), arena);
+    ast.symbols = bun_alloc::vec_from_iter_in(symbols, arena);
 
     return Some(ParseResult {
         ast,

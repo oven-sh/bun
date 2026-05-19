@@ -1,4 +1,5 @@
 use core::ptr::NonNull;
+use core::sync::atomic::{AtomicPtr, Ordering};
 
 use enumset::{EnumSet, EnumSetType};
 
@@ -317,24 +318,29 @@ impl DirInfo {
 // `Option<NonNull<_>>` because resolver-pool threads race on first access;
 // the load/CAS below makes the publish itself data-race-free. (The map's
 // *contents* are still guarded by the resolver mutex.)
-static DIR_INFO_MAP: bun_core::AtomicCell<Option<NonNull<HashMap>>> =
-    bun_core::AtomicCell::new(None);
+static DIR_INFO_MAP: AtomicPtr<HashMap> = AtomicPtr::new(core::ptr::null_mut());
 
 /// Raw pointer to the lazy DirInfo BSSMap singleton. Callers reborrow
 /// per-access under the resolver mutex — PORTING.md §Global mutable state.
 #[inline]
 pub fn hash_map_instance() -> *mut HashMap {
-    if let Some(p) = DIR_INFO_MAP.load() {
-        return p.as_ptr();
+    let p = DIR_INFO_MAP.load(Ordering::Acquire);
+    if !p.is_null() {
+        return p;
     }
     // First access: initialize and publish. Resolver init is single-threaded
     // in practice, but use CAS so a race (if it ever happens) doesn't tear
     // the pointer; the loser's `init()` result is leaked, which is fine for
     // a process-lifetime BSS-backed singleton.
     let new = HashMap::init();
-    match DIR_INFO_MAP.compare_exchange(None, Some(new)) {
+    match DIR_INFO_MAP.compare_exchange(
+        core::ptr::null_mut(),
+        new.as_ptr(),
+        Ordering::AcqRel,
+        Ordering::Acquire,
+    ) {
         Ok(_) => new.as_ptr(),
-        Err(existing) => existing.unwrap().as_ptr(),
+        Err(existing) => existing,
     }
 }
 

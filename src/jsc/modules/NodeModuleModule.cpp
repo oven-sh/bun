@@ -730,7 +730,11 @@ JSC_DEFINE_CUSTOM_GETTER(nodeModuleWrapper,
 
     NakedPtr<JSC::Exception> returnedException = nullptr;
     auto result = JSC::profiledCall(global, JSC::ProfilingReason::API, cb, callData, JSC::jsUndefined(), args, returnedException);
-    ASSERT(!returnedException);
+    if (returnedException) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        throwException(global, scope, returnedException.get());
+        return {};
+    }
     ASSERT(result.isCell());
     return JSC::JSValue::encode(result);
 }
@@ -1110,8 +1114,11 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
 
             NakedPtr<JSC::Exception> returnedException = nullptr;
             auto result = JSC::profiledCall(globalObject, ProfilingReason::API, function, JSC::getCallData(function), globalObject, ArgList(), returnedException);
-            ASSERT(!returnedException);
-            init.set(result.toObject(globalObject));
+            if (returnedException || !result.isObject()) [[unlikely]] {
+                init.set(JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure()));
+                return;
+            }
+            init.set(result.getObject());
         });
 
     globalObject->m_lazyRequireExtensionsObject.initLater(

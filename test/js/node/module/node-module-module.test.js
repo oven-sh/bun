@@ -251,4 +251,52 @@ describe.concurrent("node-module-module", () => {
    ./k.cjs (seen)`);
     expect(await proc.exited).toBe(0);
   });
+
+  test.each(["Map", "Proxy", "Symbol"])(
+    "require.cache / Module._cache does not crash when %s has been overwritten",
+    async ctor => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `globalThis.${ctor} = undefined;
+           const c1 = require.cache;
+           const c2 = require("module")._cache;
+           if (typeof c1 !== "object" || c1 === null) throw new Error("require.cache");
+           if (typeof c2 !== "object" || c2 === null) throw new Error("Module._cache");
+           console.log("ok");`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("ASSERTION FAILED");
+      expect(stdout.trim()).toBe("ok");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test("Module.wrapper throws instead of crashing when Proxy has been overwritten", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `globalThis.Proxy = undefined;
+         try {
+           require("module").wrapper;
+           console.log("no-throw");
+         } catch (e) {
+           console.log("threw", e instanceof TypeError);
+         }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("ASSERTION FAILED");
+    expect(stdout.trim()).toBe("threw true");
+    expect(exitCode).toBe(0);
+  });
 });

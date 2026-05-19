@@ -542,7 +542,7 @@ impl IntermediateOutput {
     pub fn code<'d>(
         &mut self,
         allocator_to_use: Option<&DynAlloc>,
-        parse_graph: &Graph,
+        parse_graph: &Graph<'_>,
         linker_graph: &LinkerGraph<'_>,
         import_prefix: &[u8],
         // PORT NOTE: Zig passed `*Chunk` / `[]Chunk` (freely aliased — `chunk`
@@ -593,7 +593,7 @@ impl IntermediateOutput {
     pub fn code_standalone<'d>(
         &mut self,
         allocator_to_use: Option<&DynAlloc>,
-        parse_graph: &Graph,
+        parse_graph: &Graph<'_>,
         linker_graph: &LinkerGraph<'_>,
         import_prefix: &[u8],
         // See `code()` PORT NOTE — `chunk` aliases `chunks[i]`; body is read-only.
@@ -638,7 +638,7 @@ impl IntermediateOutput {
     pub fn code_with_source_map_shifts<const ENABLE_SOURCE_MAP_SHIFTS: bool>(
         &mut self,
         allocator_to_use: Option<&DynAlloc>,
-        graph: &Graph,
+        graph: &Graph<'_>,
         linker_graph: &LinkerGraph<'_>,
         import_prefix: &[u8],
         // See `code()` PORT NOTE — `chunk` aliases `chunks[i]`; body is read-only.

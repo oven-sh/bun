@@ -74,6 +74,7 @@ await Bun.build({
     whitespace: true,
     syntax: true,
     identifiers: true,
+    keepNames: true,
   },
 });
 ```
@@ -82,17 +83,29 @@ await Bun.build({
 
 Bun's minifier has three independent modes that can be enabled separately or combined.
 
-### Whitespace minification (`--minify-whitespace`)
+### Whitespace minification
 
-Removes all unnecessary whitespace, newlines, and formatting from the output.
+<ParamField path="--minify-whitespace" type="boolean">
+  Removes all unnecessary whitespace, newlines, and formatting from the output.
 
-### Syntax minification (`--minify-syntax`)
+  - Use `--emit-dce-annotations` to re-emit DCE annotations, disabled by default when `--minify-whitespace` is active
+</ParamField>
 
-Rewrites JavaScript syntax to shorter equivalent forms and performs constant folding, dead code elimination, and other optimizations.
+### Syntax minification
 
-### Identifier minification (`--minify-identifiers`)
+<ParamField path="--minify-syntax" type="boolean">
+  Rewrites JavaScript syntax to shorter equivalent forms and performs constant folding, dead code elimination, and other optimizations.
 
-Renames local variables and function names to shorter identifiers using frequency-based optimization.
+  - Use `--keep-names` to preserve original function and class names
+</ParamField>
+
+### Identifier minification
+
+<ParamField path="--minify-identifiers" type="boolean">
+  Renames local variables and function names to shorter identifiers using frequency-based optimization.
+
+  - Use `--keep-names` to preserve original function and class names
+</ParamField>
 
 ## All Transformations
 
@@ -1223,7 +1236,7 @@ void 0;
 
 ## Keep Names
 
-When minifying identifiers, you may want to preserve original function and class names for debugging purposes. Use the `--keep-names` flag:
+When minifying **identifiers**, **syntax**, or **both**, you may want to preserve original function and class names for debugging purposes. Use the `--keep-names` flag:
 
 ```bash
 bun build ./index.ts --minify --keep-names --outfile=out.js
@@ -1237,6 +1250,19 @@ await Bun.build({
   outdir: "./out",
   minify: {
     identifiers: true,
+    keepNames: true,
+  },
+});
+```
+
+Or:
+
+```ts
+await Bun.build({
+  entrypoints: ["./index.ts"],
+  outdir: "./out",
+  minify: {
+    syntax: true,
     keepNames: true,
   },
 });
@@ -1277,7 +1303,9 @@ const a=42,b=()=>{const c=!0,d=void 0;return c?a:d},e=b();
 
 - **`--minify-whitespace`:** Quick size reduction without semantic changes
 - **`--minify-syntax`:** Smaller output while keeping readable identifiers for debugging
-- **`--minify-identifiers`:** Maximum size reduction (combine with `--keep-names` for better stack traces)
+- **`--minify-identifiers`:** Maximum size reduction
+
+> **Note:** Use `--keep-names` for better stack traces when combining `--minify-syntax` or `--minify-identifiers`.
 
 **Avoid minification for:**
 

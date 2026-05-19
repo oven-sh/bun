@@ -2,6 +2,41 @@ import { describe, expect, it } from "bun:test";
 import { normalizeBunSnapshot, tmpdirSync } from "harness";
 import { join } from "path";
 import util from "util";
+
+it("Proxy prototype with throwing getPrototypeOf trap does not crash", () => {
+  const obj = {};
+  Object.setPrototypeOf(
+    obj,
+    new Proxy(
+      {},
+      {
+        getPrototypeOf() {
+          throw new Error("trap threw");
+        },
+      },
+    ),
+  );
+  expect(() => Bun.inspect(obj)).not.toThrow();
+});
+
+it("Proxy prototype with throwing getter does not crash", () => {
+  const obj = {};
+  Object.setPrototypeOf(
+    obj,
+    new Proxy(
+      {
+        get x() {
+          throw new Error("getter threw");
+        },
+        foo: 1,
+      },
+      {},
+    ),
+  );
+  const out = Bun.inspect(obj);
+  expect(out).toContain("foo");
+});
+
 it("prototype", () => {
   const prototypes = [
     Request.prototype,

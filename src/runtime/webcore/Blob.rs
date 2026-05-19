@@ -2667,16 +2667,25 @@ impl BlobExt for Blob {
             // BOM::Utf16Le ⇒ buf is UTF-16LE bytes. `buf` may be odd-length
             // (truncated input) or odd-address (`.slice(odd)` of a shared
             // store) — either makes `bytemuck::cast_slice` `panic!`
-            // (uncatchable). `chunks_exact(2)` + `from_le_bytes` handles both:
-            // it drops any trailing odd byte (Zig's `@divTrunc(len, 2)`) and
-            // reads unaligned. `clone_utf16` copies anyway, so the extra Vec
-            // is one allocation either way.
-            let utf16: Vec<u16> = buf
-                .chunks_exact(2)
-                .map(|c| u16::from_le_bytes([c[0], c[1]]))
-                .collect();
+            // (uncatchable). Drop the trailing odd byte (Zig's
+            // `@divTrunc(len, 2)`), then borrow as `&[u16]` when already
+            // 2-aligned (the common case: file reads, whole stores) and only
+            // copy into a fresh `Vec<u16>` when `try_cast_slice` rejects on
+            // alignment.
+            let buf = &buf[..buf.len() & !1];
+            let unaligned: Vec<u16>;
+            let utf16: &[u16] = match bytemuck::try_cast_slice(buf) {
+                Ok(s) => s,
+                Err(_) => {
+                    unaligned = buf
+                        .chunks_exact(2)
+                        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                        .collect();
+                    &unaligned
+                }
+            };
             // +1 WTF ref; `OwnedString` releases it on scope exit (Zig: `defer out.deref()`).
-            let out = OwnedString::new(BunString::clone_utf16(&utf16));
+            let out = OwnedString::new(BunString::clone_utf16(utf16));
             return out.to_js(global);
         }
 
@@ -2858,16 +2867,25 @@ impl BlobExt for Blob {
             // BOM::Utf16Le ⇒ buf is UTF-16LE bytes. `buf` may be odd-length
             // (truncated input) or odd-address (`.slice(odd)` of a shared
             // store) — either makes `bytemuck::cast_slice` `panic!`
-            // (uncatchable). `chunks_exact(2)` + `from_le_bytes` handles both:
-            // it drops any trailing odd byte (Zig's `@divTrunc(len, 2)`) and
-            // reads unaligned. `clone_utf16` copies anyway, so the extra Vec
-            // is one allocation either way.
-            let utf16: Vec<u16> = buf
-                .chunks_exact(2)
-                .map(|c| u16::from_le_bytes([c[0], c[1]]))
-                .collect();
+            // (uncatchable). Drop the trailing odd byte (Zig's
+            // `@divTrunc(len, 2)`), then borrow as `&[u16]` when already
+            // 2-aligned (the common case: file reads, whole stores) and only
+            // copy into a fresh `Vec<u16>` when `try_cast_slice` rejects on
+            // alignment.
+            let buf = &buf[..buf.len() & !1];
+            let unaligned: Vec<u16>;
+            let utf16: &[u16] = match bytemuck::try_cast_slice(buf) {
+                Ok(s) => s,
+                Err(_) => {
+                    unaligned = buf
+                        .chunks_exact(2)
+                        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                        .collect();
+                    &unaligned
+                }
+            };
             // +1 WTF ref; `OwnedString` releases it on scope exit (Zig: `defer out.deref()`).
-            let mut out = OwnedString::new(BunString::clone_utf16(&utf16));
+            let mut out = OwnedString::new(BunString::clone_utf16(utf16));
             // PORT NOTE: Zig used `defer { free; detach }`. Reshaped to compute the
             // result first, then perform the deferred work explicitly — capturing
             // `&mut self` in a scopeguard closure conflicts with later uses below.

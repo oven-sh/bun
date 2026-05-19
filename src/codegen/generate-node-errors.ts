@@ -127,18 +127,44 @@ zig += `
     return Bun__createErrorWithCode(globalThis, this, message);
   }
 
-  pub fn fmt(this: Error, globalThis: *jsc.JSGlobalObject, comptime fmt_str: [:0]const u8, args: anytype) jsc.JSValue {
-    if (comptime std.meta.fieldNames(@TypeOf(args)).len == 0) {
-      var message = bun.String.static(fmt_str);
-      return toJS(this, globalThis, &message);
-    }
+  // -- Non-generic cold paths --------------------------------------------
+  // fmt()/throw() below take a comptime format string + anytype args, so
+  // they are monomorphized once per call site. The bodies are thin wrappers
+  // around Bun__createErrorWithCode; outlining the shared work into these
+  // noinline, non-generic helpers and marking fmt()/throw() inline collapses
+  // hundreds of per-site stubs into a single call to one of these.
 
+  /// Shared body for every zero-argument fmt() instantiation.
+  pub noinline fn fmtStatic(this: Error, globalThis: *jsc.JSGlobalObject, str: [:0]const u8) jsc.JSValue {
+    var message = bun.String.static(str);
+    return toJS(this, globalThis, &message);
+  }
+
+  /// Shared body for every zero-argument throw() instantiation.
+  pub noinline fn throwStatic(this: Error, globalThis: *jsc.JSGlobalObject, str: [:0]const u8) bun.JSError {
+    return globalThis.throwValue(fmtStatic(this, globalThis, str));
+  }
+
+  /// Shared toJS + throwValue tail for throw() when a formatted bun.String
+  /// has already been built.
+  pub noinline fn throwFromString(this: Error, globalThis: *jsc.JSGlobalObject, message: *bun.String) bun.JSError {
+    return globalThis.throwValue(toJS(this, globalThis, message));
+  }
+
+  pub inline fn fmt(this: Error, globalThis: *jsc.JSGlobalObject, comptime fmt_str: [:0]const u8, args: anytype) jsc.JSValue {
+    if (comptime std.meta.fieldNames(@TypeOf(args)).len == 0) {
+      return fmtStatic(this, globalThis, fmt_str);
+    }
     var message = bun.handleOom(bun.String.createFormat(fmt_str, args));
     return toJS(this, globalThis, &message);
   }
 
-  pub fn throw(this: Error, globalThis: *jsc.JSGlobalObject, comptime fmt_str: [:0]const u8, args: anytype) bun.JSError {
-    return globalThis.throwValue(fmt(this, globalThis, fmt_str, args));
+  pub inline fn throw(this: Error, globalThis: *jsc.JSGlobalObject, comptime fmt_str: [:0]const u8, args: anytype) bun.JSError {
+    if (comptime std.meta.fieldNames(@TypeOf(args)).len == 0) {
+      return throwStatic(this, globalThis, fmt_str);
+    }
+    var message = bun.handleOom(bun.String.createFormat(fmt_str, args));
+    return throwFromString(this, globalThis, &message);
   }
 
 };

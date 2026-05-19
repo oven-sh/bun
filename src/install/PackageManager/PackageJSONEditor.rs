@@ -584,7 +584,8 @@ pub fn edit(
                             if let bun_ast::ExprData::EString(s) = &item.data {
                                 if s.eql_bytes(trusted_package_name) {
                                     // PORT NOTE: reshaped for borrowck — drop return value (was allocator.free)
-                                    let _ = manager.trusted_deps_to_add_to_package_json.swap_remove(i);
+                                    let _ =
+                                        manager.trusted_deps_to_add_to_package_json.swap_remove(i);
                                     break;
                                 }
                             }

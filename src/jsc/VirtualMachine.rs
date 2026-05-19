@@ -4259,8 +4259,12 @@ impl VirtualMachine {
         let mut log = bun_ast::Log::default();
         jsc_vm.log = NonNull::new(&raw mut log);
         jsc_vm.transpiler.resolver.log = NonNull::from(&mut log);
-        // TODO(b2-cycle): `transpiler.linker.log` / `resolver.package_manager.log`
-        // — gated bundler fields.
+        jsc_vm.transpiler.linker.log = &raw mut log;
+        if let Some(pm) = jsc_vm.transpiler.resolver.package_manager {
+            // SAFETY: the `dyn AutoInstaller` is always `PackageManager`
+            // (sole impl — see `VirtualMachine::package_manager`).
+            unsafe { (*pm.cast::<bun_install::PackageManager>().as_ptr()).log = &raw mut log };
+        }
         // PORT NOTE: Zig `defer { restore old_log }` — fires on every exit
         // (including `?` from `ResolveMessage::create` below), so the VM's
         // `log` cannot be left pointing at the dropped stack `log`. Hand-roll
@@ -4278,6 +4282,17 @@ impl VirtualMachine {
                 let jsc_vm = self.vm.get().as_mut();
                 jsc_vm.log = Some(self.old_log);
                 jsc_vm.transpiler.resolver.log = self.old_log;
+                jsc_vm.transpiler.linker.log = self.old_log.as_ptr();
+                // `_resolve` may have lazily created the PM with
+                // `pm.log = resolver.log` (our stack `log`), so restore even
+                // if it was `None` when we swapped.
+                if let Some(pm) = jsc_vm.transpiler.resolver.package_manager {
+                    // SAFETY: sole `dyn AutoInstaller` impl is `PackageManager`.
+                    unsafe {
+                        (*pm.cast::<bun_install::PackageManager>().as_ptr()).log =
+                            self.old_log.as_ptr();
+                    }
+                }
             }
         }
         let _restore = RestoreLog {

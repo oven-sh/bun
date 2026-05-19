@@ -2238,31 +2238,18 @@ fn transpile_source_code_inner(
             let args_log_nn = core::ptr::NonNull::new(args.log).expect("args.log is non-null");
             unsafe {
                 (*jsc_vm).transpiler.log = args.log;
-                {
-                    (*jsc_vm).transpiler.resolver.log = args_log_nn;
-                }
-                // TODO(b2-blocked): `Linker` is a unit stub in `bun_bundler`
-                // — `.log` field un-gates with `linker.rs`.
-
-                {
-                    (*jsc_vm).transpiler.linker.log = args.log;
-                    if let Some(pm) = (*jsc_vm).transpiler.resolver.package_manager {
-                        // TODO(blocked_on): bun_resolver::package_json::PackageManager::log
-                        // — the resolver-side stub only exposes `lockfile`/`on_wake`.
-                        let _ = pm;
-                    }
+                (*jsc_vm).transpiler.resolver.log = args_log_nn;
+                (*jsc_vm).transpiler.linker.log = args.log;
+                if let Some(pm) = (*jsc_vm).transpiler.resolver.package_manager {
+                    (*pm.cast::<bun_install::PackageManager>().as_ptr()).log = args.log;
                 }
             }
             let _log_guard = scopeguard::guard(jsc_vm, move |jsc_vm| unsafe {
                 (*jsc_vm).transpiler.log = old_log;
-
-                {
-                    (*jsc_vm).transpiler.resolver.log = old_log_nn;
-                    (*jsc_vm).transpiler.linker.log = old_log;
-                    if let Some(pm) = (*jsc_vm).transpiler.resolver.package_manager {
-                        // TODO(blocked_on): bun_resolver::package_json::PackageManager::log
-                        let _ = pm;
-                    }
+                (*jsc_vm).transpiler.resolver.log = old_log_nn;
+                (*jsc_vm).transpiler.linker.log = old_log;
+                if let Some(pm) = (*jsc_vm).transpiler.resolver.package_manager {
+                    (*pm.cast::<bun_install::PackageManager>().as_ptr()).log = old_log;
                 }
             });
 
@@ -5029,17 +5016,23 @@ unsafe fn resolve_hook(
         (*vm).log = Some(log_nn);
         (*vm).transpiler.resolver.log = log_nn;
         (*vm).transpiler.linker.log = log_nn.as_ptr();
-        // TODO(b2-cycle): `transpiler.resolver.package_manager` log swap —
-        // gated alongside the PM field (see transpile_source_code §log-swap).
+        if let Some(pm) = (*vm).transpiler.resolver.package_manager {
+            (*pm.cast::<bun_install::PackageManager>().as_ptr()).log = log_nn.as_ptr();
+        }
     }
     scopeguard::defer! {
         // SAFETY: `vm` is the live per-thread VM; restoring the log pointers
         // swapped just above so early-return paths don't leave a dangling
-        // stack pointer.
+        // stack pointer. The PM may have been lazily created inside
+        // `_resolve` with `pm.log = resolver.log` (our stack `log`), so
+        // restore it even if it was `None` at swap time.
         unsafe {
             (*vm).log = Some(old_log);
             (*vm).transpiler.resolver.log = old_log;
             (*vm).transpiler.linker.log = old_log.as_ptr();
+            if let Some(pm) = (*vm).transpiler.resolver.package_manager {
+                (*pm.cast::<bun_install::PackageManager>().as_ptr()).log = old_log.as_ptr();
+            }
         }
     }
 

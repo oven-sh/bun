@@ -826,13 +826,11 @@ mod holder {
     // TODO(port): retype `dot_env::Loader.map` to `Box<Map>` so this becomes an owned field
     // (`Box<dot_env::Loader>`) on `PackageManager` and these statics disappear.
     // Write-once during single-threaded init; never read afterwards (kept only
-    // to anchor the allocation). `AtomicCell<*mut T>` — payload is `Copy` and
-    // pointer-sized, so `.store()` is a safe Release write (no `RacyCell`
-    // raw-ptr deref needed).
-    pub static ENV_MAP: bun_core::AtomicCell<*mut dot_env::Map> =
-        bun_core::AtomicCell::new(core::ptr::null_mut());
-    pub static ENV_LOADER: bun_core::AtomicCell<*mut dot_env::Loader<'static>> =
-        bun_core::AtomicCell::new(core::ptr::null_mut());
+    // to anchor the allocation). `AtomicPtrCell` so `.store()` is a safe
+    // Release write (no `RacyCell` raw-ptr deref needed).
+    pub static ENV_MAP: bun_core::AtomicPtrCell<dot_env::Map> = bun_core::AtomicPtrCell::null();
+    pub static ENV_LOADER: bun_core::AtomicPtrCell<dot_env::Loader<'static>> =
+        bun_core::AtomicPtrCell::null();
 
     /// Process-lifetime storage for `http::http_thread::InitOpts.abs_ca_file_name`
     /// (Zig: `allocator.dupeZ` into a leaked singleton field). `OnceLock` per

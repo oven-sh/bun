@@ -1999,7 +1999,7 @@ impl<'a> AnsiRenderer<'a> {
 /// Tracked so a cell that wraps mid-span can re-emit the same opens
 /// on the continuation segment AND close any open OSC 8 link before
 /// the border character — `\x1b[0m` doesn't terminate OSC 8.
-#[derive(Clone, Default)]
+#[derive(Copy, Clone, Default)]
 struct CellAnsiState<'s> {
     flags: u8,
     fg: Option<&'s [u8]>,

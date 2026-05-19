@@ -703,7 +703,7 @@ pub mod api {
     }
 
     /// schema.zig — peechy `struct Log` (minimal: `warnings`, `errors`, `msgs`).
-    #[derive(Clone, Debug, Default)]
+    #[derive(Copy, Clone, Debug, Default)]
     pub struct Log {
         pub warnings: u32,
         pub errors: u32,

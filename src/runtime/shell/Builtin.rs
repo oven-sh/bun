@@ -704,7 +704,7 @@ impl Builtin {
                 if redirect.stderr() {
                     let me = Self::of_mut(interp, cmd);
                     me.stderr = BuiltinIO::Fd(OutFd {
-                        writer: redirect_writer.clone(),
+                        writer: redirect_writer,
                         captured: None,
                     });
                 }

@@ -41,6 +41,20 @@ extern "C" void bun_warn_avx_missing(const char* url)
 }
 #endif
 
+// Called from main() before Output is initialized and before Windows has
+// converted its environment block to UTF-8, so this goes through the C
+// runtime's stderr/getenv directly. See abort_for_unsupported_simdutf in
+// src/bun_bin/lib.rs for the caller.
+extern "C" [[noreturn]] void bun_abort_missing_simd(const char* requirement, const char* hint)
+{
+    fprintf(stderr, "error: this CPU is missing %s support, which Bun requires for UTF-8 processing.\n%s", requirement, hint);
+    if (const char* forced = getenv("SIMDUTF_FORCE_IMPLEMENTATION")) {
+        fprintf(stderr, "  note: SIMDUTF_FORCE_IMPLEMENTATION is set to \"%s\"\n", forced);
+    }
+    fflush(stderr);
+    exit(134);
+}
+
 // Error condition is encoded as max int32_t.
 // The only error in this function is ESRCH (no process found)
 extern "C" int32_t get_process_priority(int32_t pid)

@@ -1164,6 +1164,17 @@ pub const AsciiU16Vector = @Vector(ascii_u16_vector_size, u16);
 pub const max_4_ascii: @Vector(4, u8) = @splat(@as(u8, 127));
 
 pub fn firstNonASCII(slice: []const u8) ?u32 {
+    // When simdutf has no usable implementation for the host CPU (e.g. a
+    // pre-SSE4.2 x86_64 machine running the baseline build), it dispatches to
+    // an `unsupported_implementation` stub whose validate_* functions always
+    // return {error_code::OTHER, 0} regardless of input. Without this guard,
+    // callers that loop on `while (firstNonASCII(remaining)) |i|` and then
+    // slice `remaining[@max(i, 1)..]` would never terminate once `remaining`
+    // is empty, because the stub still reports a (fake) non-ASCII byte at
+    // position 0. In release builds that underflows the slice length and
+    // walks gigabytes of heap (see issue #30613).
+    if (slice.len == 0) return null;
+
     const result = bun.simdutf.validate.with_errors.ascii(slice);
     if (result.status == .success) {
         return null;

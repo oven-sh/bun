@@ -53,6 +53,18 @@ The top 500 npm packages with lifecycle scripts are allowed by default. You can 
   packages from spoofing trusted package names through local file paths or git repositories.
 </Note>
 
+### Behavior of the `trustedDependencies` field
+
+Defining `trustedDependencies` in `package.json` **replaces** the default list rather than extending it. Exactly one of three modes applies per project:
+
+| `package.json`                        | Packages allowed to run lifecycle scripts                    |
+| ------------------------------------- | ------------------------------------------------------------ |
+| `trustedDependencies` omitted         | The ~500 packages in Bun's built-in list (npm sources only). |
+| `trustedDependencies: ["pkg-a", ...]` | **Only** the listed packages. The default list is ignored.   |
+| `trustedDependencies: []`             | **No** packages, including none from the default list.       |
+
+Set `trustedDependencies: []` when you want to opt out of the default allow list entirely without passing `--ignore-scripts` on every install. To trust a specific subset of packages, list them explicitly — you do not need to re-list entries from the default list for packages you already depend on.
+
 ---
 
 ## `--ignore-scripts`

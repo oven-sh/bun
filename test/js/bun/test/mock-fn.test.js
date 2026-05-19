@@ -794,6 +794,57 @@ describe("mock()", () => {
 
     expect(bar()()).toBe(true);
   });
+
+  describe("as constructor", () => {
+    test("returns an object when the implementation returns a primitive", () => {
+      const fn = jest.fn(function () {
+        this.x = 1;
+        return "primitive";
+      });
+      expect(fn.call({})).toBe("primitive");
+      const instance = new fn();
+      expect(typeof instance).toBe("object");
+      expect(instance.x).toBe(1);
+      expect(typeof Reflect.construct(fn, [])).toBe("object");
+    });
+
+    test("returns the implementation's return value when it is an object", () => {
+      const obj = { custom: true };
+      const fn = jest.fn(() => obj);
+      expect(new fn()).toBe(obj);
+      expect(Reflect.construct(fn, [])).toBe(obj);
+    });
+
+    test("works with no implementation", () => {
+      const fn = jest.fn();
+      expect(typeof new fn()).toBe("object");
+      expect(typeof Reflect.construct(fn, [])).toBe("object");
+    });
+
+    test("works with mockReturnValue", () => {
+      const fn = jest.fn().mockReturnValue(42);
+      expect(fn()).toBe(42);
+      expect(typeof new fn()).toBe("object");
+      expect(typeof Reflect.construct(fn, [])).toBe("object");
+    });
+
+    test("sets the prototype from new.target", () => {
+      class Base {}
+      const fn = jest.fn(() => undefined);
+      expect(Reflect.construct(fn, [], Base)).toBeInstanceOf(Base);
+    });
+
+    if (isBun) {
+      test("no crash when implementation returns a non-object cell", () => {
+        for (const impl of [Symbol, BigInt, () => "str", () => 1n]) {
+          const fn = jest.fn(impl);
+          expect(typeof Reflect.construct(fn, [1])).toBe("object");
+          expect(typeof new fn(1)).toBe("object");
+        }
+        Bun.gc(true);
+      });
+    }
+  });
 });
 
 describe("spyOn", () => {

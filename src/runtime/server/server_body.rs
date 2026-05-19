@@ -2478,17 +2478,19 @@ where
                 );
             }
 
-            let mut url = URL::parse(temp_url_str);
+            let url = URL::parse(temp_url_str);
 
-            // Both branches produce a heap-owned buffer that `url.href` borrows.
-            // `bun.String.cloneUTF8(url.href)` below makes its own copy, so this
-            // buffer must be freed before we leave the block.
+            // `URL::parse` always sets `href` to its full input, so once
+            // `owned_url_buf` is built it *is* the href — no second parse
+            // needed. The buffer is adopted into a WTF::ExternalStringImpl
+            // below (zero-copy) when all-ASCII; non-ASCII falls back to
+            // `clone_utf8` so multibyte sequences aren't reinterpreted as
+            // Latin-1.
             let owned_url_buf: Vec<u8> = if url.hostname.is_empty() {
                 strings::append(&self.base_url_string_for_joining, url.pathname).into_vec()
             } else {
                 temp_url_str.to_vec()
             };
-            url = URL::parse(&owned_url_buf);
 
             if arguments.len() >= 2 && arguments[1].is_object() {
                 let opts = arguments[1];
@@ -2528,8 +2530,13 @@ where
                 }
             }
 
+            let url_string = if strings::is_all_ascii(&owned_url_buf) {
+                BunString::create_external_globally_allocated_latin1(owned_url_buf)
+            } else {
+                BunString::clone_utf8(&owned_url_buf)
+            };
             Box::new(Request::init2(
-                BunString::clone_utf8(url.href),
+                url_string,
                 headers,
                 // Moves `body` into the per-VM hive pool (ref_count = 1).
                 crate::webcore::body::hive_alloc(body),

@@ -102,8 +102,7 @@ pub struct Ast<'a> {
 // is unverified across crates, so spell them out here instead of `#[derive(Default)]`.
 //
 // `parts`/`symbols`/`import_records` are now `ArenaVec`s and need an allocator,
-// so `Default` no longer applies; use `Ast::empty_in(arena)` (or `Ast::empty()`
-// with the process-static arena for placeholder values).
+// so `Default` no longer applies; use `Ast::empty_in(arena)`.
 impl<'a> Ast<'a> {
     pub fn empty_in(arena: &'a bun_alloc::MimallocArena) -> Self {
         Self {

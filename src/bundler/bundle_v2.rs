@@ -6613,9 +6613,8 @@ pub mod bv2_impl {
 
                 if let Some(id) = self.path_to_source_index_map(target).get(&path.text) {
                     if self.dev_server.is_some() && loader != Loader::Html {
-                        import_record.path = self.graph.input_files.items_source()[id as usize]
-                            .path
-                            .clone();
+                        import_record.path =
+                            self.graph.input_files.items_source()[id as usize].path;
                     } else {
                         import_record.source_index = Index::init(id);
                     }
@@ -6629,12 +6628,12 @@ pub mod bv2_impl {
                 let resolve_entry = resolve_queue.get_or_put(&path.text).expect("oom");
                 if resolve_entry.found_existing {
                     import_record.path =
-                        path_as_static(unsafe { &**resolve_entry.value_ptr }.path.clone());
+                        path_as_static(unsafe { &**resolve_entry.value_ptr }.path);
                     continue;
                 }
 
                 *path = self
-                    .path_with_pretty_initialized(core::mem::take(path), target)
+                    .path_with_pretty_initialized(*path, target)
                     .expect("oom");
 
                 import_record.path = path_as_static(*path);
@@ -6667,7 +6666,7 @@ pub mod bv2_impl {
                         && !core::ptr::eq(secondary, path)
                         && !strings::eql_long(&secondary.text, &path.text, true)
                     {
-                        resolve_task.secondary_path_for_commonjs_interop = Some(secondary.clone());
+                        resolve_task.secondary_path_for_commonjs_interop = Some(*secondary);
                     }
                 }
 

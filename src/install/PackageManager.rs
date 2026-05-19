@@ -2486,9 +2486,12 @@ pub fn init_with_runtime_once(
             root_package_json_file,
             bun_sys::File::from_fd(Fd::invalid())
         );
-        // erased *mut () set by tier-6; `js_current()` resolves the per-thread JS
-        // event loop via `bun_io::__bun_get_vm_ctx` (link-time, definer in bun_runtime).
-        wr!(event_loop, AnyEventLoop::js_current());
+        // erased *mut () set by tier-6; `js_current_or_mini()` resolves the
+        // per-thread JS event loop via `bun_io::__bun_get_vm_ctx` (link-time,
+        // definer in bun_runtime) and falls back to a fresh `MiniEventLoop`
+        // when no VM is bound — the case for `bun build` CLI and the bundler
+        // worker thread. See PackageManager.zig `initWithRuntimeOnce`.
+        wr!(event_loop, AnyEventLoop::js_current_or_mini());
         wr!(
             original_package_json_path,
             ZBox::from_vec_with_nul(original_package_json_path)
@@ -2568,6 +2571,22 @@ pub fn init_with_runtime_once(
     let manager = unsafe { &mut *manager_ptr };
     // PORT NOTE: Zig `manager.lockfile = try allocator.create(Lockfile)` —
     // folded into the struct literal above (`Box::new(Lockfile::default())`).
+
+    // Zig: when `initWithRuntimeOnce` falls back to `MiniEventLoop`, wire the
+    // parent event loop and set `MiniEventLoop.global` so `FilePoll` cleanup
+    // on this thread has a valid thread-local handle. The regular `init()`
+    // path (bun install CLI) does the same dance above.
+    if matches!(manager.event_loop, AnyEventLoop::Mini(_)) {
+        // Write the parent event loop into `uws_loop.internal_loop_data` so
+        // uSockets timers / lifecycle waiters can recover the mini loop via
+        // `EventLoopHandle::from_tag_ptr`. Mirrors the `init()` path above.
+        let uws_loop = manager.event_loop.r#loop();
+        EventLoopHandle::from_any(&mut manager.event_loop).set_as_parent_of(uws_loop);
+        if let AnyEventLoop::Mini(mini) = &mut manager.event_loop {
+            let mini_ptr: *mut MiniEventLoop<'static> = mini;
+            mini_event_loop::GLOBAL.with(|g| g.set(mini_ptr));
+        }
+    }
 
     if Output::enable_ansi_colors_stderr() {
         manager.progress = Progress::default();

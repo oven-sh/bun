@@ -1546,6 +1546,10 @@ pub trait AutoInstaller {
 
     // ── PackageManager ops ────────────────────────────────────────────────
     fn set_on_wake(&mut self, handler: WakeHandler);
+    /// Returns the current `on_wake.context`. Used by the resolver to guard
+    /// against overwriting a pre-registered VM-side handler when the bundler
+    /// worker thread first reaches the PM singleton.
+    fn on_wake_context(&self) -> Option<NonNull<c_void>>;
     fn path_for_resolution<'b>(
         &mut self,
         package_id: PackageID,

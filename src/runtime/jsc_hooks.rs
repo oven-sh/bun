@@ -167,7 +167,10 @@ pub fn timer_all_mut() -> &'static mut timer::All {
 #[inline]
 pub fn global_dns_data() -> &'static core::cell::OnceCell<Box<crate::dns_jsc::GlobalData>> {
     let state = runtime_state();
-    debug_assert!(!state.is_null(), "global_dns_data before init_runtime_state");
+    debug_assert!(
+        !state.is_null(),
+        "global_dns_data before init_runtime_state"
+    );
     // SAFETY: `state` is the live per-thread `RuntimeState` box; the field
     // address is stable for the VM's lifetime and only read (interior
     // mutability via `OnceCell`).

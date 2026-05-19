@@ -1999,7 +1999,9 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
         // toArrayBuffer in AnyBlob checks for non-UTF8 strings
         let value = self.get_body_value();
         let mut blob: AnyBlob = value.use_as_any_blob_allow_non_utf8_string();
-        let result = JSPromise::wrap(global_object, |g| blob.to_array_buffer(g, Lifetime::Transfer));
+        let result = JSPromise::wrap(global_object, |g| {
+            blob.to_array_buffer(g, Lifetime::Transfer)
+        });
         blob.detach();
         Ok(result?)
     }
@@ -2045,7 +2047,9 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
         // toArrayBuffer in AnyBlob checks for non-UTF8 strings
         let value = self.get_body_value();
         let mut blob: AnyBlob = value.use_as_any_blob_allow_non_utf8_string();
-        let result = JSPromise::wrap(global_object, |g| blob.to_uint8_array(g, Lifetime::Transfer));
+        let result = JSPromise::wrap(global_object, |g| {
+            blob.to_uint8_array(g, Lifetime::Transfer)
+        });
         blob.detach();
         Ok(result?)
     }

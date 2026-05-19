@@ -3743,7 +3743,10 @@ impl ServerAllConnectionsClosedTask {
                 .map_err(Into::into)
         }
         let ptr = bun_core::heap::into_raw(Box::new(this));
-        vm.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new_owned(ptr, call_erased));
+        vm.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new_owned(
+            ptr,
+            call_erased,
+        ));
     }
 
     /// Spec server.zig `runFromJSThread` — resolve the `server.stop()` promise

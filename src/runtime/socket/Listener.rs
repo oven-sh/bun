@@ -1450,7 +1450,8 @@ fn connect_finish<const IS_SSL: bool>(
         // `mark_inactive`'s shutdown gate skip the free and the box leaks
         // (`node:net`'s `new_detached_socket` creates `prev` with default
         // flags and no handlers).
-        prev.flags.set(prev.flags.get() | SocketFlags::OWNS_HANDLERS);
+        prev.flags
+            .set(prev.flags.get() | SocketFlags::OWNS_HANDLERS);
         debug_assert!(prev.socket.get().is_detached());
         // Free old resources before reassignment to prevent memory leaks
         // when sockets are reused for reconnection (common with MongoDB driver)

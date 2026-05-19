@@ -5732,7 +5732,9 @@ impl Resolver {
             }
 
             let address_string = bun_core::OwnedString::new(
-                triple.get_index(global_this, 1)?.to_bun_string(global_this)?,
+                triple
+                    .get_index(global_this, 1)?
+                    .to_bun_string(global_this)?,
             );
             let address_slice = address_string.to_owned_slice();
 

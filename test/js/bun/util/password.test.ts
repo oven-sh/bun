@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
 import { password } from "bun";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 
 const placeholder = "hey";

@@ -856,7 +856,10 @@ impl<'a> AsyncHTTP<'a> {
                     bun_core::from_field_ptr!(ThreadlocalAsyncHTTP, async_http, async_http);
                 {
                     let in_flight = &mut crate::http_thread().in_flight;
-                    if let Some(i) = in_flight.iter().position(|n| n.as_ptr() == threadlocal_http) {
+                    if let Some(i) = in_flight
+                        .iter()
+                        .position(|n| n.as_ptr() == threadlocal_http)
+                    {
                         in_flight.swap_remove(i);
                     }
                 }

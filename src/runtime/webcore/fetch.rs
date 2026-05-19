@@ -285,8 +285,7 @@ pub fn bun_fetch_preconnect(
     // `href_from_js` returns a +1 (`Bun::toStringRef`); Zig released it via
     // `defer url_str.deref()`. `bun_core::String` is `Copy` with no `Drop`, so
     // wrap in `OwnedString` for the scope-exit deref.
-    let url_str =
-        bun_core::OwnedString::new(jsc::URL::href_from_js(arguments[0], global_object)?);
+    let url_str = bun_core::OwnedString::new(jsc::URL::href_from_js(arguments[0], global_object)?);
     // (Zig's post-hoc `hasException()` is redundant here — `href_from_js` already
     // returns `JsResult` and is `?`-propagated.)
 
@@ -825,7 +824,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             if !obj.is_empty() {
                 if let Some(protocol_val) = obj.get(global_this, "protocol")? {
                     if protocol_val.is_string() {
-                        let str = bun_core::OwnedString::new(protocol_val.to_bun_string(global_this)?);
+                        let str =
+                            bun_core::OwnedString::new(protocol_val.to_bun_string(global_this)?);
                         if str.eql_comptime(b"http2") || str.eql_comptime(b"h2") {
                             force_http2 = true;
                         } else if str.eql_comptime(b"http3") || str.eql_comptime(b"h3") {

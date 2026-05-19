@@ -177,7 +177,12 @@ pub fn copy_env_for_define(
                         let hash = bun_wyhash::hash(k);
                         debug_assert!(hash != INVALID_HASH);
                         if let Some(key_i) = string_map_hashes.iter().position(|&h| h == hash) {
-                            env_string_store_put(to_string, bump, framework_defaults_keys[key_i], value)?;
+                            env_string_store_put(
+                                to_string,
+                                bump,
+                                framework_defaults_keys[key_i],
+                                value,
+                            )?;
                         }
                     }
                 } else {

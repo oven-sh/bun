@@ -1176,11 +1176,11 @@ pub mod parse_worker {
                     import_record_indices: {
                         // Generate a single part that depends on all the import records.
                         // This is to ensure that we generate a JavaScript bundle containing all the user's code.
-                        let mut import_record_indices =
-                            ast::PartImportRecordIndices::init_capacity(import_records_len as usize);
-                        import_record_indices.extend(
-                            0..u32::try_from(import_records_len).expect("int cast"),
+                        let mut import_record_indices = ast::PartImportRecordIndices::init_capacity(
+                            import_records_len as usize,
                         );
+                        import_record_indices
+                            .extend(0..u32::try_from(import_records_len).expect("int cast"));
                         import_record_indices
                     },
                     ..Default::default()

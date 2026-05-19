@@ -2214,7 +2214,9 @@ impl FetchTasklet {
             // enqueueing the on_progress_update task; undo the flag so a later
             // (final) callback can re-enter this branch instead of taking the
             // already-scheduled early return.
-            task_ref.has_schedule_callback.store(false, Ordering::Release);
+            task_ref
+                .has_schedule_callback
+                .store(false, Ordering::Release);
             task_ref.mutex.unlock();
             if is_done {
                 // No on_progress_update will ever run for this final result, so

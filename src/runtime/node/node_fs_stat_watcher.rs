@@ -413,9 +413,7 @@ impl StatWatcherScheduler {
         }
         // Publish the queue writes above before declaring the work-pool hop
         // finished; `shutdown_for_exit` Acquire-loads this and then drains.
-        this_ref
-            .work_pool_in_flight
-            .store(false, Ordering::Release);
+        this_ref.work_pool_in_flight.store(false, Ordering::Release);
     }
 
     /// Drain every queued [`StatWatcher`] and release the per-VM scheduler ref

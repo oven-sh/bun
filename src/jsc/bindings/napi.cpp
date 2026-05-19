@@ -73,6 +73,7 @@
 #include "wtf/text/ASCIIFastPath.h"
 #include "JavaScriptCore/WeakInlines.h"
 #include <JavaScriptCore/BuiltinNames.h>
+#include <JavaScriptCore/TopExceptionScope.h>
 #include <wtf/TZoneMallocInlines.h>
 #include "AsyncContextFrame.h"
 
@@ -1067,12 +1068,22 @@ static napi_status throwErrorWithCStrings(napi_env env, const char* code_utf8, c
 // code must be a string or nullptr (no code)
 // msg must be a string
 // never calls toString, never throws
+//
+// Intentionally does NOT check for pending VM exceptions. In Node.js,
+// napi_create_error is a pure value-producing function that runs fine
+// with an exception pending. Bun previously rejected with
+// napi_pending_exception here, which broke node-addon-api's
+// `Error::New(env)` helper during env cleanup: that helper first calls
+// napi_is_exception_pending (which Bun deliberately skips the VM check
+// for during cleanup, so it reports "no pending exception"), then falls
+// through to napi_create_error. When a prior finalizer left a VM
+// exception on the scope, this mismatch triggered
+// NAPI_FATAL_IF_FAILED -> napi_fatal_error -> panic. See #30286 and
+// #22259.
 static napi_status createErrorWithNapiValues(napi_env env, napi_value code, napi_value message, JSC::ErrorType type, napi_value* result)
 {
     auto* globalObject = toJS(env);
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
 
     NAPI_CHECK_ARG(env, result);
     NAPI_CHECK_ARG(env, message);
@@ -1082,15 +1093,14 @@ static napi_status createErrorWithNapiValues(napi_env env, napi_value code, napi
         js_message.isString() && (js_code.isEmpty() || js_code.isString()),
         napi_string_expected);
 
+    // getString() on a value we've already verified to be a string does
+    // not throw, so we do not need a throw scope here.
     auto wtf_code = js_code.isEmpty() ? WTF::String() : js_code.getString(globalObject);
-    RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
     auto wtf_message = js_message.getString(globalObject);
-    RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
 
     *result = toNapi(
         createErrorWithCode(vm, globalObject, wtf_code, wtf_message, type),
         globalObject);
-    RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
     return napi_set_last_error(env, napi_ok);
 }
 
@@ -3035,4 +3045,17 @@ extern "C" void NapiEnv__deref(napi_env env)
     env->deref();
 }
 
+}
+
+// Defined out-of-line so its uses of DECLARE_TOP_EXCEPTION_SCOPE (whose
+// ctor/dtor are JS_EXPORT_PRIVATE when ENABLE_EXCEPTION_SCOPE_VERIFICATION
+// is on) are confined to a single TU instead of inlined into every
+// translation unit that includes napi.h.
+void NapiEnv::clearExceptionsBetweenFinalizers()
+{
+    // VM::clearException (via TopExceptionScope::clearException) also
+    // resets m_needExceptionCheck bookkeeping, so a leaked exception
+    // from one finalizer does not trip debug asserts in the next.
+    DECLARE_TOP_EXCEPTION_SCOPE(m_vm).clearException();
+    m_pendingException.clear();
 }

@@ -1195,10 +1195,9 @@ fn configure_env_for_scripts_run(
     {
         let mut node_path = PathBuffer::uninit();
         if let Some(node_path_z) = this.env_mut().get_node_path(paths_fs, &mut node_path) {
-            let node_path_owned: Box<[u8]> = Box::<[u8]>::from(node_path_z.as_ref());
             let _ = this
                 .env_mut()
-                .load_node_js_config(paths_fs, &node_path_owned)?;
+                .load_node_js_config(paths_fs, node_path_z.as_ref())?;
         } else {
             'brk: {
                 let current_path = this.env().get(b"PATH").unwrap_or(b"");

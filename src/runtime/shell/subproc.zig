@@ -120,15 +120,16 @@ pub const ShellSubprocess = struct {
         pub fn onStart(_: *Writable) void {}
 
         pub fn init(
-            stdio: Stdio,
+            stdio: *Stdio,
             event_loop: jsc.EventLoopHandle,
             subprocess: *Subprocess,
             result: StdioResult,
+            out_assign_error: *jsc.JSValue,
         ) !Writable {
             assertStdioResult(result);
 
             if (Environment.isWindows) {
-                switch (stdio) {
+                switch (stdio.*) {
                     .pipe, .readable_stream => {
                         if (result == .buffer) {
                             const pipe = jsc.WebCore.FileSink.createWithPipe(event_loop, result.buffer);
@@ -138,13 +139,25 @@ pub const ShellSubprocess = struct {
                                 .err => |err| {
                                     _ = err; // autofix
                                     pipe.deref();
+                                    if (stdio.* == .readable_stream) {
+                                        stdio.readable_stream.cancel(event_loop.js.global);
+                                    }
                                     return error.UnexpectedCreatingStdin;
                                 },
                             }
+                            pipe.writer.setParent(pipe);
 
-                            // TODO: uncoment this when is ready, commented because was not compiling
-                            // subprocess.weak_file_sink_stdin_ptr = pipe;
-                            // subprocess.flags.has_stdin_destructor_called = false;
+                            if (stdio.* == .readable_stream) {
+                                const global = event_loop.js.global;
+                                const assign_result = pipe.assignToStream(&stdio.readable_stream, global);
+                                if (assign_result.toError()) |err| {
+                                    // Surface to the caller; a still-valid Writable is returned
+                                    // so spawnMaybeSyncImpl can tear down the subprocess via the
+                                    // same abortAfterFailedStart() path it uses for other post-
+                                    // spawn start failures.
+                                    out_assign_error.* = err;
+                                }
+                            }
 
                             return Writable{
                                 .pipe = pipe,
@@ -180,7 +193,7 @@ pub const ShellSubprocess = struct {
                     },
                 }
             }
-            switch (stdio) {
+            switch (stdio.*) {
                 .dup2 => {
                     // The shell never uses this
                     @panic("Unimplemented stdin dup2");
@@ -217,8 +230,32 @@ pub const ShellSubprocess = struct {
                     return Writable{ .ignore = {} };
                 },
                 .readable_stream => {
-                    // The shell never uses this
-                    @panic("Unimplemented stdin readable_stream");
+                    // `.readable_stream` only reaches here via Bun.$`cmd < ${stream}` with a JS
+                    // event loop (the `.jsbuf` branch in Cmd.initRedirections guards on that).
+                    const global = event_loop.js.global;
+                    const pipe = jsc.WebCore.FileSink.create(event_loop, result.?);
+
+                    switch (pipe.writer.start(pipe.fd, true)) {
+                        .result => {},
+                        .err => {
+                            pipe.deref();
+                            stdio.readable_stream.cancel(global);
+                            return error.UnexpectedCreatingStdin;
+                        },
+                    }
+
+                    pipe.writer.handle.poll.flags.insert(.socket);
+
+                    const assign_result = pipe.assignToStream(&stdio.readable_stream, global);
+                    if (assign_result.toError()) |err| {
+                        // Surface to the caller; a still-valid Writable is returned so
+                        // spawnMaybeSyncImpl can tear down the subprocess via the same
+                        // abortAfterFailedStart() path it uses for other post-spawn start
+                        // failures.
+                        out_assign_error.* = err;
+                    }
+
+                    return Writable{ .pipe = pipe };
                 },
             }
         }
@@ -594,16 +631,24 @@ pub const ShellSubprocess = struct {
     /// Windows: PipeReader.deinit asserts the libuv source is closed. Whether the source
     /// is uv-initialized depends on how far startWithCurrentPipe got, so a blind close or
     /// destroy is unsafe. Fall back to leaking the Subprocess (pre-existing behavior)
-    /// rather than risk closing an uninitialized handle.
+    /// rather than risk closing an uninitialized handle — but still clear the exit
+    /// handler first so libuv's deferred exit callback becomes a no-op instead of
+    /// dereferencing a Cmd whose `.exec` was already set to `.none` by the caller.
     fn abortAfterFailedStart(this: *@This()) void {
+        this.process.exit_handler = .{};
         if (Environment.isWindows) return;
         inline for (.{ .stdout, .stderr }) |tag| {
             const r: *Readable = &@field(this, @tagName(tag));
             if (r.* == .pipe and r.pipe.state == .pending) {
                 r.pipe.state = .{ .err = null };
+                // If pipe.start() never ran, reader.handle is still `.closed` and
+                // PipeReader.deinit() won't close the spawn-created fd. Close it here
+                // so callers that run before stdout/stderr start() don't leak it.
+                if (r.pipe.reader.handle == .closed) {
+                    if (r.pipe.stdio_result) |fd| fd.close();
+                }
             }
         }
-        this.process.exit_handler = .{};
         this.deinit();
     }
 
@@ -881,6 +926,7 @@ pub const ShellSubprocess = struct {
 
         var subprocess = bun.handleOom(event_loop.allocator().create(Subprocess));
         out_subproc.* = subprocess;
+        var stdin_assign_error: jsc.JSValue = .zero;
         subprocess.* = Subprocess{
             .event_loop = event_loop,
             .process = spawn_result.toProcess(
@@ -888,10 +934,11 @@ pub const ShellSubprocess = struct {
                 is_sync,
             ),
             .stdin = Subprocess.Writable.init(
-                spawn_args.stdio[0],
+                &spawn_args.stdio[0],
                 event_loop,
                 subprocess,
                 spawn_result.stdin,
+                &stdin_assign_error,
             ) catch |err| switch (err) {
                 error.UnexpectedCreatingStdin => std.debug.panic(
                     "unexpected error while creating stdin",
@@ -910,7 +957,9 @@ pub const ShellSubprocess = struct {
         subprocess.process.setExitHandler(subprocess);
         stdio_consumed = true;
 
-        if (subprocess.stdin == .pipe) {
+        if (subprocess.stdin == .pipe and spawn_args.stdio[0] != .readable_stream) {
+            // When stdin came from a ReadableStream, FileSink.assignToStream already
+            // set up the signal; overwriting it here would break the stream→sink link.
             subprocess.stdin.pipe.signal = bun.webcore.streams.Signal.init(&subprocess.stdin);
         }
 
@@ -920,6 +969,31 @@ pub const ShellSubprocess = struct {
                 notify_caller_process_already_exited.* = true;
                 spawn_args.lazy = false;
             },
+        }
+
+        if (stdin_assign_error != .zero) {
+            // assignToStream failed (e.g. a direct ReadableStream whose pull() threw
+            // synchronously). Return a shell error instead of panicking so the user
+            // sees the failure; tear down the child the same way other post-spawn
+            // start failures do. This check must run after watch() so tryKill() can
+            // actually signal the child on POSIX (kill() is a no-op while the poller
+            // is still .detached).
+            stdin_assign_error.ensureStillAlive();
+            const global = event_loop.js.global;
+            const msg = blk: {
+                var str = stdin_assign_error.toBunString(global) catch {
+                    // toBunString can throw (e.g. hostile Symbol.toPrimitive on the thrown
+                    // value); swallow that pending exception so it doesn't surface at an
+                    // unrelated throw-scope check.
+                    _ = global.tryTakeException();
+                    break :blk bun.handleOom(bun.default_allocator.dupe(u8, "Failed to pipe ReadableStream to stdin"));
+                };
+                defer str.deref();
+                break :blk bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "Failed to pipe ReadableStream to stdin: {f}", .{str}));
+            };
+            _ = subprocess.tryKill(@intFromEnum(bun.SignalCode.SIGTERM));
+            subprocess.abortAfterFailedStart();
+            return .{ .err = .{ .custom = msg } };
         }
 
         if (subprocess.stdin == .buffer) {
@@ -967,6 +1041,22 @@ pub const ShellSubprocess = struct {
 
     pub fn onProcessExit(this: *@This(), _: *Process, status: bun.spawn.Status, _: *const bun.spawn.Rusage) void {
         log("onProcessExit({x}, {f})", .{ @intFromPtr(this), status });
+
+        if (this.stdin == .pipe) {
+            // Let the FileSink (ReadableStream → stdin) know the child is gone so it
+            // cancels/closes the upstream ReadableStream and stops writing to a dead pipe.
+            this.stdin.pipe.onAttachedProcessExit(&status);
+            // Unlike StaticPipeWriter, a FileSink has no callback into the Cmd when it's
+            // done; explicitly mark buffered stdin as closed so Cmd.hasFinished can proceed.
+            // Guard on `.subproc` because on Windows a leaked Subprocess (see
+            // abortAfterFailedStart) may still receive this callback after Cmd.exec was
+            // reset to `.none`; the exit_handler clear should normally prevent that, but
+            // this keeps the access safe regardless.
+            if (this.cmd_parent.exec == .subproc) {
+                this.cmd_parent.bufferedInputClose();
+            }
+        }
+
         const exit_code: ?u8 = brk: {
             if (status == .exited) {
                 break :brk status.exited.code;
@@ -989,6 +1079,12 @@ pub const ShellSubprocess = struct {
             const cmd = this.cmd_parent;
             if (cmd.exit_code == null) {
                 cmd.onExit(code);
+            } else if (this.stdin == .pipe and cmd.exec == .subproc and cmd.hasFinished()) {
+                // exit_code was already set (e.g. by a stdout/stderr write error) before
+                // the process exited; bufferedInputClose() above may have just satisfied
+                // the last condition for hasFinished(). Drive the Cmd forward so the
+                // await doesn't hang — onExit(code) won't be called since exit_code is set.
+                cmd.onExit(cmd.exit_code.?);
             }
         }
     }

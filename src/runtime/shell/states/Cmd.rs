@@ -771,8 +771,29 @@ impl Cmd {
                             STDERR_NO as i32,
                         )?;
                     }
-                } else if crate::webcore::ReadableStream::from_js(jsval, global)?.is_some() {
-                    panic!("TODO SHELL READABLE STREAM");
+                } else if let Some(mut rstream) =
+                    crate::webcore::ReadableStream::from_js(jsval, global)?
+                {
+                    if !flags.stdin() {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "ReadableStream can only be redirected to stdin"
+                        )));
+                    }
+                    if let Some(blob) = rstream.to_any_blob(global) {
+                        // File/Bytes streams that are already complete can skip the
+                        // async pipe path.
+                        stdio[STDIN_NO].extract_blob(global, blob, STDIN_NO as i32)?;
+                    } else {
+                        if rstream.is_disturbed(global) {
+                            return Err(global
+                                .err(
+                                    crate::jsc::ErrorCode::INVALID_STATE,
+                                    format_args!("ReadableStream has already been used"),
+                                )
+                                .throw());
+                        }
+                        stdio[STDIN_NO] = Stdio::ReadableStream(rstream);
+                    }
                 } else if let Some(req) = jsval.as_::<crate::webcore::Response>() {
                     // SAFETY: `as_` returns a live JSC-owned `*mut Response`.
                     let req = unsafe { &mut *req };

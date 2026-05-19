@@ -548,6 +548,16 @@ fn initRedirections(
                             .held = .create(buf.value, globalObject),
                         }, .i = 0 } };
                     }
+                } else if (jsc.WebCore.ReadableStream.fromJS(interpreter.jsobjs[file.jsbuf.idx], globalObject) catch return .failed) |_| {
+                    if (node.redirect.stdin) {
+                        // Builtins read stdin synchronously from a buffer/blob; piping an async
+                        // ReadableStream into a builtin would require buffering the whole stream
+                        // first. For now, reject with a clear error instead of crashing.
+                        globalObject.throwInvalidArguments("ReadableStream cannot be redirected to a builtin command ('{s}'). Use an external command or buffer the stream first", .{@tagName(kind)}) catch {};
+                    } else {
+                        globalObject.throwInvalidArguments("ReadableStream can only be redirected to stdin", .{}) catch {};
+                    }
+                    return .failed;
                 } else if (interpreter.jsobjs[file.jsbuf.idx].as(jsc.WebCore.Body.Value)) |body| {
                     if ((node.redirect.stdout or node.redirect.stderr) and !(body.* == .Blob and !body.Blob.needsToReadFile())) {
                         // TODO: Locked->stream -> file -> blob conversion via .toBlobIfPossible() except we want to avoid modifying the Response/Request if unnecessary.

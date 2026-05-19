@@ -288,15 +288,9 @@ fn fetchImpl(
         }
     }
 
-    const options_object: ?JSValue = brk: {
-        if (args.nextEat()) |options| {
-            if (options.isObject() or options.jsType() == .DOMWrapper) {
-                break :brk options;
-            }
-        }
-
-        break :brk null;
-    };
+    // Defer init validation until after first-arg conversion — WebIDL converts
+    // arguments left-to-right, so a throwing toString must surface first.
+    const init_arg: ?JSValue = args.nextEat();
     const request: ?*Request = brk: {
         if (first_arg.isCell()) {
             if (first_arg.asDirect(Request)) |request_| {
@@ -312,6 +306,21 @@ fn fetchImpl(
         is_error = true;
         return .zero;
     }
+
+    // https://fetch.spec.whatwg.org/#dom-request — init is a Web IDL dictionary.
+    const options_object: ?JSValue = brk: {
+        const options = init_arg orelse break :brk null;
+        if (options.isUndefinedOrNull()) break :brk null;
+        if (options.isObject() or options.jsType() == .DOMWrapper) break :brk options;
+        is_error = true;
+        // `defer url_str.deref()` hasn't run yet on this early return, and the
+        // function-scope defer above doesn't track it — release the +1 ref
+        // from StringOrURL.fromJS here to avoid leaking a WTFStringImpl per
+        // bad-init call.
+        if (url_str_optional) |s| s.deref();
+        const err = ctx.toTypeError(.INVALID_ARG_TYPE, "The \"init\" argument must be of type object, undefined, or null.", .{});
+        return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
+    };
 
     const request_init_object: ?JSValue = brk: {
         if (request != null) break :brk null;

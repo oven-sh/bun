@@ -1207,13 +1207,11 @@ impl CommandLineReporter {
                     let needed_name =
                         unsafe { (*needed_scope).base.name.as_deref() }.unwrap_or(b"");
                     if !strings::eql(&suite_info.name, needed_name) {
-                        suites_to_close = current_suite_depth
-                            - u32::try_from(suite_index).unwrap();
+                        suites_to_close = current_suite_depth - u32::try_from(suite_index).unwrap();
                         break;
                     }
                 } else {
-                    suites_to_close = current_suite_depth
-                        - u32::try_from(suite_index).unwrap();
+                    suites_to_close = current_suite_depth - u32::try_from(suite_index).unwrap();
                     break;
                 }
                 suite_index += 1;

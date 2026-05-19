@@ -648,10 +648,14 @@ impl Progress {
                                 &mut end,
                                 format_args!("[{}/{} files] ", current_item, eti),
                             ),
-                            // TODO(port): Zig `{Bi:.2}` is std.fmt binary-bytes formatter (e.g. "1.50KiB").
-                            // Need a bun_core::fmt::BytesBi helper.
-                            Unit::Bytes => self
-                                .buf_write(&mut end, format_args!("[{}/{}] ", current_item, eti)),
+                            Unit::Bytes => self.buf_write(
+                                &mut end,
+                                format_args!(
+                                    "[{}/{}] ",
+                                    crate::fmt::size_bi(current_item as u64),
+                                    crate::fmt::size_bi(eti as u64),
+                                ),
+                            ),
                         }
                         need_ellipse = false;
                     } else if completed_items != 0 {
@@ -665,10 +669,10 @@ impl Progress {
                             Unit::Files => {
                                 self.buf_write(&mut end, format_args!("[{} files] ", current_item))
                             }
-                            // TODO(port): Zig `{Bi:.2}` binary-bytes formatter.
-                            Unit::Bytes => {
-                                self.buf_write(&mut end, format_args!("[{}] ", current_item))
-                            }
+                            Unit::Bytes => self.buf_write(
+                                &mut end,
+                                format_args!("[{}] ", crate::fmt::size_bi(current_item as u64)),
+                            ),
                         }
                         need_ellipse = false;
                     }

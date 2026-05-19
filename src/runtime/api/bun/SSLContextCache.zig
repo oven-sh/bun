@@ -132,6 +132,24 @@ pub fn getOrCreateDigest(
     return ctx;
 }
 
+/// Drop `ctx` from the cache NOW (without freeing it). Used by
+/// `SecureContext.addCACert` and friends after they mutate an SSL_CTX: the
+/// cache memoises by input-config digest, so a mutated CTX is no longer the
+/// canonical one for that digest and future `getOrCreate` for the same
+/// digest must build fresh. Clears `ex_data` so the later `SSL_CTX_free`
+/// tombstone fires into a no-op instead of touching a destroyed Entry.
+pub fn invalidate(self: *SSLContextCache, ctx: *BoringSSL.SSL_CTX, d: Digest) void {
+    self.mutex.lock();
+    defer self.mutex.unlock();
+    if (self.map.get(d)) |entry| {
+        if (entry.ctx == ctx) {
+            _ = BoringSSL.SSL_CTX_set_ex_data(ctx, c.us_ssl_ctx_cache_ex_idx(), null);
+            _ = self.map.swapRemove(d);
+            bun.destroy(entry);
+        }
+    }
+}
+
 /// `CRYPTO_EX_free` for the cache slot. `ptr` is the `*Entry` we stashed via
 /// `SSL_CTX_set_ex_data` (null for CTXs that never went through the cache —
 /// e.g. `HTTPThread`'s, or build-fail paths). Runs synchronously inside

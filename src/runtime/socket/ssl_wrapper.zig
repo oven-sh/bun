@@ -78,8 +78,16 @@ pub fn SSLWrapper(comptime T: type) type {
                 // and `SSLConfig.fromJS` rebuilt the CTX with roots from that.)
                 if (BoringSSL.SSL_CTX_get_verify_mode(ctx) == BoringSSL.SSL_VERIFY_NONE) {
                     BoringSSL.SSL_set_verify(ssl, BoringSSL.SSL_VERIFY_PEER, alwaysContinueVerify);
-                    if (us_get_shared_default_ca_store()) |roots| {
-                        _ = BoringSSL.SSL_set0_verify_cert_store(ssl, roots);
+                    // ...unless user CAs were already installed on this CTX
+                    // (by `options.ca` at construction, or by a later
+                    // `SecureContext.addCACert`). Overriding the per-SSL
+                    // trust store would throw those CAs away at handshake
+                    // time. This mirrors the same guard in
+                    // `us_internal_ssl_attach`'s client branch.
+                    if (us_ctx_has_user_ca(ctx) == 0) {
+                        if (us_get_shared_default_ca_store()) |roots| {
+                            _ = BoringSSL.SSL_set0_verify_cert_store(ssl, roots);
+                        }
                     }
                 }
             } else {
@@ -535,6 +543,7 @@ fn alwaysContinueVerify(_: c_int, _: ?*BoringSSL.X509_STORE_CTX) callconv(.c) c_
 /// up_ref'd per consumer so the ~150-cert load happens once total, not per
 /// CTX. Returns null if root loading fails (treated as "no roots").
 extern fn us_get_shared_default_ca_store() ?*BoringSSL.X509_STORE;
+extern fn us_ctx_has_user_ca(*BoringSSL.SSL_CTX) c_int;
 
 const bun = @import("bun");
 const jsc = bun.jsc;

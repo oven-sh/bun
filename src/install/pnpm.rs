@@ -168,6 +168,7 @@ impl From<crate::lockfile_real::tree::SubtreeError> for MigratePnpmLockfileError
         match e {
             E::OutOfMemory => Self::OutOfMemory,
             E::DependencyLoop => Self::DependencyLoop,
+            E::CorruptLockfile => Self::InvalidPnpmLockfile,
         }
     }
 }

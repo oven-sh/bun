@@ -1516,7 +1516,12 @@ fn on_unhandled_rejection(
     let mut error_message = bun_core::OwnedString::new(BunString::clone_utf8(&array));
     if jsc::host_fn::from_js_host_call_generic(global_object, || {
         // `cpp_worker` is the opaque C++-owned handle round-tripped via `safe fn`.
-        WebWorker__dispatchError(global_object, worker.cpp_worker, &mut error_message, error_instance);
+        WebWorker__dispatchError(
+            global_object,
+            worker.cpp_worker,
+            &mut error_message,
+            error_instance,
+        );
     })
     .is_err()
     {

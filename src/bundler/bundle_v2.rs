@@ -893,11 +893,12 @@ pub mod bv2_impl {
                     is_server_side: bool,
                 ) {
                     let _tracer = bun_core::perf::trace("JSBundler.matchOnLoad");
-                    let mut namespace_string = bun_core::OwnedString::new(if namespace.is_empty() {
-                        BunString::static_(b"file")
-                    } else {
-                        BunString::clone_utf8(namespace)
-                    });
+                    let mut namespace_string =
+                        bun_core::OwnedString::new(if namespace.is_empty() {
+                            BunString::static_(b"file")
+                        } else {
+                            BunString::clone_utf8(namespace)
+                        });
                     let mut path_string = bun_core::OwnedString::new(BunString::clone_utf8(path));
                     JSBundlerPlugin__matchOnLoad(
                         self,
@@ -918,13 +919,15 @@ pub mod bv2_impl {
                     import_record_kind: ImportKind,
                 ) {
                     let _tracer = bun_core::perf::trace("JSBundler.matchOnResolve");
-                    let mut namespace_string = bun_core::OwnedString::new(if namespace == b"file" {
-                        BunString::empty()
-                    } else {
-                        BunString::clone_utf8(namespace)
-                    });
+                    let mut namespace_string =
+                        bun_core::OwnedString::new(if namespace == b"file" {
+                            BunString::empty()
+                        } else {
+                            BunString::clone_utf8(namespace)
+                        });
                     let mut path_string = bun_core::OwnedString::new(BunString::clone_utf8(path));
-                    let mut importer_string = bun_core::OwnedString::new(BunString::clone_utf8(importer));
+                    let mut importer_string =
+                        bun_core::OwnedString::new(BunString::clone_utf8(importer));
                     JSBundlerPlugin__matchOnResolve(
                         self,
                         &mut namespace_string,

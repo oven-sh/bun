@@ -30,18 +30,31 @@ describe("issue/03830", () => {
     expect(exitCode).toBe(1);
   });
 
-  it.concurrent("nested Bun.Transpiler in a macro then import() does not free the printer", async () => {
-    // The macro's Bun.Transpiler#transformSync drops a nested MacroContext via
+  it.concurrent.each([
+    // [name, where transformSync+import() runs in macro.ts]
+    ["inside the exported macro fn", "fn-body"],
+    // Macro::init runs the module's top-level via wait_for_promise BEFORE the
+    // caller's MacroModeGuard exists — Macro::init holds its own guard so
+    // depth > 0 here too.
+    ["at macro-module top level (during Macro::init)", "top-level"],
+  ])("nested Bun.Transpiler %s then import() does not free the printer", async (_, where) => {
+    // Bun.Transpiler#transformSync drops a nested MacroContext via
     // TranspilerStateGuard, which calls __bun_macro_context_deinit. On a
     // bundler-worker thread the macro was the first SOURCE_CODE_PRINTER
     // allocator; freeing it here would panic the subsequent module fetch.
-    using dir = tempDir("issue-03830-nested", {
-      "helper.ts": "export const value = 42;",
-      "macro.ts": `export async function nested() {
+    const macroTs =
+      where === "top-level"
+        ? `new Bun.Transpiler().transformSync("const a = 1;");
+const mod = await import("./helper.ts");
+export function nested() { return mod.value; }`
+        : `export async function nested() {
   new Bun.Transpiler().transformSync("const a = 1;");
   const mod = await import("./helper.ts");
   return mod.value;
-}`,
+}`;
+    using dir = tempDir("issue-03830-nested", {
+      "helper.ts": "export const value = 42;",
+      "macro.ts": macroTs,
       "index.ts": "import { nested } from './macro.ts' with { type: 'macro' };\nconsole.log(nested());",
     });
     const testDir = realpathSync(dir);

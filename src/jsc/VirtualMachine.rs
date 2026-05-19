@@ -240,14 +240,12 @@ pub struct VirtualMachine {
     // TODO(b2-cycle): `MacroEntryPoint` from `bun_bundler::entry_points` (gated).
     pub macro_entry_points: bun_collections::ArrayHashMap<i32, *mut c_void>,
     pub macro_mode: bool,
-    /// Depth of live [`MacroModeGuard`]s on this thread. Distinct from
-    /// `macro_mode` (which is a non-reentrant bool toggled by
-    /// `enable_/disable_macro_mode` and read by the resolve/transpile path):
-    /// `macro_mode` can be cleared by an inner guard's drop while an outer
-    /// guard is still on the stack, or left stuck `true` on `Macro::init`'s
-    /// `?` error path before any guard exists. The depth is the precise "a
-    /// guard is on the stack" signal that
-    /// [`drop_source_code_printer_if_macro_owned`] needs.
+    /// Depth of live [`MacroModeGuard`]s on this thread. Nonzero exactly while
+    /// macro JS may be executing — both `MacroContext::call` and `Macro::init`
+    /// (whose `load_macro_entry_point` runs the macro module's top-level via
+    /// `wait_for_promise`) hold a guard. `enable_/disable_macro_mode` are gated
+    /// on the 0↔1 transition so the guard is reentrant; this is the signal
+    /// [`drop_source_code_printer_if_macro_owned`] uses.
     pub macro_guard_depth: u32,
     pub no_macros: bool,
     pub auto_killer: ProcessAutoKiller::ProcessAutoKiller,
@@ -2979,13 +2977,13 @@ pub struct ResolveFunctionResult {
 pub static SOURCE_CODE_PRINTER: Cell<Option<NonNull<bun_js_printer::BufferPrinter>>> =
     Cell::new(None);
 
-/// `true` when [`enable_macro_mode`](VirtualMachine::enable_macro_mode) was the
-/// first allocator of [`SOURCE_CODE_PRINTER`] on this thread (i.e. a bundler
-/// worker thread running a macro, where no runtime VM had called
-/// [`VirtualMachine::load_extra_env_and_source_code_printer`] beforehand).
-/// Lets `__bun_macro_context_deinit` free the printer on worker teardown
-/// without touching the runtime VM's printer when an inline `Bun.build()`
-/// macro ran on the JS thread.
+/// `true` when [`enable_macro_mode`](VirtualMachine::enable_macro_mode)
+/// allocated [`SOURCE_CODE_PRINTER`] on this thread and no runtime VM has since
+/// claimed it via [`VirtualMachine::load_extra_env_and_source_code_printer`]
+/// (i.e. a bundler worker thread running a macro). Lets
+/// `__bun_macro_context_deinit` free the printer on worker teardown without
+/// touching the runtime VM's printer when an inline `Bun.build()` macro ran on
+/// the JS thread.
 #[thread_local]
 static SOURCE_CODE_PRINTER_FROM_MACRO: Cell<bool> = Cell::new(false);
 
@@ -3055,11 +3053,9 @@ fn drop_source_code_printer() {
 /// `TranspilerStateGuard::drop` deinits the nested `MacroContext`), and freeing
 /// here would panic the next module fetch at
 /// `SOURCE_CODE_PRINTER.get().expect(...)` with no intervening
-/// `enable_macro_mode()`. Gated on `macro_guard_depth` (not `macro_mode`): an
-/// inner guard's drop unconditionally clears `macro_mode` while the outer guard
-/// is still on the stack, and `Macro::init`'s `?` error path can leave
-/// `macro_mode` stuck `true` before any guard exists — the depth counter is
-/// nonzero exactly while a guard is on the stack.
+/// `enable_macro_mode()`. Gated on `macro_guard_depth`: nonzero exactly while a
+/// guard is on the stack (both `MacroContext::call` and `Macro::init` hold one,
+/// so the macro module's top-level is covered too).
 pub fn drop_source_code_printer_if_macro_owned() {
     if !SOURCE_CODE_PRINTER_FROM_MACRO.get() {
         return;
@@ -3238,6 +3234,9 @@ impl VirtualMachine {
         let map = &mut *env.map;
 
         ensure_source_code_printer();
+        // The runtime VM owns the printer from here on — even if a macro had
+        // allocated it first, `__bun_macro_context_deinit` must not free it.
+        SOURCE_CODE_PRINTER_FROM_MACRO.set(false);
 
         if map.get(b"BUN_SHOW_BUN_STACKFRAMES").is_some() {
             self.hide_bun_stackframes = false;

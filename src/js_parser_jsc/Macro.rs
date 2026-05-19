@@ -427,8 +427,8 @@ impl Macro {
         hash: i32,
     ) -> Result<Macro, Error> {
         // TODO(port): narrow error set
-        let vm: *mut VirtualMachine = if VirtualMachine::is_loaded() {
-            VirtualMachine::get_mut_ptr()
+        let (vm, is_new_vm): (*mut VirtualMachine, bool) = if VirtualMachine::is_loaded() {
+            (VirtualMachine::get_mut_ptr(), false)
         } else {
             // PORT NOTE: Zig saved/restored `resolver.opts.transform_options`
             // across this block because `VirtualMachine.init` (via
@@ -451,20 +451,21 @@ impl Macro {
                 is_main_thread: false,
                 ..Default::default()
             })?;
-
-            // SAFETY: `_vm` is the freshly-allocated per-thread VM.
-            unsafe {
-                (*_vm).enable_macro_mode();
-                (*(*_vm).event_loop()).ensure_waker();
-                (*_vm).transpiler.configure_defines()?;
-            }
-            _vm
+            (_vm, true)
         };
 
+        // Covers `configure_defines` (new-VM path) and `load_macro_entry_point`
+        // (which runs the macro module's top-level JS via `wait_for_promise`) so
+        // a top-level `Bun.Transpiler#transformSync` doesn't see
+        // `macro_guard_depth == 0` and free the printer mid-init. Drops on every
+        // exit (success, `?`, Rejected) so depth/state can't leak; the caller's
+        // own `MacroModeGuard` re-enables for the actual macro call.
+        let _init_guard = MacroModeGuard::new(vm);
         // SAFETY: `vm` is the per-thread VM; uniquely accessed here.
-        unsafe {
-            (*vm).enable_macro_mode();
-            (*(*vm).event_loop()).ensure_waker();
+        unsafe { (*(*vm).event_loop()).ensure_waker() };
+        if is_new_vm {
+            // SAFETY: `vm` is the freshly-allocated per-thread VM.
+            unsafe { (*vm).transpiler.configure_defines()? };
         }
 
         // SAFETY: `vm` is the per-thread VM; uniquely accessed here.
@@ -482,7 +483,6 @@ impl Macro {
             // is a live promise cell.
             unsafe {
                 (*vm).unhandled_rejection(&*(*vm).global, result, (*loaded_result).to_js());
-                (*vm).disable_macro_mode();
             }
             return Err(err!("MacroLoadError"));
         }

@@ -631,12 +631,12 @@ impl EventLoop {
         #[cfg(not(windows))]
         {
             if delta > 0 {
-                loop_.num_polls += i32::from(delta);
+                loop_.num_polls += delta;
                 loop_.active = loop_
                     .active
                     .saturating_add(u32::try_from(delta).expect("int cast"));
             } else {
-                loop_.num_polls -= i32::from(-delta);
+                loop_.num_polls -= -delta;
                 loop_.active = loop_
                     .active
                     .saturating_sub(u32::try_from(-delta).expect("int cast"));

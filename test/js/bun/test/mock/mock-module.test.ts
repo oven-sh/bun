@@ -166,3 +166,132 @@ test("mocking a builtin", async () => {
   const { readFile } = await import("node:fs/promises");
   expect(await readFile("hello.txt", "utf8")).toBe("hello world");
 });
+
+// https://github.com/oven-sh/bun/issues/30242
+// The factory receives the module's current exports as its first argument,
+// so partial stubbing can delegate to the real implementation without
+// recursing through the live namespace (which has been replaced by the
+// mock's own exports by the time the stub runs).
+test("factory receives current exports as first argument (partial-stub delegation)", async () => {
+  mock.module("mock-partial-stub-pkg", () => ({
+    greet: () => "real",
+    leave: () => "goodbye",
+  }));
+  await import("mock-partial-stub-pkg");
+
+  mock.module("mock-partial-stub-pkg", original => ({
+    ...original,
+    greet: () => `wrapped: ${original.greet()}`,
+  }));
+
+  const stubbed = await import("mock-partial-stub-pkg");
+  // @ts-expect-error dynamic package, no types
+  expect(stubbed.greet()).toBe("wrapped: real");
+  // @ts-expect-error dynamic package, no types
+  expect(stubbed.leave()).toBe("goodbye");
+});
+
+test("factory argument is a snapshot — later mutations to the live namespace do not affect it", async () => {
+  mock.module("mock-snapshot-pkg", () => ({
+    value: 1,
+    read: () => 1,
+  }));
+  await import("mock-snapshot-pkg");
+
+  let capturedOriginal: any;
+  mock.module("mock-snapshot-pkg", original => {
+    capturedOriginal = original;
+    return {
+      value: 2,
+      read: () => original.read(),
+    };
+  });
+
+  const stubbed = await import("mock-snapshot-pkg");
+  // @ts-expect-error dynamic package, no types
+  expect(stubbed.value).toBe(2);
+  // @ts-expect-error dynamic package, no types
+  expect(stubbed.read()).toBe(1);
+  // The snapshot is detached from the live namespace — it kept the original values.
+  expect(capturedOriginal.value).toBe(1);
+  expect(capturedOriginal.read()).toBe(1);
+});
+
+test("factory argument is an empty object when the module has not been loaded yet", async () => {
+  let argumentReceived: any;
+  mock.module("mock-never-loaded-before-mock-pkg", original => {
+    argumentReceived = original;
+    return { ok: true };
+  });
+
+  const stubbed = await import("mock-never-loaded-before-mock-pkg");
+  // @ts-expect-error dynamic package, no types
+  expect(stubbed.ok).toBe(true);
+  expect(argumentReceived).toEqual({});
+});
+
+test("factory argument works for CJS modules loaded via require()", () => {
+  mock.module("mock-cjs-partial-stub-pkg", () => ({
+    original: () => "cjs-real",
+  }));
+  // Prime the CJS require cache.
+  const first = require("mock-cjs-partial-stub-pkg");
+  expect(first.original()).toBe("cjs-real");
+
+  mock.module("mock-cjs-partial-stub-pkg", original => ({
+    ...original,
+    wrapped: () => `wrapped: ${original.original()}`,
+  }));
+
+  const second = require("mock-cjs-partial-stub-pkg");
+  expect(second.original()).toBe("cjs-real");
+  expect(second.wrapped()).toBe("wrapped: cjs-real");
+});
+
+test("factory argument preserves callable CJS exports (`module.exports = function`)", () => {
+  // The fixture does `module.exports = function callable() { ... }` — the CJS
+  // exports slot is a bare function, not a property bag. When `mock.module`
+  // installs the first override, the factory's `original` must still be
+  // callable so partial stubs can wrap or delegate to the real function.
+  const realFn: any = require("./mock-module-callable-cjs-fixture.cjs");
+  expect(typeof realFn).toBe("function");
+  expect(realFn()).toBe("callable-real");
+
+  let receivedOriginal: any;
+  mock.module("./mock-module-callable-cjs-fixture.cjs", original => {
+    receivedOriginal = original;
+    return function wrapped() {
+      return `wrapped: ${original()}`;
+    };
+  });
+
+  const stubbedFn: any = require("./mock-module-callable-cjs-fixture.cjs");
+  expect(typeof receivedOriginal).toBe("function");
+  expect(receivedOriginal()).toBe("callable-real");
+  expect(typeof stubbedFn).toBe("function");
+  expect(stubbedFn()).toBe("wrapped: callable-real");
+});
+
+test("factory argument prefers CJS exports when a module was both imported and required", async () => {
+  // When a .cjs module is loaded via BOTH `import()` and `require()`, the ESM
+  // namespace is a wrapper `{ default, length, name, prototype }` around the
+  // callable `module.exports`. The factory should still see the bare callable
+  // as `original`, not the ESM wrapper — otherwise `original()` fails.
+  await import("./mock-module-callable-cjs-mixed-fixture.cjs");
+  const realFn: any = require("./mock-module-callable-cjs-mixed-fixture.cjs");
+  expect(typeof realFn).toBe("function");
+  expect(realFn()).toBe("callable-mixed-real");
+
+  let receivedOriginal: any;
+  mock.module("./mock-module-callable-cjs-mixed-fixture.cjs", original => {
+    receivedOriginal = original;
+    return function wrapped() {
+      return `wrapped: ${original()}`;
+    };
+  });
+
+  expect(typeof receivedOriginal).toBe("function");
+  expect(receivedOriginal()).toBe("callable-mixed-real");
+  const stubbedFn: any = require("./mock-module-callable-cjs-mixed-fixture.cjs");
+  expect(stubbedFn()).toBe("wrapped: callable-mixed-real");
+});

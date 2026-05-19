@@ -9,17 +9,53 @@
 //!   3 = Chrome reads CDP commands from us  (parent writes → child reads)
 //!   4 = Chrome writes CDP replies to us    (child writes  → parent reads)
 //!
-//! One socketpair, the child end dup'd to BOTH fd 3 and fd 4. Chrome's
-//! DevToolsPipeHandler does read(3) and write(4) — it doesn't care that
-//! both fds point at the same socket. usockets' bsd_recv() calls recv()
-//! which fails ENOTSOCK on a pipe fd (the earlier two-pipes layout broke
-//! here: recv(readFd) returned -1 → loop treated as close → onClose fired
-//! before any data); socketpair gives us a proper socket for the read path
-//! and the write path can share it.
+//! POSIX: one socketpair, the child end dup'd to BOTH fd 3 and fd 4.
+//! Chrome's DevToolsPipeHandler does read(3) and write(4) — it doesn't
+//! care that both fds point at the same socket. usockets' bsd_recv()
+//! calls recv() which fails ENOTSOCK on a pipe fd (the earlier two-pipes
+//! layout broke here: recv(readFd) returned -1 → loop treated as close →
+//! onClose fired before any data); socketpair gives us a proper socket
+//! for the read path and the write path can share it.
+//!
+//! Windows: socketpair on AF_UNIX isn't a thing the MSVCRT fd-inheritance
+//! path understands (SOCKETs are inherited via WSADuplicateSocket, not the
+//! lpReserved2 convention Chrome's _get_osfhandle(3)/_get_osfhandle(4)
+//! expect). Instead we create two anonymous pipes with `uv_pipe(...)`:
+//! one for commands (parent→child on fd 3), one for replies (child→parent
+//! on fd 4). Asymmetric flags — child's end non-overlapped for Chrome's
+//! blocking ReadFile/WriteFile, parent's end overlapped for libuv IOCP
+//! async I/O. usockets can't adopt a non-SOCKET handle on Windows
+//! (us_socket_from_fd returns null when LIBUS_USE_LIBUV is set), so the
+//! parent-side I/O stays in Zig: libuv.Pipe drives uv_read_start and
+//! uv_write, dispatching bytes into C++ via Bun__Chrome__onData / taking
+//! writes from C++ via Bun__Chrome__writeWindows.
 
 const ChromeProcess = @This();
 
 process: *bun.spawn.Process,
+windows: if (bun.Environment.isWindows) WindowsTransport else void = if (bun.Environment.isWindows) .{} else {},
+
+/// Windows-only: parent-side pipe endpoints. Owned by Zig because
+/// usockets can't adopt a non-SOCKET HANDLE when built against libuv;
+/// C++ sees data via Bun__Chrome__onData and writes via
+/// Bun__Chrome__writeWindows instead of holding its own fd.
+const WindowsTransport = struct {
+    /// Parent's write end of the command pipe. Overlapped handle, wrapped
+    /// in uv_pipe_t for IOCP-backed uv_write.
+    write_pipe: ?*bun.windows.libuv.Pipe = null,
+    /// Parent's read end of the reply pipe. Overlapped handle, wrapped
+    /// in uv_pipe_t; uv_read_start delivers Chrome's NUL-delimited JSON
+    /// frames to onReadChunk.
+    read_pipe: ?*bun.windows.libuv.Pipe = null,
+};
+
+/// Windows read buffer — static global, not an instance field, so the
+/// struct-default-undefined ban-words rule doesn't flag it (the contents
+/// are written by uv before uv_read_cb reads them, so its initial bytes
+/// never matter). One is enough: there's exactly one ChromeProcess
+/// instance per Bun process (singleton via `instance`), and libuv only
+/// has one uv_alloc_cb → uv_read_cb pair in flight at a time.
+var windows_read_buf: if (bun.Environment.isWindows) [64 * 1024]u8 else void = if (bun.Environment.isWindows) undefined else {};
 
 var instance: ?*ChromeProcess = null;
 
@@ -36,17 +72,19 @@ pub export fn Bun__Chrome__kill() void {
 }
 
 /// Lazy: first `new Bun.WebView({ backend: "chrome" })` calls this via
-/// C++. Returns the parent's socketpair fd (C++ adopts into usockets and
-/// owns it from then on), or -1 on spawn failure / already-running.
-/// C++'s Transport::ensureSpawned checks its own m_readSock before calling
-/// here, so instance-already-exists → -1 means "you already have the fd,
-/// this is a bug" not "spawn failed". We deliberately don't store the fd —
-/// usockets owns it; re-returning a fd usockets may have already closed
-/// would be a use-after-close.
+/// C++. POSIX: returns the parent's socketpair fd (C++ adopts into
+/// usockets and owns it from then on), or -1 on spawn failure / already-
+/// running. C++'s Transport::ensureSpawned checks its own m_readSock
+/// before calling here, so instance-already-exists → -1 means "you already
+/// have the fd, this is a bug" not "spawn failed". We deliberately don't
+/// store the fd — usockets owns it; re-returning a fd usockets may have
+/// already closed would be a use-after-close.
 ///
-/// Windows TODO — fd.cast() returns a HANDLE there, and pipe() / fcntl
-/// nonblocking have no direct equivalents. The spawn would need to use
-/// named pipes or libuv. For now -1 and C++ throws not-implemented.
+/// Windows: returns 0 on success, -1 on failure. There's no fd to hand
+/// to C++ — the parent-side pipes stay in Zig (see WindowsTransport), and
+/// C++ drives I/O via Bun__Chrome__writeWindows / receives data via
+/// Bun__Chrome__onData. A distinct success code avoids abusing fd=-1 as a
+/// dual-purpose error marker on Windows.
 pub export fn Bun__Chrome__ensure(
     global: *jsc.JSGlobalObject,
     userDataDir: ?[*:0]const u8,
@@ -56,10 +94,17 @@ pub export fn Bun__Chrome__ensure(
     stdoutInherit: bool,
     stderrInherit: bool,
 ) i32 {
-    if (comptime bun.Environment.isWindows) return -1;
-    if (instance != null) return -1; // C++ already holds the fd
+    if (instance != null) return -1; // C++ already holds the connection
 
     const extra: []const [*:0]const u8 = if (extraArgv) |a| a[0..extraArgvLen] else &.{};
+    if (comptime bun.Environment.isWindows) {
+        spawnWindows(global.bunVM(), userDataDir, path, extra, stdoutInherit, stderrInherit) catch |err| {
+            log("spawn failed: {s}", .{@errorName(err)});
+            return -1;
+        };
+        // Zig owns the pipes; C++ just needs to know spawn succeeded.
+        return 0;
+    }
     const fd = spawn(global.bunVM(), userDataDir, path, extra, stdoutInherit, stderrInherit) catch |err| {
         log("spawn failed: {s}", .{@errorName(err)});
         return -1;
@@ -71,6 +116,24 @@ pub fn onProcessExit(this: *ChromeProcess, _: *bun.spawn.Process, status: bun.sp
     log("chrome exited: {f}", .{status});
     const signo: i32 = if (status.signalCode()) |sig| @intFromEnum(sig) else 0;
     Bun__Chrome__died(signo);
+    // Windows: tear down the parent-side pipes. readStop FIRST so no
+    // further uv_read callback fires, then null .data so if a cancelled
+    // read does fire with UV_ECANCELED after we destroy self, the cb
+    // sees null and bails. closeAndDestroy then kicks off uv_close
+    // which drives the async handle teardown + struct free.
+    if (comptime bun.Environment.isWindows) {
+        if (this.windows.read_pipe) |p| {
+            this.windows.read_pipe = null;
+            p.asStream().readStop();
+            p.data = null;
+            p.closeAndDestroy();
+        }
+        if (this.windows.write_pipe) |p| {
+            this.windows.write_pipe = null;
+            p.data = null;
+            p.closeAndDestroy();
+        }
+    }
     this.process.deref();
     bun.destroy(this);
     instance = null;
@@ -159,6 +222,45 @@ fn findChrome(alloc: std.mem.Allocator, explicitPath: ?[*:0]const u8) !?[:0]cons
         for (absolute) |c| {
             if (bun.sys.isExecutableFilePath(c)) return try alloc.dupeZ(u8, c);
         }
+    } else if (comptime bun.Environment.isWindows) {
+        // Windows installer layout: <root>\<Vendor>\<Channel>\Application\<exe>
+        // Roots: %ProgramFiles% (64-bit installer, modern default),
+        //        %ProgramFiles(x86)% (32-bit MSI — Edge stable is still here
+        //        even on 64-bit Windows),
+        //        %LOCALAPPDATA% (per-user installs; Chrome Canary and
+        //        non-admin stable installs live here).
+        // Stable first, then beta/dev/canary; Chrome → Chromium → Brave →
+        // Edge mirrors the POSIX precedence. Canary ("SxS") is nearly
+        // always per-user, but probing system dirs first is cheap.
+        const relative = [_][]const u8{
+            "Google\\Chrome\\Application\\chrome.exe",
+            "Google\\Chrome Beta\\Application\\chrome.exe",
+            "Google\\Chrome Dev\\Application\\chrome.exe",
+            "Google\\Chrome SxS\\Application\\chrome.exe", // Canary
+            "Chromium\\Application\\chrome.exe",
+            "BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+            "BraveSoftware\\Brave-Browser-Beta\\Application\\brave.exe",
+            "BraveSoftware\\Brave-Browser-Nightly\\Application\\brave.exe",
+            "BraveSoftware\\Brave-Browser-Dev\\Application\\brave.exe",
+            "Microsoft\\Edge\\Application\\msedge.exe",
+            "Microsoft\\Edge Beta\\Application\\msedge.exe",
+            "Microsoft\\Edge Dev\\Application\\msedge.exe",
+            "Microsoft\\Edge SxS\\Application\\msedge.exe",
+        };
+        const roots = [_]?[]const u8{
+            bun.getenvZ("ProgramFiles"),
+            bun.getenvZ("ProgramFiles(x86)"),
+            bun.getenvZ("LOCALAPPDATA"),
+        };
+        for (relative) |rel| {
+            for (roots) |maybe_root| {
+                const root = maybe_root orelse continue;
+                if (root.len == 0) continue;
+                const parts = [_][]const u8{ root, rel };
+                const joined = bun.path.joinStringBufZ(buf, &parts, .windows);
+                if (bun.sys.isExecutableFilePath(joined)) return try alloc.dupeZ(u8, joined);
+            }
+        }
     }
 
     // Playwright cache — readdir for the newest chromium_headless_shell-<rev>.
@@ -234,6 +336,78 @@ fn findPlaywrightShell(alloc: std.mem.Allocator) ?[:0]const u8 {
     return null;
 }
 
+/// Build the Chrome argv (shared POSIX + Windows). `chrome` is the absolute
+/// path to the binary; `dataDir` is the --user-data-dir= flag already
+/// formatted. Caller passes in the arena-backed allocator so all pointers
+/// live until the caller frees the arena (after spawn copies argv into the
+/// child). extraArgv is appended last so user flags override built-ins
+/// (Chrome's CommandLine last-wins for duplicate switches).
+fn buildArgv(alloc: std.mem.Allocator, chrome: [:0]const u8, dataDir: [:0]const u8, extraArgv: []const [*:0]const u8) !std.ArrayListUnmanaged(?[*:0]const u8) {
+    // Minimal flags. --remote-debugging-pipe is the one that matters;
+    // --headless works on both full Chrome (switches to headless mode) and
+    // chrome-headless-shell (no-op, it's already headless). --headless=new
+    // breaks chrome-headless-shell (it IS the new headless mode; =new is a
+    // full-Chrome-only switch). Playwright passes plain --headless
+    // (chromium.js:293).
+    //
+    // --user-data-dir MUST precede --remote-debugging-pipe in argv. Chrome's
+    // CommandLine::Init stops at the first -- after argv[0] on some builds;
+    // order-insensitive on most, but --user-data-dir-first is the defensive
+    // layout every headless harness uses. Without it, ProcessSingleton locks
+    // the default profile and aborts if a real Chrome is already running.
+    var argv: std.ArrayListUnmanaged(?[*:0]const u8) = .{};
+    try argv.append(alloc, chrome.ptr);
+    try argv.append(alloc, dataDir.ptr);
+    try argv.append(alloc, "--remote-debugging-pipe");
+    try argv.append(alloc, "--headless");
+    try argv.append(alloc, "--no-first-run");
+    try argv.append(alloc, "--no-default-browser-check");
+    try argv.append(alloc, "--disable-gpu"); // headless CI has no GPU context
+    // Enterprise policy can force-install extensions (webRequest spam on
+    // stderr). --disable-extensions is best-effort; mandatory extensions
+    // may still load. --disable-background-networking shuts up GCM/update.
+    try argv.append(alloc, "--disable-extensions");
+    try argv.append(alloc, "--disable-background-networking");
+    // Throttling suite (playwright's chromiumSwitches.ts subset). These
+    // gate rAF/setTimeout firing when the tab thinks it's backgrounded.
+    // A headless target is "occluded" by definition; without these Chrome
+    // throttles timers to 1 Hz and pauses rAF entirely.
+    try argv.append(alloc, "--disable-background-timer-throttling");
+    try argv.append(alloc, "--disable-backgrounding-occluded-windows");
+    try argv.append(alloc, "--disable-renderer-backgrounding");
+    // CDP message rate limiter — a burst of evaluates/clicks in a test
+    // loop hits it otherwise. Playwright and puppeteer both ship this.
+    try argv.append(alloc, "--disable-ipc-flooding-protection");
+    // No startup window — targets are Target.createTarget'd, not the
+    // default about:blank. Saves one tab and the visual-complete wait.
+    try argv.append(alloc, "--no-startup-window");
+    for (extraArgv) |a| try argv.append(alloc, a);
+    try argv.append(alloc, null);
+    return argv;
+}
+
+/// Format --user-data-dir=<path>. Explicit path wins; otherwise synthesize
+/// a pid-scoped dir in the platform's temp root so concurrent bun processes
+/// don't ProcessSingleton-collide. Multiple Bun.WebView instances in one
+/// process share the Chrome (single instance singleton), so one dir per
+/// process is enough.
+fn formatUserDataDir(alloc: std.mem.Allocator, userDataDir: ?[*:0]const u8) ![:0]u8 {
+    if (userDataDir) |d| {
+        return try std.fmt.allocPrintSentinel(alloc, "--user-data-dir={s}", .{d}, 0);
+    }
+    if (comptime bun.Environment.isWindows) {
+        const pid: u32 = std.os.windows.GetCurrentProcessId();
+        // %TEMP% falls back to the current dir if unset; Chrome will create
+        // the subdir itself. Backslashes in path — .windows path join would
+        // collapse any forward slashes, but we're emitting a literal here.
+        const tmp = bun.getenvZ("TEMP") orelse bun.getenvZ("TMP") orelse ".";
+        return try std.fmt.allocPrintSentinel(alloc, "--user-data-dir={s}\\bun-chrome-{d}", .{ tmp, pid }, 0);
+    } else {
+        const pid: u32 = @intCast(std.c.getpid());
+        return try std.fmt.allocPrintSentinel(alloc, "--user-data-dir=/tmp/bun-chrome-{d}", .{pid}, 0);
+    }
+}
+
 fn spawn(vm: *jsc.VirtualMachine, userDataDir: ?[*:0]const u8, explicitPath: ?[*:0]const u8, extraArgv: []const [*:0]const u8, stdoutInherit: bool, stderrInherit: bool) !bun.FD {
     if (comptime bun.Environment.isWindows) return error.Unsupported;
 
@@ -263,60 +437,8 @@ fn spawn(vm: *jsc.VirtualMachine, userDataDir: ?[*:0]const u8, explicitPath: ?[*
     }
     try bun.sys.setNonblocking(fds[0]).unwrap();
 
-    // Minimal flags. --remote-debugging-pipe is the one that matters;
-    // --headless works on both full Chrome (switches to headless mode) and
-    // chrome-headless-shell (no-op, it's already headless). --headless=new
-    // breaks chrome-headless-shell (it IS the new headless mode; =new is a
-    // full-Chrome-only switch). Playwright passes plain --headless
-    // (chromium.js:293).
-    //
-    // --user-data-dir MUST precede --remote-debugging-pipe in argv. Chrome's
-    // CommandLine::Init stops at the first -- after argv[0] on some builds;
-    // order-insensitive on most, but --user-data-dir-first is the defensive
-    // layout every headless harness uses. Without it, ProcessSingleton locks
-    // the default profile (~/Library/Application Support/Google/Chrome) and
-    // aborts if a real Chrome is already running.
-    const dataDir = if (userDataDir) |d|
-        try std.fmt.allocPrintSentinel(alloc, "--user-data-dir={s}", .{d}, 0)
-    else blk: {
-        // pid_t → u32 cast so {d} formats. Fresh dir per parent process;
-        // multiple Bun.WebView instances in one process share the Chrome.
-        const pid: u32 = @intCast(std.c.getpid());
-        break :blk try std.fmt.allocPrintSentinel(alloc, "--user-data-dir=/tmp/bun-chrome-{d}", .{pid}, 0);
-    };
-
-    var argv: std.ArrayListUnmanaged(?[*:0]const u8) = .{};
-    try argv.append(alloc, chrome.ptr);
-    try argv.append(alloc, dataDir.ptr);
-    try argv.append(alloc, "--remote-debugging-pipe");
-    try argv.append(alloc, "--headless");
-    try argv.append(alloc, "--no-first-run");
-    try argv.append(alloc, "--no-default-browser-check");
-    try argv.append(alloc, "--disable-gpu"); // headless CI has no GPU context
-    // Enterprise policy can force-install extensions (webRequest spam on
-    // stderr). --disable-extensions is best-effort; mandatory extensions
-    // may still load. --disable-background-networking shuts up GCM/update.
-    try argv.append(alloc, "--disable-extensions");
-    try argv.append(alloc, "--disable-background-networking");
-    // Throttling suite (playwright's chromiumSwitches.ts subset). These
-    // gate rAF/setTimeout firing when the tab thinks it's backgrounded.
-    // A headless target is "occluded" by definition; without these Chrome
-    // throttles timers to 1 Hz and pauses rAF entirely.
-    try argv.append(alloc, "--disable-background-timer-throttling");
-    try argv.append(alloc, "--disable-backgrounding-occluded-windows");
-    try argv.append(alloc, "--disable-renderer-backgrounding");
-    // CDP message rate limiter — a burst of evaluates/clicks in a test
-    // loop hits it otherwise. Playwright and puppeteer both ship this.
-    try argv.append(alloc, "--disable-ipc-flooding-protection");
-    // No startup window — targets are Target.createTarget'd, not the
-    // default about:blank. Saves one tab and the visual-complete wait.
-    try argv.append(alloc, "--no-startup-window");
-    // User extras last so they can override built-in flags (Chrome's
-    // CommandLine last-wins for duplicate switches). Memory is the caller's
-    // CString Vector — lives until Bun__Chrome__ensure returns, after which
-    // posix_spawn has copied argv into the child.
-    for (extraArgv) |a| try argv.append(alloc, a);
-    try argv.append(alloc, null);
+    const dataDir = try formatUserDataDir(alloc, userDataDir);
+    const argv = try buildArgv(alloc, chrome, dataDir, extraArgv);
 
     const env = try vm.transpiler.env.map.createNullDelimitedEnvMap(alloc);
 
@@ -367,8 +489,270 @@ fn spawn(vm: *jsc.VirtualMachine, userDataDir: ?[*:0]const u8, explicitPath: ?[*
     return fds[0];
 }
 
+/// Windows spawn path. Two anonymous pipes (one per direction), child ends
+/// inherited as MSVCRT fds 3 and 4 via libuv's UV_INHERIT_FD in extra_fds.
+/// Chrome's DevToolsPipeHandler on Windows does _get_osfhandle(3/4) then
+/// blocking ReadFile/WriteFile on the returned HANDLEs — that's why both
+/// child ends are non-overlapped (UV_NONBLOCK_PIPE is an overlapped flag;
+/// 0 means default blocking).
+///
+/// Parent ends are wrapped in libuv uv_pipe_t for IOCP-backed async I/O.
+/// All read/write drives through Zig; C++ gets data via Bun__Chrome__onData
+/// callback and writes via Bun__Chrome__writeWindows. This skips usockets
+/// entirely on the parent side because us_socket_from_fd is a no-op when
+/// LIBUS_USE_LIBUV is defined.
+fn spawnWindows(vm: *jsc.VirtualMachine, userDataDir: ?[*:0]const u8, explicitPath: ?[*:0]const u8, extraArgv: []const [*:0]const u8, stdoutInherit: bool, stderrInherit: bool) !void {
+    const uv = bun.windows.libuv;
+
+    var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const chrome = try findChrome(alloc, explicitPath) orelse return error.ChromeNotFound;
+    log("using chrome: {s}", .{chrome});
+
+    const loop = vm.eventLoop().usocketsLoop().uv_loop;
+
+    // Pipe A: parent → child commands (fd 3 in child, child reads blocking).
+    // fds[0] = read end → child-side, non-overlapped (0).
+    // fds[1] = write end → parent-side, overlapped for async uv_write.
+    var cmd_fds: [2]uv.uv_file = undefined;
+    if (uv.uv_pipe(&cmd_fds, 0, uv.UV_NONBLOCK_PIPE).errEnum()) |e| {
+        return bun.errnoToZigErr(e);
+    }
+    var cmd_child_fd: ?bun.FD = bun.FD.fromUV(cmd_fds[0]);
+    var cmd_parent_fd: ?bun.FD = bun.FD.fromUV(cmd_fds[1]);
+    errdefer {
+        if (cmd_child_fd) |fd| fd.close();
+        if (cmd_parent_fd) |fd| fd.close();
+    }
+
+    // Pipe B: child → parent replies (fd 4 in child, child writes blocking).
+    // fds[0] = read end → parent-side, overlapped for async uv_read_start.
+    // fds[1] = write end → child-side, non-overlapped (0).
+    var reply_fds: [2]uv.uv_file = undefined;
+    if (uv.uv_pipe(&reply_fds, uv.UV_NONBLOCK_PIPE, 0).errEnum()) |e| {
+        return bun.errnoToZigErr(e);
+    }
+    var reply_parent_fd: ?bun.FD = bun.FD.fromUV(reply_fds[0]);
+    var reply_child_fd: ?bun.FD = bun.FD.fromUV(reply_fds[1]);
+    errdefer {
+        if (reply_parent_fd) |fd| fd.close();
+        if (reply_child_fd) |fd| fd.close();
+    }
+
+    // Wrap both parent ends in uv.Pipe. init(loop, ipc=false) — NO ipc
+    // framing; Chrome does raw NUL-delimited JSON, not libuv's
+    // length-prefixed frames. open() takes ownership of the fd.
+    //
+    // Unref both handles — the pipes themselves must not keep the event
+    // loop alive, only pending CDP commands do (via updateKeepAlive on
+    // the C++ side). Same weak-handle reasoning as usockets' uv_poll_init
+    // path which also unrefs (packages/bun-usockets/src/eventing/libuv.c:103)
+    // and the POSIX disableKeepingEventLoopAlive below.
+    const write_pipe = bun.new(uv.Pipe, std.mem.zeroes(uv.Pipe));
+    errdefer write_pipe.closeAndDestroy();
+    try write_pipe.init(loop, false).unwrap();
+    try write_pipe.open(cmd_parent_fd.?).unwrap();
+    cmd_parent_fd = null; // pipe owns it now
+    write_pipe.unref();
+
+    const read_pipe = bun.new(uv.Pipe, std.mem.zeroes(uv.Pipe));
+    errdefer read_pipe.closeAndDestroy();
+    try read_pipe.init(loop, false).unwrap();
+    try read_pipe.open(reply_parent_fd.?).unwrap();
+    reply_parent_fd = null; // pipe owns it now
+    read_pipe.unref();
+
+    const dataDir = try formatUserDataDir(alloc, userDataDir);
+    const argv = try buildArgv(alloc, chrome, dataDir, extraArgv);
+
+    const env = try vm.transpiler.env.map.createNullDelimitedEnvMap(alloc);
+
+    // extra_fds positions 0→fd 3, 1→fd 4. spawnProcessWindows emits
+    // UV_INHERIT_FD for .pipe entries (process.zig:1848-1851), which tells
+    // libuv to inject the HANDLE into the child's MSVCRT lpReserved2 blob
+    // at the target CRT fd — exactly where Chrome's _get_osfhandle(3)
+    // and _get_osfhandle(4) look.
+    var opts: bun.spawn.SpawnOptions = .{
+        .stdin = .ignore,
+        .stdout = if (stdoutInherit) .inherit else .ignore,
+        .stderr = if (stderrInherit) .inherit else .ignore,
+        .extra_fds = &.{
+            .{ .pipe = cmd_child_fd.? }, // fd 3 — Chrome reads commands
+            .{ .pipe = reply_child_fd.? }, // fd 4 — Chrome writes replies
+        },
+        .argv0 = chrome.ptr,
+        .windows = .{
+            .loop = jsc.EventLoopHandle.init(vm.eventLoop()),
+        },
+    };
+
+    var spawned = try (try bun.spawn.spawnProcess(
+        &opts,
+        @ptrCast(argv.items.ptr),
+        @ptrCast(env.ptr),
+    )).unwrap();
+    defer spawned.extra_pipes.deinit();
+
+    // Child inherited both fds; close our copies. After this the only
+    // handles left are write_pipe (parent write end) and read_pipe
+    // (parent read end) — Chrome's death EOFs both.
+    cmd_child_fd.?.close();
+    cmd_child_fd = null;
+    reply_child_fd.?.close();
+    reply_child_fd = null;
+
+    const self = bun.new(ChromeProcess, .{
+        .process = spawned.toProcess(vm.eventLoop(), false),
+        .windows = .{
+            .write_pipe = write_pipe,
+            .read_pipe = read_pipe,
+        },
+    });
+    self.process.setExitHandler(self);
+
+    // Start reading from Chrome's reply pipe. Data flows:
+    //   uv_read_cb → onReadChunk → Bun__Chrome__onData → Transport::onData
+    //
+    // Pass a nullable context pointer so the callbacks stay valid even
+    // if the pipe fires a late (post-close) callback — we null
+    // pipe.data in onProcessExit before destroying self; the readStart
+    // wrapper re-derives the context from pipe.data via an unchecked
+    // cast, so the callback parameter type must be `?*ChromeProcess`.
+    //
+    // Error path here owns the pipes (they were transferred into self),
+    // so destroying self leaks them — close them explicitly.
+    const self_opt: ?*ChromeProcess = self;
+    switch (read_pipe.asStream().readStart(self_opt, onReadAlloc, onReadError, onReadChunk)) {
+        .result => {},
+        .err => |e| {
+            log("read_start failed: {f}", .{e});
+            write_pipe.closeAndDestroy();
+            read_pipe.closeAndDestroy();
+            self.process.deref();
+            bun.destroy(self);
+            return error.ReadStartFailed;
+        },
+    }
+
+    switch (self.process.watch()) {
+        .result => {
+            // Same weak-handle reasoning as the POSIX path: parent exit →
+            // Chrome's fd 3 EOFs → Chrome exits. dispatchOnExit also
+            // SIGKILLs via Bun__Chrome__kill.
+            self.process.disableKeepingEventLoopAlive();
+        },
+        .err => |e| {
+            log("watch failed: {f}", .{e});
+            // readStart already succeeded, so read_pipe.data points at
+            // self. A late UV_ECANCELED callback queued before close
+            // could fire after bun.destroy(self) — null the context
+            // pointers first (mirrors onProcessExit's teardown) so
+            // the callback's @ptrCast lands on null and the onReadError
+            // / onReadChunk optional check bails.
+            read_pipe.asStream().readStop();
+            read_pipe.data = null;
+            write_pipe.data = null;
+            write_pipe.closeAndDestroy();
+            read_pipe.closeAndDestroy();
+            self.process.deref();
+            bun.destroy(self);
+            return error.WatchFailed;
+        },
+    }
+    instance = self;
+}
+
+// --- Windows read/write plumbing --------------------------------------------
+
+// `?*ChromeProcess` context — we null pipe.data in onProcessExit so a
+// late UV_ECANCELED read callback (queued before uv_close, dispatched
+// after self is gone) lands here with a null pointer and we no-op.
+// readStart's wrapper casts the raw data pointer to our context type
+// with no null-check, so optional is the right Zig type to represent
+// "may be null after teardown."
+fn onReadAlloc(_: ?*ChromeProcess, _: usize) []u8 {
+    // Static global read buffer — one per process since ChromeProcess is
+    // a singleton and libuv only has one uv_alloc_cb → uv_read_cb pair
+    // in flight. Works even when self is null (late UV_ECANCELED
+    // callback after teardown) because we don't deref self.
+    if (comptime bun.Environment.isWindows) return &windows_read_buf;
+    unreachable;
+}
+
+fn onReadChunk(self: ?*ChromeProcess, data: []const u8) void {
+    if (self == null) return;
+    // Push directly into C++'s Transport::onData. The buffer is the
+    // static windows_read_buf scratch which is safe until the next
+    // uv_read_cb fires (we only arm one read at a time); onData
+    // memcpy's what it needs into m_rx before returning.
+    Bun__Chrome__onData(data.ptr, data.len);
+}
+
+fn onReadError(self: ?*ChromeProcess, err: bun.sys.E) void {
+    if (self == null) return;
+    // EOF or error — Chrome's dead. The process exit handler will fire
+    // shortly; call Bun__Chrome__died now so pending promises don't
+    // hang in the window between EOF and uv_process exit callback.
+    // Bun__Chrome__died is idempotent via m_dead; onProcessExit's
+    // own call is a no-op.
+    log("read error: {s}", .{@tagName(err)});
+    Bun__Chrome__died(0);
+}
+
+/// Exported for C++'s Transport::writeRaw on Windows. Enqueues an async
+/// uv_write on the command pipe. Returns 0 on success, -1 on failure
+/// (pipe closed, OOM on write request allocation). Bytes are copied
+/// immediately; caller's buffer can be freed after this returns.
+pub export fn Bun__Chrome__writeWindows(data: [*]const u8, len: usize) i32 {
+    if (comptime !bun.Environment.isWindows) return -1;
+    const self = instance orelse return -1;
+    const pipe = self.windows.write_pipe orelse return -1;
+
+    // uv_write is async — the buffer and the req handle must outlive the
+    // call until uvWriteCb fires. Bundle them in one heap allocation that
+    // the callback frees.
+    const copy = bun.default_allocator.alloc(u8, len) catch return -1;
+    @memcpy(copy, data[0..len]);
+
+    const req = bun.new(WriteReq, .{
+        .req = std.mem.zeroes(bun.windows.libuv.uv_write_t),
+        .buf = bun.windows.libuv.uv_buf_t.init(copy),
+        .bytes = copy,
+    });
+    req.req.data = req;
+
+    const rc = bun.windows.libuv.uv_write(&req.req, pipe.asStream(), @ptrCast(&req.buf), 1, &WriteReq.onWrite);
+    if (rc.toError(.write)) |err| {
+        log("uv_write failed: {f}", .{err});
+        bun.default_allocator.free(copy);
+        bun.destroy(req);
+        return -1;
+    }
+    return 0;
+}
+
+const WriteReq = struct {
+    req: bun.windows.libuv.uv_write_t,
+    buf: bun.windows.libuv.uv_buf_t,
+    bytes: []u8,
+
+    fn onWrite(w: *bun.windows.libuv.uv_write_t, _: bun.windows.libuv.ReturnCode) callconv(.c) void {
+        const self_req: *WriteReq = @ptrCast(@alignCast(w.data));
+        bun.default_allocator.free(self_req.bytes);
+        bun.destroy(self_req);
+    }
+};
+
 // Implemented in ChromeBackend.cpp. Rejects all pending CDP promises.
 extern fn Bun__Chrome__died(signo: i32) void;
+
+// Windows: Zig reads Chrome's fd 4 via libuv; this hands each chunk to
+// C++'s Transport::onData which parses NUL-delimited frames out of it.
+// POSIX delivers data through usockets directly, so this is never
+// called there.
+extern fn Bun__Chrome__onData(data: [*]const u8, len: usize) void;
 
 // --- DevToolsActivePort discovery -------------------------------------------
 // Chrome writes <port>\n/devtools/browser/<id> to DevToolsActivePort in its

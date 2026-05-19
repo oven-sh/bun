@@ -484,7 +484,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // when ownership is moved into `FetchOptions`.
     let mut signal = SignalRef(None);
     // Custom Hostname
-    let mut hostname: Option<bun_core::ZBox> = None;
+    let mut hostname: Option<Box<[u8]>> = None;
     let mut range: Option<bun_core::ZBox> = None;
     let mut unix_socket_path: ZigStringSlice = ZigStringSlice::empty();
 
@@ -1356,7 +1356,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // an opaque ZST FFI handle (S008) — safe `*mut → &mut` deref.
             let headers_ref = bun_opaque::opaque_deref_mut(headers_);
             if let Some(hostname_) = headers_ref.fast_get(HTTPHeaderName::Host) {
-                hostname = Some(hostname_.to_owned_slice_z());
+                hostname = Some(hostname_.to_owned_slice().into_boxed_slice());
             }
             if url.is_s3() {
                 if let Some(range_) = headers_ref.fast_get(HTTPHeaderName::Range) {
@@ -2027,7 +2027,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         signal: signal.take(),
         global_this: Some(global_this.into()),
         ssl_config: ssl_config.take(),
-        hostname: hostname.take().map(|z| Box::<[u8]>::from(z.as_bytes())),
+        hostname: hostname.take(),
         upgraded_connection,
         force_http2,
         force_http3,

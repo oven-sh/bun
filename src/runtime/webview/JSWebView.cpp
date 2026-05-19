@@ -326,10 +326,38 @@ extern "C" size_t Bun__Chrome__autoDetect(char* out, size_t cap);
 JSWebView* JSWebView::createChrome(JSGlobalObject* g, Structure* structure,
     uint32_t width, uint32_t height, const WTF::String& userDataDir,
     const WTF::String& path, const WTF::Vector<WTF::String>& extraArgv,
-    bool stdoutInherit, bool stderrInherit, const WTF::String& wsUrl, bool skipAutoDetect)
+    bool stdoutInherit, bool stderrInherit, const WTF::String& wsUrl, bool skipAutoDetect,
+    ChromeCreateFailure* outFailure)
 {
     auto* zig = defaultGlobalObject(g);
     auto& t = CDP::transport();
+    auto setFailure = [&](ChromeCreateFailure f) {
+        if (outFailure) *outFailure = f;
+    };
+
+    // ensureSpawned routes through Bun__Chrome__ensure which has no
+    // Windows port (POSIX socketpair + --remote-debugging-pipe fd 3/4).
+    // The WebSocket connect path is fine on Windows — WebCore::WebSocket
+    // works, and Bun__Chrome__autoDetect reads DevToolsActivePort from
+    // %LOCALAPPDATA%. We only refuse when spawn is unavoidable.
+    //
+    // Call ensureSpawned unconditionally: it short-circuits with true
+    // when m_mode != None && !m_dead (singleton already alive — e.g.
+    // an earlier view connected via backend.url). Only translate an
+    // actual spawn failure into NotImplementedOnWindows — otherwise a
+    // second view with backend.url:false or backend.path on a process
+    // that's already got a live WebSocket transport would wrongly
+    // refuse even though no spawn is needed.
+    auto trySpawn = [&]() -> bool {
+        if (t.ensureSpawned(zig, userDataDir, path, extraArgv, stdoutInherit, stderrInherit))
+            return true;
+#if OS(WINDOWS)
+        setFailure(ChromeCreateFailure::NotImplementedOnWindows);
+#else
+        setFailure(ChromeCreateFailure::SpawnFailed);
+#endif
+        return false;
+    };
 
     // Transport selection, in priority order:
     //   1. url: "ws://..." → connect (autoDetected=false → no fallback)
@@ -342,20 +370,40 @@ JSWebView* JSWebView::createChrome(JSGlobalObject* g, Structure* structure,
     // sync/instant so the constructor stays synchronous.
     bool ok;
     if (!wsUrl.isEmpty()) {
+        // Explicit ws:// — pure WebSocket, no spawn path. Works on
+        // Windows too (WebCore::WebSocket is cross-platform).
         ok = t.ensureConnected(zig, wsUrl, /* autoDetected */ false);
+        if (!ok) setFailure(ChromeCreateFailure::ConnectFailed);
     } else if (skipAutoDetect || !path.isEmpty() || !extraArgv.isEmpty()) {
-        ok = t.ensureSpawned(zig, userDataDir, path, extraArgv, stdoutInherit, stderrInherit);
+        ok = trySpawn();
     } else {
         // Auto-detect. DevToolsActivePort URL caps at
         // ws://127.0.0.1:65535/devtools/browser/<36-char-uuid> ≈ 70B.
+        // Bun__Chrome__autoDetect has a Windows branch (reads
+        // %LOCALAPPDATA%\Google\Chrome\User Data\DevToolsActivePort),
+        // so on Windows the connect-an-existing-Chrome flow works
+        // even though our own spawn path doesn't.
         char buf[128];
         size_t len = Bun__Chrome__autoDetect(buf, sizeof(buf));
         if (len > 0) {
+            // autoDetected=true enables the wsOnClose stale-file
+            // fallback to ensureSpawned when the stored DevToolsActivePort
+            // was stale. On Windows there is no spawn path to fall back
+            // to, so pass false there — a stale file surfaces as a plain
+            // WebSocket connect failure.
+#if OS(WINDOWS)
+            constexpr bool autoDetectedFallback = false;
+#else
+            constexpr bool autoDetectedFallback = true;
+#endif
             ok = t.ensureConnected(zig,
                 WTF::String::fromUTF8(std::span<const char>(buf, len)),
-                /* autoDetected */ true, userDataDir, stdoutInherit, stderrInherit);
+                autoDetectedFallback, userDataDir, stdoutInherit, stderrInherit);
+            // AutoDetectConnectFailed (not ConnectFailed) — the user
+            // never set backend.url, so the error must not hint at it.
+            if (!ok) setFailure(ChromeCreateFailure::AutoDetectConnectFailed);
         } else {
-            ok = t.ensureSpawned(zig, userDataDir, path, extraArgv, stdoutInherit, stderrInherit);
+            ok = trySpawn();
         }
     }
     if (!ok) return nullptr;

@@ -729,6 +729,11 @@ fn shutdown(this: *WebWorker) noreturn {
         // closeAll() fires on_close → JS callbacks. RareData.deinit() runs
         // after teardownJSCVM and only deinit()s (asserts empty in debug).
         if (vm.rare_data) |rare| rare.closeAllSocketGroups(vm);
+        // Auto-revoke blob: URLs created by this worker. The registry is
+        // process-global, so without this the duped Blob entries would outlive
+        // the worker. Runs before WebWorker__dispatchExit so the parent's close
+        // event observes the URLs as already gone.
+        bun.webcore.ObjectURLRegistry.singleton().revokeEntriesForContext(this.execution_context_id);
         exit_code = vm.exit_handler.exit_code;
         globalObject = vm.global;
     }

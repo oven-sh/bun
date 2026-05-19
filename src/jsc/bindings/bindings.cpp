@@ -725,13 +725,40 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     JSCell* c2 = v2.asCell();
     ASSERT(c1);
     ASSERT(c2);
+    JSObject* o1 = v1.getObject();
+    JSObject* o2 = v2.getObject();
+
+    // Node's assert.deepStrictEqual compares prototypes with === (see
+    // `util.isDeepStrictEqual` docs). This must apply to every object type,
+    // including arrays, Map, Set, Error, Date, RegExp, ArrayBuffer and their
+    // subclasses — not just plain objects — so the check lives here, before
+    // `specialObjectsDequal` and the array branch dispatch on type.
+    //
+    // Gated on `!enableAsymmetricMatchers` so it only affects the
+    // `Bun__deepEquals<true, false>` instantiation — i.e. `node:assert`,
+    // `node:util.isDeepStrictEqual`, and the public `Bun.deepEquals(a, b, true)`
+    // API. bun:test's `toStrictEqual` (which runs with
+    // `enableAsymmetricMatchers=true`) keeps its existing
+    // `calculatedClassName`-based type guard to avoid breaking cross-realm
+    // objects and tests that compare Buffer against Uint8Array by content.
+    // See issue #29030.
+    if constexpr (isStrict && !enableAsymmetricMatchers) {
+        if (o1 && o2) {
+            JSValue proto1 = o1->getPrototype(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+            JSValue proto2 = o2->getPrototype(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (proto1 != proto2) {
+                return false;
+            }
+        }
+    }
+
     std::optional<bool> isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers>(globalObject, gcBuffer, stack, scope, c1, c2);
     RETURN_IF_EXCEPTION(scope, false);
     if (isSpecialEqual.has_value()) return WTF::move(*isSpecialEqual);
     isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers>(globalObject, gcBuffer, stack, scope, c2, c1);
     if (isSpecialEqual.has_value()) return WTF::move(*isSpecialEqual);
-    JSObject* o1 = v1.getObject();
-    JSObject* o2 = v2.getObject();
 
     bool v1Array = isArray(globalObject, v1);
     RETURN_IF_EXCEPTION(scope, false);

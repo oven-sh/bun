@@ -446,4 +446,13 @@ describe("useFakeTimers with options", () => {
     expect(performance.now()).toBe(500);
     expect(Date.now()).toBe(targetTime + 500);
   });
+
+  test("useFakeTimers accepts legacy string argument for Jest compat", () => {
+    // Jest 26 API: jest.useFakeTimers('modern') or jest.useFakeTimers('legacy')
+    // Both should be accepted without throwing.
+    expect(() => vi.useFakeTimers("modern")).not.toThrow();
+    vi.useRealTimers();
+    expect(() => vi.useFakeTimers("legacy")).not.toThrow();
+    vi.useRealTimers();
+  });
 });

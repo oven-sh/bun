@@ -763,8 +763,7 @@ mod tests {
         ($T:ty) => {{
             #[allow(unused_imports)]
             use negative_probe::{NotSendProbeA as _, NotSendProbeB as _};
-            let probe: negative_probe::Invariant<$T> =
-                negative_probe::Invariant::new();
+            let probe: negative_probe::Invariant<$T> = negative_probe::Invariant::new();
             probe.check_send();
         }};
     }
@@ -772,8 +771,7 @@ mod tests {
         ($T:ty) => {{
             #[allow(unused_imports)]
             use negative_probe::{NotSyncProbeA as _, NotSyncProbeB as _};
-            let probe: negative_probe::Invariant<$T> =
-                negative_probe::Invariant::new();
+            let probe: negative_probe::Invariant<$T> = negative_probe::Invariant::new();
             probe.check_sync();
         }};
     }

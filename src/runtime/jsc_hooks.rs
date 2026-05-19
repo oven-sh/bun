@@ -1104,8 +1104,7 @@ fn print_exception(
 ) {
     // Spec VirtualMachine.zig:2164-2188 — the print half of `runErrorHandler`
     // (the `had_errors` save/restore lives in the low-tier caller). Route via
-    // the buffered error writer; `defer writer.flush()` becomes a tail call —
-    // no early returns below.
+    // the buffered error writer; flush at the tail (no early returns below).
     let writer = bun_core::Output::error_writer_buffered();
 
     let global = vm_ref.global();
@@ -1129,7 +1128,6 @@ fn print_exception(
             colors,
             true,
         );
-        // `defer formatter.deinit()` → Drop.
     }
 
     let _ = writer.flush();
@@ -2085,8 +2083,7 @@ fn transpile_source_code_inner(
             // and printer arena allocations also use.
             bun_alloc::ast_alloc::set_thread_heap(arena.heap_ptr());
             let mut give_back_arena = true;
-            // PORT NOTE: reshaped for borrowck — Zig's `defer` block becomes a
-            // scopeguard so `?`-early-returns still run it.
+            // PORT NOTE: reshaped for borrowck — scopeguard so `?`-early-returns still run it.
             let mut arena_guard = scopeguard::guard(
                 (jsc_vm, arena, give_back_arena, args.flags),
                 |(jsc_vm, mut arena, give_back, flags)| {
@@ -2101,7 +2098,7 @@ fn transpile_source_code_inner(
                     let slot = unsafe { &mut (*jsc_vm).module_loader.transpile_source_code_arena };
                     if !give_back {
                         // Spec :146-165 — when `give_back_arena == false` the
-                        // Zig `defer` is a no-op because ownership was already
+                        // cleanup is a no-op because ownership was already
                         // transferred (to the AsyncModule queue, or held past
                         // `processFetchLog` so log spans pointing into it stay
                         // valid). The ParseError path that flips
@@ -2302,9 +2299,8 @@ fn transpile_source_code_inner(
             };
 
             let mut input_file_fd = bun_sys::Fd::INVALID;
-            // Spec :251-256 `defer { if (should_close_input_file_fd and
-            // input_file_fd != .invalid) input_file_fd.close(); }` — this
-            // `defer` is unconditional in Zig (independent of `give_back_arena`)
+            // Spec :251-256 — close `input_file_fd` if `should_close_input_file_fd`
+            // and the fd is valid. Unconditional (independent of `give_back_arena`)
             // and must fire on every exit path: parse failure, JSON early
             // return, `disable_transpilying`, already_bundled, empty `.cjs`,
             // cache-hit, AsyncModule, the wasm recurse, and the print error.
@@ -4002,7 +3998,6 @@ unsafe fn transpile_file(
     // Spec :895 — `var log = logger.Log.init(jsc_vm.transpiler.allocator)`.
     // PORT NOTE: per §Allocators the explicit allocator threads are dropped.
     let mut log = bun_ast::Log::init();
-    // PORT NOTE: reshaped for borrowck — Zig `defer log.deinit()` becomes a
     // scopeguard so every `return null` path still frees the msg vec.
     let mut log = scopeguard::guard(log, |mut l| {
         l.msgs.clear();
@@ -4047,7 +4042,6 @@ unsafe fn transpile_file(
             return ptr::null_mut();
         }
     };
-    // Spec :914 — `defer if (blob_to_deinit) |*blob| blob.deinit()`.
     // PORT NOTE: reshaped for borrowck — capture the `is_some()` flag *before*
     // moving the option into the scopeguard so the `transpile_async` predicate
     // (spec :980) can still read it without aliasing the guard's `&mut`.
@@ -4248,7 +4242,6 @@ unsafe fn transpile_file(
         }
     };
 
-    // Spec :1083 — `defer jsc_vm.module_loader.resetArena(jsc_vm)`.
     // `jsc_vm` is the live per-thread VM (BackRef invariant).
     let _reset_arena = ArenaResetGuard::new(jsc_vm);
 
@@ -4434,7 +4427,6 @@ unsafe fn transpile_virtual_module(
         })
     };
 
-    // Spec :1272-1273 — `defer log.deinit(); defer module_loader.resetArena()`.
     // `jsc_vm` is the live per-thread VM (BackRef invariant).
     let _reset_arena = ArenaResetGuard::new(jsc_vm);
 

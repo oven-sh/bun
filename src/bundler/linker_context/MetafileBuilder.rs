@@ -218,7 +218,6 @@ pub fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> Result<Box<[u8]>
 
     // Iterate through all files in chunks to collect unique source indices
     let mut seen_sources = DynamicBitSet::init_empty(sources.len())?;
-    // defer seen_sources.deinit() — handled by Drop
 
     // Mark all files that appear in chunks
     for chunk in chunks.iter() {
@@ -743,7 +742,6 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
         Ok(v) => v,
         Err(_) => return Err(bun_core::err!(InvalidJSON)),
     };
-    // defer parsed.deinit() — handled by Drop
 
     let JsonValue::Object(root_obj) = &root else {
         return Err(bun_core::err!(InvalidJSON));
@@ -794,7 +792,6 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
     // Build a map of module path -> bytesInOutput (bytes contributed to output)
     // This aggregates from all outputs since a module may appear in multiple chunks
     let mut bytes_in_output: StringHashMap<u64> = StringHashMap::default();
-    // defer bytes_in_output.deinit() — handled by Drop
 
     // First pass through outputs to collect bytesInOutput for each module
     for (_, out_value) in outputs_obj.iter() {
@@ -828,7 +825,6 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
     let mut input_files: Vec<InputFileInfo> = Vec::new();
 
     let mut imported_by: StringHashMap<Vec<&[u8]>> = StringHashMap::default();
-    // defer { ... imported_by.deinit() } — handled by Drop (Vec values drop automatically)
 
     // Second pass: collect all input file info and build reverse dependency map
     for (path, input) in inputs_obj.iter() {

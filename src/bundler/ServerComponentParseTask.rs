@@ -81,7 +81,6 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
         .ctx
         .expect("ServerComponentParseTask.ctx set at enqueue");
     let worker = Worker::get(ctx.get());
-    // PORT NOTE: `defer worker.unget()` — handled at end of fn (no early returns).
     let mut log = Log::new();
 
     // SAFETY: `worker.arena` is set in `Worker::create` to point at the
@@ -137,7 +136,6 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
             );
         }
     }
-    // Zig: `defer worker.unget()` — runs at function exit, i.e. after enqueue.
     worker.unget();
 }
 

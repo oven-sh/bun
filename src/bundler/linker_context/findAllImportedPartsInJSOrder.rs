@@ -114,11 +114,8 @@ pub fn find_imported_parts_in_js_order(
         parts_in_chunk_order.extend_from_slice(&visitor.parts_prefix);
         parts_in_chunk_order.extend_from_slice(&visitor.part_ranges);
 
-        // Zig `defer { part_ranges_shared.* = visitor.part_ranges; ... visitor.visited.deinit(); }`
-        // No fallible ops remain past this point in Rust, so plain move-back is equivalent.
         *part_ranges_shared = visitor.part_ranges;
         *parts_prefix_shared = visitor.parts_prefix;
-        // visitor.visited dropped implicitly
 
         (visitor.files, parts_in_chunk_order)
     };

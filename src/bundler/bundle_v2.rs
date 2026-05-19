@@ -729,9 +729,6 @@ pub mod bv2_impl {
                     if let Some(index) = self.files.get_index(&probe) {
                         return Ok(OpaqueFileId::init(index as u32));
                     }
-                    // Zig: `gop.key_ptr.* = InputFile.init(try map.arena.dupe(u8, abs_path), side);`
-                    // The Zig `errdefer map.files.swapRemoveAt(gop.index)` only guards the
-                    // `arena.dupe`, which is infallible in Rust, so no rollback needed.
                     let owned: Box<[u8]> = Box::<[u8]>::from(abs_path);
                     let key = InputFile::init(&owned, side);
                     self.owned_paths.push(owned);
@@ -1933,9 +1930,9 @@ pub mod bv2_impl {
     }
 
     /// RAII guard returned by [`BundleV2::decrement_scan_counter_on_drop`].
-    /// Decrements the bundle's pending-scan counter when dropped, mirroring Zig's
-    /// `defer this.decrementScanCounter()` without holding a unique borrow across
-    /// the body. Stores a raw pointer; caller guarantees the `BundleV2` outlives it.
+    /// Decrements the bundle's pending-scan counter when dropped without holding
+    /// a unique borrow across the body. Stores a raw pointer; caller guarantees
+    /// the `BundleV2` outlives it.
     pub struct ScanCounterGuard {
         bv2: *mut BundleV2<'static>,
     }
@@ -1953,7 +1950,6 @@ pub mod bv2_impl {
     impl<'a> BundleV2<'a> {
         #[cold]
         pub fn find_reachable_files(&mut self) -> Result<Box<[Index]>, Error> {
-            // RAII guard — `Ctx` ends the span on Drop (Zig: `defer trace.end()`).
             let _trace = crate::ungate_support::perf::trace("Bundler.findReachableFiles");
 
             // Create a quick index for server-component boundaries.
@@ -2998,9 +2994,9 @@ pub mod bv2_impl {
             }
         }
 
-        /// RAII form of Zig's `defer this.decrementScanCounter()`. Captures `self` as
-        /// a raw pointer so the returned guard does not hold a `&mut` borrow for the
-        /// rest of the scope; the caller must ensure `self` outlives the guard.
+        /// RAII guard that decrements the scan counter on drop. Captures `self` as
+        /// a raw pointer so the returned guard does not hold a `&mut` borrow for
+        /// the rest of the scope; the caller must ensure `self` outlives the guard.
         pub fn decrement_scan_counter_on_drop(&mut self) -> ScanCounterGuard {
             ScanCounterGuard {
                 bv2: std::ptr::from_mut::<BundleV2<'a>>(self).cast::<BundleV2<'static>>(),
@@ -4585,8 +4581,8 @@ pub mod bv2_impl {
     impl<'a> BundleV2<'a> {
         #[cold]
         pub fn on_resolve(resolve: &mut jsc_api::JSBundler::Resolve, this: &mut BundleV2) {
-            // Zig: `defer this.decrementScanCounter()`. RAII guard captures `this`
-            // as a raw pointer so it does not hold a unique borrow across the body.
+            // RAII guard captures `this` as a raw pointer so it does not hold a
+            // unique borrow across the body.
             let _dec_guard = this.decrement_scan_counter_on_drop();
             // `Resolve` is arena-allocated (no Drop); free its owned heap fields on every exit path.
             struct ResolveDeinitGuard(*mut jsc_api::JSBundler::Resolve);
@@ -4899,12 +4895,10 @@ pub mod bv2_impl {
                 drop(on_parse_finalizers);
             }
 
-            // Zig spec (bundle_v2.zig:2229): `defer { this.graph.{ast,input_files,
-            // entry_points,entry_point_original_names}.deinit(this.allocator()) }`.
             // In Zig those `MultiArrayList`s only free their slab — the per-element
             // payloads (file contents, quoted source-map JSON, …) live in
             // `this.graph.heap` (a mimalloc thread-local heap), so the caller's
-            // `defer heap.deinit()` bulk-frees them. The Rust port reads file
+            // heap teardown bulk-frees them. The Rust port reads file
             // contents and JSON-quoted source contents into the *global* heap
             // (`Vec<u8>`/`Box<[u8]>` — see ParseTask.rs `read_file_with_allocator`
             // TODO and `compute_quoted_source_contents`), and `MultiArrayList::drop`
@@ -7035,13 +7029,11 @@ pub mod bv2_impl {
                     .push(core::mem::take(&mut parse_result.external));
             }
 
-            // defer bun.default_allocator.destroy(parse_result) — caller owns Box and drops at end
             // TODO(port): parse_result is heap-allocated by worker; reconstruct heap::take at scope exit
 
             let mut diff: i32 = -1;
-            // PORT NOTE: Zig used `defer { graph.pending_items += diff; … }` —
-            // hoisted to tail position (see end of fn) so the closure doesn't
-            // double-borrow `graph`/`this`.
+            // PORT NOTE: pending-items update hoisted to tail position (see end of fn)
+            // so the closure doesn't double-borrow `graph`/`this`.
 
             let mut resolve_queue = ResolveQueue::default();
             let mut process_log = true;
@@ -7443,7 +7435,6 @@ pub mod bv2_impl {
                 }
             }
 
-            // `defer { graph.pending_items += diff; if diff < 0 on_after_decrement }`
             bun_core::scoped_log!(
                 scan_counter,
                 "in parse task .pending_items += {} = {}\n",
@@ -7585,7 +7576,6 @@ pub mod bv2_impl {
             chunks: &mut [Chunk],
             imports_from_other_chunks: &mut chunk::ImportsFromOtherChunks,
         ) -> Result<(), Error> {
-            // PORT NOTE: reshaped for borrowck — Zig used `defer list.* = result;`.
             list.clear();
             list.reserve(imports_from_other_chunks.count());
 

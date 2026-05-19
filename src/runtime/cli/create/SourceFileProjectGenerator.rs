@@ -147,7 +147,6 @@ fn create_file(filename: &[u8], contents: &[u8]) -> bun_sys::Result<bool> {
         bun_sys::Result::Ok(fd) => fd,
         bun_sys::Result::Err(err) => return bun_sys::Result::Err(err),
     };
-    // TODO(port): RAII fd guard — `defer fd.close()` semantics
     let close_guard = scopeguard::guard(fd, |fd| fd.close());
 
     // Write contents

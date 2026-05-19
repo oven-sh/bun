@@ -3158,8 +3158,8 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
 
     pub fn get(&mut self, denormalized_key: &[u8]) -> Option<&mut ValueType> {
         let _key = Self::key_hash(denormalized_key);
-        // Hold the lock across `at_index` (Zig: `defer self.mutex.unlock()` at fn scope) —
-        // a concurrent `put()` could otherwise mutate `overflow_list`/`backing_buf` while
+        // Hold the lock across `at_index` — a concurrent `put()` could otherwise
+        // mutate `overflow_list`/`backing_buf` while
         // we dereference `index`. `MutexGuard` holds a raw pointer (see [`Mutex`] docs),
         // so it does not conflict with the `&mut self` borrow in `at_index`.
         let _guard = self.mutex.lock();

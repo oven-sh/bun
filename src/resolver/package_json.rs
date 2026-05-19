@@ -2679,10 +2679,9 @@ impl<'a> ESModule<'a> {
                     ));
                     log.increase_indent();
                 }
-                // PORT NOTE: Zig had `defer log.decrease_indent()` capturing the unwrapped
-                // `*DebugLogs`. Rust scopeguard cannot hold the &mut across the recursive
-                // `&mut self` calls below; manual decrease at each return below.
-                // TODO(port): errdefer — verify all return paths decrease_indent.
+                // PORT NOTE: scopeguard cannot hold the &mut across the recursive
+                // `&mut self` calls below; manual `decrease_indent` at each return.
+                // TODO(port): verify all return paths decrease_indent.
                 macro_rules! dedent {
                     () => {
                         if let Some(log) = self.debug_logs.as_deref_mut() {

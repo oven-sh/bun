@@ -398,9 +398,9 @@ impl<'a> Parser<'a> {
         scan_pass: &'a mut ScanPassResult,
     ) -> Result<(), Error> {
         type Pi<'a, const TS: bool> = P<'a, TS, true>;
-        // Zig moves lexer/options by value into `P` (Parser.zig) and only
-        // `defer p.lexer.deinit()` cleans up — Zig has no implicit destructor
-        // on `Parser.lexer`. In Rust, `Lexer` owns `Vec`s and `Options` owns
+        // Zig moves lexer/options by value into `P` (Parser.zig) and cleans up
+        // explicitly — Zig has no implicit destructor on `Parser.lexer`.
+        // In Rust, `Lexer` owns `Vec`s and `Options` owns
         // `jsx: Pragma` boxes, so a bitwise `ptr::read` would double-free
         // when `self` later drops. Move them out, leaving inert placeholders.
         //
@@ -546,10 +546,10 @@ impl<'a> Parser<'a> {
         symbols: js_ast::symbol::List<'a>,
     ) -> Result<crate::Result<'a>, Error> {
         // TODO(port): narrow error set
-        // Zig moves lexer/options by value into `P` (Parser.zig) and only
-        // `defer p.lexer.deinit()` cleans up — Zig has no implicit destructor
-        // on `Parser.lexer`. In Rust we move them out and leave inert
-        // placeholders so `self` may drop without double-free.
+        // Zig moves lexer/options by value into `P` (Parser.zig) and cleans up
+        // explicitly — Zig has no implicit destructor on `Parser.lexer`.
+        // In Rust we move them out and leave inert placeholders so `self` may
+        // drop without double-free.
         //
         // The placeholder lexer gets its own arena `Log` so it does not alias
         // `self.log` (see `_scan_imports`).
@@ -738,10 +738,10 @@ impl<'a> Parser<'a> {
         //   let _restore = bun_crash_handler::scoped_action(Action::Parse(self.source.path.text));
         // (`ActionGuard` restores the previous action on Drop — no scopeguard.)
 
-        // Zig moves lexer/options by value into `P` (Parser.zig:339) and only
-        // `defer p.lexer.deinit()` cleans up — Zig has no implicit destructor
-        // on `Parser.lexer`. `parse()` consumes `self` by value, so we
-        // destructure here and hand the owned `lexer`/`options` straight to
+        // Zig moves lexer/options by value into `P` (Parser.zig:339) and cleans
+        // up explicitly — Zig has no implicit destructor on `Parser.lexer`.
+        // `parse()` consumes `self` by value, so we destructure here and hand
+        // the owned `lexer`/`options` straight to
         // `P::init` — no `ptr::read`/`mem::replace` placeholder dance, no
         // double-free hazard.
         let Parser {
@@ -780,14 +780,6 @@ impl<'a> Parser<'a> {
         p.binary_expression_simplify_stack = BumpVec::with_capacity_in(47, p.arena);
 
         // (Zig asserted the stack-fallback arena owns the buffer; not applicable here.)
-
-        // defer {
-        //     if (p.allocated_names_pool) |pool| {
-        //         pool.data = p.allocated_names;
-        //         pool.release();
-        //         p.allocated_names_pool = null;
-        //     }
-        // }
 
         // Consume a leading hashbang comment
         let mut hashbang: &[u8] = b"";

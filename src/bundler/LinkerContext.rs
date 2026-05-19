@@ -1683,7 +1683,7 @@ pub struct PendingPartRange<'a> {
 /// callbacks: recover the intrusive [`PendingPartRange`] from `task`, extract
 /// the raw `*mut LinkerContext` / `*mut Chunk` from its [`GenerateChunkCtx`],
 /// and acquire the per-thread [`Worker`](crate::thread_pool::Worker) (returned
-/// as a scopeguard that calls `unget()` on drop — Zig: `defer worker.unget()`).
+/// as a scopeguard that calls `unget()` on drop).
 ///
 /// `GenerateChunkCtx.{c, chunk}` are raw `*mut T` (Copy), so reading them
 /// through `&GenerateChunkCtx` preserves the mutable provenance they were
@@ -2267,10 +2267,8 @@ impl<'a> LinkerContext<'a> {
         };
 
         writer.buffer.reset();
-        // PORT NOTE: Zig moved `*writer` into the printer by value and wrote it
-        // back via `defer writer.* = printer.ctx;`. `BufferWriter` isn't
-        // `Clone`/`Default` in Rust; move it through `mem::replace` with a
-        // freshly-initialized writer instead.
+        // PORT NOTE: `BufferWriter` isn't `Clone`/`Default` in Rust; move it
+        // through `mem::replace` with a freshly-initialized writer instead.
         let mut printer = js_printer::BufferPrinter::init(core::mem::replace(
             writer,
             js_printer::BufferWriter::init(),
@@ -2326,7 +2324,6 @@ impl<'a> LinkerContext<'a> {
             )
         };
 
-        // `defer writer.* = printer.ctx;`
         *writer = printer.ctx;
         result
     }
@@ -3528,8 +3525,7 @@ impl<'a> LinkerContext<'a> {
         re_exports: &mut Vec<Dependency>,
     ) -> MatchImport {
         let cycle_detector_top = self.cycle_detector.len();
-        // PORT NOTE: Zig's `defer cycle_detector.shrinkRetainingCapacity` is
-        // lowered to an explicit `truncate` after the `'loop_` below — the only
+        // PORT NOTE: explicit `truncate` after the `'loop_` below — the only
         // exits are the three `return`s that follow it, so a single post-loop
         // truncate covers every path. A scopeguard holding a raw `*mut` into
         // `self.cycle_detector` would be invalidated by the `&mut self`
@@ -4149,9 +4145,7 @@ impl<'a> LinkerContext<'a> {
             return Ok(crate::chunk::IntermediateOutput::Joiner(core::mem::take(j)));
         }
 
-        // PORT NOTE: Zig had `errdefer j.deinit()` around the initCapacity — Drop handles it.
         let mut pieces: Vec<OutputPiece> = Vec::with_capacity(count as usize);
-        // errdefer pieces.deinit() — Drop handles it
         // PORT NOTE: Zig used `j.done(alloc)` (worker arena), so the joined
         // buffer outlived this function. The Rust `StringJoiner::done()`
         // returns a `Box<[u8]>`; we must keep it alive alongside the pieces

@@ -2139,7 +2139,6 @@ mod rule_parsers {
             input: &mut Parser,
         ) -> CssResult<()> {
             let loc = this.get_loc(start);
-            // PORT NOTE: Zig `defer this.composes_refs.clearRetainingCapacity();`.
             // `composes_refs` is `&mut SmallList<..>` borrowed from the parent
             // `TopLevelRuleParser`, so dropping `NestedRuleParser` on an error path
             // does NOT clear the underlying storage. A safe `scopeguard::guard`

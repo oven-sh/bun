@@ -1278,7 +1278,6 @@ impl StrictModeKind {
 }
 
 pub fn printmem(args: fmt::Arguments<'_>) {
-    // `defer Output.flush()` → executes after print; emulate ordering explicitly.
     Output::init_test();
     Output::print(args);
     Output::flush();

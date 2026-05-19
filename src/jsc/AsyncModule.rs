@@ -161,16 +161,15 @@ impl AsyncModule {
         jsc::mark_binding();
         let mut specifier = specifier_;
         let mut referrer = referrer_;
-        // PORT NOTE: Zig `defer { specifier.deref(); referrer.deref(); scope.deinit(); }` —
         // BunString is `Copy` in the Rust port (no Drop), so deref the held
         // refcounts explicitly via scopeguard. The `TopExceptionScope` is
         // omitted: `from_js_host_call_generic` already checks the VM for a
         // pending exception after the FFI call (host_fn.rs).
         //
         // The guard captures raw pointers to the locals (not by-value copies)
-        // so the deref observes the *post-FFI* value of the variable, matching
-        // Zig `defer` semantics — `Bun__onFulfillAsyncModule` receives
-        // `&mut specifier`/`&mut referrer` and is free to overwrite them.
+        // so the deref observes the *post-FFI* value of the variable —
+        // `Bun__onFulfillAsyncModule` receives `&mut specifier`/`&mut referrer`
+        // and is free to overwrite them.
         // Safety: `specifier`/`referrer` are declared above this guard, so
         // they outlive it (locals drop in reverse order); the `&mut` reborrow
         // passed to FFI below is dead by the time the guard runs.
@@ -183,9 +182,7 @@ impl AsyncModule {
 
         let mut errorable: ErrorableResolvedSource;
         if let Some(e) = err {
-            // PORT NOTE: inner Zig `defer { if (needs_deref) { needs_deref = false;
-            // source_code.deref(); } }` — `OwnedString` derefs on Drop at the end
-            // of this `if` arm; `None` is the no-op path.
+            // `OwnedString` derefs on Drop at the end of this `if` arm; `None` is the no-op path.
             let _source_code_guard = if resolved_source.source_code_needs_deref {
                 resolved_source.source_code_needs_deref = false;
                 Some(OwnedString::new(resolved_source.source_code))
@@ -1310,11 +1307,9 @@ impl AsyncModule {
             bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init()),
         );
         printer.ctx.reset();
-        // Zig: `defer source_code_printer.?.* = printer;` — fires at fn exit,
-        // *after* the `printer.ctx.get_written()` reads below. Declare the
-        // guard immediately after `printer` so it drops last (locals drop in
-        // reverse declaration order) and the buffer is still populated when
-        // read.
+        // Declare the guard immediately after `printer` so it drops last (locals
+        // drop in reverse declaration order) — the `printer.ctx.get_written()`
+        // reads below need the buffer still populated when this fires.
         let _writeback =
             scopeguard::guard((printer_ptr.as_ptr(), &raw mut printer), |(dst, src)| {
                 // SAFETY: `dst` is the thread-local's leaked Box, `src` is the

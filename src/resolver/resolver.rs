@@ -654,8 +654,7 @@ pub struct Resolver<'a> {
 }
 
 /// RAII guard returned by [`Resolver::scoped_log`]. Restores the previous
-/// `Resolver::log` pointer on drop — port of the Zig
-/// `defer resolver.log = orig_log` save/restore pattern.
+/// `Resolver::log` pointer on drop.
 pub struct ResolverLogScope {
     slot: *mut NonNull<bun_ast::Log>,
     prev: NonNull<bun_ast::Log>,
@@ -1181,8 +1180,7 @@ impl<'a> Resolver<'a> {
         }
 
         let original_order = self.extension_order;
-        // PORT NOTE: Zig `defer r.extension_order = original_order` — reshaped for
-        // borrowck so the restore happens explicitly at every return point below.
+        // PORT NOTE: reshaped for borrowck — restore happens explicitly at every return below.
         self.extension_order = match kind {
             ast::ImportKind::Url | ast::ImportKind::AtConditional | ast::ImportKind::At => {
                 options::ExtOrder::Css
@@ -1198,8 +1196,8 @@ impl<'a> Resolver<'a> {
             self.timer.reset();
         }
 
-        // Spec resolver.zig:703-707: `defer { if (tracing) r.elapsed += r.timer.read() }`
-        // — fires on EVERY return path. Capture raw field ptrs (Copy) so the closure
+        // Spec resolver.zig:703-707 — fires on EVERY return path.
+        // Capture raw field ptrs (Copy) so the closure
         // does not hold a `&mut self` borrow across the function body.
         let elapsed_ptr: *mut u64 = core::ptr::addr_of_mut!(self.elapsed);
         let timer_ptr: *const Timer = core::ptr::addr_of!(self.timer);
@@ -1463,8 +1461,6 @@ impl<'a> Resolver<'a> {
         };
 
         // r.mutex.lock();
-        // defer r.mutex.unlock();
-        // errdefer (r.flushDebugLogs(.fail) catch {}) — handled at each error return below
 
         // A path with a null byte cannot exist on the filesystem. Continuing
         // anyways would cause assertion failures.
@@ -2613,8 +2609,7 @@ impl<'a> Resolver<'a> {
             ));
             debug.increase_indent();
         }
-        // PORT NOTE: Zig `defer { debug.decreaseIndent() }` — reshaped for borrowck;
-        // `decrease_indent()` is called explicitly at every return point below.
+        // PORT NOTE: reshaped for borrowck — `decrease_indent()` called explicitly at every return below.
 
         // First, check path overrides from the nearest enclosing TypeScript "tsconfig.json" file
 
@@ -4269,8 +4264,8 @@ impl<'a> Resolver<'a> {
         // When this function halts, any item not processed means it's not found.
         // PORT NOTE: capture only what the cleanup needs by-value (store_fd) / by-Cell
         // (open_dir_count) so the guard doesn't pin `&mut self` across the loop
-        // body. `need_to_close_files()` is evaluated AT DROP TIME (matching
-        // Zig's `defer`), not snapshotted up-front — the loop body calls
+        // body. `need_to_close_files()` is evaluated AT DROP TIME, not
+        // snapshotted up-front — the loop body calls
         // `Fs.FileSystem.setMaxFd()` which can flip `needToCloseFiles()`
         // mid-walk. Reach the RealFS via the `&'static` singleton accessor
         // instead of capturing a raw `*mut RealFS` (the read is `&self`-only).
@@ -4313,7 +4308,6 @@ impl<'a> Resolver<'a> {
             let (qt_unsafe_path, qt_safe_path) = (queue_top.unsafe_path, queue_top.safe_path);
             let queue_top_unsafe_path: &[u8] = qt_unsafe_path.slice();
             let queue_top_safe_path: &[u8] = qt_safe_path.slice();
-            // defer top_parent = queue_top.result — done at end of loop body
             queue_slice_len -= 1;
 
             let open_dir: FD = if queue_top.fd.is_valid() {
@@ -4358,8 +4352,8 @@ impl<'a> Resolver<'a> {
                     };
 
                     // bun.fs.debug("open({s})", .{sentinel}) — TODO(port): scoped log
-                    // Restore the byte we NUL-terminated above (Zig: `defer path[len] = prev_char`).
-                    // No early-return path exists between the write and here, so a guard is unnecessary.
+                    // Restore the byte we NUL-terminated above. No early-return path
+                    // exists between the write and here, so a guard is unnecessary.
                     path[nul_at] = prev_char;
 
                     match open_req {
@@ -4817,7 +4811,7 @@ impl<'a> Resolver<'a> {
                 bstr::BStr::new(package_json.source.path.text)
             ));
             debug.increase_indent();
-            // defer debug.decreaseIndent() — TODO(port): missing matching decrease in Zig too
+            // TODO(port): missing matching decrease_indent (in Zig too)
         }
         let imports_map = package_json.imports.as_ref().unwrap();
 
@@ -5017,7 +5011,6 @@ impl<'a> Resolver<'a> {
             debug.increase_indent();
         }
 
-        // defer { debug.decreaseIndent() } — handled at returns
         macro_rules! dec_ret {
             ($e:expr) => {{
                 if let Some(d) = self.debug_logs.as_mut() {
@@ -5364,7 +5357,6 @@ impl<'a> Resolver<'a> {
             ));
             debug.increase_indent();
         }
-        // defer if (r.debug_logs) |*debug| debug.decreaseIndent();
         macro_rules! dec_ret {
             ($e:expr) => {{
                 if let Some(d) = self.debug_logs.as_mut() {

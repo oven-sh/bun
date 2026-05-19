@@ -809,10 +809,8 @@ pub mod parse_worker {
             Loader::Toml => {
                 let _trace = perf::trace("Bundler.ParseTOML");
                 let mut temp_log = Log::init();
-                // PORT NOTE: Zig `defer { temp_log.cloneToWithRecycled(log, true);
-                // temp_log.msgs.clearAndFree() }` runs on the error path too.
-                // scopeguard would alias `log`/`temp_log` (both borrowed mutably
-                // below); reshape as a closure so every `?` exits through one
+                // PORT NOTE: scopeguard would alias `log`/`temp_log` (both borrowed
+                // mutably below); reshape as a closure so every `?` exits through one
                 // post-amble that flushes `temp_log`.
                 let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
                     let root: Expr =
@@ -1203,8 +1201,8 @@ pub mod parse_worker {
                 let mut import_records = Vec::<ImportRecord>::default();
                 let source_code = &source.contents;
                 let mut temp_log = Log::init();
-                // PORT NOTE: Zig `defer { temp_log.appendToMaybeRecycled(log, source) }` —
-                // folded into linear control flow (scopeguard would alias `log`/`temp_log`).
+                // PORT NOTE: temp_log flush folded into linear control flow
+                // (scopeguard would alias `log`/`temp_log`).
 
                 const CSS_MODULE_SUFFIX: &[u8] = b".module.css";
                 let enable_css_modules = source.path.pretty.len() > CSS_MODULE_SUFFIX.len()
@@ -1271,9 +1269,7 @@ pub mod parse_worker {
                 // `js_ast.Symbol`; convert field-by-field so CSS-module local refs
                 // index a populated symbol table (.zig:613).
                 let symbols = css_symbols_to_parser_symbols(extra.symbols, bump);
-                // PORT NOTE: Zig `defer temp_log.appendToMaybeRecycled(log, source)`
-                // (.zig:564-566) flushes on EVERY exit including this `try`; mirror
-                // by matching explicitly so accumulated CSS-module diagnostics are
+                // Match explicitly so accumulated CSS-module diagnostics are
                 // not dropped on the error path.
                 let lazy = js_parser::new_lazy_export_ast_impl(
                     bump,
@@ -2696,8 +2692,8 @@ pub mod parse_worker {
         // SAFETY: ctx backref valid for the bundle pass (outlives this task).
         let ctx = unsafe { this.ctx() };
         let worker: &mut crate::Worker = crate::Worker::get(ctx);
-        // PORT NOTE: `defer worker.unget()` — handled at function exit (scopeguard
-        // would alias the `&mut worker` borrows below).
+        // PORT NOTE: `unget()` at function exit (scopeguard would alias the
+        // `&mut worker` borrows below).
         scoped_log!(
             ParseTask,
             "ParseTask(0x{:x}, {}) callback",
@@ -2844,7 +2840,6 @@ pub mod parse_worker {
                 );
             }
         }
-        // Zig: `defer worker.unget()` — runs at function exit, i.e. after enqueue.
         worker.unget();
     }
 
@@ -2864,7 +2859,6 @@ pub mod parse_worker {
         BundleV2::on_parse_task_complete(unsafe { &mut *result }, unsafe { &mut *ctx });
         // SAFETY: `result` is uniquely owned (callback contract).
         drop_result_owned_fields(unsafe { &mut *result });
-        // Zig: `defer bun.default_allocator.destroy(parse_result)` (bundle_v2.zig).
         // Zig's `destroy` is *struct-only* (no field deinit). 954e9ccb mapped this
         // to `drop(heap::take(result))`, but that runs full Drop glue:
         // `on_parse_task_complete` SWAPS `result.value.Success.source` with the

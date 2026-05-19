@@ -196,7 +196,6 @@ impl Config {
                 let define_obj_ref = unsafe { &*define_obj };
                 let mut define_iter =
                     JSPropertyIterator::init(global, define_obj_ref, PROP_ITER_OPTS)?;
-                // `defer define_iter.deinit()` → Drop
 
                 // `define_iter.i` is the property position, not a dense index of yielded
                 // entries. With `skip_empty_name = true` (or a skipped property getter),
@@ -562,19 +561,15 @@ impl Config {
                 // SAFETY: `replace_obj` is non-null (just returned by get_object()).
                 let replace_obj_ref = unsafe { &*replace_obj };
                 let mut iter = JSPropertyIterator::init(global, replace_obj_ref, PROP_ITER_OPTS)?;
-                // defer iter.deinit() → Drop
 
                 if iter.len > 0 {
                     bun_core::handle_oom(replacements.ensure_unused_capacity(iter.len));
 
                     // We cannot set the exception before `?` because it could be
                     // a double free with the errdefer.
-                    // TODO(port): the Zig `defer if (globalThis.hasException()) { free keys; clear }`
-                    // is a conditional cleanup at scope exit. Model with scopeguard
-                    // (captures &mut replacements + &global; borrowck conflict with the loop
-                    // below — needs restructuring). Keys are Box<[u8]> in Rust, so dropping
-                    // `replacements` on `?` already frees them; only the explicit
-                    // `clear_and_free` on the has_exception path is unported.
+                    // TODO(port): conditional `clear_and_free` on the has-exception
+                    // path is unported (keys are Box<[u8]>, so dropping `replacements`
+                    // on `?` already frees them).
 
                     while let Some(key_) = iter.next()? {
                         let value = iter.value;
@@ -769,7 +764,6 @@ impl<'a> TransformTask<'a> {
 
         // PERF(port): was MimallocArena bulk-free — profile if hot.
         let arena = Arena::new();
-        // defer arena.deinit() → Drop
 
         // `self.transpiler` is a `ManuallyDrop` bytewise copy of the
         // `JSTranspiler`'s long-lived transpiler (`ptr::read` in `create()`),
@@ -884,9 +878,7 @@ impl<'a> TransformTask<'a> {
     }
 
     pub fn then(&mut self, promise: &mut JSPromise) -> Result<(), bun_jsc::JsTerminated> {
-        // defer this.deinit() — handled by caller / Drop on Box<TransformTask>
-        // TODO(port): Zig `defer this.deinit()` here destroys self at end of `then`. In Rust,
-        // ConcurrentPromiseTask should own the Box and drop it after `then` returns.
+        // TODO(port): ConcurrentPromiseTask should own the Box and drop it after `then` returns.
 
         if self.log.has_any() || self.err.is_some() {
             let error_value: JsResult<JSValue> = 'brk: {
@@ -1150,10 +1142,6 @@ impl Drop for JSTranspiler {
     }
 }
 
-/// RAII guard mirroring Zig's
-/// `defer { setLog(&this.config.log); setAllocator(prev); arena.deinit(); }`
-/// (and `transformSync`'s full-snapshot `defer { this.transpiler = prev_bundler; }`).
-///
 /// `scan` / `transform_sync` / `scan_imports` temporarily point the long-lived
 /// `Transpiler` at a stack-local `Arena`/`Log`; on EVERY exit (including `?`
 /// and early `return Err`) those must be restored before the locals drop, or
@@ -1340,7 +1328,6 @@ impl JSTranspiler {
         // SAFETY: bun_vm() returns the live VM singleton on this thread.
         let vm = global.bun_vm();
         let mut args = ArgumentsSlice::init(vm, arguments.slice());
-        // defer args.deinit() → Drop
         let Some(code_arg) = args.next() else {
             return Err(global.throw_invalid_argument_type("scan", "code", "string or Uint8Array"));
         };
@@ -1348,7 +1335,6 @@ impl JSTranspiler {
         let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
             return Err(global.throw_invalid_argument_type("scan", "code", "string or Uint8Array"));
         };
-        // defer code_holder.deinit() → Drop
         let code = code_holder.slice();
         args.eat();
 
@@ -1367,7 +1353,6 @@ impl JSTranspiler {
         // PERF(port): was MimallocArena bulk-free — profile if hot.
         let arena = Arena::new();
         let mut log = bun_ast::Log::init();
-        // defer log.deinit() → Drop
         // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
         // `_restore` (declared after `arena`/`log`, so dropped first) restores
         // `prev_arena` and `&self.config.log` before either local drops.
@@ -1428,7 +1413,6 @@ impl JSTranspiler {
         // SAFETY: bun_vm() returns the live VM singleton on this thread.
         let vm = global.bun_vm();
         let mut args = ArgumentsSlice::init(vm, arguments.slice());
-        // defer args.arena.deinit() → Drop
         let Some(code_arg) = args.next() else {
             return Err(global.throw_invalid_argument_type(
                 "transform",
@@ -1488,7 +1472,6 @@ impl JSTranspiler {
         // SAFETY: bun_vm() returns the live VM singleton on this thread.
         let vm = global.bun_vm();
         let mut args = ArgumentsSlice::init(vm, arguments.slice());
-        // defer args.arena.deinit() → Drop
         let Some(code_arg) = args.next() else {
             return Err(global.throw_invalid_argument_type(
                 "transformSync",
@@ -1506,7 +1489,6 @@ impl JSTranspiler {
                 "string or Uint8Array",
             ));
         };
-        // defer code_holder.deinit() → Drop
         let code = code_holder.slice();
         arguments.ptr[0].ensure_still_alive();
         let _keep0 = bun_jsc::EnsureStillAlive(arguments.ptr[0]);
@@ -1599,9 +1581,6 @@ impl JSTranspiler {
             // Zig: `writer.buffer.list.expandToCapacity()` — Vec<u8> can grow lazily; skip.
             writer
         });
-
-        // defer { this.buffer_writer = buffer_writer } — only the print-error and tail
-        // paths reach past this point; both write `Some(..)` back explicitly.
 
         buffer_writer.reset();
         let mut printer = JSPrinter::BufferPrinter::init(buffer_writer);
@@ -1704,7 +1683,6 @@ impl JSTranspiler {
         // SAFETY: bun_vm() returns the live VM singleton on this thread.
         let vm = global.bun_vm();
         let mut args = ArgumentsSlice::init(vm, arguments.slice());
-        // defer args.deinit() → Drop
 
         let Some(code_arg) = args.next() else {
             return Err(global.throw_invalid_argument_type(
@@ -1728,7 +1706,6 @@ impl JSTranspiler {
             }
         };
         args.eat();
-        // defer code_holder.deinit() → Drop
         let code = code_holder.slice();
 
         let mut loader: Loader = self.config.get().default_loader;
@@ -1748,7 +1725,6 @@ impl JSTranspiler {
         // PERF(port): was MimallocArena bulk-free — profile if hot.
         let arena = Arena::new();
         let mut log = bun_ast::Log::init();
-        // defer log.deinit() → Drop
         // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
         // `_restore` (declared after `arena`/`log`, so dropped first) restores
         // `prev_arena` and `&self.config.log` before either local drops.
@@ -1808,9 +1784,9 @@ impl JSTranspiler {
             &source,
         );
 
-        // Zig: `defer this.scan_pass_result.reset()` covers every exit past this
-        // point (including the catch arm and the `try namedImportsToJS` error
-        // path). Compute the result, then reset unconditionally before returning.
+        // Compute the result, then reset `scan_pass_result` unconditionally before
+        // returning so every exit (including the catch arm and the
+        // `namedImportsToJS` error path) sees a clean state.
         let result = (|| -> JsResult<JSValue> {
             if let Err(err) = scan_result {
                 if (log.warnings + log.errors) > 0 {

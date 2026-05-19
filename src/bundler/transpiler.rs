@@ -570,16 +570,14 @@ impl<'a> Transpiler<'a> {
         let env_loader = self.env_mut();
         let mut is_production = env_loader.is_production();
 
-        // PORT NOTE: spec (`transpiler.zig:314`) eagerly did
-        // `Expr.Data.Store.create()` / `Stmt.Data.Store.create()` plus a
-        // `defer Store.reset()` here, purely so `defines.zig`'s `parse_env_json`
-        // had a thread-local AST store to build `E::String` nodes in. That work
-        // is now done lazily inside `DefineData::parse`, only on the JSON-parse
+        // PORT NOTE: spec (`transpiler.zig:314`) eagerly created+reset the AST
+        // node store here purely so `defines.zig`'s `parse_env_json` had a
+        // thread-local AST store to build `E::String` nodes in. That work is
+        // now done lazily inside `DefineData::parse`, only on the JSON-parse
         // slow path — the common case (`bun run` with no user `--define`)
         // resolves every define through the literal fast path and never
         // allocates an AST store. A store lazily created on the slow path is
-        // reclaimed by the next `Store::begin()` (every subsequent file parse),
-        // so the dropped `defer reset` is a no-op in practice.
+        // reclaimed by the next `Store::begin()` (every subsequent file parse).
 
         // Spec passed `&this.options.env` as a separate arg; `load_defines` now
         // reads `&self.env` internally so the disjoint borrow is resolved

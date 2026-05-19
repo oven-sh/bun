@@ -31,7 +31,6 @@ pub fn compute_cross_chunk_dependencies(
             dynamic_imports: ArrayHashMap::<IndexInt, ()>::default(),
         })
         .collect();
-    // defer { meta.*.deinit(); free(chunk_metas) } — handled by Drop
 
     {
         // PORT NOTE: Zig heap-allocated this via c.arena().create() and destroyed it at
@@ -450,12 +449,10 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
     {
         debug_assert!(chunk_metas.len() == chunks.len());
         let mut r = renamer::ExportRenamer::init();
-        // defer r.deinit() — handled by Drop
         debug!("Generating cross-chunk exports");
 
         let mut stable_ref_list: Vec<StableRef> = Vec::new();
         // PERF(port): was arena-backed std.ArrayList — profile if it shows up on a hot path
-        // defer stable_ref_list.deinit() — handled by Drop
 
         debug_assert_eq!(chunks.len(), chunk_metas.len());
         for (chunk, chunk_meta) in chunks.iter_mut().zip(chunk_metas.iter_mut()) {
@@ -548,7 +545,6 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
     {
         debug!("Generating cross-chunk imports");
         let mut list: Vec<CrossChunkImport> = Vec::new();
-        // defer list.deinit() — handled by Drop
         // PORT NOTE: reshaped for borrowck — Zig's `for (chunks) |*chunk|` aliases the same
         // slice it passes to `sortedCrossChunkImports`. We move the per-chunk fields we
         // mutate (`imports_from_other_chunks`, `cross_chunk_imports`) out via `take`, drop

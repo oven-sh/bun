@@ -252,6 +252,12 @@ where
                 if next_is_eql && param.takes_value == clap::Values::None {
                     return Err(self.err(arg, Some(short), None, ArgError::DoesntTakeValue));
                 }
+                if next_is_eql {
+                    return Ok(Some(Arg {
+                        param,
+                        value: Some(&arg[next_index + 1..]),
+                    }));
+                }
                 return Ok(Some(Arg { param, value: None }));
             }
 
@@ -416,7 +422,7 @@ mod tests {
 
     #[test]
     fn short_params() {
-        let params: [clap::Param<u8>; 4] = [
+        let params: [clap::Param<u8>; 5] = [
             clap::Param {
                 id: 0,
                 names: clap::Names::short(b'a'),
@@ -439,17 +445,25 @@ mod tests {
                 takes_value: clap::Values::Many,
                 ..Default::default()
             },
+            clap::Param {
+                id: 4,
+                names: clap::Names::short(b'e'),
+                takes_value: clap::Values::OneOptional,
+                ..Default::default()
+            },
         ];
 
         let a = &params[0];
         let b = &params[1];
         let c = &params[2];
         let d = &params[3];
+        let e = &params[4];
 
         test_no_err(
             &params,
             &[
-                b"-a", b"-b", b"-ab", b"-ba", b"-c", b"0", b"-c=0", b"-ac", b"0", b"-ac=0", b"-d=0",
+                b"-a", b"-b", b"-ab", b"-ba", b"-c", b"0", b"-c=0", b"-ac", b"0", b"-ac=0",
+                b"-d=0", b"-e=1", b"-e",
             ],
             &[
                 Arg {
@@ -503,6 +517,14 @@ mod tests {
                 Arg {
                     param: d,
                     value: Some(b"0"),
+                },
+                Arg {
+                    param: e,
+                    value: Some(b"1"),
+                },
+                Arg {
+                    param: e,
+                    value: None,
                 },
             ],
         );

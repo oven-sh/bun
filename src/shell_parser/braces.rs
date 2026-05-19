@@ -1370,7 +1370,12 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
             debug_assert!(matches!(first, Token::Open(_)));
         }
 
-        let mut braces: u8 = 0;
+        // PORT NOTE: Zig used `u8` here, which silently wraps in ReleaseFast.
+        // In Rust debug builds overflow-checks turn that wrap into a panic, so
+        // `{{{...}}}` deeper than 255 matched levels inside an unclosed outer
+        // brace aborted the process. Widened to `u32` to match the surrounding
+        // index type and also avoid the original latent wrap.
+        let mut braces: u32 = 0;
 
         self.replace_token_with_string(starting_idx);
         let mut i: u32 = starting_idx + 1;

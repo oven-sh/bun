@@ -1,5 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 describe("$.braces", () => {
   test("no-op", () => {
@@ -75,5 +76,24 @@ describe("$.braces", () => {
   test("unicode", () => {
     const result = $.braces(`lol {😂,🫵,🤣}`);
     expect(result).toEqual(["lol 😂", "lol 🫵", "lol 🤣"]);
+  });
+
+  test("unclosed outer with >255 matched nested pairs does not abort", async () => {
+    // Outer `{` is unmatched, but contains 300 levels of balanced `{...}`
+    // around an `x`. The rollback walk visits ≥300 consecutive `Open` tokens
+    // before the first `Close`, which used to overflow a `u8` counter and
+    // panic the debug build (released Bun silently wrapped).
+    const depth = 300;
+    const input = "{" + Buffer.alloc(depth, "{").toString() + "x" + Buffer.alloc(depth, "}").toString();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `import { $ } from "bun"; $.braces(${JSON.stringify(input)});`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 });

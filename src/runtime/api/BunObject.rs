@@ -720,7 +720,14 @@ pub fn bun_inspect(global_this: &JSGlobalObject, value: JSValue) -> BunString {
     let mut array: Vec<u8> = Vec::new();
 
     let mut formatter = ConsoleObject::Formatter::new(global_this);
-    if write!(&mut array, "{}", value.to_fmt(&mut formatter)).is_err() {
+    use core::fmt::Write;
+    if write!(
+        bun_core::fmt::VecWriter(&mut array),
+        "{}",
+        value.to_fmt(&mut formatter)
+    )
+    .is_err()
+    {
         return BunString::empty();
     }
     BunString::clone_utf8(&array)

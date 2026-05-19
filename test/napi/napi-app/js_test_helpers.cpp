@@ -236,6 +236,27 @@ static napi_value make_empty_array(const Napi::CallbackInfo &info) {
   return array;
 }
 
+// Calls napi_create_int64 `count` times inside a single native call the same
+// way napi-rs does when materialising a Vec<i64>. Used to verify that
+// creating many non-cell primitive values does not bloat the handle scope's
+// backing storage. Returns the final value so the loop cannot be optimised
+// away.
+// https://github.com/oven-sh/bun/issues/15055
+static napi_value create_many_int64(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  uint32_t count;
+  NODE_API_CALL(env, napi_get_value_uint32(env, info[0], &count));
+  napi_value element;
+  NODE_API_CALL(env, napi_get_undefined(env, &element));
+  for (uint32_t i = 0; i < count; i++) {
+    // Use a value outside the int32 range so it is encoded as a double in the
+    // JSValue rather than an int32. This matches what rrule-rust produces
+    // (packed datetimes like 20000101000001).
+    NODE_API_CALL(env, napi_create_int64(env, 20000000000000LL + i, &element));
+  }
+  return element;
+}
+
 static napi_value make_empty_object(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
   napi_value object;
@@ -431,6 +452,7 @@ void register_js_test_helpers(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, throw_error);
   REGISTER_FUNCTION(env, exports, create_and_throw_error);
   REGISTER_FUNCTION(env, exports, make_empty_array);
+  REGISTER_FUNCTION(env, exports, create_many_int64);
   REGISTER_FUNCTION(env, exports, make_empty_object);
   REGISTER_FUNCTION(env, exports, add_tag);
   REGISTER_FUNCTION(env, exports, try_add_tag);

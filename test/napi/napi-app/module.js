@@ -741,6 +741,59 @@ nativeTests.test_reference_unref_in_finalizer_experimental = async gc => {
   throw new Error("Test FAILED: napi_reference_unref should have aborted for experimental module");
 };
 
+// https://github.com/oven-sh/bun/issues/15055
+//
+// Non-cell primitives (numbers, booleans, null, undefined) created by Zig-side
+// napi functions like napi_create_int64 were being appended to the handle
+// scope's storage vector even though they cannot be garbage collected. Native
+// modules that return large arrays of numbers (e.g. rrule-rust's between()
+// which returns ~500k packed datetimes) would grow the handle scope by several
+// MB per call. The GC does not know about that extra memory, so handle scopes
+// would accumulate until a full sweep ran.
+//
+// Prints "PASS" if RSS growth across the hot loop stays under the budget.
+// Exit code is 0 in both cases so the test harness compares stdout instead of
+// relying on a crash.
+nativeTests.test_napi_handle_scope_int64_does_not_bloat = async () => {
+  const count = 250_000;
+  const iterations = 30;
+  // Without the fix each call leaves ~count*8 bytes (~2 MB) of handle-scope
+  // storage behind, so 30 iterations is ~60 MB of retained vector storage.
+  // With the fix the handle scope never spills past its inline capacity and
+  // RSS stays flat. 20 MB sits comfortably between "fixed" (~0 MB) and
+  // "broken" (~50 MB) while leaving slack for allocator noise.
+  const budgetMB = 20;
+
+  const gc = () => {
+    if (typeof Bun === "object") Bun.gc(true);
+    else global.gc();
+  };
+  const rssMB = () => process.memoryUsage.rss() / 1024 / 1024;
+
+  // Sanity check the native helper once.
+  const sample = nativeTests.create_many_int64(4);
+  assert(sample === 20000000000003, `unexpected return value ${sample}`);
+
+  // Warm up so the baseline includes any one-time heap growth.
+  for (let i = 0; i < 3; i++) nativeTests.create_many_int64(count);
+  gc();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  gc();
+
+  const baseline = rssMB();
+  for (let i = 0; i < iterations; i++) {
+    nativeTests.create_many_int64(count);
+  }
+  const after = rssMB();
+
+  const delta = after - baseline;
+  if (delta > budgetMB) {
+    console.log(`FAIL: RSS grew ${delta.toFixed(1)} MB (baseline ${baseline.toFixed(1)} -> ${after.toFixed(1)}); handle scope is retaining non-cell values`);
+  } else {
+    console.log("PASS");
+  }
+};
+
 nativeTests.test_create_bigint_words = () => {
   console.log(nativeTests.create_weird_bigints());
 };

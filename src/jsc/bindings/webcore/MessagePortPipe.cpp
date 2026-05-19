@@ -230,6 +230,7 @@ void MessagePortPipe::close(uint8_t side)
     while (!worklist.isEmpty()) {
         auto [pipe, sd] = worklist.takeLast();
         auto& s = pipe->m_sides[sd];
+        auto& peer = pipe->m_sides[1 - sd];
 
         Deque<MessageWithMessagePorts> dropped;
         {
@@ -239,6 +240,15 @@ void MessagePortPipe::close(uint8_t side)
             // Closed is terminal; queued messages are dropped.
             s.state.store(Closed, std::memory_order_release);
             dropped = std::exchange(s.inbox, {});
+        }
+        {
+            // Mirror Closed into the peer's state word so its
+            // hasPendingActivity() — which must be a single atomic load to
+            // avoid observing a torn {before-send, after-close} snapshot —
+            // can see it. fetch_or under the peer's lock since all state
+            // writes are lock-guarded.
+            Locker locker { peer.lock };
+            peer.state.fetch_or(PeerClosed, std::memory_order_acq_rel);
         }
 
         // Harvest transferred pipes before `dropped` destructs so their

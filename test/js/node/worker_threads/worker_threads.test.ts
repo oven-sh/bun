@@ -1,3 +1,4 @@
+import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
@@ -21,6 +22,10 @@ import wt, {
   workerData,
 } from "worker_threads";
 
+// Many tests here spawn subprocesses or workers that each take 1-3s in debug/ASAN builds,
+// and the default 5s per-test timeout is too tight under load.
+setDefaultTimeout(30_000);
+
 test("support eval in worker", async () => {
   const worker = new Worker(`postMessage(1 + 1)`, {
     eval: true,
@@ -38,6 +43,7 @@ test("all worker_threads module properties are present", () => {
   expect(wt).toHaveProperty("markAsUntransferable");
   expect(wt).toHaveProperty("moveMessagePortToContext");
   expect(wt).toHaveProperty("parentPort");
+  expect(wt).toHaveProperty("postMessageToThread");
   expect(wt).toHaveProperty("receiveMessageOnPort");
   expect(wt).toHaveProperty("resourceLimits");
   expect(wt).toHaveProperty("SHARE_ENV");
@@ -266,17 +272,18 @@ describe("execArgv option", async () => {
     expect(await proc.stdout.text()).toBe(expected);
   }
 
+  // Each run() spawns a --smol subprocess that creates a worker; slow in debug builds.
   it("inherits the parent's execArgv when falsy or unspecified", async () => {
     await run("null", '["--smol"]\n');
     await run("0", '["--smol"]\n');
-  });
+  }, 30_000);
   it("provides empty execArgv when passed an empty array", async () => {
     // empty array should result in empty execArgv, not inherited from parent thread
     await run("[]", "[]\n");
-  });
+  }, 15_000);
   it("can specify an array of strings", async () => {
     await run('["--no-warnings"]', '["--no-warnings"]\n');
-  });
+  }, 15_000);
   // TODO(@190n) get our handling of non-string array elements in line with Node's
 });
 
@@ -292,7 +299,7 @@ test("eval does not leak source code", async () => {
   const errors = await proc.stderr.text();
   if (errors.length > 0) throw new Error(errors);
   expect(proc.exitCode).toBe(0);
-});
+}, 60_000); // Spawns six workers with 100 MiB of source each; slow in debug builds.
 
 describe("worker event", () => {
   test("is emitted on the next tick with the right value", () => {
@@ -384,7 +391,7 @@ describe("environmentData", () => {
     expect(proc.exitCode).toBe(0);
     const out = await proc.stdout.text();
     expect(out).toBe("foo\n".repeat(5));
-  });
+  }, 30_000); // Five nested workers; slow in debug builds.
 
   test("can be used if parent thread had not imported worker_threads", async () => {
     const proc = Bun.spawn({
@@ -398,7 +405,7 @@ describe("environmentData", () => {
     const errors = await proc.stderr.text();
     if (errors.length > 0) throw new Error(errors);
     expect(proc.exitCode).toBe(0);
-  });
+  }, 30_000); // Two nested workers; slow in debug builds.
 });
 
 describe("error event", () => {
@@ -486,4 +493,239 @@ describe("getHeapSnapshot", () => {
     ]);
     worker.postMessage(0);
   });
+});
+
+describe("postMessageToThread", () => {
+  test("is exported", () => {
+    expect(wt).toHaveProperty("postMessageToThread");
+    expect(wt.postMessageToThread).toBeFunction();
+  });
+
+  test("rejects when targeting the same thread", async () => {
+    await expect(wt.postMessageToThread(threadId)).rejects.toMatchObject({
+      name: "Error",
+      code: "ERR_WORKER_MESSAGING_SAME_THREAD",
+    });
+  });
+
+  test("rejects when targeting an unknown thread", async () => {
+    await expect(wt.postMessageToThread(2 ** 30)).rejects.toMatchObject({
+      name: "Error",
+      code: "ERR_WORKER_MESSAGING_FAILED",
+    });
+  });
+
+  test("delivers to workerMessage listener in worker and back", async () => {
+    const worker = new Worker(
+      /* js */ `
+        const wt = require("node:worker_threads");
+        process.on("workerMessage", (value, source) => {
+          wt.postMessageToThread(source, { echo: value, from: wt.threadId });
+        });
+        wt.parentPort.postMessage("ready");
+        wt.parentPort.once("message", () => {});
+      `,
+      { eval: true },
+    );
+    const onWorkerMessage = (value, source) => resolve({ value, source });
+    const { promise, resolve } = Promise.withResolvers();
+    try {
+      await once(worker, "message");
+      process.on("workerMessage", onWorkerMessage);
+      await wt.postMessageToThread(worker.threadId, "hello");
+      const { value, source } = await promise;
+      expect(value).toEqual({ echo: "hello", from: worker.threadId });
+      expect(source).toBe(worker.threadId);
+    } finally {
+      process.removeListener("workerMessage", onWorkerMessage);
+      worker.postMessage("done");
+      await worker.terminate();
+    }
+  });
+
+  test("rejects with ERR_WORKER_MESSAGING_FAILED when worker has no listener", async () => {
+    const worker = new Worker(
+      /* js */ `
+        const wt = require("node:worker_threads");
+        wt.parentPort.postMessage("ready");
+        wt.parentPort.once("message", () => {});
+      `,
+      { eval: true },
+    );
+    try {
+      await once(worker, "message");
+      await expect(wt.postMessageToThread(worker.threadId, "hello")).rejects.toMatchObject({
+        name: "Error",
+        code: "ERR_WORKER_MESSAGING_FAILED",
+      });
+    } finally {
+      worker.postMessage("done");
+      await worker.terminate();
+    }
+  });
+
+  test("rejects with ERR_WORKER_MESSAGING_ERRORED when handler throws", async () => {
+    const worker = new Worker(
+      /* js */ `
+        const wt = require("node:worker_threads");
+        process.on("workerMessage", () => { throw new Error("boom"); });
+        wt.parentPort.postMessage("ready");
+        wt.parentPort.once("message", () => {});
+      `,
+      { eval: true },
+    );
+    try {
+      await once(worker, "message");
+      await expect(wt.postMessageToThread(worker.threadId, "hello")).rejects.toMatchObject({
+        name: "Error",
+        code: "ERR_WORKER_MESSAGING_ERRORED",
+      });
+    } finally {
+      worker.postMessage("done");
+      await worker.terminate();
+    }
+  });
+
+  test("rejects with ERR_WORKER_MESSAGING_FAILED for an exited worker's threadId", async () => {
+    // The worker's port registration must be torn down on exit; previously
+    // #onClose read the native threadId (which is -1 once the worker is
+    // closing) and the stale port stayed in the map, so this would hang
+    // until the timeout instead of failing immediately.
+    const worker = new Worker("require('node:worker_threads')", { eval: true });
+    const id = worker.threadId;
+    await once(worker, "exit");
+    expect(worker.threadId).toBe(-1);
+    await expect(wt.postMessageToThread(id, "hello")).rejects.toMatchObject({
+      name: "Error",
+      code: "ERR_WORKER_MESSAGING_FAILED",
+    });
+  });
+});
+
+test("process.emit returns false when there are no listeners", () => {
+  // process uses a native EventEmitter; it used to always return true.
+  expect(process.emit("__bun_test_no_listener_event__")).toBe(false);
+  let called = false;
+  process.once("__bun_test_with_listener_event__", () => {
+    called = true;
+  });
+  expect(process.emit("__bun_test_with_listener_event__")).toBe(true);
+  expect(called).toBe(true);
+});
+
+test("GC of a ref'd MessagePort whose peer closed releases its event-loop ref", async () => {
+  // port1.onmessage = fn takes an event-loop ref. port2.close() sets PeerClosed on
+  // port1's pipe side so hasPendingActivity() → false and port1's wrapper is
+  // collectible. ~MessagePort() used to not release the event-loop ref → hang.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      /* js */ `
+        (() => {
+          const { port1, port2 } = new MessageChannel();
+          port1.onmessage = () => {};
+          port2.close();
+        })();
+        Bun.gc(true);
+        setTimeout(() => { Bun.gc(true); console.log("DONE"); }, 50);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("DONE");
+  expect(exitCode).toBe(0);
+});
+
+test("transferring a ref'd MessagePort releases its event-loop ref on the source thread", async () => {
+  // port1.onmessage = fn takes an event-loop ref; transferring port1 detaches it from the
+  // source context. disentangle() used to leave that ref behind, so the source process hung.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      /* js */ `
+        const { Worker } = require("node:worker_threads");
+        const { port1 } = new MessageChannel();
+        port1.onmessage = () => {};
+        const w = new Worker("setTimeout(() => {}, 100)", { ev${/* bundler hates eval */ ""}al: true });
+        w.postMessage({ p: port1 }, [port1]);
+        w.unref();
+        setTimeout(() => console.log("DONE"), 50);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("DONE");
+  expect(exitCode).toBe(0);
+});
+
+test("on() after unref() on a transferred port re-refs (Node's newListener hook)", async () => {
+  // Node's setupPortReferencing installs a 'newListener' hook that calls
+  // this.ref() on the first 'message' listener, so port.unref(); port.on('message', fn)
+  // re-refs and the worker stays alive. The reverse order (on; unref) stays unref'd.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      /* js */ `
+        const { Worker, workerData } = require("node:worker_threads");
+        const { once } = require("node:events");
+        const { port1, port2 } = new MessageChannel();
+        const w = new Worker(
+          "const p = require('node:worker_threads').workerData.port;" +
+          "p.unref(); p.on('message', m => { console.log('got:' + m); p.close(); });" +
+          "require('node:worker_threads').parentPort.postMessage(p.hasRef());",
+          { ev${/* bundler hates eval */ ""}al: true, workerData: { port: port2 }, transferList: [port2] },
+        );
+        once(w, "message").then(([hasRef]) => {
+          console.log("hasRef:" + hasRef);
+          setTimeout(() => port1.postMessage("hi"), 50);
+        });
+        w.on("exit", c => { console.log("exit:" + c); port1.close(); });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim().split("\n").sort()).toEqual(["exit:0", "got:hi", "hasRef:true"]);
+  expect(exitCode).toBe(0);
+});
+
+test("worker does not stay alive after unref() on a transferred port with a listener", async () => {
+  // A transferred MessagePort with a 'message' listener used to hold a separate
+  // event loop ref that .unref() could not release, keeping the worker alive forever.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      /* js */ `
+        const { Worker, workerData } = require("node:worker_threads");
+        const { port1, port2 } = new MessageChannel();
+        const w = new Worker(
+          "const p = require('node:worker_threads').workerData.port; p.addEventListener('message', () => {}); p.unref();",
+          { ev${/* bundler hates eval */ ""}al: true, workerData: { port: port2 }, transferList: [port2] },
+        );
+        w.on("exit", code => { console.log("exit", code); port1.close(); });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("exit 0");
+  expect(exitCode).toBe(0);
 });

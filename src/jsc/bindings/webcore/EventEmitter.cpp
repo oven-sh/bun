@@ -116,8 +116,7 @@ bool EventEmitter::emitForBindings(const Identifier& eventType, const MarkedArgu
     if (!scriptExecutionContext())
         return false;
 
-    emit(eventType, arguments);
-    return true;
+    return emit(eventType, arguments);
 }
 
 bool EventEmitter::emit(const Identifier& eventType, const MarkedArgumentBuffer& arguments)

@@ -30,18 +30,13 @@ pub struct EditOptions {
     pub before_install: bool,
 }
 
-/// Allocate a `'static` byte buffer for storage in `E::EString.data`. Zig's
-/// equivalent (`allocator.dupe(u8, ...)`) used `manager.allocator`, a
-/// process-lifetime arena that is never reset during a `bun pm pkg`/`bun add`
-/// invocation — so this ownership is parked for the rest of the command, not
-/// reclaimed. `heap::release` is the named spelling of that hand-off.
 #[inline]
-fn leak_str(bytes: Vec<u8>) -> &'static [u8] {
-    bun_core::heap::release(bytes.into_boxed_slice())
+fn arena_str<'a>(arena: &'a bun_alloc::Arena, bytes: Vec<u8>) -> &'a [u8] {
+    arena.alloc_slice_copy(&bytes)
 }
 #[inline]
-fn leak_dup(bytes: &[u8]) -> &'static [u8] {
-    bun_core::heap::release(Box::<[u8]>::from(bytes))
+fn arena_dup<'a>(arena: &'a bun_alloc::Arena, bytes: &[u8]) -> &'a [u8] {
+    arena.alloc_slice_copy(bytes)
 }
 
 /// Shallow-copy a `G::Property` for the JSON-editing path. Only `key`/`value`
@@ -59,12 +54,12 @@ fn copy_property(p: &G::Property) -> G::Property {
 }
 
 pub fn edit_patched_dependencies(
-    _manager: &mut PackageManager,
+    manager: &mut PackageManager,
     package_json: &mut Expr,
     patch_key: &[u8],
     patchfile_path: &[u8],
 ) -> Result<(), bun_alloc::AllocError> {
-    let bump = bun_alloc::Arena::new();
+    let arena = &manager.ast_arena;
     // const pkg_to_patch = manager.
     let mut patched_dependencies = E::Object::default();
     if let Some(query) = package_json.as_property(b"patchedDependencies") {
@@ -84,14 +79,14 @@ pub fn edit_patched_dependencies(
     }
 
     let patchfile_expr = Expr::init(
-        E::EString::init(leak_dup(patchfile_path)),
+        E::EString::init(arena_dup(arena, patchfile_path)),
         bun_ast::Loc::EMPTY,
     );
 
-    patched_dependencies.put(&bump, leak_dup(patch_key), patchfile_expr)?;
+    patched_dependencies.put(arena, arena_dup(arena, patch_key), patchfile_expr)?;
 
     package_json.data.e_object_mut().unwrap().put(
-        &bump,
+        arena,
         b"patchedDependencies",
         Expr::init(patched_dependencies, bun_ast::Loc::EMPTY),
     )?;
@@ -158,7 +153,7 @@ pub fn edit_trusted_dependencies(
             while i > 0 {
                 i -= 1;
                 if matches!(deps[i].data, bun_ast::ExprData::EMissing(_)) {
-                    deps[i] = Expr::init(E::EString::init(leak_dup(name)), bun_ast::Loc::EMPTY);
+                    deps[i] = Expr::init(E::EString::init(name), bun_ast::Loc::EMPTY);
                     break;
                 }
             }
@@ -354,8 +349,7 @@ pub fn edit_update_no_args(
 
                         if manager.options.do_.contains(Do::UPDATE_TO_LATEST) {
                             // is it an aliased package
-                            let temp_version: &'static [u8] = if let Some(at_index) = alias_at_index
-                            {
+                            let temp_version: &[u8] = if let Some(at_index) = alias_at_index {
                                 let mut v = Vec::new();
                                 write!(
                                     &mut v,
@@ -363,7 +357,7 @@ pub fn edit_update_no_args(
                                     bstr::BStr::new(&version_literal[0..at_index])
                                 )
                                 .unwrap();
-                                leak_str(v)
+                                arena_str(arena, v)
                             } else {
                                 b"latest"
                             };
@@ -521,7 +515,7 @@ pub fn edit_update_no_args(
                                             .unwrap();
                                             dep.value = Some(Expr::allocate(
                                                 arena,
-                                                E::EString::init(leak_str(v)),
+                                                E::EString::init(arena_str(arena, v)),
                                                 bun_ast::Loc::EMPTY,
                                             ));
                                             break 'updated;
@@ -532,7 +526,7 @@ pub fn edit_update_no_args(
 
                                     dep.value = Some(Expr::allocate(
                                         arena,
-                                        E::EString::init(leak_str(new_version)),
+                                        E::EString::init(arena_str(arena, new_version)),
                                         bun_ast::Loc::EMPTY,
                                     ));
                                     break 'updated;
@@ -832,7 +826,7 @@ pub fn edit(
                     if matches!(deps[i].data, bun_ast::ExprData::EMissing(_)) {
                         deps[i] = Expr::allocate(
                             arena,
-                            E::EString::init(leak_dup(package_name)),
+                            E::EString::init(arena_dup(arena, package_name)),
                             bun_ast::Loc::EMPTY,
                         );
                         break;
@@ -878,7 +872,10 @@ pub fn edit(
 
                 new_dependencies[k].key = Some(Expr::allocate(
                     arena,
-                    E::EString::init(leak_dup(request.get_resolved_name(&manager.lockfile))),
+                    E::EString::init(arena_dup(
+                        arena,
+                        request.get_resolved_name(&manager.lockfile),
+                    )),
                     bun_ast::Loc::EMPTY,
                 ));
 
@@ -992,7 +989,7 @@ pub fn edit(
             root_properties.push(G::Property {
                 key: Some(Expr::allocate(
                     arena,
-                    E::EString::init(leak_dup(dependency_list)),
+                    E::EString::init(arena_dup(arena, dependency_list)),
                     bun_ast::Loc::EMPTY,
                 )),
                 value: Some(dependencies_object),
@@ -1033,7 +1030,7 @@ pub fn edit(
                 root_properties.push(G::Property {
                     key: Some(Expr::allocate(
                         arena,
-                        E::EString::init(leak_dup(dependency_list)),
+                        E::EString::init(arena_dup(arena, dependency_list)),
                         bun_ast::Loc::EMPTY,
                     )),
                     value: Some(dependencies_object),
@@ -1070,7 +1067,7 @@ pub fn edit(
                     key: Some(Expr::allocate(
                         arena,
                         E::EString::init(if needs_new_dependency_list {
-                            leak_dup(dependency_list)
+                            arena_dup(arena, dependency_list)
                         } else {
                             TRUSTED_DEPENDENCIES_STRING
                         }),
@@ -1137,8 +1134,11 @@ pub fn edit(
                     {
                         break 'uninitialized match request.version.tag {
                             dependency::Tag::Uninitialized => b"latest".into(),
-                            _ => leak_dup(request.version.literal.slice(request.version_buf()))
-                                .into(),
+                            _ => arena_dup(
+                                arena,
+                                request.version.literal.slice(request.version_buf()),
+                            )
+                            .into(),
                         };
                     } else {
                         break 'uninitialized e_string.data;
@@ -1225,11 +1225,11 @@ pub fn edit(
                                             bstr::BStr::new(&new_version)
                                         )
                                         .unwrap();
-                                        break 'npm leak_str(v);
+                                        break 'npm arena_str(arena, v);
                                     }
                                 }
 
-                                break 'npm leak_str(new_version);
+                                break 'npm arena_str(arena, new_version);
                             }
                         }
                         if request.version.tag == dependency::Tag::DistTag
@@ -1270,18 +1270,18 @@ pub fn edit(
                                         bstr::BStr::new(&new_version)
                                     )
                                     .unwrap();
-                                    break 'npm leak_str(v);
+                                    break 'npm arena_str(arena, v);
                                 }
                             }
 
-                            break 'npm leak_str(new_version);
+                            break 'npm arena_str(arena, new_version);
                         }
 
-                        leak_dup(request.version.literal.slice(request.version_buf()))
+                        arena_dup(arena, request.version.literal.slice(request.version_buf()))
                     }
 
                     resolution::Tag::Workspace => b"workspace:*",
-                    _ => leak_dup(request.version.literal.slice(request.version_buf())),
+                    _ => arena_dup(arena, request.version.literal.slice(request.version_buf())),
                 });
         }
     }

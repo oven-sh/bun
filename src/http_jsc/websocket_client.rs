@@ -1808,6 +1808,10 @@ impl<const SSL: bool> WebSocket<SSL> {
                 // ref before C++ can finalize.
                 ws: NonNull::new(outgoing).map(|p| unsafe { CppWebSocketRef::new(p) }),
             }));
+            // Backref so `handle_data` can drain the buffered slice ahead of
+            // fresh socket data, and so `deinit()` can reclaim the box if
+            // process.exit() races ahead of the microtask drain.
+            ws_ref.initial_data_handler = NonNull::new(initial_data);
 
             // Use a higher-priority callback for the initial onData handler
             // PORT NOTE: `queue_microtask_callback` takes an erased
@@ -1921,6 +1925,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                 // ref before C++ can finalize.
                 ws: NonNull::new(outgoing).map(|p| unsafe { CppWebSocketRef::new(p) }),
             }));
+            ws_ref.initial_data_handler = NonNull::new(initial_data);
             // PORT NOTE: `queue_microtask_callback` takes an erased
             // `(*mut c_void, unsafe extern "C" fn(*mut c_void))`; cast both.
             global_this.queue_microtask_callback(
@@ -2015,6 +2020,19 @@ impl<const SSL: bool> WebSocket<SSL> {
         this_ref.clear_data();
         // deflate already dropped in clear_data; this is defensive parity with Zig
         this_ref.deflate = None;
+        // The queued microtask normally owns the handler box and clears this
+        // field via `handle_without_deinit` before freeing it. Reaching
+        // `deinit()` with the field still set means the microtask never
+        // drained (process.exit() under the API lock during onopen) and JSC
+        // is being torn down — reclaim the box so LSan doesn't flag it. In
+        // normal operation the adopted-socket I/O ref keeps `ref_count > 0`
+        // until after microtasks drain, so this branch is not hit.
+        if let Some(handler) = this_ref.initial_data_handler.take() {
+            // SAFETY: allocated via `heap::into_raw` in init()/init_with_tunnel();
+            // sole remaining owner — JSC's microtask queue only holds the
+            // pointer encoded as a JSValue double and will not run again.
+            drop(unsafe { bun_core::heap::take(handler.as_ptr()) });
+        }
         bun_core::scoped_log!(alloc, "destroy({}) = {:p}", Self::ALLOC_TYPE_NAME, this);
         // SAFETY: this was allocated via heap::alloc in init/init_with_tunnel
         drop(unsafe { bun_core::heap::take(this) });

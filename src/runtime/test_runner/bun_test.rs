@@ -432,6 +432,10 @@ pub struct BunTestRoot {
     // gpa dropped — global mimalloc
     pub active_file: BunTestPtrOptional,
     pub hook_scope: Box<DescribeScope>,
+    /// `RefData` pointers handed to `Promise.then()`. Tracked here (process-lifetime)
+    /// so a never-settled promise's `+1` stays reachable; do not free orphans —
+    /// a queued reaction may still consume them.
+    pub pending_then_refs: std::cell::RefCell<Vec<*const RefData>>,
 }
 
 impl BunTestRoot {
@@ -449,6 +453,7 @@ impl BunTestRoot {
         BunTestRoot {
             active_file: None,
             hook_scope,
+            pending_then_refs: std::cell::RefCell::new(Vec::new()),
         }
     }
 
@@ -467,6 +472,34 @@ impl BunTestRoot {
             test_id_for_debugger: 0,
             line_no: 0,
         });
+    }
+
+    /// Tear down `bun:test` GC roots before `global_exit()` so
+    /// `Zig__GlobalObject__destructOnExit()`'s `collectNow()` can reclaim the
+    /// closures they pin. Releases the active file's per-test `Strong`s (the
+    /// bail path skips its `scopeguard::defer! { exit_file() }` because
+    /// `process::exit()` does not unwind), the preload-hook `Strong`s held in
+    /// `hook_scope`, and the `pending_then_refs` Vec.
+    pub fn deinit_for_exit(&mut self) {
+        if self.active_file.is_some() {
+            self.exit_file();
+        }
+        self.reset_hook_scope_for_test_isolation();
+        // `pending_then_refs` holds the `+1` `RefData` ref taken at
+        // `Promise.then()` time so a never-settled promise's box stays
+        // reachable. The corresponding deref happens in
+        // `bun_test_then_or_catch` when the promise settles — which it now
+        // never will (the VM is going away). Release each orphan ourselves;
+        // any reaction that is still queued is dropped wholesale by
+        // `destructOnExit`.
+        for ptr in self.pending_then_refs.borrow_mut().drain(..) {
+            // SAFETY: `ptr` was produced by `IntrusiveRc::into_raw` in
+            // `BunTest::run_test_callback`; it is live because the promise
+            // never settled (the settle path removes the entry before
+            // `deref()`). `RefPtr<T>` has no `Drop`, so explicitly `.deref()`
+            // to release the `+1` and destroy the box. Single-threaded.
+            unsafe { RefDataPtr::from_raw(ptr.cast_mut()) }.deref();
+        }
     }
 
     pub fn enter_file(
@@ -616,6 +649,9 @@ pub struct BunTest {
     pub default_concurrent: bool,
     pub first_last: FirstLast,
     pub extra_execution_entries: Vec<*mut ExecutionEntry>,
+    /// Heap-boxed bitwise clones of hook entries from `Order::generate_order_test`.
+    /// Only the Box header may be freed in `Drop` — fields alias `DescribeScope` originals.
+    pub cloned_hook_entries: Vec<*mut ExecutionEntry>,
     pub wants_wakeup: bool,
 
     pub phase: Phase,
@@ -650,6 +686,7 @@ impl BunTest {
             default_concurrent,
             first_last,
             extra_execution_entries: Vec::new(),
+            cloned_hook_entries: Vec::new(),
             // PORT NOTE: `EventLoopTimer` has no `Default`; `init_paused` sets
             // `next = EPOCH, state = PENDING` (matches Zig's zero-init).
             timer: EventLoopTimer::init_paused(EventLoopTimerTag::BunTest),
@@ -723,7 +760,15 @@ impl BunTest {
         }
 
         // SAFETY: this_ptr was created by wrapping a RefDataPtr via asPromisePtr; we adopt the +1 it carried
-        let refdata: RefDataPtr = unsafe { bun_ptr::IntrusiveRc::from_raw(this_ptr.as_promise_ptr::<RefData>()) };
+        let raw_ref: *mut RefData = this_ptr.as_promise_ptr::<RefData>();
+        let refdata: RefDataPtr = unsafe { bun_ptr::IntrusiveRc::from_raw(raw_ref) };
+        // Remove the pending_then_refs entry before `deref()` so a freed `RefData` never lingers.
+        if let Some(runner) = Jest::runner() {
+            let mut pending = runner.bun_test_root.pending_then_refs.borrow_mut();
+            if let Some(pos) = pending.iter().position(|p| *p == raw_ref.cast_const()) {
+                pending.swap_remove(pos);
+            }
+        }
         // defer refdata.deref() — RefPtr<T> currently has NO Drop impl (src/ptr/ref_count.rs),
         // so scope-exit drop is a silent no-op. Decrement the intrusive count explicitly so
         // (a) RefData::destructor frees the box + Weak<BunTest>, and (b) a paired done() callback
@@ -861,26 +906,22 @@ impl BunTest {
     }
 
     pub fn run_next_tick(weak: &BunTestPtrWeak, global_this: &JSGlobalObject, phase: RefDataValue) {
+        let vm = global_this.bun_vm().as_mut();
+        // Check liveness before allocating so the early return doesn't strand a Box.
+        let Some(strong) = weak.upgrade() else {
+            debug_assert!(false); // shouldn't be calling runNextTick after moving on to the next file
+            return; // but just in case
+        };
         let done_callback_test = bun_core::heap::into_raw(Box::new(RunTestsTask {
             weak: weak.clone(),
             global_this: GlobalRef::from(global_this),
             phase,
         }));
-        // errdefer bun.destroy(done_callback_test) → ManagedTask::run reconstitutes the Box
-        // PORT NOTE: `jsc::ManagedTask` re-exports the *module*; struct is `ManagedTask::ManagedTask`.
-        // `bun_event_loop::JsResult` carries the low-tier `ErasedJsError` tag (lower-tier
-        // crate can't name `jsc::JsError`); shim the callback signature preserving the
-        // discriminant so `report_error_or_terminate` branches correctly.
         fn call_erased(this: *mut RunTestsTask) -> bun_event_loop::JsResult<()> {
             RunTestsTask::call(this).map_err(Into::into)
         }
-        let task = jsc::ManagedTask::ManagedTask::new::<RunTestsTask>(done_callback_test, call_erased);
-        let vm = global_this.bun_vm().as_mut();
-        let Some(strong) = weak.upgrade() else {
-            // Zig: gated on `bun.Environment.ci_assert`.
-            debug_assert!(false); // shouldn't be calling runNextTick after moving on to the next file
-            return; // but just in case
-        };
+        // `new_owned`: if the task never runs (VM teardown), the queue drainer frees `done_callback_test`.
+        let task = jsc::ManagedTask::ManagedTask::new_owned::<RunTestsTask>(done_callback_test, call_erased);
         // SAFETY: single field write through `UnsafeCell`; no other `&mut` live.
         strong.get().wants_wakeup = true;
         // we need to wake up the event loop so autoTick() doesn't wait for 16-100ms because we just enqueued a task
@@ -1041,7 +1082,28 @@ impl BunTest {
                 } else {
                     Order::AllOrderResult::EMPTY
                 };
+                let describe_seq_start = order.sequences.len();
                 order.generate_order_describe(&mut self.collection.root_scope)?;
+                let describe_seq_end = order.sequences.len();
+                // Collect hook-entry clones boxed by `generate_order_test` so `Drop` can
+                // reclaim the Box headers. Must run before `extra_execution_entries` are
+                // spliced into the same chains, or the walk would double-free `DescribeScope`
+                // entries.
+                debug_assert!(
+                    self.extra_execution_entries.is_empty(),
+                    "extra_execution_entries must be spliced after the cloned-hook walk"
+                );
+                for seq in &order.sequences[describe_seq_start..describe_seq_end] {
+                    let Some(test_entry) = seq.test_entry else { continue };
+                    let mut cur = seq.first_entry;
+                    while let Some(p) = cur {
+                        if p != test_entry {
+                            self.cloned_hook_entries.push(p.as_ptr());
+                        }
+                        // SAFETY: live linked-list nodes built by `generate_order_test`.
+                        cur = unsafe { p.as_ref() }.next.and_then(NonNull::new);
+                    }
+                }
                 beforeall_order.set_failure_skip_to(&mut order);
                 let afterall_order: Order::AllOrderResult = if self.first_last.last {
                     order.generate_all_order(&root.hook_scope.after_all)?
@@ -1187,9 +1249,17 @@ impl BunTest {
                         } else {
                             Self::ref_(&this_strong, cfg_data.clone())
                         };
+                        // Track the `+1` handed to `Promise.then()` in case the promise never settles.
+                        let raw_ref: *mut RefData = bun_ptr::IntrusiveRc::into_raw(this_ref);
+                        this_strong
+                            .bun_test_root
+                            .get()
+                            .pending_then_refs
+                            .borrow_mut()
+                            .push(raw_ref.cast_const());
                         let _ = result.then(
                             global_this,
-                            bun_ptr::IntrusiveRc::into_raw(this_ref),
+                            raw_ref,
                             Bun__TestScope__Describe2__bunTestThen,
                             Bun__TestScope__Describe2__bunTestCatch,
                         );
@@ -1295,6 +1365,11 @@ impl Drop for BunTest {
         for entry in self.extra_execution_entries.drain(..) {
             // SAFETY: entries were heap-allocated in generic_hook; we own them
             unsafe { drop(bun_core::heap::take(entry)); }
+        }
+        for entry in self.cloned_hook_entries.drain(..) {
+            // Reclaim only the Box header — fields alias the `DescribeScope` originals.
+            // SAFETY: heap-boxed by `Order::generate_order_test`; same layout as `ManuallyDrop`.
+            let _ = unsafe { Box::from_raw(entry.cast::<core::mem::ManuallyDrop<ExecutionEntry>>()) };
         }
         // execution, collection, result_queue: dropped automatically
         // PERF(port): was arena bulk-free (arena_allocator.deinit)

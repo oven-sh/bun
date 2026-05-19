@@ -91,15 +91,17 @@ impl ByteBlobLoader {
         // PORT NOTE: Zig did `var blobe = blob.*; blobe.resolveSize();` — `Blob` is not
         // `Clone` in Rust, so use the non-mutating `resolved_size()` helper instead.
         let (offset, size) = blob.resolved_size();
-        let (content_type, content_type_allocated) = 'brk: {
-            if blob.content_type_was_set.get() {
-                let ct = blob.content_type_slice();
-                if blob.content_type_allocated.get() {
-                    break 'brk (Box::<[u8]>::from(ct), true);
-                }
-                // TODO(port): Zig borrowed `blob.content_type` here without copying; we dupe.
-                break 'brk (Box::<[u8]>::from(ct), false);
-            }
+        // Zig borrowed `blob.content_type` when `!blob.content_type_allocated`
+        // and tracked ownership via the flag. The Rust port collapsed
+        // `content_type` to an always-owned `Box<[u8]>` (we dupe in both
+        // arms), so the flag must be `true` whenever the box is non-empty —
+        // it's later transferred verbatim to a `Blob` in `to_any_blob`, and a
+        // `false` there strands the `into_raw`'d allocation behind
+        // `Blob::free_content_type`'s `content_type_allocated` gate.
+        let (content_type, content_type_allocated) = if blob.content_type_was_set.get() {
+            let ct = blob.content_type_slice();
+            (Box::<[u8]>::from(ct), !ct.is_empty())
+        } else {
             (Box::default(), false)
         };
         *self = ByteBlobLoader {
@@ -189,7 +191,10 @@ impl ByteBlobLoader {
             blob.content_type_was_set.set(!ct.is_empty());
             blob.content_type
                 .set(bun_core::heap::into_raw(ct).cast_const());
-            blob.content_type_allocated.set(self.content_type_allocated);
+            // `content_type` is an always-owned `Box<[u8]>` in the Rust port
+            // (see `setup`); `into_raw` just handed the new blob a heap
+            // allocation it must free regardless of the flag's prior value.
+            blob.content_type_allocated.set(true);
             self.content_type_allocated = false;
         }
 
@@ -252,7 +257,13 @@ impl ByteBlobLoader {
         action: streams::BufferActionTag,
     ) -> JsResult<JSValue> {
         if let Some(mut blob) = self.to_any_blob(global) {
-            return Ok(blob.to_promise(global, action)?);
+            let result = blob.to_promise(global, action);
+            // `Any` has no `Drop` and the inner `Blob`'s `content_type` is a
+            // raw `*const [u8]` that `to_any_blob` filled via `into_raw`;
+            // release the store ref + content_type explicitly (same shape as
+            // the BodyMixin arms in `Body.rs`).
+            blob.detach();
+            return Ok(result?);
         }
 
         // globalThis.ERR(.BODY_ALREADY_USED, "...", .{}).reject()

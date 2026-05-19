@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN } from "harness";
 
 // https://github.com/oven-sh/bun/issues/28756
 // AbortSignal.timeout() + util.aborted() causes unbounded memory growth
@@ -54,7 +54,8 @@ test("AbortSignal.timeout + util.aborted does not leak memory", async () => {
       const growthMB = (growth / 1024 / 1024).toFixed(1);
       console.log(JSON.stringify({ baselineMB: (baselineRSS/1024/1024).toFixed(1), finalMB: (finalRSS/1024/1024).toFixed(1), growthMB }));
       // Without the fix, 80k signals leak ~60 MB.  With the fix, <50 MB.
-      process.exit(growth < 50 * 1024 * 1024 ? 0 : 1);
+      // ASAN's quarantine retains freed allocations so widen the threshold there.
+      process.exit(growth < ${isASAN ? 256 : 50} * 1024 * 1024 ? 0 : 1);
       `,
     ],
     env: bunEnv,

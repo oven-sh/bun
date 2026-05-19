@@ -823,6 +823,12 @@ impl Default for DynamicBitSetUnmanaged {
     }
 }
 
+impl Drop for DynamicBitSetUnmanaged {
+    fn drop(&mut self) {
+        self.deinit();
+    }
+}
+
 impl DynamicBitSetUnmanaged {
     pub const EMPTY: fn() -> Self = Self::default;
     // TODO(port): Zig has `pub const empty: Self = .{ ... }` as a const value.
@@ -991,9 +997,7 @@ impl DynamicBitSetUnmanaged {
 
     /// deinitializes the array and releases its memory.
     /// The passed allocator must be the same one used for
-    /// init* or resize in the past.
-    // TODO(port): kept as an explicit method (not `Drop`) because `List` hands
-    // out non-owning `DynamicBitSetUnmanaged` views that must NOT free on drop.
+    /// init* or resize in the past. Idempotent.
     pub fn deinit(&mut self) {
         self.resize(0, false).expect("unreachable");
     }
@@ -1344,14 +1348,14 @@ impl DynamicBitSetList {
     /// live. All current callers (`hoisted_install`, `isolated_install`,
     /// `PackageInstaller::can_run_scripts`) satisfy this by keeping the list
     /// alive for the view's entire use. The view must not be `deinit`ed.
-    pub fn at(&self, i: usize) -> DynamicBitSetUnmanaged {
+    pub fn at(&self, i: usize) -> core::mem::ManuallyDrop<DynamicBitSetUnmanaged> {
         debug_assert!(i < self.n, "DynamicBitSetList::at index out of bounds");
         let num_masks = DynamicBitSetUnmanaged::num_masks(self.bit_length);
         let single_bitset_buf_size = num_masks + 1;
 
         let offset = single_bitset_buf_size * i;
 
-        DynamicBitSetUnmanaged {
+        core::mem::ManuallyDrop::new(DynamicBitSetUnmanaged {
             bit_length: self.bit_length,
             // SAFETY: `i < n` (asserted), so `offset + 1 + num_masks <= buf_len`
             // and the pointer is in-bounds. `buf` is a raw allocation never
@@ -1361,7 +1365,7 @@ impl DynamicBitSetList {
             // hold `&self` here — `&self` freezes the pointer *value*, not the
             // pointee.
             masks: unsafe { self.buf.as_ptr().add(offset).add(1) },
-        }
+        })
     }
 
     pub fn set(&self, i: usize, j: usize) {
@@ -1736,12 +1740,6 @@ impl DynamicBitSet {
         &self,
     ) -> BitSetIterator<'_, KIND_SET, DIR_FWD> {
         self.unmanaged.iterator::<KIND_SET, DIR_FWD>()
-    }
-}
-
-impl Drop for DynamicBitSet {
-    fn drop(&mut self) {
-        self.unmanaged.deinit();
     }
 }
 

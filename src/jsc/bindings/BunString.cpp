@@ -14,7 +14,7 @@
 #include "DOMURL.h"
 #include "ZigGlobalObject.h"
 #include "IDLTypes.h"
-#include "mimalloc.h"
+#include "MimallocWTFMalloc.h"
 
 #include <limits>
 #include <wtf/Seconds.h>
@@ -863,7 +863,9 @@ extern "C" BunString BunString__createExternalGloballyAllocatedLatin1(
 {
     ASSERT(length > 0);
     Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create({ bytes, length }, nullptr, [](void*, void* ptr, size_t) {
-        mi_free(ptr);
+        // `bytes` came from a Rust `Vec` (the global allocator); free with
+        // `defaultAllocatorFree` so it agrees with the `#[global_allocator]`.
+        Bun::defaultAllocatorFree(ptr);
     });
     return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
 }
@@ -874,7 +876,9 @@ extern "C" BunString BunString__createExternalGloballyAllocatedUTF16(
 {
     ASSERT(length > 0);
     Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create({ bytes, length }, nullptr, [](void*, void* ptr, size_t) {
-        mi_free(ptr);
+        // `bytes` came from a Rust `Vec` (the global allocator); free with
+        // `defaultAllocatorFree` so it agrees with the `#[global_allocator]`.
+        Bun::defaultAllocatorFree(ptr);
     });
     return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
 }

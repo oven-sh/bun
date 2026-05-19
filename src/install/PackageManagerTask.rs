@@ -182,7 +182,6 @@ impl<'a> Task<'a> {
 
     bun_core::extern_union_accessors! {
         tag: tag as Tag, value: data;
-        PackageManifest => data_package_manifest @ package_manifest: npm::PackageManifest;
         GitCheckout     => data_git_checkout     @ git_checkout:     ExtractData, mut data_git_checkout_mut;
     }
 
@@ -206,6 +205,33 @@ impl<'a> Task<'a> {
         debug_assert!(self.tag == Tag::GitClone);
         // SAFETY: tag-guarded; `Fd` is `Copy`.
         unsafe { *self.data.git_clone }
+    }
+
+    pub fn deinit_payload(&mut self) {
+        // SAFETY: `tag` discriminates both unions, set once at enqueue.
+        unsafe {
+            match self.tag {
+                Tag::PackageManifest => {
+                    ManuallyDrop::drop(&mut self.request.package_manifest);
+                    ManuallyDrop::drop(&mut self.data.package_manifest);
+                }
+                Tag::Extract => {
+                    ManuallyDrop::drop(&mut self.request.extract);
+                    ManuallyDrop::drop(&mut self.data.extract);
+                }
+                Tag::GitClone => {
+                    ManuallyDrop::drop(&mut self.request.git_clone);
+                }
+                Tag::GitCheckout => {
+                    ManuallyDrop::drop(&mut self.request.git_checkout);
+                    ManuallyDrop::drop(&mut self.data.git_checkout);
+                }
+                Tag::LocalTarball => {
+                    ManuallyDrop::drop(&mut self.request.local_tarball);
+                    ManuallyDrop::drop(&mut self.data.extract);
+                }
+            }
+        }
     }
 }
 
@@ -610,14 +636,6 @@ pub enum Status {
     Success,
     Fail,
 }
-
-// PORT NOTE: matches Zig — `Task` has no `deinit`; the active `Data`/`Request`
-// payload (`PackageManifest` blob, `ExtractData` paths, `ExtractTarball`
-// name/url) is intentionally leaked per `preallocated_resolve_tasks` put/get
-// cycle (Zig `HiveArray.Fallback.put` is `value.* = undefined` / raw
-// `allocator.destroy`). A Rust `impl Drop for Task` cannot recover this without
-// breaking the `..Task::uninit()` struct-update callers and risking drop of the
-// zeroed-`uninit()` union storage.
 
 /// Bare Zig `union` (untagged). Discriminated externally by `Task.tag`.
 /// // TODO(port): Phase B — consider folding `Tag` + `Request` + `Data` into a

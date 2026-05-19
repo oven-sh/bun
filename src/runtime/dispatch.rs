@@ -864,6 +864,29 @@ pub unsafe fn __bun_run_immediate_task(
     }
 }
 
+/// `__bun_cancel_pending_immediate` body — VM-teardown release of the event
+/// loop's `+1` ref on a still-queued `ImmediateObject` (low tier stores
+/// `*mut ()`, high tier owns the cast). Does not run the callback.
+///
+/// # Safety
+/// `task` was produced by `enqueue_immediate_task` from a live
+/// `timer::ImmediateObject` whose event-loop ref has not yet been released;
+/// `vm` is the live per-thread VM with `RuntimeState` still installed.
+#[unsafe(no_mangle)]
+pub unsafe fn __bun_cancel_pending_immediate(
+    task: *mut (),
+    vm: *mut bun_jsc::virtual_machine::VirtualMachine,
+) {
+    // SAFETY: per fn contract — the only producer (`TimerObjectInternals::init`)
+    // stores a `*mut crate::timer::ImmediateObject`, so the cast is the identity.
+    unsafe {
+        crate::timer::ImmediateObject::cancel_pending(
+            task.cast::<crate::timer::ImmediateObject>(),
+            vm,
+        );
+    }
+}
+
 /// `__bun_run_wtf_timer` body — cast the low-tier erased `*mut ()` to the real
 /// `crate::timer::WTFTimer` and fire it (spec event_loop.zig:302-306
 /// `imminent_gc_timer.swap(null).?.run(vm)`).
@@ -1128,5 +1151,62 @@ pub fn __bun_tick_queue_with_count(
 
 // (former duplicate `__bun_run_tasks` removed r6 — `bun_jsc::task::run_tasks`
 // had no callers; `__bun_tick_queue_with_count` above is the sole entry point.)
+
+/// `__bun_release_task_at_shutdown` body — declared `extern "Rust"` in
+/// `bun_jsc::event_loop`. Called from `release_queued_tasks_for_shutdown` on
+/// the JS thread for every queued task that will never be dispatched (the JS
+/// thread is past `global_exit`'s `is_shutting_down` flip and the loop will
+/// not tick again), after the HTTP daemon has parked and before
+/// `destructOnExit`. Releases the boxes and JSC handles the dispatch path
+/// would have dropped. Tags not yet listed leak their box at exit; add them
+/// as LSan surfaces them.
+#[unsafe(no_mangle)]
+pub fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
+    use bun_event_loop::task_tag;
+    match task.tag {
+        // `callback` (HTTP thread) won the `has_schedule_callback` CAS and
+        // posted this entry, then deref'd its own +1 if final; the JS-side
+        // +1 it expected `on_progress_update` to drop is the one we release
+        // here. Runs on the JS thread, so the plain `deref` (→ `deinit` on
+        // 1→0) is the right teardown path; the HTTP daemon is already
+        // parked (`shutdown_for_exit` precedes `destroy`), so the
+        // `Box<AsyncHTTP>` and any `metadata` it owns are exclusively ours.
+        task_tag::FetchTasklet => {
+            FetchTasklet::deref(task.ptr.cast::<FetchTasklet>());
+            true
+        }
+        // `AsyncFSTask`s are `Box::leak`'d in `create()` and freed by
+        // `destroy()` (called from `run_from_js_thread`'s scopeguard).
+        // `destroy()` resets `JSPromiseStrong` (touches the JSC HandleSet)
+        // and unrefs the loop `KeepAlive`, both of which are still valid
+        // here — we're before `destructOnExit`. Before
+        // `release_queued_tasks_for_shutdown` existed these boxes stayed
+        // reachable via `concurrent_tasks` (rooted by the static `VMHolder`),
+        // so LSan didn't flag them; the drain unhooks that root and surfaces
+        // the real leak.
+        for_each_fs_async_op!(__fs_pat) => {
+            macro_rules! __fs_destroy {
+                ($($tag:ident $ty:ident;)*) => { match task.tag {
+                    $(task_tag::$tag => {
+                        // SAFETY: tag identifies pointee; `Box::leak`'d in
+                        // `AsyncFSTask::create`. The work-pool callback ran
+                        // (it posted this entry) so the threadpool no longer
+                        // holds the embedded `task` field.
+                        unsafe { fs_async::$ty::destroy(task.ptr.cast::<fs_async::$ty>()) };
+                    })*
+                    // SAFETY: outer arm guard proves one of the table tags matched.
+                    _ => unsafe { core::hint::unreachable_unchecked() },
+                }};
+            }
+            for_each_fs_async_op!(__fs_destroy);
+            true
+        }
+        // Re-queued by the caller; the box stays reachable from the
+        // static-rooted VM. Dispatching the type-erased `AnyTask` callback
+        // is not generally safe at shutdown (e.g. `AsyncModule::on_done`,
+        // `dns::Holder::run` call straight into JS).
+        _ => false,
+    }
+}
 
 // ported from: src/jsc/Task.zig

@@ -21,7 +21,7 @@ use bun_core::strings;
 /// `bun.ast.Index` — bundler source-file index. Hoisted into
 /// `bun_options_types` to keep css below the parser tier.
 use bun_ast::Index as SrcIndex;
-use bun_ast::symbol::List as SymbolList;
+type SymbolList = Vec<bun_ast::Symbol>;
 use bun_ast::{ImportKind, ImportRecord};
 
 pub use crate::compat::{self, Feature};
@@ -1648,8 +1648,10 @@ mod rule_parsers {
                 rules.v.insert(
                     0,
                     CssRule::Style(StyleRule {
-                        selectors: SelectorList::from_selector(Selector::from_component(
+                        // Arena-backed: this StyleRule lands in arena AST; bulk-free won't run Drop.
+                        selectors: SelectorList::from_selector(Selector::from_component_in(
                             Component::Nesting,
+                            bun_alloc::ArenaPtr::new(input.arena()),
                         )),
                         declarations,
                         vendor_prefix: VendorPrefix::default(),

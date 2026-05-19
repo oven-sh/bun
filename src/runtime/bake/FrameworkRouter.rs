@@ -697,7 +697,7 @@ impl Style {
     // TODO(port): move to *_jsc — calls JSValue methods
     pub fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Style> {
         if value.is_string() {
-            let bun_string = value.to_bun_string(global)?;
+            let bun_string = bun_core::OwnedString::new(value.to_bun_string(global)?);
             // PERF(port): was stack-fallback allocator
             let utf8 = bun_string.to_utf8();
             if let Some(style) = STYLE_MAP.get(utf8.slice()) {

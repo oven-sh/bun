@@ -97,6 +97,40 @@ describe("bundler", () => {
       },
     },
   });
+
+  // `import defer * as ns from "..."` must not break bytecode generation.
+  // The bundler inlines the deferred module into the entry chunk (documented
+  // out-of-scope limitation — same as esbuild), so the defer semantics are
+  // lost in the compiled output; this test verifies that the syntax is
+  // accepted by the bundler parser, the resulting source bytecode-compiles
+  // cleanly in JSC, and the compiled binary loads from the bytecode cache.
+  for (const format of ["cjs", "esm"] as const) {
+    itBundled(`compile/ImportDeferBytecode+${format}`, {
+      compile: true,
+      bytecode: true,
+      format,
+      files: {
+        "/entry.ts": /* js */ `
+          import defer * as ns from "./dep.ts";
+          console.log("before");
+          console.log("value:", ns.value);
+        `,
+        "/dep.ts": /* js */ `
+          console.log("dep evaluated");
+          export const value = 42;
+        `,
+      },
+      run: {
+        stdout: "dep evaluated\nbefore\nvalue: 42",
+        env: {
+          BUN_JSC_verboseDiskCache: "1",
+        },
+        validate({ stderr }) {
+          expect(stderr).toContain("[Disk Cache] Cache hit for sourceCode");
+        },
+      },
+    });
+  }
   // ESM bytecode test matrix: each scenario × {default, minified} = 2 tests per scenario.
   // With --compile, static imports are inlined into one chunk, but dynamic imports
   // create separate modules in the standalone graph — each with its own bytecode + ModuleInfo.

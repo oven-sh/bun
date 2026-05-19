@@ -3054,8 +3054,11 @@ impl BlobExt for Blob {
                     return Err(global.throw_out_of_memory());
                 }
                 // SAFETY: `Temporary` ⇒ `buf` is a leaked `Box<[u8]>` we exclusively own;
-                // ownership is transferred to JSC via `to_js` (Zig: `JSC.MarkedArrayBuffer.fromBytes`).
-                jsc::ArrayBuffer::from_bytes(unsafe { &mut *buf }, TYPED_ARRAY_VIEW).to_js(global)
+                // ownership is transferred to JSC (Zig: `JSC.MarkedArrayBuffer.fromBytes`).
+                // `to_js_unchecked`: `to_js`'s heap-region probe would skip the deallocator
+                // for a non-mimalloc buffer, but `Temporary` is always default-allocator.
+                jsc::ArrayBuffer::from_bytes(unsafe { &mut *buf }, TYPED_ARRAY_VIEW)
+                    .to_js_unchecked(global)
             }
         }
     }
@@ -5410,9 +5413,13 @@ pub fn jsdom_file_construct_(
         if let Some(store_) = blob.store.get() {
             match store_.data_mut() {
                 store::Data::Bytes(bytes) => {
-                    // Zig: `toUTF8Bytes(allocator)` → owned heap slice adopted by
-                    // PathString. `to_utf8().slice()` would dangle as soon as the
-                    // temporary `ZigStringSlice` drops at end-of-statement.
+                    // `get::<_, true>` on a single-Blob sequence returns
+                    // `dupe()` (a shared StoreRef), so this `Bytes` may already
+                    // carry an owned `stored_name` from the source blob.
+                    // `PathString` is `Copy` — assignment alone would leak it.
+                    // SAFETY: every writer of `stored_name` adopts via
+                    // `PathString::init_owned` or leaves it `EMPTY`.
+                    unsafe { bytes.stored_name.deinit_owned() };
                     bytes.stored_name =
                         bun_core::PathString::init_owned(name_value_str.to_owned_slice());
                 }
@@ -6278,6 +6285,9 @@ impl Any {
                     // `StoreRef` exposes interior-mutable `data_mut()` (no DerefMut).
                     let internal = s.data_mut().as_bytes_mut().to_internal_blob();
                     // PORT NOTE: Zig deref's the store; StoreRef::drop on replace handles it.
+                    // `content_type` is a raw pointer not covered by any field's
+                    // drop glue — free it explicitly.
+                    blob.free_content_type();
                     *self = Any::InternalBlob(internal);
                     return;
                 }
@@ -6376,8 +6386,12 @@ impl Any {
                 Ok(str)
             }
             Any::WTFStringImpl(impl_) => {
-                let mut str =
-                    BunString::adopt_wtf_impl(core::mem::replace(impl_, core::ptr::null_mut()));
+                // Adopts a +1 WTF ref; `OwnedString` releases it on every exit
+                // path (Zig: `defer str.deref()`).
+                let mut str = OwnedString::new(BunString::adopt_wtf_impl(core::mem::replace(
+                    impl_,
+                    core::ptr::null_mut(),
+                )));
                 *self = Any::Blob(Blob::default());
                 if str.length() == 0 {
                     return Ok(JSValue::NULL);
@@ -6414,7 +6428,10 @@ impl Any {
 
         if let Any::WTFStringImpl(_) = self {
             let blob = Blob::create(self.slice(), global, true);
-            *self = Any::Blob(Blob::default());
+            // `Blob::create(.., true)` copied the bytes; `Any` still owns the
+            // +1 WTF ref. `detach()` releases it and resets `*self` (the bare
+            // `*self = Any::Blob(default)` here previously leaked that ref).
+            self.detach();
             return blob;
         }
 
@@ -6438,8 +6455,12 @@ impl Any {
                 Ok(owned)
             }
             Any::WTFStringImpl(impl_) => {
-                let str =
-                    BunString::adopt_wtf_impl(core::mem::replace(impl_, core::ptr::null_mut()));
+                // Adopts a +1 WTF ref; `OwnedString` releases it on scope exit
+                // (Zig: `defer str.deref()`).
+                let str = OwnedString::new(BunString::adopt_wtf_impl(core::mem::replace(
+                    impl_,
+                    core::ptr::null_mut(),
+                )));
                 *self = Any::Blob(Blob::default());
                 str.to_js(global)
             }
@@ -6480,8 +6501,13 @@ impl Any {
                 ))
             }
             Any::WTFStringImpl(impl_) => {
-                let str =
-                    BunString::adopt_wtf_impl(core::mem::replace(impl_, core::ptr::null_mut()));
+                // Adopts a +1 WTF ref; `OwnedString` releases it on scope exit,
+                // after `out_bytes` (which borrows it) is consumed below
+                // (Zig: `defer str.deref()`).
+                let str = OwnedString::new(BunString::adopt_wtf_impl(core::mem::replace(
+                    impl_,
+                    core::ptr::null_mut(),
+                )));
                 *self = Any::Blob(Blob::default());
 
                 let out_bytes = str.to_utf8_without_ref();
@@ -6559,6 +6585,11 @@ impl Any {
     pub fn detach(&mut self) {
         match self {
             Any::Blob(b) => {
+                // `content_type` is a raw `*const [u8]` not covered by `Blob`'s drop
+                // glue; release it here so a heap-owned content_type (e.g. the
+                // `multipart/form-data; boundary=…` string from `from_dom_form_data`)
+                // doesn't leak when the AnyBlob is torn down.
+                b.free_content_type();
                 b.detach();
                 *self = Any::Blob(Blob::default());
             }

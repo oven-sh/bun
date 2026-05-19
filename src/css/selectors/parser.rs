@@ -3,7 +3,7 @@
 
 use core::fmt;
 
-use bun_alloc::Arena as Bump;
+use bun_alloc::{Arena as Bump, ArenaPtr};
 use bun_core::strings;
 use bun_css as css;
 use bun_css::css_values::ident::{CustomIdent, Ident};
@@ -45,10 +45,8 @@ type Str = &'static [u8]; // arena-backed `[]const u8` source slice
 // generic types hand-write bodies (the derive's `where Impl: CssEql` bound is
 // useless — equality recurses on `Impl::Assoc`, not `Impl`).
 //
-// `deep_clone` on the grammar types intentionally drops the `&Arena` parameter:
-// the selector AST is global-alloc (`Vec`/`Box`/`SmallList`), and
-// the only arena-borrowed payloads are `Str` / `Ident.v` (`*const [u8]`)
-// which are identity-copied (matches generics.zig "const strings" fast-path).
+// `deep_clone` on the grammar types drops the `&Arena` parameter: `GenericSelector.components`
+// is `Vec<_, ArenaPtr>` and clones into the *source* allocator (intra-arena only).
 use css::generics::{CssEql, CssHash};
 
 /// Drain a `SmallList<T, N>` into a `Box<[T]>`. `SmallList` has no `into_vec`;
@@ -197,7 +195,7 @@ pub mod attrs {
         pub fn deep_clone(&self) -> Self {
             // `NamespaceUrl = &'static [u8]` (arena-backed) — identity copy.
             Self {
-                prefix: self.prefix.clone(),
+                prefix: self.prefix,
                 url: self.url,
             }
         }
@@ -272,8 +270,8 @@ pub mod attrs {
         pub fn deep_clone(&self) -> Self {
             Self {
                 namespace: self.namespace.as_ref().map(|n| n.deep_clone()),
-                local_name: self.local_name.clone(),
-                local_name_lower: self.local_name_lower.clone(),
+                local_name: self.local_name,
+                local_name_lower: self.local_name_lower,
                 operation: self.operation.deep_clone(),
                 never_matches: self.never_matches,
             }
@@ -587,9 +585,7 @@ fn parse_selector<Impl: BunSelectorImpl>(
         input.reset(&parser_state);
     }
 
-    // PERF: allocations here
-    // PERF(port): was arena-backed SelectorBuilder — profile if it shows up on a hot path.
-    let mut builder = SelectorBuilder::<Impl>::default();
+    let mut builder = SelectorBuilder::<Impl>::init_in(ArenaPtr::new(input.arena()));
 
     'outer_loop: loop {
         // Parse a sequence of simple selectors.
@@ -1651,7 +1647,7 @@ impl<Impl: SelectorImpl> Default for GenericSelector<Impl> {
                 specificity: 0,
                 flags: SelectorFlags::empty(),
             },
-            components: Vec::new(),
+            components: Vec::new_in(ArenaPtr::global()),
         }
     }
 }
@@ -1945,8 +1941,7 @@ impl<Impl: BunSelectorImpl> CssHash for GenericSelectorList<Impl> {
 #[derive(Clone)]
 pub struct GenericSelector<Impl: SelectorImpl> {
     pub specificity_and_flags: SpecificityAndFlags,
-    pub components: Vec<GenericComponent<Impl>>,
-    // PERF(port): was arena ArrayList — profile if it shows up on a hot path.
+    pub components: Vec<GenericComponent<Impl>, ArenaPtr>,
 }
 
 pub struct SelectorDebugFmt<'a, Impl: SelectorImpl>(pub &'a GenericSelector<Impl>);
@@ -1998,9 +1993,12 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
     }
 
     pub fn deep_clone(&self) -> Self {
+        let alloc = *self.components.allocator();
+        let mut components = Vec::with_capacity_in(self.components.len(), alloc);
+        components.extend(self.components.iter().map(|c| c.deep_clone()));
         Self {
             specificity_and_flags: self.specificity_and_flags,
-            components: self.components.iter().map(|c| c.deep_clone()).collect(),
+            components,
         }
     }
 
@@ -2035,7 +2033,11 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
     }
 
     pub fn from_component(component: GenericComponent<Impl>) -> Self {
-        let mut builder = SelectorBuilder::<Impl>::default();
+        Self::from_component_in(component, ArenaPtr::global())
+    }
+
+    pub fn from_component_in(component: GenericComponent<Impl>, alloc: ArenaPtr) -> Self {
+        let mut builder = SelectorBuilder::<Impl>::init_in(alloc);
         if let Some(combinator) = component.as_combinator() {
             builder.push_combinator(combinator);
         } else {
@@ -2261,19 +2263,19 @@ impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
             C::ExplicitNoNamespace => C::ExplicitNoNamespace,
             C::DefaultNamespace(u) => C::DefaultNamespace(*u),
             C::Namespace { prefix, url } => C::Namespace {
-                prefix: prefix.clone(),
+                prefix: *prefix,
                 url: *url,
             },
             C::ExplicitUniversalType => C::ExplicitUniversalType,
             C::LocalName(ln) => C::LocalName(ln.deep_clone()),
-            C::Id(i) => C::Id(i.clone()),
-            C::Class(i) => C::Class(i.clone()),
+            C::Id(i) => C::Id(*i),
+            C::Class(i) => C::Class(*i),
             C::AttributeInNoNamespaceExists {
                 local_name,
                 local_name_lower,
             } => C::AttributeInNoNamespaceExists {
-                local_name: local_name.clone(),
-                local_name_lower: local_name_lower.clone(),
+                local_name: *local_name,
+                local_name_lower: *local_name_lower,
             },
             C::AttributeInNoNamespace {
                 local_name,
@@ -2282,9 +2284,9 @@ impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
                 case_sensitivity,
                 never_matches,
             } => C::AttributeInNoNamespace {
-                local_name: local_name.clone(),
+                local_name: *local_name,
                 operator: *operator,
-                value: value.clone(),
+                value: *value,
                 case_sensitivity: *case_sensitivity,
                 never_matches: *never_matches,
             },
@@ -2305,7 +2307,7 @@ impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
                 vendor_prefix,
                 selectors,
             } => C::Any {
-                vendor_prefix: vendor_prefix.clone(),
+                vendor_prefix: *vendor_prefix,
                 selectors: deep_clone_selector_slice(selectors),
             },
             C::Has(s) => C::Has(deep_clone_selector_slice(s)),
@@ -3448,14 +3450,14 @@ pub fn parse_one_simple_selector<Impl: BunSelectorImpl>(
                                 // PERF(port): was arena ArrayList with capacity 1 — profile if hot.
                                 let mut result: Vec<Impl::Identifier> = Vec::with_capacity(1);
 
-                                result.push(Impl::Identifier::from(Ident {
+                                result.push(Ident {
                                     v: input2.expect_ident()?,
-                                }));
+                                });
 
                                 while !input2.is_exhausted() {
-                                    result.push(Impl::Identifier::from(Ident {
+                                    result.push(Ident {
                                         v: input2.expect_ident()?,
-                                    }));
+                                    });
                                 }
 
                                 Ok(result.into_boxed_slice())
@@ -3594,22 +3596,20 @@ pub fn parse_attribute_selector<Impl: BunSelectorImpl>(
                 if let Some(ns) = namespace {
                     let x = attrs::AttrSelectorWithOptionalNamespace::<Impl> {
                         namespace: Some(ns),
-                        local_name: Ident { v: local_name }.into(),
+                        local_name: Ident { v: local_name },
                         local_name_lower: Ident {
                             v: local_name_lower,
-                        }
-                        .into(),
+                        },
                         never_matches: false,
                         operation: attrs::ParsedAttrSelectorOperation::Exists,
                     };
                     return Ok(GenericComponent::AttributeOther(Box::new(x)));
                 } else {
                     return Ok(GenericComponent::AttributeInNoNamespaceExists {
-                        local_name: Ident { v: local_name }.into(),
+                        local_name: Ident { v: local_name },
                         local_name_lower: Ident {
                             v: local_name_lower,
-                        }
-                        .into(),
+                        },
                     });
                 }
             }
@@ -3709,7 +3709,7 @@ pub fn parse_attribute_selector<Impl: BunSelectorImpl>(
         )))
     } else {
         Ok(GenericComponent::AttributeInNoNamespace {
-            local_name: Ident { v: local_name }.into(),
+            local_name: Ident { v: local_name },
             operator,
             value,
             case_sensitivity,
@@ -3795,7 +3795,7 @@ pub fn parse_functional_pseudo_class<Impl: BunSelectorImpl>(
 
     let result = parser.parse_non_ts_functional_pseudo_class(name, input)?;
 
-    Ok(GenericComponent::NonTsPseudoClass(result.into()))
+    Ok(GenericComponent::NonTsPseudoClass(result))
     // TODO(port): `Impl::NonTSPseudoClass` is `PseudoClass` for the concrete impl;
     // generic path would need a `From` bound.
 }
@@ -3859,7 +3859,7 @@ pub fn parse_simple_pseudo_class<Impl: BunSelectorImpl>(
         ));
     }
 
-    Ok(GenericComponent::NonTsPseudoClass(pseudo_class.into()))
+    Ok(GenericComponent::NonTsPseudoClass(pseudo_class))
 }
 
 pub fn parse_nth_pseudo_class<Impl: BunSelectorImpl>(
@@ -4045,10 +4045,9 @@ pub fn parse_qualified_name<Impl: BunSelectorImpl>(
                 false
             };
             if n {
-                let prefix: Impl::NamespacePrefix = Ident { v: value }.into();
-                let result: Option<Impl::NamespaceUrl> = parser
-                    .namespace_for_prefix(Ident { v: value })
-                    .map(Into::into);
+                let prefix: Impl::NamespacePrefix = Ident { v: value };
+                let result: Option<Impl::NamespaceUrl> =
+                    parser.namespace_for_prefix(Ident { v: value });
                 let url: Impl::NamespaceUrl = match result {
                     Some(url) => url,
                     None => {
@@ -4091,7 +4090,7 @@ pub fn parse_qualified_name<Impl: BunSelectorImpl>(
                     }
                 }
                 // PORT NOTE: reshaped for borrowck — clone token before reset.
-                let result_cloned = result.map(|t| t.clone());
+                let result_cloned = result.cloned();
                 input.reset(&after_star);
                 if in_attr_selector {
                     match result_cloned {
@@ -4175,8 +4174,8 @@ impl<Impl: BunSelectorImpl> LocalName<Impl> {
     }
     pub fn deep_clone(&self) -> Self {
         Self {
-            name: self.name.clone(),
-            lower_name: self.lower_name.clone(),
+            name: self.name,
+            lower_name: self.lower_name,
         }
     }
 }

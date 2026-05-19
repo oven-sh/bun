@@ -218,7 +218,9 @@ pub fn write_bind<Context: WriterContext>(
             }
 
             _ => {
-                let str = BunString::from_js(value, global).map_err(js_error_to_postgres)?;
+                let str = bun_core::OwnedString::new(
+                    BunString::from_js(value, global).map_err(js_error_to_postgres)?,
+                );
                 if str.tag() == bun_core::Tag::Dead {
                     return Err(AnyPostgresError::OutOfMemory);
                 }
@@ -226,7 +228,6 @@ pub fn write_bind<Context: WriterContext>(
                 let l = writer.length()?;
                 writer.write(slice.slice())?;
                 l.write_excluding_self()?;
-                // `str.deref()` and `slice.deinit()` handled by Drop
             }
         }
 

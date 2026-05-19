@@ -1150,6 +1150,19 @@ impl JSValue {
             .get(global, property)?
             .filter(|v| !v.is_empty_or_undefined_or_null() && !(v.is_string() && !v.to_boolean())))
     }
+    /// JSValue.zig:1649 `getTruthyComptime` — `fast_get` (precached `JSC::Identifier`,
+    /// no StringImpl alloc / atom-table probe) followed by the same `truthyPropertyValue`
+    /// filter as `get_truthy`. Use this when the property name is a `BuiltinName`.
+    pub fn fast_get_truthy(
+        self,
+        global: &JSGlobalObject,
+        builtin_name: BuiltinName,
+    ) -> JsResult<Option<JSValue>> {
+        // JSValue.zig:1625 truthyPropertyValue: filters undef/null AND empty strings.
+        Ok(self
+            .fast_get(global, builtin_name)?
+            .filter(|v| !v.is_empty_or_undefined_or_null() && !(v.is_string() && !v.to_boolean())))
+    }
     /// JSValue.zig:1866 `getBooleanLoose` — missing/undefined → `None`; otherwise
     /// truthy-coerce the property value (never throws on the coercion itself).
     pub fn get_boolean_loose(

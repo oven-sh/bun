@@ -869,8 +869,7 @@ impl<'a> Run<'a> {
                 ));
             }
             T::String => {
-                let bun_str = value.to_bun_string(self.global)?;
-                // `bun_str.deref()` on Drop
+                let bun_str = bun_core::OwnedString::new(value.to_bun_string(self.global)?);
 
                 // encode into utf16 so the printer escapes the string correctly
                 // PERF(port): was allocator.alloc(u16, len) — profile if it shows up on a hot path

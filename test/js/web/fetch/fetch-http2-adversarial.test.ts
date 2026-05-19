@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tls } from "harness";
+import { bunEnv, bunExe, isASAN, tls } from "harness";
 import { once } from "node:events";
 import nodetls from "node:tls";
 
@@ -157,8 +157,9 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
         const out = JSON.parse(stdout.trim());
         // Connection should error well before the ~80 MB of CONTINUATION payload
         // accumulates. Allow generous slack for TLS/allocator overhead.
+        // ASAN's quarantine retains freed allocations so widen the threshold there.
         expect(out.result).toBe("HTTP2HeaderListTooLarge");
-        expect(out.growth).toBeLessThan(64 * 1024 * 1024);
+        expect(out.growth).toBeLessThan((isASAN ? 256 : 64) * 1024 * 1024);
         expect(exitCode).toBe(0);
       },
     );

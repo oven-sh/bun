@@ -622,7 +622,7 @@ fn get_shadcn_components(
         match loaders[file.get() as usize] {
             bun_ast::Loader::Tsx | bun_ast::Loader::Jsx => {
                 let import_records = &all[file.get() as usize];
-                for import_record in import_records.slice() {
+                for import_record in import_records.as_slice() {
                     if import_record.path.text.starts_with(b"@/components/ui/") {
                         icons.insert(&import_record.path.text[b"@/components/ui/".len()..])?;
                     }

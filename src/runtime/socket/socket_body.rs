@@ -449,8 +449,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 // `RefPtr: Deref<Target = H2FrameParser>`; `on_native_close`
                 // takes `&self`, so no raw-pointer reach-through is needed.
                 h2.on_native_close();
-                // Zig `h2.deref()` — IntrusiveRc::drop decrements.
-                drop(h2);
+                h2.deref();
             }
             NativeCallbacks::None => {}
         }
@@ -919,6 +918,24 @@ impl<const SSL: bool> NewSocket<SSL> {
         );
 
         if vm.is_shutting_down() {
+            // The `cleanup` guard's `mark_inactive()` is a no-op for a socket
+            // that never opened (`IS_ACTIVE` unset), and at process exit the
+            // JS wrapper is typically still rooted by module scope so
+            // `deinit_and_destroy()`'s `OWNS_HANDLERS` cleanup never runs.
+            // That strands the per-connection `Handlers` box allocated in
+            // `connect_inner()`. Free it here so a connect that's aborted by
+            // `close_all_socket_groups()` at shutdown doesn't leak.
+            let flags = this.flags.get();
+            if flags.contains(Flags::OWNS_HANDLERS) && !flags.contains(Flags::IS_ACTIVE) {
+                if let Some(h) = this.handlers.take() {
+                    // SAFETY: `OWNS_HANDLERS` ⇒ `h` is this socket's own
+                    // `heap::alloc` Handlers box. `!IS_ACTIVE` ⇒ neither the
+                    // `cleanup` guard nor `Handlers::mark_inactive()` will
+                    // touch it after this, and `take()` nulls the cell so
+                    // `deinit_and_destroy()` can't double-free.
+                    drop(unsafe { bun_core::heap::take(h.as_ptr()) });
+                }
+            }
             drop(cleanup);
             return Ok(());
         }
@@ -1114,9 +1131,18 @@ impl<const SSL: bool> NewSocket<SSL> {
             // leaving `this.handlers` dangling. Active-connection
             // bookkeeping is irrelevant once the process is exiting, so
             // just release the event-loop ref and stop.
-            let vm = VirtualMachine::get();
-            // SAFETY: VM singleton is always live once initialized.
-            if unsafe { (*vm).is_shutting_down() } {
+            //
+            // Client-mode (`OWNS_HANDLERS`) is exempt: `handlers` is this
+            // socket's own `heap::alloc` box, not a field of a Listener, so
+            // it cannot be finalized out from under us. Skipping the
+            // `Handlers::mark_inactive()` free strands that box —
+            // `close_all_socket_groups()` reaches here for every still-open
+            // client connection at exit and the test runner module scope
+            // typically still roots the JS wrapper, so the GC sweep never
+            // runs the `OWNS_HANDLERS` cleanup in `deinit_and_destroy`.
+            if VirtualMachine::get().is_shutting_down()
+                && !self.flags.get().contains(Flags::OWNS_HANDLERS)
+            {
                 self.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
                 return;
             }
@@ -2500,6 +2526,22 @@ impl<const SSL: bool> NewSocket<SSL> {
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
+        let socket = this.socket.get();
+        // An in-flight `connect()` whose `on_open` has not fired yet is a
+        // SEMI_SOCKET — `us_socket_close` skips dispatch for those (firing
+        // `on_close` without a prior `on_open` is wrong, and the natural
+        // failure path delivers `on_connect_error` from the loop instead).
+        // Closing one here therefore runs *no* terminal callback, stranding
+        // the +1 `connect_finish` took on `this` (whose matching `deref()`
+        // lives in `on_close`/`handle_connect_error`) and the Strong
+        // `this_value` upgrade. node:net reaches this for every aborted /
+        // `autoSelectFamily`-timed-out attempt via `_handle.close()`.
+        //
+        // `socket.socket.get().is_some()` is `true` only for the
+        // `Connected(us_socket_t)` arm — the `Connecting` arm fires
+        // `on_connecting_error` synchronously inside `close()` and so does
+        // its own `deref()`; double-releasing it would underflow.
+        let is_semi_connect = socket.socket.get().is_some() && !socket.is_established();
         // `_handle.close()` is the net.Socket `_destroy()` path — Node emits close_notify
         // once and closes the fd without waiting for the peer's reply. `.fast_shutdown`
         // makes `ssl_handle_shutdown` take the fast branch so the raw close runs
@@ -2507,7 +2549,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // detach + unref immediately below, orphaning the `us_socket_t`). NOT `.failure`:
         // that arms SO_LINGER{1,0} → RST and drops any data still in the kernel send
         // buffer, which `destroy()` after `write()` must not do.
-        this.socket.get().close(uws::CloseCode::FastShutdown);
+        socket.close(uws::CloseCode::FastShutdown);
         this.socket.set(SocketHandler::<SSL>::DETACHED);
         let _ = global;
         this.poll_ref.with_mut(|p| {
@@ -2515,6 +2557,15 @@ impl<const SSL: bool> NewSocket<SSL> {
                 bun_io::AllocatorType::Js,
             ))
         });
+        if is_semi_connect {
+            if !matches!(this.this_value.get(), JsRef::Finalized) {
+                this.this_value.with_mut(|r| r.downgrade());
+            }
+            // Balance `connect_finish`'s `socket_ref.ref_()`. The JS wrapper
+            // we were called through holds the remaining +1, so refcount
+            // stays ≥ 1 across this call.
+            this.deref();
+        }
         Ok(JSValue::UNDEFINED)
     }
 
@@ -2585,6 +2636,12 @@ impl<const SSL: bool> NewSocket<SSL> {
     unsafe fn deinit_and_destroy(this: *mut Self) {
         let this_ref: &Self = unsafe { &*this };
         this_ref.mark_inactive();
+        if this_ref.flags.get().contains(Flags::OWNS_HANDLERS) {
+            if let Some(h) = this_ref.handlers.take() {
+                // SAFETY: `OWNS_HANDLERS` ⇒ `h` is the unfreed `heap::alloc` root.
+                drop(unsafe { bun_core::heap::take(h.as_ptr()) });
+            }
+        }
         this_ref.detach_native_callback();
         // PORT NOTE: Zig `JSRef.deinit()` → reset to empty (Strong drops on assign).
         this_ref.this_value.set(JsRef::empty());
@@ -2626,6 +2683,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         this_ref.this_value.with_mut(|r| r.finalize());
         if !this_ref.socket.get().is_closed() {
             this_ref.close_and_detach(uws::CloseCode::Failure);
+        } else {
+            this_ref.detach_native_callback();
         }
 
         this_ref.deref();
@@ -2910,7 +2969,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             server_name: JsCell::new(
                 cfg.and_then(|c| c.server_name_bytes().map(Box::<[u8]>::from)),
             ),
-            flags: Cell::new(Flags::default()),
+            flags: Cell::new(Flags::default() | Flags::OWNS_HANDLERS),
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
@@ -3045,7 +3104,9 @@ impl<const SSL: bool> NewSocket<SSL> {
             // tears down `raw_handlers` (client-mode handlers free
             // themselves there). No poll_ref — `tls` keeps the loop alive.
             // active_connections=1 was already on raw_handlers from `this`.
-            flags: Cell::new(Flags::BYPASS_TLS | Flags::IS_ACTIVE | Flags::OWNED_PROTOS),
+            flags: Cell::new(
+                Flags::BYPASS_TLS | Flags::IS_ACTIVE | Flags::OWNED_PROTOS | Flags::OWNS_HANDLERS,
+            ),
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
@@ -3439,7 +3500,8 @@ bitflags::bitflags! {
         /// `us_socket_raw_write` (bypassing the SSL layer) so node:net can pipe
         /// pre-handshake bytes / read the underlying TCP stream.
         const BYPASS_TLS           = 1 << 9;
-        // bits 10..15 unused (Zig: `_: u6 = 0`)
+        const OWNS_HANDLERS        = 1 << 10;
+        // bits 11..15 unused (Zig: `_: u6 = 0`)
     }
 }
 
@@ -3899,7 +3961,7 @@ pub fn js_upgrade_duplex_to_tls(
         server_name: JsCell::new(
             socket_config.and_then(|cfg| cfg.server_name_bytes().map(Box::<[u8]>::from)),
         ),
-        flags: Cell::new(Flags::default()),
+        flags: Cell::new(Flags::default() | Flags::OWNS_HANDLERS),
         this_value: JsCell::new(JsRef::empty()),
         poll_ref: JsCell::new(KeepAlive::init()),
         ref_pollref_on_connect: Cell::new(true),

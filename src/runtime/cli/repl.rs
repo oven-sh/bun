@@ -1849,8 +1849,12 @@ impl<'a> Repl<'a> {
         // a stack 1-slot slice). `Map::init_with_one_list` takes ownership of
         // `ast.symbols` instead — see Symbol.rs PORT NOTE on the dangling-slice
         // hazard.
-        let symbols_map =
-            bun_ast::symbol::Map::init_with_one_list(core::mem::take(&mut ast.symbols));
+        let arena = *ast.symbols.allocator();
+        let symbols_map = bun_ast::symbol::Map::init_with_one_list(
+            core::mem::replace(&mut ast.symbols, bun_alloc::ArenaVec::new_in(arena))
+                .into_iter()
+                .collect(),
+        );
 
         if bun_js_printer::print_ast::<
             _,

@@ -1063,7 +1063,7 @@ impl TranspilerJob {
             return;
         }
 
-        for import_record in parse_result.ast.import_records.slice_mut() {
+        for import_record in parse_result.ast.import_records.as_mut_slice() {
             let import_record: &mut ImportRecord = import_record;
 
             if let Some(replacement) = HardcodedAlias::get(
@@ -1159,6 +1159,9 @@ impl TranspilerJob {
                 },
             );
             transpiler.print_with_source_map(
+                // Same per-call `arena` that `transpiler.set_arena(&arena)`
+                // and `parse_options.arena` used to build `parse_result.ast`.
+                &arena,
                 parse_result,
                 &mut printer,
                 js_printer::Format::EsmAscii,
@@ -1181,14 +1184,11 @@ impl TranspilerJob {
         let source_code = 'brk: {
             let written = source_code_printer.ctx.get_written();
 
-            // PORT NOTE: lower-tier `cache.output_code` is `Option<Box<[u8]>>`
-            // (Zig `?bun.String`). `RuntimeTranspilerCacheExt::put()` stores
-            // the printer bytes there; convert to a WTF `bun.String` for JSC.
-            let result = cache
-                .output_code
-                .take()
-                .map(|b| String::clone_latin1(&b))
-                .unwrap_or_else(|| String::clone_latin1(written));
+            // The `Jsc` vtable bridge `put()` does not write
+            // `cache.output_code` (only the `r#impl == None` fallback does,
+            // and `r#impl` is `Some(Jsc)` here), so it is always `None`.
+            debug_assert!(cache.output_code.is_none());
+            let result = String::clone_latin1(written);
 
             // SAFETY: leaf scalar field read on `*vm`; see `vm` PORT NOTE above.
             if written.len() > 1024 * 1024 * 2 || unsafe { (*vm).smol } {

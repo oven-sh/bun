@@ -130,6 +130,10 @@ impl BuildCommand {
         let this_transpiler: &mut transpiler::Transpiler<'static> = arena.alloc(
             transpiler::Transpiler::init(arena, log, ctx.args.clone(), None)?,
         );
+        bun_core::asan::register_root_region(
+            std::ptr::from_ref::<transpiler::Transpiler>(this_transpiler).cast(),
+            core::mem::size_of::<transpiler::Transpiler>(),
+        );
         if let Some(fetch) = fetcher.as_deref() {
             this_transpiler.options.entry_points = fetch.entry_points.clone();
             // resolver.opts is a distinct subset type; entry_points / IMRE live
@@ -567,15 +571,15 @@ impl BuildCommand {
                 // resolver subset; bundler-side `entry_naming` is sufficient.
             }
 
-            // Zig: `bun.jsc.AnyEventLoop.init(ctx.allocator)` — a Mini event loop
-            // owned by the arena. `generate_from_cli` → `wait_for_parse` derefs
-            // this via `r#loop()` to drain parse tasks; passing `None` panics.
-            let event_loop = arena.alloc(bun_event_loop::AnyEventLoop::init());
+            // Stack-owned Mini event loop so its tasks/concurrent_tasks queues
+            // drop at scope exit; the arena bulk-free skips Drop. Outlives the
+            // BACKREF passed to `generate_from_cli`.
+            let mut event_loop = bun_event_loop::AnyEventLoop::init();
 
             let build_result = match BundleV2::generate_from_cli(
                 this_transpiler,
                 arena,
-                Some(core::ptr::NonNull::from(event_loop)),
+                Some(core::ptr::NonNull::from(&mut event_loop)),
                 ctx.debug.hot_reload == HotReload::Watch,
                 &mut reachable_file_count,
                 &mut minify_duration,

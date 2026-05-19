@@ -708,4 +708,46 @@ extern "C" void Debugger__willDispatchAsyncCall(JSGlobalObject* globalObject, As
 
     agent->willDispatchAsyncCall(getCallType(callType), callbackId);
 }
+
+extern "C" void Bun__InspectorConnection__disconnectAllOnExit(Zig::GlobalObject* globalObject)
+{
+    // Snapshot under the lock, release before calling into the inspector —
+    // `willDestroyFrontendAndBackend` must not run with `inspectorConnectionsLock` held.
+    Vector<BunInspectorConnection*, 8> toDisconnect;
+    {
+        Locker<Lock> locker(inspectorConnectionsLock);
+        if (!inspectorConnections)
+            return;
+        auto* context = globalObject->scriptExecutionContext();
+        if (!context)
+            return;
+        auto it = inspectorConnections->find(context->identifier());
+        if (it == inspectorConnections->end())
+            return;
+        for (auto* connection : it->value) {
+            if (connection->status == ConnectionStatus::Disconnected)
+                continue;
+            connection->status = ConnectionStatus::Disconnected;
+            // Never call `disconnect()` for a connection that never connected —
+            // `disconnectFrontend` would underflow the FrontendRouter.
+            if (connection->hasEverConnected)
+                toDisconnect.append(connection);
+        }
+    }
+
+    if (toDisconnect.isEmpty())
+        return;
+
+    for (auto* connection : toDisconnect)
+        globalObject->inspectorDebuggable().disconnect(*connection);
+
+    globalObject->m_inspectorController->globalObjectDestroyed();
+
+    // WebKit header bug: `m_inspectorAgent` (CheckedPtr) is declared before
+    // `m_agents`, so `~JSGlobalObjectInspectorController` destroys the agent
+    // while a CheckedPtr still counts it -> `crashDueToCheckedPtrToDeadObject()`.
+    // Leak the connected controller and hand the global a fresh, never-connected one.
+    [[maybe_unused]] auto* leakedController = globalObject->m_inspectorController.release();
+    globalObject->m_inspectorController = makeUnique<Inspector::JSGlobalObjectInspectorController>(*globalObject, Bun::BunInjectedScriptHost::create());
+}
 }

@@ -20,6 +20,7 @@ use crate::test_command::CommandLineReporter;
 
 // PORT NOTE: `bun.spawn.Status` lives in src/runtime/api/bun/process.zig
 // (not the lower-tier `bun_spawn` crate). Worker.exit_status is this type.
+use crate::api::bun::process::Process;
 use crate::api::bun::process::Status as SpawnStatus;
 
 pub struct Coordinator<'a> {
@@ -486,6 +487,14 @@ impl<'a> Coordinator<'a> {
             }
         }
 
+        if let Some(p) = w.process.take() {
+            // SAFETY: `p` is the live `*mut Process` from `to_process`; sole owner now.
+            unsafe {
+                (*p).detach();
+                Process::deref(p);
+            }
+        }
+
         let mut respawned = false;
         if !self.bailed && self.has_undispatched_files() {
             // TODO(port): explicit deinit of ipc/out/err — in Rust these become
@@ -493,7 +502,6 @@ impl<'a> Coordinator<'a> {
             w.ipc = Default::default();
             w.out = WorkerPipe::new(PipeRole::Stdout, std::ptr::from_ref::<Worker>(w));
             w.err = WorkerPipe::new(PipeRole::Stderr, std::ptr::from_ref::<Worker>(w));
-            w.process = None;
             match w.start() {
                 Ok(()) => {
                     respawned = true;

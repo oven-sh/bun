@@ -2797,11 +2797,15 @@ fn map_dep_to_pkg(
     if text_lockfile_version != Version::V0 {
         let res = &pkg_resolutions[pkg_id as usize];
         if res.tag == ResolutionTag::Workspace {
-            dep.version.tag = DependencyVersionTag::Workspace;
-            // SAFETY: `res.tag == Workspace` was just checked, so the
-            // `workspace` arm of the `Resolution.value` union is the active one.
-            dep.version.value = DependencyVersionValue {
-                workspace: *res.workspace(),
+            // Whole-struct assign so `DependencyVersion::Drop` frees any prior
+            // npm chain. SAFETY: `res.tag == Workspace` checked above.
+            let literal = dep.version.literal;
+            dep.version = DependencyVersion {
+                tag: DependencyVersionTag::Workspace,
+                literal,
+                value: DependencyVersionValue {
+                    workspace: *res.workspace(),
+                },
             };
         }
     }

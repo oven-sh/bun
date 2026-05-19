@@ -126,6 +126,59 @@ int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int fl
 #endif
 }
 
+#if defined(__linux__)
+#include <linux/errqueue.h>
+
+/* Dequeue one entry from the UDP socket's error queue (populated when
+ * IP_RECVERR/IPV6_RECVERR is enabled and an ICMP error arrives). Plain
+ * recv/recvmsg reports the pending error once but does NOT remove it from
+ * the error queue, so EPOLLERR stays level-triggered and the event loop
+ * busy-spins. Reading with MSG_ERRQUEUE actually drains it.
+ *
+ * Returns 1 and writes the error's errno to *err_out when an entry was
+ * dequeued; returns 0 when the queue is empty; returns -1 on unexpected
+ * failure (errno set). */
+int bsd_udp_drain_errqueue(LIBUS_SOCKET_DESCRIPTOR fd, int *err_out) {
+    char control[256];
+    /* The error-queue message carries the offending packet's payload; we
+     * only care about the cmsg, so a 1-byte iov is enough (kernel sets
+     * MSG_TRUNC which we ignore). */
+    char scratch[1];
+    struct sockaddr_storage addr;
+    struct iovec iov = { .iov_base = scratch, .iov_len = sizeof(scratch) };
+    struct msghdr msg;
+    memset(&msg, 0, sizeof(msg));
+    msg.msg_name = &addr;
+    msg.msg_namelen = sizeof(addr);
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = control;
+    msg.msg_controllen = sizeof(control);
+
+    ssize_t ret;
+    do {
+        ret = recvmsg(fd, &msg, MSG_ERRQUEUE | MSG_DONTWAIT);
+    } while (ret < 0 && errno == EINTR);
+
+    if (ret < 0) {
+        return (errno == EAGAIN || errno == EWOULDBLOCK) ? 0 : -1;
+    }
+
+    for (struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg); cmsg != NULL; cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+        if ((cmsg->cmsg_level == IPPROTO_IP && cmsg->cmsg_type == IP_RECVERR) ||
+            (cmsg->cmsg_level == IPPROTO_IPV6 && cmsg->cmsg_type == IPV6_RECVERR)) {
+            struct sock_extended_err *serr = (struct sock_extended_err *) CMSG_DATA(cmsg);
+            *err_out = (int) serr->ee_errno;
+            return 1;
+        }
+    }
+    /* Dequeued something but no sock_extended_err cmsg — unexpected, but
+     * report it as drained so the caller keeps looping until EAGAIN. */
+    *err_out = 0;
+    return 1;
+}
+#endif
+
 int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int flags) {
 #if defined(_WIN32)
     socklen_t addr_len = sizeof(struct sockaddr_storage);

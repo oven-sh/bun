@@ -62,8 +62,8 @@ impl StatHash {
             let mtime_timespec = stat_mtime(stat);
             // Clamp negative values to 0 to avoid timestamp overflow issues on Windows
             let mtime = Timespec {
-                nsec: i64::try_from(mtime_timespec.nsec.max(0)).expect("int cast"),
-                sec: i64::try_from(mtime_timespec.sec.max(0)).expect("int cast"),
+                nsec: mtime_timespec.nsec.max(0),
+                sec: mtime_timespec.sec.max(0),
             };
             if mtime.ms() > 0 {
                 self.last_modified_buffer_len = u8::try_from(

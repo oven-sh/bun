@@ -1,14 +1,23 @@
-var default_manager: ?*PathWatcherManager = null;
-
 // TODO: make this a generic so we can reuse code with path_watcher
 // TODO: we probably should use native instead of libuv abstraction here for better performance
+
+/// One per VM, stored on `RareData`. Unlike the POSIX backend (`path_watcher.zig`),
+/// which is process-global because it owns a single inotify/kqueue fd and a dedicated
+/// reader thread, the Windows backend wraps libuv `uv_fs_event_t` handles. A libuv
+/// handle is bound to a specific `uv_loop_t` and is not thread-safe: init/start/stop/
+/// close must all happen on the thread that runs that loop, and the event callback
+/// fires on that same thread.
+///
+/// Every VM (main thread and each Worker) has its own `uv_loop_t`, so a `PathWatcher`
+/// created by a Worker must live on the Worker's loop — it cannot be shared with the
+/// main thread's manager. Storing the manager per-VM means the dedup map is only ever
+/// touched from that VM's single JS thread, so no locking is required.
 pub const PathWatcherManager = struct {
     const options = @import("../../bundler/options.zig");
     const log = Output.scoped(.PathWatcherManager, .visible);
 
     watchers: bun.StringArrayHashMapUnmanaged(*PathWatcher) = .{},
     vm: *jsc.VirtualMachine,
-    deinit_on_last_watcher: bool = false,
 
     pub const new = bun.TrivialNew(PathWatcherManager);
 
@@ -19,14 +28,7 @@ pub const PathWatcherManager = struct {
         });
     }
 
-    // unregister is always called form main thread
     fn unregisterWatcher(this: *PathWatcherManager, watcher: *PathWatcher, path: [:0]const u8) void {
-        defer {
-            if (this.deinit_on_last_watcher and this.watchers.count() == 0) {
-                this.deinit();
-            }
-        }
-
         if (std.mem.indexOfScalar(*PathWatcher, this.watchers.values(), watcher)) |index| {
             if (comptime bun.Environment.isDebug) {
                 if (path.len > 0)
@@ -38,26 +40,21 @@ pub const PathWatcherManager = struct {
         }
     }
 
-    fn deinit(this: *PathWatcherManager) void {
-        // enable to create a new manager
-        if (default_manager == this) {
-            default_manager = null;
-        }
-
-        if (this.watchers.count() != 0) {
-            this.deinit_on_last_watcher = true;
-            return;
-        }
-
+    /// Called from `RareData.deinit()` on VM shutdown. Frees the manager itself
+    /// and the owned key strings, but deliberately does NOT touch any surviving
+    /// `PathWatcher` entries: their `uv_fs_event_t` handles live on this VM's
+    /// `uv_loop_t`, which is being torn down, and calling `uv_close` on a
+    /// dead/dying loop is undefined. In normal shutdown the FSWatcher finalizers
+    /// have already emptied the map via `detach()` → `unregisterWatcher()`.
+    pub fn deinit(this: *PathWatcherManager) void {
         for (this.watchers.values()) |watcher| {
+            // Orphan it so a late finalizer's `detach()` won't walk back into
+            // a freed manager.
             watcher.manager = null;
-            watcher.deinit();
         }
-
         for (this.watchers.keys()) |path| {
             bun.default_allocator.free(path);
         }
-
         this.watchers.deinit(bun.default_allocator);
         bun.destroy(this);
     }
@@ -277,10 +274,10 @@ pub fn watch(
         @compileError("win_watcher should only be used on Windows");
     }
 
-    const manager = default_manager orelse brk: {
-        default_manager = PathWatcherManager.init(vm);
-        break :brk default_manager.?;
-    };
+    // Per-VM: each Worker has its own uv loop, so each needs its own manager whose
+    // `uv_fs_event_t` handles are bound to that loop. See PathWatcherManager doc comment.
+    const manager = vm.rareData().windowsPathWatcherManager(vm);
+    bun.debugAssert(manager.vm == vm);
     var watcher = switch (PathWatcher.init(manager, path, recursive)) {
         .err => |err| return .{ .err = err },
         .result => |watcher| watcher,

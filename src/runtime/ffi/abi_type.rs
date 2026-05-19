@@ -246,6 +246,17 @@ impl ABIType {
         matches!(self, ABIType::Double | ABIType::Float)
     }
 
+    /// Returns true if converting this type to a JSValue may heap-allocate
+    /// a JS object (a JSBigInt). For threadsafe callbacks the trampoline
+    /// may run on an arbitrary OS thread, so the allocation must be
+    /// deferred to the JS thread inside `FFI_Callback_threadsafe_call`.
+    pub fn may_allocate_bigint_when_converted_to_js(self) -> bool {
+        matches!(
+            self,
+            ABIType::Int64T | ABIType::Uint64T | ABIType::I64Fast | ABIType::U64Fast
+        )
+    }
+
     pub fn to_c(self, symbol: &[u8]) -> ToCFormatter<'_> {
         ToCFormatter {
             tag: self,

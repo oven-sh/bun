@@ -295,7 +295,7 @@ impl Stringifier {
                     Self::write_workspace_deps(
                         writer,
                         indent,
-                        u32::try_from(workspace_pkg_id).expect("int cast"),
+                        workspace_pkg_id,
                         // SAFETY: `workspace_sort_buf` only contains pkgs whose
                         // resolution `tag == Workspace`.
                         *res.workspace(),
@@ -621,7 +621,7 @@ impl Stringifier {
                     pkg_deps_sort_buf.clear();
                     pkg_deps_sort_buf.reserve(pkg_deps_list.len as usize);
                     for pkg_dep_id in pkg_deps_list.begin()..pkg_deps_list.end() {
-                        pkg_deps_sort_buf.push(u32::try_from(pkg_dep_id).expect("int cast"));
+                        pkg_deps_sort_buf.push(pkg_dep_id);
                         // PERF(port): was assume_capacity
                     }
 
@@ -2316,8 +2316,7 @@ pub fn parse_into_binary_lockfile(
                     for _workspace_pkg_id in
                         workspace_pkgs_off..workspace_pkgs_off + workspace_pkgs_len
                     {
-                        let workspace_pkg_id: PackageID =
-                            u32::try_from(_workspace_pkg_id).expect("int cast");
+                        let workspace_pkg_id: PackageID = _workspace_pkg_id;
                         if res.eql(
                             &pkg_resolutions[workspace_pkg_id as usize],
                             lockfile.buffers.string_bytes.as_slice(),
@@ -2593,7 +2592,7 @@ pub fn parse_into_binary_lockfile(
         {
             // first the root dependencies are resolved
             for _dep_id in pkg_deps[0].begin()..pkg_deps[0].end() {
-                let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
+                let dep_id: DependencyID = _dep_id;
                 let dep = &mut dependencies[dep_id as usize];
 
                 let Some(&res_id) = pkg_map.get(dep.name.slice(string_buf)) else {
@@ -2636,14 +2635,14 @@ pub fn parse_into_binary_lockfile(
         if lockfile_version != Version::V0 {
             // then workspace dependencies are resolved
             for _pkg_id in workspace_pkgs_off..workspace_pkgs_off + workspace_pkgs_len {
-                let pkg_id: PackageID = u32::try_from(_pkg_id).expect("int cast");
+                let pkg_id: PackageID = _pkg_id;
                 let workspace_name = pkg_names[pkg_id as usize].slice(string_buf);
 
                 seen_deps.clear_retaining_capacity();
 
                 let deps = pkg_deps[pkg_id as usize];
                 for _dep_id in deps.begin()..deps.end() {
-                    let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
+                    let dep_id: DependencyID = _dep_id;
                     let dep = &mut dependencies[dep_id as usize];
                     let dep_name = dep.name.slice(string_buf);
 
@@ -2731,7 +2730,7 @@ pub fn parse_into_binary_lockfile(
             // find resolutions. iterate up to root through the pkg path.
             let deps = pkg_deps[pkg_id as usize];
             'deps: for _dep_id in deps.begin()..deps.end() {
-                let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
+                let dep_id: DependencyID = _dep_id;
                 let dep = &mut dependencies[dep_id as usize];
 
                 let res_id =

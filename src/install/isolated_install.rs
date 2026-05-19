@@ -317,7 +317,7 @@ pub fn install_isolated_packages(
                 let pkg_id: PackageID = u32::try_from(pkg_idx).expect("int cast");
                 let deps = pkg_dependency_slices[pkg_id as usize];
                 for _dep_id in deps.begin()..deps.end() {
-                    let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
+                    let dep_id: DependencyID = _dep_id;
                     let dep = &dependencies[dep_id as usize];
                     let Some(bit) = peer_name_idx.get_index(&dep.name_hash) else {
                         continue;
@@ -350,7 +350,7 @@ pub fn install_isolated_packages(
                     scratch.copy_into(&own_peers.at(pkg_id as usize));
 
                     for _dep_id in deps.begin()..deps.end() {
-                        let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
+                        let dep_id: DependencyID = _dep_id;
                         let dep = &dependencies[dep_id as usize];
                         if dep.behavior.is_peer() {
                             if let Some(bit) = peer_name_idx.get_index(&dep.name_hash) {
@@ -383,7 +383,7 @@ pub fn install_isolated_packages(
 
         let mut root_declares_workspace = DynamicBitSet::init_empty(lockfile.packages.len())?;
         for _dep_idx in pkg_dependency_slices[0].begin()..pkg_dependency_slices[0].end() {
-            let dep_idx: DependencyID = u32::try_from(_dep_idx).expect("int cast");
+            let dep_idx: DependencyID = _dep_idx;
             if !dependencies[dep_idx as usize].behavior.is_workspace() {
                 continue;
             }
@@ -670,7 +670,7 @@ pub fn install_isolated_packages(
             dep_ids_sort_buf.clear();
             dep_ids_sort_buf.reserve(pkg_deps.len as usize);
             for _dep_id in pkg_deps.begin()..pkg_deps.end() {
-                let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
+                let dep_id: DependencyID = _dep_id;
                 dep_ids_sort_buf.push(dep_id);
                 // PERF(port): was appendAssumeCapacity — profile if hot.
             }
@@ -2089,7 +2089,7 @@ pub fn install_isolated_packages(
                 .as_deref()
                 .map(|b: &[u8]| -> &bun_core::ZStr {
                     // SAFETY: `global_store_path` was built with a trailing NUL above.
-                    bun_core::ZStr::from_slice_with_nul(&b[..])
+                    bun_core::ZStr::from_slice_with_nul(b)
                 }),
             global_store_tmp_suffix: fast_random(),
             summary: Default::default(),

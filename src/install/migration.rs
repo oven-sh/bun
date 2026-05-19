@@ -690,7 +690,7 @@ pub fn migrate_npm_lockfile<'a>(
                 }
 
                 let off = this.buffers.extern_strings.len() as u32;
-                let len = u32::try_from(bin_obj.properties.len_u32() * 2).expect("int cast");
+                let len = bin_obj.properties.len_u32() * 2;
 
                 for bin_entry in bin_obj.properties.slice() {
                     let key = bin_entry

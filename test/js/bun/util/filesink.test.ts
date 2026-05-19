@@ -1,6 +1,6 @@
 import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { fileDescriptorLeakChecker, isPosix, isWindows, tmpdirSync } from "harness";
+import { fileDescriptorLeakChecker, isPosix, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "node:path";
 
@@ -277,4 +277,43 @@ it("start() without path/fd on an already-open writer does not crash", async () 
   writer.write("hello");
   await writer.end();
   expect(await Bun.file(path).text()).toBe("hello");
+});
+
+it("Bun.file().writer() ignores invalid path/fd in options instead of crashing", async () => {
+  using dir = tempDir("filesink-writer-invalid-options", {});
+
+  // `fd` in options is not an integer: previously this panicked accessing the
+  // wrong union field after `fromJSWithTag` returned `.err`.
+  {
+    const file = Bun.file(join(dir, "a.txt")) as any;
+    file.fd = Int16Array;
+    const writer = file.writer(file);
+    writer.write("a");
+    await writer.end();
+    expect(await Bun.file(join(dir, "a.txt")).text()).toBe("a");
+  }
+
+  // Explicit non-integer `fd` in options object.
+  {
+    const writer = Bun.file(join(dir, "b.txt")).writer({ fd: "nope" } as any);
+    writer.write("b");
+    await writer.end();
+    expect(await Bun.file(join(dir, "b.txt")).text()).toBe("b");
+  }
+
+  // Non-string `path` in options object.
+  {
+    const writer = Bun.file(join(dir, "c.txt")).writer({ path: 123 } as any);
+    writer.write("c");
+    await writer.end();
+    expect(await Bun.file(join(dir, "c.txt")).text()).toBe("c");
+  }
+
+  // String `path` in options is parsed but overridden by the Blob's own path.
+  {
+    const writer = Bun.file(join(dir, "d.txt")).writer({ path: join(dir, "ignored.txt") } as any);
+    writer.write("d");
+    await writer.end();
+    expect(await Bun.file(join(dir, "d.txt")).text()).toBe("d");
+  }
 });

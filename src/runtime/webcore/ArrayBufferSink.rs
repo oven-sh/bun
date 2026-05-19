@@ -53,8 +53,10 @@ impl ArrayBufferSink {
         } = stream_start
         {
             if chunk_size > 0 {
-                self.bytes
-                    .ensure_total_capacity_precise(chunk_size as usize);
+                let need = (chunk_size as usize).saturating_sub(self.bytes.len());
+                if self.bytes.try_reserve_exact(need).is_err() {
+                    return bun_sys::Result::Err(syscall::Error::oom());
+                }
             }
 
             self.as_uint8array = as_uint8array;

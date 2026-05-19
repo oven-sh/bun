@@ -961,10 +961,15 @@ pub(crate) fn abort_tracker() -> &'static mut ArrayHashMap<u32, uws::AnySocket> 
 /// Priority: tls_props.server_name > client.hostname > client.url.hostname
 /// The Host header value (client.hostname) may contain a port suffix which
 /// must be stripped because it is not part of the DNS name in certificates.
+/// IPv6 literals have their surrounding brackets stripped (e.g. "[::1]" -> "::1")
+/// so downstream consumers (boringssl::check_x509_server_identity, SNI's
+/// is_ip_address check, and any user-supplied checkServerIdentity callback) see
+/// the bare address. This mirrors Node.js, which strips brackets in
+/// urlToHttpOptions before the hostname reaches tls.checkServerIdentity.
 fn get_tls_hostname<'c>(client: &'c HTTPClient<'_>, allow_proxy_url: bool) -> &'c [u8] {
     if allow_proxy_url {
         if let Some(proxy) = &client.http_proxy {
-            return proxy.hostname;
+            return strip_ipv6_brackets(proxy.hostname);
         }
     }
     // Prefer the explicit TLS server_name (e.g. from Node.js servername option)
@@ -977,15 +982,25 @@ fn get_tls_hostname<'c>(client: &'c HTTPClient<'_>, allow_proxy_url: bool) -> &'
             // `client.tls_props`) without a `(ptr,len)` round-trip.
             let sn_slice = unsafe { bun_core::ffi::cstr(sn) }.to_bytes();
             if !sn_slice.is_empty() {
-                return sn_slice;
+                return strip_ipv6_brackets(sn_slice);
             }
         }
     }
     // client.hostname comes from the Host header and may include ":port"
     if let Some(host) = &client.hostname {
-        return strip_port_from_host(host);
+        return strip_ipv6_brackets(strip_port_from_host(host));
     }
-    client.url.hostname
+    strip_ipv6_brackets(client.url.hostname)
+}
+
+/// Strips surrounding `[` `]` from an IPv6 literal, e.g. "[::1]" -> "::1".
+/// Leaves non-bracketed hostnames unchanged.
+fn strip_ipv6_brackets(host: &[u8]) -> &[u8] {
+    if host.len() >= 2 && host[0] == b'[' && host[host.len() - 1] == b']' {
+        &host[1..host.len() - 1]
+    } else {
+        host
+    }
 }
 
 // ── support types ───────────────────────────────────────────────────────

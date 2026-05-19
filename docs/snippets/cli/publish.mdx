@@ -87,6 +87,32 @@ bun publish --otp 123456
 
 </ParamField>
 
+<ParamField path="--provenance" type="boolean">
+
+Generate a signed npm provenance statement via Sigstore keyless signing. Requires `--access public` and running inside GitHub Actions (with `id-token: write` permission) or GitLab CI (with `SIGSTORE_ID_TOKEN`). Also enabled by `NPM_CONFIG_PROVENANCE=true`; override with `--no-provenance`.
+
+```sh terminal icon="terminal"
+bun publish --provenance --access public
+```
+
+`--provenance` can also be set in the `publishConfig` field of your `package.json`.
+
+```json package.json icon="file-json"
+{
+  "publishConfig": {
+    "provenance": true // [!code ++]
+  }
+}
+```
+
+</ParamField>
+
+<ParamField path="--provenance-file" type="string">
+
+Path to an externally-generated Sigstore provenance bundle to attach instead of generating one. The bundle's subject must match the package name and tarball digest. Mutually exclusive with `--provenance`.
+
+</ParamField>
+
 ### Registry Configuration
 
 #### Custom Registry

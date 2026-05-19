@@ -284,6 +284,19 @@ export const sigactionLayout: () =>
       sizeof: number;
     } = $newZigFunction("sys.zig", "TestingAPIs.sigactionLayout", 0);
 
+export const rusageLayout: () =>
+  | undefined
+  | {
+      sizeof: number;
+      sizeofSpawnRusage: number;
+      sizeofStdPosixRusage: number;
+      hasReservedTail: boolean;
+      isAndroid: boolean;
+      maxrss: number;
+      utime_usec: number;
+      stime_usec: number;
+    } = $newZigFunction("sys.zig", "TestingAPIs.rusageLayout", 0);
+
 export const stringsInternals = {
   /**
    * Calls `bun.strings.toUTF16AllocForReal(allocator, bytes, false, true)` and

@@ -71,30 +71,12 @@ pub fn uv_getrusage(process: *uv.uv_process_t) win_rusage {
 }
 pub const Rusage = if (Environment.isWindows)
     win_rusage
-    // std.posix.rusage has no .freebsd arm; field names also differ
-    // (ru_* instead of bare). Define a layout-compatible struct so
-    // ResourceUsage can use the same field names everywhere.
-else if (Environment.isFreeBSD)
-    extern struct {
-        utime: std.c.timeval,
-        stime: std.c.timeval,
-        maxrss: isize,
-        ixrss: isize,
-        idrss: isize,
-        isrss: isize,
-        minflt: isize,
-        majflt: isize,
-        nswap: isize,
-        inblock: isize,
-        oublock: isize,
-        msgsnd: isize,
-        msgrcv: isize,
-        nsignals: isize,
-        nvcsw: isize,
-        nivcsw: isize,
-    }
 else
-    std.posix.rusage;
+    // `std.posix.rusage` is oversized on Android (musl's `__reserved` tail,
+    // which bionic doesn't have) and missing entirely on FreeBSD.
+    // `bun.sys.rusage` carries per-platform overrides for both and is a
+    // transparent alias of `std.posix.rusage` everywhere else.
+    bun.sys.rusage;
 
 // const ShellSubprocessMini = bun.shell.ShellSubprocessMini;
 pub const ProcessExitHandler = struct {

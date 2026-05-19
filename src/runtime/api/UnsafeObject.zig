@@ -1,9 +1,11 @@
 pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
-    const object = JSValue.createEmptyObject(globalThis, 3);
+    const object = JSValue.createEmptyObject(globalThis, 5);
     const fields = comptime .{
         .gcAggressionLevel = gcAggressionLevel,
         .arrayBufferToString = arrayBufferToString,
         .mimallocDump = dump_mimalloc,
+        .napiLinkSlots = napiLinkSlots,
+        .linkNapiModule = linkNapiModule,
     };
     inline for (comptime std.meta.fieldNames(@TypeOf(fields))) |name| {
         object.put(
@@ -64,6 +66,85 @@ fn dump_mimalloc(globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSErr
     if (bun.heap_breakdown.enabled) {
         dump_zone_malloc_stats();
     }
+    return .js_undefined;
+}
+
+/// Return the NAPI link-slot table as an array of
+/// `{ index, used, path, offset, length, hash }` so tests (and curious
+/// users) can see which stub loaders are populated in the current
+/// executable. This inspects the running binary's own table, not a file.
+pub fn napiLinkSlots(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const slots = bun.napi_link.slots();
+    const arr = try jsc.JSValue.createEmptyArray(globalThis, slots.len);
+    for (slots, 0..) |*slot, i| {
+        const obj = JSValue.createEmptyObject(globalThis, 6);
+        obj.put(globalThis, ZigString.static("index"), JSValue.jsNumber(@as(i32, @intCast(slot.index()))));
+        obj.put(globalThis, ZigString.static("used"), JSValue.jsBoolean(slot.isUsed()));
+        obj.put(globalThis, ZigString.static("path"), try bun.String.createUTF8ForJS(globalThis, slot.pathSlice()));
+        obj.put(globalThis, ZigString.static("offset"), JSValue.jsNumber(@as(f64, @floatFromInt(slot.offset))));
+        obj.put(globalThis, ZigString.static("length"), JSValue.jsNumber(@as(f64, @floatFromInt(slot.length))));
+        obj.put(globalThis, ZigString.static("hash"), try bun.String.createUTF8ForJS(globalThis, &std.fmt.bytesToHex(std.mem.asBytes(&slot.hash), .lower)));
+        try arr.putIndex(globalThis, @intCast(i), obj);
+    }
+    return arr;
+}
+
+/// `Bun.unsafe.linkNapiModule(exePath, addonPath, virtualPath, outPath)`
+/// Post-process a `bun build --compile` executable: append the Mach-O
+/// `.node` image at `addonPath` into the `__BUN,__bun` section and stamp
+/// the first free stub slot so that `process.dlopen(virtualPath)` inside the
+/// resulting binary resolves to it. Writes the result to `outPath` (which
+/// may equal `exePath`). Mach-O only for now.
+pub fn linkNapiModule(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    if (callframe.argumentsCount() < 4) {
+        return globalThis.throwInvalidArguments("linkNapiModule(exePath, addonPath, virtualPath, outPath) requires 4 arguments", .{});
+    }
+    const exe_arg, const addon_arg, const vpath_arg, const out_arg = callframe.argumentsAsArray(4);
+
+    const allocator = bun.default_allocator;
+
+    var exe_path = try exe_arg.toSliceOrNull(globalThis);
+    defer exe_path.deinit();
+    var addon_path = try addon_arg.toSliceOrNull(globalThis);
+    defer addon_path.deinit();
+    var virtual_path = try vpath_arg.toSliceOrNull(globalThis);
+    defer virtual_path.deinit();
+    var out_path = try out_arg.toSliceOrNull(globalThis);
+    defer out_path.deinit();
+
+    const exe_bytes = switch (bun.sys.File.readFrom(bun.FD.cwd(), exe_path.slice(), allocator)) {
+        .result => |b| b,
+        .err => |e| return globalThis.throwValue(try e.withPath(exe_path.slice()).toJS(globalThis)),
+    };
+    defer allocator.free(exe_bytes);
+
+    const addon_bytes = switch (bun.sys.File.readFrom(bun.FD.cwd(), addon_path.slice(), allocator)) {
+        .result => |b| b,
+        .err => |e| return globalThis.throwValue(try e.withPath(addon_path.slice()).toJS(globalThis)),
+    };
+    defer allocator.free(addon_bytes);
+
+    const out_bytes = bun.napi_link.linkIntoMachO(allocator, exe_bytes, addon_bytes, virtual_path.slice()) catch |err| switch (err) {
+        error.UnsupportedExecutableFormat => return globalThis.throw("linkNapiModule: executable is not a Mach-O file (only macOS targets are supported for now)", .{}),
+        error.NotStandaloneExecutable => return globalThis.throw("linkNapiModule: executable was not produced by `bun build --compile`", .{}),
+        error.NoFreeSlot => return globalThis.throw("linkNapiModule: all {d} NAPI link slots are in use", .{bun.napi_link.Slot.count}),
+        error.PathTooLong => return globalThis.throw("linkNapiModule: virtual path must be < 224 bytes", .{}),
+        error.SlotTableMissing => return globalThis.throw("linkNapiModule: executable has no NAPI link slot table (was it built with an older bun?)", .{}),
+        error.OutOfMemory => return globalThis.throwOutOfMemory(),
+    };
+    defer allocator.free(out_bytes);
+
+    var out_buf: bun.PathBuffer = undefined;
+    const out_z = bun.path.z(out_path.slice(), &out_buf);
+    const out_file = bun.sys.File.openat(bun.FD.cwd(), out_z, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o755).unwrap() catch |err| {
+        return globalThis.throw("linkNapiModule: failed to open output file: {s}", .{@errorName(err)});
+    };
+    defer out_file.close();
+    switch (out_file.writeAll(out_bytes)) {
+        .result => {},
+        .err => |e| return globalThis.throwValue(try e.withPath(out_path.slice()).toJS(globalThis)),
+    }
+
     return .js_undefined;
 }
 

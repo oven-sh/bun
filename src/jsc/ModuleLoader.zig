@@ -1341,6 +1341,14 @@ export fn Bun__resolveEmbeddedNodeFile(vm: *VirtualMachine, in_out_str: *bun.Str
     return true;
 }
 
+comptime {
+    // NAPI link-slot addons (appended to the executable after
+    // `bun build --compile` without rebundling) are handled directly by
+    // `Process_functionDlopen` via `Bun__tryLoadNapiLinkSlot` — they're
+    // loaded from memory and never touch this path.
+    _ = &bun.napi_link.Bun__tryLoadNapiLinkSlot;
+}
+
 export fn ModuleLoader__isBuiltin(data: [*]const u8, len: usize) bool {
     const str = data[0..len];
     return HardcodedModule.Alias.bun_aliases.get(str) != null;

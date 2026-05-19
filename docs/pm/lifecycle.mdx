@@ -57,11 +57,11 @@ A curated list of popular npm packages with lifecycle scripts is allowed by defa
 
 Defining `trustedDependencies` in `package.json` **replaces** the default list rather than extending it. Exactly one of three modes applies per project:
 
-| `package.json`                        | Packages allowed to run lifecycle scripts                    |
-| ------------------------------------- | ------------------------------------------------------------ |
-| `trustedDependencies` omitted         | The packages in Bun's built-in list (npm sources only).      |
-| `trustedDependencies: ["pkg-a", ...]` | **Only** the listed packages. The default list is ignored.   |
-| `trustedDependencies: []`             | **No** packages, including none from the default list.       |
+| `package.json`                        | Packages allowed to run lifecycle scripts                  |
+| ------------------------------------- | ---------------------------------------------------------- |
+| `trustedDependencies` omitted         | The packages in Bun's built-in list (npm sources only).    |
+| `trustedDependencies: ["pkg-a", ...]` | **Only** the listed packages. The default list is ignored. |
+| `trustedDependencies: []`             | **No** packages, including none from the default list.     |
 
 Set `trustedDependencies: []` when you want to opt out of the default allow list entirely without passing `--ignore-scripts` on every install. If you define `trustedDependencies` with an explicit list, include any packages from the [default list](https://github.com/oven-sh/bun/blob/main/src/install/default-trusted-dependencies.txt) whose lifecycle scripts you still need (for example, `sharp` or `esbuild`) — they are no longer trusted implicitly.
 

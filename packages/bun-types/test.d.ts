@@ -380,6 +380,12 @@ declare module "bun:test" {
    *
    * Can only be called inside a test, not in describe blocks.
    *
+   * Works inside concurrent tests when `onTestFinished()` is called
+   * synchronously from the test callback body (including microtasks drained
+   * before the first suspension point). Registrations made after yielding to
+   * a later event-loop turn — for example after `await`ing a timer — may
+   * not resolve which concurrent sequence they belong to.
+   *
    * @example
    * test("my test", () => {
    *   onTestFinished(() => {
@@ -705,12 +711,24 @@ declare module "bun:test" {
     unreachable(msg?: string | Error): never;
 
     /**
-     * Ensures that an assertion is made
+     * Ensures that an assertion is made.
+     *
+     * Not supported in concurrent tests — use `test.serial` or remove
+     * `.concurrent` from the enclosing test. Unlike `onTestFinished()`,
+     * this cannot be resolved to the owning sequence across `await`
+     * boundaries, so it throws unconditionally rather than silently
+     * miscounting.
      */
     hasAssertions(): void;
 
     /**
-     * Ensures that a specific number of assertions are made
+     * Ensures that a specific number of assertions are made.
+     *
+     * Not supported in concurrent tests — use `test.serial` or remove
+     * `.concurrent` from the enclosing test. Unlike `onTestFinished()`,
+     * this cannot be resolved to the owning sequence across `await`
+     * boundaries, so it throws unconditionally rather than silently
+     * miscounting.
      */
     assertions(neededAssertions: number): void;
   }

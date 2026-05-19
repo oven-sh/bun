@@ -280,6 +280,12 @@ pub const Expect = struct {
         var buntest_strong = parent.bunTest() orelse return error.TestNotActive;
         defer buntest_strong.deinit();
         const buntest = buntest_strong.get();
+        // Snapshots in a concurrent group have the same limitation as
+        // `expect.assertions` — the sync call works, but a post-await call
+        // in the same test body can't resolve back to the right sequence.
+        // Reject at call time rather than silently writing to the wrong
+        // snapshot slot. See https://github.com/oven-sh/bun/issues/29236.
+        if (isInMultiSequenceConcurrentGroup(buntest)) return error.SnapshotInConcurrentGroup;
         const execution_entry = parent.phase.entry(buntest) orelse return error.SnapshotInConcurrentGroup;
 
         const test_name = execution_entry.base.name orelse "(unnamed)";
@@ -1178,16 +1184,37 @@ pub const Expect = struct {
         _ = callFrame;
         defer globalThis.bunVM().autoGarbageCollect();
 
-        var buntest_strong = bun.jsc.Jest.bun_test.cloneActiveStrong() orelse return globalThis.throw("expect.assertions() must be called within a test", .{});
+        var buntest_strong = bun.jsc.Jest.bun_test.cloneActiveStrong() orelse return globalThis.throw("expect.hasAssertions() must be called within a test", .{});
         defer buntest_strong.deinit();
         const buntest = buntest_strong.get();
+        if (isInMultiSequenceConcurrentGroup(buntest)) {
+            // expect.hasAssertions() and expect.assertions() can't work in
+            // concurrent tests: we can set the constraint on the calling
+            // sequence synchronously, but subsequent expect() matchers that
+            // resume after an `await` have no way to resolve back to the
+            // same sequence, so the counter diverges and the test ends with
+            // a spurious "expected N assertions" failure. Throw at call
+            // time instead of silently miscounting later.
+            return globalThis.throw("expect.hasAssertions() is not supported in concurrent tests. Remove `.concurrent` from the test or use `test.serial` instead.", .{});
+        }
         const state_data = buntest.getCurrentStateData();
-        const execution = state_data.sequence(buntest) orelse return globalThis.throw("expect.assertions() is not supported in the describe phase, in concurrent tests, between tests, or after test execution has completed", .{});
+        const execution = state_data.sequence(buntest) orelse return globalThis.throw("expect.hasAssertions() is not supported in the describe phase, between tests, or after test execution has completed", .{});
         if (execution.expect_assertions != .exact) {
             execution.expect_assertions = .at_least_one;
         }
 
         return .js_undefined;
+    }
+
+    /// Returns true if the active execution group has more than one sequence
+    /// in flight (i.e. the caller is inside a `test.concurrent` group).
+    /// Used by `expect.assertions`/`expect.hasAssertions`, which can't safely
+    /// track per-sequence counters across `await` boundaries in a concurrent
+    /// group (see https://github.com/oven-sh/bun/issues/29236).
+    fn isInMultiSequenceConcurrentGroup(buntest: *bun.jsc.Jest.bun_test.BunTest) bool {
+        if (buntest.phase != .execution) return false;
+        const active_group = buntest.execution.activeGroup() orelse return false;
+        return active_group.sequences(&buntest.execution).len > 1;
     }
 
     pub fn assertions(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
@@ -1218,8 +1245,14 @@ pub const Expect = struct {
         var buntest_strong = bun.jsc.Jest.bun_test.cloneActiveStrong() orelse return globalThis.throw("expect.assertions() must be called within a test", .{});
         defer buntest_strong.deinit();
         const buntest = buntest_strong.get();
+        if (isInMultiSequenceConcurrentGroup(buntest)) {
+            // Same limitation as `expect.hasAssertions` — see that function's
+            // comment for why we throw at call time instead of letting the
+            // per-sequence counter silently diverge across `await` boundaries.
+            return globalThis.throw("expect.assertions() is not supported in concurrent tests. Remove `.concurrent` from the test or use `test.serial` instead.", .{});
+        }
         const state_data = buntest.getCurrentStateData();
-        const execution = state_data.sequence(buntest) orelse return globalThis.throw("expect.assertions() is not supported in the describe phase, in concurrent tests, between tests, or after test execution has completed", .{});
+        const execution = state_data.sequence(buntest) orelse return globalThis.throw("expect.assertions() is not supported in the describe phase, between tests, or after test execution has completed", .{});
         execution.expect_assertions = .{ .exact = unsigned_expected_assertions };
 
         return .js_undefined;

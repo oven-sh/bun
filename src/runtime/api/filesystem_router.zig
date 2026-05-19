@@ -256,10 +256,22 @@ pub const FileSystemRouter = struct {
             return globalThis.throw("Unable to find directory: {s}", .{this.router.config.dir});
         };
 
+        // Deep-copy config strings into the new arena. The previous arena is freed below, so
+        // any slice that still points into it (the inner extension strings, asset_prefix_path)
+        // would dangle on the *next* reload() and be read by loadRoutes. dupe(string, ...) only
+        // copies the outer []string; each inner []const u8 must be duped individually.
+        const extensions = extensions: {
+            const old = this.router.config.extensions;
+            const new = allocator.alloc(string, old.len) catch unreachable;
+            for (old, new) |ext, *out| {
+                out.* = allocator.dupe(u8, ext) catch unreachable;
+            }
+            break :extensions new;
+        };
         var router = Router.init(vm.transpiler.fs, allocator, .{
             .dir = allocator.dupe(u8, this.router.config.dir) catch unreachable,
-            .extensions = allocator.dupe(string, this.router.config.extensions) catch unreachable,
-            .asset_prefix_path = this.router.config.asset_prefix_path,
+            .extensions = extensions,
+            .asset_prefix_path = allocator.dupe(u8, this.router.config.asset_prefix_path) catch unreachable,
         }) catch unreachable;
         router.loadRoutes(&log, root_dir_info, Resolver, &vm.transpiler.resolver, router.config.dir) catch {
             // Build the JS error before freeing the arena: `log` is backed by the arena allocator.

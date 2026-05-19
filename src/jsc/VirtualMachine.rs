@@ -3026,10 +3026,28 @@ fn drop_source_code_printer() {
 /// on threads where the runtime VM had already initialized the printer (e.g. an
 /// inline `Bun.build()` macro on the JS thread), so subsequent module loads
 /// keep their printer.
+///
+/// Also a no-op while a [`MacroModeGuard`] is still active on this thread:
+/// `__bun_macro_context_deinit` can fire *inside* the guard scope (e.g. a
+/// macro that calls `new Bun.Transpiler().transformSync(...)` —
+/// `TranspilerStateGuard::drop` deinits the nested `MacroContext`), and freeing
+/// here would panic the next module fetch at
+/// `SOURCE_CODE_PRINTER.get().expect(...)` with no intervening
+/// `enable_macro_mode()`. The outermost guard's `disable_macro_mode()` clears
+/// `macro_mode`, after which `Worker::deinit` (or the next per-job deinit)
+/// reaches the free.
 pub fn drop_source_code_printer_if_macro_owned() {
-    if SOURCE_CODE_PRINTER_FROM_MACRO.get() {
-        drop_source_code_printer();
+    if !SOURCE_CODE_PRINTER_FROM_MACRO.get() {
+        return;
     }
+    if let Some(vm) = VM.get() {
+        // SAFETY: `VM` is this thread's per-JS-thread VM singleton; we only
+        // read the `macro_mode` flag and never alias `&mut`.
+        if unsafe { (*vm).macro_mode } {
+            return;
+        }
+    }
+    drop_source_code_printer();
 }
 
 fn normalize_source(source: &[u8]) -> &[u8] {

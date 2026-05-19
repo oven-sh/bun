@@ -278,6 +278,35 @@ describe("Bun.Terminal", () => {
 
       expect(() => terminal.setRawMode(true)).toThrow("Terminal is closed");
     });
+
+    // Regression for #30988: wtf-bindings.cpp used libc `assert` without
+    // including <cassert>. After the WebKit upgrade in #30705 the header
+    // stopped reaching this translation unit transitively, so debug builds
+    // failed to compile. Building and running this test file exercises
+    // Bun__ttySetMode (the same translation unit) on a real PTY fd and
+    // proves the file compiled.
+    test.skipIf(isWindows)("setRawMode toggles on a real PTY fd", async () => {
+      await using terminal = new Bun.Terminal({});
+      // ICANON is 0x2 on Linux but 0x100 on Darwin — bit 0x2 is ECHOE there,
+      // which Bun__ttySetMode mode=1 does not clear, so a flat 0x2 would fail
+      // on macOS CI. ECHO is 0x8 on every POSIX we build for.
+      const ICANON = process.platform === "darwin" ? 0x100 : 0x2;
+      const ECHO = 0x8;
+
+      const beforeLflag = terminal.localFlags;
+      expect(beforeLflag & ICANON).not.toBe(0);
+      expect(beforeLflag & ECHO).not.toBe(0);
+
+      terminal.setRawMode(true);
+      const rawLflag = terminal.localFlags;
+      expect(rawLflag & ICANON).toBe(0);
+      expect(rawLflag & ECHO).toBe(0);
+
+      terminal.setRawMode(false);
+      const restoredLflag = terminal.localFlags;
+      expect(restoredLflag & ICANON).not.toBe(0);
+      expect(restoredLflag & ECHO).not.toBe(0);
+    });
   });
 
   describe("termios flags", () => {

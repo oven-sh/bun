@@ -60,13 +60,13 @@ impl From<JsError> for ReadFromBlobError {
 // so `free_sensitive` would not pair with `Box`-owned memory.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `ZBox` is global-allocator memory; re-allocate via `dupe_z` so `mi_free` can free it.
+/// `ZBox` is global-allocator memory; re-allocate via `dupe_z` so `free_sensitive` can free it.
 #[inline]
 fn zbox_into_raw(z: bun_core::ZBox) -> *const c_char {
     bun_core::dupe_z(z.as_bytes())
 }
 
-/// `dupeZ` a byte slice into a fresh mimalloc allocation.
+/// `dupeZ` a byte slice into a fresh default-allocator allocation.
 #[inline]
 fn dupe_z(bytes: &[u8]) -> *const c_char {
     bun_core::dupe_z(bytes)

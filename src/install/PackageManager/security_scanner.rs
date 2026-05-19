@@ -1388,10 +1388,14 @@ impl<'a> SecurityScanSubprocess<'a> {
         // in place (raw intrusive object — no Rust aliasing across the RefPtr).
         let writer_ptr = writer_local.as_ptr();
         let start_result = unsafe { (*writer_ptr).start() };
-        // SAFETY: `writer_local` keeps `*writer_ptr` live; we own the `start()` ref.
-        unsafe { RefCount::<StaticPipeWriter>::deref(writer_ptr) };
-        // SAFETY: `writer_local` keeps `*writer_ptr` live.
-        unsafe { (*writer_ptr).started = false };
+        // `start()` is refcount-neutral on `Err` (it releases its own +1 and
+        // leaves `started == false`); only the `Ok` path leaves a +1 to drop.
+        if start_result.is_ok() {
+            // SAFETY: `writer_local` keeps `*writer_ptr` live; we own the `start()` ref.
+            unsafe { RefCount::<StaticPipeWriter>::deref(writer_ptr) };
+            // SAFETY: `writer_local` keeps `*writer_ptr` live.
+            unsafe { (*writer_ptr).started = false };
+        }
         match start_result {
             Err(e) => {
                 writer_local.deref();

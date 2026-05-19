@@ -161,7 +161,7 @@ pub fn CompressionStream(comptime T: type) type {
                 return;
             }
 
-            this.stream.updateWriteResult(&this.write_result.?[1], &this.write_result.?[0]);
+            updateWriteResult(this, global, this_value);
             this_value.ensureStillAlive();
 
             const write_callback: jsc.JSValue = T.js.writeCallbackGetCached(this_value).?;
@@ -237,7 +237,7 @@ pub fn CompressionStream(comptime T: type) type {
 
             this.stream.doWork();
             if (checkError(this, globalThis, this_value)) {
-                this.stream.updateWriteResult(&this.write_result.?[1], &this.write_result.?[0]);
+                updateWriteResult(this, globalThis, this_value);
                 this.write_in_progress = false;
             }
             this.deref();
@@ -293,6 +293,24 @@ pub fn CompressionStream(comptime T: type) type {
 
         pub fn getOnError(_: *T, this_value: jsc.JSValue, _: *jsc.JSGlobalObject) jsc.JSValue {
             return T.js.errorCallbackGetCached(this_value) orelse .js_undefined;
+        }
+
+        /// Write avail_in/avail_out back into the JS-side `_writeState` Uint32Array.
+        ///
+        /// The typed array is cached as a JSValue (see `writeState` in
+        /// zlib.classes.ts) rather than stored as a raw `[*]u32`, because a
+        /// typed array's backing store can move (FastTypedArray ->
+        /// WastefulTypedArray transition when `.buffer` is first accessed) or
+        /// be freed entirely when detached via `ArrayBuffer.prototype.transfer()`
+        /// / `postMessage` / `structuredClone` transfer. Re-resolving the
+        /// vector here and length-checking it makes a detached buffer a safe
+        /// no-op instead of a write into freed memory.
+        fn updateWriteResult(this: *T, globalThis: *jsc.JSGlobalObject, this_value: jsc.JSValue) void {
+            const write_state = T.js.writeStateGetCached(this_value) orelse return;
+            const buf = write_state.asArrayBuffer(globalThis) orelse return;
+            const slice = buf.asU32();
+            if (slice.len < 2) return;
+            this.stream.updateWriteResult(&slice[1], &slice[0]);
         }
 
         /// returns true if no error was detected/emitted

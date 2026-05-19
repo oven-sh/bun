@@ -1367,7 +1367,7 @@ pub enum BuiltInModule {
     Code(&'static [u8]),
 }
 
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 pub struct ServerComponents {
     pub separate_ssr_graph: bool,
     pub server_runtime_import: &'static [u8],
@@ -1389,7 +1389,7 @@ impl Default for ServerComponents {
     }
 }
 
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 pub struct ReactFastRefresh {
     pub import_source: &'static [u8],
 }

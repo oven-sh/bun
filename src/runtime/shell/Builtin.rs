@@ -774,7 +774,7 @@ impl Builtin {
                         me.stdout = BuiltinIO::Blob(blob.clone());
                     }
                     if redirect.stderr() {
-                        me.stderr = BuiltinIO::Blob(blob.clone());
+                        me.stderr = BuiltinIO::Blob(blob);
                     }
                 } else if let Some(blob_ref) = jsval.as_class_ref::<crate::webcore::Blob>() {
                     if (redirect.stdout() || redirect.stderr()) && !blob_ref.needs_to_read_file() {

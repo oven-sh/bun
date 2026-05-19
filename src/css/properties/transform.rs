@@ -773,7 +773,7 @@ impl Translate {
 }
 
 /// A value for the [rotate](https://drafts.csswg.org/css-transforms-2/#propdef-rotate) property.
-#[derive(Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 pub struct Rotate {
     /// Rotation around the x axis.
     pub x: f32,

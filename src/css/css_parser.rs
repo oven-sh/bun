@@ -4240,7 +4240,7 @@ impl<'a> ParserInput<'a> {
 
 /// A capture of the internal state of a `Parser` (including the position
 /// within the input), obtained from the `Parser::position` method.
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 pub struct ParserState {
     pub position: usize,
     pub current_line_start_position: usize,

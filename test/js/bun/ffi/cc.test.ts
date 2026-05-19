@@ -1,7 +1,7 @@
 import { cc, CString, ptr, type FFIFunction, type Library } from "bun:ffi";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { promises as fs } from "fs";
-import { bunEnv, bunExe, isArm64, isASAN, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isArm64, isASAN, isWindows, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
 // TinyCC (and all of bun:ffi) is disabled on Windows ARM64
@@ -191,6 +191,45 @@ describe.skip("given a strlen(cstring) function", () => {
     expect(() => library.symbols.strlen("hello")).toThrow(TypeError);
   });
 }); // </given a strlen(cstring) function>
+
+// Every successful cc() used to leak all of its option strings (source path,
+// include dirs, define key/values, flags, libraries) because CompileC.deinit()
+// was only called when an exception was pending. The fixture pads `flags`
+// with 4 MiB of whitespace — Bun dupes the full string into CompileC.flags
+// (the leak), while TinyCC only parses it and does not retain a copy — and
+// measures RSS growth relative to a baseline run with a tiny padding so
+// per-call overhead unrelated to the leaked strings cancels out.
+//
+// Kept at the end of the file: the fixture subprocess briefly allocates a
+// few hundred MiB, which on slow machines can push adjacent tests with short
+// timeouts over the edge if it runs first.
+it.skipIf(isFFIUnavailable)(
+  "cc() does not leak option strings on success",
+  async () => {
+    using dir = tempDir("bun-ffi-cc-leak", {
+      "add.c": "int add(int a, int b) { return a + b; }\n",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--smol", path.join(__dirname, "cc-leak-fixture.js"), path.join(String(dir), "add.c")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    let result;
+    try {
+      result = JSON.parse(stdout);
+    } catch {
+      throw new Error(`fixture did not produce JSON\nstdout: ${stdout}\nstderr: ${stderr}\nexit: ${exitCode}`);
+    }
+    const { baselineMB, bigMB, deltaMB } = result;
+    // Without the fix: ~115-120 MiB.
+    // With the fix: ≤ 0 MiB (second run reuses first run's high-water mark).
+    expect(deltaMB, `baseline ${baselineMB} MiB, big ${bigMB} MiB`).toBeLessThan(40);
+    expect(exitCode).toBe(0);
+  },
+  60_000,
+);
 
 // =============================================================================
 

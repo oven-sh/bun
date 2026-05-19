@@ -620,11 +620,12 @@ pub const FFI = struct {
         const object = arguments[0];
 
         var compile_c = CompileC{};
-        defer {
-            if (globalThis.hasException()) {
-                compile_c.deinit();
-            }
-        }
+        // Always deinit. On the success path, `compile_c.symbols` is moved into
+        // the returned FFI object and reset to `.{}` before we get here, so this
+        // only frees the transient option strings (source, libraries, include
+        // dirs, defines, flags, deferred errors) which are not needed after
+        // compilation.
+        defer compile_c.deinit();
 
         const symbols_object: JSValue = try object.getOwn(globalThis, "symbols") orelse .js_undefined;
         if (!globalThis.hasException() and (symbols_object == .zero or !symbols_object.isObject())) {

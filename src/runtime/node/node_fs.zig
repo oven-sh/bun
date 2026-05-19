@@ -714,7 +714,10 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                 this.result.err.deinit();
             }
             if (comptime !is_shell) this.ref.unref(this.evtloop);
-            this.args.deinit();
+            // `createWithShellTask`/`createMini` call `toThreadSafe()` on
+            // `src`/`dest`, which for `.buffer` paths pins + protects the
+            // backing ArrayBuffer; pair with `deinitAndUnprotect` here.
+            this.args.deinitAndUnprotect();
             this.promise.deinit();
             this.arena.deinit();
             bun.destroy(this);
@@ -1284,7 +1287,11 @@ pub const AsyncReaddirRecursiveTask = struct {
         }
 
         this.ref.unref(this.globalObject.bunVM());
-        this.args.deinit();
+        // `create` calls `args.toThreadSafe()`, which for a `.buffer` path
+        // pins + protects the backing ArrayBuffer; pair with
+        // `deinitAndUnprotect` here (this runs on the JS thread, not from
+        // a GC finalizer, so unpinning is safe).
+        this.args.deinitAndUnprotect();
         bun.default_allocator.free(this.root_path.slice());
         this.clearResultList();
         this.promise.deinit();
@@ -3088,6 +3095,13 @@ pub const Arguments = struct {
             if (this.flags.deinit_paths) {
                 this.src.deinit();
                 this.dest.deinit();
+            }
+        }
+
+        pub fn deinitAndUnprotect(this: *const Cp) void {
+            if (this.flags.deinit_paths) {
+                this.src.deinitAndUnprotect();
+                this.dest.deinitAndUnprotect();
             }
         }
 

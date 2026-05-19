@@ -189,9 +189,17 @@ fn CryptoJob(comptime Ctx: type) type {
 const random = struct {
     const JobCtx = struct {
         value: JSValue,
+        /// Slice into `value`'s ArrayBuffer backing store. The backing store
+        /// is pinned by the caller (see `JSValue.pinArrayBuffer`), so user
+        /// code calling `buf.buffer.transfer()` while the task is queued or
+        /// running copies the contents out instead of freeing them — the
+        /// threadpool can safely write through this pointer. Captured
+        /// *after* pinning because the pin promotes a `FastTypedArray` to
+        /// stable heap storage, which repoints the view's vector.
         bytes: [*]u8,
         offset: u32,
         length: usize,
+        pinned: bool,
 
         result: void = {},
 
@@ -209,6 +217,7 @@ const random = struct {
         }
 
         fn deinit(this: *JobCtx) void {
+            if (this.pinned) this.value.unpinArrayBuffer();
             this.value.unprotect();
         }
     };
@@ -337,11 +346,23 @@ const random = struct {
             return result;
         }
 
+        // `result` is freshly allocated and not yet exposed to user JS, so a
+        // detach can't race us here; pin anyway so the worker's pointer
+        // survives a GC that could relocate a FastTypedArray's inline
+        // storage, and so `JobCtx` has uniform unpin-in-deinit semantics.
+        // `ArrayBuffer.alloc` → `JSUint8Array::createUninitialized` yields a
+        // FastTypedArray for `size ≤ fastSizeLimit`, and pinning promotes
+        // that to stable heap storage (repointing the vector), so re-read
+        // the slice *after* pinning — `bytes` above is stale for small
+        // sizes once the pin runs.
+        const pinned = result.pinArrayBuffer();
+        const stable = result.asArrayBuffer(global).?;
         const ctx: JobCtx = .{
             .value = result,
-            .bytes = bytes.ptr,
+            .bytes = stable.slice().ptr,
             .offset = 0,
             .length = size,
+            .pinned = pinned,
         };
         try Job.initAndSchedule(global, callback, &ctx);
 
@@ -415,11 +436,22 @@ const random = struct {
             return .js_undefined;
         }
 
+        // Pin the backing store so a concurrent `buf.buffer.transfer()` copies
+        // instead of freeing it while the threadpool is writing. Pinning may
+        // promote a FastTypedArray to stable heap storage, so re-read the
+        // slice afterwards. `JobCtx.deinit` unpins.
+        const pinned = buf_value.pinArrayBuffer();
+        const stable = buf_value.asArrayBuffer(global) orelse {
+            if (pinned) buf_value.unpinArrayBuffer();
+            return global.throwInvalidArgumentTypeValue("buf", "ArrayBuffer or ArrayBufferView", buf_value);
+        };
+
         const ctx: JobCtx = .{
             .value = buf_value,
-            .bytes = buf.slice().ptr,
+            .bytes = stable.slice().ptr,
             .offset = offset,
             .length = size,
+            .pinned = pinned,
         };
         try Job.initAndSchedule(global, callback, &ctx);
 

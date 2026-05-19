@@ -111,6 +111,10 @@ pub const ForOf = struct {
     init: StmtNodeIndex,
     value: ExprNodeIndex,
     body: StmtNodeIndex,
+    // Source range of the `await` keyword in a `for await (...)` loop.
+    // Only meaningful when `is_await` is true. Used by the visit pass to
+    // point CJS-TLA diagnostics at the live `await` token.
+    await_range: logger.Range = logger.Range.None,
 };
 
 pub const DoWhile = struct { body: StmtNodeIndex, test_: ExprNodeIndex };

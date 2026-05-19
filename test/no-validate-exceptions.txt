@@ -77,6 +77,7 @@ test/js/third_party/resvg/bbox.test.js
 test/js/third_party/rollup-v4/rollup-v4.test.ts
 test/napi/uv.test.ts
 test/napi/uv_stub.test.ts
+test/regression/issue/29260.test.ts
 test/napi/node-napi-tests/test/js-native-api/2_function_arguments/do.test.ts
 test/napi/node-napi-tests/test/js-native-api/3_callbacks/do.test.ts
 test/napi/node-napi-tests/test/js-native-api/4_object_factory/do.test.ts

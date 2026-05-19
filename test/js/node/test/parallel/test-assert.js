@@ -1493,7 +1493,7 @@ test('Additional assert', () => {
       () => assert.match(/abc/, 'string'),
       {
         code: 'ERR_INVALID_ARG_TYPE',
-        message: 'The "regexp" argument must be of type RegExp.' +
+        message: 'The "regexp" argument must be an instance of RegExp.' +
           invalidArgTypeHelper('string')
       }
     );
@@ -1546,7 +1546,7 @@ test('Additional assert', () => {
       () => assert.doesNotMatch(/abc/, 'string'),
       {
         code: 'ERR_INVALID_ARG_TYPE',
-        message: 'The "regexp" argument must be of type RegExp.' +
+        message: 'The "regexp" argument must be an instance of RegExp.' +
         invalidArgTypeHelper('string')
       }
     );

@@ -49,7 +49,7 @@ assert.strictEqual(flatLongLen.toString(), check);
     Buffer.concat(value);
   }, {
     code: 'ERR_INVALID_ARG_TYPE',
-    message: 'The "list" argument must be of type Array.' +
+    message: 'The "list" argument must be an instance of Array.' +
              `${common.invalidArgTypeHelper(value)}`
   });
 });

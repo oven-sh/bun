@@ -2948,6 +2948,27 @@ pub struct ResolveFunctionResult {
 pub static SOURCE_CODE_PRINTER: Cell<Option<NonNull<bun_js_printer::BufferPrinter>>> =
     Cell::new(None);
 
+struct SourceCodePrinterDtor;
+impl Drop for SourceCodePrinterDtor {
+    fn drop(&mut self) {
+        if let Some(p) = SOURCE_CODE_PRINTER.take() {
+            // SAFETY: `p` was produced by `heap::into_raw` in
+            // `ensure_source_code_printer` and is owned exclusively by this
+            // thread; `destroy()` would have `.take()`n it first if a VM
+            // teardown ran.
+            drop(unsafe { bun_core::heap::take(p.as_ptr()) });
+        }
+    }
+}
+thread_local! {
+    /// Registers a thread-exit destructor for [`SOURCE_CODE_PRINTER`]. The raw
+    /// `#[thread_local]` slot has no dtor; a bundler worker thread that ran a
+    /// macro and exits before `VirtualMachine::destroy` would otherwise orphan
+    /// the boxed `BufferPrinter` (LSan only sees it as rooted while the
+    /// thread's TLS segment is live).
+    static SOURCE_CODE_PRINTER_DTOR: SourceCodePrinterDtor = const { SourceCodePrinterDtor };
+}
+
 /// Spec VirtualMachine.zig:1712 `normalizeSpecifierForResolution`.
 fn normalize_specifier_for_resolution<'a>(
     specifier_: &'a [u8],
@@ -2984,6 +3005,7 @@ fn ensure_source_code_printer() {
         let mut printer = Box::new(bun_js_printer::BufferPrinter::init(writer));
         printer.ctx.append_null_byte = false;
         SOURCE_CODE_PRINTER.set(NonNull::new(bun_core::heap::into_raw(printer)));
+        SOURCE_CODE_PRINTER_DTOR.with(|_| {});
     }
 }
 

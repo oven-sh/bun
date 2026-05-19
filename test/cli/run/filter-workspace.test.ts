@@ -590,4 +590,74 @@ describe("bun", () => {
     expect(stdoutval).toMatch(/(?:log_line[\s\S]*?){20}/);
     expect(exitCode).toBe(0);
   });
+
+  // Regression test for https://github.com/oven-sh/bun/issues/29938.
+  //
+  // `bun run --filter <path-glob> ...` walks the workspace via
+  // DirEntryAccessor, whose entry map is keyed by the lowercased filename.
+  // Returning the map key as the entry name would hand the glob walker a
+  // lowercased path it then openat()s on a case-sensitive filesystem,
+  // surfacing `error: ENOENT`.
+  test("--filter with a path glob works when a workspace dir contains uppercase letters (issue #29938)", () => {
+    const dir = tempDirWithFiles("filter-casepath", {
+      apps: {
+        app1: {
+          "package.json": JSON.stringify({
+            name: "@issue/app1",
+            scripts: { build: "echo app1-built" },
+          }),
+        },
+        app2: {
+          "package.json": JSON.stringify({
+            name: "@issue/app2",
+            scripts: { build: "echo app2-built" },
+          }),
+        },
+      },
+      packages: {
+        somePackage: {
+          "package.json": JSON.stringify({
+            name: "@issue/somepackage",
+            scripts: { build: "echo somepackage-built" },
+          }),
+        },
+        "somePackage.test": {
+          "package.json": JSON.stringify({
+            name: "@issue/somepackage.test",
+            scripts: { build: "echo somepackage-test-built" },
+          }),
+        },
+      },
+      "package.json": JSON.stringify({
+        name: "issue",
+        workspaces: ["apps/*", "packages/*"],
+      }),
+    });
+
+    // A path-style filter traverses dirs on disk via the glob walker.
+    const apps = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), "run", "--filter", "./apps/**", "build"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(apps.stderr.toString()).not.toContain("ENOENT");
+    expect(apps.stdout.toString()).toContain("app1-built");
+    expect(apps.stdout.toString()).toContain("app2-built");
+    expect(apps.exitCode).toBe(0);
+
+    // Same thing but hitting the mixed-case directory names directly.
+    const pkgs = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), "run", "--filter", "./packages/**", "build"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(pkgs.stderr.toString()).not.toContain("ENOENT");
+    expect(pkgs.stdout.toString()).toContain("somepackage-built");
+    expect(pkgs.stdout.toString()).toContain("somepackage-test-built");
+    expect(pkgs.exitCode).toBe(0);
+  });
 });

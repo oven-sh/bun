@@ -221,7 +221,12 @@ pub const DirEntryAccessor = struct {
         pub inline fn next(self: *DirIter) Maybe(?IterResult) {
             if (self.value) |*value| {
                 const nextval = value.next() orelse return .{ .result = null };
-                const name = nextval.key_ptr.*;
+                // The map key is lowercased for case-insensitive lookups
+                // (see FileSystem.DirEntry.addEntry), but the glob walker
+                // needs the original-case basename — otherwise on case-
+                // sensitive filesystems we later openat() a path that
+                // does not exist and surface ENOENT to the user.
+                const name = nextval.value_ptr.*.base();
                 const kind = nextval.value_ptr.*.kind(&FS.instance.fs, true);
                 const fskind = switch (kind) {
                     .file => std.fs.File.Kind.file,

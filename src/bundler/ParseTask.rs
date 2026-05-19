@@ -791,7 +791,6 @@ pub mod parse_worker {
                 // `caches` is disjoint from `(*transpiler).options` reborrowed above.
                 let root: Expr = unsafe { &mut (*resolver).caches.json }
                     .parse_json(log, source, mode, true)?
-                    .map(Into::into)
                     .unwrap_or_else(|| Expr::init(E::Object::default(), Loc::EMPTY));
                 return Ok(JSAst::init(
                     js_parser::new_lazy_export_ast(
@@ -816,7 +815,7 @@ pub mod parse_worker {
                 // post-amble that flushes `temp_log`.
                 let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
                     let root: Expr =
-                        bun_parsers::toml::TOML::parse(source, &mut temp_log, bump, false)?.into();
+                        bun_parsers::toml::TOML::parse(source, &mut temp_log, bump, false)?;
                     Ok(JSAst::init(
                         js_parser::new_lazy_export_ast(
                             bump,
@@ -837,8 +836,7 @@ pub mod parse_worker {
                 let _trace = perf::trace("Bundler.ParseYAML");
                 let mut temp_log = Log::init();
                 let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
-                    let root: Expr =
-                        bun_parsers::yaml::YAML::parse(source, &mut temp_log, bump)?.into();
+                    let root: Expr = bun_parsers::yaml::YAML::parse(source, &mut temp_log, bump)?;
                     Ok(JSAst::init(
                         js_parser::new_lazy_export_ast(
                             bump,
@@ -860,7 +858,7 @@ pub mod parse_worker {
                 let mut temp_log = Log::init();
                 let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
                     let root: Expr =
-                        bun_parsers::json5::JSON5Parser::parse(source, &mut temp_log, bump)?.into();
+                        bun_parsers::json5::JSON5Parser::parse(source, &mut temp_log, bump)?;
                     Ok(JSAst::init(
                         js_parser::new_lazy_export_ast(
                             bump,
@@ -1161,7 +1159,7 @@ pub mod parse_worker {
                     b"",
                 )?
                 .unwrap();
-                ast.import_records = bun_alloc::vec_from_iter_in(import_records.into_iter(), bump);
+                ast.import_records = bun_alloc::vec_from_iter_in(import_records, bump);
 
                 // We're banning import default of html loader files for now.
                 //
@@ -1289,7 +1287,7 @@ pub mod parse_worker {
                 let mut ast = JSAst::init(lazy?.unwrap());
                 let css_ast_heap = crate::bundled_ast::CssAstRef::from_bump(bump.alloc(css_ast));
                 ast.css = Some(css_ast_heap);
-                ast.import_records = bun_alloc::vec_from_iter_in(import_records.into_iter(), bump);
+                ast.import_records = bun_alloc::vec_from_iter_in(import_records, bump);
                 return Ok(ast);
             }
             // TODO:

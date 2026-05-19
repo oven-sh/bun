@@ -361,9 +361,8 @@ pub fn generate_code_for_lazy_export(
                     // PORT NOTE: Zig used an arena-backed ArrayList and moved `.items`
                     // into `E.Template`; mirror that by moving into the linker arena
                     // (freed when the linker arena drops).
-                    let parts_slice = bun_ast::StoreSlice::new_mut(
-                        arena.alloc_slice_fill_iter(template_parts.into_iter()),
-                    );
+                    let parts_slice =
+                        bun_ast::StoreSlice::new_mut(arena.alloc_slice_fill_iter(template_parts));
                     value = Expr::init(
                         E::Template {
                             tag: None,

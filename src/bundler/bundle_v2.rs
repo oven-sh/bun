@@ -2021,11 +2021,11 @@ pub mod bv2_impl {
 
             if self.transpiler.options.code_splitting {
                 for entry_point in self.graph.entry_points.iter().copied() {
-                    visitor.visit::<true>(entry_point.into(), false);
+                    visitor.visit::<true>(entry_point, false);
                 }
             } else {
                 for entry_point in self.graph.entry_points.iter().copied() {
-                    visitor.visit::<false>(entry_point.into(), false);
+                    visitor.visit::<false>(entry_point, false);
                 }
             }
 
@@ -2393,7 +2393,7 @@ pub mod bv2_impl {
                                                 bstr::BStr::new(path_to_use)
                                             ),
                                             path_to_use,
-                                            import_record.kind.into(),
+                                            import_record.kind,
                                         );
                                     } else {
                                         add_error(
@@ -2405,7 +2405,7 @@ pub mod bv2_impl {
                                                 bstr::BStr::new(path_to_use)
                                             ),
                                             path_to_use,
-                                            import_record.kind.into(),
+                                            import_record.kind,
                                         );
                                     }
                                 } else {
@@ -2418,7 +2418,7 @@ pub mod bv2_impl {
                                             bstr::BStr::new(path_to_use)
                                         ),
                                         path_to_use,
-                                        import_record.kind.into(),
+                                        import_record.kind,
                                     );
                                 }
                             }
@@ -2623,7 +2623,7 @@ pub mod bv2_impl {
                 ..Default::default()
             })?;
             // Arena-owned (Zig: `arena.create(ParseTask)`); freed on heap reset.
-            let task_val = ParseTask::init(&result, source_index.into(), self);
+            let task_val = ParseTask::init(&result, source_index, self);
             // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
             let task: &mut ParseTask = self.arena_create(task_val);
             task.loader = Some(loader);
@@ -2740,7 +2740,7 @@ pub mod bv2_impl {
                 ..Default::default()
             })?;
             // Arena-owned (Zig: `arena.create(ParseTask)`); freed on heap reset.
-            let task_val = ParseTask::init(result, source_index.into(), self);
+            let task_val = ParseTask::init(result, source_index, self);
             // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
             let task: &mut ParseTask = self.arena_create(task_val);
             task.loader = Some(loader);
@@ -5625,9 +5625,8 @@ pub mod bv2_impl {
             // Arena-owned (Zig allocates `chunks` from `this.arena()`); the
             // `DevServerOutput` lifetime is documented as "tied to the bundler's
             // arena". `alloc_slice_fill_iter` moves each `Chunk` into the bump.
-            let chunks: *mut [Chunk] = std::ptr::from_mut::<[Chunk]>(
-                self.arena().alloc_slice_fill_iter(chunks.into_iter()),
-            );
+            let chunks: *mut [Chunk] =
+                std::ptr::from_mut::<[Chunk]>(self.arena().alloc_slice_fill_iter(chunks));
             // SAFETY: arena outlives this fn and the `DevServerOutput` it produces.
             let chunks: &mut [Chunk] = unsafe { &mut *chunks };
 
@@ -5717,7 +5716,7 @@ pub mod bv2_impl {
             target: options::Target,
         ) -> bool {
             if let Some(plugins) = self.plugins_ref() {
-                let mut temp_path = Fs::Path::init(entry_point.into());
+                let mut temp_path = Fs::Path::init(entry_point);
                 temp_path.namespace = b"file";
                 if plugins.has_any_matches(&temp_path, false) {
                     bun_core::scoped_log!(
@@ -6367,7 +6366,7 @@ pub mod bv2_impl {
                                                     },
                                                 ),
                                                 &import_record.path.text,
-                                                import_record.kind.into(),
+                                                import_record.kind,
                                             );
                                         } else if !ctx.target.is_bun()
                                             && import_record.path.text == b"bun"
@@ -6389,7 +6388,7 @@ pub mod bv2_impl {
                                                     },
                                                 ),
                                                 &import_record.path.text,
-                                                import_record.kind.into(),
+                                                import_record.kind,
                                             );
                                         } else if !ctx.target.is_bun()
                                             && import_record.path.text.starts_with(b"bun:")
@@ -6411,7 +6410,7 @@ pub mod bv2_impl {
                                                     },
                                                 ),
                                                 &import_record.path.text,
-                                                import_record.kind.into(),
+                                                import_record.kind,
                                             );
                                         } else {
                                             add_error(
@@ -6423,7 +6422,7 @@ pub mod bv2_impl {
                                                     bstr::BStr::new(&import_record.path.text)
                                                 ),
                                                 &import_record.path.text,
-                                                import_record.kind.into(),
+                                                import_record.kind,
                                             );
                                         }
                                     } else {
@@ -6457,7 +6456,7 @@ pub mod bv2_impl {
                                                 bstr::BStr::new(specifier_to_use)
                                             ),
                                             specifier_to_use,
-                                            import_record.kind.into(),
+                                            import_record.kind,
                                         );
                                     }
                                 }
@@ -6568,7 +6567,7 @@ pub mod bv2_impl {
                                 import_record.path.is_disabled = false;
                             } else {
                                 import_record.path.text = path.text;
-                                import_record.path.pretty = rel.into();
+                                import_record.path.pretty = rel;
                                 import_record.path = path_as_static(
                                     self.path_with_pretty_initialized(path.clone(), target)
                                         .expect("oom"),
@@ -6652,7 +6651,7 @@ pub mod bv2_impl {
                     target
                 };
 
-                resolve_task.jsx = resolve_result.jsx.clone().into();
+                resolve_task.jsx = resolve_result.jsx.clone();
                 resolve_task.jsx.development = match transpiler.options.force_node_env {
                     options::ForceNodeEnv::Development => true,
                     options::ForceNodeEnv::Production => false,
@@ -6735,7 +6734,7 @@ pub mod bv2_impl {
                 if !found_existing {
                     let new_task: &mut ParseTask = value;
                     let mut new_input_file = crate::Graph::InputFile {
-                        source: bun_ast::Source::init_empty_file(&new_task.path.text[..]),
+                        source: bun_ast::Source::init_empty_file(new_task.path.text),
                         side_effects: new_task.side_effects,
                         secondary_path: if let Some(secondary_path) =
                             &new_task.secondary_path_for_commonjs_interop
@@ -6896,8 +6895,7 @@ pub mod bv2_impl {
 
                     if let Some(compare) = get_redirect_id(ctx.redirect_import_record_index) {
                         if compare == i as u32 {
-                            let _ =
-                                path_to_source_index_map.put(ctx.source_path.into(), source_index); // OOM-only Result (Zig: catch unreachable)
+                            let _ = path_to_source_index_map.put(ctx.source_path, source_index); // OOM-only Result (Zig: catch unreachable)
                         }
                     }
                 }
@@ -6925,11 +6923,7 @@ pub mod bv2_impl {
                 ..Default::default()
             });
             let mut js_parser_options = bun_js_parser::ParserOptions::init(
-                self.transpiler_for_target(target)
-                    .options
-                    .jsx
-                    .clone()
-                    .into(),
+                self.transpiler_for_target(target).options.jsx.clone(),
                 Loader::Html,
             );
             js_parser_options.bundle = true;
@@ -6994,7 +6988,7 @@ pub mod bv2_impl {
             import_record.source_index = Index::init(fake_source_index.0);
             let _ = self
                 .path_to_source_index_map(target)
-                .put(path_text.into(), fake_source_index.0); // OOM-only Result (Zig: catch unreachable)
+                .put(path_text, fake_source_index.0); // OOM-only Result (Zig: catch unreachable)
             self.graph
                 .html_imports
                 .server_source_indices

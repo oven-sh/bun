@@ -834,35 +834,35 @@ impl ESMConditions {
         style_condition_map.reserve(defaults.len() + 2 + conditions.len());
 
         // PERF(port): was assume_capacity
-        import_condition_map.insert(b"import".as_slice().into(), ());
-        require_condition_map.insert(b"require".as_slice().into(), ());
-        style_condition_map.insert(b"style".as_slice().into(), ());
+        import_condition_map.insert(b"import".as_slice(), ());
+        require_condition_map.insert(b"require".as_slice(), ());
+        style_condition_map.insert(b"style".as_slice(), ());
 
         for condition in conditions {
-            import_condition_map.insert((*condition).into(), ());
-            require_condition_map.insert((*condition).into(), ());
-            default_condition_amp.insert((*condition).into(), ());
+            import_condition_map.insert(*condition, ());
+            require_condition_map.insert(*condition, ());
+            default_condition_amp.insert(*condition, ());
         }
 
         for default in defaults {
-            default_condition_amp.insert((*default).into(), ());
-            import_condition_map.insert((*default).into(), ());
-            require_condition_map.insert((*default).into(), ());
-            style_condition_map.insert((*default).into(), ());
+            default_condition_amp.insert(*default, ());
+            import_condition_map.insert(*default, ());
+            require_condition_map.insert(*default, ());
+            style_condition_map.insert(*default, ());
         }
 
         if allow_addons {
-            default_condition_amp.insert(b"node-addons".as_slice().into(), ());
-            import_condition_map.insert(b"node-addons".as_slice().into(), ());
-            require_condition_map.insert(b"node-addons".as_slice().into(), ());
+            default_condition_amp.insert(b"node-addons".as_slice(), ());
+            import_condition_map.insert(b"node-addons".as_slice(), ());
+            require_condition_map.insert(b"node-addons".as_slice(), ());
 
             // style is not here because you don't import N-API addons inside css files.
         }
 
-        default_condition_amp.insert(b"default".as_slice().into(), ());
-        import_condition_map.insert(b"default".as_slice().into(), ());
-        require_condition_map.insert(b"default".as_slice().into(), ());
-        style_condition_map.insert(b"default".as_slice().into(), ());
+        default_condition_amp.insert(b"default".as_slice(), ());
+        import_condition_map.insert(b"default".as_slice(), ());
+        require_condition_map.insert(b"default".as_slice(), ());
+        style_condition_map.insert(b"default".as_slice(), ());
 
         Ok(ESMConditions {
             default: default_condition_amp,
@@ -895,19 +895,19 @@ impl ESMConditions {
 
         for condition in conditions {
             // PERF(port): was assume_capacity
-            self.default.insert((*condition).into(), ());
-            self.import.insert((*condition).into(), ());
-            self.require.insert((*condition).into(), ());
-            self.style.insert((*condition).into(), ());
+            self.default.insert(*condition, ());
+            self.import.insert(*condition, ());
+            self.require.insert(*condition, ());
+            self.style.insert(*condition, ());
         }
         Ok(())
     }
 
     pub fn append(&mut self, condition: &[u8]) -> Result<(), bun_alloc::AllocError> {
-        self.default.insert(condition.into(), ());
-        self.import.insert(condition.into(), ());
-        self.require.insert(condition.into(), ());
-        self.style.insert(condition.into(), ());
+        self.default.insert(condition, ());
+        self.import.insert(condition, ());
+        self.require.insert(condition, ());
+        self.style.insert(condition, ());
         Ok(())
     }
 }

@@ -589,15 +589,12 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         Ok(crate::BundledAst {
             parts,
             module_scope: module_scope_value,
-            symbols: bun_alloc::vec_from_iter_in(
-                core::mem::take(&mut self.symbols).into_iter(),
-                self.bump,
-            ),
+            symbols: bun_alloc::vec_from_iter_in(core::mem::take(&mut self.symbols), self.bump),
             exports_ref: Ref::NONE,
             wrapper_ref: Ref::NONE,
             module_ref: self.module_ref,
             import_records: bun_alloc::vec_from_iter_in(
-                core::mem::take(&mut self.import_records).into_iter(),
+                core::mem::take(&mut self.import_records),
                 self.bump,
             ),
             export_star_import_records: Box::default(),

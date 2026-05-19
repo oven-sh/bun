@@ -4593,22 +4593,6 @@ impl VirtualMachine {
         Ok(promise)
     }
 
-    /// Loads the worker entry point and waits for it, honoring termination requests.
-    pub fn load_entry_point_for_web_worker(
-        &mut self,
-        entry_path: &[u8],
-    ) -> crate::CrateResult<*mut JSInternalPromise> {
-        let promise = self.reload_entry_point(entry_path)?;
-        self.event_loop_mut().perform_gc();
-        self.event_loop_mut()
-            .wait_for_promise_with_termination(jsc::AnyPromise::Internal(promise));
-        if let Some(worker) = self.worker_ref() {
-            if worker.has_requested_terminate() {
-                return Err(crate::CrateError::WorkerTerminated);
-            }
-        }
-        Ok(self.pending_internal_promise.unwrap())
-    }
 
     /// Loads a test-file entry point and waits for the load promise to settle.
     pub fn load_entry_point_for_test_runner(

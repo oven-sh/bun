@@ -721,8 +721,8 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
     }
 
     // No up-front isOnline() gate: a worker can post to its parent (e.g. from
-    // a microtask the entry module scheduled, drained inside
-    // wait_for_promise_with_termination's tick()) while m_state is still
+    // a microtask the entry module scheduled, drained during the worker's
+    // pre-online startup ticks) while m_state is still
     // Pending. postTaskToWorkerGlobalScope queues into m_pendingTasks for
     // Pending and returns false only for Closing/Closed, which the !accepted
     // reject below handles. If the worker never reaches Running (entry threw,

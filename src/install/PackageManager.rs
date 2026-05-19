@@ -1161,7 +1161,6 @@ fn configure_env_for_scripts_run(
 
     let init_cwd_entry = this.env_mut().map.get_or_put_without_value(b"INIT_CWD")?;
     if !init_cwd_entry.found_existing {
-        *init_cwd_entry.key_ptr = Box::<[u8]>::from(&**init_cwd_entry.key_ptr);
         *init_cwd_entry.value_ptr = dot_env::HashTableValue {
             value: Box::<[u8]>::from(strings::without_trailing_slash(
                 FileSystem::instance().top_level_dir(),

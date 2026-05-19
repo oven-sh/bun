@@ -68,7 +68,7 @@ impl<T: ColonListValue> ColonListType<T> {
                     // — `bun_fmt::enum_tag_list::<Loader, false>()` requires the derive; print
                     // a placeholder list until lower-tier crate adds it.
                     pretty_errorln!(
-                        "<r><red>error<r><d>:<r> <b>invalid loader {}<r>, expected one of: jsx, js, ts, tsx, css, file, json, jsonc, toml, wasm, napi, base64, dataurl, text, bunsh, sqlite, html, yaml, json5, md",
+                        "<r><red>error<r><d>:<r> <b>invalid loader {}<r>, expected one of: jsx, js, ts, tsx, css, file, json, jsonc, toml, wasm, napi, base64, dataurl, text, bunsh, sqlite, html, yaml, xml, json5, md",
                         bun_fmt::quote(&str[midpoint + 1..str.len()]),
                     );
                     Global::exit(1);

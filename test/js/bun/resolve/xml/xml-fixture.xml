@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config version="1.0">
+  <name>bun</name>
+  <features>
+    <feature enabled="true">fast</feature>
+    <feature enabled="true">fun</feature>
+  </features>
+  <count>42</count>
+</config>

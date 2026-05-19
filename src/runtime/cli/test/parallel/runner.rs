@@ -499,6 +499,7 @@ fn api_loader_tag_name(l: bun_options_types::schema::api::Loader) -> &'static st
         L::sqlite_embedded => "sqlite_embedded",
         L::html => "html",
         L::yaml => "yaml",
+        L::xml => "xml",
         L::json5 => "json5",
         L::md => "md",
         L::_none => "_none",

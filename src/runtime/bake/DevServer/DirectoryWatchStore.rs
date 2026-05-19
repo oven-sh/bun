@@ -28,10 +28,11 @@ use bun_watcher::{self, Watcher};
 
 /// List of active watchers. Can be re-ordered on removal
 pub struct DirectoryWatchStore {
-    // TODO(port): Zig stores keys as `[]const u8` sub-slices into a duped
-    // buffer (trailing slash trimmed), then frees the slice via allocator.
-    // `Box<[u8]>` cannot represent "free the larger backing allocation from a
-    // sub-slice"; may need a thin key newtype or trim-before-dupe.
+    // Zig stores keys as `[]const u8` sub-slices into a duped buffer (trailing
+    // slash trimmed) and frees the slice via the allocator. Here the trimmed
+    // path is duped once by `get_or_put` as the `Box<[u8]>` key; the watcher
+    // borrows that same allocation (see `insert`), and `free_entry` removes the
+    // watcher before the key Box is dropped.
     pub watches: ArrayHashMap<Box<[u8]>, Entry>,
     pub dependencies: Vec<Dep>,
     /// Dependencies cannot be re-ordered. This list tracks what indexes are free.
@@ -294,23 +295,19 @@ impl DirectoryWatchStore {
             );
         }
 
-        let dir_name: Box<[u8]> = Box::<[u8]>::from(dir_name_to_watch);
-        // errdefer free(dir_name) — handled by Drop.
-
-        // TODO(port): Zig sets key_ptr to a sub-slice of `dir_name` (trailing
-        // slash trimmed) while the allocation backing it is the full dupe.
-        // With Box<[u8]> keys we instead dupe the trimmed slice as the key and
-        // keep `dir_name` separately for addDirectory/getHash. Verify Watcher
-        // does not retain `dir_name` beyond this call.
-        let key: Box<[u8]> = Box::<[u8]>::from(
-            strings::paths::without_trailing_slash_windows_path(&dir_name),
-        );
+        // `get_or_put` above already duped the (trimmed) directory path as the
+        // map key. Borrow that single allocation for the watcher instead of
+        // duping it again: `add_directory::<false>` keeps the slice as a
+        // `'static` borrow (Watcher.rs), and the key outlives the watch entry
+        // (`free_entry` removes the watcher before dropping the key), so the
+        // borrow stays valid for the watch's lifetime.
+        let dir_key: &[u8] = &watches_guard.keys()[gop_index];
 
         // SAFETY: `dev` is a valid *mut DevServer for the duration of this call.
         let watch_index = match unsafe { &mut (*dev).bun_watcher }.add_directory::<false>(
             fd,
-            &dir_name,
-            Watcher::get_hash(&dir_name),
+            dir_key,
+            Watcher::get_hash(dir_key),
         ) {
             bun_sys::Result::Err(_) => return Err(InsertError::Ignore),
             bun_sys::Result::Ok(id) => id,
@@ -340,16 +337,12 @@ impl DirectoryWatchStore {
                 index
             }
         };
-        watches.put_assume_capacity(
-            key,
-            Entry {
-                dir: fd,
-                dir_fd_owned: owned_fd,
-                first_dep: dep,
-                watch_index,
-            },
-        );
-        let _ = dir_name; // keep alive past add_directory; dropped here
+        watches.values_mut()[gop_index] = Entry {
+            dir: fd,
+            dir_fd_owned: owned_fd,
+            first_dep: dep,
+            watch_index,
+        };
         Ok(())
     }
 

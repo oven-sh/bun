@@ -59,6 +59,8 @@ const jsFixtures = [
   // FTL - RegExp
   "ftl-regexp-exec.js",
   "ftl-regexp-test.js",
+  // Yarr JIT
+  "yarr-non-bmp-backtrack-trampoline-index-sync.js",
   // FTL - Arguments
   "ftl-getmyargumentslength.js",
   "ftl-getmyargumentslength-inline.js",

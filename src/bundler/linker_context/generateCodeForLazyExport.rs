@@ -393,7 +393,7 @@ pub fn generate_code_for_lazy_export(
 
     match exports_kind {
         bun_ast::ExportsKind::Cjs => {
-            part.stmts.slice_mut()[0] = Stmt::assign(
+            (unsafe { part.stmts.slice_mut() })[0] = Stmt::assign(
                 Expr::init(
                     E::Dot {
                         target: Expr::init_identifier(module_ref, stmt.loc),

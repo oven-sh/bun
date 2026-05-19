@@ -1908,7 +1908,7 @@ impl Template {
 
     #[inline]
     pub fn parts_mut(&mut self) -> &mut [TemplatePart] {
-        self.parts.slice_mut()
+        unsafe { self.parts.slice_mut() }
     }
 }
 

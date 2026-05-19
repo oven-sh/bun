@@ -4243,7 +4243,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         let mut end: usize = 0;
 
-        let items_slice: &mut [js_ast::ClauseItem] = stmt.items.slice_mut();
+        let items_slice: &mut [js_ast::ClauseItem] = unsafe { stmt.items.slice_mut() };
         for i in 0..items_slice.len() {
             // PORT NOTE: Zig copied `ClauseItem` by value (POD struct). Rust's
             // `ClauseItem` does not derive `Copy`; bit-copy via `ptr::read` —
@@ -6925,7 +6925,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // freeze `s_class.class` — the body still needs to read
                 // sibling fields like `class_name`, `ts_decorators`, etc.
                 let mut props = s_class.class.properties;
-                for prop in props.slice_mut().iter_mut() {
+                for prop in unsafe { props.slice_mut() }.iter_mut() {
                     // merge parameter decorators with method decorators
                     if prop.flags.contains(Flags::Property::IsMethod) {
                         if let Some(prop_value) = prop.value {
@@ -7163,7 +7163,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // PORT NOTE: Zig `Property.List.fromList(class.properties)` re-wraps the
                         // freshly-installed slice and inserts at index 0. We rebuild instead
                         // (Property is not Clone in Rust).
-                        let mut old_props: bun_ast::StoreSlice<G::Property> = s_class.class.properties;
+                        let mut old_props: bun_ast::StoreSlice<G::Property> =
+                            s_class.class.properties;
                         let old_len = old_props.len();
                         let mut properties =
                             BumpVec::<G::Property>::with_capacity_in(old_len + 1, self.arena);
@@ -7231,7 +7232,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             value: Some(value_expr),
                             ..Default::default()
                         });
-                        for old in old_props.slice_mut().iter_mut() {
+                        for old in unsafe { old_props.slice_mut() }.iter_mut() {
                             properties.push(core::mem::take(old));
                         }
 
@@ -8435,7 +8436,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Bake does not care about 'import =', as it handles it on it's own
                 let _ = ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, true>(
                     self,
-                    part.stmts.slice_mut(),
+                    unsafe { part.stmts.slice_mut() },
                     wrap_mode != WrapMode::None,
                     Some(&mut hmr_transform_ctx),
                 )?;
@@ -8445,7 +8446,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let mut last_stmts = hmr_transform_ctx.last_part.stmts;
                 let _ = ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, true>(
                     self,
-                    last_stmts.slice_mut(),
+                    unsafe { last_stmts.slice_mut() },
                     wrap_mode != WrapMode::None,
                     Some(&mut hmr_transform_ctx),
                 )?;
@@ -8482,7 +8483,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     let result = match ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, false>(
                         self,
-                        part.stmts.slice_mut(),
+                        unsafe { part.stmts.slice_mut() },
                         wrap_mode != WrapMode::None,
                         None,
                     ) {

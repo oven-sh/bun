@@ -173,7 +173,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         data: &mut S::ExportClause,
     ) -> Result<(), Error> {
         // "export {foo}"
-        let items = data.items.slice_mut();
+        let items = unsafe { data.items.slice_mut() };
         let items_len = items.len();
         let mut end: usize = 0;
         let mut any_replaced = false;
@@ -277,7 +277,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         VecExt::append(&mut p.cur_scope().generated, data.namespace_ref);
         p.record_declared_symbol(data.namespace_ref);
 
-        let items = data.items.slice_mut();
+        let items = unsafe { data.items.slice_mut() };
 
         if p.options.features.replace_exports.count() > 0 {
             let mut j: usize = 0;
@@ -2124,7 +2124,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .expect("unreachable");
             let old_is_inside_switch = p.fn_or_arrow_data_visit.is_inside_switch;
             p.fn_or_arrow_data_visit.is_inside_switch = true;
-            let cases = data.cases.slice_mut();
+            let cases = unsafe { data.cases.slice_mut() };
             for i in 0..cases.len() {
                 if let Some(val) = cases[i].value.as_mut() {
                     p.visit_expr(val);
@@ -2196,7 +2196,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // ahead of time before visiting any statements inside the namespace
         // because we may end up visiting the uses before the declarations.
         // We need to convert the uses into property accesses on the namespace.
-        let values = data.values.slice_mut();
+        let values = unsafe { data.values.slice_mut() };
         for value in values.iter() {
             if value.ref_.is_valid() {
                 p.is_exported_inside_namespace.insert(value.ref_, data.arg);

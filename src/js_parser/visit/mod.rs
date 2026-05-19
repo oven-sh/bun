@@ -129,7 +129,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         self.push_scope_for_visit_pass(ScopeKind::FunctionArgs, open_parens_loc)
             .expect("unreachable");
-        let args: &mut [G::Arg] = func.args.slice_mut();
+        let args: &mut [G::Arg] = unsafe { func.args.slice_mut() };
         self.visit_args(
             args,
             &VisitArgsOpts {
@@ -871,7 +871,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // — manual restore at block end below; no early returns in this block.
 
             let mut constructor_function: Option<bun_ast::StoreRef<E::Function>> = None;
-            let properties: &mut [G::Property] = class.properties.slice_mut();
+            let properties: &mut [G::Property] = unsafe { class.properties.slice_mut() };
             for property in properties.iter_mut() {
                 if property.kind == PropertyKind::ClassStaticBlock {
                     let old_fn_or_arrow_data = self.fn_or_arrow_data_visit;

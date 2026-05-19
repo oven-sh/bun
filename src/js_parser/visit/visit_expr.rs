@@ -2491,7 +2491,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // new `slice_mut(&mut self)` signature would otherwise conflict with
         // the read of `e_.has_rest_arg` in the same call expression.
         let has_rest_arg = e_.has_rest_arg;
-        let args_mut: &mut [G::Arg] = e_.args.slice_mut();
+        let args_mut: &mut [G::Arg] = unsafe { e_.args.slice_mut() };
         p.visit_args(
             args_mut,
             &VisitArgsOpts {

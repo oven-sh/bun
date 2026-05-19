@@ -406,20 +406,31 @@ impl<T> StoreSlice<T> {
         unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len as usize) }
     }
 
-    /// Re-borrow as `&mut [T]`. Takes `&mut self` so the borrow checker enforces
-    /// `&mut`-exclusivity through the `StoreSlice` handle — `StoreSlice<T>` is
-    /// `Copy`, and a previous `self`-by-value signature let two copies hand out
-    /// independent `&mut [T]` to the same arena allocation (audit witness in
-    /// the CodeRabbit review of #30924). Structurally mirrors `StoreRef::deref_mut`,
-    /// which already uses `&mut self` for the same reason. Aliasing across distinct
-    /// `StoreSlice` handles that happen to point at overlapping memory is still a
-    /// caller obligation (the arena hands out unique allocations, so this only
-    /// arises if callers split a slice manually — same posture as `StoreRef`).
+    /// Re-borrow as `&mut [T]`. **Unsafe** because `StoreSlice<T>` is `Copy`:
+    /// `&mut self` only blocks a second `slice_mut` through the *same* handle,
+    /// but safe code can `let s2 = s1;` and call `slice_mut` on each copy to
+    /// produce overlapping `&mut [T]` to the same arena allocation. The
+    /// `unsafe` marker forces every call site to acknowledge that the caller
+    /// has unique access to this allocation — see CodeRabbit's audit in
+    /// #30924. (The previous `slice_mut(self)` signature was strictly weaker
+    /// because it didn't even require `&mut`.)
+    ///
+    /// # Safety
+    ///
+    /// At the moment of call, no other live borrow or `slice_mut`-derived
+    /// reference of the underlying arena slice exists — including through any
+    /// other `StoreSlice` Copy that aliases the same memory. The arena hands
+    /// out unique allocations, so the typical pattern is "the field holding
+    /// this `StoreSlice` is the only handle" and the call is sound. The
+    /// duplicate-Copy hole exists symmetrically on `StoreRef::deref_mut` and
+    /// can only be closed by dropping `Copy` from both types — that's a
+    /// separate, cross-cutting refactor.
     #[inline]
-    pub fn slice_mut(&mut self) -> &mut [T] {
+    pub unsafe fn slice_mut(&mut self) -> &mut [T] {
         // SAFETY: StoreSlice invariant — `ptr` is non-null, points at `len`
         // initialized `T` valid for the arena lifetime; `&mut self` upholds
-        // `&mut`-exclusivity through this handle.
+        // single-handle exclusivity, and the caller has audited the
+        // duplicate-Copy case per the function-level safety contract.
         unsafe { core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len as usize) }
     }
 
@@ -1361,7 +1372,7 @@ impl<T> Batcher<T> {
         // `mem::replace` detaches `self.head` so `slice_mut` borrows the owned
         // local, freeing us to reassign `self.head` further down.
         let mut head = core::mem::replace(&mut self.head, StoreSlice::EMPTY);
-        let (prev, rest) = head.slice_mut().split_at_mut(1);
+        let (prev, rest) = unsafe { head.slice_mut() }.split_at_mut(1);
         prev[0] = value;
         self.head = StoreSlice::new_mut(rest);
         StoreSlice::new_mut(prev)
@@ -1370,7 +1381,7 @@ impl<T> Batcher<T> {
     pub fn next<const N: usize>(&mut self, values: [T; N]) -> StoreSlice<T> {
         // `head` has at least N elements remaining; see `eat1`.
         let mut head = core::mem::replace(&mut self.head, StoreSlice::EMPTY);
-        let (prev, rest) = head.slice_mut().split_at_mut(N);
+        let (prev, rest) = unsafe { head.slice_mut() }.split_at_mut(N);
         for (dst, src) in prev.iter_mut().zip(values) {
             *dst = src;
         }

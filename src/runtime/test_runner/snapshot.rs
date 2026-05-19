@@ -289,7 +289,7 @@ impl<'a> Snapshots<'a> {
         for part in ast.parts.as_mut_slice() {
             // `part.stmts` is an arena-owned `StoreSlice<Stmt>`; arena outlives this
             // loop and `ast` is owned here, so unique access is upheld.
-            for stmt in part.stmts.slice_mut() {
+            for stmt in unsafe { part.stmts.slice_mut() } {
                 match &mut stmt.data {
                     bun_ast::StmtData::SExpr(expr) => {
                         if let bun_ast::ExprData::EBinary(e_binary) = &mut expr.value.data {

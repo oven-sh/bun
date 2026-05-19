@@ -488,13 +488,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             js_ast::ExprData::EArrow(e) => {
-                let stmts = e.body.stmts.slice_mut();
+                let stmts = unsafe { e.body.stmts.slice_mut() };
                 self.rewrite_stmts(stmts, kind);
             }
             js_ast::ExprData::EFunction(e) => match kind {
                 RewriteKind::ReplaceThis { .. } => {}
                 RewriteKind::ReplaceRef { .. } => {
-                    let stmts = e.func.body.stmts.slice_mut();
+                    let stmts = unsafe { e.func.body.stmts.slice_mut() };
                     if !stmts.is_empty() {
                         self.rewrite_stmts(stmts, kind);
                     }
@@ -545,7 +545,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 js_ast::StmtData::SBlock(data) => {
-                    let stmts = data.stmts.slice_mut();
+                    let stmts = unsafe { data.stmts.slice_mut() };
                     self.rewrite_stmts(stmts, kind);
                 }
                 js_ast::StmtData::SFor(data) => {
@@ -598,24 +598,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let mut t = data.test_;
                     self.rewrite_expr(&mut t, kind);
                     data.test_ = t;
-                    let cases = data.cases.slice_mut();
+                    let cases = unsafe { data.cases.slice_mut() };
                     for case in cases.iter_mut() {
                         if let Some(v) = &mut case.value {
                             self.rewrite_expr(v, kind);
                         }
-                        let body = case.body.slice_mut();
+                        let body = unsafe { case.body.slice_mut() };
                         self.rewrite_stmts(body, kind);
                     }
                 }
                 js_ast::StmtData::STry(data) => {
-                    let body = data.body.slice_mut();
+                    let body = unsafe { data.body.slice_mut() };
                     self.rewrite_stmts(body, kind);
                     if let Some(c) = &mut data.catch_ {
-                        let cb = c.body.slice_mut();
+                        let cb = unsafe { c.body.slice_mut() };
                         self.rewrite_stmts(cb, kind);
                     }
                     if let Some(f) = &mut data.finally {
-                        let fb = f.stmts.slice_mut();
+                        let fb = unsafe { f.stmts.slice_mut() };
                         self.rewrite_stmts(fb, kind);
                     }
                 }
@@ -840,11 +840,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             js_ast::ExprData::EFunction(e) => {
-                let stmts = e.func.body.stmts.slice_mut();
+                let stmts = unsafe { e.func.body.stmts.slice_mut() };
                 self.rewrite_private_accesses_in_stmts(stmts, map);
             }
             js_ast::ExprData::EArrow(e) => {
-                let stmts = e.body.stmts.slice_mut();
+                let stmts = unsafe { e.body.stmts.slice_mut() };
                 self.rewrite_private_accesses_in_stmts(stmts, map);
             }
             _ => {}
@@ -884,7 +884,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 js_ast::StmtData::SBlock(data) => {
-                    let stmts = data.stmts.slice_mut();
+                    let stmts = unsafe { data.stmts.slice_mut() };
                     self.rewrite_private_accesses_in_stmts(stmts, map);
                 }
                 js_ast::StmtData::SFor(data) => {
@@ -937,24 +937,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let mut t = data.test_;
                     self.rewrite_private_accesses_in_expr(&mut t, map);
                     data.test_ = t;
-                    let cases = data.cases.slice_mut();
+                    let cases = unsafe { data.cases.slice_mut() };
                     for case in cases.iter_mut() {
                         if let Some(v) = &mut case.value {
                             self.rewrite_private_accesses_in_expr(v, map);
                         }
-                        let body = case.body.slice_mut();
+                        let body = unsafe { case.body.slice_mut() };
                         self.rewrite_private_accesses_in_stmts(body, map);
                     }
                 }
                 js_ast::StmtData::STry(data) => {
-                    let body = data.body.slice_mut();
+                    let body = unsafe { data.body.slice_mut() };
                     self.rewrite_private_accesses_in_stmts(body, map);
                     if let Some(c) = &mut data.catch_ {
-                        let cb = c.body.slice_mut();
+                        let cb = unsafe { c.body.slice_mut() };
                         self.rewrite_private_accesses_in_stmts(cb, map);
                     }
                     if let Some(f) = &mut data.finally {
-                        let fb = f.stmts.slice_mut();
+                        let fb = unsafe { f.stmts.slice_mut() };
                         self.rewrite_private_accesses_in_stmts(fb, map);
                     }
                 }
@@ -1144,7 +1144,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut pre_eval_stmts = BumpVec::<Stmt>::new_in(bump);
         let mut computed_key_counter: usize = 0;
 
-        let props_slice: &mut [Property] = class.properties.slice_mut();
+        let props_slice: &mut [Property] = unsafe { class.properties.slice_mut() };
         for (prop_idx, prop) in props_slice.iter_mut().enumerate() {
             if prop.kind == PropertyKind::ClassStaticBlock {
                 continue;
@@ -1339,7 +1339,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        let props_slice2: &mut [Property] = class.properties.slice_mut();
+        let props_slice2: &mut [Property] = unsafe { class.properties.slice_mut() };
         for (prop_idx, prop) in props_slice2.iter_mut().enumerate() {
             if prop.ts_decorators.len_u32() == 0 {
                 // ── Non-decorated property ──

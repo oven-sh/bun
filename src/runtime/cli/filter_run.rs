@@ -290,6 +290,22 @@ struct ElideResult<'b> {
     elided_count: usize,
 }
 
+#[derive(Copy, Clone)]
+enum RedrawMode {
+    /// Live frame during the run. Cap per-handle content to fit the terminal
+    /// so a subsequent redraw can fully clear it (prevents #28800).
+    Live,
+    /// Ctrl+C / signal — dump every buffered line regardless of `elide_count`
+    /// to aid debugging. Still clamps cursor-up to terminal rows so the clear
+    /// loop doesn't over-emit.
+    Abort,
+    /// Last frame on a clean successful exit. Honors the user's
+    /// `--elide-lines` (so `--elide-lines=0` actually shows everything per
+    /// the documented contract), but does not enforce the terminal cap
+    /// because there is no next redraw to corrupt.
+    Final,
+}
+
 impl<'a> State<'a> {
     pub fn is_done(&self) -> bool {
         self.remaining_scripts == 0
@@ -303,7 +319,7 @@ impl<'a> State<'a> {
         // TODO(port): narrow error set
         if self.pretty_output {
             handle.buffer.extend_from_slice(chunk);
-            let _ = self.redraw(false);
+            let _ = self.redraw(RedrawMode::Live);
         } else {
             let mut content = chunk;
             self.draw_buf.clear();
@@ -362,7 +378,7 @@ impl<'a> State<'a> {
             }
         }
         if self.pretty_output {
-            let _ = self.redraw(false);
+            let _ = self.redraw(RedrawMode::Live);
         } else {
             self.draw_buf.clear();
             // flush any remaining buffer
@@ -402,6 +418,13 @@ impl<'a> State<'a> {
         Ok(())
     }
 
+    /// Returns the tail of `data_` (dropping a single trailing newline) plus
+    /// the number of lines removed off the front.
+    ///
+    /// `max_lines` semantics:
+    /// - `None`: no elision, show everything.
+    /// - `Some(0)`: elide everything, show no content.
+    /// - `Some(n)` with `n > 0`: keep the last `n` lines, elide the rest.
     fn elide(data_: &[u8], max_lines: Option<usize>) -> ElideResult<'_> {
         let mut data = data_;
         if data.is_empty() {
@@ -413,6 +436,13 @@ impl<'a> State<'a> {
         if data[data.len() - 1] == b'\n' {
             data = &data[0..data.len() - 1];
         }
+        // A bare trailing newline (now trimmed to empty) is semantically empty.
+        if data.is_empty() {
+            return ElideResult {
+                content: &[],
+                elided_count: 0,
+            };
+        }
         let Some(max_lines_val) = max_lines else {
             return ElideResult {
                 content: data,
@@ -420,9 +450,17 @@ impl<'a> State<'a> {
             };
         };
         if max_lines_val == 0 {
+            // Elide every line. One "last line" exists without a trailing
+            // newline (we trimmed it above), plus one per embedded '\n'.
+            let mut elided: usize = 1;
+            for &c in data {
+                if c == b'\n' {
+                    elided += 1;
+                }
+            }
             return ElideResult {
-                content: data,
-                elided_count: 0,
+                content: &[],
+                elided_count: elided,
             };
         }
         let mut i: usize = data.len();
@@ -450,18 +488,128 @@ impl<'a> State<'a> {
         }
     }
 
-    fn redraw(&mut self, is_abort: bool) -> Result<(), bun_core::Error> {
+    /// Queries the current terminal height in rows. Returns `None` when it
+    /// cannot be determined (not a terminal, ioctl/WinAPI failure, etc.).
+    fn get_terminal_rows() -> Option<usize> {
+        #[cfg(unix)]
+        {
+            // SAFETY: all-zero is a valid winsize (#[repr(C)] POD).
+            let mut size: libc::winsize = bun_core::ffi::zeroed();
+            // SAFETY: ioctl with TIOCGWINSZ on stdout fd; size is a valid out-ptr.
+            if unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &raw mut size) } == 0
+                && size.ws_row > 0
+            {
+                return Some(size.ws_row as usize);
+            }
+            None
+        }
+        #[cfg(windows)]
+        {
+            let handle = sys::windows::GetStdHandle(sys::windows::STD_OUTPUT_HANDLE)?;
+            // CONSOLE_SCREEN_BUFFER_INFO is #[repr(C)] POD with a Zeroable
+            // impl in bun_core::windows_sys, so the safe `zeroed()` applies.
+            let mut csbi: sys::windows::CONSOLE_SCREEN_BUFFER_INFO = bun_core::ffi::zeroed();
+            // SAFETY: handle is valid; csbi is a valid out-ptr.
+            if unsafe { sys::windows::kernel32::GetConsoleScreenBufferInfo(handle, &mut csbi) }
+                != sys::windows::FALSE
+            {
+                // Widen to i32 to avoid i16 overflow for 32767-row consoles.
+                let rows = i32::from(csbi.srWindow.Bottom) - i32::from(csbi.srWindow.Top) + 1;
+                if rows > 0 {
+                    return Some(rows as usize);
+                }
+            }
+            None
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            None
+        }
+    }
+
+    fn redraw(&mut self, mode: RedrawMode) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         if !self.pretty_output {
             return Ok(());
         }
+        let is_abort = matches!(mode, RedrawMode::Abort);
+        // `Final` is the last frame on clean exit. No subsequent redraw will
+        // clear or overprint it, so the terminal cap isn't needed to prevent
+        // overflow, and we can honor the user's `--elide-lines=0` = "show
+        // everything" without risking #28800 on the next frame.
+        let skip_terminal_cap = !matches!(mode, RedrawMode::Live);
         self.draw_buf.clear();
         self.draw_buf
             .extend_from_slice(Output::SYNCHRONIZED_START.as_bytes());
+
+        // Cap per-handle content so the next frame fits the terminal window.
+        // Without this, `\x1b[1A` escapes below clamp at the top of the
+        // viewport once the frame is taller than the terminal, leaving stale
+        // lines that look like duplicated output (see #28800).
+        //
+        // The clamp on `up` below always applies (including during abort), so
+        // the clear loop can't emit more cursor-ups than the terminal can
+        // hold. The content cap below is skipped during abort so we still
+        // dump every line for debugging.
+        //
+        // Every emitted line ends in `\n`, so writing N newlines advances
+        // the cursor N rows from its starting position. With the cursor at
+        // row 1 and a `rows`-tall viewport, writing exactly `rows` lines
+        // scrolls the top line off into scrollback (the cursor would need
+        // row `rows + 1` to land on). Budget against `rows - 1` so the
+        // frame always fits without scrolling — otherwise the top line of
+        // every redraw accumulates in scrollback, re-introducing the
+        // #28800 duplication after enough redraws.
+        let terminal_rows = Self::get_terminal_rows();
+        let usable_rows: Option<usize> = terminal_rows.map(|r| r.saturating_sub(1));
+        // `show_indicator` reserves an extra line per handle for the
+        // "[N lines elided]" marker. Threshold is `rows >= 4 * n` so the
+        // indicator only turns on when at least one content line per handle
+        // still fits (content = `(rows - 3*n) / n >= 1` iff `rows >= 4*n`).
+        // Otherwise there's a non-monotonic valley `3n < rows < 4n` where
+        // enlarging the terminal would replace a content line with an
+        // "[N lines elided]" marker. When capping isn't applied at all
+        // (`Abort`/`Final`), we always show the indicator.
+        let show_indicator = if skip_terminal_cap {
+            true
+        } else {
+            match usable_rows {
+                Some(rows) => rows >= 4 * self.handles.len(),
+                None => true,
+            }
+        };
+        let terminal_cap: Option<usize> = if skip_terminal_cap {
+            None
+        } else {
+            match usable_rows {
+                Some(rows) if !self.handles.is_empty() => {
+                    let n = self.handles.len();
+                    // Per-handle overhead: header + footer (+ indicator if
+                    // we're still showing it).
+                    let per_handle_overhead: usize = if show_indicator { 3 } else { 2 };
+                    let overhead = per_handle_overhead * n;
+                    if rows <= overhead {
+                        Some(0)
+                    } else {
+                        Some((rows - overhead) / n)
+                    }
+                }
+                _ => None,
+            }
+        };
+
         if self.last_lines_written > 0 {
+            // Clamp the upward movement at the terminal height. `\x1b[1A`
+            // clamps at the viewport top on its own, but counting past that
+            // wastes bytes and makes the next frame's position ambiguous
+            // if the terminal was resized smaller between frames.
+            let up = match terminal_rows {
+                Some(rows) => self.last_lines_written.min(rows),
+                None => self.last_lines_written,
+            };
             // move cursor to the beginning of the line and clear it
             self.draw_buf.extend_from_slice(b"\x1b[0G\x1b[K");
-            for _ in 0..self.last_lines_written {
+            for _ in 0..up {
                 // move cursor up and clear the line
                 self.draw_buf.extend_from_slice(b"\x1b[1A\x1b[K");
             }
@@ -471,11 +619,26 @@ impl<'a> State<'a> {
             // SAFETY: idx in bounds; we need disjoint access to handles[idx] and draw_buf.
             let handle = unsafe { &*(&raw const self.handles[idx]) };
             // TODO(port): borrowck — self.handles[idx] borrowed while self.draw_buf is &mut.
-            // normally we truncate the output to 10 lines, but on abort we print everything to aid debugging
-            let elide_lines = if is_abort {
+            // Normally we truncate the output to 10 lines, but on abort we
+            // print everything to aid debugging. The CLI flag treats `0` as
+            // "show all content" (see --elide-lines help text), so translate
+            // that into `None` before passing it to `elide`, where `Some(0)`
+            // now means "elide everything".
+            let user_elide_raw = handle.config.elide_count.unwrap_or(10);
+            let user_elide: Option<usize> = if user_elide_raw == 0 {
                 None
             } else {
-                Some(handle.config.elide_count.unwrap_or(10))
+                Some(user_elide_raw)
+            };
+            let elide_lines: Option<usize> = if is_abort {
+                None
+            } else {
+                match (user_elide, terminal_cap) {
+                    // Terminal cap overrides the user setting to prevent overflow.
+                    (Some(u), Some(cap)) => Some(u.min(cap)),
+                    (None, Some(cap)) => Some(cap),
+                    (u, None) => u,
+                }
             };
             let e = Self::elide(&handle.buffer, elide_lines);
 
@@ -486,7 +649,7 @@ impl<'a> State<'a> {
                 bstr::BStr::new(&handle.config.script_name),
                 bstr::BStr::new(&handle.config.script_content),
             )?;
-            if e.elided_count > 0 {
+            if e.elided_count > 0 && show_indicator {
                 write!(
                     &mut self.draw_buf,
                     fmt!("<cyan>│<r> <d>[{d} lines elided]<r>\n"),
@@ -601,9 +764,14 @@ impl<'a> State<'a> {
     }
 
     pub fn finalize(&mut self) -> u8 {
-        if self.aborted {
-            let _ = self.redraw(true);
-        }
+        // Render one more frame unconditionally: `Abort` on Ctrl+C (dumps
+        // everything), `Final` on clean exit (honors `--elide-lines` but
+        // skips the terminal cap since no further redraw can corrupt it).
+        let _ = self.redraw(if self.aborted {
+            RedrawMode::Abort
+        } else {
+            RedrawMode::Final
+        });
         for handle in self.handles.iter() {
             if let Some(proc) = &handle.process {
                 match &proc.status {

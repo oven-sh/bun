@@ -855,7 +855,9 @@ impl<'a> TransformTask<'a> {
         buffer_writer.reset();
 
         let mut printer = JSPrinter::BufferPrinter::init(buffer_writer);
+        // Same per-call `arena` that `set_arena(&arena)` and `parse()` used.
         let printed = match self.transpiler.print(
+            &arena,
             parse_result,
             &mut printer,
             Transpiler::transpiler::PrintFormat::EsmAscii,
@@ -1598,7 +1600,9 @@ impl JSTranspiler {
         buffer_writer.reset();
         let mut printer = JSPrinter::BufferPrinter::init(buffer_writer);
         // SAFETY: see `transpiler_mut` — `print` does not re-enter JS.
+        // Same per-call `arena` that `set_arena(&arena)` and `parse()` used.
         if let Err(err) = unsafe { self.transpiler_mut() }.print(
+            &arena,
             parse_result,
             &mut printer,
             Transpiler::transpiler::PrintFormat::EsmAscii,

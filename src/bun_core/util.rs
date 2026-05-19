@@ -4108,25 +4108,22 @@ pub mod base64 {
 /// copy. Returns a raw `*const c_char` because the SSLConfig FFI surface
 /// stores C-strings. Caller frees via [`free_sensitive`].
 ///
-/// Allocated via mimalloc (the process-global default allocator), NOT
-/// `libc::malloc`. Under ASAN, libc malloc/free are intercepted and freed
-/// buffers sit in a ~256 MiB quarantine; routing the per-connection cert/key
-/// dups through libc made the SSLConfig leak test (`websocket.test.js`
-/// "bounded RSS growth") observe ~250 MiB RSS growth even though every
-/// allocation was correctly freed. Matching the Zig spec
-/// (`bun.default_allocator`) keeps these in mimalloc and out of quarantine.
+/// Allocated via the default allocator (`bun_alloc::default_alloc` —
+/// mimalloc, or `std::alloc::System` under `cfg(bun_asan)`), so the
+/// allocation is visible to ASAN's interceptor and LeakSanitizer like every
+/// other heap allocation. Pairs with [`free_sensitive`], which frees through
+/// the same `default_alloc::free`.
 pub fn dupe_z(bytes: &[u8]) -> *const core::ffi::c_char {
-    // SAFETY: mimalloc FFI; returns null on OOM or a writable region of
-    // ≥len+1 bytes (alignment ≤ MI_MAX_ALIGN_SIZE for u8).
+    let p = bun_alloc::default_alloc::malloc(bytes.len() + 1).cast::<u8>();
+    if p.is_null() {
+        crate::out_of_memory();
+    }
+    // SAFETY: `p` is a fresh allocation of `len + 1` writable bytes.
     unsafe {
-        let p = bun_alloc::mimalloc::mi_malloc(bytes.len() + 1).cast::<u8>();
-        if p.is_null() {
-            crate::out_of_memory();
-        }
         core::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
         *p.add(bytes.len()) = 0;
-        p as *const core::ffi::c_char
     }
+    p as *const core::ffi::c_char
 }
 
 /// Port of `bun.freeSensitive(bun.default_allocator, slice)` for the C-string

@@ -2944,6 +2944,11 @@ fn transpile_source_code_inner(
                         unsafe { (*jsc_vm).source_map_handler((*extra).source_code_printer) };
                     unsafe {
                         (*jsc_vm).transpiler.print_with_source_map(
+                            // Same per-call arena that `parse_options.arena`
+                            // built `parse_result.ast` from — the printer's
+                            // rope-flattening scratch belongs in it, not in
+                            // the per-VM `transpiler_arena`.
+                            &arena_guard.1,
                             parse_result,
                             &mut *(*extra).source_code_printer,
                             bun_js_printer::Format::EsmAscii,

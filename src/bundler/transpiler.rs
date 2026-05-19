@@ -2353,6 +2353,7 @@ pub use js_printer::Format as PrintFormat;
 impl<'a> Transpiler<'a> {
     fn print_with_source_map_maybe<const ENABLE_SOURCE_MAP: bool>(
         &mut self,
+        print_arena: &Arena,
         mut ast: bun_ast::Ast,
         source: &bun_ast::Source,
         writer: &mut js_printer::BufferPrinter,
@@ -2401,8 +2402,16 @@ impl<'a> Transpiler<'a> {
         // shares 64 kB faultaround windows with ~888 kB of dead code. Hoist the
         // three cold arms behind `#[cold] #[inline(never)]` thunks so their
         // instantiation trees land in `.text.unlikely` instead.
+        //
+        // `print_arena` is the same per-call arena that built `ast` (the one
+        // passed in `ParseOptions.arena`). Do NOT use `self.arena` here: on the
+        // runtime per-import path that aliases the per-VM `transpiler_arena`
+        // (`Arena::borrowing_default()` → `mi_heap_main()`, never freed), so the
+        // printer's rope/template-string flattening (`Str::resolve_rope_if_needed`)
+        // would strand its bytes in `mi_heap_main` on every print.
         match format {
             js_printer::Format::Cjs => self.print_cjs_cold::<ENABLE_SOURCE_MAP>(
+                print_arena,
                 writer,
                 &ast,
                 symbols,
@@ -2412,6 +2421,7 @@ impl<'a> Transpiler<'a> {
             ),
 
             js_printer::Format::Esm => self.print_esm_cold::<ENABLE_SOURCE_MAP>(
+                print_arena,
                 writer,
                 &ast,
                 symbols,
@@ -2427,6 +2437,7 @@ impl<'a> Transpiler<'a> {
                 // also drive `module_type`.
                 if self.options.target.is_bun() {
                     self.print_ast_esm_ascii::<ENABLE_SOURCE_MAP, true>(
+                        print_arena,
                         writer,
                         ast,
                         symbols,
@@ -2438,6 +2449,7 @@ impl<'a> Transpiler<'a> {
                     )
                 } else {
                     self.print_ast_esm_ascii_not_bun_cold::<ENABLE_SOURCE_MAP>(
+                        print_arena,
                         writer,
                         ast,
                         symbols,
@@ -2463,6 +2475,7 @@ impl<'a> Transpiler<'a> {
     #[allow(clippy::too_many_arguments)]
     fn print_cjs_cold<const ENABLE_SOURCE_MAP: bool>(
         &mut self,
+        print_arena: &Arena,
         writer: &mut js_printer::BufferPrinter,
         ast: &bun_ast::Ast,
         symbols: bun_ast::symbol::Map,
@@ -2472,11 +2485,11 @@ impl<'a> Transpiler<'a> {
     ) -> Result<usize, bun_core::Error> {
         js_printer::print_common_js::<_, false, ENABLE_SOURCE_MAP>(
             writer,
-            // PORT NOTE: `print_common_js` grew a `&bumpalo::Bump` arg in
-            // the Rust port (for `binary_expression_stack` arena). Zig
-            // threaded `opts.arena`; here `self.arena` IS the
-            // per-transpiler `bun_alloc::Arena = bumpalo::Bump`.
-            self.arena,
+            // The printer's per-call scratch arena (rope/template-string
+            // flattening via `Str::resolve_rope_if_needed` / `Str::slice`).
+            // Same arena that `ParseOptions.arena` used to build this AST —
+            // see `print_with_source_map_maybe`.
+            print_arena,
             ast,
             symbols,
             source,
@@ -2507,6 +2520,7 @@ impl<'a> Transpiler<'a> {
     #[allow(clippy::too_many_arguments)]
     fn print_esm_cold<const ENABLE_SOURCE_MAP: bool>(
         &mut self,
+        print_arena: &Arena,
         writer: &mut js_printer::BufferPrinter,
         ast: &bun_ast::Ast,
         symbols: bun_ast::symbol::Map,
@@ -2533,9 +2547,12 @@ impl<'a> Transpiler<'a> {
         };
         js_printer::print_ast::<_, false, ENABLE_SOURCE_MAP>(
             writer,
-            // PORT NOTE: `print_ast` takes a `&bumpalo::Bump` (for
-            // `binary_expression_stack` arena) — same as the Cjs arm.
-            self.arena, ast, symbols, source, opts,
+            // Per-call scratch arena (rope flattening) — same as the Cjs arm.
+            print_arena,
+            ast,
+            symbols,
+            source,
+            opts,
         )
     }
 
@@ -2548,6 +2565,7 @@ impl<'a> Transpiler<'a> {
     #[allow(clippy::too_many_arguments)]
     fn print_ast_esm_ascii_not_bun_cold<const ENABLE_SOURCE_MAP: bool>(
         &mut self,
+        print_arena: &Arena,
         writer: &mut js_printer::BufferPrinter,
         ast: bun_ast::Ast,
         symbols: bun_ast::symbol::Map,
@@ -2558,6 +2576,7 @@ impl<'a> Transpiler<'a> {
         module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
     ) -> Result<usize, bun_core::Error> {
         self.print_ast_esm_ascii::<ENABLE_SOURCE_MAP, false>(
+            print_arena,
             writer,
             ast,
             symbols,
@@ -2575,6 +2594,7 @@ impl<'a> Transpiler<'a> {
     #[allow(clippy::too_many_arguments)]
     fn print_ast_esm_ascii<const ENABLE_SOURCE_MAP: bool, const IS_BUN: bool>(
         &mut self,
+        print_arena: &Arena,
         writer: &mut js_printer::BufferPrinter,
         ast: bun_ast::Ast,
         symbols: bun_ast::symbol::Map,
@@ -2624,9 +2644,12 @@ impl<'a> Transpiler<'a> {
         };
         js_printer::print_ast::<_, IS_BUN, ENABLE_SOURCE_MAP>(
             writer,
-            // PORT NOTE: thread the per-transpiler arena (mirrors the Cjs arm /
-            // spec transpiler.zig:635 — same shape across all three arms).
-            self.arena, &ast, symbols, source, opts,
+            // Per-call scratch arena (rope flattening) — same as the Cjs arm.
+            print_arena,
+            &ast,
+            symbols,
+            source,
+            opts,
         )
     }
 
@@ -2635,14 +2658,20 @@ impl<'a> Transpiler<'a> {
     // and called by symbol from bun_runtime / bun_jsc / bun_install instead of
     // each crate re-monomorphizing the entire `Printer<W,…>` recursion tree.
     // See the PERF block above this `impl` for the icache-thrash measurement.
+    /// `print_arena` is the same per-call arena that built `result.ast` (the
+    /// one passed in `ParseOptions.arena`) — the printer uses it for rope /
+    /// template-string flattening and the flattened bytes share the AST's
+    /// lifetime. See `print_with_source_map_maybe`.
     #[inline(never)]
     pub fn print(
         &mut self,
+        print_arena: &Arena,
         result: ParseResult,
         writer: &mut js_printer::BufferPrinter,
         format: js_printer::Format,
     ) -> Result<usize, bun_core::Error> {
         self.print_with_source_map_maybe::<false>(
+            print_arena,
             result.ast,
             &result.source,
             writer,
@@ -2657,9 +2686,12 @@ impl<'a> Transpiler<'a> {
     // above. This is the hot entry from jsc_hooks.rs / RuntimeTranspilerStore.rs
     // / AsyncModule.rs; keeping it non-generic collapses the four cross-crate
     // copies of `print_expr<true,false,true,false,true>` (244 KB → ~61 KB).
+    /// `print_arena` is the same per-call arena that built `result.ast` —
+    /// see [`Self::print`].
     #[inline(never)]
     pub fn print_with_source_map(
         &mut self,
+        print_arena: &Arena,
         result: ParseResult,
         writer: &mut js_printer::BufferPrinter,
         format: js_printer::Format,
@@ -2673,6 +2705,7 @@ impl<'a> Transpiler<'a> {
             .unwrap_or(false)
         {
             return self.print_with_source_map_maybe::<false>(
+                print_arena,
                 result.ast,
                 &result.source,
                 writer,
@@ -2683,6 +2716,7 @@ impl<'a> Transpiler<'a> {
             );
         }
         self.print_with_source_map_maybe::<true>(
+            print_arena,
             result.ast,
             &result.source,
             writer,
@@ -2702,15 +2736,19 @@ impl<'a> Transpiler<'a> {
     // gracefully (keeps the raw transpiled position) when a path has no entry in
     // `SavedSourceMap`, so eagerly building a per-module source map nothing will
     // consume is pure overhead. See jsc_hooks.rs `transpile_source_code_inner`.
+    /// `print_arena` is the same per-call arena that built `result.ast` —
+    /// see [`Self::print`].
     #[inline(never)]
     pub fn print_skip_source_map(
         &mut self,
+        print_arena: &Arena,
         result: ParseResult,
         writer: &mut js_printer::BufferPrinter,
         format: js_printer::Format,
         module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
     ) -> Result<usize, bun_core::Error> {
         self.print_with_source_map_maybe::<false>(
+            print_arena,
             result.ast,
             &result.source,
             writer,
@@ -3049,15 +3087,22 @@ impl<'a> Transpiler<'a> {
                 let buffer_writer = js_printer::BufferWriter::init();
                 let mut writer = js_printer::BufferPrinter::init(buffer_writer);
 
+                // Same `self.arena` that `parse_opts.arena` used to build
+                // `result.ast` above. (`bun build` is one-shot — `self.arena`
+                // here is `cli_arena()` and lives for the process.)
+                let print_arena: &Arena = self.arena;
                 output_file.size = match self.options.target {
                     options::Target::Browser | options::Target::Node => {
-                        self.print(result, &mut writer, js_printer::Format::Esm)?
+                        self.print(print_arena, result, &mut writer, js_printer::Format::Esm)?
                     }
                     options::Target::Bun
                     | options::Target::BunMacro
-                    | options::Target::BakeServerComponentsSsr => {
-                        self.print(result, &mut writer, js_printer::Format::EsmAscii)?
-                    }
+                    | options::Target::BakeServerComponentsSsr => self.print(
+                        print_arena,
+                        result,
+                        &mut writer,
+                        js_printer::Format::EsmAscii,
+                    )?,
                 };
                 output_file.value = crate::output_file::Value::Buffer {
                     bytes: writer.ctx.written().to_vec().into_boxed_slice(),

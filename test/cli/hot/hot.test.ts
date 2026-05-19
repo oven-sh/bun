@@ -1,7 +1,7 @@
 import { spawn } from "bun";
-import { beforeEach, expect, it } from "bun:test";
+import { beforeEach, describe, expect, it } from "bun:test";
 import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, tmpdirSync, waitForFileToExist } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -766,3 +766,158 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
   },
   longTimeout,
 );
+
+// https://github.com/oven-sh/bun/issues/26036
+// Under --hot, re-evaluating the entry module re-runs Bun.listen()/Bun.serve()
+// with the same address. The previous listener must be reused (handlers
+// swapped in place) rather than re-binding, which would fail EADDRINUSE.
+describe("should reuse the listening socket on hot reload", () => {
+  for (const [name, listen, extract] of [
+    [
+      "Bun.listen",
+      `const server = Bun.listen({
+         hostname: "127.0.0.1",
+         port: 0,
+         socket: {
+           open(s) { s.write("v" + globalThis.reloadCount + "\\n"); s.flush(); },
+           data() {},
+         },
+       });`,
+      async (port: number) => {
+        const { promise, resolve, reject } = Promise.withResolvers<string>();
+        let text = "";
+        const sock = await Bun.connect({
+          hostname: "127.0.0.1",
+          port,
+          socket: {
+            data(s, data) {
+              // TCP is a byte stream; accumulate until the newline
+              // terminator instead of assuming a single-chunk delivery.
+              text += Buffer.from(data).toString();
+              const nl = text.indexOf("\n");
+              if (nl === -1) return;
+              resolve(text.slice(0, nl));
+              s.end();
+            },
+            error: (_s, e) => reject(e),
+            connectError: (_s, e) => reject(e),
+          },
+        });
+        const result = await promise;
+        sock.end();
+        return result;
+      },
+    ],
+    [
+      "Bun.serve",
+      `const server = Bun.serve({
+         hostname: "127.0.0.1",
+         port: 0,
+         fetch() { return new Response("v" + globalThis.reloadCount); },
+       });`,
+      async (port: number) => {
+        const res = await fetch(`http://127.0.0.1:${port}/`);
+        return await res.text();
+      },
+    ],
+  ] as const) {
+    it(
+      name,
+      async () => {
+        // The hot-reload registry keys on the *requested* address, so
+        // `port: 0` matches itself across reloads and the child keeps the
+        // same resolved port. We read that port back from the first event
+        // rather than reserving one in the parent (which would be a TOCTOU
+        // race with other processes on the CI box).
+        const source = (n: number) => `
+globalThis.reloadCount = ${n};
+${listen}
+console.log(JSON.stringify({ listening: true, port: server.port, reload: globalThis.reloadCount }));
+`;
+        using dir = tempDir("hot-listen-reuse", {
+          "index.ts": source(1),
+        });
+        const entry = join(String(dir), "index.ts");
+
+        await using runner = spawn({
+          cmd: [bunExe(), "--hot", "run", entry],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+          stdin: "ignore",
+        });
+
+        let stderr = "";
+        const stderrDone = (async () => {
+          for await (const chunk of runner.stderr) {
+            stderr += new TextDecoder().decode(chunk);
+            // Without the fix the second evaluation fails EADDRINUSE and
+            // stdout never produces another event; bail instead of hanging
+            // until the timeout.
+            if (stderr.includes("EADDRINUSE") || stderr.includes("Failed to")) {
+              runner.kill();
+            }
+          }
+        })().catch(() => {});
+
+        const events: Array<{ listening: boolean; port: number; reload: number }> = [];
+        const responses: string[] = [];
+        let buf = "";
+        const target = 3;
+        let port = 0;
+
+        try {
+          for await (const chunk of runner.stdout) {
+            buf += new TextDecoder().decode(chunk);
+            const lines = buf.split("\n");
+            buf = lines.pop() ?? "";
+            let advanced = false;
+            for (const line of lines) {
+              if (!line.startsWith("{")) continue;
+              const ev = JSON.parse(line);
+              // File watchers can fire more than once for a single write
+              // (truncate+write); ignore repeats of the current generation
+              // so the strict-sequence assertions below aren't at the mercy
+              // of platform watcher coalescing.
+              if (events.length > 0 && events[events.length - 1].reload === ev.reload) continue;
+              events.push(ev);
+              port ||= ev.port;
+              advanced = true;
+            }
+            if (!advanced) continue;
+            if (events.length >= target) {
+              responses.push(await extract(port));
+              runner.kill();
+              break;
+            }
+            // Verify the new handlers are actually wired up (not just that
+            // listen() didn't throw), then trigger the next reload.
+            responses.push(await extract(port));
+            writeFileSync(entry, source(events.length + 1));
+          }
+        } catch (e) {
+          // runner.kill() from the stderr reader aborts this iterator; only
+          // swallow that — let real errors from JSON.parse / extract /
+          // writeFileSync surface directly.
+          if (!runner.killed) throw e;
+        }
+
+        runner.kill();
+        await runner.exited;
+        await stderrDone;
+
+        expect(stderr).not.toContain("EADDRINUSE");
+        expect(stderr).not.toContain("Failed to listen");
+        expect(stderr).not.toContain("Failed to start server");
+        expect(events).toEqual([
+          { listening: true, port, reload: 1 },
+          { listening: true, port, reload: 2 },
+          { listening: true, port, reload: 3 },
+        ]);
+        expect(responses).toEqual(["v1", "v2", "v3"]);
+      },
+      timeout,
+    );
+  }
+});

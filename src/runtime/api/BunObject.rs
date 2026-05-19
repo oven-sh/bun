@@ -1629,17 +1629,39 @@ pub fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
             }
             server_ref.js_value.set_strong(obj, global_object);
 
-            if config.allow_hot {
+            // `init` above `core::mem::take`s the caller's `config` into the
+            // server, so `config.{allow_hot,id}` here are the *defaults*, not
+            // what was computed above. Read through `server_ref.config`.
+            if server_ref.config.allow_hot {
                 // SAFETY: same VM pointer; re-borrow after the earlier `vm` mut
                 // borrow was released by the `hot_map()` arm above.
                 if let Some(hot) = global_object.bun_vm().as_mut().hot_map() {
-                    hot.insert_raw(
-                        &config.id,
-                        HotMapEntry {
-                            tag: $tag as u8,
-                            ptr: server.cast::<()>(),
-                        },
-                    );
+                    // `insert_raw` panics on a duplicate key. The lookup
+                    // above only early-returns on an `AnyServerTag` match,
+                    // so a foreign-tag entry would survive to here.
+                    // `Bun.listen` keys are namespaced
+                    // (`[tcp]-`/`[tls]-`/`[listen]-`) so this is
+                    // belt-and-suspenders for a contrived
+                    // `Bun.serve({id: "[listen]-…"})` — skip registration
+                    // rather than panicking; the tag check keeps the
+                    // entries from ever being mis-cast.
+                    if hot.get_entry(&server_ref.config.id).is_none() {
+                        hot.insert_raw(
+                            &server_ref.config.id,
+                            HotMapEntry {
+                                tag: $tag as u8,
+                                ptr: server.cast::<()>(),
+                            },
+                        );
+                    } else {
+                        // Not registered → `NewServer::stop` must not
+                        // `hot.remove` the foreign entry that *is* there.
+                        // Flip `allow_hot` so its `allow_hot && !id.is_empty()`
+                        // gate is false, but leave `config.id` intact so the
+                        // user-visible `server.id` getter still reflects what
+                        // was passed.
+                        server_ref.config.allow_hot = false;
+                    }
                 }
             }
 

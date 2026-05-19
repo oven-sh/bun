@@ -4988,19 +4988,41 @@ pub const NodeFS = struct {
     }
 
     fn shouldThrowOutOfMemoryEarlyForJavaScript(encoding: Encoding, size: usize, syscall: Syscall.Tag) ?Syscall.Error {
-        // Strings & typed arrays max out at 4.7 GB.
-        // But, it's **string length**
-        // So you can load an 8 GB hex string, for example, it should be fine.
-        const adjusted_size = switch (encoding) {
-            .utf16le, .ucs2, .utf8 => size / 4 -| 1,
-            .hex => size / 2 -| 1,
-            .base64, .base64url => size / 3 -| 1,
-            .ascii, .latin1, .buffer => size,
+        // Compute the *maximum* JS string length (in UTF-16 code units) that the
+        // given number of input bytes could decode to. We must upper-bound the
+        // output, not lower-bound it: lower-bounding lets the read loop balloon
+        // far past `WTF::String::MaxLength` before this check fires (see
+        // https://github.com/oven-sh/bun/issues/29184 where reading `/dev/urandom`
+        // with `encoding: "utf8"` never rejected).
+        //
+        // Worst-case output length per input byte:
+        //   utf8/ascii/latin1  — 1 char per byte (all-ASCII)
+        //   hex                — 2 chars per byte
+        //   base64             — 4 * ceil(n / 3) chars (padded, per RFC 4648)
+        //   base64url          — ceil(4 * n / 3) chars (unpadded; matches
+        //                        `urlSafeEncodeLen` in `src/base64/base64.zig`)
+        //   utf16le/ucs2       — n / 2 code units (fixed ratio)
+        //   buffer             — n bytes (the result is a Uint8Array, not a string)
+        const max_output_length: usize = switch (encoding) {
+            .utf8, .ascii, .latin1 => size,
+            .hex => size *| 2,
+            .base64 => ((size +| 2) / 3) *| 4,
+            .base64url => (size *| 4 + 2) / 3,
+            .utf16le, .ucs2 => size / 2,
+            .buffer => size,
         };
 
-        if (
-        // Typed arrays in JavaScript are limited to 4.7 GB.
-        adjusted_size > jsc.VirtualMachine.synthetic_allocation_limit or
+        // Buffer (typed array) results are capped by `MAX_ARRAY_BUFFER_SIZE` which
+        // the synthetic allocation limit matches. String results are additionally
+        // capped by `WTF::String::MaxLength` (`INT32_MAX`, ~2 GiB) — see
+        // `vendor/WebKit/Source/WTF/wtf/text/StringImpl.h`.
+        const wtf_string_max_length: usize = std.math.maxInt(i32);
+        const limit: usize = switch (encoding) {
+            .buffer => jsc.VirtualMachine.synthetic_allocation_limit,
+            else => @min(jsc.VirtualMachine.synthetic_allocation_limit, wtf_string_max_length),
+        };
+
+        if (max_output_length > limit or
             // If they do not have enough memory to open the file and they're on Linux, let's throw an error instead of dealing with the OOM killer.
             (Environment.isLinux and size >= bun.getTotalMemorySize()))
         {

@@ -75,6 +75,27 @@ pub fn decode_binary_value<Context: ReaderContext>(
                 ..Default::default()
             })
         }
+        // YEAR is encoded as a 2-byte little-endian unsigned 16-bit integer in
+        // the binary result row (same wire shape as MYSQL_TYPE_SHORT, no length
+        // prefix). Without an explicit arm here, the default arm below reads
+        // `column_length` bytes — that is the ColumnDefinition41 display width
+        // (typically 4 for YEAR(4)) and over-reads by 2 bytes, misaligning the
+        // cursor for every subsequent column in the row. With NEWDECIMAL as
+        // the next column, the mis-read length byte would drive an unbounded
+        // wait for bytes that never arrive, hanging the query forever (#30854).
+        FieldType::MYSQL_TYPE_YEAR => {
+            if raw {
+                let data = reader.read(2)?;
+                return Ok(SQLDataCell::raw(Some(&data)));
+            }
+            Ok(SQLDataCell {
+                tag: CellTag::Uint4,
+                value: CellValue {
+                    uint4: reader.int::<u16>()? as u32,
+                },
+                ..Default::default()
+            })
+        }
         FieldType::MYSQL_TYPE_INT24 => {
             if raw {
                 // Binary protocol sends INT24 as a fixed 4-byte field; consume

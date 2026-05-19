@@ -9,7 +9,8 @@ describe("String.raw preserves non-ASCII characters", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
     expect(stdout).toBe("a\n中\n");
     expect(exitCode).toBe(0);
   });
@@ -21,7 +22,8 @@ describe("String.raw preserves non-ASCII characters", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
     expect(stdout).toBe("Redémarrage\n");
     expect(exitCode).toBe(0);
   });
@@ -33,7 +35,8 @@ describe("String.raw preserves non-ASCII characters", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
     expect(stdout).toBe("æ™弟気👋\n");
     expect(exitCode).toBe(0);
   });
@@ -45,7 +48,8 @@ describe("String.raw preserves non-ASCII characters", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
     expect(stdout).toBe("before中middleafter弟\n");
     expect(exitCode).toBe(0);
   });
@@ -58,7 +62,8 @@ test("RegExp source preserves non-ASCII characters", async () => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
   expect(stdout).toBe("æ™\n");
   expect(exitCode).toBe(0);
 });
@@ -78,7 +83,8 @@ test("String.raw with non-ASCII via runtime transpiler cache", async () => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout1, , exitCode1] = await Promise.all([proc1.stdout.text(), proc1.stderr.text(), proc1.exited]);
+  const [stdout1, stderr1, exitCode1] = await Promise.all([proc1.stdout.text(), proc1.stderr.text(), proc1.exited]);
+  expect(stderr1).toBe("");
   expect(stdout1).toBe("æ™弟気👋\n");
   expect(exitCode1).toBe(0);
 
@@ -89,7 +95,8 @@ test("String.raw with non-ASCII via runtime transpiler cache", async () => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout2, , exitCode2] = await Promise.all([proc2.stdout.text(), proc2.stderr.text(), proc2.exited]);
+  const [stdout2, stderr2, exitCode2] = await Promise.all([proc2.stdout.text(), proc2.stderr.text(), proc2.exited]);
+  expect(stderr2).toBe("");
   expect(stdout2).toBe("æ™弟気👋\n");
   expect(exitCode2).toBe(0);
 });
@@ -99,14 +106,20 @@ test("String.raw with non-ASCII after bun build", async () => {
     "index.ts": "console.log(String.raw`æ™弟気👋`);",
   });
 
-  // Build
+  // Build — `bun build` writes a summary to stderr by design, so only assert
+  // absence of an error keyword rather than empty stderr.
   await using buildProc = Bun.spawn({
     cmd: [bunExe(), "build", "--target", "bun", "--outfile", String(dir) + "/out.js", String(dir) + "/index.ts"],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [, , buildExitCode] = await Promise.all([buildProc.stdout.text(), buildProc.stderr.text(), buildProc.exited]);
+  const [, buildStderr, buildExitCode] = await Promise.all([
+    buildProc.stdout.text(),
+    buildProc.stderr.text(),
+    buildProc.exited,
+  ]);
+  expect(buildStderr).not.toContain("error");
   expect(buildExitCode).toBe(0);
 
   // Run the built output
@@ -116,7 +129,8 @@ test("String.raw with non-ASCII after bun build", async () => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
   expect(stdout).toBe("æ™弟気👋\n");
   expect(exitCode).toBe(0);
 });

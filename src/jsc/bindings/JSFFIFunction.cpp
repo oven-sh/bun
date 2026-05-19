@@ -104,6 +104,20 @@ extern "C" void Bun__FFIFunction_setDataPtr(JSC::EncodedJSValue jsValue, void* p
     function->dataPtr = ptr;
 }
 
+// Called from FFI.Function.deinit (ffi.zig) before the per-function TCC state
+// is deleted. Nulls out the native trampoline pointer so that any JS
+// references to this function which are invoked after the owning library is
+// closed will throw a TypeError instead of jumping into freed JIT memory.
+extern "C" void Bun__FFIFunction_setClosed(JSC::EncodedJSValue jsValue)
+{
+    Zig::JSFFIFunction* function = dynamicDowncast<Zig::JSFFIFunction>(JSC::JSValue::decode(jsValue));
+    if (!function)
+        return;
+
+    function->setFunction(nullptr);
+    function->symbolFromDynamicLibrary = nullptr;
+}
+
 extern "C" JSC::EncodedJSValue Bun__CreateFFIFunctionValue(Zig::GlobalObject* globalObject, const ZigString* symbolName, unsigned argCount, Zig::FFIFunction functionPointer, bool addPtrField, void* symbolFromDynamicLibrary)
 {
     if (addPtrField) {
@@ -158,23 +172,25 @@ JSFFIFunction* JSFFIFunction::create(VM& vm, Zig::GlobalObject* globalObject, un
     return function;
 }
 
-#if OS(WINDOWS)
-
 JSC_DEFINE_HOST_FUNCTION(JSFFIFunction::trampoline, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     const auto* function = uncheckedDowncast<JSFFIFunction>(callFrame->jsCallee());
-    return function->function()(globalObject, callFrame);
+    auto native = function->function();
+    if (!native) [[unlikely]] {
+        auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(globalObject, scope, "Cannot call an FFI function after the library has been closed"_s);
+    }
+    return native(globalObject, callFrame);
 }
-
-#endif
 
 JSFFIFunction* JSFFIFunction::createForFFI(VM& vm, Zig::GlobalObject* globalObject, unsigned length, const String& name, CFFIFunction FFIFunction)
 {
-#if OS(WINDOWS)
+    // Always route through the static trampoline so the TinyCC-compiled
+    // function pointer lives in the mutable m_function field instead of being
+    // baked into a NativeExecutable. This lets us safely detach the native
+    // code when the library is closed (see Bun__FFIFunction_setClosed).
     NativeExecutable* executable = vm.getHostFunction(trampoline, ImplementationVisibility::Public, NoIntrinsic, trampoline, nullptr, name);
-#else
-    NativeExecutable* executable = vm.getHostFunction(FFIFunction, ImplementationVisibility::Public, NoIntrinsic, FFIFunction, nullptr, name);
-#endif
     Structure* structure = globalObject->FFIFunctionStructure();
     JSFFIFunction* function = new (NotNull, allocateCell<JSFFIFunction>(vm)) JSFFIFunction(vm, executable, globalObject, structure, reinterpret_cast<CFFIFunction>(WTF::move(FFIFunction)));
     function->finishCreation(vm, executable, length, name);

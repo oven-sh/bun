@@ -544,8 +544,12 @@ pub const FFI = struct {
     const SymbolsMap = struct {
         map: bun.StringArrayHashMapUnmanaged(Function) = .{},
         pub fn deinit(this: *SymbolsMap) void {
-            for (this.map.keys()) |key| {
-                bun.default_allocator.free(@constCast(key));
+            // Each map key aliases the Function's base_name allocation, which
+            // Function.deinit frees along with the per-symbol TCC state,
+            // arg_types, and (on the dlopen/linkSymbols/cc paths) the
+            // protect()ed JSFFIFunction root.
+            for (this.map.values()) |*value| {
+                value.deinitWithoutGlobal();
             }
             this.map.clearAndFree(bun.default_allocator);
         }
@@ -810,6 +814,9 @@ pub const FFI = struct {
                         function.symbol_from_dynamic_library,
                     );
                     compiled.js_function = cb;
+                    // Rooted so Function.deinit can safely detach it on
+                    // close() even if it was removed from the symbols object.
+                    cb.protect();
                     obj.put(globalThis, &str, cb);
                 },
             }
@@ -1110,8 +1117,7 @@ pub const FFI = struct {
                 const resolved_symbol = dylib.lookup(*anyopaque, function_name) orelse {
                     const ret = global.toInvalidArguments("Symbol \"{s}\" not found in \"{s}\"", .{ bun.asByteSlice(function_name), name });
                     for (symbols.values()) |*value| {
-                        bun.default_allocator.free(@constCast(bun.asByteSlice(value.base_name.?)));
-                        value.arg_types.clearAndFree(bun.default_allocator);
+                        value.deinit(global);
                     }
                     symbols.clearAndFree(bun.default_allocator);
                     dylib.close();
@@ -1136,11 +1142,10 @@ pub const FFI = struct {
             };
             switch (function.step) {
                 .failed => |err| {
-                    defer for (symbols.values()) |*other_function| {
-                        other_function.deinit(global);
-                    };
-
                     const res = ZigString.init(err.msg).toErrorInstance(global);
+                    for (symbols.values()) |*other_function| {
+                        other_function.deinit(global);
+                    }
                     symbols.clearAndFree(bun.default_allocator);
                     dylib.close();
                     return res;
@@ -1164,6 +1169,9 @@ pub const FFI = struct {
                         function.symbol_from_dynamic_library,
                     );
                     compiled.js_function = cb;
+                    // Rooted so Function.deinit can safely detach it on
+                    // close() even if it was removed from the symbols object.
+                    cb.protect();
                     obj.put(global, &str, cb);
                 },
             }
@@ -1223,8 +1231,7 @@ pub const FFI = struct {
             if (function.symbol_from_dynamic_library == null) {
                 const ret = global.toInvalidArguments("Symbol \"{s}\" is missing a \"ptr\" field. When using linkSymbols() or CFunction(), you must provide a \"ptr\" field with the memory address of the native function.", .{bun.asByteSlice(function_name)});
                 for (symbols.values()) |*value| {
-                    allocator.free(@constCast(bun.asByteSlice(value.base_name.?)));
-                    value.arg_types.clearAndFree(allocator);
+                    value.deinit(global);
                 }
                 symbols.clearAndFree(allocator);
                 return ret;
@@ -1243,20 +1250,16 @@ pub const FFI = struct {
             };
             switch (function.step) {
                 .failed => |err| {
-                    for (symbols.values()) |*value| {
-                        allocator.free(@constCast(bun.asByteSlice(value.base_name.?)));
-                        value.arg_types.clearAndFree(allocator);
-                    }
-
                     const res = ZigString.init(err.msg).toErrorInstance(global);
-                    function.deinit(global);
+                    for (symbols.values()) |*value| {
+                        value.deinit(global);
+                    }
                     symbols.clearAndFree(allocator);
                     return res;
                 },
                 .pending => {
                     for (symbols.values()) |*value| {
-                        allocator.free(@constCast(bun.asByteSlice(value.base_name.?)));
-                        value.arg_types.clearAndFree(allocator);
+                        value.deinit(global);
                     }
                     symbols.clearAndFree(allocator);
                     return ZigString.static("Failed to compile (nothing happend!)").toErrorInstance(global);
@@ -1273,6 +1276,9 @@ pub const FFI = struct {
                         function.symbol_from_dynamic_library,
                     );
                     compiled.js_function = cb;
+                    // Rooted so Function.deinit can safely detach it on
+                    // close() even if it was removed from the symbols object.
+                    cb.protect();
 
                     obj.put(global, name, cb);
                 },
@@ -1459,8 +1465,13 @@ pub const FFI = struct {
         }
 
         extern "c" fn FFICallbackFunctionWrapper_destroy(*anyopaque) void;
+        extern "c" fn Bun__FFIFunction_setClosed(JSValue) void;
 
-        pub fn deinit(val: *Function, globalThis: *jsc.JSGlobalObject) void {
+        pub fn deinit(val: *Function, _: *jsc.JSGlobalObject) void {
+            val.deinitWithoutGlobal();
+        }
+
+        pub fn deinitWithoutGlobal(val: *Function) void {
             jsc.markBinding(@src());
 
             if (val.base_name) |base_name| {
@@ -1471,14 +1482,24 @@ pub const FFI = struct {
 
             val.arg_types.clearAndFree(val.allocator);
 
-            if (val.state) |state| {
-                state.deinit();
-                val.state = null;
-            }
-
             if (val.step == .compiled) {
                 if (val.step.compiled.js_function != .zero) {
-                    _ = globalThis;
+                    // On the dlopen/linkSymbols/cc paths, js_function is the
+                    // JSFFIFunction we created for this symbol (rooted via
+                    // protect() at creation time) whose native trampoline
+                    // lives in the TCC state about to be freed. Detach it so
+                    // calling it throws instead of jumping into freed JIT
+                    // memory, then release the GC root.
+                    //
+                    // On the JSCallback path (ffi_callback_function_wrapper
+                    // != null), js_function is the user's callback which we
+                    // merely borrowed — it is rooted via the wrapper's
+                    // Strong<JSFunction> and may itself be an unrelated FFI
+                    // symbol, so it must not be detached here.
+                    if (val.step.compiled.ffi_callback_function_wrapper == null) {
+                        Bun__FFIFunction_setClosed(val.step.compiled.js_function);
+                        val.step.compiled.js_function.unprotect();
+                    }
                     val.step.compiled.js_function = .zero;
                 }
 
@@ -1486,6 +1507,11 @@ pub const FFI = struct {
                     FFICallbackFunctionWrapper_destroy(wrapper);
                     val.step.compiled.ffi_callback_function_wrapper = null;
                 }
+            }
+
+            if (val.state) |state| {
+                state.deinit();
+                val.state = null;
             }
 
             if (val.step == .failed and val.step.failed.allocated) {

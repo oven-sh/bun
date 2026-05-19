@@ -623,7 +623,23 @@ JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>& s
     OrdinalNumber line = OrdinalNumber::fromOneBasedInt(line_in);
     OrdinalNumber column = OrdinalNumber::fromOneBasedInt(column_in);
 
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorInstance, bunErrorData);
+    if (scope.exception()) [[unlikely]] {
+        // ErrorInstance::materializeErrorInfoIfNeeded (our only caller via
+        // vm.onComputeErrorInfoJSValue) unconditionally putDirects
+        // line/column/sourceURL/stack after we return, so getOwnPropertySlot
+        // ends up returning true with a pending exception and trips
+        // EXCEPTION_ASSERT(!scope.exception() || !result) in
+        // JSObject::getOwnPropertyDescriptor (and releaseAssertNoException in
+        // other host callers). Swallow the exception here like
+        // computeErrorInfoWrapperToString already does; result already holds
+        // the default-formatted stack string from formatStackTraceToJSValue's
+        // RETURN_IF_EXCEPTION fallback.
+        (void)scope.tryClearException();
+        if (!result)
+            result = jsUndefined();
+    }
 
     line_in = line.oneBasedInt();
     column_in = column.oneBasedInt();

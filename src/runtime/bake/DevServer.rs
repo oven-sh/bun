@@ -776,9 +776,11 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             // PORT NOTE: Zig left `ssr_transpiler` `undefined` when
             // `!separate_ssr_graph` and never read it. Rust must still write a
             // valid value before `assume_init()`. Bitwise-alias the server
-            // transpiler (it is never independently dropped: `Drop for DevServer`
-            // does not free transpiler heap fields — see `useAllFields` mapping
-            // where `.ssr_transpiler = {}` is a no-op in Zig).
+            // transpiler. This is sound only because `Drop for DevServer` gates
+            // `ssr_transpiler.assume_init_drop()` behind the same
+            // `separate_ssr_graph` check (see Drop impl): in the `!separate`
+            // branch the alias is never independently dropped, so there is no
+            // double-free. Do not remove that gate.
             ::core::ptr::copy_nonoverlapping(
                 addr_of_mut!((*p).server_transpiler).cast_const(),
                 addr_of_mut!((*p).ssr_transpiler),

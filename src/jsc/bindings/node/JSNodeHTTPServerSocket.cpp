@@ -153,38 +153,36 @@ void JSNodeHTTPServerSocket::onClose()
         return;
     }
 
-    if (scriptExecutionContext) {
-        scriptExecutionContext->postTask([self = this](ScriptExecutionContext& context) {
-            WTF::NakedPtr<JSC::Exception> exception;
-            auto* globalObject = defaultGlobalObject(context.globalObject());
-            auto* thisObject = self;
-            auto* callbackObject = thisObject->functionToCallOnClose.get();
-            if (!callbackObject) {
-                if (auto* res = thisObject->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
-                    Bun__NodeHTTPResponse_onClose(res->m_ctx, JSValue::encode(res));
-                }
-                thisObject->detach();
-                return;
-            }
-            auto callData = JSC::getCallData(callbackObject);
-            MarkedArgumentBuffer args;
-            EnsureStillAliveScope ensureStillAlive(self);
-
-            if (globalObject->scriptExecutionStatus(globalObject, thisObject) == ScriptExecutionStatus::Running) {
-                if (auto* res = thisObject->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
-                    Bun__NodeHTTPResponse_onClose(res->m_ctx, JSValue::encode(res));
-                }
-
-                profiledCall(globalObject, JSC::ProfilingReason::API, callbackObject, callData, thisObject, args, exception);
-
-                if (auto* ptr = exception.get()) {
-                    exception.clear();
-                    globalObject->reportUncaughtExceptionAtEventLoop(globalObject, ptr);
-                }
+    scriptExecutionContext->postTask([self = this](ScriptExecutionContext& context) {
+        WTF::NakedPtr<JSC::Exception> exception;
+        auto* globalObject = defaultGlobalObject(context.globalObject());
+        auto* thisObject = self;
+        auto* callbackObject = thisObject->functionToCallOnClose.get();
+        if (!callbackObject) {
+            if (auto* res = thisObject->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
+                Bun__NodeHTTPResponse_onClose(res->m_ctx, JSValue::encode(res));
             }
             thisObject->detach();
-        });
-    }
+            return;
+        }
+        auto callData = JSC::getCallData(callbackObject);
+        MarkedArgumentBuffer args;
+        EnsureStillAliveScope ensureStillAlive(self);
+
+        if (globalObject->scriptExecutionStatus(globalObject, thisObject) == ScriptExecutionStatus::Running) {
+            if (auto* res = thisObject->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
+                Bun__NodeHTTPResponse_onClose(res->m_ctx, JSValue::encode(res));
+            }
+
+            profiledCall(globalObject, JSC::ProfilingReason::API, callbackObject, callData, thisObject, args, exception);
+
+            if (auto* ptr = exception.get()) {
+                exception.clear();
+                globalObject->reportUncaughtExceptionAtEventLoop(globalObject, ptr);
+            }
+        }
+        thisObject->detach();
+    });
 }
 
 void JSNodeHTTPServerSocket::onDrain()

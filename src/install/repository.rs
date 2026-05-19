@@ -6,7 +6,7 @@ use bstr::BStr;
 
 use bun_alloc::AllocError;
 use bun_core::strings;
-use bun_core::{self, Error, err};
+use bun_core::{self, Error, Output, err};
 use bun_paths::{self as Path, PathBuffer};
 use bun_semver::String;
 use bun_semver::StringBuilder as StringBuilderLike;
@@ -399,22 +399,21 @@ fn exec(env: &bun_dotenv::Map, argv: &[&[u8]]) -> Result<Vec<u8>, Error> {
     // (auth, ssh, signal) opaque. Mirror git's stderr to ours and report the
     // termination kind so the actual cause is visible.
     {
-        use std::io::Write;
         let term = match result.term {
             bun_spawn::Term::Exited(code) => format!("exit code {code}"),
             bun_spawn::Term::Signal(sig) => format!("signal {sig}"),
             bun_spawn::Term::Stopped(sig) => format!("stopped (signal {sig})"),
             bun_spawn::Term::Unknown(_) => "unknown status".to_string(),
         };
-        let stderr = std::io::stderr();
-        let mut handle = stderr.lock();
-        let _ = writeln!(handle, "error: {} failed with {}", BStr::new(argv[0]), term);
+        Output::err_generic("{} failed with {}", (BStr::new(argv[0]), term.as_str()));
         if !result.stderr.is_empty() {
-            let _ = handle.write_all(&result.stderr);
+            let ew = Output::error_writer();
+            let _ = ew.write_all(&result.stderr);
             if result.stderr.last() != Some(&b'\n') {
-                let _ = handle.write_all(b"\n");
+                let _ = ew.write_all(b"\n");
             }
         }
+        Output::flush();
     }
 
     Err(err!("InstallFailed"))

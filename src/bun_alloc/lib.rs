@@ -378,9 +378,16 @@ pub mod default_alloc {
         if ptr.is_null() {
             return 0;
         }
+        // Under `bun_asan` the global allocator is `std::alloc::System`, so the
+        // size must come from libc, not mimalloc — and the symbol differs per
+        // OS (`malloc_usable_size` on Linux, `malloc_size` on macOS). `bun_asan`
+        // is only ever set on Linux or macOS, so the catch-all (non-asan, every
+        // `check-all` target including Windows) stays on mimalloc.
         #[cfg(all(bun_asan, target_os = "linux"))]
         return unsafe { libc::malloc_usable_size(ptr.cast_mut()) };
-        #[cfg(not(all(bun_asan, target_os = "linux")))]
+        #[cfg(all(bun_asan, target_os = "macos"))]
+        return unsafe { libc::malloc_size(ptr) };
+        #[cfg(not(any(all(bun_asan, target_os = "linux"), all(bun_asan, target_os = "macos"))))]
         return unsafe { crate::mimalloc::mi_usable_size(ptr) };
     }
 

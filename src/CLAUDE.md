@@ -192,8 +192,11 @@ Common constants: `JAVASCRIPT`, `JSON`, `HTML`, `CSS`, `TEXT`, `WASM`, `ICO`, `O
 
 ## Memory & Allocators
 
-The `#[global_allocator]` is mimalloc, so plain `Box`/`Vec`/`String`
-already use it.
+The `#[global_allocator]` is mimalloc (or `std::alloc::System` under
+`cfg(bun_asan)`), so plain `Box`/`Vec`/`String` already use it. When pairing
+with C/C++ that may free the bytes, route through `bun_alloc::default_alloc`
+rather than `mi_*` directly — under ASAN the global allocator is libc's, so a
+`mi_free`/`mi_usable_size` on `Box`-owned memory is an allocator mismatch.
 
 OOM handling: do not let a runtime OOM unwind into FFI. Use
 `bun_core::handle_oom` (or the `.unwrap_or_oom()` extension) to convert

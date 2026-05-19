@@ -91,8 +91,8 @@ unsafe impl bun_threading::Linked for StatWatcher {
     }
 }
 
-/// RAII owner of one outstanding [`StatWatcherScheduler`] ref. Adopts a ref
-/// taken elsewhere (e.g. by [`StatWatcherScheduler::set_interval`]) and
+/// RAII owner of one outstanding [`StatWatcherScheduler`] ref. Adopts the
+/// "task in flight" ref taken in [`StatWatcherScheduler::timer_callback`] and
 /// releases it on Drop. Replaces Zig `defer this.deref()`.
 #[must_use = "dropping immediately releases the adopted ref"]
 struct SchedulerRefGuard(*mut StatWatcherScheduler);
@@ -248,7 +248,8 @@ impl StatWatcherScheduler {
         // SAFETY: main-thread-only per fn contract; `runtime_state()` is non-null
         // after `bun_runtime::init()`. Raw-ptr-per-field re-entry pattern.
         let timer_all = unsafe { &mut (*crate::jsc_hooks::runtime_state()).timer };
-        // SAFETY: `this` is live (ref'd in `set_interval`).
+        // SAFETY: `this` is live — the caller holds a ref (`set_interval`'s
+        // BACKREF, or `update_timer`'s `ParentRef`).
         let elt = unsafe { core::ptr::addr_of_mut!((*this).event_loop_timer) };
 
         // if the interval is 0 means that we stop the timer
@@ -271,11 +272,12 @@ impl StatWatcherScheduler {
     /// Schedule a task to set the timer in the main thread
     fn schedule_timer_update(this: *mut Self) {
         struct Holder {
-            // BACKREF — the outstanding ref on `scheduler` was already taken by
-            // `set_interval`'s `ref_()`; this borrows it (the work-pool
-            // callback's `defer this.deref()` balances it). `ParentRef`
-            // preserves the `*mut` provenance for `set_timer` and gives a safe
-            // `&StatWatcherScheduler` projection for `get_interval()`.
+            // BACKREF — `scheduler` is the refcounted singleton, kept alive by
+            // every `StatWatcher`'s `RefPtr<StatWatcherScheduler>`; the watcher
+            // that drove this `set_interval` still holds one across the hop.
+            // `ParentRef` preserves the `*mut` provenance for `set_timer` and
+            // gives a safe `&StatWatcherScheduler` projection for
+            // `get_interval()`.
             scheduler: bun_ptr::ParentRef<StatWatcherScheduler>,
             task: AnyTask,
         }
@@ -283,8 +285,9 @@ impl StatWatcherScheduler {
         fn update_timer(self_: *mut c_void) -> bun_event_loop::JsResult<()> {
             // SAFETY: `self_` was heap-allocated below; reclaim and drop at end of scope.
             let self_ = unsafe { bun_core::heap::take(self_.cast::<Holder>()) };
-            // `scheduler` is kept alive by the ref taken in `set_interval`
-            // (ParentRef invariant).
+            // `scheduler` is the refcounted singleton, kept alive across the
+            // hop by the triggering `StatWatcher`'s `RefPtr` (ParentRef
+            // invariant).
             let interval = self_.scheduler.get_interval();
             StatWatcherScheduler::set_timer(self_.scheduler.as_mut_ptr(), interval);
             Ok(())

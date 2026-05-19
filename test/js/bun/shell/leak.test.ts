@@ -14,7 +14,7 @@ $.nothrow();
 
 // ASAN's quarantine retains freed allocations (default 256 MB) so per-iteration
 // RSS jumps run far higher under bun-asan; widen the threshold there.
-const DEFAULT_THRESHOLD = (process.platform === "darwin" ? 100 : isASAN ? 350 : 150) * (1 << 20);
+const DEFAULT_THRESHOLD = (isASAN ? 350 : process.platform === "darwin" ? 100 : 150) * (1 << 20);
 
 const TESTS: [name: string, builder: () => TestBuilder, runs?: number][] = [
   ["redirect_file", () => TestBuilder.command`echo hello > test.txt`.fileEquals("test.txt", "hello\n")],

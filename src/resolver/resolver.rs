@@ -415,9 +415,10 @@ pub struct Bufs {
     pub win32_normalized_dir_info_cache: (),
 }
 // TODO(port): bun.ThreadlocalBuffers(Bufs) — lazily-allocated threadlocal Box<Bufs>.
-// In Rust we model it as a `thread_local! { static BUFS_PTR: Cell<*mut Bufs> }`
-// caching a leaked `Box<Bufs>` pointer (the Box is never freed in Zig either —
-// process-lifetime scratch storage). The `bufs!()` macro hands out `&mut` to a
+// In Rust we model it as a `thread_local! { static BUFS_PTR: BufsSlot }` caching a
+// leaked `Box<Bufs>` pointer. `BufsSlot`'s `Drop` reclaims that box when a
+// worker/transpiler-pool thread exits; the main thread's lives process-lifetime
+// (as in Zig, which never freed it). The `bufs!()` macro hands out `&mut` to a
 // single field. This relies on the caller never holding two `bufs!()` borrows
 // simultaneously across the same field; the Zig code already obeys that invariant.
 struct BufsSlot(core::cell::Cell<*mut Bufs>);
@@ -442,8 +443,9 @@ thread_local! {
 
 #[inline(always)]
 fn bufs_storage_get() -> *mut Bufs {
-    // Fast path: single TLS pointer load + null check. `LocalKey<Cell<T>>::get`
-    // (T: Copy) compiles to a plain `__tls_get_addr` + load with no
+    // Fast path: TLS access + null check. `BUFS_PTR` is a `BufsSlot` (it has a
+    // `Drop`), so `with()` goes through `thread_local!`'s destructor-state check
+    // before the `Cell::get` load — still only a few instructions, no
     // RefCell/Option/closure machinery on the hot path (benches: misc/require-fs).
     let p = BUFS_PTR.with(|s| s.0.get());
     if !p.is_null() {

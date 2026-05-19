@@ -376,9 +376,11 @@ impl<'a> ArgumentsSlice<'a> {
 
     pub fn init_async(vm: &'a VirtualMachine, slice: &'a [JSValue]) -> ArgumentsSlice<'a> {
         // Spec (CallFrame.zig:258-265): `.remaining = bun.default_allocator.dupe(jsc.JSValue, slice)`.
+        // In the Rust port `all: &'a [JSValue]` already pins the struct lifetime to `slice`, so a
+        // heap-owned dupe of `remaining` cannot outlive `slice` anyway — borrow instead of copying.
         // `all` stays borrowed (matches Zig) so `protect_eat` index math holds.
         ArgumentsSlice {
-            remaining_buf: Cow::Owned(slice.to_vec()),
+            remaining_buf: Cow::Borrowed(slice),
             remaining_start: 0,
             vm,
             all: slice,

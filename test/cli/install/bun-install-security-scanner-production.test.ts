@@ -99,22 +99,28 @@ scanner = "test-security-scanner"`,
   return { dir, stdout, stderr, exitCode, combined: stdout + stderr };
 }
 
-test("install --production with npm security scanner in devDependencies installs the scanner and completes", async () => {
-  const { combined, exitCode } = await writeFixture({ production: true, frozenLockfile: false });
+test.concurrent(
+  "install --production with npm security scanner in devDependencies installs the scanner and completes",
+  async () => {
+    const { combined, exitCode } = await writeFixture({ production: true, frozenLockfile: false });
 
-  expect(combined).not.toContain("no packages were installed during security scanner installation");
-  expect(combined).toContain("Attempting to install security scanner from npm");
-  expect(combined).toContain("Security scanner installed successfully");
-  expect(combined).toContain("SCANNER_RAN");
-  expect(exitCode).toBe(0);
-});
+    expect(combined).not.toContain("no packages were installed during security scanner installation");
+    expect(combined).toContain("Attempting to install security scanner from npm");
+    expect(combined).toContain("Security scanner installed successfully");
+    expect(combined).toContain("SCANNER_RAN");
+    expect(exitCode).toBe(0);
+  },
+);
 
-test("install --frozen-lockfile --production with npm security scanner in devDependencies installs the scanner and completes", async () => {
-  const { combined, exitCode } = await writeFixture({ production: true, frozenLockfile: true });
+test.concurrent(
+  "install --frozen-lockfile --production with npm security scanner in devDependencies installs the scanner and completes",
+  async () => {
+    const { combined, exitCode } = await writeFixture({ production: true, frozenLockfile: true });
 
-  expect(combined).not.toContain("no packages were installed during security scanner installation");
-  expect(combined).toContain("Attempting to install security scanner from npm");
-  expect(combined).toContain("Security scanner installed successfully");
-  expect(combined).toContain("SCANNER_RAN");
-  expect(exitCode).toBe(0);
-});
+    expect(combined).not.toContain("no packages were installed during security scanner installation");
+    expect(combined).toContain("Attempting to install security scanner from npm");
+    expect(combined).toContain("Security scanner installed successfully");
+    expect(combined).toContain("SCANNER_RAN");
+    expect(exitCode).toBe(0);
+  },
+);

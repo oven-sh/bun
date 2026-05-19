@@ -3,7 +3,6 @@
 //!
 //! Web and runtime-specific APIs should go in `bun.webcore` and `bun.api`.
 //!
-#![feature(allocator_api)]
 //! LAYERING: `jsc.zig` carries deprecated aliases `WebCore = bun.webcore`,
 //! `API = bun.api`, `Node = bun.api.node`, `Subprocess = bun.api.Subprocess`.
 //! In the Rust crate graph those targets live in `bun_runtime`, which depends
@@ -34,6 +33,7 @@
 // accessor inlining (every `VirtualMachine::get_or_null()` ≥3×/run_callback).
 // Precedent: 064951400fa4 did this for `bun_alloc`/`bun_ast`.
 #![feature(thread_local)]
+#![feature(allocator_api)]
 #![allow(incomplete_features)]
 
 extern crate alloc;

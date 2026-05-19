@@ -10,7 +10,7 @@ function generate(name: string) {
     estimatedSize: true,
     klass: {},
     JSType: "0b11101110",
-    values: ["writeCallback", "errorCallback", "dictionary"],
+    values: ["writeCallback", "errorCallback"],
 
     proto: {
       init: { fn: "init" },

@@ -251,7 +251,7 @@ impl ParseTask {
             // SAFETY: lifetime erased — `ctx` outlives the ParseTask (BACKREF);
             // write provenance from the `*mut BundleV2` parameter.
             ctx: Some(unsafe { bun_ptr::ParentRef::from_raw_mut(ctx.cast::<BundleV2<'static>>()) }),
-            path: resolve_result.path_pair.primary.clone(),
+            path: resolve_result.path_pair.primary,
             contents_or_fd: ContentsOrFd::Fd {
                 dir: resolve_result.dirname_fd,
                 file: resolve_result.file_fd,
@@ -2206,7 +2206,7 @@ pub mod parse_worker {
         // path explicitly (scopeguard would alias `transpiler` access below).
         // SAFETY: `transpiler` is live; `resolver` projects a field of it.
         let resolver: *mut Resolver = unsafe { core::ptr::addr_of_mut!((*transpiler).resolver) };
-        let mut file_path = task.path.clone();
+        let mut file_path = task.path;
         let mut loader = task
             .loader
             // SAFETY: `options` is a disjoint field of the live `*transpiler`.

@@ -831,7 +831,7 @@ pub mod fs {
     /// of this type (D090). Resolver-tier methods (`dupe_alloc`, `loader`, `hash_key`,
     /// …) live on `bun_resolver::fs::PathResolverExt`.
     #[repr(C)]
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, Copy)]
     pub struct Path<'a> {
         /// Display path — relative to cwd in the bundler; forward-slash on Windows.
         pub pretty: &'a [u8],

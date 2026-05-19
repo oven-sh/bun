@@ -5833,7 +5833,7 @@ pub mod bv2_impl {
                 self.transpiler.fs().top_level_dir,
                 bump,
             )?;
-            Ok(out.clone())
+            Ok(out)
         }
 
         #[cold]
@@ -6497,8 +6497,7 @@ pub mod bv2_impl {
                             true,
                         )
                     {
-                        import_record.path =
-                            path_as_static(resolve_result.path_pair.primary.clone());
+                        import_record.path = path_as_static(resolve_result.path_pair.primary);
                     }
                     import_record.flags.set(
                         bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS,
@@ -6570,7 +6569,7 @@ pub mod bv2_impl {
                                 import_record.path.text = path.text;
                                 import_record.path.pretty = rel.into();
                                 import_record.path = path_as_static(
-                                    self.path_with_pretty_initialized(path.clone(), target)
+                                    self.path_with_pretty_initialized(*path, target)
                                         .expect("oom"),
                                 );
                                 if loader == Loader::Html
@@ -6613,9 +6612,8 @@ pub mod bv2_impl {
 
                 if let Some(id) = self.path_to_source_index_map(target).get(&path.text) {
                     if self.dev_server.is_some() && loader != Loader::Html {
-                        import_record.path = self.graph.input_files.items_source()[id as usize]
-                            .path
-                            .clone();
+                        import_record.path =
+                            self.graph.input_files.items_source()[id as usize].path;
                     } else {
                         import_record.source_index = Index::init(id);
                     }
@@ -6628,16 +6626,15 @@ pub mod bv2_impl {
 
                 let resolve_entry = resolve_queue.get_or_put(&path.text).expect("oom");
                 if resolve_entry.found_existing {
-                    import_record.path =
-                        path_as_static(unsafe { &**resolve_entry.value_ptr }.path.clone());
+                    import_record.path = path_as_static(unsafe { &**resolve_entry.value_ptr }.path);
                     continue;
                 }
 
                 *path = self
-                    .path_with_pretty_initialized(core::mem::take(path), target)
+                    .path_with_pretty_initialized(*path, target)
                     .expect("oom");
 
-                import_record.path = path_as_static(path.clone());
+                import_record.path = path_as_static(*path);
                 // key already interned by get_or_put — no key_ptr on StringHashMapGetOrPut
                 bun_core::scoped_log!(Bundle, "created ParseTask: {}", bstr::BStr::new(&path.text));
                 // Arena-owned (Zig: `arena.create(ParseTask)`).
@@ -6667,7 +6664,7 @@ pub mod bv2_impl {
                         && !core::ptr::eq(secondary, path)
                         && !strings::eql_long(&secondary.text, &path.text, true)
                     {
-                        resolve_task.secondary_path_for_commonjs_interop = Some(secondary.clone());
+                        resolve_task.secondary_path_for_commonjs_interop = Some(*secondary);
                     }
                 }
 
@@ -6752,7 +6749,7 @@ pub mod bv2_impl {
 
                     new_input_file.source.index =
                         bun_ast::Index(self.graph.input_files.len() as u32);
-                    new_input_file.source.path = path_as_static(new_task.path.clone());
+                    new_input_file.source.path = path_as_static(new_task.path);
                     new_input_file.loader = loader;
                     let new_source_index: u32 = new_input_file.source.index.0;
                     new_task.source_index = bun_ast::Index(new_source_index);

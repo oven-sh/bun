@@ -37,6 +37,7 @@ pub const HardcodedModule = enum {
     @"node:querystring",
     @"node:readline",
     @"node:readline/promises",
+    @"node:sqlite",
     @"node:stream",
     @"node:stream/consumers",
     @"node:stream/promises",
@@ -137,6 +138,7 @@ pub const HardcodedModule = enum {
         .{ "node:querystring", .@"node:querystring" },
         .{ "node:readline/promises", .@"node:readline/promises" },
         .{ "node:repl", .@"node:repl" },
+        .{ "node:sqlite", .@"node:sqlite" },
         .{ "node:stream", .@"node:stream" },
         .{ "node:stream/consumers", .@"node:stream/consumers" },
         .{ "node:stream/promises", .@"node:stream/promises" },
@@ -265,6 +267,7 @@ pub const HardcodedModule = enum {
             nodeEntry("node:worker_threads"),
             nodeEntry("node:zlib"),
             // New Node.js builtins only resolve from the prefixed one.
+            nodeEntryOnlyPrefix("node:sqlite"),
             nodeEntryOnlyPrefix("node:test"),
 
             nodeEntry("assert"),

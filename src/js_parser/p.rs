@@ -599,6 +599,10 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// associated with that namespace or namespace member: "ref_to_ts_namespace_member".
     /// This gives enough info to be able to resolve queries into the namespace.
     pub ref_to_ts_namespace_member: HashMap<Ref, js_ast::ts::Data>,
+    /// Arena-allocated `TSNamespaceScope`s; their global-heap maps are freed in `Drop`.
+    pub ts_namespace_scopes: Vec<js_ast::StoreRef<js_ast::TSNamespaceScope>>,
+    /// Companion list (sibling scopes share a map, so the scope list can't free it).
+    pub ts_namespace_member_maps: Vec<js_ast::StoreRef<js_ast::TSNamespaceMemberMap>>,
     /// When visiting expressions, namespace metadata is associated with the most
     /// recently visited node. If namespace metadata is present, "tsNamespaceTarget"
     /// will be set to the most recently visited node (as a way to mark that this
@@ -718,6 +722,18 @@ pub type Binding2ExprWrapperNamespace = bun_ast::binding::ToExprWrapper;
 pub type Binding2ExprWrapperHoisted = bun_ast::binding::ToExprWrapper;
 
 // ═══════════════════════════════════════════════════════════════════════════
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> Drop for P<'a, TYPESCRIPT, SCAN_ONLY> {
+    fn drop(&mut self) {
+        // Arena-allocated structs never run Drop; free their global-heap maps here.
+        for mut scope in self.ts_namespace_scopes.drain(..) {
+            drop(core::mem::take(&mut scope.property_accesses));
+        }
+        for mut map in self.ts_namespace_member_maps.drain(..) {
+            drop(core::mem::take(&mut *map));
+        }
+    }
+}
+
 // Associated consts kept live (cheap, used by ParserLike + Parser.rs).
 // The full method-body impl block below is gated wholesale — 600+ type errors
 // from method bodies referencing not-yet-real Expr/Symbol/Log surface; un-gate
@@ -4665,12 +4681,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
 
         if let Some(existing) = map {
-            return js_ast::StoreRef::from_bump(self.arena.alloc(js_ast::TSNamespaceScope {
+            let scope = js_ast::StoreRef::from_bump(self.arena.alloc(js_ast::TSNamespaceScope {
                 exported_members: existing,
                 is_enum_scope,
                 arg_ref: Ref::NONE,
                 property_accesses: Default::default(),
             }));
+            self.ts_namespace_scopes.push(scope);
+            return scope;
         }
 
         // Otherwise, generate a new namespace object.
@@ -4679,12 +4697,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // can't be null-then-patch; two bump allocs from the same arena is the
         // same locality and avoids the self-referential init.
         let map = js_ast::StoreRef::from_bump(self.arena.alloc(Default::default()));
-        js_ast::StoreRef::from_bump(self.arena.alloc(js_ast::TSNamespaceScope {
+        self.ts_namespace_member_maps.push(map);
+        let scope = js_ast::StoreRef::from_bump(self.arena.alloc(js_ast::TSNamespaceScope {
             exported_members: map,
             is_enum_scope,
             arg_ref: Ref::NONE,
             property_accesses: Default::default(),
-        }))
+        }));
+        self.ts_namespace_scopes.push(scope);
+        scope
     }
 
     // TODO:
@@ -5387,7 +5408,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         &mut self.import_records_for_current_part,
                         BumpVec::new_in(self.arena),
                     );
-                    v.as_slice().to_vec()
+                    js_ast::PartImportRecordIndices::from_slice(v.as_slice())
                 },
                 // SAFETY: fresh bump allocation, uniquely owned by the new Part.
                 scopes: bun_ast::StoreSlice::new_mut(
@@ -8500,14 +8521,36 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .append_slice(self.import_records_for_current_part.as_slice());
                         }
 
+                        // Wipe the source slot's heap-backed maps so a multi-pass
+                        // re-scan of `idx` never aliases the compacted survivor.
+                        // SAFETY: `idx < parts.len()`; field-only write, `part` owns the old bits.
+                        unsafe {
+                            let src = parts.as_mut_ptr().add(idx);
+                            core::ptr::write(&raw mut (*src).symbol_uses, Default::default());
+                            core::ptr::write(
+                                &raw mut (*src).import_symbol_property_uses,
+                                Default::default(),
+                            );
+                        }
                         // SAFETY: bitwise overwrite matching Zig
                         // `parts.items[parts_end] = part;` — old slot value is not
                         // dropped (arena-owned; Zig never deinit'd it either).
                         unsafe { core::ptr::write(parts.as_mut_ptr().add(parts_end), part) };
                         parts_end += 1;
                     } else {
-                        // Drop path: `parts[idx]` still owns this data; discard the
-                        // bitwise duplicate without running Drop.
+                        // Filtered out; free the global-heap maps and clear the
+                        // alias in `parts[idx]` so a re-scan never sees freed handles.
+                        drop(core::mem::take(&mut part.symbol_uses));
+                        drop(core::mem::take(&mut part.import_symbol_property_uses));
+                        // SAFETY: `idx < parts.len()`; field-only write, old bits just freed above.
+                        unsafe {
+                            let slot = parts.as_mut_ptr().add(idx);
+                            core::ptr::write(&raw mut (*slot).symbol_uses, Default::default());
+                            core::ptr::write(
+                                &raw mut (*slot).import_symbol_property_uses,
+                                Default::default(),
+                            );
+                        }
                         core::mem::forget(part);
                     }
                 }
@@ -9278,6 +9321,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             binary_expression_stack: BumpVec::new_in(arena),
             binary_expression_simplify_stack: BumpVec::new_in(arena),
             ref_to_ts_namespace_member: Default::default(),
+            ts_namespace_scopes: Vec::new(),
+            ts_namespace_member_maps: Vec::new(),
             ts_namespace: RecentlyVisitedTSNamespace {
                 expr: null_expr_data(),
                 map: None,

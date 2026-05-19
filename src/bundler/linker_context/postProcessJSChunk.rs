@@ -619,8 +619,7 @@ pub fn post_process_js_chunk(
 
     let mut compile_results_for_source_map: MultiArrayList<CompileResultForSourceMap> =
         MultiArrayList::default();
-    let _ = compile_results_for_source_map.set_capacity(compile_results.len()); // OOM/capacity: Zig aborts; port keeps fire-and-forget
-    // bun.handleOom dropped — Rust aborts on OOM
+    bun_core::handle_oom(compile_results_for_source_map.set_capacity(compile_results.len()));
 
     let show_comments = c.options.mode == LinkerOptionsMode::Bundle && !c.options.minify_whitespace;
 
@@ -717,14 +716,19 @@ pub fn post_process_js_chunk(
 
             if let Some(source_map_chunk) = compile_result.source_map_chunk() {
                 if c.options.source_maps != options::SourceMapOption::None {
-                    compile_results_for_source_map.append(CompileResultForSourceMap {
-                        source_map_chunk: source_map_chunk.clone(),
-                        generated_offset: match line_offset {
-                            SourceMap::LineColumnOffsetOptional::Value(v) => v,
-                            SourceMap::LineColumnOffsetOptional::Null => Default::default(),
+                    bun_core::handle_oom(compile_results_for_source_map.append(
+                        CompileResultForSourceMap {
+                            // SAFETY: bitwise alias of `chunk.compile_results_for_chunk`
+                            // (read-only and outlives this fn); slab-only MAL drop means
+                            // the alias is never freed — original keeps the single owner.
+                            source_map_chunk: unsafe { source_map_chunk.alias() },
+                            generated_offset: match line_offset {
+                                SourceMap::LineColumnOffsetOptional::Value(v) => v,
+                                SourceMap::LineColumnOffsetOptional::Null => Default::default(),
+                            },
+                            source_index: compile_result.source_index(),
                         },
-                        source_index: compile_result.source_index(),
-                    })?;
+                    ));
                 }
 
                 line_offset.reset();

@@ -360,7 +360,7 @@ fn source_from_js(
 ) -> JsResult<Source> {
     // String → file path or data:/base64 URL. Everything else → bytes.
     if value.is_string() {
-        let str = value.to_bun_string(global)?;
+        let str = bun_core::OwnedString::new(value.to_bun_string(global)?);
         let utf8 = str.to_utf8();
         let s = utf8.slice();
         // `data:[<mime>][;base64],<payload>` — accept any image MIME (we sniff
@@ -1008,7 +1008,7 @@ impl Image {
         // `"color"` without growing methods. Anything else throws so the
         // option space isn't accidentally squatted.
         if args.len() > 0 && !args[0].is_undefined_or_null() {
-            let s = args[0].to_bun_string(global)?;
+            let s = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
             if !s.eql_utf8(b"dataurl") {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "Image.placeholder(): only \"dataurl\" is supported",
@@ -1038,7 +1038,7 @@ impl Image {
         // carry no extension contract, so the explicit `.png()` etc. (or source
         // format) decides.
         if output.is_none() && args[0].is_string() {
-            let str = args[0].to_bun_string(global)?;
+            let str = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
             let utf8 = str.to_utf8();
             if let Some(f) = codecs::Format::from_extension(utf8.slice()) {
                 match f {

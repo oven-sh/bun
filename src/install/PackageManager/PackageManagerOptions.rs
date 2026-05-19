@@ -534,10 +534,6 @@ impl Options {
                 self.max_concurrent_lifecycle_scripts = jobs as usize;
             }
 
-            if let Some(cache_dir) = config.cache_directory.as_deref() {
-                self.cache_directory = leak_static(cache_dir);
-            }
-
             if let Some(ignore_scripts) = config.ignore_scripts {
                 if ignore_scripts {
                     self.do_.set(Do::RUN_SCRIPTS, false);

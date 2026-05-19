@@ -580,8 +580,9 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         parts.mut_(1).declared_symbols = core::mem::take(&mut self.declared_symbols);
         parts.mut_(1).scopes =
             bun_ast::StoreSlice::new_mut(self.bump.alloc_slice_copy(self.scopes.as_slice()));
-        parts.mut_(1).import_record_indices =
-            Vec::<u32>::move_from_list(core::mem::take(&mut self.import_records_for_current_part));
+        parts.mut_(1).import_record_indices = bun_ast::PartImportRecordIndices::move_from_list(
+            core::mem::take(&mut self.import_records_for_current_part),
+        );
 
         // SAFETY: module_scope is a live arena allocation. `Scope` is no-Drop
         // arena POD; Zig bitwise-copied it (`module_scope.*`).

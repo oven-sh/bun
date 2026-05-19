@@ -852,6 +852,9 @@ impl ExtractTarball {
 
             let ret_json_path = FileSystem::instance().dirname_store().append(json_path)?;
 
+            // Lands in `Task.data.*` (untagged `ManuallyDrop` union); freed by
+            // `Task::deinit_payload()` at the `runTasks.rs` re-pool site, which
+            // calls it before `preallocated_resolve_tasks.put()`.
             Ok(ExtractData {
                 url: url.into(),
                 resolved: resolved.into(),

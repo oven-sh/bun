@@ -2018,7 +2018,9 @@ impl<'a> Parser<'a> {
                 before.push(js_ast::Part {
                     stmts: part_stmts.into(),
                     declared_symbols,
-                    import_record_indices: vec![import_record_id],
+                    import_record_indices: js_ast::PartImportRecordIndices::init_one(
+                        import_record_id,
+                    ),
                     tag: bun_ast::PartTag::BunTest,
                     ..Default::default()
                 });
@@ -2075,7 +2077,9 @@ impl<'a> Parser<'a> {
                 before.push(js_ast::Part {
                     stmts: part_stmts.into(),
                     declared_symbols,
-                    import_record_indices: vec![import_record_id],
+                    import_record_indices: js_ast::PartImportRecordIndices::init_one(
+                        import_record_id,
+                    ),
                     tag: bun_ast::PartTag::BunTest,
                     ..Default::default()
                 });

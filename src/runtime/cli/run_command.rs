@@ -2424,10 +2424,11 @@ impl RunCommand {
         // transpiler — so the bundler-linker / `tsconfig.json` / JSX-runtime
         // setup would be dead weight (and the largest block of bundler code
         // otherwise faulted in for a plain `bun run <script>`).
-        let mut this_transpiler = ::core::mem::MaybeUninit::<Transpiler<'static>>::uninit();
+        let this_transpiler: &'static mut ::core::mem::MaybeUninit<Transpiler<'static>> =
+            runner_arena().alloc(::core::mem::MaybeUninit::<Transpiler<'static>>::uninit());
         let root_dir_info = Self::configure_env_for_run_without_linker(
             ctx,
-            &mut this_transpiler,
+            this_transpiler,
             None,
             log_errors,
             false,
@@ -2435,6 +2436,10 @@ impl RunCommand {
         // SAFETY: `configure_env_for_run_without_linker` returned `Ok`, so the
         // slot is fully initialized via `MaybeUninit::write`.
         let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
+        bun_core::asan::register_root_region(
+            std::ptr::from_ref::<Transpiler>(this_transpiler).cast(),
+            ::core::mem::size_of::<Transpiler>(),
+        );
         let force_using_bun = ctx.debug.run_in_bun;
         let mut original_path: Vec<u8> = Vec::new();
         Self::configure_path_for_run(
@@ -3894,7 +3899,11 @@ impl RunCommand {
         strings::sort_asc(&mut all_keys);
         // Park the owning maps in the runner arena (process-lifetime) so the
         // `'static` slices above remain valid without leaking/forgetting.
-        let _ = runner_arena().alloc(results);
+        let parked = runner_arena().alloc(results);
+        bun_core::asan::register_root_region(
+            std::ptr::from_ref::<ResultList>(parked).cast(),
+            ::core::mem::size_of::<ResultList>(),
+        );
         shell_out.commands = std::borrow::Cow::Borrowed(runner_arena().alloc_slice_copy(&all_keys));
         shell_out.descriptions = std::borrow::Cow::Borrowed(runner_arena().alloc_slice_copy(
             // SAFETY: descriptions borrow into the package.json source buffer

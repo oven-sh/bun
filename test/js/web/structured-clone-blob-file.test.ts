@@ -1,6 +1,6 @@
 import { deserialize, serialize } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN } from "harness";
 import v8 from "node:v8";
 
 describe("structuredClone with Blob and File", () => {
@@ -506,7 +506,9 @@ describe("structuredClone with Blob and File", () => {
       const rssAfter = process.memoryUsage.rss();
 
       const deltaMiB = (rssAfter - rssBefore) / 1024 / 1024;
-      expect(deltaMiB).toBeLessThan(32);
+      // ASAN's quarantine retains freed allocations (default 256 MB) so the
+      // measured window still grows under bun-asan; widen the threshold there.
+      expect(deltaMiB).toBeLessThan(isASAN ? 128 : 32);
     }, 30_000);
   });
 });

@@ -1323,8 +1323,13 @@ impl PathLikeExt for PathLike {
 
             sliced.report_extra_memory(global.vm());
 
-            // It is expensive to keep both around.
-            Ok(Self::EncodedSlice(core::mem::take(&mut sliced.utf8)))
+            // It is expensive to keep both around. `utf8` here is an Owned
+            // transcoded copy (UTF-16 or non-ASCII Latin-1 input), so the
+            // returned EncodedSlice is independent of `underlying` — release
+            // the WTFStringImpl ref `to_slice` moved into it.
+            let utf8 = core::mem::take(&mut sliced.utf8);
+            sliced.deinit();
+            Ok(Self::EncodedSlice(utf8))
         }
     }
 }

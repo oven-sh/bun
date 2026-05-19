@@ -1212,19 +1212,12 @@ it.skipIf(isWindows)(
           console.log(code);
         `,
       ],
-      // Disable symbolization so an ASAN abort exits promptly instead of spending
-      // seconds in llvm-symbolizer against the large debug binary.
-      env: {
-        ...bunEnv,
-        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allow_user_segv_handler=1", "symbolize=0", "abort_on_error=1"]
-          .filter(Boolean)
-          .join(":"),
-      },
+      env: bunEnv,
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "inherit",
     });
 
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
     expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ELOOP", exitCode: 0 });
   },

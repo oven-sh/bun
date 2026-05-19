@@ -1325,7 +1325,9 @@ impl Drop for CssChunk {
         // copies (see `prepareCssAstsForChunk` `ptr::read`). Multiple slots may
         // alias the same source AST's heap buffers when a file is imported more
         // than once, so element-wise drop would double-free.
-        core::mem::forget(core::mem::take(&mut self.asts));
+        let mut asts = core::mem::take(&mut self.asts).into_vec();
+        // SAFETY: `set_len(0)` then `Vec::drop` frees the slab without running element destructors.
+        unsafe { asts.set_len(0) };
     }
 }
 
@@ -1346,8 +1348,8 @@ impl Drop for CssImportOrder {
     fn drop(&mut self) {
         // `conditions`: bitwise-shared across multiple order entries by
         // `findImportedFilesInCSSOrder` (`bitwise_copy(wrapping_conditions)`);
-        // freeing here would double-free. Global-backed → leaks until the
-        // aliasing is replaced (PORTING.md §CSS-import-order).
+        // freeing here would double-free. The slab is allocated from the
+        // `LinkerGraph` arena and is bulk-freed with it.
         core::mem::forget(core::mem::take(&mut self.conditions));
         // `condition_import_records`: every populated value is uniquely owned
         // (moved `all_import_records`) or an empty-Vec bitwise copy (cap == 0,

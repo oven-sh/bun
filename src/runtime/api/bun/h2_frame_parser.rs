@@ -7282,6 +7282,8 @@ impl H2FrameParser {
                 BunSocket::Tcp(bun_ptr::BackRef::from(socket_nn.cast::<TCPSocket>()))
             }
         } else {
+            // attach_native_callback failed: balance the init_ref taken above.
+            self.deref();
             socket_ref.ref_();
             if SSL {
                 BunSocket::TlsWriteonly(bun_ptr::BackRef::from(socket_nn.cast::<TLSSocket>()))
@@ -7598,7 +7600,23 @@ impl H2FrameParser {
     pub fn finalize(self: Box<Self>) {
         bun_output::scoped_log!(H2FrameParser, "finalize");
         // PORT NOTE: JsRef::deinit() dropped — overwrite with empty(); Drop releases the Strong slot.
-        bun_ptr::finalize_js_box(self, |this| this.strong_this.set(JsRef::empty()));
+        bun_ptr::finalize_js_box(self, |this| {
+            this.strong_this.set(JsRef::empty());
+            // process.exit() never unwinds, so a stack-rooted ref can strand and deinit()
+            // never runs; free streams here. The map is emptied so deinit() won't double-free.
+            if VirtualMachine::get().is_shutting_down() {
+                let streams = this.streams.replace(BunHashMap::default());
+                for (_, item) in streams.iter() {
+                    let stream = *item;
+                    // SAFETY: map has been emptied; each entry is freed exactly once.
+                    unsafe {
+                        (*stream).free_resources::<true>(this);
+                        drop(bun_core::heap::take(stream));
+                    }
+                }
+                drop(streams);
+            }
+        });
     }
 }
 

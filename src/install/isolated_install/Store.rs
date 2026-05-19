@@ -104,6 +104,13 @@ impl<T> NewId<T> {
     }
 }
 
+impl Drop for Store {
+    fn drop(&mut self) {
+        self.entries.drop_elements();
+        self.nodes.drop_elements();
+    }
+}
+
 impl Store {
     /// Called from multiple threads. `parent_dedupe` should not be shared between threads.
     pub fn is_cycle(

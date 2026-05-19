@@ -936,13 +936,13 @@ pub struct DeclaredSymbol {
 }
 
 pub struct DeclaredSymbolList {
-    pub entries: MultiArrayList<DeclaredSymbol>,
+    pub entries: MultiArrayList<DeclaredSymbol, bun_alloc::AstAlloc>,
 }
 
 impl Default for DeclaredSymbolList {
     fn default() -> Self {
         Self {
-            entries: MultiArrayList::default(),
+            entries: MultiArrayList::new_in(bun_alloc::AstAlloc),
         }
     }
 }
@@ -1018,7 +1018,7 @@ impl DeclaredSymbolList {
     pub fn init_capacity(
         capacity: usize,
     ) -> core::result::Result<DeclaredSymbolList, bun_alloc::AllocError> {
-        let mut entries = MultiArrayList::<DeclaredSymbol>::default();
+        let mut entries = MultiArrayList::new_in(bun_alloc::AstAlloc);
         entries.ensure_unused_capacity(capacity)?;
         Ok(DeclaredSymbolList { entries })
     }
@@ -1034,10 +1034,6 @@ impl DeclaredSymbolList {
         Ok(this)
     }
 }
-// TODO(port): arena threading — Zig passes `std.mem.Allocator` to every
-// MultiArrayList op. bun_collections::MultiArrayList owns its arena (global
-// mimalloc); if arena-backed SoA storage is ever needed, add a `&'bump Bump`
-// param here.
 
 impl DeclaredSymbol {
     fn for_each_top_level_symbol_with_type<C>(
@@ -1140,7 +1136,7 @@ pub struct Part {
     pub tag: PartTag,
 }
 
-pub type PartImportRecordIndices = Vec<u32>;
+pub type PartImportRecordIndices = Vec<u32, bun_alloc::AstAlloc>;
 pub type PartList = Vec<Part>;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -1167,7 +1163,7 @@ impl Default for Part {
         Self {
             stmts: StoreSlice::EMPTY,
             scopes: StoreSlice::EMPTY,
-            import_record_indices: PartImportRecordIndices::default(),
+            import_record_indices: PartImportRecordIndices::new_in(bun_alloc::AstAlloc),
             declared_symbols: DeclaredSymbolList::default(),
             symbol_uses: PartSymbolUseMap::default(),
             import_symbol_property_uses: PartSymbolPropertyUseMap::default(),

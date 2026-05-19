@@ -1845,7 +1845,7 @@ impl Package<u64> {
                         // value so the borrow outlives the parse call.
                         let wp = workspace_path.unwrap();
                         let path = wp.sliced(buf);
-                        if let Some(dep) = dependency::parse_with_tag(
+                        if let Some(mut dep) = dependency::parse_with_tag(
                             external_alias.value,
                             Some(external_alias.hash),
                             path.slice,
@@ -1854,8 +1854,10 @@ impl Package<u64> {
                             Some(&mut *log),
                             Some(&mut *pm),
                         ) {
-                            dependency_version.tag = dep.tag;
-                            dependency_version.value = dep.value;
+                            // Whole-struct move so `Drop` frees the old npm
+                            // chain; keep the existing `literal` (Zig parity).
+                            dep.literal = dependency_version.literal;
+                            dependency_version = dep;
                         }
                     } else {
                         // It doesn't satisfy, but a workspace shares the same name. Override the workspace with the other dependency

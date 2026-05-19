@@ -1086,12 +1086,12 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
     // `&mut self` helpers like `ssl_ctx_cache()` / `postgres_socket_group()`.
     let vm = global_object.bun_vm().as_mut();
     let arguments = callframe.arguments();
-    let hostname_str = arguments[0].to_bun_string(global_object)?;
+    let hostname_str = bun_core::OwnedString::new(arguments[0].to_bun_string(global_object)?);
     let port = arguments[1].coerce::<i32>(global_object)?;
 
-    let username_str = arguments[2].to_bun_string(global_object)?;
-    let password_str = arguments[3].to_bun_string(global_object)?;
-    let database_str = arguments[4].to_bun_string(global_object)?;
+    let username_str = bun_core::OwnedString::new(arguments[2].to_bun_string(global_object)?);
+    let password_str = bun_core::OwnedString::new(arguments[3].to_bun_string(global_object)?);
+    let database_str = bun_core::OwnedString::new(arguments[4].to_bun_string(global_object)?);
     let ssl_mode: SSLMode = match arguments[5].to_int32() {
         0 => SSLMode::Disable,
         1 => SSLMode::Prefer,
@@ -1171,9 +1171,9 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
     let mut options = bun_ptr::RawSlice::<u8>::EMPTY;
     let mut path = bun_ptr::RawSlice::<u8>::EMPTY;
 
-    let options_str = arguments[7].to_bun_string(global_object)?;
+    let options_str = bun_core::OwnedString::new(arguments[7].to_bun_string(global_object)?);
 
-    let path_str = arguments[8].to_bun_string(global_object)?;
+    let path_str = bun_core::OwnedString::new(arguments[8].to_bun_string(global_object)?);
 
     let options_buf: Box<[u8]> = 'brk: {
         let mut b = bun_core::StringBuilder::default();

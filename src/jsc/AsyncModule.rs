@@ -1344,6 +1344,12 @@ impl AsyncModule {
             // SAFETY: per-thread VM.
             let _ = unsafe {
                 (*jsc_vm).transpiler.print_with_source_map(
+                    // `self.arena` is the same per-call arena that built
+                    // `parse_result.ast` (handed to the queue via
+                    // `InitOpts::arena` after the original parse). The
+                    // printer's rope-flattening scratch belongs in it, not
+                    // in the per-VM `transpiler_arena`.
+                    &self.arena,
                     parse_result,
                     &mut printer,
                     bun_js_printer::Format::EsmAscii,

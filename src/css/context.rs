@@ -10,7 +10,7 @@ use css::css_rules::media::MediaRule;
 use css::css_properties::custom::UnparsedProperty;
 use css::media_query::{MediaCondition, MediaFeature, MediaFeatureId, MediaList, MediaQuery};
 
-use bun_alloc::Arena as Bump;
+use bun_alloc::{Arena as Bump, ArenaPtr};
 use bun_collections::ArrayHashMap;
 
 pub struct SupportsEntry {
@@ -190,9 +190,10 @@ impl<'a> PropertyHandlerContext<'a> {
             dest.push(css::CssRule::Media(MediaRule {
                 query: MediaList {
                     media_queries: {
-                        let mut list: Vec<MediaQuery> = Vec::with_capacity(1);
+                        // Arena-backed to match `MediaList.media_queries: Vec<_, ArenaPtr>`.
+                        let mut list: Vec<MediaQuery, ArenaPtr> =
+                            Vec::with_capacity_in(1, ArenaPtr::new(self.bump_static()));
 
-                        // PERF(port): was appendAssumeCapacity
                         list.push(MediaQuery {
                             qualifier: None,
                             media_type: css::media_query::MediaType::All,

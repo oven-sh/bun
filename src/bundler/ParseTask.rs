@@ -1173,17 +1173,15 @@ pub mod parse_worker {
                 ast.parts.slice_mut()[1] = Part {
                     stmts: ast::StoreSlice::EMPTY,
                     is_live: true,
-                    import_record_indices: 'brk2: {
+                    import_record_indices: {
                         // Generate a single part that depends on all the import records.
                         // This is to ensure that we generate a JavaScript bundle containing all the user's code.
-                        let mut import_record_indices =
-                            Vec::<u32>::init_capacity(import_records_len as usize);
-                        bun_core::vec::extend_from_fn(
-                            &mut import_record_indices,
+                        let mut import_record_indices = ast::PartImportRecordIndices::init_capacity(
                             import_records_len as usize,
-                            |i| u32::try_from(i).expect("int cast"),
                         );
-                        break 'brk2 import_record_indices;
+                        import_record_indices
+                            .extend(0..u32::try_from(import_records_len).expect("int cast"));
+                        import_record_indices
                     },
                     ..Default::default()
                 };
@@ -1264,7 +1262,6 @@ pub mod parse_worker {
                 }
                 // If this is a css module, the final exports object wil be set in `generateCodeForLazyExport`.
                 let root = Expr::init(E::Object::default(), Loc { start: 0 });
-                let css_ast_heap = crate::bundled_ast::CssAstRef::from_bump(bump.alloc(css_ast));
                 // PORT NOTE: `StylesheetExtra.symbols` is
                 // `Vec<bun_ast::Symbol>`; `new_lazy_export_ast_impl` takes
                 // `Vec<bun_ast::Symbol>`. Both port the same Zig
@@ -1287,6 +1284,7 @@ pub mod parse_worker {
                 );
                 let _ = temp_log.append_to_maybe_recycled(log, source);
                 let mut ast = JSAst::init(lazy?.unwrap());
+                let css_ast_heap = crate::bundled_ast::CssAstRef::from_bump(bump.alloc(css_ast));
                 ast.css = Some(css_ast_heap);
                 ast.import_records = import_records;
                 return Ok(ast);
@@ -1450,20 +1448,13 @@ pub mod parse_worker {
                     }
                 }
 
-                // TODO: this arena may be wrong for native plugins
-                //
-                // Zig (`ParseTask.zig:707-711`): pass `bun.default_allocator`
-                // when the loader copies its contents into the `OutputFile`
-                // (that memory must outlive the per-file worker arena), else the
-                // worker arena. Routing the non-copy case through `bump` keeps
-                // the source bytes in the bulk-reset worker arena instead of
-                // churning the global allocator's large-object free list one
-                // `Vec<u8>` per file.
-                let read_arena: Option<&Bump> = if loader.should_copy_for_bundling() {
-                    None
-                } else {
-                    Some(bump)
-                };
+                // Always read into the worker arena: it is pinned for the
+                // entire bundle pass (freed only via `pool.deinit()` inside
+                // `deinit_without_freeing_arena`, after `process_files_to_copy`
+                // has already deep-copied every additional-file body into its
+                // `OutputFile`). This avoids churning the global allocator with
+                // one `Vec<u8>` per file.
+                let read_arena: Option<&Bump> = Some(bump);
                 // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`;
                 // `(*transpiler).fs` is a live `*mut FileSystem` BACKREF.
                 let fs_ref = unsafe { &mut *(*transpiler).fs };
@@ -2535,28 +2526,31 @@ pub mod parse_worker {
         // reads (Parser.zig:1415,1433) into the parser-side mirror and bump-alloc
         // so `opts` can borrow it.
         opts.framework = topts.framework.map(|f| {
+            // `Framework` is bump-allocated below, so `Drop` never runs — use arena-owned slices.
             let projected = js_parser::options::Framework {
                 is_built_in_react: f.is_built_in_react,
                 server_components: f.server_components.as_ref().map(|sc| {
                     js_parser::options::FrameworkServerComponents {
                         separate_ssr_graph: sc.separate_ssr_graph,
-                        server_runtime_import: std::borrow::Cow::Owned(
-                            sc.server_runtime_import.to_vec(),
+                        server_runtime_import: std::borrow::Cow::Borrowed(
+                            bump.alloc_slice_copy(&sc.server_runtime_import),
                         ),
-                        server_register_client_reference: std::borrow::Cow::Owned(
-                            sc.server_register_client_reference.to_vec(),
+                        server_register_client_reference: std::borrow::Cow::Borrowed(
+                            bump.alloc_slice_copy(&sc.server_register_client_reference),
                         ),
-                        server_register_server_reference: std::borrow::Cow::Owned(
-                            sc.server_register_server_reference.to_vec(),
+                        server_register_server_reference: std::borrow::Cow::Borrowed(
+                            bump.alloc_slice_copy(&sc.server_register_server_reference),
                         ),
-                        client_register_server_reference: std::borrow::Cow::Owned(
-                            sc.client_register_server_reference.to_vec(),
+                        client_register_server_reference: std::borrow::Cow::Borrowed(
+                            bump.alloc_slice_copy(&sc.client_register_server_reference),
                         ),
                     }
                 }),
                 react_fast_refresh: f.react_fast_refresh.as_ref().map(|rfr| {
                     js_parser::options::ReactFastRefresh {
-                        import_source: std::borrow::Cow::Owned(rfr.import_source.to_vec()),
+                        import_source: std::borrow::Cow::Borrowed(
+                            bump.alloc_slice_copy(&rfr.import_source),
+                        ),
                     }
                 }),
             };
@@ -2811,6 +2805,9 @@ pub mod parse_worker {
         });
         let result = bun_core::heap::into_raw(result);
 
+        // `ParseTask` is arena-owned (no Drop); `jsx` may hold owned slices from tsconfig.
+        drop(core::mem::take(&mut this.jsx));
+
         // Zig matched `worker.ctx.loop().*` on `AnyEventLoop::{js, mini}`.
         // `worker.ctx` is a `BackRef<BundleV2>` (safe `Deref`); the BACKREF deref
         // of `linker.r#loop` is centralised in `LinkerContext::any_loop_mut`.
@@ -2846,10 +2843,22 @@ pub mod parse_worker {
         worker.unget();
     }
 
+    // The struct-only `dealloc` below skips field Drop; the `Log` is the only
+    // heap-owning field `on_parse_task_complete` doesn't move out, so take it here.
+    fn drop_result_owned_fields(result: &mut Result) {
+        match &mut result.value {
+            ResultValue::Success(s) => drop(core::mem::take(&mut s.log)),
+            ResultValue::Err(e) => drop(core::mem::take(&mut e.log)),
+            ResultValue::Empty { .. } => {}
+        }
+    }
+
     fn on_complete_mini(result: *mut Result, ctx: *mut BundleV2<'static>) {
         // SAFETY: callback contract — `result` was heap-allocated above; `ctx` is
         // the BACKREF stashed in `result.ctx` (Zig passed `BundleV2` as ParentContext).
         BundleV2::on_parse_task_complete(unsafe { &mut *result }, unsafe { &mut *ctx });
+        // SAFETY: `result` is uniquely owned (callback contract).
+        drop_result_owned_fields(unsafe { &mut *result });
         // Zig: `defer bun.default_allocator.destroy(parse_result)` (bundle_v2.zig).
         // Zig's `destroy` is *struct-only* (no field deinit). 954e9ccb mapped this
         // to `drop(heap::take(result))`, but that runs full Drop glue:
@@ -2874,6 +2883,7 @@ pub mod parse_worker {
         // pass and no other `&mut BundleV2` is live on this (main) thread when the
         // event-loop callback fires. `r` and `*ctx` are disjoint allocations.
         BundleV2::on_parse_task_complete(r, unsafe { ctx.assume_mut() });
+        drop_result_owned_fields(r);
         // See `on_complete_mini` for why this is `dealloc`, not `drop(take(_))`.
         // SAFETY: `result` came from `bun_core::heap::into_raw(Box<Result>)`
         // above; uniquely owned. Dealloc with the same layout, no field Drop.

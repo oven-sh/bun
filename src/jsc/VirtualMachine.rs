@@ -208,6 +208,12 @@ pub struct VirtualMachine {
 
     pub is_printing_plugin: bool,
     pub is_shutting_down: bool,
+    /// Set once `on_exit()` has finished draining `RareData::cleanup_hooks`.
+    /// After this point the cleanup-hook list is never iterated again, so
+    /// pushing to it (e.g. from a deferred N-API finalizer scheduled during
+    /// the final `collectNow()` in `Zig__GlobalObject__destructOnExit`) would
+    /// only leak the hook's `ctx` allocation.
+    pub has_run_cleanup_hooks: bool,
     pub plugin_runner: Option<crate::plugin_runner::PluginRunner>,
     pub is_main_thread: bool,
     pub exit_handler: ExitHandler,
@@ -269,6 +275,7 @@ pub struct VirtualMachine {
 
     pub rare_data: Option<Box<RareData>>,
     pub proxy_env_storage: crate::rare_data::ProxyEnvStorage,
+    pub resolved_path_dups: Vec<Box<[u8]>>,
     pub is_us_loop_entered: bool,
     pub pending_internal_promise: Option<*mut JSInternalPromise>,
     pub pending_internal_promise_is_protected: bool,
@@ -984,6 +991,10 @@ impl VirtualMachine {
         self.is_shutting_down
     }
 
+    pub fn has_run_cleanup_hooks(&self) -> bool {
+        self.has_run_cleanup_hooks
+    }
+
     /// Port of `VirtualMachine.scriptExecutionStatus` (VirtualMachine.zig:885).
     /// Exported to C++ as `Bun__VM__scriptExecutionStatus` via virtual_machine_exports.rs.
     pub fn script_execution_status(&self) -> crate::ScriptExecutionStatus {
@@ -1506,6 +1517,7 @@ impl VirtualMachine {
         }
         // Zig `defer rare_data.cleanup_hooks.clearAndFree(...)` — `mem::take`
         // above leaves an empty `Vec` (capacity already freed by drop).
+        self.has_run_cleanup_hooks = true;
     }
 
     pub fn global_exit(&mut self) -> ! {
@@ -1522,6 +1534,19 @@ impl VirtualMachine {
                 // VirtualMachine.zig:967 `t.deinit(true)`.
                 unsafe { uws::Timer::close::<true>(t.as_ptr()) };
             }
+            // Drain `TimeoutObject`s / `ImmediateObject`s from `All.timers`
+            // while `runtime_state`, the event loop, and the JSC heap are all
+            // still alive: drops their JS pins and in-heap `+1` refs so the GC
+            // sweep below (`destructOnExit` → `lastChanceToFinalize`) collects
+            // them instead of leaking. Must precede `close_all_socket_groups`
+            // and `~RunLoop::Timer` so no dangling `WTFTimer` heap node is
+            // observed during the walk.
+            if let Some(hooks) = runtime_hooks() {
+                // SAFETY: `self` is the live per-thread VM on the JS thread;
+                // `runtime_state` is still installed (it's torn down in
+                // `destroy()`, well after `global_exit`).
+                unsafe { (hooks.cancel_all_timers)(core::ptr::from_mut(self)) };
+            }
             // Detached worker threads may still be in startVM()/spin() using
             // the process-global resolver BSSMap singletons. transpiler.deinit()
             // below frees those singletons, so request termination of every
@@ -1531,6 +1556,15 @@ impl VirtualMachine {
                 // until each unparks at shutdown().
                 (hooks.terminate_all_workers_and_wait)(10_000);
             }
+
+            // Every worker has now posted its close task to our concurrent
+            // queue (OUTSTANDING is decremented after dispatchExit). Drop
+            // those queued lambdas — without running them — so the captured
+            // `Ref<Worker>` releases and the final GC sweep below brings the
+            // refcount to zero (`~Worker` → `WebWorker__destroy`). Must
+            // precede `destructOnExit`: deleting after JSC VM teardown would
+            // run `~JSEventListener` against freed Weak handle storage.
+            self.event_loop_mut().drop_concurrent_cpp_tasks();
 
             // Embedded per-VM socket groups must drain while JSC is still
             // alive (closeAll() fires on_close → JS). After JSC teardown,
@@ -1548,6 +1582,20 @@ impl VirtualMachine {
                     .close_all_socket_groups(vm_ref);
             }
 
+            // The HTTP daemon thread holds a `Box<ThreadlocalAsyncHTTP>` per
+            // in-flight request; with the JS thread exiting those never reach
+            // a terminal state. Ask it to reclaim them now (waits up to 1s).
+            bun_http::shutdown_for_exit();
+
+            // The HTTP daemon is parked. Release any task it posted to our
+            // queue before observing `is_shutting_down` (the read is
+            // non-atomic and can lag the JS-thread store) — `FetchTasklet`'s
+            // `on_progress_update` would have dropped the JS-side ref, and
+            // without it the tasklet ⇄ `Box<AsyncHTTP>` cycle leaks. Must
+            // precede `destructOnExit` so `FetchTasklet::deinit` can drop its
+            // JSC `Strong`/`Weak` handles against a live HandleSet.
+            self.event_loop_mut().release_queued_tasks_for_shutdown();
+
             Zig__GlobalObject__destructOnExit(self.global());
 
             // lastChanceToFinalize() above runs Listener/Server finalize →
@@ -1558,8 +1606,6 @@ impl VirtualMachine {
             // loop, which is live for the process lifetime.
             unsafe { (*uws::Loop::get()).drain_closed_sockets() };
 
-            // TODO(port): `self.transpiler.deinit()` — `Transpiler<'_>` has no
-            // `deinit()` yet (resolver BSSMap teardown not ported).
             self.gc_controller.deinit();
             self.destroy();
         }
@@ -1773,6 +1819,15 @@ pub struct RuntimeHooks {
     /// dispatches here. No-op when `bun test` isn't running.
     pub retroactively_report_discovered_tests:
         unsafe fn(agent: *mut crate::debugger::TestReporterHandle),
+    /// Cancel every `TimeoutObject` / `ImmediateObject` still in the calling
+    /// thread's `timer::All` heap so their JS pins and in-heap `+1` refs drop
+    /// before the GC sweep. `timer::All` lives in `bun_runtime` (forward-dep);
+    /// callers (`global_exit`, `WebWorker::shutdown`) are in this crate.
+    ///
+    /// # Safety
+    /// `vm` is the live per-thread VM; `runtime_state` must still be installed
+    /// and the JSC heap must not have been swept yet.
+    pub cancel_all_timers: unsafe fn(vm: *mut VirtualMachine),
 }
 
 /// Canonical `EventLoopCtx` vtable for a `*mut VirtualMachine` owner — the JS
@@ -2052,6 +2107,7 @@ impl VirtualMachine {
             // canonical empty value via `ptr::write` (no Drop of zeroed bytes).
             addr_of_mut!((*vm).preload).write(Vec::new());
             addr_of_mut!((*vm).argv).write(Vec::new());
+            addr_of_mut!((*vm).resolved_path_dups).write(Vec::new());
             addr_of_mut!((*vm).macros).write(Default::default());
             addr_of_mut!((*vm).macro_entry_points).write(Default::default());
             addr_of_mut!((*vm).auto_killer).write(Default::default());
@@ -3892,15 +3948,14 @@ impl VirtualMachine {
         ret.unwrap()
     }
 
-    /// Zig `bun.default_allocator.dupe(u8, s)` for the `_resolve`
-    /// fast-paths. The spec intentionally never frees these — they back
-    /// `ResolveFunctionResult.path` for the VM lifetime (see the field's
-    /// `TODO(port): lifetime` note). Returning a `'static` borrow of the
-    /// boxed bytes mirrors that contract.
-    fn dupe_resolved_path(s: &[u8]) -> &'static [u8] {
-        // SAFETY: allocation is VM-lifetime by spec (VirtualMachine.zig:1740,
-        // :1744, :1755, :1761) — never freed in `deinit`.
-        unsafe { &*bun_core::heap::into_raw(s.to_vec().into_boxed_slice()) }
+    /// Zig `bun.default_allocator.dupe(u8, s)` for the `_resolve` fast-paths.
+    fn dupe_resolved_path(&mut self, s: &[u8]) -> &'static [u8] {
+        let boxed: Box<[u8]> = s.to_vec().into_boxed_slice();
+        // SAFETY: `boxed`'s heap allocation has a stable address for as long
+        // as the owning `Box` lives in `resolved_path_dups` (drained in `destroy()`).
+        let slice: &'static [u8] = unsafe { core::mem::transmute::<&[u8], &'static [u8]>(&*boxed) };
+        self.resolved_path_dups.push(boxed);
+        slice
     }
 
     /// Spec VirtualMachine.zig:1724 `_resolve`.
@@ -3937,12 +3992,12 @@ impl VirtualMachine {
         }
         if specifier.starts_with(Macro::NAMESPACE_WITH_COLON) {
             ret.result = None;
-            ret.path = Self::dupe_resolved_path(specifier);
+            ret.path = self.dupe_resolved_path(specifier);
             return Ok(());
         }
         if specifier.starts_with(node_fallbacks::IMPORT_PATH) {
             ret.result = None;
-            ret.path = Self::dupe_resolved_path(specifier);
+            ret.path = self.dupe_resolved_path(specifier);
             return Ok(());
         }
         if let Some(result) = ModuleLoader::HardcodedModule::Alias::get(
@@ -3959,7 +4014,7 @@ impl VirtualMachine {
                 || specifier.ends_with(bun_paths::path_literal!("/[stdin]").as_bytes()))
         {
             ret.result = None;
-            ret.path = Self::dupe_resolved_path(specifier);
+            ret.path = self.dupe_resolved_path(specifier);
             return Ok(());
         }
         if let Some(blob_id) = specifier.strip_prefix(b"blob:".as_slice()) {
@@ -3970,7 +4025,7 @@ impl VirtualMachine {
                 .map(|h| (h.has_blob_url)(blob_id))
                 .unwrap_or(false);
             if has {
-                ret.path = Self::dupe_resolved_path(specifier);
+                ret.path = self.dupe_resolved_path(specifier);
                 return Ok(());
             }
             return Err(bun_core::err!("ModuleNotFound"));
@@ -4300,6 +4355,9 @@ impl VirtualMachine {
     /// `VirtualMachine.deinit` — worker-thread teardown. Spec
     /// VirtualMachine.zig:2109.
     pub fn destroy(&mut self) {
+        self.regular_event_loop.deinit();
+        self.macro_event_loop.deinit();
+
         // PORT NOTE: Zig `auto_killer.deinit()` — `ProcessAutoKiller`'s `Drop`
         // is the deinit body; take()+drop runs it without dropping `self`.
         drop(core::mem::take(&mut self.auto_killer));
@@ -4335,6 +4393,18 @@ impl VirtualMachine {
         // PORT NOTE: Zig `proxy_env_storage.deinit()` — drops all `Arc`-held
         // proxy strings; `ProxyEnvStorage: Default` so take()+drop suffices.
         drop(core::mem::take(&mut self.proxy_env_storage));
+
+        // The VM box is `dealloc`'d raw by the worker (see `web_worker.rs`
+        // section 5) so field `Drop`s never run; reclaim the boxed
+        // `ModuleLoader` payloads explicitly. `eval_source.contents` may be
+        // mmap-backed (`MAPPED_CONTENTS_CACHE`) — `Source`'s `Drop` is a
+        // no-op, so dropping the box just frees its own allocation.
+        drop(core::mem::take(&mut self.module_loader));
+
+        self.transpiler.deinit();
+
+        drop(core::mem::take(&mut self.resolved_path_dups));
+
         self.overridden_main.deinit();
 
         // PORT NOTE: Zig frees `timer`/`entry_point` as value fields of `self`;
@@ -6522,7 +6592,7 @@ pub fn plugin_runner_on_resolve_jsc(
         )));
     }
 
-    let file_path = path_value.to_bun_string(global)?;
+    let file_path = bun_core::OwnedString::new(path_value.to_bun_string(global)?);
 
     if file_path.length() == 0 {
         return Ok(Some(ErrorableString::err(

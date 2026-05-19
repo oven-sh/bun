@@ -256,6 +256,11 @@ enum SerializationTag {
     ErrorTag = 255
 };
 
+// Releases the +1 taken by `BlockList::on_structured_clone_serialize` so the
+// shared backing is freed once the SerializedScriptValue holding the raw
+// pointer is gone.
+extern "C" SYSV_ABI void BlockList__onStructuredCloneDestroy(void*);
+
 enum ArrayBufferViewSubtag {
     DataViewTag = 0,
     Int8ArrayTag = 1,
@@ -899,6 +904,7 @@ public:
         WasmMemoryHandleArray& wasmMemoryHandles,
 #endif
         Vector<uint8_t>& out, SerializationContext context, ArrayBufferContentsArray& sharedBuffers,
+        Vector<void*>& serializedBlockListRefs,
         SerializationForStorage forStorage, SerializationForCrossProcessTransfer forTransfer)
     {
         CloneSerializer serializer(lexicalGlobalObject, messagePorts, arrayBuffers,
@@ -917,7 +923,9 @@ public:
             wasmMemoryHandles,
 #endif
             out, context, sharedBuffers, forStorage, forTransfer);
-        return serializer.serialize(value);
+        auto code = serializer.serialize(value);
+        serializedBlockListRefs = WTF::move(serializer.m_serializedBlockListRefs);
+        return code;
     }
 
     static bool serialize(StringView string, Vector<uint8_t>& out)
@@ -1978,6 +1986,8 @@ private:
                 StructuredCloneableSerialize to_write = WTF::move(_cloneable.value());
                 write(to_write.tag);
                 to_write.write(this, m_lexicalGlobalObject);
+                if (to_write.tag == Bun__nodenet_BlockList)
+                    m_serializedBlockListRefs.append(to_write.impl);
                 return true;
             }
 
@@ -2580,6 +2590,7 @@ private:
     Identifier m_emptyIdentifier;
     SerializationContext m_context;
     ArrayBufferContentsArray& m_sharedBuffers;
+    Vector<void*> m_serializedBlockListRefs;
 #if ENABLE(WEBASSEMBLY)
     WasmModuleArray& m_wasmModules;
     WasmMemoryHandleArray& m_wasmMemoryHandles;
@@ -5494,7 +5505,11 @@ error:
     return std::make_pair(JSValue(), SerializationReturnCode::ValidationError);
 }
 
-SerializedScriptValue::~SerializedScriptValue() = default;
+SerializedScriptValue::~SerializedScriptValue()
+{
+    for (auto* ptr : m_serializedBlockListRefs)
+        BlockList__onStructuredCloneDestroy(ptr);
+}
 
 SerializedScriptValue::SerializedScriptValue(Vector<uint8_t>&& buffer, std::unique_ptr<ArrayBufferContentsArray>&& arrayBufferContentsArray
 #if ENABLE(WEB_RTC)
@@ -6246,6 +6261,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     WasmMemoryHandleArray wasmMemoryHandles;
 #endif
     std::unique_ptr<ArrayBufferContentsArray> sharedBuffers = makeUnique<ArrayBufferContentsArray>();
+    Vector<void*> serializedBlockListRefs;
 #if ENABLE(WEB_CODECS)
     Vector<RefPtr<WebCodecsEncodedVideoChunkStorage>> serializedVideoChunks;
     Vector<RefPtr<WebCodecsVideoFrame>> serializedVideoFrames;
@@ -6281,7 +6297,13 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
         wasmModules,
         wasmMemoryHandles,
 #endif
-        buffer, context, *sharedBuffers, forStorage, forTransfer);
+        buffer, context, *sharedBuffers, serializedBlockListRefs, forStorage, forTransfer);
+
+    auto releaseSerializedBlockListRefs = [&] {
+        for (auto* ptr : serializedBlockListRefs)
+            BlockList__onStructuredCloneDestroy(ptr);
+        serializedBlockListRefs.clear();
+    };
 
     // Serialize may throw an exception. This code looks weird, but we'll rethrow it
     // in maybeThrowExceptionIfSerializationFailed (since that may also throw other
@@ -6292,11 +6314,14 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
 
     // If we rethrew an exception just now, or we failed with a status code other than success,
     // we should exit right now.
-    if (scope.exception() || code != SerializationReturnCode::SuccessfullyCompleted) [[unlikely]]
+    if (scope.exception() || code != SerializationReturnCode::SuccessfullyCompleted) [[unlikely]] {
+        releaseSerializedBlockListRefs();
         RELEASE_AND_RETURN(scope, exceptionForSerializationFailure(code));
+    }
 
     auto arrayBufferContentsArray = transferArrayBuffers(vm, arrayBuffers);
     if (arrayBufferContentsArray.hasException()) {
+        releaseSerializedBlockListRefs();
         RELEASE_AND_RETURN(scope, arrayBufferContentsArray.releaseException());
     }
 
@@ -6340,7 +6365,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     // #endif
     //             ));
     scope.releaseAssertNoException();
-    return adoptRef(*new SerializedScriptValue(WTF::move(buffer), arrayBufferContentsArray.releaseReturnValue(), context == SerializationContext::WorkerPostMessage ? WTF::move(sharedBuffers) : nullptr
+    auto result = adoptRef(*new SerializedScriptValue(WTF::move(buffer), arrayBufferContentsArray.releaseReturnValue(), context == SerializationContext::WorkerPostMessage ? WTF::move(sharedBuffers) : nullptr
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
         ,
         WTF::move(detachedCanvases)
@@ -6358,6 +6383,8 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
         WTF::move(serializedVideoChunks), WTF::move(serializedVideoFrameData)
 #endif
             ));
+    result->m_serializedBlockListRefs = WTF::move(serializedBlockListRefs);
+    return result;
 }
 
 RefPtr<SerializedScriptValue> SerializedScriptValue::create(StringView string)

@@ -623,15 +623,33 @@ impl<const SSL: bool> HTTPClient<SSL> {
             unsafe { Self::deref(this.as_ptr()) };
         }
 
-        // Copy `tcp` out so no `&mut Self` spans the close — uSockets fires
-        // `handle_close` inline, which derives a fresh `&mut`/`*mut` from
-        // userdata.
+        // Copy `tcp` out so no `&mut Self` spans the close.
         let tcp = this.tcp;
+        // Clear the socket's ext slot before closing. `us_socket_close` on a
+        // SEMI_SOCKET (TCP connect still in flight — the common case when
+        // `ws.close()` is called synchronously after `new WebSocket()`) skips
+        // dispatch entirely, so we cannot rely on `handle_close` /
+        // `handle_connect_error` to release the socket-userdata ref taken in
+        // `connect()`. Take it back here and deref it ourselves; any callback
+        // that does fire sees `ext == None` and no-ops via the
+        // `RawPtrHandler` guard.
+        let had_socket_ref = tcp
+            .ext::<Option<core::ptr::NonNull<Self>>>()
+            // SAFETY: ext slot is the `Option<NonNull<Self>>` written in
+            // `connect_group`; single-threaded (JS thread), no other `&mut`
+            // to it is live.
+            .is_some_and(|ext| unsafe { (*ext).take().is_some() });
         // no need to be .failure we still wanna to send pending SSL buffer + close_notify
         if SSL {
             tcp.close(uws::CloseCode::Normal);
         } else {
             tcp.close(uws::CloseCode::Failure);
+        }
+        if had_socket_ref {
+            // SAFETY: short-lived `&mut` for the field detach.
+            unsafe { (*this.as_ptr()).tcp.detach() };
+            // SAFETY: refcount > 1 (the +1 from `_guard` above).
+            unsafe { Self::deref(this.as_ptr()) };
         }
         // `_guard` drops here, balancing the ref above. May free `this`.
     }

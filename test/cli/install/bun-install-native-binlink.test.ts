@@ -7,8 +7,9 @@ import { join } from "path";
 
 let verdaccio: VerdaccioRegistry;
 
+setDefaultTimeout(1000 * 60 * 5);
+
 beforeAll(async () => {
-  setDefaultTimeout(1000 * 60 * 5);
   verdaccio = new VerdaccioRegistry();
   await verdaccio.start();
 });

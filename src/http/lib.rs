@@ -62,6 +62,7 @@ pub use http_cert_error::HTTPCertError;
 pub use http_context::{HTTPContext, HTTPSocket};
 pub use http_request_body::HTTPRequestBody;
 pub use http_thread::HttpThread as HTTPThread;
+pub use http_thread::{defer_shutdown_reclaim, shutdown_for_exit};
 pub use internal_state::InternalState;
 pub use proxy_tunnel::ProxyTunnel;
 pub use send_file::SendFile;
@@ -496,6 +497,15 @@ pub type HTTPClientResultCallbackFunction =
 pub struct HTTPClientResultCallback {
     pub ctx: *mut (),
     pub function: HTTPClientResultCallbackFunction,
+    /// Optional shutdown-time release for `ctx`. Called from
+    /// `HttpThread::dealloc_in_flight_for_exit` (HTTP thread, after the JS
+    /// thread has set `SHUTDOWN_REQUESTED`) for every request still in
+    /// `in_flight` so the owner can release whatever ref it took for the
+    /// in-flight callback. Must be HTTP-thread-safe (no JSC, no JS-thread
+    /// allocator); the JS thread is parked in `shutdown_for_exit` waiting
+    /// for the ack. `None` ⇒ no-op (the default for callers whose `ctx`
+    /// is process-lifetime or whose code path never reaches `global_exit`).
+    pub release_at_shutdown: Option<unsafe fn(*mut ())>,
 }
 
 impl HTTPClientResultCallback {
@@ -519,7 +529,18 @@ impl HTTPClientResultCallback {
                     HTTPClientResultCallbackFunction,
                 >(callback)
             },
+            release_at_shutdown: None,
         }
+    }
+
+    pub fn new_with_release<T>(
+        this: *mut T,
+        callback: fn(*mut T, *mut AsyncHTTP<'static>, HTTPClientResult<'_>),
+        release: unsafe fn(*mut ()),
+    ) -> Self {
+        let mut cb = Self::new(this, callback);
+        cb.release_at_shutdown = Some(release);
+        cb
     }
 }
 

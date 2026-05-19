@@ -421,9 +421,8 @@ impl BlockList {
         // A single SerializedScriptValue can be deserialized multiple times
         // (e.g. BroadcastChannel fan-out), so each wrapper must own its own ref
         // instead of adopting the one taken in serialize. The serialize ref is
-        // what keeps the backing alive while the pointer sits in the byte buffer;
-        // SerializedScriptValue has no destroy hook for Bun-native tags, so that
-        // ref is retained until a buffer-level deref exists (preferable to UAF).
+        // what keeps the backing alive while the pointer sits in the byte buffer
+        // and is released by `~SerializedScriptValue` via the destroy hook below.
         // SAFETY: `int` was produced by `on_structured_clone_serialize` from a
         // live `*mut Self` whose ref was bumped at serialize time. Ownership of
         // one ref transfers to the C++ wrapper (released via `finalize` → `deref`).
@@ -432,6 +431,19 @@ impl BlockList {
             (*this).ref_();
             Ok(Self::to_js_ptr(this, global))
         }
+    }
+}
+
+bun_jsc::jsc_host_abi! {
+    /// Called from `~SerializedScriptValue` for each BlockList pointer that was
+    /// written into the wire buffer. Releases the `+1` taken by
+    /// [`BlockList::on_structured_clone_serialize`].
+    #[unsafe(no_mangle)]
+    pub unsafe fn BlockList__onStructuredCloneDestroy(ptr: *mut c_void) -> () {
+        // SAFETY: `ptr` is the same `*mut BlockList` passed to
+        // `on_structured_clone_serialize`; it stayed alive because that path
+        // bumped the refcount. Dropping that ref here may free the box.
+        unsafe { BlockList::deref(ptr.cast::<BlockList>()) };
     }
 }
 

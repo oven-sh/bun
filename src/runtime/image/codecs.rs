@@ -529,7 +529,9 @@ impl Encoded {
         };
         Encoded {
             bytes: slice,
-            free: encoded_wrap_free!(bun_alloc::mimalloc::mi_free),
+            // `bytes` came from a `Vec<u8>` (the global allocator); free with
+            // `default_alloc::free` so it agrees with the `#[global_allocator]`.
+            free: encoded_wrap_free!(bun_alloc::default_alloc::free),
         }
     }
 }

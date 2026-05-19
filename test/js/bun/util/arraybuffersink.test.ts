@@ -106,7 +106,7 @@ describe("ArrayBufferSink", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe("ENOMEM");
     expect(stderr).not.toContain("memory allocation of");
-    expect(exitCode).toBe(0);
     expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(0);
   });
 });

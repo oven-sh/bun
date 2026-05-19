@@ -15,8 +15,8 @@
 // without the fix it compiles, which is exactly the soundness bug.
 // This test asserts both outcomes.
 
-import { expect, test } from "bun:test";
 import { spawn, which } from "bun";
+import { expect, test } from "bun:test";
 import { join } from "node:path";
 
 const cargo = which("cargo");
@@ -39,11 +39,7 @@ test.skipIf(!cargo)(
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const out = stdout + stderr;
 
     // Expected failure — the fixture deliberately tries the launder.

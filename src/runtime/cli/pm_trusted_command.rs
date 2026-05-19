@@ -268,6 +268,14 @@ impl TrustCommand {
         let log_level = pm.options.log_level;
         let load_lockfile = pm.load_lockfile_from_cwd::<true>();
         PackageManagerCommand::handle_load_lockfile_errors(&load_lockfile, log_level);
+        // Derive `options.config_version` from the loaded lockfile so
+        // `save_to_disk` below preserves it instead of falling back to
+        // `ConfigVersion::CURRENT` (which would silently bump existing
+        // projects once `BREAKING_CHANGES_1_4` flips).
+        // SAFETY: `load_lockfile` borrows `pm.lockfile` (separate `Box`
+        // allocation); `apply_config_version_defaults` only touches
+        // `pm.options`, which is disjoint.
+        _ = unsafe { &mut *pm_raw }.apply_config_version_defaults(&load_lockfile);
         // PORT NOTE: `update_lockfile_if_needed` consumes `LoadResult` but we
         // need it again for `save_to_disk`; inline the body (it only flips
         // `meta.has_install_script` when `packages_need_update`).

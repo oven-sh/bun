@@ -3265,10 +3265,9 @@ where
                 parse_qualified_rule(&start, self.input, self.parser, delimiters)
             } else {
                 let token = tok.clone();
-                let start_clone = start.clone();
                 self.input
                     .parse_until_after(Delimiters::SEMICOLON, move |_i| {
-                        Err(start_clone
+                        Err(start
                             .source_location()
                             .new_unexpected_token_error(token))
                     })

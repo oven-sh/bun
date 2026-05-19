@@ -6920,9 +6920,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // arena allocations, so those accesses cannot alias this
                 // borrow. No other code reaches `class.properties` while the
                 // loop is running (single-threaded visitor).
-                for prop in
-                    unsafe { s_class.class.properties.slice_mut_unbound().iter_mut() }
-                {
+                for prop in unsafe { s_class.class.properties.slice_mut_unbound().iter_mut() } {
                     // merge parameter decorators with method decorators
                     if prop.flags.contains(Flags::Property::IsMethod) {
                         if let Some(prop_value) = prop.value {
@@ -8457,9 +8455,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // reads+mutates only `last_part.stmts` contents; the
                 // `&mut hmr_transform_ctx` passed alongside touches other
                 // `hmr_transform_ctx` fields, not the stmts slice backing.
-                let last_stmts = unsafe {
-                    hmr_transform_ctx.last_part.stmts.slice_mut_unbound()
-                };
+                let last_stmts = unsafe { hmr_transform_ctx.last_part.stmts.slice_mut_unbound() };
                 let _ = ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, true>(
                     self,
                     last_stmts,

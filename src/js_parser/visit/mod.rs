@@ -1051,8 +1051,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // a separate Store allocation, not into the Property slice itself).
                     // SAFETY: arena-lifetime read borrow. `func.args` is not
                     // mutated between this borrow and its last use below.
-                    let func_args: &[G::Arg] =
-                        unsafe { constructor.func.args.slice_unbound() };
+                    let func_args: &[G::Arg] = unsafe { constructor.func.args.slice_unbound() };
                     let mut to_add: usize = 0;
                     for arg in func_args.iter() {
                         if arg.is_typescript_ctor_field

@@ -5891,7 +5891,12 @@ pub mod __gated_printer {
                             self.print(b")");
                         }
                         self.print_space();
-                        self.print_block(catch_.body_loc, slice_of(&catch_.body), None, sub_var_try);
+                        self.print_block(
+                            catch_.body_loc,
+                            slice_of(&catch_.body),
+                            None,
+                            sub_var_try,
+                        );
                     }
 
                     if let Some(finally) = &s.finally {

@@ -1453,8 +1453,7 @@ impl<'a> Parser<'a> {
                     // the returned slice points at, so the borrow stays valid.
                     // Nothing else holds a `StoreSlice` over this memory — `part`
                     // is the unique owner and this loop iteration is single-threaded.
-                    let part_stmts: &mut [Stmt] =
-                        unsafe { part.stmts.slice_mut_unbound() };
+                    let part_stmts: &mut [Stmt] = unsafe { part.stmts.slice_mut_unbound() };
                     if part_stmts.len() > 1 {
                         break;
                     }

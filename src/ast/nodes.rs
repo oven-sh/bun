@@ -459,7 +459,10 @@ impl<T> StoreSlice<T> {
     /// hazard, but the contract on the resulting handle is real.
     #[inline]
     pub fn reborrow_shared(&self) -> StoreSlice<T> {
-        StoreSlice { ptr: self.ptr, len: self.len }
+        StoreSlice {
+            ptr: self.ptr,
+            len: self.len,
+        }
     }
 
     /// Shorten the slice in place. Panics if `new_len > len` (mirrors Zig

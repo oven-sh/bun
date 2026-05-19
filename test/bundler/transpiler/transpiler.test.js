@@ -3804,3 +3804,336 @@ const Layout = () => {
     expect(result).not.toContain("fn(");
   });
 });
+
+// oven-sh/bun#30538 — `sourcemap` option now threads a v3 source map
+// through to the JS-visible output. Behaviour matches `Bun.build`'s
+// `sourcemap` option:
+//   - unset / false / "none"  → returns string (unchanged)
+//   - "inline" / true         → string + inline `//# sourceMappingURL=data:...`
+//   - "external" / "linked"   → `{ code, map }` (map is v3 JSON text)
+describe("Bun.Transpiler sourcemap option", () => {
+  // Shared input: 6 lines, two `interface` declarations that the TS
+  // transpiler drops, plus the blank lines it collapses around them. The
+  // stripped output is only 2 lines, so any sensible sourcemap must
+  // re-map generated line 0 back to input line 1, and generated line 1
+  // back to input line 5.
+  const input = `interface Foo { x: number }
+const x: number = 5;
+
+interface Bar { y: string }
+
+const y: number = 10;`;
+
+  // Minimal VLQ decoder — plenty fast for the handful of mappings we
+  // emit, and avoids pulling in an external dependency. Returns an array
+  // of { generatedLine, generatedColumn, originalLine, originalColumn }
+  // records (zero-indexed, matching the v3 spec).
+  function decodeMappings(mappings) {
+    const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    function decodeVLQ(seg, offset) {
+      let value = 0;
+      let shift = 0;
+      let cont = true;
+      while (cont) {
+        const ch = seg[offset++];
+        const digit = charset.indexOf(ch);
+        if (digit === -1) {
+          // Fail fast on malformed VLQ. Without this guard, (digit & 32)
+          // stays truthy for `-1` and we loop forever — a test assertion
+          // failure would manifest as a CI hang, not a useful error.
+          throw new Error(
+            `Invalid VLQ digit ${JSON.stringify(ch)} in segment ${JSON.stringify(seg)} at offset ${offset - 1}`,
+          );
+        }
+        cont = (digit & 32) !== 0;
+        value += (digit & 31) << shift;
+        shift += 5;
+      }
+      const negative = (value & 1) !== 0;
+      value >>= 1;
+      return [negative ? -value : value, offset];
+    }
+
+    const lines = mappings.split(";");
+    const out = [];
+    let genLine = 0;
+    let srcIdx = 0;
+    let origLine = 0;
+    let origCol = 0;
+    for (const line of lines) {
+      let genCol = 0;
+      if (line !== "") {
+        for (const segment of line.split(",")) {
+          const fields = [];
+          let offset = 0;
+          while (offset < segment.length) {
+            const [v, next] = decodeVLQ(segment, offset);
+            fields.push(v);
+            offset = next;
+          }
+          genCol += fields[0];
+          if (fields.length >= 4) {
+            srcIdx += fields[1];
+            origLine += fields[2];
+            origCol += fields[3];
+          }
+          out.push({
+            generatedLine: genLine,
+            generatedColumn: genCol,
+            originalLine: origLine,
+            originalColumn: origCol,
+          });
+        }
+      }
+      genLine++;
+    }
+    return out;
+  }
+
+  it("returns a plain string when sourcemap is unset", () => {
+    const t = new Bun.Transpiler({ loader: "ts" });
+    const out = t.transformSync(input);
+    expect(typeof out).toBe("string");
+    expect(out).not.toContain("sourceMappingURL");
+  });
+
+  it.each([false, "none"])("returns a plain string when sourcemap is %p", value => {
+    const t = new Bun.Transpiler({ loader: "ts", sourcemap: value });
+    const out = t.transformSync(input);
+    expect(typeof out).toBe("string");
+    expect(out).not.toContain("sourceMappingURL");
+  });
+
+  it("'inline' appends a data URL and returns a string", () => {
+    const t = new Bun.Transpiler({ loader: "ts", sourcemap: "inline" });
+    const out = t.transformSync(input);
+
+    expect(typeof out).toBe("string");
+    expect(out).toContain("//# sourceMappingURL=data:application/json;base64,");
+    // Match `Bun.build`'s inline emitter — the footer terminates with a
+    // newline so two inline outputs can be safely concatenated without
+    // the second one being swallowed by the `//#` line comment.
+    expect(out.endsWith("\n")).toBe(true);
+
+    // Decode the embedded map and sanity-check v3 shape.
+    const match = out.match(/sourceMappingURL=data:application\/json;base64,([A-Za-z0-9+/=]+)/);
+    expect(match).not.toBeNull();
+    const map = JSON.parse(atob(match[1]));
+    expect(map).toMatchObject({
+      version: 3,
+      sources: ["/input.ts"],
+      sourcesContent: [input],
+      names: [],
+    });
+    expect(typeof map.mappings).toBe("string");
+    expect(map.mappings.length).toBeGreaterThan(0);
+  });
+
+  it("true is treated as 'inline' (matches Bun.build alias)", () => {
+    const t = new Bun.Transpiler({ loader: "ts", sourcemap: true });
+    const out = t.transformSync(input);
+    expect(typeof out).toBe("string");
+    expect(out).toContain("//# sourceMappingURL=data:application/json;base64,");
+  });
+
+  it("'external' returns { code, map } with a v3 JSON map", () => {
+    const t = new Bun.Transpiler({ loader: "ts", sourcemap: "external" });
+    const out = t.transformSync(input);
+
+    expect(typeof out).toBe("object");
+    expect(typeof out.code).toBe("string");
+    expect(typeof out.map).toBe("string");
+    // external: the code has no sourceMappingURL footer.
+    expect(out.code).not.toContain("sourceMappingURL");
+
+    const map = JSON.parse(out.map);
+    expect(map).toMatchObject({
+      version: 3,
+      sources: ["/input.ts"],
+      sourcesContent: [input],
+      names: [],
+    });
+  });
+
+  it("'linked' returns { code, map } and appends //# sourceMappingURL= to code", () => {
+    const t = new Bun.Transpiler({ loader: "ts", sourcemap: "linked" });
+    const out = t.transformSync(input);
+
+    expect(typeof out).toBe("object");
+    expect(typeof out.code).toBe("string");
+    expect(typeof out.map).toBe("string");
+    // linked: code has a sibling-file reference; no inline data URL.
+    expect(out.code).toMatch(/\/\/# sourceMappingURL=[^\s]+\.map/);
+    expect(out.code).not.toContain("data:application/json");
+
+    // map is still valid v3 JSON.
+    const map = JSON.parse(out.map);
+    expect(map.version).toBe(3);
+    expect(typeof map.mappings).toBe("string");
+  });
+
+  it("mappings recover the original line numbers after TS stripping", () => {
+    // This is the motivating case from the issue: the generated file is
+    // 2 lines but the original was 6. The transpiler dropped two
+    // `interface` declarations plus the surrounding blank lines; the map
+    // must still point `const x` back at original line 1 and `const y`
+    // back at original line 5.
+    const t = new Bun.Transpiler({ loader: "ts", sourcemap: "external" });
+    const out = t.transformSync(input);
+
+    const code = out.code.trimEnd();
+    expect(code.split("\n")).toEqual(["const x = 5;", "const y = 10;"]);
+
+    const map = JSON.parse(out.map);
+    const decoded = decodeMappings(map.mappings);
+
+    // The first mapping on each generated line is the one that matters
+    // for stack-trace recovery.
+    const firstOnLine0 = decoded.find(m => m.generatedLine === 0);
+    const firstOnLine1 = decoded.find(m => m.generatedLine === 1);
+
+    expect(firstOnLine0).toMatchObject({
+      generatedLine: 0,
+      generatedColumn: 0,
+      originalLine: 1, // `const x: number = 5;`
+      originalColumn: 0,
+    });
+    expect(firstOnLine1).toMatchObject({
+      generatedLine: 1,
+      generatedColumn: 0,
+      originalLine: 5, // `const y: number = 10;`
+      originalColumn: 0,
+    });
+  });
+
+  it("async transform() mirrors the sync shape — string when unset", async () => {
+    const t = new Bun.Transpiler({ loader: "ts" });
+    const out = await t.transform(input);
+    expect(typeof out).toBe("string");
+    expect(out).not.toContain("sourceMappingURL");
+  });
+
+  it("async transform() returns { code, map } for 'external'", async () => {
+    const t = new Bun.Transpiler({ loader: "ts", sourcemap: "external" });
+    const out = await t.transform(input);
+    expect(typeof out).toBe("object");
+    expect(typeof out.code).toBe("string");
+    const map = JSON.parse(out.map);
+    expect(map.version).toBe(3);
+    expect(map.sources).toEqual(["/input.ts"]);
+  });
+
+  it("async transform() embeds the inline data URL for 'inline'", async () => {
+    const t = new Bun.Transpiler({ loader: "ts", sourcemap: "inline" });
+    const out = await t.transform(input);
+    expect(typeof out).toBe("string");
+    expect(out).toContain("//# sourceMappingURL=data:application/json;base64,");
+    // Parity with the sync path: trailing newline after the data URL.
+    expect(out.endsWith("\n")).toBe(true);
+  });
+
+  // --- empty-input parity between sync and async ---
+  //
+  // Type-only TypeScript files (`interface Foo {}`, `type X = number;`,
+  // `.d.ts`-style sources) and empty inputs produce zero output bytes.
+  // The documented contract for `sourcemap: "external"` / `"linked"` is
+  // `{ code, map }` regardless, and the sync and async paths must agree.
+  describe.each([
+    ["empty input", ""],
+    ["type-only input", "interface Foo { x: number }"],
+  ])("%s", (_name, src) => {
+    it.each(["external", "linked"])("'%s' returns { code, map } (sync)", mode => {
+      const t = new Bun.Transpiler({ loader: "ts", sourcemap: mode });
+      const out = t.transformSync(src);
+      expect(typeof out).toBe("object");
+      expect(out.code.replace(/\n\/\/# sourceMappingURL=.*/s, "")).toBe("");
+      expect(typeof out.map).toBe("string");
+      const map = JSON.parse(out.map);
+      expect(map).toMatchObject({ version: 3, sources: ["/input.ts"] });
+    });
+
+    it.each(["external", "linked"])("'%s' returns { code, map } (async)", async mode => {
+      // Pre-fix, the async path silently fell back to `""` for empty
+      // output while the sync path returned `{ code, map }` — see
+      // oven-sh/bun#30540 review.
+      const t = new Bun.Transpiler({ loader: "ts", sourcemap: mode });
+      const out = await t.transform(src);
+      expect(typeof out).toBe("object");
+      expect(typeof out.map).toBe("string");
+      const map = JSON.parse(out.map);
+      expect(map).toMatchObject({ version: 3, sources: ["/input.ts"] });
+    });
+
+    it("'inline' returns a string with a trailing newline (sync)", () => {
+      const t = new Bun.Transpiler({ loader: "ts", sourcemap: "inline" });
+      const out = t.transformSync(src);
+      expect(typeof out).toBe("string");
+      expect(out).toContain("//# sourceMappingURL=data:application/json;base64,");
+      expect(out.endsWith("\n")).toBe(true);
+    });
+
+    it("'inline' returns a string with a trailing newline (async)", async () => {
+      const t = new Bun.Transpiler({ loader: "ts", sourcemap: "inline" });
+      const out = await t.transform(src);
+      expect(typeof out).toBe("string");
+      expect(out).toContain("//# sourceMappingURL=data:application/json;base64,");
+      expect(out.endsWith("\n")).toBe(true);
+    });
+  });
+
+  // Sync and async must agree on the synthetic source filename even
+  // when the caller passes a per-call loader that differs from the
+  // constructor's `default_loader`. Pre-fix, sync used
+  // `default_loader.stdinName()` (e.g. `"input.jsx"`) while async used
+  // the overridden loader — observable on `map.sources` and the
+  // `//# sourceMappingURL=<name>.map` footer.
+  it("per-call loader override affects sources name consistently (sync vs async)", async () => {
+    // No loader set in the constructor → default_loader = "jsx".
+    // Pass "ts" as the per-call override.
+    const t = new Bun.Transpiler({ sourcemap: "external" });
+    const sync = t.transformSync("const x: number = 5;", "ts");
+    const async_ = await t.transform("const x: number = 5;", "ts");
+    expect(JSON.parse(sync.map).sources).toEqual(JSON.parse(async_.map).sources);
+    expect(JSON.parse(sync.map).sources).toEqual(["/input.ts"]);
+  });
+
+  it("per-call loader override affects linked footer consistently (sync vs async)", async () => {
+    const t = new Bun.Transpiler({ sourcemap: "linked" });
+    const sync = t.transformSync("const x: number = 5;", "ts");
+    const async_ = await t.transform("const x: number = 5;", "ts");
+    const syncFooter = sync.code.match(/sourceMappingURL=[^\s]+/)?.[0];
+    const asyncFooter = async_.code.match(/sourceMappingURL=[^\s]+/)?.[0];
+    expect(syncFooter).toBe(asyncFooter);
+    expect(syncFooter).toBe("sourceMappingURL=input.ts.map");
+  });
+
+  // `target: "bun"` flips the printer's sourcemap builder into the
+  // packed InternalSourceMap binary format. The transform path has to
+  // re-encode that to standard VLQ before emitting the v3 JSON map,
+  // otherwise JSON.parse chokes on the raw binary bytes embedded in
+  // the `mappings` field.
+  it.each(["ts", "tsx", "jsx", "js"])('target: "bun" emits valid VLQ mappings for loader=%s (sync)', loader => {
+    const t = new Bun.Transpiler({ loader, target: "bun", sourcemap: "external" });
+    const out = t.transformSync("const x = 1;\nconst y = 2;");
+    const parsed = JSON.parse(out.map);
+    // decodeMappings would throw on an invalid VLQ segment; a
+    // successful decode is our proof that the format is correct.
+    const decoded = decodeMappings(parsed.mappings);
+    expect(decoded.length).toBeGreaterThan(0);
+    for (const m of decoded) {
+      expect(m.originalLine).toBeGreaterThanOrEqual(0);
+      expect(m.originalColumn).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it('target: "bun" with sourcemap: "inline" produces a parseable embedded map', () => {
+    const t = new Bun.Transpiler({ loader: "ts", target: "bun", sourcemap: "inline" });
+    const out = t.transformSync("const x: number = 1;");
+    const match = out.match(/sourceMappingURL=data:application\/json;base64,([A-Za-z0-9+/=]+)/);
+    expect(match).not.toBeNull();
+    const map = JSON.parse(atob(match[1]));
+    expect(map.version).toBe(3);
+    // No non-VLQ characters in the mappings field.
+    expect(map.mappings).toMatch(/^[A-Za-z0-9+/,;]*$/);
+  });
+});

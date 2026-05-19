@@ -2372,7 +2372,17 @@ declare module "bun" {
     };
   }
 
-  interface TranspilerOptions {
+  /**
+   * Values the `sourcemap` constructor option can take.
+   *
+   * Used as a generic parameter on {@link Transpiler} so the return type of
+   * `transformSync` / `transform` narrows to `string` or
+   * {@link TranspilerTransformResult} based on whether the transpiler is
+   * configured to return an external map.
+   */
+  type TranspilerSourceMapOption = "none" | "inline" | "external" | "linked" | boolean;
+
+  interface TranspilerOptions<SM extends TranspilerSourceMapOption = TranspilerSourceMapOption> {
     /**
      * Replace key with value. Value must be a JSON string.
      * @example
@@ -2489,6 +2499,24 @@ declare module "bun" {
      * @default false
      */
     replMode?: boolean;
+
+    /**
+     * Emit a v3 source map alongside the transpiled code.
+     *
+     * - `"none"` / `false` (default) — no source map; `transformSync` /
+     *   `transform` return a plain `string`.
+     * - `"inline"` / `true` — a base64-encoded v3 map is appended to the
+     *   returned code as a `//# sourceMappingURL=data:application/json;base64,…`
+     *   footer. Still returns a `string`.
+     * - `"external"` — returns `{ code, map }`. The returned code has no
+     *   `sourceMappingURL` footer; `map` is the v3 map as JSON text.
+     * - `"linked"` — returns `{ code, map }`. The returned code carries a
+     *   `//# sourceMappingURL=<name>.map` comment so the caller can write
+     *   a sibling map file.
+     *
+     * @default "none"
+     */
+    sourcemap?: SM;
   }
 
   /**
@@ -2511,35 +2539,84 @@ declare module "bun" {
    * ```
    */
 
-  class Transpiler {
-    constructor(options?: TranspilerOptions);
+  /**
+   * The shape returned by `Bun.Transpiler.transform` / `transformSync` when
+   * the transpiler is configured with `sourcemap: "external"` or
+   * `sourcemap: "linked"`. The `map` field holds a v3 source map as JSON
+   * text — callers typically `JSON.parse(result.map)` to work with it.
+   *
+   * For `sourcemap: "inline"` (and its `true` alias), the map is base64-
+   * encoded into a `//# sourceMappingURL=data:application/json;base64,…`
+   * footer on the returned string and no object is produced.
+   *
+   * For `sourcemap: "none"` (the default), a plain string is returned.
+   */
+  interface TranspilerTransformResult {
+    code: string;
+    map: string;
+  }
+
+  /**
+   * Picks the return type for `transform` / `transformSync` based on the
+   * transpiler's `sourcemap` configuration. Only `"external"` and `"linked"`
+   * produce the `{ code, map }` object; every other mode stays a plain
+   * `string` so existing callers keep their current typing.
+   */
+  type TranspilerTransformReturn<SM extends TranspilerSourceMapOption> = SM extends "external" | "linked"
+    ? TranspilerTransformResult
+    : string;
+
+  class Transpiler<const SM extends TranspilerSourceMapOption = "none"> {
+    constructor(options?: TranspilerOptions<SM>);
 
     /**
      * Transpile code from TypeScript or JSX into valid JavaScript.
      * This function does not resolve imports.
+     *
+     * Returns a `string` when the transpiler's `sourcemap` option is unset,
+     * `false`, `"none"`, `"inline"`, or `true`. Returns
+     * `{ code, map }` (a {@link TranspilerTransformResult}) when `sourcemap`
+     * is `"external"` or `"linked"`.
+     *
      * @param code The code to transpile
      */
-    transform(code: Bun.StringOrBuffer, loader?: JavaScriptLoader): Promise<string>;
+    transform(
+      code: Bun.StringOrBuffer,
+      loader?: JavaScriptLoader,
+    ): Promise<TranspilerTransformReturn<SM>>;
     /**
      * Transpile code from TypeScript or JSX into valid JavaScript.
      * This function does not resolve imports.
      * @param code The code to transpile
      */
-    transformSync(code: Bun.StringOrBuffer, loader: JavaScriptLoader, ctx: object): string;
+    transformSync(
+      code: Bun.StringOrBuffer,
+      loader: JavaScriptLoader,
+      ctx: object,
+    ): TranspilerTransformReturn<SM>;
     /**
      * Transpile code from TypeScript or JSX into valid JavaScript.
      * This function does not resolve imports.
      * @param code The code to transpile
      * @param ctx An object to pass to macros
      */
-    transformSync(code: Bun.StringOrBuffer, ctx: object): string;
+    transformSync(code: Bun.StringOrBuffer, ctx: object): TranspilerTransformReturn<SM>;
 
     /**
      * Transpile code from TypeScript or JSX into valid JavaScript.
      * This function does not resolve imports.
+     *
+     * Returns a `string` when the transpiler's `sourcemap` option is unset,
+     * `false`, `"none"`, `"inline"`, or `true`. Returns
+     * `{ code, map }` (a {@link TranspilerTransformResult}) when `sourcemap`
+     * is `"external"` or `"linked"`.
+     *
      * @param code The code to transpile
      */
-    transformSync(code: Bun.StringOrBuffer, loader?: JavaScriptLoader): string;
+    transformSync(
+      code: Bun.StringOrBuffer,
+      loader?: JavaScriptLoader,
+    ): TranspilerTransformReturn<SM>;
 
     /**
      * Get a list of import paths and paths from a TypeScript, JSX, TSX, or JavaScript file.

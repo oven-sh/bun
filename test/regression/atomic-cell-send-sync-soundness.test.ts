@@ -35,7 +35,11 @@ test.skipIf(!cargo)(
   { timeout: 10 * 60 * 1000 }, // first run compiles bun_core's dep graph; cached after
   async () => {
     await using proc = spawn({
-      cmd: [cargo!, "check", "--message-format=short"],
+      // `--locked` so the fixture's committed Cargo.lock pins the
+      // transitive dep graph — the test's content assertions only
+      // fire for the intended soundness errors, not for registry
+      // drift or offline runners (see claude[bot] review on #31090).
+      cmd: [cargo!, "check", "--locked", "--message-format=short"],
       cwd: fixtureDir,
       env: { ...process.env, CARGO_TERM_COLOR: "never" },
       stdout: "pipe",

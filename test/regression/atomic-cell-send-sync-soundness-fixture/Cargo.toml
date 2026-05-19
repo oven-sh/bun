@@ -7,6 +7,9 @@
 #
 # Detached from the parent workspace so `cargo check` on the top-level
 # doesn't pull it in (it intentionally fails to compile).
+# `Cargo.lock` is committed so the test driver pins the transitive dep
+# graph with `--locked` — keeps the compile-fail check hermetic rather
+# than re-resolving `bun_core`'s deps against crates.io on every run.
 [workspace]
 
 [package]

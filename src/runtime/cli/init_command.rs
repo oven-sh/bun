@@ -482,11 +482,6 @@ impl InitCommand {
                     package_json_contents.list.as_slice(),
                 );
                 let mut log = bun_ast::Log::init();
-                // PORT NOTE: bun_parsers::json builds the T2
-                // (bun_ast::js_ast) value tree to avoid a T2->T4 dep
-                // cycle; lift to the full T4 (bun_js_parser) tree here so
-                // the rest of exec can use E::Object::{put,put_string,
-                // get_or_put_object,...} which only exist at T4.
                 let package_json_expr: bun_ast::Expr =
                     match json::parse_package_json_utf8(&source, &mut log, &bump) {
                         Ok(e) => e,

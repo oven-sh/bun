@@ -61,7 +61,6 @@ pub fn view(
                 let Ok(pkg_json) = JSON::parse::<false>(source, &mut pkg_log, &bump) else {
                     break 'from_package_json;
                 };
-                let pkg_json: ast::Expr = pkg_json;
                 if let Some(name) = pkg_json.get_string_cloned(&bump, b"name").ok().flatten() {
                     if !name.is_empty() {
                         break 'brk name;

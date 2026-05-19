@@ -2923,11 +2923,8 @@ pub fn pack<const FOR_PUBLISH: bool>(
     };
 
     let normalized_pkg_info: Option<Box<[u8]>> = if FOR_PUBLISH {
-        // `normalized_package` operates on the full T4 `bun_ast::Expr`
-        // (it injects new properties before printing); lift the T2 value-subset
-        // root via the `From` impl. The mutated tree is consumed inside
-        // `normalized_package` (it prints the JSON itself), so the lifted copy
-        // doesn't need to flow back into `json.root`.
+        // The mutated tree is consumed inside `normalized_package` (it prints
+        // the JSON itself), so the copy doesn't need to flow back into `json.root`.
         let mut root_full = json.root;
         Some(Publish::PublishCommand::normalized_package(
             manager,
@@ -3564,8 +3561,6 @@ fn edit_root_package_json(
 
     let written = match js_printer::print_json(
         &mut package_json_writer,
-        // `print_json` is monomorphized over the full T4 `Expr`; lift the T2
-        // value-subset root (lossless — every T2 variant maps 1:1).
         json.root,
         // shouldn't be used
         &json.source,

@@ -5087,7 +5087,7 @@ unsafe fn resolve_hook(
                 data: bun_ast::range_data(None, bun_ast::Range::NONE, printed.clone()),
                 metadata: bun_ast::Metadata::Resolve(bun_ast::MetadataResolve {
                     specifier: bun_ast::BabyString::r#in(&printed, specifier_utf8.slice()),
-                    import_kind: import_kind,
+                    import_kind,
                     err,
                 }),
                 ..Default::default()

@@ -492,12 +492,14 @@ impl<'a> Snapshots<'a> {
                     ils.line,
                     ils.col
                 );
+                // c_ulong is u32 on Windows (LLP64); widen explicitly.
+                #[allow(clippy::useless_conversion)]
                 let Some(byte_offset_add) = bun_ast::Source::line_col_to_byte_offset(
                     &file_text[last_byte..],
-                    last_line,
-                    last_col,
-                    ils.line,
-                    ils.col,
+                    u64::from(last_line),
+                    u64::from(last_col),
+                    u64::from(ils.line),
+                    u64::from(ils.col),
                 ) else {
                     bun_core::scoped_log!(inline_snapshot, "-> Could not find byte");
                     log.add_error_fmt(

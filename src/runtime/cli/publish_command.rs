@@ -404,14 +404,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         sha512.r#final(&mut integrity);
         drop(sha512);
 
-        // `json_mod::parse_package_json_utf8` returns the value-shaped
-        // `bun_ast::Expr`; `normalized_package` (and `print_json`)
-        // operate on the full parser-shaped `bun_ast::Expr`. Lift via the
-        // documented `From<bun_ast::Expr>` bridge — same conversion
-        // `WorkspacePackageJSONCache::get_with_path` applies before stashing
-        // `MapEntry.root`. The thread-local `data::Store` has already been
-        // initialised by `PackageManager::init`.
-        let mut json: Expr = json;
+        let mut json = json;
         let normalized_pkg_info = PublishCommand::normalized_package(
             manager,
             &package_name,

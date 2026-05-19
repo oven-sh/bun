@@ -98,7 +98,8 @@ pub fn hostent_with_ttls_to_js_response(
             // so build a sockaddr_in/in6 on the stack and copy through that.
             let addr_string = {
                 // h_addrtype is c_short on Windows, c_int on POSIX; widen for the compare.
-                let address = if hostent.h_addrtype == c_ares::AF::INET6 {
+                #[allow(clippy::useless_conversion)]
+                let address = if i32::from(hostent.h_addrtype) == c_ares::AF::INET6 {
                     // SAFETY: addr points to ≥16 bytes for AF_INET6.
                     let bytes: [u8; 16] = unsafe { *(addr as *const [u8; 16]) };
                     let mut sa6: super::netc::sockaddr_in6 = bun_core::ffi::zeroed();

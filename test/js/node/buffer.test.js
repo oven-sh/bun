@@ -380,9 +380,10 @@ for (let withOverridenBufferWrite of [false, true]) {
       });
 
       // https://github.com/oven-sh/bun/issues/31083
-      // Per Node docs, `'ascii'` on write is equivalent to `'latin1'`
-      // (verbatim byte copy, not 7-bit masking).
-      it("write with 'ascii' encoding preserves high-bit bytes (Node parity)", () => {
+      // Per Node docs, `'ascii'` on encode is equivalent to `'latin1'`
+      // (verbatim byte copy, not 7-bit masking). Covers write / fill / alloc.
+      it("'ascii' encoding preserves high-bit bytes on encode (Node parity)", () => {
+        // write()
         const buf = Buffer.alloc(4, 0);
         buf.write(String.fromCharCode(128), 0, "ascii");
         buf.write(String.fromCharCode(129), 1, "ascii");
@@ -390,10 +391,18 @@ for (let withOverridenBufferWrite of [false, true]) {
         buf.write(String.fromCharCode(129), 3, "latin1");
         expect([buf[0], buf[1], buf[2], buf[3]]).toEqual([128, 129, 128, 129]);
 
-        // Multi-byte Latin-1 input via 'ascii' write should also copy verbatim.
+        // write() with multi-byte Latin-1 input
         const buf2 = Buffer.alloc(4, 0);
         buf2.write(String.fromCharCode(128, 129, 250, 255), 0, "ascii");
         expect([buf2[0], buf2[1], buf2[2], buf2[3]]).toEqual([128, 129, 250, 255]);
+
+        // fill()
+        const buf3 = Buffer.alloc(4).fill(String.fromCharCode(128), "ascii");
+        expect([buf3[0], buf3[1], buf3[2], buf3[3]]).toEqual([128, 128, 128, 128]);
+
+        // alloc() with fill string
+        const buf4 = Buffer.alloc(4, String.fromCharCode(129), "ascii");
+        expect([buf4[0], buf4[1], buf4[2], buf4[3]]).toEqual([129, 129, 129, 129]);
       });
 
       it("ASCII slice", () => {

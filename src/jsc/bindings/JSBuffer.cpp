@@ -396,6 +396,14 @@ static JSC::EncodedJSValue writeToBuffer(JSC::JSGlobalObject* lexicalGlobalObjec
 
     size_t written = 0;
 
+    // Per Node docs, `'ascii'` on write is equivalent to `'latin1'` —
+    // verbatim byte copy, no 7-bit masking. The writeLatin1/writeUTF16
+    // ascii arm masks because the ascii *decode* path (jsBufferToStringFromBytes)
+    // reuses it; on encode we route ascii through the latin1 branch instead.
+    auto encodingForWrite = encoding == WebCore::BufferEncodingType::ascii
+        ? WebCore::BufferEncodingType::latin1
+        : encoding;
+
     switch (encoding) {
     case WebCore::BufferEncodingType::utf8:
     case WebCore::BufferEncodingType::latin1:
@@ -408,10 +416,10 @@ static JSC::EncodedJSValue writeToBuffer(JSC::JSGlobalObject* lexicalGlobalObjec
 
         if (view->is8Bit()) {
             const auto span = view->span8();
-            written = Bun__encoding__writeLatin1(span.data(), span.size(), reinterpret_cast<unsigned char*>(castedThis->vector()) + offset, length, static_cast<uint8_t>(encoding));
+            written = Bun__encoding__writeLatin1(span.data(), span.size(), reinterpret_cast<unsigned char*>(castedThis->vector()) + offset, length, static_cast<uint8_t>(encodingForWrite));
         } else {
             const auto span = view->span16();
-            written = Bun__encoding__writeUTF16(span.data(), span.size(), reinterpret_cast<unsigned char*>(castedThis->vector()) + offset, length, static_cast<uint8_t>(encoding));
+            written = Bun__encoding__writeUTF16(span.data(), span.size(), reinterpret_cast<unsigned char*>(castedThis->vector()) + offset, length, static_cast<uint8_t>(encodingForWrite));
         }
         break;
     }

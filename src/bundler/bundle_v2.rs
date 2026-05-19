@@ -6497,8 +6497,7 @@ pub mod bv2_impl {
                             true,
                         )
                     {
-                        import_record.path =
-                            path_as_static(resolve_result.path_pair.primary);
+                        import_record.path = path_as_static(resolve_result.path_pair.primary);
                     }
                     import_record.flags.set(
                         bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS,

@@ -889,6 +889,38 @@ describe("node:http", () => {
     });
   });
 
+  // Issue #24474: https.Server should expose the tls.Server API surface
+  // (addContext, setSecureContext, getTicketKeys, setTicketKeys).
+  describe("https.Server exposes tls.Server API", () => {
+    it("addContext is callable", () => {
+      const server = createHttpsServer(() => {});
+      expect(typeof server.addContext).toBe("function");
+      const ctx = { key: tlsCert.key, cert: tlsCert.cert };
+      expect(() => server.addContext("example.com", ctx)).not.toThrow();
+    });
+
+    it("addContext throws on non-string hostname", () => {
+      const server = createHttpsServer(() => {});
+      expect(() => server.addContext(123, {})).toThrow(TypeError);
+    });
+
+    it("setSecureContext is callable", () => {
+      const server = createHttpsServer(() => {});
+      expect(typeof server.setSecureContext).toBe("function");
+      expect(() => server.setSecureContext({ key: tlsCert.key, cert: tlsCert.cert })).not.toThrow();
+    });
+
+    it("getTicketKeys exists (stub)", () => {
+      const server = createHttpsServer(() => {});
+      expect(typeof server.getTicketKeys).toBe("function");
+    });
+
+    it("setTicketKeys exists (stub)", () => {
+      const server = createHttpsServer(() => {});
+      expect(typeof server.setTicketKeys).toBe("function");
+    });
+  });
+
   describe("signal", () => {
     it("should abort and close the server", done => {
       const server = createServer((req, res) => {

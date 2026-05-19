@@ -61,7 +61,6 @@ leak:runtime.dns_jsc.dns.GetAddrInfoRequest.run
 leak:tcc_sys.tcc.State.init__anon
 leak:runtime.api.bun.dynamic_library.DlDynLib.open
 leak:Zig::ImportMetaObject::finishCreation
-leak:uws_add_server_name_with_options
 leak:runtime.webcore.Body.Value.fromJS
 leak:sys_jsc.error_jsc.errorToSystemError
 leak:runtime.webcore.Blob.getNameString

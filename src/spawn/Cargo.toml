@@ -17,7 +17,6 @@ scopeguard.workspace = true
 bun_analytics.workspace = true
 bun_dispatch.workspace = true
 bun_core.workspace = true
-bun_crash_handler.workspace = true
 bun_event_loop.workspace = true
 bun_io.workspace = true
 bun_output.workspace = true

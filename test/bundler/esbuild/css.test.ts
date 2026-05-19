@@ -92,6 +92,28 @@ describe("bundler", () => {
     },
   });
 
+  itBundled("css/CSSAtImportPackageExportsStyleCondition", {
+    files: {
+      "/entry.css": `@import "pkg";`,
+      "/node_modules/pkg/package.json": JSON.stringify({
+        exports: {
+          style: "./style.css",
+          import: "./wrong.js",
+          default: "./default.css",
+        },
+      }),
+      "/node_modules/pkg/style.css": `.from-style { color: green }`,
+      "/node_modules/pkg/default.css": `.from-default { color: red }`,
+      "/node_modules/pkg/wrong.js": `export default "wrong";`,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toContain(".from-style");
+      api.expectFile("/out.css").not.toContain(".from-default");
+      api.expectFile("/out.css").not.toContain("wrong");
+    },
+  });
+
   itBundled("css/CSSAtImportDiamond", {
     // GENERATED
     files: {

@@ -2097,6 +2097,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 is_single_line: true,
                 default_name: None,
                 star_name_loc: None,
+                phase_defer: false,
             },
             bun_ast::Loc::default(),
         );
@@ -2235,6 +2236,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 is_single_line: true,
                 default_name: None,
                 star_name_loc: None,
+                phase_defer: false,
             },
             bun_ast::Loc::default(),
         );
@@ -2398,6 +2400,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     is_single_line: false,
                     default_name: None,
                     star_name_loc: None,
+                    phase_defer: false,
                 },
                 bun_ast::Loc::EMPTY,
             )
@@ -4098,6 +4101,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             None
         };
 
+        // `import defer` grammatically admits only `* as ns` — no default
+        // binding, no named clause. The parser guarantees this by
+        // construction; assert it here so any future S::Import producer
+        // that sets `phase_defer` without upholding the shape is caught
+        // immediately rather than surfacing as odd printer output.
+        debug_assert!(
+            !stmt.phase_defer
+                || (stmt.star_name_loc.is_some()
+                    && stmt.default_name.is_none()
+                    && stmt.items.is_empty())
+        );
+
         stmt.import_record_index = self.add_import_record(ImportKind::Stmt, path.loc, path.text);
         self.import_records.items_mut()[stmt.import_record_index as usize]
             .flags
@@ -4105,6 +4120,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 bun_ast::ImportRecordFlags::WAS_ORIGINALLY_BARE_IMPORT,
                 was_originally_bare_import,
             );
+        self.import_records.items_mut()[stmt.import_record_index as usize]
+            .flags
+            .set(bun_ast::ImportRecordFlags::PHASE_DEFER, stmt.phase_defer);
 
         if let Some(star) = stmt.star_name_loc {
             let name = self.load_name_from_ref(stmt.namespace_ref);

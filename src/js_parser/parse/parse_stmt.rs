@@ -1457,6 +1457,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 let mut default_name = p.lexer.identifier;
+                let default_name_raw = p.lexer.raw();
                 stmt = S::Import {
                     namespace_ref: Ref::NONE,
                     import_record_index: u32::MAX,
@@ -1467,6 +1468,48 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ..Default::default()
                 };
                 p.lexer.next()?;
+
+                // "import defer * as ns from 'path'"
+                //
+                // https://tc39.es/proposal-defer-import-eval/
+                //
+                // `defer` is only a phase keyword when followed by `*`; in
+                // every other position (`import defer from 'x'`,
+                // `import defer, {x} from 'y'`) it is an ordinary default
+                // binding named `defer`. Compare the raw token so
+                // `def\u0065r` is not treated as the phase keyword.
+                //
+                // `opts.is_export` rules out `export import defer * as ...`
+                // (only reachable via the TypeScript `export import foo = bar`
+                // re-entry) so it falls through to the import-equals handler
+                // and errors there.
+                if default_name_raw == b"defer" && p.lexer.token == T::TAsterisk && !opts.is_export
+                {
+                    // Same scope restriction as `import * as ns from 'path'`:
+                    // ESM import declarations are only valid at module scope
+                    // (or inside a TypeScript `declare namespace`).
+                    if !opts.is_module_scope
+                        && (!opts.is_namespace_scope || !opts.is_typescript_declare)
+                    {
+                        p.lexer.unexpected()?;
+                        return Err(err!("SyntaxError"));
+                    }
+                    p.lexer.next()?;
+                    p.lexer.expect_contextual_keyword(b"as")?;
+                    stmt = S::Import {
+                        namespace_ref: p.store_name_in_ref(p.lexer.identifier)?,
+                        star_name_loc: Some(p.lexer.loc()),
+                        import_record_index: u32::MAX,
+                        phase_defer: true,
+                        ..Default::default()
+                    };
+                    p.lexer.expect(T::TIdentifier)?;
+                    p.lexer.expect_contextual_keyword(b"from")?;
+
+                    let path = p.parse_path()?;
+                    p.lexer.expect_or_insert_semicolon()?;
+                    return p.process_import_statement(stmt, path, loc, false);
+                }
 
                 if Self::IS_TYPESCRIPT_ENABLED {
                     // Skip over type-only imports

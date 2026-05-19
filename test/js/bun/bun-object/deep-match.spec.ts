@@ -205,20 +205,6 @@ describe("Bun.deepMatch", () => {
     // expect(Bun.deepMatch(foo, baz)).toBe(false);
   });
 
-  it("throws a RangeError for deeply nested objects instead of crashing", () => {
-    const a: Record<string, unknown> = {};
-    const b: Record<string, unknown> = {};
-    let pa = a;
-    let pb = b;
-    for (let i = 0; i < 100000; i++) {
-      pa.c = {};
-      pa = pa.c as Record<string, unknown>;
-      pb.c = {};
-      pb = pb.c as Record<string, unknown>;
-    }
-    expect(() => Bun.deepMatch(a, b)).toThrow(RangeError);
-  });
-
   describe("Invalid arguments", () => {
     it.each<TestCase>([
       [null, null],

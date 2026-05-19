@@ -1111,7 +1111,6 @@ bun_ast::link_impl_TranspilerCacheImpl! {
                 return;
             }
             debug_assert!(this.entry.is_none());
-            this.output_code = Some(Box::<[u8]>::from(output_code_bytes));
 
             let output_code = BunString::clone_latin1(output_code_bytes);
             let result = RuntimeTranspilerCache::to_file(

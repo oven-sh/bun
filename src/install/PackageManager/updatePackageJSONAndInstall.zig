@@ -116,6 +116,11 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             current_package_json.root.asProperty("optionalDependencies") == null and
             current_package_json.root.asProperty("peerDependencies") == null)
         {
+            if (manager.options.global and log_level != .silent) {
+                for (updates.*) |request| {
+                    if (request.name.len > 0) warnGlobalPackageNotFound(request.name);
+                }
+            }
             Output.prettyErrorln("package.json doesn't have dependencies, there's nothing to {s}!", .{@tagName(subcommand)});
             Global.exit(0);
         }
@@ -137,6 +142,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             // if we're removing, they don't have to specify where it is installed in the dependencies list
             // they can even put it multiple times and we will just remove all of them
             for (updates.*) |request| {
+                var found = false;
                 inline for ([_]string{ "dependencies", "devDependencies", "optionalDependencies", "peerDependencies" }) |list| {
                     if (current_package_json.root.asProperty(list)) |query| {
                         if (query.expr.data == .e_object) {
@@ -154,6 +160,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                                         }
 
                                         any_changes = true;
+                                        found = true;
                                     }
                                 }
                             }
@@ -177,6 +184,10 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                             }
                         }
                     }
+                }
+
+                if (!found and manager.options.global and log_level != .silent and request.name.len > 0) {
+                    warnGlobalPackageNotFound(request.name);
                 }
             }
         },
@@ -484,6 +495,94 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             }
         }
     }
+}
+
+/// Called when `bun remove -g <name>` is used but `<name>` is not in the global package.json.
+/// If `<name>` resolves to a binary on $PATH, try to figure out the owning package name and
+/// suggest it. Otherwise just warn that the package is not installed globally.
+fn warnGlobalPackageNotFound(name: string) void {
+    defer Output.flush();
+
+    const which_buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(which_buf);
+
+    if (bun.which(which_buf, bun.env_var.PATH.get() orelse "", FileSystem.instance.top_level_dir, name)) |binary_path| {
+        const link_buf = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(link_buf);
+        if (packageNameFromBinary(binary_path, link_buf)) |pkg| {
+            if (!strings.eql(pkg, name)) {
+                Output.warn(
+                    "<b>{s}<r> is not in global package.json. Did you mean <b><cyan>bun remove -g {s}<r>?",
+                    .{ name, pkg },
+                );
+                Output.note("<b>{s}<r> is in $PATH at {s}", .{ name, binary_path });
+                return;
+            }
+        }
+
+        Output.warn("<b>{s}<r> is not in global package.json, but it is in $PATH at {s}", .{ name, binary_path });
+        return;
+    }
+
+    Output.warn("<b>{s}<r> is not in global package.json", .{name});
+}
+
+/// Given an absolute path to a binary, try to derive the npm package name that provides it.
+/// On POSIX this follows the symlink (global bins are relative symlinks into
+/// `node_modules/<pkg>/...`). Falls back to scanning the path itself for a `node_modules/`
+/// segment. Returns a slice into `link_buf` or `binary_path`.
+fn packageNameFromBinary(binary_path: [:0]const u8, link_buf: *bun.PathBuffer) ?string {
+    if (!Environment.isWindows) {
+        switch (bun.sys.readlink(binary_path, link_buf)) {
+            .result => |target| {
+                if (packageNameFromNodeModulesPath(target)) |pkg| return pkg;
+            },
+            .err => {},
+        }
+    }
+
+    return packageNameFromNodeModulesPath(binary_path);
+}
+
+/// Find the last `node_modules/` segment in `path_` and return the package name that follows it,
+/// handling `@scope/name`. Works with both `/` and `\` separators. Returns a slice into `path_`.
+fn packageNameFromNodeModulesPath(path_: string) ?string {
+    const needles = if (Environment.isWindows)
+        &[_]string{ "node_modules/", "node_modules\\" }
+    else
+        &[_]string{"node_modules/"};
+
+    var best: ?usize = null;
+    for (needles) |needle| {
+        if (strings.lastIndexOf(path_, needle)) |i| {
+            // Must sit on a segment boundary so e.g. `foo-node_modules/` doesn't match.
+            if (i > 0 and !bun.path.Platform.auto.isSeparator(path_[i - 1])) continue;
+            const after = i + needle.len;
+            if (best == null or after > best.?) best = after;
+        }
+    }
+
+    var remain = path_[best orelse return null ..];
+
+    // `@scope/name/...` or `name/...`
+    const is_scoped = remain.len > 0 and remain[0] == '@';
+    var seen_sep: usize = 0;
+    var end: usize = 0;
+    while (end < remain.len) : (end += 1) {
+        if (bun.path.Platform.auto.isSeparator(remain[end])) {
+            seen_sep += 1;
+            if (!is_scoped or seen_sep == 2) break;
+        }
+    }
+    remain = remain[0..end];
+
+    // Only suggest names that pass bun's own package-name validator. This also rejects
+    // `.bin`, `@scope` with no `/name`, `@scope/` with an empty name, and on Windows
+    // `@scope\name` (we return a slice into the possibly-const input so we can't normalize
+    // the separator here; the caller falls back to the generic $PATH message).
+    if (!strings.isNPMPackageName(remain)) return null;
+
+    return remain;
 }
 
 pub fn updatePackageJSONAndInstallCatchError(

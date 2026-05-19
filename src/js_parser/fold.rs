@@ -570,7 +570,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return Some(p.new_expr(
                         E::Dot {
                             target,
-                            name: name_static.into(),
+                            name: name_static,
                             name_loc,
                             can_be_removed_if_unused: true,
                             ..Default::default()
@@ -733,7 +733,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 return Some(Expr::init(
                                     E::Dot {
                                         target: Expr::init_identifier(p.hmr_api_ref, target.loc),
-                                        name: name_static.into(),
+                                        name: name_static,
                                         name_loc,
                                         ..Default::default()
                                     },
@@ -813,7 +813,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.new_expr(
                             E::Dot {
                                 target: *target,
-                                name: name_static.into(),
+                                name: name_static,
                                 name_loc,
                                 ..Default::default()
                             },
@@ -823,7 +823,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.new_expr(
                             E::Dot {
                                 target: *target,
-                                name: name_static.into(),
+                                name: name_static,
                                 name_loc,
                                 ..Default::default()
                             },

@@ -6,6 +6,7 @@
 #include <wtf/dtoa.h>
 #include <wtf/NumberOfCores.h>
 #include <atomic>
+#include <cassert>
 
 #include "wtf/SIMDUTF.h"
 #if OS(WINDOWS)

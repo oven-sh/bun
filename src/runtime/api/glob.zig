@@ -161,7 +161,6 @@ pub const WalkTask = struct {
     }
 
     pub fn run(this: *WalkTask) void {
-        defer decrPendingActivityFlag(this.has_pending_activity);
         const result = this.walker.walk() catch |err| {
             this.err = .{ .unknown = err };
             return;
@@ -176,6 +175,10 @@ pub const WalkTask = struct {
 
     pub fn then(this: *WalkTask, promise: *jsc.JSPromise) bun.JSTerminated!void {
         defer this.deinit();
+        // The stored syscall error's path may borrow from `Glob.pattern` (see
+        // GlobWalker.zig's literal-tail statat), so keep the Glob alive via
+        // pending-activity until after `err.toJS()` has consumed it.
+        defer decrPendingActivityFlag(this.has_pending_activity);
 
         if (this.err) |err| {
             try promise.rejectWithAsyncStack(this.global, err.toJS(this.global));

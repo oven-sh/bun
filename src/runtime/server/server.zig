@@ -2248,6 +2248,18 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 .specific => |m| m,
             }) orelse return;
 
+            // OpenTelemetry: Notify operation start AFTER URL is available, BEFORE user handler
+            // Include route pattern for http.route semantic convention (e.g., "/api/users/:id")
+            bun.telemetry.http.maybeNotifyHttpRequestStart(
+                &prepared.ctx.telemetry_ctx,
+                server.globalThis,
+                prepared.request_object,
+                req,
+                @tagName(prepared.ctx.method),
+                server,
+                user_route.route.path,
+            );
+
             const server_request_list = js.routeListGetCached(server.jsValueAssertAlive()).?;
             const callRoute = if (Ctx.is_h3) Bun__ServerRouteList__callRouteH3 else Bun__ServerRouteList__callRoute;
             const response_value = bun.jsc.fromJSHostCall(server.globalThis, @src(), callRoute, .{ server.globalThis, index, prepared.request_object, server.jsValueAssertAlive(), server_request_list, &prepared.js_request, req }) catch |err| server.globalThis.takeException(err);
@@ -2295,6 +2307,17 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         fn onRequestFor(this: *ThisServer, comptime Ctx: type, req: *Ctx.Req, resp: *Ctx.Resp) void {
             var should_deinit_context = false;
             const prepared = this.prepareJsRequestContextFor(Ctx, req, resp, &should_deinit_context, .yes, null) orelse return;
+
+            // OpenTelemetry: Notify operation start AFTER URL is available, BEFORE user handler
+            bun.telemetry.http.maybeNotifyHttpRequestStart(
+                &prepared.ctx.telemetry_ctx,
+                this.globalThis,
+                prepared.request_object,
+                req,
+                @tagName(prepared.ctx.method),
+                this,
+                null, // No route pattern for fetch-based handlers
+            );
 
             bun.assert(this.config.onRequest != .zero);
 

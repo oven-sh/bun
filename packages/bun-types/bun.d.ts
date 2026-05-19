@@ -2454,6 +2454,27 @@ declare module "bun" {
     /**
      * **Experimental**
      *
+     * Fold constant expressions, eliminate dead branches, and perform other
+     * syntax-level minifications.
+     */
+    minifySyntax?: boolean;
+    /**
+     * **Experimental**
+     *
+     * Rename local identifiers to shorter names.
+     */
+    minifyIdentifiers?: boolean;
+    /**
+     * **Experimental**
+     *
+     * Enable all minification (`true`), or selectively enable a subset.
+     * Top-level `minifyWhitespace` / `minifySyntax` / `minifyIdentifiers`
+     * override the corresponding fields here when both are set.
+     */
+    minify?: boolean | { whitespace?: boolean; syntax?: boolean; identifiers?: boolean };
+    /**
+     * **Experimental**
+     *
      * Enabled by default, use this to disable dead code elimination.
      *
      * Some other transpiler options may still do some specific dead code elimination.

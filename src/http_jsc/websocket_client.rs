@@ -1630,7 +1630,21 @@ impl<const SSL: bool> WebSocket<SSL> {
         if !this.has_tcp() {
             return;
         }
-        let mut close_reason_buf = [0u8; 128];
+        // `send_close_with_body` takes `&mut [u8; 125]`; keep the array at
+        // 125 bytes so the borrow covers the full provenance and matches
+        // the other caller (line 1006, server-initiated close echo).
+        let mut close_reason_buf = [0u8; 125];
+        // RFC 6455 §5.5.1: the close-frame payload is ≤ 125 bytes total and
+        // the 7-bit header length field is the payload length — there is no
+        // extended-length encoding for control frames. `send_close_with_body`
+        // prepends the 2-byte status code separately and computes the header
+        // length as `(body_len + 2) & 0x7F`. A reason of 124 or 125 UTF-8
+        // bytes therefore writes a header length of 126 or 127, which are
+        // the 16/64-bit extended-length sentinels per §5.2 and malform the
+        // frame. Cap the transcode cursor at 123 bytes so the overflow arms
+        // below (`WriteZero` / `NoSpaceLeft`) bail via `break 'inner` at the
+        // correct boundary.
+        const MAX_REASON_BYTES: usize = 123;
         // SAFETY: reason is null or a valid *const ZigString from C++
         if let Some(str) = unsafe { reason.as_ref() } {
             'inner: {
@@ -1640,9 +1654,9 @@ impl<const SSL: bool> WebSocket<SSL> {
                 // replicate the encoding switch directly: 8-bit copies bytes,
                 // 16-bit transcodes via `to_owned_slice()` (UTF-16 → UTF-8).
                 use std::io::Write;
-                let mut cursor = std::io::Cursor::new(&mut close_reason_buf[..]);
+                let mut cursor = std::io::Cursor::new(&mut close_reason_buf[..MAX_REASON_BYTES]);
                 if str.is_16bit() {
-                    // Allocates; close-reason is bounded ≤125 bytes and this
+                    // Allocates; close-reason is bounded ≤123 bytes and this
                     // path is cold (close handshake).
                     let utf8 = str.to_owned_slice();
                     if cursor.write_all(&utf8).is_err() {
@@ -1669,13 +1683,9 @@ impl<const SSL: bool> WebSocket<SSL> {
                     cursor.set_position((pos + result.written as usize) as u64);
                 }
                 let wrote_len = cursor.position() as usize;
-                // 125-byte close-frame payload budget minus the 2-byte status code.
-                if wrote_len > 123 {
-                    break 'inner;
-                }
-                // SAFETY: close_reason_buf has 128 bytes; reinterpret first 125 as fixed array
-                let buf_ptr = close_reason_buf.as_mut_ptr().cast::<[u8; 125]>();
-                this.send_close_with_body(code, Some(unsafe { &mut *buf_ptr }), wrote_len);
+                // Cursor is over a 123-byte view; overflow takes `break 'inner` above.
+                debug_assert!(wrote_len <= MAX_REASON_BYTES);
+                this.send_close_with_body(code, Some(&mut close_reason_buf), wrote_len);
                 return;
             }
         }

@@ -6450,7 +6450,14 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
     size_t prefixLen)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    // This is an FFI boundary called from Zig without JSError propagation,
+    // so use a top-level scope and swallow any exception locally rather than
+    // letting it escape to a caller that has no scope to check it.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto clearAndEncode = [&](JSC::JSValue v) {
+        scope.clearException();
+        return JSC::JSValue::encode(v);
+    };
 
     JSC::JSValue target = JSC::JSValue::decode(targetValue);
     if (!target || target.isUndefined() || target.isNull()) {
@@ -6459,7 +6466,8 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
 
     if (!target.isObject()) {
         JSObject* boxed = target.toObject(globalObject);
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+        if (scope.exception()) [[unlikely]]
+            return clearAndEncode(JSC::jsUndefined());
         target = boxed;
     }
 
@@ -6470,40 +6478,47 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
     JSC::JSObject* object = target.getObject();
     JSC::PropertyNameArrayBuilder propertyNames(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
     object->getPropertyNames(globalObject, propertyNames, DontEnumPropertiesMode::Include);
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+    if (scope.exception()) [[unlikely]]
+        return clearAndEncode(JSC::jsUndefined());
 
     JSC::JSArray* completions = JSC::constructEmptyArray(globalObject, nullptr, 0);
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+    if (scope.exception()) [[unlikely]]
+        return clearAndEncode(JSC::jsUndefined());
 
     unsigned completionIndex = 0;
     for (const auto& propertyName : propertyNames) {
         WTF::String name = propertyName.string();
         if (prefix.isEmpty() || name.startsWith(prefix)) {
             completions->putDirectIndex(globalObject, completionIndex++, JSC::jsString(vm, name));
-            RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+            if (scope.exception()) [[unlikely]]
+                return clearAndEncode(JSC::jsUndefined());
         }
     }
 
     // Also check the prototype chain
     JSC::JSValue proto = object->getPrototype(globalObject);
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(completions));
+    if (scope.exception()) [[unlikely]]
+        return clearAndEncode(completions);
 
     while (proto && proto.isObject()) {
         JSC::JSObject* protoObj = proto.getObject();
         JSC::PropertyNameArrayBuilder protoNames(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
         protoObj->getPropertyNames(globalObject, protoNames, DontEnumPropertiesMode::Include);
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(completions));
+        if (scope.exception()) [[unlikely]]
+            return clearAndEncode(completions);
 
         for (const auto& propertyName : protoNames) {
             WTF::String name = propertyName.string();
             if (prefix.isEmpty() || name.startsWith(prefix)) {
                 completions->putDirectIndex(globalObject, completionIndex++, JSC::jsString(vm, name));
-                RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(completions));
+                if (scope.exception()) [[unlikely]]
+                    return clearAndEncode(completions);
             }
         }
 
         proto = protoObj->getPrototype(globalObject);
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(completions));
+        if (scope.exception()) [[unlikely]]
+            return clearAndEncode(completions);
     }
 
     return JSC::JSValue::encode(completions);

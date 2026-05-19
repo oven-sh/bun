@@ -674,7 +674,12 @@ fn cmd_help(repl: &mut Repl, _: &[u8]) -> ReplResult {
         Color::RESET
     ));
     repl.print(format_args!(
-        "  {}Tab{}          Auto-complete\n",
+        "  {}Tab{}          Auto-complete / accept suggestion\n",
+        Color::CYAN,
+        Color::RESET
+    ));
+    repl.print(format_args!(
+        "  {}Right/End{}    Accept inline suggestion\n",
         Color::CYAN,
         Color::RESET
     ));
@@ -815,6 +820,7 @@ fn cmd_editor(repl: &mut Repl, _: &[u8]) -> ReplResult {
 fn cmd_break(repl: &mut Repl, _: &[u8]) -> ReplResult {
     repl.line_editor.clear();
     repl.multiline_buffer.clear();
+    repl.suggestion.clear();
     repl.in_multiline = false;
     ReplResult::SkipEval
 }
@@ -853,6 +859,10 @@ pub struct Repl<'a> {
     history: History,
     multiline_buffer: Vec<u8>,
     editor_buffer: Vec<u8>,
+    /// Ghost text shown dimmed after the cursor (the *remainder* to append,
+    /// not the full word). Empty when no suggestion is available. Only
+    /// rendered when the cursor is at end-of-line and colors are enabled.
+    suggestion: Vec<u8>,
 
     // State
     in_multiline: bool,
@@ -891,6 +901,7 @@ impl<'a> Repl<'a> {
             history: History::init(),
             multiline_buffer: Vec::new(),
             editor_buffer: Vec::new(),
+            suggestion: Vec::new(),
             in_multiline: false,
             editor_mode: false,
             running: false,
@@ -1203,6 +1214,20 @@ impl<'a> Repl<'a> {
             self.write(line);
         }
 
+        // Write the inline ghost suggestion after the typed text. Only shown
+        // when the cursor is at end-of-line so it visually continues the
+        // input. Width-fit is enforced in update_suggestion(), so anything
+        // stored here is guaranteed to render on the current row — keeping
+        // render/accept in sync.
+        if !self.suggestion.is_empty()
+            && self.use_colors
+            && self.line_editor.cursor == self.line_editor.buffer.len()
+        {
+            self.write(Color::DIM.as_bytes());
+            self.write(&self.suggestion);
+            self.write(Color::RESET.as_bytes());
+        }
+
         // Position cursor
         let cursor_pos = prompt_len + self.line_editor.cursor;
         if cursor_pos < self.terminal_width as usize {
@@ -1218,6 +1243,179 @@ impl<'a> Repl<'a> {
         }
 
         Output::flush();
+    }
+
+    // ========================================================================
+    // Inline Suggestions (ghost text)
+    // ========================================================================
+
+    /// Resolve a dotted identifier chain like `process.env` starting from
+    /// globalThis by walking own/prototype properties. Returns `UNDEFINED`
+    /// on any failure. Deliberately avoids the REPL evaluator so `_`/`_error`
+    /// are untouched; getters on the chain may still run (matching Node's
+    /// REPL).
+    fn resolve_object_expr(&self, expr: &[u8]) -> JSValue {
+        let Some(global) = self.global else {
+            return JSValue::UNDEFINED;
+        };
+        if expr.is_empty() {
+            return JSValue::UNDEFINED;
+        }
+
+        let mut current = global_to_js_value(global);
+        for part in expr.split(|&b| b == b'.') {
+            if part.is_empty() || !is_ident_start(part[0]) {
+                return JSValue::UNDEFINED;
+            }
+            if !current.is_object() {
+                return JSValue::UNDEFINED;
+            }
+            match current.get(global, part) {
+                Ok(Some(next)) => current = next,
+                Ok(None) => return JSValue::UNDEFINED,
+                Err(_) => {
+                    global_clear_exception(global);
+                    return JSValue::UNDEFINED;
+                }
+            }
+        }
+        current
+    }
+
+    /// Recompute the inline ghost suggestion for the current editor state.
+    /// Stores only the remainder (text to append) in `self.suggestion`.
+    fn update_suggestion(&mut self) {
+        self.suggestion.clear();
+
+        if !self.is_tty || !self.use_colors {
+            return;
+        }
+        if self.in_multiline || self.editor_mode {
+            return;
+        }
+
+        // Only suggest when the cursor is at end-of-line; mid-line ghost text
+        // is confusing to render correctly.
+        let line: Vec<u8> = self.line_editor.get_line().to_vec();
+        if self.line_editor.cursor != line.len() {
+            return;
+        }
+        if line.is_empty() || line[0] == b'.' {
+            return; // skip REPL dot-commands
+        }
+
+        let ctx = parse_completion_context(&line, self.line_editor.cursor);
+        if ctx.prefix.is_empty() && ctx.object_expr.is_empty() {
+            return;
+        }
+
+        let Some(global) = self.global else {
+            return;
+        };
+
+        let mut target = JSValue::UNDEFINED;
+        if !ctx.object_expr.is_empty() {
+            target = self.resolve_object_expr(ctx.object_expr);
+            if target.is_undefined_or_null() {
+                return;
+            }
+        }
+
+        // SAFETY: `global` is a live opaque handle; `ctx.prefix` is valid for
+        // the duration of the call. The C++ side uses a TopExceptionScope and
+        // clears any exception before returning, so nothing escapes here.
+        let completions = unsafe {
+            Bun__REPL__getCompletions(global, target, ctx.prefix.as_ptr(), ctx.prefix.len())
+        };
+
+        let mut best_len: usize = usize::MAX;
+
+        if !completions.is_undefined_or_null() && completions.is_array() {
+            let len: u32 = match completions.get_length(global) {
+                Ok(n) => n as u32,
+                Err(_) => {
+                    global_clear_exception(global);
+                    0
+                }
+            };
+            for idx in 0..len {
+                let item = match completions.get_index(global, idx) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        global_clear_exception(global);
+                        continue;
+                    }
+                };
+                if !item.is_string() {
+                    continue;
+                }
+                let slice = match item.to_slice(global) {
+                    Ok(s) => s,
+                    Err(_) => {
+                        global_clear_exception(global);
+                        continue;
+                    }
+                };
+                let name = slice.slice();
+                if name.len() <= ctx.prefix.len() {
+                    continue;
+                }
+                if !is_dot_accessible(name) {
+                    continue; // skip keys that can't follow `.`
+                }
+                if ctx.prefix.is_empty() {
+                    // `obj.` with no prefix: just offer the first reasonable key.
+                    self.suggestion.clear();
+                    self.suggestion.extend_from_slice(name);
+                    break;
+                }
+                if name.len() < best_len {
+                    best_len = name.len();
+                    self.suggestion.clear();
+                    self.suggestion.extend_from_slice(&name[ctx.prefix.len()..]);
+                }
+            }
+        }
+
+        // Fallback: suggest a JS keyword in global context.
+        if self.suggestion.is_empty() && ctx.object_expr.is_empty() && !ctx.prefix.is_empty() {
+            for &kw in JS_KEYWORDS {
+                if kw.len() > ctx.prefix.len()
+                    && kw.starts_with(ctx.prefix)
+                    && kw.len() < best_len
+                {
+                    best_len = kw.len();
+                    self.suggestion.clear();
+                    self.suggestion.extend_from_slice(&kw[ctx.prefix.len()..]);
+                }
+            }
+        }
+
+        // Drop the suggestion if rendering it would wrap past the terminal
+        // width — wrapping would make refresh_line()'s `\r`+CUF cursor restore
+        // land on the wrong row. Enforcing it here (not just at render time)
+        // keeps acceptance in sync: Tab/Right/End can never apply a
+        // suggestion the user didn't see.
+        if !self.suggestion.is_empty()
+            && self.get_prompt_length() + line.len() + self.suggestion.len()
+                >= self.terminal_width as usize
+        {
+            self.suggestion.clear();
+        }
+    }
+
+    /// Insert the current suggestion into the line buffer. Returns true if a
+    /// suggestion was accepted.
+    fn accept_suggestion(&mut self) -> bool {
+        if self.suggestion.is_empty() {
+            return false;
+        }
+        let sugg = core::mem::take(&mut self.suggestion);
+        let ok = self.line_editor.insert_slice(&sugg).is_ok();
+        // Keep the Vec's capacity for reuse.
+        self.suggestion = sugg;
+        self.suggestion.clear();
+        ok
     }
 
     fn write_highlighted(&self, text: &[u8]) {
@@ -2029,6 +2227,7 @@ impl<'a> Repl<'a> {
                         self.running = false;
                     } else {
                         self.line_editor.delete_char();
+                        self.update_suggestion();
                         self.refresh_line();
                     }
                 }
@@ -2039,54 +2238,77 @@ impl<'a> Repl<'a> {
                 }
                 Key::CtrlA => {
                     self.line_editor.move_to_start();
+                    self.suggestion.clear();
                     self.refresh_line();
                 }
                 Key::CtrlE => {
-                    self.line_editor.move_to_end();
+                    if !self.accept_suggestion() {
+                        self.line_editor.move_to_end();
+                    }
+                    self.update_suggestion();
                     self.refresh_line();
                 }
                 Key::CtrlB | Key::ArrowLeft => {
                     self.line_editor.move_left();
+                    self.suggestion.clear();
                     self.refresh_line();
                 }
                 Key::CtrlF | Key::ArrowRight => {
-                    self.line_editor.move_right();
+                    // At end-of-line with a visible suggestion, Right accepts
+                    // it (fish/node-style). Otherwise it moves the cursor.
+                    if self.line_editor.cursor == self.line_editor.buffer.len()
+                        && self.accept_suggestion()
+                    {
+                        self.update_suggestion();
+                    } else {
+                        self.line_editor.move_right();
+                        self.update_suggestion();
+                    }
                     self.refresh_line();
                 }
                 Key::AltB | Key::AltLeft => {
                     self.line_editor.move_word_left();
+                    self.suggestion.clear();
                     self.refresh_line();
                 }
                 Key::AltF | Key::AltRight => {
                     self.line_editor.move_word_right();
+                    self.update_suggestion();
                     self.refresh_line();
                 }
                 Key::CtrlU => {
                     self.line_editor.delete_to_start();
+                    self.update_suggestion();
                     self.refresh_line();
                 }
                 Key::CtrlK => {
                     self.line_editor.delete_to_end();
+                    self.update_suggestion();
                     self.refresh_line();
                 }
                 Key::CtrlW | Key::AltBackspace => {
                     self.line_editor.backspace_word();
+                    self.update_suggestion();
                     self.refresh_line();
                 }
                 Key::AltD => {
                     self.line_editor.delete_word();
+                    self.update_suggestion();
                     self.refresh_line();
                 }
                 Key::CtrlT => {
                     self.line_editor.swap();
+                    self.update_suggestion();
                     self.refresh_line();
                 }
                 Key::Backspace => {
                     self.line_editor.backspace();
+                    self.update_suggestion();
                     self.refresh_line();
                 }
                 Key::Delete => {
                     self.line_editor.delete_char();
+                    self.update_suggestion();
                     self.refresh_line();
                 }
                 Key::ArrowUp | Key::CtrlP => {
@@ -2095,6 +2317,7 @@ impl<'a> Repl<'a> {
                     if let Some(prev_line) = self.history.prev(&cur) {
                         let prev_line = prev_line.to_vec();
                         let _ = self.line_editor.set(&prev_line);
+                        self.suggestion.clear();
                         self.refresh_line();
                     }
                 }
@@ -2105,19 +2328,25 @@ impl<'a> Repl<'a> {
                     } else {
                         self.line_editor.clear();
                     }
+                    self.suggestion.clear();
                     self.refresh_line();
                 }
                 Key::Tab => self.handle_tab(),
                 Key::Home => {
                     self.line_editor.move_to_start();
+                    self.suggestion.clear();
                     self.refresh_line();
                 }
                 Key::End => {
-                    self.line_editor.move_to_end();
+                    if !self.accept_suggestion() {
+                        self.line_editor.move_to_end();
+                    }
+                    self.update_suggestion();
                     self.refresh_line();
                 }
                 Key::Char(c) => {
                     let _ = self.line_editor.insert(c);
+                    self.update_suggestion();
                     self.refresh_line();
                 }
                 _ => {}
@@ -2131,6 +2360,12 @@ impl<'a> Repl<'a> {
 
     fn handle_enter(&mut self) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
+        // Erase any rendered ghost text past the cursor so the submitted
+        // line shows only what was actually typed.
+        if !self.suggestion.is_empty() {
+            self.write(Cursor::CLEAR_TO_END.as_bytes());
+        }
+        self.suggestion.clear();
         self.print(format_args!("\n"));
 
         // PORT NOTE: reshaped for borrowck — copy line out so we can call &mut self methods
@@ -2237,6 +2472,10 @@ impl<'a> Repl<'a> {
     }
 
     fn handle_ctrl_c(&mut self) {
+        if !self.suggestion.is_empty() {
+            self.write(Cursor::CLEAR_TO_END.as_bytes());
+        }
+        self.suggestion.clear();
         if self.editor_mode {
             self.print(format_args!(
                 "\n{}// Editor mode cancelled{}\n",
@@ -2270,6 +2509,16 @@ impl<'a> Repl<'a> {
     }
 
     fn handle_tab(&mut self) {
+        // If a ghost suggestion is showing, Tab accepts it.
+        if !self.suggestion.is_empty()
+            && self.line_editor.cursor == self.line_editor.buffer.len()
+        {
+            self.accept_suggestion();
+            self.update_suggestion();
+            self.refresh_line();
+            return;
+        }
+
         // PORT NOTE: reshaped for borrowck — copy line out
         let line: Vec<u8> = self.line_editor.get_line().to_vec();
 
@@ -2311,23 +2560,41 @@ impl<'a> Repl<'a> {
             return;
         };
 
-        // Find the word being completed
-        let mut word_start: usize = line.len();
-        while word_start > 0 {
-            let c = line[word_start - 1];
-            if !c.is_ascii_alphanumeric() && c != b'_' && c != b'$' {
-                break;
-            }
-            word_start -= 1;
+        let cursor = self.line_editor.cursor;
+
+        // Don't complete when the cursor is in the middle of an identifier —
+        // replacing only the left half would duplicate the right half (e.g.
+        // `con|sole` + Tab -> `consolesole`). Do nothing rather than insert
+        // whitespace here: every other indent-fallback in this function runs
+        // with the cursor at/after a token boundary, but this branch is by
+        // definition inside one, and injecting spaces would split it.
+        if cursor < line.len() && is_ident_part(line[cursor]) {
+            self.refresh_line();
+            return;
         }
 
-        let prefix = &line[word_start..];
+        // Parse the completion context at the cursor (handles `obj.prop` chains).
+        let ctx = parse_completion_context(&line, cursor);
+        let word_start = ctx.prefix_start;
+        let prefix = ctx.prefix;
 
-        // Get completions from global object
+        let mut target = JSValue::UNDEFINED;
+        if !ctx.object_expr.is_empty() {
+            target = self.resolve_object_expr(ctx.object_expr);
+            if target.is_undefined_or_null() {
+                // Couldn't resolve the object; just indent.
+                let _ = self.line_editor.insert(b' ');
+                let _ = self.line_editor.insert(b' ');
+                self.refresh_line();
+                return;
+            }
+        }
+
+        // Get completions from the target (or global object if target is undefined).
         // SAFETY: `global` is a live opaque `JSGlobalObject` handle; `prefix` ptr/len
         // are valid for the duration of the call.
         let completions = unsafe {
-            Bun__REPL__getCompletions(global, JSValue::UNDEFINED, prefix.as_ptr(), prefix.len())
+            Bun__REPL__getCompletions(global, target, prefix.as_ptr(), prefix.len())
         };
 
         if completions.is_undefined() || !completions.is_array() {
@@ -2370,11 +2637,16 @@ impl<'a> Repl<'a> {
                     }
                 };
                 let completion = slice.slice();
-                // Replace the prefix with the completion
-                while self.line_editor.cursor > word_start {
-                    self.line_editor.backspace();
+                // Only insert if the result is a valid dot-access identifier;
+                // e.g. a sole `"foo-bar"` key would otherwise produce
+                // `obj.foo-bar` which parses as subtraction.
+                if is_dot_accessible(completion) {
+                    // Replace the prefix with the completion
+                    while self.line_editor.cursor > word_start {
+                        self.line_editor.backspace();
+                    }
+                    let _ = self.line_editor.insert_slice(completion);
                 }
-                let _ = self.line_editor.insert_slice(completion);
                 self.refresh_line();
             }
         } else if len <= 50 {
@@ -2444,6 +2716,87 @@ extern "C" fn sigint_handler(_: c_int) {
         // blocked in wait while the handler runs, so it stays valid).
         unsafe { vm_set_execution_forbidden(vm, true) };
     }
+}
+
+// ============================================================================
+// Inline Suggestions (ghost text)
+// ============================================================================
+
+#[inline]
+fn is_ident_part(c: u8) -> bool {
+    c.is_ascii_alphanumeric() || c == b'_' || c == b'$'
+}
+
+#[inline]
+fn is_ident_start(c: u8) -> bool {
+    c.is_ascii_alphabetic() || c == b'_' || c == b'$'
+}
+
+/// True if `name` is safe to insert after a `.` — i.e. a plain ASCII
+/// identifier. Rejects keys like `"foo-bar"` or `"a b"` whose first byte
+/// passes `is_ident_start` but which would not parse as dot-access.
+fn is_dot_accessible(name: &[u8]) -> bool {
+    match name.first() {
+        Some(&c) if is_ident_start(c) => name[1..].iter().all(|&c| is_ident_part(c)),
+        _ => false,
+    }
+}
+
+/// Common JS keywords offered as fallback suggestions in global context when
+/// no matching global property exists (e.g. `fun` -> `function`).
+const JS_KEYWORDS: &[&[u8]] = &[
+    b"async", b"await", b"break", b"case", b"catch", b"class", b"const",
+    b"continue", b"debugger", b"default", b"delete", b"else", b"export",
+    b"extends", b"false", b"finally", b"for", b"function", b"import",
+    b"instanceof", b"let", b"new", b"null", b"return", b"static", b"super",
+    b"switch", b"this", b"throw", b"true", b"try", b"typeof", b"undefined",
+    b"var", b"void", b"while", b"yield",
+];
+
+struct CompletionContext<'a> {
+    /// Dotted object expression before the final `.`, e.g. `b"console"` for
+    /// input `console.lo|`. Empty means complete against globalThis.
+    object_expr: &'a [u8],
+    /// Trailing identifier fragment being typed, e.g. `b"lo"` for `console.lo|`.
+    prefix: &'a [u8],
+    /// Byte offset in `line` where `prefix` begins.
+    prefix_start: usize,
+}
+
+/// Parse backward from `cursor` to determine what is being completed.
+/// Only recognises simple `ident(.ident)*` chains; anything fancier (calls,
+/// indexing, optional chaining) falls back to completing `prefix` on global.
+fn parse_completion_context(line: &[u8], cursor: usize) -> CompletionContext<'_> {
+    let mut i = cursor;
+    while i > 0 && is_ident_part(line[i - 1]) {
+        i -= 1;
+    }
+    let prefix_start = i;
+    let prefix = &line[prefix_start..cursor];
+
+    if i == 0 || line[i - 1] != b'.' {
+        return CompletionContext { object_expr: b"", prefix, prefix_start };
+    }
+    i -= 1; // skip the `.`
+    let chain_end = i;
+
+    loop {
+        let ident_end = i;
+        while i > 0 && is_ident_part(line[i - 1]) {
+            i -= 1;
+        }
+        if i == ident_end {
+            // No identifier before the dot (e.g. `(expr).foo`) — can't safely
+            // resolve, so treat as global completion of the bare prefix.
+            return CompletionContext { object_expr: b"", prefix, prefix_start };
+        }
+        if i == 0 || line[i - 1] != b'.' {
+            break;
+        }
+        i -= 1;
+    }
+
+    CompletionContext { object_expr: &line[i..chain_end], prefix, prefix_start }
 }
 
 fn is_incomplete_code(code: &[u8]) -> bool {

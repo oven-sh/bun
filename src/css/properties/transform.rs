@@ -761,7 +761,7 @@ impl Translate {
             Translate::Xyz { x, y, z } => Transform::Translate3d {
                 x: x.clone(),
                 y: y.clone(),
-                z: z.clone(),
+                z: *z,
             },
         }
     }

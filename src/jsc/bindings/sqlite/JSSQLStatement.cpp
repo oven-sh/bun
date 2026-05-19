@@ -286,8 +286,10 @@ JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetColumnCount);
 
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementSerialize);
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementDeserialize);
+JSC_DECLARE_HOST_FUNCTION(jsSQLStatementInterruptFunction);
 
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementSetPrototypeFunction);
+JSC_DECLARE_HOST_FUNCTION(jsSQLStatementInterruptStatementFunction);
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementFunctionFinalize);
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementToStringFunction);
 
@@ -612,6 +614,7 @@ static const HashTableValue JSSQLStatementPrototypeTableValues[] = {
     { "values"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementExecuteStatementFunctionRows, 1 } },
     { "raw"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementExecuteStatementFunctionRawRows, 1 } },
     { "finalize"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementFunctionFinalize, 0 } },
+    { "interrupt"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementInterruptStatementFunction, 0 } },
     { "toString"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementToStringFunction, 0 } },
     { "columns"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsSqlStatementGetColumnNames, 0 } },
     { "columnsCount"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsSqlStatementGetColumnCount, 0 } },
@@ -1841,6 +1844,40 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
     return JSValue::encode(jsNumber(statusCode));
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsSQLStatementInterruptFunction, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue thisValue = callFrame->thisValue();
+    JSSQLStatementConstructor* thisObject = dynamicDowncast<JSSQLStatementConstructor>(thisValue.getObject());
+    if (!thisObject) [[unlikely]] {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected SQLStatement"_s));
+        return {};
+    }
+
+    JSC::JSValue dbNumber = callFrame->argument(0);
+    if (!dbNumber.isNumber()) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid database handle"_s));
+        return {};
+    }
+
+    int32_t handle = dbNumber.toInt32(lexicalGlobalObject);
+    if (handle < 0 || handle >= databases().size()) [[unlikely]] {
+        throwException(lexicalGlobalObject, scope, createRangeError(lexicalGlobalObject, "Invalid database handle"_s));
+        return {};
+    }
+
+    sqlite3* db = databases()[handle]->db;
+    if (!db) [[unlikely]] {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Database has closed"_s));
+        return {};
+    }
+
+    sqlite3_interrupt(db);
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
+}
+
 /* Hash table for constructor */
 static const HashTableValue JSSQLStatementConstructorTableValues[] = {
     { "open"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementOpenStatementFunction, 2 } },
@@ -1849,6 +1886,7 @@ static const HashTableValue JSSQLStatementConstructorTableValues[] = {
     { "run"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementExecuteFunction, 3 } },
     { "isInTransaction"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementIsInTransactionFunction, 1 } },
     { "loadExtension"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementLoadExtensionFunction, 2 } },
+    { "interrupt"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementInterruptFunction, 1 } },
     { "setCustomSQLite"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementSetCustomSQLite, 1 } },
     { "serialize"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementSerialize, 1 } },
     { "deserialize"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementDeserialize, 2 } },
@@ -2704,6 +2742,24 @@ JSC_DEFINE_CUSTOM_SETTER(jsSqlStatementSetSafeIntegers, (JSGlobalObject * lexica
     castedThis->useBigInt64 = value;
 
     return true;
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsSQLStatementInterruptStatementFunction, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    JSSQLStatement* castedThis = dynamicDowncast<JSSQLStatement>(callFrame->thisValue());
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    CHECK_THIS
+    CHECK_PREPARED
+
+    sqlite3* db = castedThis->version_db->db;
+    if (!db) [[unlikely]] {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Database has closed"_s));
+        return {};
+    }
+
+    sqlite3_interrupt(db);
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFunctionFinalize, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))

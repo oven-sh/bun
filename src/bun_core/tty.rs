@@ -15,6 +15,10 @@ pub struct Winsize {
 unsafe impl crate::ffi::Zeroable for Winsize {}
 // SAFETY: `#[repr(C)]` over four `u16` — exactly 8 bytes, no padding.
 crate::unsafe_impl_atom!(Winsize);
+// SAFETY: four `u16` fields — POD, trivially `Send + Sync`, so publishing
+// the 8-byte representation via an atomic op is a sound cross-thread
+// handoff (per `AtomCrossThread`'s contract).
+unsafe impl crate::AtomCrossThread for Winsize {}
 
 #[repr(C)]
 #[derive(Copy, Clone, Eq, PartialEq)]

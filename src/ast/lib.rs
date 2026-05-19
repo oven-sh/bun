@@ -1602,6 +1602,10 @@ pub enum Level {
 }
 // SAFETY: `#[repr(i8)]`, five variants, no payload — 1 byte, no padding.
 bun_core::unsafe_impl_atom!(Level);
+// SAFETY: payload-free repr enum — trivially `Send + Sync`, so publishing
+// its 1-byte discriminant via an atomic op is a sound cross-thread handoff
+// (per `AtomCrossThread`'s contract).
+unsafe impl bun_core::AtomCrossThread for Level {}
 
 impl Level {
     pub fn at_least(self, other: Level) -> bool {

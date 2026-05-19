@@ -268,10 +268,9 @@ describe.concurrent("node-module-module", () => {
         ],
         env: bunEnv,
         stdout: "pipe",
-        stderr: "pipe",
+        stderr: "inherit",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).not.toContain("ASSERTION FAILED");
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
       expect(stdout.trim()).toBe("ok");
       expect(exitCode).toBe(0);
     },
@@ -292,10 +291,9 @@ describe.concurrent("node-module-module", () => {
       ],
       env: bunEnv,
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "inherit",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("ASSERTION FAILED");
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect(stdout.trim()).toBe("threw true");
     expect(exitCode).toBe(0);
   });

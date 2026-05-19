@@ -3223,14 +3223,22 @@ where
             let path = ReqLike::url(req);
             if !path.is_empty() && path[0] == b'/' {
                 if let Some(host) = host.as_deref() {
-                    let fmt = bun_fmt::HostFormatter {
-                        is_https: true,
-                        host,
-                        port: None,
-                    };
-                    let mut s = Vec::new();
-                    write!(&mut s, "https://{}{}", fmt, BStr::new(path)).ok();
-                    request_object.url.set(BunString::clone_utf8(&s));
+                    let url_len = b"https://".len() + host.len() + path.len();
+                    if strings::is_all_ascii(host) && strings::is_all_ascii(path) {
+                        let (s, bytes) = BunString::create_uninitialized_latin1(url_len);
+                        let (a, rest) = bytes.split_at_mut(b"https://".len());
+                        let (b, c) = rest.split_at_mut(host.len());
+                        a.copy_from_slice(b"https://");
+                        b.copy_from_slice(host);
+                        c.copy_from_slice(path);
+                        request_object.url.set(s);
+                    } else {
+                        let mut s = Vec::with_capacity(url_len);
+                        s.extend_from_slice(b"https://");
+                        s.extend_from_slice(host);
+                        s.extend_from_slice(path);
+                        request_object.url.set(BunString::clone_utf8(&s));
+                    }
                 } else {
                     request_object.url.set(BunString::clone_utf8(path));
                 }

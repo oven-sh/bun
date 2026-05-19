@@ -654,6 +654,16 @@ class PooledPostgresConnection {
     }
     return true;
   }
+  /// Bypasses `retry()`'s auth-code gate and forces a fresh handshake on
+  /// this slot. Only meaningful when `connectionInfo.password` is a
+  /// function — the re-evaluation is what lets a rotated IAM token / Vault
+  /// lease actually take effect on a slot whose previous handshake failed
+  /// with a non-retryable auth error.
+  forceRetry(): boolean {
+    if (this.adapter.closed) return false;
+    this.#doRetry();
+    return true;
+  }
 }
 
 class PostgresAdapter
@@ -666,7 +676,13 @@ class PostgresAdapter
 {
   public readonly connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions;
 
+  /// Live pool entries. Grown lazily on demand up to `maxPoolSize`. Slots are
+  /// only nulled out during shutdown (#close) — the rest of the code can
+  /// assume every index < connections.length is a valid connection.
   public readonly connections: PooledPostgresConnection[];
+  /// Hard cap on the number of connections this pool is allowed to open.
+  /// `connections.length` is the CURRENT size and grows from 0 up to this.
+  public readonly maxPoolSize: number;
   public readonly readyConnections: Set<PooledPostgresConnection>;
 
   public waitingQueue: Array<(err: Error | null, result: any) => void> = [];
@@ -679,7 +695,8 @@ class PostgresAdapter
 
   constructor(connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions) {
     this.connectionInfo = connectionInfo;
-    this.connections = new Array(connectionInfo.max);
+    this.connections = [];
+    this.maxPoolSize = connectionInfo.max;
     this.readyConnections = new Set();
   }
 
@@ -821,8 +838,36 @@ class PostgresAdapter
 
   maxDistribution() {
     if (!this.waitingQueue.length) return 0;
-    const result = Math.ceil((this.waitingQueue.length + this.totalQueries) / this.connections.length);
+    // Target distribution against the pool ceiling, not the current size.
+    // With lazy pool growth `connections.length` starts small and would
+    // collapse every queued query onto the first connection.
+    const result = Math.ceil((this.waitingQueue.length + this.totalQueries) / this.maxPoolSize);
     return result ? result : 1;
+  }
+
+  /// Open a new connection and append it to the pool if we have room. The
+  /// new connection starts connecting immediately and will enter
+  /// `readyConnections` via `release()` once its TCP/auth handshake finishes.
+  /// Returns the new connection, or null if we're already at `maxPoolSize`.
+  #tryGrowPool(): PooledPostgresConnection | null {
+    if (this.closed) return null;
+    if (this.connections.length >= this.maxPoolSize) return null;
+    const connection = new PooledPostgresConnection(this.connectionInfo, this);
+    this.connections.push(connection);
+    return connection;
+  }
+
+  /// Count connections that are still completing their handshake. A pending
+  /// connection will soon join `readyConnections`, so we don't need to grow
+  /// the pool further just because no connection is ready *right now*.
+  #pendingConnectionsCount(): number {
+    let count = 0;
+    const len = this.connections.length;
+    for (let i = 0; i < len; i++) {
+      const c = this.connections[i];
+      if (c && c.state === PooledConnectionState.pending) count++;
+    }
+    return count;
   }
 
   flushConcurrentQueries() {
@@ -836,6 +881,23 @@ class PostgresAdapter
         c => !(c.flags & PooledConnectionFlags.preReserved) && c.queryCount < maxDistribution,
       );
       if (nonReservedConnections.length === 0) {
+        // No idle connection can take another query. Grow the pool only if
+        // the number of still-handshaking connections is less than the
+        // backlog — otherwise those pending connections will drain the
+        // queue on their own once they become ready.
+        //
+        // `release()` hands freshly-connected slots to `reservedQueue`
+        // first (and returns early, never feeding `waitingQueue`), so up
+        // to `reservedQueue.length` pending sockets are already spoken for
+        // and don't count as capacity for `waitingQueue`. Without this
+        // adjustment a mixed `reserve()` + plain-query workload
+        // under-provisions.
+        const pending = this.#pendingConnectionsCount();
+        const pendingForWaiting = Math.max(0, pending - this.reservedQueue.length);
+        const unservedWaiters = this.waitingQueue.length - pendingForWaiting;
+        if (unservedWaiters > 0 && this.connections.length < this.maxPoolSize) {
+          this.#tryGrowPool();
+        }
         return;
       }
       const orderedConnections = nonReservedConnections.sort((a, b) => a.queryCount - b.queryCount);
@@ -1079,25 +1141,21 @@ class PostgresAdapter
       let storedError: Error | null = null;
 
       if (this.poolStarted) {
-        // we already started the pool
-        // lets check if some connection is available to retry
+        // We already started the pool. Enqueue the waiter BEFORE any call
+        // that could invoke `onClose` synchronously (e.g. `retry()` →
+        // `#startConnection` → `createConnection` if `password()` throws),
+        // otherwise `release()` would drain the queue before we got into
+        // it and the waiter would hang.
+        const queue = reserved ? this.reservedQueue : this.waitingQueue;
+        queue.push(onConnected);
+
+        // Now check if any existing slot can be retried.
         const pollSize = this.connections.length;
         for (let i = 0; i < pollSize; i++) {
           const connection = this.connections[i];
-          // we need a new connection and we have some connections that can retry
           if (connection.state === PooledConnectionState.closed) {
             if (connection.retry()) {
-              // lets wait for connection to be released
-              if (!retry_in_progress) {
-                // avoid adding to the queue twice, we wanna to retry every available pool connection
-                retry_in_progress = true;
-                if (reserved) {
-                  // we are not sure what connection will be available so we dont pre reserve
-                  this.reservedQueue.push(onConnected);
-                } else {
-                  this.waitingQueue.push(onConnected);
-                }
-              }
+              retry_in_progress = true;
             } else {
               // we have some error, lets grab it and fail if unable to start a connection
               storedError = connection.storedError;
@@ -1108,17 +1166,41 @@ class PostgresAdapter
           }
         }
         if (!all_closed && !retry_in_progress) {
-          // is possible to connect because we have some working connections, or we are just without network for some reason
-          // wait for connection to be released or fail
-          if (reserved) {
-            // we are not sure what connection will be available so we dont pre reserve
-            this.reservedQueue.push(onConnected);
-          } else {
-            this.waitingQueue.push(onConnected);
-          }
+          // Some slots are pending or connected — caller will be served
+          // when they finish. If the pool isn't at max yet, open another
+          // connection in parallel rather than letting everyone pile up
+          // behind the first socket.
+          this.#tryGrowPool();
         } else if (!retry_in_progress) {
-          // impossible to connect or retry
-          onConnected(storedError ?? this.connectionClosedError(), null);
+          // Every existing slot is closed and `retry()` refused all of
+          // them. That's the non-retryable class of errors (bad password,
+          // unknown auth method, TLS failures). Opening another connection
+          // with the SAME `connectionInfo` will hit the identical failure
+          // and just burn a TCP+auth round-trip per waiter — UNLESS the
+          // password is supplied as a function (dynamic credential, e.g.
+          // IAM token), in which case a fresh attempt may genuinely pick
+          // up a new secret.
+          if (typeof this.connectionInfo.password === "function") {
+            // Prefer growing the pool when there's room; otherwise reuse
+            // one of the existing closed slots via `forceRetry()` so the
+            // `max: 1` case (and any already-at-max pool) can still
+            // recover after credentials rotate.
+            if (!this.#tryGrowPool()) {
+              for (let i = 0; i < pollSize; i++) {
+                const c = this.connections[i];
+                if (c.state === PooledConnectionState.closed && c.forceRetry()) {
+                  break;
+                }
+              }
+            }
+          } else {
+            // Impossible to retry with the current credentials. Pull the
+            // waiter back out of the queue and fail it directly with the
+            // cached error.
+            const idx = queue.indexOf(onConnected);
+            if (idx !== -1) queue.splice(idx, 1);
+            onConnected(storedError ?? this.connectionClosedError(), null);
+          }
         }
         return;
       }
@@ -1129,15 +1211,12 @@ class PostgresAdapter
         this.waitingQueue.push(onConnected);
       }
       this.poolStarted = true;
-      const pollSize = this.connections.length;
-      // pool is always at least 1 connection
-      const firstConnection = new PooledPostgresConnection(this.connectionInfo, this);
-      this.connections[0] = firstConnection;
-      if (reserved) {
+      // Only open one connection for the first query. Further connections
+      // are opened lazily by `flushConcurrentQueries()` as demand grows,
+      // up to `maxPoolSize`.
+      const firstConnection = this.#tryGrowPool();
+      if (reserved && firstConnection) {
         firstConnection.flags |= PooledConnectionFlags.preReserved; // lets pre reserve the first connection
-      }
-      for (let i = 1; i < pollSize; i++) {
-        this.connections[i] = new PooledPostgresConnection(this.connectionInfo, this);
       }
       return;
     }
@@ -1168,8 +1247,10 @@ class PostgresAdapter
         connectionWithLeastQueries.flags |= PooledConnectionFlags.preReserved;
       }
 
-      // no connection available to be reserved lets wait for a connection to be released
+      // No ready connection can be reserved. Grow the pool if we still can,
+      // so the caller isn't stuck waiting behind the currently-open sockets.
       this.reservedQueue.push(onConnected);
+      this.#tryGrowPool();
     } else {
       this.waitingQueue.push(onConnected);
       this.flushConcurrentQueries();

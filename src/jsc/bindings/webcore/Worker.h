@@ -74,18 +74,26 @@ struct WorkerOptions;
 ///         │        under lock)         │
 ///         │                            │
 ///         └────────────┬───────────────┘
-///                      │ dispatchExit (worker thread,
-///                      │   under m_toWorker.lock)
+///                      │ close task (parent thread)
 ///                      ▼
 ///                 ┌────────┐  'close' event   ┌────────┐
-///                 │Closing │ ────────────────►│ Closed │
+///                 │Closing │ ───────────────► │ Closed │
 ///                 └────────┘  dispatched      └────────┘
-///                             (close task, parent thread)
 ///
 /// Closing exists so that inside the 'close'/'exit' handler threadId reads
 /// -1 and isOnline() is false (old ClosingFlag behaviour) while postMessage()
 /// — which only gates on Closed (old TerminatedFlag behaviour) — still
 /// accepts and silently drops the message, matching browser/Node semantics.
+///
+/// The parent-thread placement of the Closing transition is load-bearing for
+/// the final-message window: a worker that does `parentPort.postMessage(x)`
+/// and then exits posts (1) drainToParent and (2) the close task to the parent
+/// in that order. Both are Closing-stores on the worker thread would let
+/// drainToParent's message event observe `wasTerminated()==true` (threadId→-1,
+/// silent ref/unref). Keeping Closing parent-thread-only preserves the
+/// pre-refactor FIFO guarantee. The inbox-close gate in enqueueToWorker is a
+/// separate `MessageInbox::closed` flag set under the inbox lock on the worker
+/// thread, so the ref-leak window on dispatchExit is still closed.
 ///
 /// m_terminateRequested is orthogonal: set once by terminate(), gates
 /// dispatchEvent()/setKeepAlive(), and is mirrored into the Zig side via
@@ -97,8 +105,7 @@ public:
     enum class State : uint8_t {
         Pending, // created; worker thread starting up
         Running, // dispatchOnline has fired; worker event loop is spinning
-        Closing, // set in dispatchExit (worker thread, under m_toWorker.lock);
-                 // parent is still to dispatch the 'close' event
+        Closing, // worker thread has exited; close task is dispatching the 'close' event
         Closed, // close event dispatched on the parent; worker is fully done
     };
 
@@ -120,12 +127,7 @@ public:
     bool postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&&);
 
     // -- State queries (safe from any thread; all loads are atomic) ----------
-    // wasTerminated: the close event has been dispatched on the parent. Used
-    // for the user-visible `threadId === -1` and inspector `terminated` flags.
-    // Gated on `Closed` (not `Closing`) because Closing is set on the worker
-    // thread before the parent drains final messages — the user's 'message'
-    // handler for a message posted just before exit still sees a live worker.
-    bool wasTerminated() const { return m_state.load() == State::Closed; }
+    bool wasTerminated() const { return m_state.load() >= State::Closing; }
     bool hasPendingActivity() const { return m_state.load() != State::Closed; }
     bool isOnline() const { return m_state.load() == State::Running; }
 
@@ -155,6 +157,13 @@ public:
         WTF::Lock lock;
         WTF::Deque<MessageWithMessagePorts> queue WTF_GUARDED_BY_LOCK(lock);
         std::atomic<bool> drainScheduled { false };
+        // Set by dispatchExit (worker thread for m_toWorker; never for
+        // m_toParent — parent teardown doesn't use this) to stop enqueueToWorker
+        // from taking a parent event-loop ref it couldn't balance. Distinct
+        // from Worker::State::Closing so that state transitions remain
+        // parent-thread-observable (close-event timing) while the inbox gate
+        // can flip synchronously on the worker thread.
+        bool closed WTF_GUARDED_BY_LOCK(lock) { false };
     };
 
     void enqueueToParent(MessageWithMessagePorts&&);

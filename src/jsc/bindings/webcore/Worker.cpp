@@ -236,12 +236,13 @@ void Worker::enqueueToWorker(MessageWithMessagePorts&& message)
     auto* parentContext = scriptExecutionContext();
     {
         Locker locker { m_toWorker.lock };
-        // Closing/Closed: silently drop. dispatchExit synchronously transitions
-        // to Closing on the worker thread under this same lock before it
-        // clears the queue, so any enqueue after that point would leak a
-        // parent event-loop ref (the message would never drain).
-        State s = m_state.load();
-        if (s == State::Closing || s == State::Closed)
+        // Inbox closed: silently drop. dispatchExit synchronously sets this
+        // flag under the same lock before clearing the queue, so any enqueue
+        // after that point would leak a parent event-loop ref (the message
+        // would never drain). This is a separate flag from State::Closing
+        // because that transition is parent-thread-only for the final-message
+        // `wasTerminated()` FIFO guarantee — see Worker.h.
+        if (m_toWorker.closed)
             return;
         // Ref the parent event loop for each enqueued message. Without this,
         // an unref'd worker's messages are lost because the parent exits
@@ -255,7 +256,7 @@ void Worker::enqueueToWorker(MessageWithMessagePorts&& message)
         // already scheduled, don't double-schedule — it will see this
         // message. drainScheduled is only set/cleared under the lock so
         // the load/store pair is not a race.
-        if (s != State::Running || m_toWorker.drainScheduled.load(std::memory_order_relaxed))
+        if (m_state.load() != State::Running || m_toWorker.drainScheduled.load(std::memory_order_relaxed))
             return;
         m_toWorker.drainScheduled.store(true, std::memory_order_relaxed);
     }
@@ -420,13 +421,10 @@ void Worker::terminate()
 
 void Worker::setKeepAlive(bool keepAlive)
 {
-    // Once terminate() has been called or the close event has dispatched, the
+    // Once terminate() has been called or the close task has started, the
     // worker no longer participates in the parent's liveness — the close
-    // task is the last thing to touch parent_poll_ref. The `== Closed` gate
-    // keeps ref/unref working inside the user's 'message' handler for a
-    // message posted just before the worker exited (State::Closing is set on
-    // the worker thread before the parent drains the final queue).
-    if (m_terminateRequested.load() || m_state.load() == State::Closed)
+    // task is the last thing to touch parent_poll_ref.
+    if (m_terminateRequested.load() || m_state.load() >= State::Closing)
         return;
     WebWorker__setRef(impl_, keepAlive);
 }
@@ -597,12 +595,15 @@ bool Worker::dispatchExit(int32_t exitCode)
     // Drop any queued messages and count their parent refs. Each message in
     // m_toWorker.queue held one parent event-loop ref (from enqueueToWorker)
     // that won't be balanced by drainInbox — the worker VM is torn down.
-    // Transitioning to Closing under the same lock makes enqueueToWorker
-    // on the parent observe the flag and silently drop new messages.
+    // Setting m_toWorker.closed under the same lock makes enqueueToWorker
+    // on the parent observe the flag and silently drop new messages. Note
+    // we do NOT transition State::Closing here — that's parent-thread-only
+    // so wasTerminated()/threadId/ref/unref observe a live worker inside
+    // any trailing message handlers (see Worker.h state-machine doc).
     size_t leakedToWorkerRefs;
     {
         Locker locker { m_toWorker.lock };
-        m_state.store(State::Closing);
+        m_toWorker.closed = true;
         leakedToWorkerRefs = m_toWorker.queue.size();
         m_toWorker.queue.clear();
         m_toWorker.drainScheduled.store(false, std::memory_order_relaxed);
@@ -618,7 +619,7 @@ bool Worker::dispatchExit(int32_t exitCode)
             // handlers observe threadId == -1 and isOnline() == false while
             // postMessage() (gated only on Closed) still accepts and drops the
             // message, matching browser/Node and pre-refactor behaviour.
-            // (We already transitioned to Closing on the worker thread above.)
+            protectedThis->m_state.store(State::Closing);
 
             if (protectedThis->hasEventListeners(eventNames().closeEvent)) {
                 auto event = CloseEvent::create(exitCode == 0, static_cast<unsigned short>(exitCode), exitCode == 0 ? "Worker terminated normally"_s : "Worker exited abnormally"_s);

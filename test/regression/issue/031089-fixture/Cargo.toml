@@ -1,0 +1,21 @@
+# Compile-only fixture for test/regression/issue/031089.test.ts — verifies
+# that `bun_core::AtomicCell<T>` refuses to grant `Send`/`Sync` to a
+# `Copy + !Send` payload (the coderabbit soundness finding). The test
+# invokes `cargo check` on this crate and asserts the expected trait-bound
+# error fires.
+#
+# Detached from the parent workspace so `cargo check` on the top-level
+# doesn't pull it in (it intentionally fails to compile).
+[workspace]
+
+[package]
+name = "issue_31089_fixture"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+bun_core = { path = "../../../../src/bun_core" }
+
+[lib]
+path = "src/lib.rs"

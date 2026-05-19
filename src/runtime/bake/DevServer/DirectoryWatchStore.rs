@@ -297,14 +297,11 @@ impl DirectoryWatchStore {
         let dir_name: Box<[u8]> = Box::<[u8]>::from(dir_name_to_watch);
         // errdefer free(dir_name) — handled by Drop.
 
-        // TODO(port): Zig sets key_ptr to a sub-slice of `dir_name` (trailing
-        // slash trimmed) while the allocation backing it is the full dupe.
-        // With Box<[u8]> keys we instead dupe the trimmed slice as the key and
-        // keep `dir_name` separately for addDirectory/getHash. Verify Watcher
-        // does not retain `dir_name` beyond this call.
-        let key: Box<[u8]> = Box::<[u8]>::from(
-            strings::paths::without_trailing_slash_windows_path(&dir_name),
-        );
+        // PORT NOTE: Zig repoints `gop.key_ptr` to a trailing-slash-trimmed
+        // sub-slice of the duped `dir_name`. This port's `get_or_put` already
+        // boxed (and owns) an identical trimmed key from `dir_name_to_watch`,
+        // so the entry's key at `gop_index` is already correct — no second
+        // dupe is needed. `dir_name` is kept separately for addDirectory/getHash.
 
         // SAFETY: `dev` is a valid *mut DevServer for the duration of this call.
         let watch_index = match unsafe { &mut (*dev).bun_watcher }.add_directory::<false>(
@@ -340,15 +337,15 @@ impl DirectoryWatchStore {
                 index
             }
         };
-        watches.put_assume_capacity(
-            key,
-            Entry {
-                dir: fd,
-                dir_fd_owned: owned_fd,
-                first_dep: dep,
-                watch_index,
-            },
-        );
+        // `get_or_put` already inserted and owns the (trimmed) key at
+        // `gop_index`; only the value is a placeholder. Write the real entry
+        // directly instead of re-hashing and freeing a freshly-duped key.
+        watches.values_mut()[gop_index] = Entry {
+            dir: fd,
+            dir_fd_owned: owned_fd,
+            first_dep: dep,
+            watch_index,
+        };
         let _ = dir_name; // keep alive past add_directory; dropped here
         Ok(())
     }

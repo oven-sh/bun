@@ -1147,11 +1147,17 @@ impl VirtualMachine {
             self.macro_event_loop.virtual_machine = NonNull::new(std::ptr::from_mut(self));
             self.macro_event_loop.global = NonNull::new(self.global);
             self.macro_event_loop.concurrent_tasks = Default::default();
-            if SOURCE_CODE_PRINTER.get().is_none() {
-                SOURCE_CODE_PRINTER_FROM_MACRO.set(true);
-            }
-            ensure_source_code_printer();
         }
+        // Idempotent; outside the `has_enabled_macro_mode` guard because
+        // `__bun_macro_context_deinit` runs per-job (RuntimeTranspilerStore
+        // scopeguard, JSTranspiler TransformTask, bundler `Worker::deinit`) and
+        // frees the printer while this VM survives with the flag still set —
+        // the next macro on the same pool thread would otherwise skip re-init
+        // and panic at `SOURCE_CODE_PRINTER.get().expect(...)`.
+        if SOURCE_CODE_PRINTER.get().is_none() {
+            SOURCE_CODE_PRINTER_FROM_MACRO.set(true);
+        }
+        ensure_source_code_printer();
         self.transpiler.options.target = bun_ast::Target::BunMacro;
         self.transpiler
             .resolver

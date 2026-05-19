@@ -15,6 +15,10 @@ pub struct Winsize {
 unsafe impl crate::ffi::Zeroable for Winsize {}
 // SAFETY: `#[repr(C)]` over four `u16` — exactly 8 bytes, no padding.
 crate::unsafe_impl_atom!(Winsize);
+// SAFETY: `Winsize` is a plain `Send` scalar struct; publishing terminal-size
+// snapshots through `AtomicCell` does not transfer ownership of pointed-to or
+// thread-confined state.
+unsafe impl crate::atomic_cell::AtomSend for Winsize {}
 
 #[repr(C)]
 #[derive(Copy, Clone, Eq, PartialEq)]

@@ -230,9 +230,8 @@ pub unsafe trait Atom: Copy {
 /// etc. — so the auto-trait bound for `AtomicCell<T>: Send + Sync` lives
 /// here, not on [`Atom`].
 ///
-/// The `unsafe_impl_atom!` macro implements `AtomSend` for the built-in
-/// numeric types (all of which are `Send`). The pointer specializations
-/// below also implement `AtomSend` directly, matching the unconditional
+/// The built-in scalar impls below opt in explicitly, and the pointer
+/// specializations implement `AtomSend` directly, matching the unconditional
 /// `AtomicPtr<U>: Send + Sync` story — the atomic op makes the address
 /// transfer well-defined, and what the receiver dereferences is on them.
 ///
@@ -318,14 +317,6 @@ macro_rules! unsafe_impl_atom {
                 unsafe { $crate::atomic_cell::_dispatch_cas::<$T>(p, cur, new, s, f) }
             }
         }
-        // SAFETY: caller of `unsafe_impl_atom!` is asserting `$T` is safe
-        // to use inside `AtomicCell` — including cross-thread carriage,
-        // which for the typical POD scalar / fixed-layout struct shape this
-        // macro is meant for is trivially satisfied. Hand-roll `unsafe impl
-        // Atom for FunkyType` (without using this macro) if the cross-thread
-        // story needs separate consideration; that path opts out of
-        // `AtomSend` until explicitly added.
-        unsafe impl $crate::atomic_cell::AtomSend for $T {}
     )+};
 }
 
@@ -432,6 +423,19 @@ pub unsafe fn _dispatch_cas<T: Copy>(
 // ── Built-in Atom impls ────────────────────────────────────────────────────
 
 unsafe_impl_atom!(
+    bool, char, u8, u16, u32, u64, usize, i8, i16, i32, i64, isize, f32, f64,
+);
+
+macro_rules! unsafe_impl_builtin_atomsend {
+    ($($T:ty),+ $(,)?) => {$(
+        // SAFETY: built-in scalar atomics are plain `Send` value types; moving
+        // their bits between threads via the matching `AtomicU*` backing does
+        // not violate any type-specific invariant.
+        unsafe impl AtomSend for $T {}
+    )+};
+}
+
+unsafe_impl_builtin_atomsend!(
     bool, char, u8, u16, u32, u64, usize, i8, i16, i32, i64, isize, f32, f64,
 );
 
@@ -747,18 +751,8 @@ mod tests {
         assert_eq!(c.load(), 10);
     }
 
-    /// Regression test for the auto-trait hole closed by `AtomSend`. A
-    /// downstream `unsafe impl Atom for FunkyCopy` (where `FunkyCopy: Copy`
-    /// but `!Send` and the macro is *not* used) must not auto-derive
-    /// `Send + Sync` on `AtomicCell<FunkyCopy>`. The check is at compile
-    /// time: this test exists so a future refactor that broadens the
-    /// `Send`/`Sync` bound trips a doc-visible signpost. The negative
-    /// invariant is in the adjacent `compile_fail` doctest on `Atom` /
-    /// `AtomSend` (a positive integration-test sweep is sufficient here).
     #[test]
     fn atomic_cell_atomsend_marker_is_required_for_send() {
-        // Compile-time witness: the built-in scalar Atom impls also satisfy
-        // AtomSend, so the standard usage path still works.
         fn assert_send<T: Send>() {}
         fn assert_sync<T: Sync>() {}
         assert_send::<AtomicCell<u64>>();
@@ -767,5 +761,66 @@ mod tests {
         assert_sync::<AtomicCell<*mut u8>>();
         assert_send::<AtomicCell<Option<NonNull<u8>>>>();
         assert_sync::<AtomicCell<Option<NonNull<u8>>>>();
+
+        #[repr(C)]
+        #[derive(Copy, Clone)]
+        struct FunkyCopy {
+            bits: u32,
+            _not_send: core::marker::PhantomData<*const ()>,
+        }
+
+        // SAFETY: test fixture only. `FunkyCopy` is a 4-byte no-padding
+        // wrapper around `u32`, so it satisfies `Atom`'s representation
+        // contract while deliberately remaining `!Send` / `!Sync`. This must
+        // use the exported macro: the regression is that `unsafe_impl_atom!`
+        // used to grant `AtomSend` too broadly.
+        crate::unsafe_impl_atom!(FunkyCopy);
+
+        mod negative_probe {
+            use core::marker::PhantomData;
+
+            pub(super) struct Probe<T: ?Sized>(PhantomData<fn() -> T>);
+            impl<T: ?Sized> Probe<T> {
+                pub(super) fn new() -> Self {
+                    Self(PhantomData)
+                }
+            }
+
+            pub(super) trait NotSendA {
+                fn check_send(&self) {}
+            }
+            impl<T: ?Sized> NotSendA for Probe<T> {}
+            pub(super) trait NotSendB {
+                fn check_send(&self) {}
+            }
+            impl<T: Send + ?Sized> NotSendB for Probe<T> {}
+
+            pub(super) trait NotSyncA {
+                fn check_sync(&self) {}
+            }
+            impl<T: ?Sized> NotSyncA for Probe<T> {}
+            pub(super) trait NotSyncB {
+                fn check_sync(&self) {}
+            }
+            impl<T: Sync + ?Sized> NotSyncB for Probe<T> {}
+        }
+
+        macro_rules! assert_not_send {
+            ($T:ty) => {{
+                use negative_probe::{NotSendA as _, NotSendB as _};
+                negative_probe::Probe::<$T>::new().check_send();
+            }};
+        }
+        macro_rules! assert_not_sync {
+            ($T:ty) => {{
+                use negative_probe::{NotSyncA as _, NotSyncB as _};
+                negative_probe::Probe::<$T>::new().check_sync();
+            }};
+        }
+
+        assert_not_send!(FunkyCopy);
+        assert_not_sync!(FunkyCopy);
+        assert_not_send!(AtomicCell<FunkyCopy>);
+        assert_not_sync!(AtomicCell<FunkyCopy>);
     }
 }

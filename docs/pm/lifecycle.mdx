@@ -63,7 +63,7 @@ Defining `trustedDependencies` in `package.json` **replaces** the default list r
 | `trustedDependencies: ["pkg-a", ...]` | **Only** the listed packages. The default list is ignored.   |
 | `trustedDependencies: []`             | **No** packages, including none from the default list.       |
 
-Set `trustedDependencies: []` when you want to opt out of the default allow list entirely without passing `--ignore-scripts` on every install. To trust a specific subset of packages, list them explicitly — you do not need to re-list entries from the default list for packages you already depend on.
+Set `trustedDependencies: []` when you want to opt out of the default allow list entirely without passing `--ignore-scripts` on every install. If you define `trustedDependencies` with an explicit list, include any packages from the [default list](https://github.com/oven-sh/bun/blob/main/src/install/default-trusted-dependencies.txt) whose lifecycle scripts you still need (for example, `sharp` or `esbuild`) — they are no longer trusted implicitly.
 
 ---
 

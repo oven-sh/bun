@@ -2500,11 +2500,12 @@ impl Data {
                     args: crate::StoreSlice::new(args.into_bump_slice()),
                     body: G::FnBody {
                         loc: el.body.loc,
-                        // Shares `stmts` with the source arrow. Matches the
-                        // pre-existing behavior (Zig `deep_clone` left `stmts`
-                        // aliased). Neither clone may call `slice_mut()` on
-                        // `body.stmts` while the other is live.
-                        stmts: el.body.stmts.reborrow_shared(),
+                        // Allocate a fresh arena-backed `[Stmt]` for the clone
+                        // so `body.stmts.slice_mut()` on either the source or
+                        // the clone operates on disjoint memory. Stmts are POD
+                        // (Copy); deeper pointers inside each Stmt still reach
+                        // shared AST nodes, which is the StoreRef discipline.
+                        stmts: el.body.stmts.shallow_copy_in(bump),
                     },
                     is_async: el.is_async,
                     has_rest_arg: el.has_rest_arg,
@@ -2551,11 +2552,11 @@ impl Data {
                         Some(tag) => Some(tag.deep_clone_no_detach(bump)?),
                         None => None,
                     },
-                    // Shares `parts` with the source template. Matches the
-                    // pre-existing behavior (Zig `deep_clone` left `parts`
-                    // aliased). Neither clone may call `slice_mut()` on
-                    // `parts` while the other is live.
-                    parts: el.parts.reborrow_shared(),
+                    // Allocate a fresh arena-backed `[TemplatePart]` for the
+                    // clone so `parts.slice_mut()` on either handle operates
+                    // on disjoint memory (closes the StoreSlice aliasing UB
+                    // previously papered over by `Copy` — #31088).
+                    parts: el.parts.shallow_copy_in(bump),
                     // `TemplateContents` is POD-shaped; Zig copied `el.head` by
                     // value. `shallow_clone` is the safe field-wise copy.
                     head: el.head.shallow_clone(),

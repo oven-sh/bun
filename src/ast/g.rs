@@ -346,10 +346,11 @@ impl Fn {
             args: StoreSlice::new_mut(args),
             body: FnBody {
                 loc: self.body.loc,
-                // Shares `stmts` with `self` (same as Zig's deep_clone). The
-                // two handles must not both call `slice_mut()` — documented
-                // via `reborrow_shared` rather than a silent `Copy`.
-                stmts: self.body.stmts.reborrow_shared(),
+                // Allocate a fresh arena-backed `[Stmt]` for the clone so
+                // neither `self.body.stmts.slice_mut()` nor the clone's
+                // `body.stmts.slice_mut()` can form aliased `&mut [Stmt]`
+                // (closes the StoreSlice aliasing UB — #31088).
+                stmts: self.body.stmts.shallow_copy_in(bump),
             },
             arguments_ref: self.arguments_ref,
             flags: self.flags,

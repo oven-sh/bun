@@ -1448,15 +1448,20 @@ impl<'a> Parser<'a> {
                     //    module.exports = require('./foo.js');
                     //
                     // An example is react-dom/index.js, which does a DCE check.
-                    // SAFETY: arena-lifetime `&mut [Stmt]` borrow. The `part.stmts =`
-                    // rewrite below abandons (but does not free) the allocation
-                    // the returned slice points at, so the borrow stays valid.
-                    // Nothing else holds a `StoreSlice` over this memory — `part`
-                    // is the unique owner and this loop iteration is single-threaded.
-                    let part_stmts: &mut [Stmt] = unsafe { part.stmts.slice_mut_unbound() };
+                    // Take ownership of `part.stmts` so the `part.stmts = …`
+                    // rewrite below doesn't contend with the `&mut [Stmt]`
+                    // borrow. If no rewrite fires we write `part_stmts_ss`
+                    // back at the bottom of the iteration.
+                    let mut part_stmts_ss: bun_ast::StoreSlice<Stmt> =
+                        core::mem::take(&mut part.stmts);
+                    let part_stmts: &mut [Stmt] = part_stmts_ss.slice_mut();
                     if part_stmts.len() > 1 {
+                        // Restore and bail — no mutations happened yet.
+                        part.stmts = part_stmts_ss;
                         break;
                     }
+                    let orig_len = part_stmts.len();
+                    let mut rewrote = false;
 
                     for j in 0..part_stmts.len() {
                         let stmt = &mut part_stmts[j];
@@ -1491,7 +1496,7 @@ impl<'a> Parser<'a> {
                                         let stmt_loc = stmt.loc;
                                         part.stmts = {
                                             let mut new_stmts = BumpVec::<Stmt>::with_capacity_in(
-                                                part.stmts.len() + 1,
+                                                orig_len + 1,
                                                 p.arena,
                                             );
                                             // PERF(port): was appendSliceAssumeCapacity
@@ -1508,6 +1513,7 @@ impl<'a> Parser<'a> {
                                             new_stmts.extend_from_slice(&part_stmts[j + 1..]);
                                             bun_ast::StoreSlice::from_bump(new_stmts)
                                         };
+                                        rewrote = true;
 
                                         part.import_record_indices.push(req.import_record_index);
                                         p.symbols.as_mut_slice()
@@ -1547,6 +1553,11 @@ impl<'a> Parser<'a> {
                                 let _ = bin_ptr;
                             }
                         }
+                    }
+                    // Restore the original slice if we didn't rewrite
+                    // `part.stmts` (the loop body may have found no match).
+                    if !rewrote {
+                        part.stmts = part_stmts_ss;
                     }
                     let _ = &mut *part;
                     // PORT NOTE: Zig had no explicit continue/break here; loop continues

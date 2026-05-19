@@ -195,10 +195,12 @@ pub fn fold_string_addition(
                             return Some(Expr::init(
                                 E::Template {
                                     tag: None,
-                                    // Aliases `right.parts` (not `Copy`) — the
-                                    // source template is dropped right after,
-                                    // so no two callers hold `slice_mut()`.
-                                    parts: right.parts.reborrow_shared(),
+                                    // Allocate a fresh `[TemplatePart]` arena
+                                    // slice for the folded template so it and
+                                    // the source `right` template own disjoint
+                                    // `parts` storage — closes the StoreSlice
+                                    // aliasing UB (#31088).
+                                    parts: right.parts.shallow_copy_in(bump),
                                     head: e::TemplateContents::Cooked(join_strings(
                                         left.get(),
                                         right.head.cooked(),
@@ -285,14 +287,12 @@ pub fn fold_string_addition(
                                     ));
                                     left.parts_mut()[i].tail = new_tail;
 
-                                    let new_parts = if right.parts().is_empty() {
-                                        // Reuse the same arena-backed slice.
-                                        left.parts.reborrow_shared()
-                                    } else {
+                                    if !right.parts().is_empty() {
                                         // std.mem.concat → bump-allocated concat
-                                        concat_parts(bump, left.parts(), right.parts())
-                                    };
-                                    left.parts = new_parts;
+                                        left.parts = concat_parts(bump, left.parts(), right.parts());
+                                    }
+                                    // else: leave `left.parts` untouched —
+                                    // nothing to append.
                                     return Some(lhs);
                                 }
                             } else if left.head.is_utf8() && right.head.is_utf8() {
@@ -302,10 +302,11 @@ pub fn fold_string_addition(
                                     matches!(r.data, Data::EInlinedEnum(_)),
                                 );
                                 left.head = e::TemplateContents::Cooked(new_head);
-                                // `right` is a `StoreRef<Template>`; the source
-                                // template is abandoned here, so aliasing the
-                                // slice is safe.
-                                left.parts = right.parts.reborrow_shared();
+                                // Allocate a fresh `[TemplatePart]` arena slice
+                                // for `left` so its `parts` storage is disjoint
+                                // from the source `right` template — closes the
+                                // StoreSlice aliasing UB (#31088).
+                                left.parts = right.parts.shallow_copy_in(bump);
                                 return Some(lhs);
                             }
                         }

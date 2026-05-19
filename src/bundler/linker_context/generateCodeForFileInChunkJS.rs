@@ -287,15 +287,13 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         // SAFETY: see `parts` raw-pointer note above.
         && unsafe { (*parts)[namespace_export_part_index as usize].is_live }
     {
-        // SAFETY: arena-lifetime read borrow. `parts` is a raw pointer into
-        // an arena-owned `[Part]` slice (see `parts` note above); no other
-        // site holds a `slice_mut()` over the same `stmts` allocation in
-        // this function.
-        let ns_part_stmts: &[Stmt] = unsafe {
-            (*parts)[namespace_export_part_index as usize]
-                .stmts
-                .slice_unbound()
-        };
+        // SAFETY: in-bounds (checked above); `parts` is the raw-pointer
+        // window documented at the top of this function — borrowing a
+        // `&Part` out of it is sound while the MultiArrayList is frozen
+        // for the duration of the call. Outside the unsafe block the
+        // `part.stmts.slice()` call is borrow-checked by Rust.
+        let part: &Part = unsafe { &(*parts)[namespace_export_part_index as usize] };
+        let ns_part_stmts: &[Stmt] = part.stmts.slice();
         if let Err(err) = convert_stmts_for_chunk(
             c,
             source_index as u32,

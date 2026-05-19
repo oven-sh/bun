@@ -114,7 +114,15 @@ fn prop_full_copy(p: &Property) -> Property {
 }
 
 #[inline]
-fn class_copy(c: &G::Class) -> G::Class {
+fn class_copy<'a>(c: &G::Class, bump: &'a bun_alloc::Arena) -> G::Class {
+    // Allocate a fresh `[Property]` arena slice for the clone. The elements
+    // are shallow-copied via `prop_full_copy` (matches Zig's bitwise-copy
+    // semantic), so any `properties.slice_mut()` on either the source or the
+    // clone operates on disjoint memory — closes the StoreSlice aliasing UB
+    // (#31088). Deeper pointers inside each `Property` still reach shared
+    // AST nodes, which is the `StoreRef` discipline and unaffected here.
+    let src = c.properties.slice();
+    let dst: &mut [Property] = bump.alloc_slice_fill_with(src.len(), |i| prop_full_copy(&src[i]));
     G::Class {
         class_keyword: c.class_keyword,
         // SAFETY: see `prop_full_copy`.
@@ -123,9 +131,7 @@ fn class_copy(c: &G::Class) -> G::Class {
         extends: c.extends,
         body_loc: c.body_loc,
         close_brace_loc: c.close_brace_loc,
-        // Shares `properties` with the source class (pre-existing behavior).
-        // Callers must not call `slice_mut()` on both handles concurrently.
-        properties: c.properties.reborrow_shared(),
+        properties: js_ast::StoreSlice::new_mut(dst),
         has_decorators: c.has_decorators,
         should_lower_standard_decorators: c.should_lower_standard_decorators,
     }
@@ -2398,7 +2404,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             comma_parts.push(p.assign_to(init_ref, init_start_expr, loc));
 
             // _class = class { ... }
-            let class_expr = p.new_expr(class_copy(class), loc);
+            let class_expr = p.new_expr(class_copy(class, p.arena), loc);
             comma_parts.push(p.assign_to(expr_class_ref.unwrap(), class_expr, loc));
 
             comma_parts.extend_from_slice(&suffix_exprs);

@@ -139,19 +139,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // E::Function payload after boxing rather than copying `func`.
         let mut func = func;
         func.flags.insert(flags::Function::IsUniqueFormalParameters);
-        // SAFETY: arena-lifetime read borrow. `func` is moved into
-        // `E::Function` below, but the args backing allocation lives in the
-        // parser arena for `'a` (independent of `func`'s stack slot); the
-        // rest of this function only reads `args` and does not cause any
-        // `slice_mut()` alias.
-        let args: &[G::Arg] = unsafe { func.args.slice_unbound() };
-        let value = p.new_expr(E::Function { func }, loc);
 
-        // Enforce argument rules for accessors
+        // Enforce argument rules for accessors BEFORE moving `func` into the
+        // new `E::Function` expression, so the `&[G::Arg]` borrow from
+        // `func.args.slice()` stays borrow-checked (no `slice_unbound`).
+        // We only need a handful of scalars (len + first two loc's), so
+        // capture them here and drop the borrow before `p.new_expr` below.
+        let (args_len, first_arg_loc, second_arg_loc) = {
+            let args: &[G::Arg] = func.args.slice();
+            (
+                args.len(),
+                args.first().map(|a| a.binding.loc),
+                args.get(1).map(|a| a.binding.loc),
+            )
+        };
         match kind {
             PropertyKind::Get => {
-                if args.len() > 0 {
-                    let r = js_lexer::range_of_identifier(p.source, args[0].binding.loc);
+                if args_len > 0 {
+                    let r = js_lexer::range_of_identifier(
+                        p.source,
+                        first_arg_loc.expect("args_len>0"),
+                    );
                     // TODO(port): Zig used p.keyNameForError(key) inline; borrowck reshape — pre-compute name.
                     let key_name = p.key_name_for_error(key);
                     p.log().add_range_error_fmt(
@@ -165,17 +173,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             PropertyKind::Set => {
-                if args.len() != 1 {
+                if args_len != 1 {
                     let mut r = js_lexer::range_of_identifier(
                         p.source,
-                        if args.len() > 0 {
-                            args[0].binding.loc
-                        } else {
-                            loc
-                        },
+                        first_arg_loc.unwrap_or(loc),
                     );
-                    if args.len() > 1 {
-                        r = js_lexer::range_of_identifier(p.source, args[1].binding.loc);
+                    if args_len > 1 {
+                        r = js_lexer::range_of_identifier(
+                            p.source,
+                            second_arg_loc.expect("args_len>1"),
+                        );
                     }
                     let key_name = p.key_name_for_error(key);
                     p.log().add_range_error_fmt(
@@ -184,13 +191,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         format_args!(
                             "Setter {} must have exactly 1 argument (there are {})",
                             bstr::BStr::new(key_name),
-                            args.len()
+                            args_len,
                         ),
                     );
                 }
             }
             _ => {}
         }
+
+        let value = p.new_expr(E::Function { func }, loc);
 
         // Special-case private identifiers
         match &mut key.data {

@@ -6912,15 +6912,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let mut static_members = BumpVec::<Stmt>::new_in(self.arena);
                 let mut class_properties = BumpVec::<G::Property>::new_in(self.arena);
 
-                // SAFETY: arena-lifetime `&mut [Property]` borrow. `s_class`
-                // is a `StoreRef` into the parser arena; this loop mutates
-                // per-property fields and separately reads/writes unrelated
-                // `s_class.class.*` fields (ts_decorators, class_name). The
-                // `Property` array and the `S::Class` struct live in disjoint
-                // arena allocations, so those accesses cannot alias this
-                // borrow. No other code reaches `class.properties` while the
-                // loop is running (single-threaded visitor).
-                for prop in unsafe { s_class.class.properties.slice_mut_unbound().iter_mut() } {
+                // Take ownership of the `properties` handle so the loop body
+                // can freely mutate other `s_class.class.*` fields (e.g.
+                // `ts_decorators`) without contending with the `&mut self`
+                // reborrow that `properties.slice_mut()` would hold. The
+                // handle is written back below.
+                let mut taken_properties: js_ast::StoreSlice<G::Property> =
+                    core::mem::take(&mut s_class.class.properties);
+                for prop in taken_properties.slice_mut().iter_mut() {
                     // merge parameter decorators with method decorators
                     if prop.flags.contains(Flags::Property::IsMethod) {
                         if let Some(prop_value) = prop.value {

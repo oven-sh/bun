@@ -492,10 +492,14 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             let items_len = items.len();
             if items_len > 0 {
                 if stmt.items.is_empty() {
-                    // Aliases `items` with `stmt.items` — matches the
-                    // pre-existing behavior where `SExportFrom.items` was
-                    // shared with the surviving `SImport.items` via `Copy`.
-                    stmt.items = items.reborrow_shared();
+                    // Allocate a fresh `[ClauseItem]` arena slice for the
+                    // surviving import so its `items` storage is disjoint
+                    // from the caller's — closes the StoreSlice aliasing
+                    // UB that the silent `Copy` in the Zig port papered
+                    // over (#31088). The caller still holds its own slice
+                    // and may `slice_mut()` it without risk of aliased
+                    // `&mut [ClauseItem]` with `stmt.items`.
+                    stmt.items = items.shallow_copy_in(p.arena);
                 } else {
                     // PORT NOTE: Zig `std.mem.concat` — allocate concatenated slice in arena.
                     // ClauseItem fields are all bitwise-copyable; copy raw to avoid Clone bound.
@@ -561,9 +565,10 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 import_record_index,
                 is_single_line: true,
                 default_name,
-                // Aliases the caller's `items` StoreSlice. Matches the
-                // pre-existing behavior (silent `Copy` of the handle).
-                items: items.reborrow_shared(),
+                // Allocate a fresh `[ClauseItem]` arena slice for the new
+                // import so it and the caller's `items` own disjoint
+                // storage — closes the StoreSlice aliasing UB (#31088).
+                items: items.shallow_copy_in(p.arena),
                 namespace_ref,
                 star_name_loc,
                 phase_defer: false,

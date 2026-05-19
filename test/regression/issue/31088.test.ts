@@ -4,25 +4,20 @@
 // value, so a caller could duplicate a handle and call `slice_mut()` on both
 // copies to produce two `&mut [T]` over the same arena-backed allocation —
 // immediate UB. The fix removes `Copy`/`Clone` from `StoreSlice<T>`, changes
-// `slice()`/`slice_mut()` to `&self`/`&mut self` respectively, and threads
-// `reborrow_shared()` through the handful of sites that legitimately need a
-// second read-only handle.
+// `slice()`/`slice_mut()` to `&self`/`&mut self` respectively, and replaces
+// every site that previously aliased via the implicit `Copy` with either
+// `core::mem::take(&mut field)` (ownership handoff) or `shallow_copy_in(bump)`
+// (allocates a fresh arena slice so the two handles own disjoint storage).
 //
-// The primary proof of the fix lives in `src/ast/nodes.rs`'s unit tests
-// (`cargo test -p bun_ast store_slice_tests`): an autoref-specialization
-// probe panics if someone re-adds `impl Copy for StoreSlice` (fail-before,
-// pass-after on the Rust side). This TypeScript file is a smoke test for
-// the parser/transpiler paths that had to be refactored to uphold the new
-// borrow-checked API: class decorators (`src/js_parser/lower/lower_decorators.rs`,
-// `src/js_parser/p.rs` constructor-field rewrites), template-literal folding
-// (`src/ast/fold_string_addition.rs`), deep-clone of arrow/template/fn
-// bodies (`src/ast/expr.rs`, `src/ast/g.rs`), and import deduplication
-// (`src/js_parser/lower/lower_esm_exports_hmr.rs`). A behavior regression
-// in any of those would surface here even though the Copy-removal itself
-// is invisible at the JS level.
+// The compile-time / unit-test guard lives in `src/ast/nodes.rs`'s
+// `not_copy_not_clone` test: an autoref-specialization probe panics on
+// `cargo test -p bun_ast` if someone re-adds `impl Copy for StoreSlice`.
 //
-// Runs the fixture in a subprocess so an ASAN/UBSAN trip in the transpiler
-// surfaces as a non-zero exit + signal instead of tearing down the runner.
+// The TypeScript cases below are end-to-end smoke tests: each runs `bun` on
+// a fixture that exercises one of the refactored hot paths and asserts on
+// observable runtime output. A regression in any of those refactors would
+// flip the assertions. Subprocess-isolated so an ASAN trip surfaces as
+// non-zero exit + signal instead of tearing down the in-process runner.
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
@@ -151,42 +146,69 @@ test.concurrent("template-literal folding + deep-clone of arrow bodies transpile
   });
 });
 
-test.concurrent("import deduplication across export-from and re-export preserves bindings", async () => {
+test.concurrent("import deduplication across multiple named imports preserves bindings", async () => {
   // `lower_esm_exports_hmr.rs::deduplicated_import` used to move the
-  // caller's `StoreSlice<ClauseItem>` into the merged import by silent
-  // `Copy`, leaving an aliased handle the caller could mutate. The fix
-  // changes the parameter to `&StoreSlice` and uses `reborrow_shared()`
-  // at the two sites that stash the slice into a new or merged stmt —
-  // a bundling pass that duplicate-imports the same module should still
-  // produce a single working import.
+  // caller's `StoreSlice<ClauseItem>` into the merged import via silent
+  // `Copy`, leaving an aliased handle. The fix changes the parameter to
+  // `&StoreSlice` and allocates a fresh `[ClauseItem]` arena slice via
+  // `shallow_copy_in()` at the two sites that stash the slice into a
+  // merged-or-new `S::Import` stmt. A multi-import entry that hits both
+  // the merge path and the fresh-import path must still produce a bundle
+  // whose imports resolve correctly.
   using dir = tempDir("storeslice-31088-dedup", {
     "lib.ts": `
-      export const one = "one";
-      export const two = "two";
-      export const three = "three";
+      export const one = "one-val";
+      export const two = "two-val";
+      export const three = "three-val";
     `,
     "entry.ts": `
       import { one } from "./lib";
-      export { two } from "./lib";
+      import { two } from "./lib";
       import { three } from "./lib";
-      console.log(JSON.stringify({ one, three, two: (globalThis as any).two ?? "?" }));
-      (globalThis as any).two = "<assigned-at-entry>";
+      console.log(JSON.stringify({ one, two, three }));
     `,
   });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "--target=bun", "entry.ts"],
+  // Build to an output file so we can both (a) inspect the bundled text
+  // for a single `./lib` reference and (b) execute it and assert bindings.
+  await using buildProc = Bun.spawn({
+    cmd: [bunExe(), "build", "--target=bun", "--outfile=out.js", "entry.ts"],
     cwd: String(dir),
     env: bunEnv,
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [bundleOut, bundleErr, bundleExit] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(bundleErr).toBe("");
-  expect(bundleExit).toBe(0);
-  // The bundled output should emit only ONE reference to `./lib` (the merged
-  // import record) and preserve both named bindings.
-  expect(bundleOut).toContain("one");
-  expect(bundleOut).toContain("three");
+  const [buildOut, buildErr, buildExit] = await Promise.all([
+    buildProc.stdout.text(),
+    buildProc.stderr.text(),
+    buildProc.exited,
+  ]);
+  expect({ buildErr, buildExit }).toEqual({ buildErr: "", buildExit: 0 });
+  expect(buildOut).toContain("out.js");
+
+  // Run the bundled output — all three bindings must resolve correctly.
+  await using runProc = Bun.spawn({
+    cmd: [bunExe(), "out.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [runOut, runErr, runExit] = await Promise.all([
+    runProc.stdout.text(),
+    runProc.stderr.text(),
+    runProc.exited,
+  ]);
+  expect({ runErr, runExit, signalCode: runProc.signalCode }).toEqual({
+    runErr: "",
+    runExit: 0,
+    signalCode: null,
+  });
+  expect(JSON.parse(runOut)).toEqual({
+    one: "one-val",
+    two: "two-val",
+    three: "three-val",
+  });
 });

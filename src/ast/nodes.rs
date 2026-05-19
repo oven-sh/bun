@@ -322,8 +322,10 @@ impl core::fmt::Debug for StoreStr {
 // NOT `Copy`/`Clone`: `slice_mut` hands out `&mut [T]`, so duplicating the
 // handle would let callers form two `&mut [T]` over the same arena memory
 // (immediate UB). Callers that need a detached snapshot go through
-// `core::mem::take(&mut field)` (leaves `EMPTY`) or `reborrow_shared`
-// for read-only aliases.
+// `core::mem::take(&mut field)` (leaves `EMPTY`), and callers that need a
+// second owner (e.g. `deep_clone`, class-to-expression lowering, import
+// dedup) go through `shallow_copy_in(bump)` — which allocates a fresh arena
+// slice so the two handles own disjoint backing storage.
 #[repr(C)]
 pub struct StoreSlice<T> {
     ptr: core::ptr::NonNull<T>,
@@ -394,14 +396,25 @@ impl<T> StoreSlice<T> {
     }
 
     /// Re-borrow as `&mut [T]`. Borrow is tied to `&mut self`, so two calls
-    /// cannot produce overlapping `&mut` slices; the backing arena memory
-    /// lives until arena reset (same invariant as `slice`).
+    /// on the SAME handle cannot produce overlapping `&mut` slices; the
+    /// backing arena memory lives until arena reset (same invariant as
+    /// `slice`).
+    ///
+    /// `StoreSlice<T>` is intentionally NOT `Copy`/`Clone`, which prevents
+    /// the implicit-duplicate-and-mutate pattern that caused #31088. Note
+    /// however that `new_mut` / `shallow_copy_in` / `slice_unbound` / the
+    /// raw-ptr constructors can all produce a *different* `StoreSlice`
+    /// handle aliasing the same backing allocation — those paths are
+    /// either `unsafe` (caller-audited) or allocate fresh storage
+    /// (`shallow_copy_in`). A deliberate alias via
+    /// `StoreSlice::new_mut(other.slice_mut())` is the caller's problem
+    /// (and would rightly show up under Miri).
     #[inline]
     pub fn slice_mut(&mut self) -> &mut [T] {
-        // SAFETY: `&mut self` gives us exclusive access to the handle, and the
+        // SAFETY: `&mut self` gives us exclusive access to the handle; the
         // handle's backing memory is an arena allocation that outlives any
-        // borrow we can hand out. `StoreSlice` is neither `Copy` nor `Clone`,
-        // so no other handle can name this allocation.
+        // borrow we can hand out. See the method doc for the remaining
+        // contract on sibling handles.
         unsafe { core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len as usize) }
     }
 
@@ -447,22 +460,38 @@ impl<T> StoreSlice<T> {
         unsafe { core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len as usize) }
     }
 
-    /// Produce an independent `StoreSlice<T>` handle that aliases the same
-    /// backing allocation for read-only use. This exists because `StoreSlice`
-    /// is not `Copy` — callers that need to stash a second handle for
-    /// read-only purposes (e.g. iterating the slice while also calling a
-    /// helper that takes the whole `StoreSlice` by value) go through here.
+    /// Element-wise shallow copy into a fresh arena allocation. The returned
+    /// `StoreSlice` owns its own backing storage, so subsequent `slice_mut()`
+    /// calls on either handle can't form aliased `&mut [T]` over the same
+    /// memory. Used by `deep_clone` paths and similar sites that previously
+    /// silently aliased via `Copy`.
     ///
-    /// The returned handle MUST NOT be used to call `slice_mut` /
-    /// `slice_mut_unbound` — aliased `&mut [T]` is immediate UB. The method
-    /// is safe because `slice()` alone (returning `&[T]`) cannot produce the
-    /// hazard, but the contract on the resulting handle is real.
+    /// # Safety discussion
+    ///
+    /// Elements are copied **bitwise** (equivalent to `Copy` when it's
+    /// available, but without the `T: Copy` bound — matches the Zig `@memcpy`
+    /// the original port relied on for arena-backed AST types like `Property`
+    /// and `TemplatePart`). This is sound because:
+    /// - Arena allocations have no `Drop` (the arena reclaims them wholesale).
+    /// - AST payload types never contain self-referential pointers.
+    /// - Deeper pointers inside each element (e.g. `StoreRef<_>` inside a
+    ///   `Stmt`) still reach shared arena allocations; that's the
+    ///   `StoreRef` discipline, orthogonal to `StoreSlice` aliasing.
+    ///
+    /// Prefer `alloc_slice_copy` at the call site when `T: Copy` — this
+    /// exists specifically for the AST types that want a bitwise copy but
+    /// can't implement `Copy` (because they carry `bun_alloc::ArenaVec`,
+    /// `StoreRef`, etc. that aren't safely re-Copy-able).
     #[inline]
-    pub fn reborrow_shared(&self) -> StoreSlice<T> {
-        StoreSlice {
-            ptr: self.ptr,
-            len: self.len,
-        }
+    pub fn shallow_copy_in<'b>(&self, bump: &'b bun_alloc::Arena) -> Self {
+        let src = self.slice();
+        // SAFETY: see the doc-comment above. Elements are `ptr::read` into
+        // fresh arena storage; the source `src` retains a bitwise-equal copy
+        // (we never re-drop either). `alloc_slice_fill_with` writes each slot
+        // exactly once, so no uninitialised `T` escapes.
+        let dst: &mut [T] = bump
+            .alloc_slice_fill_with(src.len(), |i| unsafe { core::ptr::read(&src[i]) });
+        StoreSlice::new_mut(dst)
     }
 
     /// Shorten the slice in place. Panics if `new_len > len` (mirrors Zig
@@ -578,23 +607,20 @@ mod store_slice_tests {
         assert_eq!(s2, &[10, 42, 30]);
     }
 
-    // `reborrow_shared` hands out an independent handle that aliases the same
-    // backing allocation. Both handles may call `slice()` concurrently (shared
-    // reads are safe); calling `slice_mut()` on either while the other's
-    // borrow is live is a caller-enforced discipline (documented on the API).
-    #[test]
-    fn reborrow_shared_aliases_read_only() {
-        let mut arr: [u32; 2] = [7, 8];
-        let ss = StoreSlice::new_mut(&mut arr);
-        let clone_view = ss.reborrow_shared();
-        assert_eq!(ss.slice(), clone_view.slice());
-    }
-
+    // Round-trip check on `default()` / `EMPTY`. Two `default()` handles
+    // are both valid for zero-length reads and never alias mutable memory
+    // (there's no backing allocation). The live-arena `shallow_copy_in`
+    // path is exercised end-to-end by the bundler/decorator suites that
+    // re-enter `deep_clone` / `class_copy` / `fold` — see
+    // test/bundler/transpiler/decorators.test.ts and
+    // test/regression/issue/31088.test.ts for the system-level coverage.
     #[test]
     fn default_is_empty() {
         let s: StoreSlice<u32> = StoreSlice::default();
         assert_eq!(s.raw_len(), 0);
         assert!(s.slice().is_empty());
+        let s2: StoreSlice<u32> = StoreSlice::default();
+        assert_eq!(s2.raw_len(), 0);
     }
 }
 

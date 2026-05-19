@@ -3327,6 +3327,16 @@ mod posix_platform_specific_v8_apis {
 #[cfg(unix)]
 mod uv_functions_to_export {
     // TODO(port): move to napi_sys
+    //
+    // Every function here is declared as unit-return/no-args — these are
+    // symbol-export placeholders never called from Rust, so their signatures
+    // are irrelevant to ABI correctness. See the analogous NOTE at
+    // napi_body.rs:3109 (`uv_os_getpid` / `uv_os_getppid`). Real bindings
+    // that the program actually calls live elsewhere (`libuv_sys::libuv::*`
+    // on Windows; ad-hoc `extern "C"` blocks under `src/runtime/cli/` on
+    // Unix). Suppress `clashing_extern_declarations` against those real
+    // signatures.
+    #[allow(clashing_extern_declarations)]
     unsafe extern "C" {
         pub fn uv_accept();
         pub fn uv_async_init();

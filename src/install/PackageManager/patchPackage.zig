@@ -391,29 +391,6 @@ pub fn doPatchCommit(
     };
     defer patchfile_contents.deinit();
 
-    // write the patch contents to temp file then rename
-    var tmpname_buf: [1024]u8 = undefined;
-    const tempfile_name = try bun.fs.FileSystem.tmpname("tmp", &tmpname_buf, bun.fastRandom());
-    const tmpdir = manager.getTemporaryDirectory().handle;
-    const tmpfd = switch (bun.sys.openat(
-        .fromStdDir(tmpdir),
-        tempfile_name,
-        bun.O.RDWR | bun.O.CREAT,
-        0o666,
-    )) {
-        .result => |fd| fd,
-        .err => |e| {
-            Output.err(e, "failed to open temp file", .{});
-            Global.crash();
-        },
-    };
-    defer tmpfd.close();
-
-    if (bun.sys.File.writeAll(.{ .handle = tmpfd }, patchfile_contents.items).asErr()) |e| {
-        Output.err(e, "failed to write patch to temp file", .{});
-        Global.crash();
-    }
-
     @memcpy(resolution_buf[resolution_label.len .. resolution_label.len + ".patch".len], ".patch");
     var patch_filename: []const u8 = resolution_buf[0 .. resolution_label.len + ".patch".len];
     var deinit = false;
@@ -423,9 +400,11 @@ pub fn doPatchCommit(
     }
     defer if (deinit) manager.allocator.free(patch_filename);
 
+    const patches_dir = manager.options.patch_features.commit.patches_dir;
+
     const path_in_patches_dir = bun.path.joinZ(
         &[_][]const u8{
-            manager.options.patch_features.commit.patches_dir,
+            patches_dir,
             patch_filename,
         },
         .posix,
@@ -433,21 +412,81 @@ pub fn doPatchCommit(
 
     var nodefs = bun.jsc.Node.fs.NodeFS{};
     const args = bun.jsc.Node.fs.Arguments.Mkdir{
-        .path = .{ .string = bun.PathString.init(manager.options.patch_features.commit.patches_dir) },
+        .path = .{ .string = bun.PathString.init(patches_dir) },
     };
     if (nodefs.mkdirRecursive(args).asErr()) |e| {
         Output.err(e, "failed to make patches dir {f}", .{bun.fmt.quote(args.path.slice())});
         Global.crash();
     }
 
-    // rename to patches dir
-    if (bun.sys.renameatConcurrently(
-        .fromStdDir(tmpdir),
-        tempfile_name,
+    // Stage the patch file inside the patches dir itself so the final rename
+    // is always same-filesystem. Staging in the cache-drive tempdir breaks
+    // when the project is on a different drive than the install cache
+    // (common on Windows): renameat returns E.XDEV, falls back to CopyFileW,
+    // and CopyFileW fails with EPERM while the source fd is still open.
+    var patches_dir_z_buf: bun.PathBuffer = undefined;
+    const patches_dir_z = bun.path.z(patches_dir, &patches_dir_z_buf);
+    const patches_dir_fd = switch (bun.sys.openat(
         bun.FD.cwd(),
-        path_in_patches_dir,
-        .{ .move_fallback = true },
+        patches_dir_z,
+        bun.O.DIRECTORY | bun.O.RDONLY,
+        0,
+    )) {
+        .result => |fd| fd,
+        .err => |e| {
+            Output.err(e, "failed to open patches dir {f}", .{bun.fmt.quote(patches_dir)});
+            Global.crash();
+        },
+    };
+    defer patches_dir_fd.close();
+
+    // Write the patch contents to a temp file inside patches/ and then rename
+    // to the final filename. The rename stays in the same directory which
+    // means it's atomic (POSIX) / NtSetInformationFile (Windows) with no
+    // cross-device fallback.
+    var tmpname_buf: [1024]u8 = undefined;
+    const tempfile_name = try bun.fs.FileSystem.tmpname("tmp", &tmpname_buf, bun.fastRandom());
+    {
+        const tmpfd = switch (bun.sys.openat(
+            patches_dir_fd,
+            tempfile_name,
+            bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC,
+            0o666,
+        )) {
+            .result => |fd| fd,
+            .err => |e| {
+                Output.err(e, "failed to open temp file", .{});
+                Global.crash();
+            },
+        };
+        // Close the temp fd before the rename so no writable handle is left
+        // open on the source path — belt-and-suspenders for any future
+        // cross-device fallback path.
+        defer tmpfd.close();
+
+        if (bun.sys.File.writeAll(.{ .handle = tmpfd }, patchfile_contents.items).asErr()) |e| {
+            _ = bun.sys.unlinkat(patches_dir_fd, tempfile_name);
+            Output.err(e, "failed to write patch to temp file", .{});
+            Global.crash();
+        }
+    }
+
+    // rename within the patches dir — same directory, same filesystem. Use
+    // plain renameat (which atomically replaces an existing target on POSIX
+    // and Windows) rather than renameatConcurrently: when the target patch
+    // file already exists (re-commit of an existing patch), the concurrent
+    // path falls through to RENAME_EXCHANGE on Linux/macOS and swaps rather
+    // than replaces, leaving the *previous* patch's bytes as a stray
+    // `.<hex>-<hex>.tmp` in the user's patches/ dir.
+    var patch_filename_z_buf: bun.PathBuffer = undefined;
+    const patch_filename_z = bun.path.z(patch_filename, &patch_filename_z_buf);
+    if (bun.sys.renameat(
+        patches_dir_fd,
+        tempfile_name,
+        patches_dir_fd,
+        patch_filename_z,
     ).asErr()) |e| {
+        _ = bun.sys.unlinkat(patches_dir_fd, tempfile_name);
         Output.err(e, "failed renaming patch file to patches dir", .{});
         Global.crash();
     }

@@ -85,6 +85,17 @@ struct WorkerOptions;
 /// — which only gates on Closed (old TerminatedFlag behaviour) — still
 /// accepts and silently drops the message, matching browser/Node semantics.
 ///
+/// The parent-thread placement of the Closing transition is load-bearing for
+/// the final-message window: a worker that does `parentPort.postMessage(x)`
+/// and then exits posts (1) drainToParent and (2) the close task to the parent
+/// in that order. Storing `Closing` on the worker thread between (1) and (2)
+/// would let drainToParent's message event observe `wasTerminated()==true`
+/// (threadId→-1, silent ref/unref). Keeping the store inside (2)'s lambda on
+/// the parent thread preserves the pre-refactor FIFO guarantee — (1) finishes
+/// first and sees Running. The inbox-close gate in enqueueToWorker is a
+/// separate `MessageInbox::closed` flag set under the inbox lock on the worker
+/// thread, so the ref-leak window on dispatchExit is still closed.
+///
 /// m_terminateRequested is orthogonal: set once by terminate(), gates
 /// dispatchEvent()/setKeepAlive(), and is mirrored into the Zig side via
 /// WebWorker__notifyNeedTermination so the worker loop can observe it.
@@ -147,6 +158,13 @@ public:
         WTF::Lock lock;
         WTF::Deque<MessageWithMessagePorts> queue WTF_GUARDED_BY_LOCK(lock);
         std::atomic<bool> drainScheduled { false };
+        // Set by dispatchExit (worker thread for m_toWorker; never for
+        // m_toParent — parent teardown doesn't use this) to stop enqueueToWorker
+        // from taking a parent event-loop ref it couldn't balance. Distinct
+        // from Worker::State::Closing so that state transitions remain
+        // parent-thread-observable (close-event timing) while the inbox gate
+        // can flip synchronously on the worker thread.
+        bool closed WTF_GUARDED_BY_LOCK(lock) { false };
     };
 
     void enqueueToParent(MessageWithMessagePorts&&);
@@ -181,6 +199,10 @@ private:
     // postTaskTo() so the worker thread never dereferences the parent context
     // pointer (which could be freed concurrently).
     const ScriptExecutionContextIdentifier m_parentContextId;
+    // Cached parent VM pointer for atomic refEventLoop/unrefEventLoop from
+    // the worker thread. Same rationale as m_parentContextId — can't touch
+    // the parent's ScriptExecutionContext pointer from the worker thread.
+    void* const m_parentBunVM;
     // This worker's own context identifier (allocated at construction, bound
     // once the worker VM is up).
     const ScriptExecutionContextIdentifier m_clientIdentifier;

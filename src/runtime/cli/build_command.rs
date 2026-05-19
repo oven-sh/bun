@@ -773,6 +773,13 @@ impl BuildCommand {
             }
 
             if ctx.bundler_options.compile {
+                if log_ref.errors > 0 {
+                    log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
+                        Output::error_writer(),
+                    ))?;
+                    Global::exit(1);
+                }
+
                 print_summary(
                     bundled_end,
                     minify_duration,

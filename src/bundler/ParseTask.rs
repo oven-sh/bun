@@ -2579,6 +2579,11 @@ pub mod parse_worker {
             opts.lower_import_meta_main_for_node_js = true;
         }
 
+        // Lower import.meta.env to process.env for targets where process.env is available
+        if target != options::Target::Browser {
+            opts.lower_import_meta_env_to_process_env = true;
+        }
+
         opts.tree_shaking = if task.source_index.is_runtime() {
             true
         } else {

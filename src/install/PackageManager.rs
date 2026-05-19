@@ -1567,6 +1567,13 @@ pub fn init(
                 ) {
                     Ok(f) => break 'child f,
                     Err(e) if e.get_errno() == bun_sys::E::ENOENT => {
+                        // For global installs, the install dir is self-contained.
+                        // Don't walk above it — a stray package.json/package-lock.json
+                        // in a parent directory (e.g. $HOME) isn't the "root package"
+                        // bun should be acting on. See #30658.
+                        if cli.global {
+                            break;
+                        }
                         if let Some(parent) = bun_core::dirname(this_cwd) {
                             this_cwd = strings::without_trailing_slash(parent);
                             continue;
@@ -1637,7 +1644,9 @@ pub fn init(
         // PORT NOTE: reshaped — Zig uses withoutSuffixComptime(.., sep_str ++ "package.json")
 
         // Check if this is a workspace; if so, use root package
-        if subcommand.should_chdir_to_root() {
+        // Global installs are self-contained — don't hop up into a parent
+        // workspace that happens to live above the global dir. See #30658.
+        if subcommand.should_chdir_to_root() && !cli.global {
             if !created_package_json {
                 while let Some(parent) = bun_core::dirname(this_cwd) {
                     let parent_without_trailing_slash = strings::without_trailing_slash(parent);

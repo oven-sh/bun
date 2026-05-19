@@ -318,18 +318,21 @@ impl JSMySQLConnection {
         if self.connection.get().status == my_sql_connection::Status::Failed {
             return;
         }
-        use bun_core::fmt::{ConnTimeoutKind, fmt_conn_timeout};
-        self.fail_fmt(
-            AnyMySQLErrorT::LifetimeTimeout,
-            format_args!(
-                "{}",
-                fmt_conn_timeout(
-                    ConnTimeoutKind::MaxLifetime,
-                    self.max_lifetime_interval_ms,
-                    ""
-                )
-            ),
-        );
+
+        // Only retire the connection once it's idle. If queries are queued or
+        // in-flight, reschedule the timer so we close between queries rather
+        // than killing healthy ones with ERR_MYSQL_LIFETIME_TIMEOUT (#30646).
+        if self.connection.get().status == my_sql_connection::Status::Connected
+            && self.connection.get().is_idle()
+        {
+            self.close();
+            return;
+        }
+
+        self.max_lifetime_timer.with_mut(|t| {
+            t.next = timespec::ms_from_now(TimespecMockMode::AllowMockedTime, 1000);
+            self.vm_mut().timer().insert(t);
+        });
     }
 
     fn setup_max_lifetime_timer_if_necessary(&self) {

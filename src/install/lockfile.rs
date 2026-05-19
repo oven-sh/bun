@@ -1323,7 +1323,7 @@ fn clean_migrate_patched_dependencies_cold(
         .iter()
         .zip(old.patched_dependencies.values().iter())
     {
-        debug_assert!(!v.patchfile_hash_is_null);
+        debug_assert!(!v.patchfile_hash_is_null());
         let mut patchdep = *v;
         patchdep.path = builder
             .append::<SemverString>(patchdep.path.slice(old.buffers.string_bytes.as_slice()));
@@ -3372,7 +3372,12 @@ pub struct PatchedDep {
     /// e.g. "patches/is-even@1.0.0.patch"
     pub path: SemverString,
     _padding: [u8; 7],
-    pub patchfile_hash_is_null: bool,
+    // Stored as `u8` (not `bool`) so that every bit pattern is a valid
+    // value. The lockfile reader transmutes raw bytes into `&[PatchedDep]`
+    // (`Buffers::read_array`), and an attacker-controlled byte here would
+    // otherwise produce an invalid `bool` and immediate UB (audit witness
+    // EXP-036). Only `0` (present) and `1` (null) are accepted.
+    patchfile_hash_is_null: u8,
     /// the hash of the patch file contents
     __patchfile_hash: u64,
 }
@@ -3382,13 +3387,16 @@ impl Default for PatchedDep {
         PatchedDep {
             path: SemverString::default(),
             _padding: [0; 7],
-            patchfile_hash_is_null: true,
+            patchfile_hash_is_null: PatchedDep::PATCHFILE_HASH_NULL,
             __patchfile_hash: 0,
         }
     }
 }
 
 impl PatchedDep {
+    const PATCHFILE_HASH_PRESENT: u8 = 0;
+    const PATCHFILE_HASH_NULL: u8 = 1;
+
     /// Construct with just `path` set (Zig: `.{ .path = path }`). Exists because
     /// the explicit-padding / private-hash fields make the `..Default::default()`
     /// struct-update form unusable from sibling modules.
@@ -3398,13 +3406,31 @@ impl PatchedDep {
         this
     }
 
+    #[inline]
+    pub fn patchfile_hash_is_null(&self) -> bool {
+        debug_assert!(self.has_valid_patchfile_hash_flag());
+        self.patchfile_hash_is_null == Self::PATCHFILE_HASH_NULL
+    }
+
+    #[inline]
+    pub(crate) fn has_valid_patchfile_hash_flag(&self) -> bool {
+        matches!(
+            self.patchfile_hash_is_null,
+            Self::PATCHFILE_HASH_PRESENT | Self::PATCHFILE_HASH_NULL
+        )
+    }
+
     pub fn set_patchfile_hash(&mut self, val: Option<u64>) {
-        self.patchfile_hash_is_null = val.is_none();
+        self.patchfile_hash_is_null = if val.is_none() {
+            Self::PATCHFILE_HASH_NULL
+        } else {
+            Self::PATCHFILE_HASH_PRESENT
+        };
         self.__patchfile_hash = val.unwrap_or(0);
     }
 
     pub fn patchfile_hash(&self) -> Option<u64> {
-        if self.patchfile_hash_is_null {
+        if self.patchfile_hash_is_null() {
             None
         } else {
             Some(self.__patchfile_hash)

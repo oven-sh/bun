@@ -1,7 +1,8 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, expect, it } from "bun:test";
-import { copyFile, exists, open, rm, writeFile } from "fs/promises";
+import { copyFile, exists, mkdir, open, rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, isWindows, runBunInstall, stderrForInstall, VerdaccioRegistry } from "harness";
+import { Buffer } from "node:buffer";
 import { join } from "path";
 
 const registry = new VerdaccioRegistry();
@@ -13,6 +14,21 @@ beforeAll(async () => {
 afterAll(() => {
   registry.stop();
 });
+
+const patchedDepPrefix = Buffer.from("\n<install.lockfile.PatchedDep> 24 sizeof, 8 alignof\n");
+const patchedDepHashIsNullOffset = 15;
+
+const noDepsPatch = /* patch */ `diff --git a/index.js b/index.js
+index 1034e955e3ad1d3c4eebdccf0b8f05e6b72fef59..9e9388fc3b7ea38889fc0f47d5cb1d7db1e4d1af 100644
+--- a/index.js
++++ b/index.js
+@@ -1,4 +1,5 @@
+ module.exports = require(\`./package.json\`);
++module.exports.patched = true;
+
+ for (const key of [\`dependencies\`, \`devDependencies\`, \`peerDependencies\`]) {
+   for (const dep of Object.keys(module.exports[key] || {})) {
+`;
 
 it("should not print anything to stderr when running bun.lockb", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
@@ -80,6 +96,54 @@ it("should not print anything to stderr when running bun.lockb", async () => {
   expect(stderrOutput).toBe("");
 
   expect(await exited).toBe(0);
+});
+
+it("rejects a non-canonical PatchedDep flag in a binary lockfile", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
+
+  await mkdir(join(packageDir, "patches"));
+  await writeFile(join(packageDir, "patches/no-deps@1.0.0.patch"), noDepsPatch);
+  await writeFile(
+    packageJson,
+    JSON.stringify({
+      name: "patched-binary-lockfile-package",
+      version: "1.0.0",
+      dependencies: {
+        "no-deps": "1.0.0",
+      },
+      patchedDependencies: {
+        "no-deps@1.0.0": "patches/no-deps@1.0.0.patch",
+      },
+    }),
+  );
+
+  await runBunInstall(env, packageDir);
+
+  const lockfilePath = join(packageDir, "bun.lockb");
+  const lockfile = Buffer.from(await file(lockfilePath).arrayBuffer());
+  const prefixOffset = lockfile.indexOf(patchedDepPrefix);
+  expect(prefixOffset).toBeGreaterThanOrEqual(0);
+  expect(lockfile.indexOf(patchedDepPrefix, prefixOffset + patchedDepPrefix.length)).toBe(-1);
+
+  const patchedDepStart = Math.ceil((prefixOffset + patchedDepPrefix.length) / 8) * 8;
+  const patchedDepHashIsNullByte = patchedDepStart + patchedDepHashIsNullOffset;
+  expect(lockfile[patchedDepHashIsNullByte]).toBe(0);
+  lockfile[patchedDepHashIsNullByte] = 0xff;
+  await writeFile(lockfilePath, lockfile);
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "bun.lockb"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const stdoutOutput = await stdout.text();
+  const stderrOutput = await stderr.text();
+  expect(stdoutOutput).toBe("");
+  expect(stderrOutput).toContain("CorruptLockfile");
+  expect(await exited).not.toBe(0);
 });
 
 it("should continue using a binary lockfile if it exists", async () => {

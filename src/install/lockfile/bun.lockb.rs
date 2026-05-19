@@ -258,7 +258,7 @@ pub fn save(
 
     if this.patched_dependencies.count() > 0 {
         for patched_dep in this.patched_dependencies.values() {
-            debug_assert!(!patched_dep.patchfile_hash_is_null);
+            debug_assert!(!patched_dep.patchfile_hash_is_null());
         }
 
         stream.write_all(&HAS_PATCHED_DEPENDENCIES_TAG.to_ne_bytes())?;
@@ -599,14 +599,19 @@ pub fn load(
 
                 // PORT NOTE: Zig: `var map = lockfile.patched_dependencies; defer lockfile.patched_dependencies = map;`
                 let map = &mut lockfile.patched_dependencies;
-
-                map.ensure_total_capacity(patched_dependencies_name_and_version_hashes.len())?;
                 let patched_dependencies_paths: Vec<PatchedDep> = buffers::read_array(stream)?;
 
-                debug_assert_eq!(
-                    patched_dependencies_name_and_version_hashes.len(),
-                    patched_dependencies_paths.len()
-                );
+                if patched_dependencies_name_and_version_hashes.len()
+                    != patched_dependencies_paths.len()
+                    || patched_dependencies_paths
+                        .iter()
+                        .any(|patched_dep| !patched_dep.has_valid_patchfile_hash_flag())
+                {
+                    return Err(bun_core::err!("CorruptLockfile"));
+                }
+
+                map.ensure_total_capacity(patched_dependencies_name_and_version_hashes.len())?;
+
                 for (name_hash, patch_path) in patched_dependencies_name_and_version_hashes
                     .iter()
                     .zip(patched_dependencies_paths.iter())

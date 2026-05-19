@@ -1368,10 +1368,14 @@ impl<T> Batcher<T> {
 
     pub fn eat1(&mut self, value: T) -> StoreSlice<T> {
         // `head` has at least 1 element remaining (caller contract — Zig would
-        // panic on bounds); `Batcher` holds the unique view of the allocation.
-        // `mem::replace` detaches `self.head` so `slice_mut` borrows the owned
-        // local, freeing us to reassign `self.head` further down.
-        let mut head = core::mem::replace(&mut self.head, StoreSlice::EMPTY);
+        // panic on bounds). Check before taking the mutable arena slice so a
+        // panic leaves `self.head` intact.
+        assert!(self.head.raw_len() > 0);
+        // SAFETY: `Batcher::head` is private, so no external code can have
+        // copied the remaining-slice handle out of this `Batcher`. Copying the
+        // handle into `head` does not create a reference, and we do not use
+        // `self.head` again until after the mutable split below is complete.
+        let mut head = self.head;
         let (prev, rest) = unsafe { head.slice_mut() }.split_at_mut(1);
         prev[0] = value;
         self.head = StoreSlice::new_mut(rest);
@@ -1380,7 +1384,9 @@ impl<T> Batcher<T> {
 
     pub fn next<const N: usize>(&mut self, values: [T; N]) -> StoreSlice<T> {
         // `head` has at least N elements remaining; see `eat1`.
-        let mut head = core::mem::replace(&mut self.head, StoreSlice::EMPTY);
+        assert!(self.head.raw_len() as usize >= N);
+        // SAFETY: see `eat1`.
+        let mut head = self.head;
         let (prev, rest) = unsafe { head.slice_mut() }.split_at_mut(N);
         for (dst, src) in prev.iter_mut().zip(values) {
             *dst = src;

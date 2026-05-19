@@ -1489,7 +1489,7 @@ impl<'a> Parser<'a> {
                                         let stmt_loc = stmt.loc;
                                         part.stmts = {
                                             let mut new_stmts = BumpVec::<Stmt>::with_capacity_in(
-                                                part.stmts.len() + 1,
+                                                part_stmts.len() + 1,
                                                 p.arena,
                                             );
                                             // PERF(port): was appendSliceAssumeCapacity

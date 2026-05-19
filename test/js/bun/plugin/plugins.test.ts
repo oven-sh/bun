@@ -560,3 +560,17 @@ it("recursion throws stack overflow at entry point", () => {
 
   expect(result.stderr.toString()).toContain("RangeError: Maximum call stack size exceeded.");
 });
+
+it("does not crash when target property throws on string conversion", () => {
+  const badTarget = {
+    toString() {
+      return {};
+    },
+    valueOf() {
+      return {};
+    },
+  };
+  expect(() => {
+    plugin({ name: "bad-target", target: badTarget as any, setup() {} });
+  }).toThrow();
+});

@@ -2283,20 +2283,33 @@ pub inline fn serializableInto(comptime T: type, init: anytype) T {
     return result.*;
 }
 
+/// Mode passed to `mkdirat(2)` when creating directories.
+///
+/// POSIX applies the process umask on top of this, so the final permission is
+/// `0o777 & ~umask`. With the default umask of `0o022` this yields `0o755`
+/// (same as before), but `umask 0o002` yields `0o775` — letting multi-user
+/// setups work like they do with Node, npm, pnpm, and `/bin/mkdir`.
+pub const umask_mkdir_mode: sys.Mode = 0o777;
+
 /// Like std.fs.Dir.makePath except instead of infinite looping on dangling
-/// symlink, it deletes the symlink and tries again.
+/// symlink, it deletes the symlink and tries again. Uses `umask_mkdir_mode`
+/// so the kernel honors the process umask.
 pub fn makePath(dir: std.fs.Dir, sub_path: []const u8) !void {
     var it = try std.fs.path.componentIterator(sub_path);
     var component = it.last() orelse return;
     while (true) {
-        dir.makeDir(component.path) catch |err| switch (err) {
+        makeDirUmask(dir, component.path) catch |err| switch (err) {
             error.PathAlreadyExists => {
                 var path_buf2: [MAX_PATH_BYTES * 2]u8 = undefined;
                 copy(u8, &path_buf2, component.path);
 
                 path_buf2[component.path.len] = 0;
                 const path_to_use = path_buf2[0..component.path.len :0];
-                const result = try sys.lstat(path_to_use).unwrap();
+                // The mkdirat above and the deleteTree below are both
+                // relative to `dir`. Stat the same dir-fd so the decision
+                // lines up — `sys.lstat` would resolve against cwd, which
+                // is wrong whenever `dir` isn't cwd.
+                const result = try sys.lstatat(.fromStdDir(dir), path_to_use).unwrap();
                 const is_dir = S.ISDIR(@intCast(result.mode));
                 // dangling symlink
                 if (!is_dir) {
@@ -2312,6 +2325,13 @@ pub fn makePath(dir: std.fs.Dir, sub_path: []const u8) !void {
         };
         component = it.next() orelse return;
     }
+}
+
+/// Like std.fs.Dir.makeDir but uses `umask_mkdir_mode` so the kernel
+/// applies the process umask to the final permissions.
+fn makeDirUmask(dir: std.fs.Dir, sub_path: []const u8) std.posix.MakeDirError!void {
+    if (Environment.isWindows) return dir.makeDir(sub_path);
+    return std.posix.mkdirat(dir.fd, sub_path, umask_mkdir_mode);
 }
 
 /// Like std.fs.Dir.makePath except instead of infinite looping on dangling
@@ -2457,6 +2477,8 @@ pub const MakePath = struct {
         }
     }
 
+    /// On POSIX, uses `bun.umask_mkdir_mode` when creating directories so the
+    /// kernel honors the process umask (matches `mkdir(1)` / Node / npm).
     pub fn makeOpenPath(self: std.fs.Dir, sub_path: anytype, opts: std.fs.Dir.OpenOptions) !std.fs.Dir {
         if (comptime Environment.isWindows) {
             return makeOpenPathAccessMaskW(
@@ -2472,12 +2494,27 @@ pub const MakePath = struct {
             );
         }
 
-        return self.makeOpenPath(sub_path, opts);
+        // POSIX: avoid std's makeOpenPath which hardcodes mode 0o755. Try
+        // openDir first, then fall back to the file-level `bun.makePath`
+        // (umask-honoring mkdirat plus dangling-symlink handling) and retry.
+        // The qualified `bun.makePath` is unambiguous — only the bare
+        // `makePath` identifier is shadowed by `MakePath.makePath` below,
+        // and `MakePath.makePath` infinite-loops on dangling intermediate
+        // symlinks.
+        return self.openDir(sub_path, opts) catch |err| switch (err) {
+            error.FileNotFound => {
+                try bun.makePath(self, sub_path);
+                return self.openDir(sub_path, opts);
+            },
+            else => |e| return e,
+        };
     }
 
     /// copy/paste of `std.fs.Dir.makePath` and related functions and modified to support u16 slices.
     /// inside `MakePath` scope to make deleting later easier.
     /// TODO(dylan-conway) delete `MakePath`
+    ///
+    /// On POSIX, uses `bun.umask_mkdir_mode` so the kernel honors the process umask.
     pub fn makePath(comptime T: type, self: std.fs.Dir, sub_path: []const T) !void {
         if (Environment.isWindows) {
             var dir = try makeOpenPath(self, sub_path, .{});
@@ -2488,7 +2525,7 @@ pub const MakePath = struct {
         var it = try componentIterator(T, sub_path);
         var component = it.last() orelse return;
         while (true) {
-            std.fs.Dir.makeDir(self, component.path) catch |err| switch (err) {
+            std.posix.mkdirat(self.fd, component.path, bun.umask_mkdir_mode) catch |err| switch (err) {
                 error.PathAlreadyExists => {
                     // TODO stat the file and return an error if it's not a directory
                     // this is important because otherwise a dangling symlink

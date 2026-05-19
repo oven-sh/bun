@@ -66,7 +66,7 @@ fn link(ctx: Command.Context) !void {
 
             try manager.setupGlobalDir(ctx);
 
-            break :brk manager.global_dir.?.makeOpenPath("node_modules", .{}) catch |err| {
+            break :brk bun.MakePath.makeOpenPath(manager.global_dir.?, "node_modules", .{}) catch |err| {
                 if (manager.options.log_level != .silent)
                     Output.prettyErrorln("<r><red>error:<r> failed to create node_modules in global dir due to error {s}", .{@errorName(err)});
                 Global.crash();
@@ -78,11 +78,14 @@ fn link(ctx: Command.Context) !void {
             // delete it if it exists
             node_modules.deleteTree(name) catch {};
 
-            // create scope if specified
+            // create scope if specified. Use bun.makePath so the mkdir
+            // honors the process umask (final mode = 0o777 & ~umask) like
+            // every other install-created directory, instead of
+            // std.fs.Dir.makeDir's hardcoded 0o755. bun.makePath also
+            // handles PathAlreadyExists internally, so no catch is needed.
             if (name[0] == '@') {
                 if (strings.indexOfChar(name, '/')) |i| {
-                    node_modules.makeDir(name[0..i]) catch |err| brk: {
-                        if (err == error.PathAlreadyExists) break :brk;
+                    bun.makePath(node_modules, name[0..i]) catch |err| {
                         if (manager.options.log_level != .silent)
                             Output.prettyErrorln("<r><red>error:<r> failed to create scope in global dir due to error {s}", .{@errorName(err)});
                         Global.crash();

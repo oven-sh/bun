@@ -69,7 +69,7 @@ var getTemporaryDirectoryOnce = bun.once(struct {
             std.posix.renameatZ(tempdir.fd, tmpname, cache_directory.fd, tmpname) catch |err| {
                 if (!tried_dot_tmp) {
                     tried_dot_tmp = true;
-                    tempdir = cache_directory.makeOpenPath(".tmp", .{}) catch |err2| {
+                    tempdir = bun.MakePath.makeOpenPath(cache_directory, ".tmp", .{}) catch |err2| {
                         Output.prettyErrorln("<r><red>error<r>: bun is unable to write files to tempdir: {s}", .{@errorName(err2)});
                         Global.crash();
                     };
@@ -124,7 +124,7 @@ noinline fn ensureCacheDirectory(this: *PackageManager) std.fs.Dir {
             const cache_dir = fetchCacheDirectoryPath(this.env, &this.options);
             this.cache_directory_path = bun.handleOom(this.allocator.dupeZ(u8, cache_dir.path));
 
-            return std.fs.cwd().makeOpenPath(cache_dir.path, .{}) catch {
+            return bun.MakePath.makeOpenPath(std.fs.cwd(), cache_dir.path, .{}) catch {
                 this.options.enable.cache = false;
                 this.allocator.free(this.cache_directory_path);
                 continue :loop;
@@ -140,7 +140,7 @@ noinline fn ensureCacheDirectory(this: *PackageManager) std.fs.Dir {
             .auto,
         )) catch |err| bun.handleOom(err);
 
-        return std.fs.cwd().makeOpenPath("node_modules/.cache", .{}) catch |err| {
+        return bun.MakePath.makeOpenPath(std.fs.cwd(), "node_modules/.cache", .{}) catch |err| {
             Output.prettyErrorln("<r><red>error<r>: bun is unable to write files: {s}", .{@errorName(err)});
             Global.crash();
         };
@@ -375,7 +375,7 @@ pub fn setupGlobalDir(manager: *PackageManager, ctx: Command.Context) !void {
 
 pub fn globalLinkDir(this: *PackageManager) std.fs.Dir {
     return this.global_link_dir orelse brk: {
-        var global_dir = Options.openGlobalDir(this.options.explicit_global_directory) catch |err| switch (err) {
+        const global_dir = Options.openGlobalDir(this.options.explicit_global_directory) catch |err| switch (err) {
             error.@"No global directory found" => {
                 Output.errGeneric("failed to find a global directory for package caching and global link directories", .{});
                 Global.exit(1);
@@ -386,7 +386,7 @@ pub fn globalLinkDir(this: *PackageManager) std.fs.Dir {
             },
         };
         this.global_dir = global_dir;
-        this.global_link_dir = global_dir.makeOpenPath("node_modules", .{}) catch |err| {
+        this.global_link_dir = bun.MakePath.makeOpenPath(global_dir, "node_modules", .{}) catch |err| {
             Output.err(err, "failed to open global link dir node_modules at '{f}'", .{FD.fromStdDir(global_dir)});
             Global.exit(1);
         };

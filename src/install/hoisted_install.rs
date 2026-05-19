@@ -188,8 +188,10 @@ pub fn install_hoisted_packages(
 
         new_node_modules = true;
 
-        // Attempt to create a new node_modules folder
-        if let Err(err) = sys::mkdir(bun_core::zstr!("node_modules"), 0o755) {
+        // Attempt to create a new node_modules folder. Pass 0o777 so the
+        // kernel's umask application decides the final permission
+        // (matches Node/npm/pnpm; issue #29723).
+        if let Err(err) = sys::mkdir(bun_core::zstr!("node_modules"), sys::UMASK_MKDIR_MODE) {
             if err.errno != sys::E::EEXIST as _ {
                 Output::err(
                     err,

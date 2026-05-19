@@ -1124,7 +1124,8 @@ impl<'a> PackageInstall<'a> {
             while let Some(entry) = walker.next()? {
                 match entry.kind {
                     EntryKind::Directory => {
-                        let _ = sys::mkdirat(destination_dir_.fd(), entry.path, 0o755);
+                        let _ =
+                            sys::mkdirat(destination_dir_.fd(), entry.path, sys::UMASK_MKDIR_MODE);
                     }
                     EntryKind::File => {
                         let path_len = entry.path.len();
@@ -1193,7 +1194,7 @@ impl<'a> PackageInstall<'a> {
                 self.destination_dir_subpath_buf[slash] = 0;
                 // SAFETY: NUL written above.
                 let subdir = ZStr::from_buf(&self.destination_dir_subpath_buf, slash);
-                let _ = sys::mkdirat(destination_dir.fd(), subdir, 0o755);
+                let _ = sys::mkdirat(destination_dir.fd(), subdir, sys::UMASK_MKDIR_MODE);
                 self.destination_dir_subpath_buf[slash] = SEP;
             }
         }

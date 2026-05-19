@@ -318,9 +318,13 @@ pub struct CreateFlags {
 }
 
 impl Dir {
-    /// `std.fs.Dir.makeDir` — single-level `mkdirat` (mode 0o755) relative to
-    /// this dir. Unlike `make_path`, does NOT create intermediate directories
-    /// and surfaces `error.PathAlreadyExists` for callers to branch on.
+    /// `std.fs.Dir.makeDir` — single-level `mkdirat` relative to this dir.
+    /// Unlike `make_path`, does NOT create intermediate directories and
+    /// surfaces `error.PathAlreadyExists` for callers to branch on.
+    ///
+    /// Passes `UMASK_MKDIR_MODE` (0o777) so the kernel applies the process
+    /// umask — default umask `0o022` still yields `0o755`, `umask 0o002`
+    /// yields `0o775` (issue #29723).
     pub fn make_dir(&self, sub_path: &[u8]) -> core::result::Result<(), bun_core::Error> {
         let mut buf = bun_paths::PathBuffer::default();
         let len = sub_path.len().min(buf.0.len() - 1);
@@ -328,7 +332,7 @@ impl Dir {
         buf.0[len] = 0;
         // SAFETY: NUL-terminated above.
         let z = ZStr::from_buf(&buf.0[..], len);
-        match mkdirat(self.fd, z, 0o755) {
+        match mkdirat(self.fd, z, UMASK_MKDIR_MODE) {
             Ok(()) => Ok(()),
             Err(e) if e.get_errno() == E::EEXIST => Err(bun_core::err!("PathAlreadyExists")),
             Err(e) => Err(e.into()),

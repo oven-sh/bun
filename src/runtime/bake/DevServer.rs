@@ -500,8 +500,7 @@ impl DeferredPromise {
     }
 
     pub fn reset(&mut self) {
-        // Zig: `this.strong.deinit()` — `JSPromiseStrong` has no `deinit`; the
-        // underlying `JscStrong` is released by `Drop` when overwritten.
+        // Zig: `this.strong.deinit()`
         self.strong = jsc::JSPromiseStrong::empty();
         self.route_bundle_indices.clear_retaining_capacity();
     }
@@ -521,8 +520,8 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
 
     #[cfg(feature = "bake_debugging_features")]
     let dump_dir = if let Some(dir) = options.dump_sources {
-        // TODO(port): std.fs.cwd().makeOpenPath - use bun_sys
-        match sys::Dir::cwd().make_open_path(dir) {
+        // Zig: `std.fs.cwd().makeOpenPath(dir, .{})`
+        match sys::Dir::cwd().make_open_path(dir, Default::default()) {
             Ok(d) => Some(d),
             Err(err) => {
                 Output::warn(format_args!(
@@ -537,7 +536,11 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     };
     #[cfg(not(feature = "bake_debugging_features"))]
     let dump_dir = ();
-    // TODO(port): errdefer dump_dir.close() — handled by Drop on sys::Dir
+    // Zig: `errdefer dump_dir.close()` — handled by `Drop` on `sys::Dir`, but
+    // ONLY while `dump_dir` is still a live local. `Box<MaybeUninit<DevServer>>`
+    // never runs field destructors, so the move into `(*p).dump_dir` must be the
+    // *last* field write before `assume_init()`; otherwise any `?` between the
+    // move and `assume_init()` would leak the fd.
 
     let separate_ssr_graph = options
         .framework
@@ -585,7 +588,10 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         );
         w!(generation, 0);
         w!(graph_safety_lock, ThreadLock::init_unlocked());
-        w!(dump_dir, dump_dir);
+        // `dump_dir` is written LAST (just before `assume_init()` below), not
+        // here — see the comment at its declaration. Moving it into the
+        // `MaybeUninit` early would leak the fd on any error return between
+        // here and `assume_init()`, since `MaybeUninit` never drops fields.
         w!(framework, options.framework);
         w!(bundler_options, options.bundler_options);
         w!(emit_incremental_visualizer_events, 0);
@@ -705,9 +711,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     };
     // SAFETY: per-field write into uninit struct; see `w!` SAFETY above.
     unsafe { w!(bun_watcher, ::core::mem::ManuallyDrop::new(bun_watcher)) };
-    // errdefer dev.bun_watcher.deinit(false) — handled by `Watcher::shutdown` in
-    // `Drop for DevServer` when `dev_uninit` is dropped on an error path after
-    // `assume_init()`.
+    // errdefer dev.bun_watcher.deinit(false)
 
     // `.watcher_atomics = undefined` → `WatcherAtomics.init(dev)`
     // SAFETY: `WatcherAtomics::init` / `HotReloadEvent::init_empty` only store `p`
@@ -790,6 +794,15 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
 
         w!(bundler_framework_views, bundler_framework_views);
     }
+
+    // `dump_dir` is moved into the struct as the *last* field write so that
+    // its `Drop` (which closes the fd) still runs if any earlier `?` above
+    // returned early. `MaybeUninit` never runs field destructors, so writing
+    // it any sooner would leak the fd on those error paths. This mirrors
+    // Zig's `errdefer dump_dir.close()`, which stayed armed until `init()`
+    // returned successfully.
+    // SAFETY: per-field write into uninit struct; see `w!` SAFETY above.
+    unsafe { w!(dump_dir, dump_dir) };
 
     // ── every field is now written ───────────────────────────────────────────
     // SAFETY: all fields of `*p` were written exactly once above via
@@ -874,7 +887,6 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     }
 
     // errdefer dev.route_lookup.clearAndFree() / client_graph.deinit() / server_graph.deinit()
-    // — handled by Drop
 
     dev.configuration_hash_key = 'hash_key: {
         let mut h = Wyhash::init(128);
@@ -1091,8 +1103,7 @@ impl Drop for DevServer {
         DEV_SERVER_DEINIT_COUNT_FOR_TESTING.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         // TODO(port): Zig used `useAllFields(DevServer, .{...})` to ensure every field
-        // was visited. In Rust, Drop on each field handles most freeing automatically.
-        // Only side-effecty cleanup is kept here.
+        // was visited. Only side-effecty cleanup is kept here.
 
         // WebSockets should be deinitialized before other parts.
         // `websocket.close()` synchronously dispatches `HmrSocket.onClose`,
@@ -1165,8 +1176,6 @@ impl Drop for DevServer {
         for value in self.source_maps.entries.values_mut() {
             debug_assert!(value.ref_count > 0);
             value.ref_count = 0;
-            // PORT NOTE: `Entry`'s owned buffers are freed by `Drop` when the
-            // map drops; Zig's explicit `deinit` was the allocator-free.
         }
         if self.source_maps.weak_ref_sweep_timer.state == EventLoopTimerState::ACTIVE {
             let timer_ptr: *mut EventLoopTimer = &raw mut self.source_maps.weak_ref_sweep_timer;
@@ -3157,7 +3166,7 @@ impl DevServer {
         }
 
         let heap = bun_alloc::MimallocArena::new();
-        // TODO(port): heap is moved into BundleV2; errdefer heap.deinit() handled by Drop
+        // TODO(port): heap is moved into BundleV2; errdefer heap.deinit()
         // PORT NOTE: `MimallocArena = bumpalo::Bump` (no `.arena()` accessor);
         // `Bump::alloc` is the inherent method, and `BundleV2::init`'s `alloc`
         // param is `&bun_alloc::Arena` (== `&Bump`).
@@ -4104,9 +4113,7 @@ pub fn finalize_bundle(
             route_bundle::Data::Html(h) => h,
             _ => unreachable!(),
         };
-        if let Some(_slice) = html.bundled_html_text.take() {
-            // freed by Drop
-        }
+        if let Some(_slice) = html.bundled_html_text.take() {}
         html.bundled_html_text = Some(compile_result_code.clone()); // TODO(port): ownership transfer
         html.script_injection_offset = Some(route_bundle::ByteOffset::init(*compile_result_offset));
 
@@ -4217,7 +4224,6 @@ pub fn finalize_bundle(
         } else {
             None
         };
-        // _ = source_map_json freed by Drop
 
         let server_bundle = dev.server_graph.take_js_bundle_server(
             &incremental_graph::TakeJSBundleOptionsServer {
@@ -4225,7 +4231,6 @@ pub fn finalize_bundle(
                 script_id: server_script_id,
             },
         )?;
-        // freed by Drop
 
         let global = dev.global();
         let server_modules = if let Some(json) = source_map_json {
@@ -5547,7 +5552,7 @@ pub fn dump_bundle(
     }
 
     bufw.flush()?;
-    _ = file.close();
+    // Zig: `defer file.close()` / `defer inner_dir.close()`
     Ok(())
 }
 

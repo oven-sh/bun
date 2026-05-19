@@ -662,7 +662,6 @@ pub fn compute_chunks(
                         &mut real_path_buf.0,
                     );
                 };
-                let _close = bun_sys::CloseOnDrop::file(&dir_file);
 
                 match dir_file.get_path(&mut real_path_buf) {
                     Ok(p) => break 'dir p,

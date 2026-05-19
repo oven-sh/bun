@@ -134,7 +134,7 @@ fn create_file(filename: &[u8], contents: &[u8]) -> bun_sys::Result<bool> {
     // Create parent directories if needed
     let dirname = resolve_path::dirname::<path::platform::Auto>(filename);
     if !dirname.is_empty() {
-        let _ = bun_sys::make_path(bun_sys::Dir::cwd(), dirname);
+        let _ = bun_sys::Dir::cwd().make_path(dirname);
     }
 
     // Open file for writing
@@ -147,11 +147,7 @@ fn create_file(filename: &[u8], contents: &[u8]) -> bun_sys::Result<bool> {
         bun_sys::Result::Ok(fd) => fd,
         bun_sys::Result::Err(err) => return bun_sys::Result::Err(err),
     };
-    // TODO(port): RAII fd guard — `defer fd.close()` semantics
-    let close_guard = scopeguard::guard(fd, |fd| fd.close());
-
-    // Write contents
-    match bun_sys::File::from_fd(*close_guard).write_all(contents) {
+    match bun_sys::File::from_fd(fd).write_all(contents) {
         bun_sys::Result::Ok(()) => bun_sys::Result::Ok(true),
         bun_sys::Result::Err(err) => bun_sys::Result::Err(err),
     }

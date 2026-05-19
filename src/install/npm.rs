@@ -12,7 +12,7 @@ use bun_dotenv::Loader as DotEnv;
 use bun_http::{self as http, AsyncHTTP, HTTPClient, HeaderBuilder};
 use bun_picohttp as picohttp;
 use bun_semver::{self as Semver, ExternalString, SlicedString, String as SemverString};
-use bun_sys::{self, CloseOnDrop, Fd, File};
+use bun_sys::{self, Fd, File};
 use bun_threading::ThreadPool;
 use bun_url::{OwnedURL, URL};
 use bun_wyhash::Wyhash11;
@@ -579,7 +579,7 @@ pub mod registry {
                     &package,
                     scope,
                     package_manager.get_temporary_directory().handle.fd,
-                    package_manager.get_cache_directory().fd,
+                    package_manager.get_cache_directory(),
                 );
             }
 
@@ -1132,19 +1132,12 @@ pub mod package_manifest {
                 )?
             };
 
-            {
-                // errdefer file.close()
-                let guard = CloseOnDrop::file(&file);
-                file.write_all(&buffer)?;
-                let _ = guard.into_inner();
-            }
+            // Zig: `errdefer file.close()`
+            file.write_all(&buffer)?;
 
             #[cfg(windows)]
             {
                 let mut realpath2_buf = bun_paths::PathBuffer::uninit();
-                // errdefer if (!did_close) file.close() — disarmed once we close explicitly below.
-                let guard = CloseOnDrop::file(&file);
-
                 let cache_dir_abs = &PackageManager::get().cache_directory_path;
                 let cache_path_abs =
                     bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
@@ -1152,7 +1145,6 @@ pub mod package_manifest {
                         &mut realpath2_buf[..],
                         &[cache_dir_abs, outpath.as_bytes()],
                     );
-                let _ = guard.into_inner();
                 // Zig spec discards the close error too — the renameat
                 // immediately below surfaces a usable error if the temp
                 // file is in a bad state, and on POSIX the close cannot
@@ -1169,7 +1161,6 @@ pub mod package_manifest {
 
             #[cfg(any(target_os = "linux", target_os = "android"))]
             if is_using_o_tmpfile {
-                let _close = CloseOnDrop::file(&file);
                 // Attempt #1.
                 if bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath).is_err() {
                     // Attempt #2: the file may already exist. Let's unlink and try again.
@@ -1182,7 +1173,6 @@ pub mod package_manifest {
 
             #[cfg(not(windows))]
             {
-                let _close = CloseOnDrop::file(&file);
                 // Attempt #1. Rename the file.
                 let rc = bun_sys::renameat(tmpdir, tmp_path, cache_dir, outpath);
 
@@ -1379,7 +1369,6 @@ pub mod package_manifest {
             let Ok(cache_file) = File::openat(cache_dir, file_name, bun_sys::O::RDONLY, 0) else {
                 return Ok(None);
             };
-            let _close_cache_file = CloseOnDrop::file(&cache_file);
 
             'delete: {
                 match Self::load_by_file(scope, &cache_file) {

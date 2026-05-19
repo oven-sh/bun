@@ -131,7 +131,7 @@ pub fn do_patch_commit(
     } else {
         argument
     };
-    // `defer if (free_argument) manager.allocator.free(argument);` — handled by Drop of `argument_owned`
+    // `defer if (free_argument) manager.allocator.free(argument);`
 
     // Attempt to open the existing node_modules folder
     let root_node_modules: Dir = match sys::openat_os_path(
@@ -149,7 +149,7 @@ pub fn do_patch_commit(
             Global::crash();
         }
     };
-    let _root_node_modules_close = sys::CloseOnDrop::dir(root_node_modules);
+    // Zig: `defer root_node_modules.close()`
 
     let mut iterator = tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(&lockfile);
     let mut resolution_buf = [0u8; 1024];
@@ -157,7 +157,7 @@ pub fn do_patch_commit(
     // `manager` mutably while the package name/resolution borrow `lockfile`
     // (which itself sometimes aliases `manager.lockfile`). Clone the slice/
     // resolution out first, then compute, then assemble the result tuple.
-    let (cache_dir, cache_dir_subpath, changes_dir, pkg): (Dir, &ZStr, Vec<u8>, Package) =
+    let (cache_dir, cache_dir_subpath, changes_dir, pkg): (Fd, &ZStr, Vec<u8>, Package) =
         match arg_kind {
             PatchArgKind::Path => 'result: {
                 let package_json_path =
@@ -174,7 +174,7 @@ pub fn do_patch_commit(
                             Global::crash();
                         }
                     };
-                // `defer manager.allocator.free(package_json_source.contents);` — Drop of Source frees contents
+                // `defer manager.allocator.free(package_json_source.contents);`
 
                 initialize_store();
                 let log = manager.log_mut();
@@ -308,7 +308,7 @@ pub fn do_patch_commit(
         };
 
     // zls
-    let cache_dir: Dir = cache_dir;
+    let cache_dir: Fd = cache_dir;
     let cache_dir_subpath: &ZStr = cache_dir_subpath;
     let changes_dir: &[u8] = &changes_dir;
     let pkg: Package = pkg;
@@ -334,7 +334,7 @@ pub fn do_patch_commit(
         let mut buf2 = PathBuffer::uninit();
         let mut buf3 = PathBuffer::uninit();
         let old_folder: &[u8] = 'old_folder: {
-            let cache_dir_path = match sys::get_fd_path(cache_dir.fd, &mut buf2) {
+            let cache_dir_path = match sys::get_fd_path(cache_dir, &mut buf2) {
                 Ok(s) => s,
                 Err(e) => {
                     Output::err(e, "failed to read from cache", ());
@@ -377,7 +377,7 @@ pub fn do_patch_commit(
                         Global::crash();
                     }
                 };
-            let _close = sys::CloseOnDrop::dir(new_folder_handle);
+            // Zig: `defer new_folder_handle.close()`
 
             if sys::renameat_concurrently_a(
                 new_folder_handle.fd,
@@ -433,7 +433,7 @@ pub fn do_patch_commit(
                         Global::crash();
                     }
                 };
-            let _close = sys::CloseOnDrop::dir(new_folder_handle);
+            // Zig: `defer new_folder_handle.close()`
 
             if let Err(e) = sys::renameat_concurrently_a(
                 new_folder_handle.fd,
@@ -467,7 +467,7 @@ pub fn do_patch_commit(
                         Global::crash();
                     }
                 };
-                let _close = sys::CloseOnDrop::dir(new_folder_handle);
+                // Zig: `defer new_folder_handle.close()`
 
                 if has_nested_node_modules {
                     if let Err(e) = sys::renameat_concurrently_a(
@@ -595,14 +595,14 @@ pub fn do_patch_commit(
 
         break 'brk contents;
     };
-    // `defer patchfile_contents.deinit();` — Drop
+    // `defer patchfile_contents.deinit();`
 
     // write the patch contents to temp file then rename
     let mut tmpname_buf = [0u8; 1024];
     let tempfile_name =
         bun_paths::fs::FileSystem::tmpname(b"tmp", &mut tmpname_buf, bun_core::fast_random())?;
-    let tmpdir = get_temporary_directory(manager).handle;
-    if let Err(e) = sys::File::write_file(tmpdir.fd, tempfile_name, &patchfile_contents) {
+    let tmpdir = get_temporary_directory(manager).handle.fd();
+    if let Err(e) = sys::File::write_file(tmpdir, tempfile_name, &patchfile_contents) {
         Output::err(e, "failed to write patch to temp file", ());
         Global::crash();
     }
@@ -617,7 +617,7 @@ pub fn do_patch_commit(
     } else {
         escaped_owned = None;
     }
-    // `defer if (deinit) manager.allocator.free(patch_filename);` — Drop of escaped_owned
+    // `defer if (deinit) manager.allocator.free(patch_filename);`
     let _ = &escaped_owned;
 
     let patches_dir: &[u8] = match &manager.options.patch_features {
@@ -643,7 +643,7 @@ pub fn do_patch_commit(
 
     // rename to patches dir
     if let Err(e) = sys::renameat_concurrently(
-        tmpdir.fd,
+        tmpdir,
         tempfile_name,
         Fd::cwd(),
         path_in_patches_dir,
@@ -684,11 +684,16 @@ fn patch_commit_get_version<'a>(
     patch_tag_path: &ZStr,
 ) -> sys::Maybe<&'a [u8]> {
     let patch_tag = sys::File::open(patch_tag_path, sys::O::RDONLY, 0)?;
-    // we actually need to delete this -- runs after fd close (LIFO drop order)
-    scopeguard::defer! { let _ = sys::unlink(patch_tag_path); }
-    let _close = sys::CloseOnDrop::file(&patch_tag);
+    // Zig: `defer { patch_tag_fd.close(); unlink(patch_tag_path); }` — close
+    // then unlink, on every exit path after a successful open. `_cleanup`
+    // declared after `patch_tag` so it drops first (LIFO); the closure takes
+    // ownership of `patch_tag` and closes it before the unlink.
+    let _cleanup = scopeguard::guard(patch_tag, |f| {
+        drop(f);
+        let _ = sys::unlink(patch_tag_path);
+    });
 
-    let version = patch_tag.read_fill_buf(&mut buf[..])?;
+    let version = _cleanup.read_fill_buf(&mut buf[..])?;
 
     // maybe if someone opens it in their editor and hits save a newline will be inserted,
     // so trim that off
@@ -800,9 +805,9 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
     } else {
         argument
     };
-    // `defer if (free_argument) manager.allocator.free(argument);` — Drop of argument_owned
+    // `defer if (free_argument) manager.allocator.free(argument);`
 
-    let (cache_dir, cache_dir_subpath, module_folder, pkg_name): (Dir, &[u8], Vec<u8>, Vec<u8>) =
+    let (cache_dir, cache_dir_subpath, module_folder, pkg_name): (Fd, &[u8], Vec<u8>, Vec<u8>) =
         match arg_kind {
             PatchArgKind::Path => 'brk: {
                 let package_json_path =
@@ -819,7 +824,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
                             Global::crash();
                         }
                     };
-                // `defer manager.allocator.free(package_json_source.contents);` — Drop
+                // `defer manager.allocator.free(package_json_source.contents);`
 
                 initialize_store();
                 let log = manager.log_mut();
@@ -1099,7 +1104,7 @@ fn detach_module_folder_from_shared_store(module_folder: &[u8]) {
     let native: &[u8] = module_folder;
 
     let mut p = bun_paths::Path::<u8>::from(native).unwrap();
-    // `defer path.deinit();` — Drop
+    // `defer path.deinit();`
     let mut components: usize = 1;
     for &c in native {
         if c == SEP {
@@ -1181,7 +1186,7 @@ fn detach_module_folder_from_shared_store(module_folder: &[u8]) {
 }
 
 fn overwrite_package_in_node_modules_folder(
-    cache_dir: Dir,
+    cache_dir: Fd,
     cache_dir_subpath: &[u8],
     node_modules_folder_path: &[u8],
 ) -> Result<(), bun_core::Error> {
@@ -1198,7 +1203,7 @@ fn overwrite_package_in_node_modules_folder(
         { bun_paths::path_options::PathSeparators::AUTO },
     >::from(node_modules_folder_path)
     .unwrap();
-    // `defer dest_subpath.deinit();` — Drop
+    // `defer dest_subpath.deinit();`
 
     let src_path: bun_paths::AbsPath<
         bun_paths::OSPathChar,
@@ -1207,7 +1212,7 @@ fn overwrite_package_in_node_modules_folder(
         #[cfg(windows)]
         {
             let mut path_buf = bun_paths::WPathBuffer::uninit();
-            let abs_path = sys::get_fd_path_w(cache_dir.fd, &mut path_buf)?;
+            let abs_path = sys::get_fd_path_w(cache_dir, &mut path_buf)?;
 
             let mut sp = bun_paths::AbsPath::<
                 bun_paths::OSPathChar,
@@ -1225,16 +1230,16 @@ fn overwrite_package_in_node_modules_folder(
             break 'src_path bun_paths::AbsPath::init();
         }
     };
-    // `defer src_path.deinit();` — Drop
+    // `defer src_path.deinit();`
 
-    let cached_package_folder = cache_dir.open_dir(
+    let cached_package_folder = Dir::borrow(&cache_dir).open_dir(
         cache_dir_subpath,
         sys::OpenDirOptions {
             iterate: true,
             ..Default::default()
         },
     )?;
-    let _close = sys::CloseOnDrop::dir(cached_package_folder);
+    // Zig: `defer cached_package_folder.close()`
 
     let ignore_directories: &[&bun_paths::OSPathSlice] = &[
         bun_paths::os_path_literal!("node_modules"),
@@ -1248,7 +1253,7 @@ fn overwrite_package_in_node_modules_folder(
         dest_subpath,
         ignore_directories,
     )?;
-    // `defer copier.deinit();` — Drop
+    // `defer copier.deinit();`
 
     copier.copy()?;
     Ok(())

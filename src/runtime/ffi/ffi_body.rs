@@ -2668,8 +2668,7 @@ impl CompilerRT {
         else {
             return;
         };
-        // `defer bunCC.close()`.
-        let bun_cc = scopeguard::guard(bun_cc, |d| d.close());
+        // `defer bunCC.close()`
 
         // Spec ffi.zig:2344-2350 — `inline for (decls) |d| bunCC.writeFile(d) catch {}`.
         for (name, source) in CompilerRtSources::SOURCES {

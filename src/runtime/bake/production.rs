@@ -362,7 +362,7 @@ pub fn build_with_vm(
 
     let config_entry_point_string =
         BunString::clone_utf8(config_entry_point.path_const().unwrap().text);
-    // defer config_entry_point_string.deref() — Drop handles deref
+    // Zig: `defer config_entry_point_string.deref()`
 
     let Some(config_promise) =
         JSModuleLoader::load_and_evaluate_module_ptr(vm.global, Some(&config_entry_point_string))
@@ -684,9 +684,8 @@ pub fn build_with_vm(
     Output::flush();
 
     // Zig: `try std.fs.cwd().makeOpenPath("dist", .{})` — mkdir -p + open.
-    // `OwnedDir` closes the fd on Drop (Zig: `defer root_dir.close()`).
-    let root_dir =
-        bun_sys::OwnedDir::new(bun_sys::Dir::cwd().make_open_path(b"dist", Default::default())?);
+    // Zig: `defer root_dir.close()`
+    let root_dir = bun_sys::Dir::cwd().make_open_path(b"dist", Default::default())?;
 
     let mut maybe_runtime_file_index: Option<u32> = None;
 
@@ -1158,7 +1157,7 @@ pub fn build_with_vm(
 
         // Init the items
         let pattern_string = BunString::clone_utf8(pattern.slice());
-        // defer pattern_string.deref() — Drop handles deref
+        // Zig: `defer pattern_string.deref()`
         route_patterns
             .put_index(
                 global,
@@ -1405,7 +1404,7 @@ pub extern "C" fn BakeToWindowsPath(input: BunString) -> BunString {
         let input_utf8 = input.to_utf8();
         let input_slice = input_utf8.slice();
         let mut output = bun_paths::w_path_buffer_pool::get();
-        // defer bun.w_path_buffer_pool.put(output) — RAII guard puts back on Drop
+        // Zig: `defer bun.w_path_buffer_pool.put(output)`
         let output_slice = strings::to_w_path_normalize_auto_extend(&mut output[..], input_slice);
         BunString::clone_utf16(output_slice.as_slice())
     }

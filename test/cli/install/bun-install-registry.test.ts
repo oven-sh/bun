@@ -4897,6 +4897,155 @@ test("name from manifest is scoped and url encoded", async () => {
   ]);
 });
 
+// Regression test for https://github.com/oven-sh/bun/issues/30311
+// Bun was encoding the '/' in scoped package manifest URLs as lowercase '%2f'.
+// GitLab's npm registry (and any registry that doesn't normalize per RFC 3986
+// §6.2.2.1) returns 404 for the lowercase form. The npm CLI uses uppercase
+// '%2F' so we match that.
+test("scoped package manifest url uses uppercase %2F", async () => {
+  const manifestPaths: string[] = [];
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const url = new URL(req.url);
+      // Record the raw (not normalized) path so the test can see the exact
+      // bytes bun put on the wire. URL constructor preserves %2F/%2f casing.
+      manifestPaths.push(url.pathname);
+
+      // Simulate GitLab: reject lowercase %2f, accept uppercase %2F or
+      // an unencoded slash. This is the exact discriminator from the bug.
+      if (url.pathname.includes("%2f")) {
+        return new Response("not found", { status: 404 });
+      }
+
+      // Manifest for @scoped/has-bin-entry.
+      if (url.pathname.endsWith("@scoped%2Fhas-bin-entry") || url.pathname.endsWith("@scoped/has-bin-entry")) {
+        return Response.json({
+          name: "@scoped/has-bin-entry",
+          "dist-tags": { latest: "1.0.0" },
+          versions: {
+            "1.0.0": {
+              name: "@scoped/has-bin-entry",
+              version: "1.0.0",
+              dist: {
+                shasum: "611b2b566718e05e8643fe872923ed91342b039a",
+                tarball: `http://localhost:${server.port}/@scoped/has-bin-entry/-/has-bin-entry-1.0.0.tgz`,
+              },
+            },
+          },
+        });
+      }
+
+      // Tarball download.
+      if (url.pathname.endsWith("/has-bin-entry-1.0.0.tgz")) {
+        return new Response(
+          Bun.file(
+            join(import.meta.dir, "registry", "packages", "@scoped", "has-bin-entry", "has-bin-entry-1.0.0.tgz"),
+          ),
+        );
+      }
+
+      return new Response("not found", { status: 404 });
+    },
+  });
+
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "@scoped/has-bin-entry": "1.0.0",
+        },
+      }),
+    ),
+    write(join(packageDir, ".npmrc"), `@scoped:registry=http://localhost:${server.port}/\n`),
+  ]);
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+
+  // Assertion on the raw URL bun produced: every manifest request must use
+  // uppercase %2F and never lowercase %2f. Filter to manifest paths (they end
+  // with the package name, tarballs end with .tgz).
+  const manifestHits = manifestPaths.filter(
+    p =>
+      p.endsWith("@scoped/has-bin-entry") ||
+      p.endsWith("@scoped%2Fhas-bin-entry") ||
+      p.endsWith("@scoped%2fhas-bin-entry"),
+  );
+  expect(manifestHits.length).toBeGreaterThan(0);
+  for (const hit of manifestHits) {
+    expect(hit).not.toContain("%2f");
+    expect(hit).toContain("%2F");
+  }
+
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("404");
+  expect(out).toContain("+ @scoped/has-bin-entry@1.0.0");
+  expect(code).toBe(0);
+});
+
+// Companion to the regression test above: `bun pm view` goes through
+// `DependencyUrlFormatter` (src/bun_core/fmt.zig), not the install manifest
+// path, and that encoder had the same lowercase-%2f bug.
+test("bun pm view uses uppercase %2F for scoped names", async () => {
+  const manifestPaths: string[] = [];
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const url = new URL(req.url);
+      manifestPaths.push(url.pathname);
+      // Reject lowercase like GitLab.
+      if (url.pathname.includes("%2f")) {
+        return new Response("not found", { status: 404 });
+      }
+      if (url.pathname.endsWith("@scoped%2Fhas-bin-entry")) {
+        return Response.json({
+          name: "@scoped/has-bin-entry",
+          "dist-tags": { latest: "1.0.0" },
+          versions: {
+            "1.0.0": { name: "@scoped/has-bin-entry", version: "1.0.0" },
+          },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    },
+  });
+
+  // pm view needs a clean project dir without bunfig.toml overriding our
+  // scoped registry; use a fresh tempDir rather than the shared packageDir.
+  const viewDir = tempDirWithFiles("pm-view-scoped", {
+    "package.json": JSON.stringify({ name: "x", version: "0.0.1" }),
+    ".npmrc": `@scoped:registry=http://localhost:${server.port}/\n`,
+  });
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "pm", "view", "@scoped/has-bin-entry"],
+    cwd: viewDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+
+  const hits = manifestPaths.filter(p => p.includes("has-bin-entry"));
+  expect(hits.length).toBeGreaterThan(0);
+  for (const hit of hits) {
+    expect(hit).not.toContain("%2f");
+    expect(hit).toContain("%2F");
+  }
+  expect(err).not.toContain("error:");
+  expect(out).toContain("@scoped/has-bin-entry@1.0.0");
+  expect(code).toBe(0);
+});
+
 describe("update", () => {
   test("duplicate peer dependency (one package is invalid_package_id)", async () => {
     await write(

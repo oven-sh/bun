@@ -465,10 +465,10 @@ it("should handle @scoped names", async () => {
     env,
   });
   const err = await stderr.text();
-  expect(err.split(/\r?\n/)).toContain(`error: GET http://localhost:${port}/@bar%2fbaz - 404`);
+  expect(err.split(/\r?\n/)).toContain(`error: GET http://localhost:${port}/@bar%2Fbaz - 404`);
   expect(await stdout.text()).toEqual(expect.stringContaining("bun add v1."));
   expect(await exited).toBe(1);
-  expect(urls.sort()).toEqual([`${root_url}/@bar%2fbaz`]);
+  expect(urls.sort()).toEqual([`${root_url}/@bar%2Fbaz`]);
   expect(requested).toBe(1);
   try {
     await access(join(package_dir, "bun.lockb"));

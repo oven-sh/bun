@@ -99,18 +99,18 @@ pub fn edit_trusted_dependencies(
 ) -> Result<(), bun_alloc::AllocError> {
     let mut len = names_to_add.len();
 
-    let original_trusted_dependencies: Vec<Expr> = 'brk: {
-        if let Some(query) = package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
-            if let bun_ast::ExprData::EArray(arr) = &query.expr.data {
-                break 'brk arr.items.slice().to_vec();
-            }
+    let mut trusted_dependencies: &[Expr] = &[];
+    if let Some(query) = package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
+        if let bun_ast::ExprData::EArray(arr) = &query.expr.data {
+            // SAFETY: `arr` is a `StoreRef` into the AST arena which outlives
+            // this function; lifetime erased per the parser's `Str` convention.
+            trusted_dependencies = unsafe { bun_ptr::detach_lifetime(arr.items.slice()) };
         }
-        Vec::new()
-    };
+    }
 
     for i in 0..names_to_add.len() {
         let name = &names_to_add[i];
-        for item in original_trusted_dependencies.iter() {
+        for item in trusted_dependencies.iter() {
             if let bun_ast::ExprData::EString(s) = &item.data {
                 if s.eql_bytes(name) {
                     names_to_add.swap(i, len - 1);
@@ -118,15 +118,6 @@ pub fn edit_trusted_dependencies(
                     break;
                 }
             }
-        }
-    }
-
-    let mut trusted_dependencies: &[Expr] = &[];
-    if let Some(query) = package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
-        if let bun_ast::ExprData::EArray(arr) = &query.expr.data {
-            // SAFETY: `arr` is a `StoreRef` into the AST arena which outlives
-            // this function; lifetime erased per the parser's `Str` convention.
-            trusted_dependencies = unsafe { bun_ptr::detach_lifetime(arr.items.slice()) };
         }
     }
 

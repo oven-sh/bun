@@ -559,7 +559,7 @@ interface Subprocess extends AsyncDisposable {
   readonly signalCode: NodeJS.Signals | null;
   readonly killed: boolean;
 
-  kill(exitCode?: number | NodeJS.Signals): void;
+  kill(signal?: number | NodeJS.Signals): boolean;
   ref(): void;
   unref(): void;
 

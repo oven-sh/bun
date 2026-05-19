@@ -932,6 +932,7 @@ impl CompletionStruct for JSBundleCompletionTask {
             .unwrap_or(!config.minify.whitespace);
         transpiler.options.ignore_dce_annotations = config.ignore_dce_annotations;
         transpiler.options.css_chunking = config.css_chunking;
+        transpiler.options.asset_inline_limit = config.asset_inline_limit;
         transpiler.options.compile_to_standalone_html = 'brk: {
             if config.compile.is_none() || config.target != bun_ast::Target::Browser {
                 break 'brk false;

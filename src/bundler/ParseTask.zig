@@ -386,7 +386,7 @@ fn getAST(
                 .data = source.contents,
             }, Logger.Loc{ .start = 0 });
             var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "")).?);
-            ast.addUrlForCss(allocator, source, "text/plain", null, transpiler.options.compile_to_standalone_html);
+            ast.addUrlForCss(allocator, source, "text/plain", null, transpiler.options.compile_to_standalone_html, transpiler.options.asset_inline_limit);
             return ast;
         },
         .md => {
@@ -402,7 +402,7 @@ fn getAST(
                 .data = html,
             }, Logger.Loc{ .start = 0 });
             var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "")).?);
-            ast.addUrlForCss(allocator, source, "text/html", null, transpiler.options.compile_to_standalone_html);
+            ast.addUrlForCss(allocator, source, "text/html", null, transpiler.options.compile_to_standalone_html, transpiler.options.asset_inline_limit);
             return ast;
         },
 
@@ -619,7 +619,7 @@ fn getAST(
         .dataurl, .base64, .bunsh => {
             return try getEmptyAST(log, transpiler, opts, allocator, source, E.String);
         },
-        .file, .wasm => {
+        .file, .url, .wasm => {
             bun.assert(loader.shouldCopyForBundling());
 
             // Put a unique key in the AST to implement the URL loader. At the end
@@ -653,7 +653,23 @@ fn getAST(
                 .content_hash = content_hash,
             };
             var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "")).?);
-            ast.addUrlForCss(allocator, source, null, unique_key, transpiler.options.compile_to_standalone_html);
+            // The `file` loader always emits a physical asset. The `url` loader
+            // inlines the contents as a `data:` URI when referenced from a CSS
+            // `url(...)` and the size is below `asset_inline_limit`, otherwise
+            // it falls back to emitting a file. Standalone HTML always inlines
+            // so every asset lives inside a single output file.
+            const force_inline = transpiler.options.compile_to_standalone_html;
+            const should_inline_for_css = force_inline or loader == .url;
+            if (should_inline_for_css) {
+                ast.addUrlForCss(
+                    allocator,
+                    source,
+                    null,
+                    unique_key,
+                    force_inline,
+                    transpiler.options.asset_inline_limit,
+                );
+            }
             return ast;
         },
     }

@@ -330,12 +330,15 @@ impl<'a, T> BabyVec<'a, T> {
 
     #[cold]
     fn grow_to(&mut self, at_least: usize) {
-        debug_assert!(at_least <= u32::MAX as usize, "BabyVec capacity overflow");
+        assert!(at_least <= u32::MAX as usize, "BabyVec capacity overflow");
         if Self::T_IS_ZST {
             return;
         }
-        // Same growth as `Vec`: max(2×cap, at_least, 4).
-        let new_cap = (self.cap as usize * 2).max(at_least).max(4);
+        // Same growth as `Vec`: max(2×cap, at_least, 4), capped at u32::MAX.
+        let new_cap = (self.cap as usize * 2)
+            .max(at_least)
+            .max(4)
+            .min(u32::MAX as usize);
         self.grow_exact(new_cap);
     }
 
@@ -344,8 +347,7 @@ impl<'a, T> BabyVec<'a, T> {
         if Self::T_IS_ZST {
             return;
         }
-        debug_assert!(new_cap <= u32::MAX as usize, "BabyVec capacity overflow");
-        let new_cap = new_cap.min(u32::MAX as usize);
+        assert!(new_cap <= u32::MAX as usize, "BabyVec capacity overflow");
         let new_layout = Layout::array::<T>(new_cap).unwrap_or_else(|_| crate::out_of_memory());
         let new_ptr = if self.cap == 0 {
             (&self.alloc)

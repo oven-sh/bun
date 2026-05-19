@@ -1017,6 +1017,10 @@ pub const PipelineTask = struct {
         }
 
         if (this.kind == .placeholder) {
+            // ThumbHash operates on 8-bit RGBA (the hash encoder indexes
+            // the buffer as u8); `applyPipeline` is also 8-bpc-only, so
+            // a 16-bpc source must narrow first.
+            decoded.downconvertTo8();
             this.result = makePlaceholder(decoded.rgba, decoded.width, decoded.height) catch |e| .{ .err = e };
             return;
         }
@@ -1044,7 +1048,11 @@ pub const PipelineTask = struct {
         // Jpegli XYB) as sRGB and visibly shifts the colours — see #30197.
         // JPEG/PNG/WebP embed it; HEIC/AVIF via the system backend do not.
         if (enc.icc_profile == null) enc.icc_profile = decoded.icc_profile;
-        const out = codecs.encode(decoded.rgba, decoded.width, decoded.height, enc) catch |e| {
+        // 16-bpc survives only on the PNG-truecolour path — JPEG/WebP/HEIC/
+        // AVIF and indexed-PNG encoders are all u8-only. Narrow here so the
+        // codec arms never see a mismatched buffer. Issue #30462.
+        if (enc.format != .png or enc.palette) decoded.downconvertTo8();
+        const out = codecs.encode(decoded.rgba, decoded.width, decoded.height, decoded.bit_depth, enc) catch |e| {
             this.result = .{ .err = e };
             return;
         };
@@ -1083,7 +1091,7 @@ pub const PipelineTask = struct {
         defer bun.default_allocator.free(rendered.rgba);
         // Placeholder is a synthetic ThumbHash render, not the source image —
         // no ICC profile attaches to it.
-        const png_out = try codecs.png.encode(rendered.rgba, rendered.w, rendered.h, -1, null);
+        const png_out = try codecs.png.encode(rendered.rgba, rendered.w, rendered.h, 8, -1, null);
         return .{ .encoded = .{ .out = png_out, .format = .png, .w = rendered.w, .h = rendered.h } };
     }
 
@@ -1183,6 +1191,12 @@ pub const PipelineTask = struct {
     /// the profile survives unchanged.
     fn applyPipeline(this: *PipelineTask, d: *codecs.Decoded) codecs.Error!void {
         const p = this.pipeline;
+        // The geometry kernels (rotate/flip/resize) and the modulate pass
+        // are u8-only. Narrow 16-bpc RGBA to 8 before any op runs. No-op
+        // when all pipeline slots are empty, which preserves the
+        // 16-bpc PNG→PNG pass-through from issue #30462.
+        const has_op = p.rotate != 0 or p.flip or p.flop or p.resize != null or p.modulate != null;
+        if (has_op) d.downconvertTo8();
         if (p.rotate != 0) {
             const next = try codecs.rotate(d.rgba, d.width, d.height, p.rotate);
             bun.default_allocator.free(d.rgba);
@@ -1246,6 +1260,11 @@ pub const PipelineTask = struct {
 
     fn applyOrientation(d: *codecs.Decoded, orient: exif.Orientation) codecs.Error!void {
         const t = orient.transform();
+        // Same as applyPipeline — the kernels are u8-only. Reached only
+        // from the JPEG auto-orient path today, and JPEGs are always
+        // 8-bpc, but narrow unconditionally so a future non-JPEG EXIF
+        // path can't skip it.
+        if (t.flip or t.flop or t.rotate != 0) d.downconvertTo8();
         if (t.flip) {
             const next = try codecs.flip(d.rgba, d.width, d.height, false);
             bun.default_allocator.free(d.rgba);

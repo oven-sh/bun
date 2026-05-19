@@ -15,6 +15,11 @@ extern fn bun_coregraphics_decode(
     max_pixels: u64,
     out_w: *u32,
     out_h: *u32,
+    // Phase 1 writes 8 or 16 (driven by `kCGImagePropertyDepth`); phase 2
+    // reads it to size the VFmt/VBuf for either RGBA8 or RGBA16. Any source
+    // with depth ≥ 9 (HEIC 10/12, TIFF 16) maps to 16 so the extra
+    // precision survives through to PNG 16-bpc encode. Issue #30462.
+    out_bit_depth: *u8,
     out: ?[*]u8,
 ) i32;
 
@@ -47,22 +52,26 @@ fn mapErr(rc: i32) BackendError {
 pub fn decode(bytes: []const u8, max_pixels: u64) BackendError!codecs.Decoded {
     var w: u32 = 0;
     var h: u32 = 0;
-    // Phase 1: dimensions only (out=null) so we can allocate in
-    // bun.default_allocator like every other decode path.
-    switch (bun_coregraphics_decode(bytes.ptr, bytes.len, max_pixels, &w, &h, null)) {
+    var bit_depth: u8 = 8;
+    // Phase 1: dimensions + source depth (out=null) so we can allocate in
+    // bun.default_allocator like every other decode path and size the
+    // buffer for either RGBA8 (4 B/px) or RGBA16 (8 B/px) before asking
+    // vImage to render into it.
+    switch (bun_coregraphics_decode(bytes.ptr, bytes.len, max_pixels, &w, &h, &bit_depth, null)) {
         CG_OK => {},
         else => |rc| return mapErr(rc),
     }
-    const out = try bun.default_allocator.alloc(u8, @as(usize, w) * h * 4);
+    const bytes_per_pixel: usize = if (bit_depth == 16) 8 else 4;
+    const out = try bun.default_allocator.alloc(u8, @as(usize, w) * h * bytes_per_pixel);
     errdefer bun.default_allocator.free(out);
     // Phase 2: render. The C side re-creates the CGImageSource (cheap — the
     // header parse is the only repeated work) so we don't have to thread an
     // opaque handle across the boundary.
-    switch (bun_coregraphics_decode(bytes.ptr, bytes.len, max_pixels, &w, &h, out.ptr)) {
+    switch (bun_coregraphics_decode(bytes.ptr, bytes.len, max_pixels, &w, &h, &bit_depth, out.ptr)) {
         CG_OK => {},
         else => |rc| return mapErr(rc),
     }
-    return .{ .rgba = out, .width = w, .height = h };
+    return .{ .rgba = out, .width = w, .height = h, .bit_depth = bit_depth };
 }
 
 pub fn encode(rgba: []const u8, width: u32, height: u32, opts: codecs.EncodeOptions) BackendError![]u8 {

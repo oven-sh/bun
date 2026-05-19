@@ -1126,20 +1126,17 @@ impl Tree {
 
         // this dependency was not found in this tree, try hoisting or placing in the next parent
         if this.parent != INVALID_ID && this.id != hoist_root_id {
-            let id = match Tree::hoist_dependency::<false, METHOD>(
+            // `hoist_dependency::<false, _>` can return `Err(SubtreeError::CorruptLockfile)`
+            // on attacker-controlled lockfile bytes (an out-of-range `dep_id`); propagate
+            // it so corrupt input fails closed instead of reaching UB on a stale
+            // `unreachable_unchecked` invariant.
+            let id = Tree::hoist_dependency::<false, METHOD>(
                 this.parent,
                 hoist_root_id,
                 package_id,
                 input_dep_id,
                 builder,
-            ) {
-                Ok(id) => id,
-                // SAFETY: `hoist_dependency::<false, _>` never returns `Err` —
-                // the only `Err(SubtreeError::DependencyLoop)` site above is
-                // gated on `AS_DEFINED`. Avoids faulting panic-format pages on
-                // the per-dependency recursion.
-                Err(_) => unsafe { core::hint::unreachable_unchecked() },
-            };
+            )?;
             if !AS_DEFINED || !matches!(id, HoistDependencyResult::DependencyLoop) {
                 return Ok(id); // 1 or 2
             }

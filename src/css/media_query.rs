@@ -1,30 +1,18 @@
 //! CSS [media queries](https://drafts.csswg.org/mediaqueries/).
 //!
 //! Ported from `src/css/media_query.zig`.
-//!
-//! ─── B-2 round 3 status ──────────────────────────────────────────────────
-//! Module un-gated. All data types (`MediaList`, `MediaQuery`,
-//! `MediaCondition`, `QueryFeature`, `MediaFeatureValue`, `MediaFeatureId`,
-//! `MediaFeatureName`, `MediaFeatureComparison`, `MediaFeatureType`,
-//! `Operator`, `Qualifier`, `MediaType`, `QueryConditionFlags`) compile for
-//! real so `rules::{media,import,custom_media}` and
-//! `css_parser::AtRulePrelude` can hold them. `to_css` and arena-aware
-//! `deep_clone` are real; the `rules::dc::{media_list,query_feature}`
-//! bridges now route through them. `QueryFeature::parse` and the
-//! `MediaFeatureName`/`MediaFeatureValue` leaf parsers are real — the
-//! `values::{length,number,resolution,ratio}` calc lattice has un-gated, so
-//! `@media`/`@container` parse end-to-end.
 
 use crate as css;
 use crate::css_properties::custom::EnvironmentVariable;
 use crate::css_values::ident::{DashedIdent, Ident};
 use crate::{Parser, PrintErr, Printer, Result};
+use bun_alloc::ArenaPtr;
 
 pub use crate::Error;
 
 // TODO(port): the CSS crate borrows strings from parser input with lifetime `'i`
-// (matching lightningcss). Phase A avoids struct lifetime params; Phase B should
-// thread `'i` through `MediaType::Custom`, `Ident`, `DashedIdent`, etc.
+// (matching lightningcss). This module avoids struct lifetime params; consider
+// threading `'i` through `MediaType::Custom`, `Ident`, `DashedIdent`, etc.
 
 // ───────────────────────── value-type imports ─────────────────────────
 // Real `values/` payloads — the calc lattice has un-gated, so the local
@@ -66,8 +54,23 @@ pub trait QueryCondition: Sized + ToCss {
     ) -> Result<Self> {
         Self::parse_feature(input)
     }
-    fn create_negation(condition: Box<Self>) -> Self;
-    fn create_operation(operator: Operator, conditions: Vec<Self>) -> Self;
+    // Mutually-defaulting pairs: override exactly one of each.
+    fn create_negation(condition: Box<Self>) -> Self {
+        Self::create_negation_in(*condition, ArenaPtr::global())
+    }
+    fn create_negation_in(condition: Self, _alloc: ArenaPtr) -> Self {
+        Self::create_negation(Box::new(condition))
+    }
+    fn create_operation(operator: Operator, conditions: Vec<Self>) -> Self {
+        let mut v = Vec::new_in(ArenaPtr::global());
+        v.extend(conditions);
+        Self::create_operation_in(operator, v)
+    }
+    fn create_operation_in(operator: Operator, conditions: Vec<Self, ArenaPtr>) -> Self {
+        let mut v = Vec::with_capacity(conditions.len());
+        v.extend(conditions);
+        Self::create_operation(operator, v)
+    }
     fn parse_style_query(input: &mut Parser) -> Result<Self>;
     /// See `parse_feature_with_options` — same default-forward rationale.
     fn parse_style_query_with_options(
@@ -125,11 +128,18 @@ pub use crate::generics::ToCss;
 // ───────────────────────── MediaList / MediaQuery ─────────────────────────
 
 /// A [media query list](https://drafts.csswg.org/mediaqueries/#mq-list).
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MediaList {
     /// The list of media queries.
-    pub media_queries: Vec<MediaQuery>,
-    // PERF(port): was ArrayListUnmanaged backed by parser arena — profile in Phase B
+    pub media_queries: Vec<MediaQuery, ArenaPtr>,
+}
+
+impl Default for MediaList {
+    fn default() -> Self {
+        Self {
+            media_queries: Vec::new_in(ArenaPtr::global()),
+        }
+    }
 }
 
 /// A [media query](https://drafts.csswg.org/mediaqueries/#media).
@@ -218,11 +228,10 @@ impl QueryConditionFlags {
 #[derive(Debug, Clone, PartialEq)]
 pub enum MediaCondition {
     Feature(MediaFeature),
-    Not(Box<MediaCondition>),
+    Not(Box<MediaCondition, ArenaPtr>),
     Operation {
         operator: Operator,
-        conditions: Vec<MediaCondition>,
-        // PERF(port): was ArrayListUnmanaged backed by parser arena — profile in Phase B
+        conditions: Vec<MediaCondition, ArenaPtr>,
     },
 }
 
@@ -840,10 +849,10 @@ impl QueryCondition for MediaCondition {
         let feature = MediaFeature::parse_with_options(input, options)?;
         Ok(MediaCondition::Feature(feature))
     }
-    fn create_negation(condition: Box<Self>) -> Self {
-        MediaCondition::Not(condition)
+    fn create_negation_in(condition: Self, alloc: ArenaPtr) -> Self {
+        MediaCondition::Not(Box::new_in(condition, alloc))
     }
-    fn create_operation(operator: Operator, conditions: Vec<Self>) -> Self {
+    fn create_operation_in(operator: Operator, conditions: Vec<Self, ArenaPtr>) -> Self {
         MediaCondition::Operation {
             operator,
             conditions,
@@ -1263,13 +1272,10 @@ fn write_min_max<FeatureId: FeatureIdTrait>(
 impl MediaList {
     /// Zig: `MediaList.deepClone` — element-wise clone of `media_queries`.
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        Self {
-            media_queries: self
-                .media_queries
-                .iter()
-                .map(|q| q.deep_clone(bump))
-                .collect(),
-        }
+        let mut media_queries =
+            Vec::with_capacity_in(self.media_queries.len(), ArenaPtr::new(bump));
+        media_queries.extend(self.media_queries.iter().map(|q| q.deep_clone(bump)));
+        Self { media_queries }
     }
 
     /// Zig: `pub fn clone(this, arena)` — alias for `deepClone`.
@@ -1319,16 +1325,21 @@ impl MediaType {
 impl MediaCondition {
     /// Zig: `MediaCondition.deepClone` — variant-wise recursion.
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+        let alloc = ArenaPtr::new(bump);
         match self {
             MediaCondition::Feature(f) => MediaCondition::Feature(f.deep_clone(bump)),
             // Zig: `bun.create(arena, MediaCondition, c.deepClone(arena))`
-            MediaCondition::Not(c) => MediaCondition::Not(Box::new(c.deep_clone(bump))),
+            MediaCondition::Not(c) => MediaCondition::Not(Box::new_in(c.deep_clone(bump), alloc)),
             MediaCondition::Operation {
                 operator,
                 conditions,
             } => MediaCondition::Operation {
                 operator: *operator,
-                conditions: conditions.iter().map(|c| c.deep_clone(bump)).collect(),
+                conditions: {
+                    let mut out = Vec::with_capacity_in(conditions.len(), alloc);
+                    out.extend(conditions.iter().map(|c| c.deep_clone(bump)));
+                    out
+                },
             },
         }
     }
@@ -1434,8 +1445,8 @@ impl MediaType {
 impl MediaList {
     /// Parse a media query list from CSS.
     pub fn parse(input: &mut Parser, options: &css::ParserOptions) -> Result<MediaList> {
-        // PERF(port): was ArrayListUnmanaged(input.arena())
-        let mut media_queries: Vec<MediaQuery> = Vec::new();
+        let mut media_queries: Vec<MediaQuery, ArenaPtr> =
+            Vec::new_in(ArenaPtr::new(input.arena()));
         loop {
             match input
                 .parse_until_before(css::Delimiters::COMMA, |i| MediaQuery::parse(i, options))
@@ -1559,15 +1570,17 @@ pub fn parse_query_condition_with_options<C: QueryCondition>(
         return Err(location.new_unexpected_token_error(tok));
     };
 
+    let alloc = ArenaPtr::new(input.arena());
+
     // (is_negation, is_style)
     let first_condition: C = match (is_negation, is_style) {
         (true, false) => {
             let inner_condition = parse_parens_or_function::<C>(input, flags, options)?;
-            return Ok(C::create_negation(Box::new(inner_condition)));
+            return Ok(C::create_negation_in(inner_condition, alloc));
         }
         (true, true) => {
             let inner_condition = C::parse_style_query_with_options(input, options)?;
-            return Ok(C::create_negation(Box::new(inner_condition)));
+            return Ok(C::create_negation_in(inner_condition, alloc));
         }
         (false, false) => parse_paren_block::<C>(input, flags, options)?,
         (false, true) => C::parse_style_query_with_options(input, options)?,
@@ -1582,8 +1595,7 @@ pub fn parse_query_condition_with_options<C: QueryCondition>(
         return Err(location.new_unexpected_token_error(css::Token::Ident(b"or")));
     }
 
-    // PERF(port): was ArrayListUnmanaged(input.arena())
-    let mut conditions: Vec<C> = Vec::new();
+    let mut conditions: Vec<C, ArenaPtr> = Vec::new_in(alloc);
     conditions.push(first_condition);
     conditions.push(parse_parens_or_function::<C>(input, flags, options)?);
 
@@ -1594,7 +1606,7 @@ pub fn parse_query_condition_with_options<C: QueryCondition>(
 
     loop {
         if input.try_parse(|i| i.expect_ident_matching(delim)).is_err() {
-            return Ok(C::create_operation(operator, conditions));
+            return Ok(C::create_operation_in(operator, conditions));
         }
         conditions.push(parse_parens_or_function::<C>(input, flags, options)?);
     }

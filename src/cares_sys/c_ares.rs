@@ -318,9 +318,8 @@ pub struct struct_hostent {
 // stable, so the wrappers below are reshaped to a trait: the implementing
 // type provides the callback as a trait method, and the `extern "C"` thunk is
 // monomorphized per `T: Trait`.
-// TODO(port): revisit in Phase B once the dns_jsc consumer is ported — a
-// proc-macro may be cleaner if many callsites need distinct callbacks on the
-// same `Type`.
+// TODO(port): a proc-macro may be cleaner if many callsites need distinct
+// callbacks on the same `Type`.
 // ──────────────────────────────────────────────────────────────────────────
 
 pub trait HostentHandler: Sized {
@@ -755,7 +754,7 @@ pub trait ChannelContainer: Sized {
 /// the `extern "C"` parse-thunk used as the ares_callback.
 /// TODO(port): Zig dispatched via `@field(NSType, "ns_t_" ++ lookup_name)` and
 /// `cares_type.callbackWrapper(lookup_name, Type, callback)`. This trait is the
-/// Phase-A reshaping; the dns_jsc consumer will impl it per (T, record-type).
+/// Rust-side reshaping; the dns_jsc consumer impls it per (T, record-type).
 pub trait ResolveHandler: Sized {
     const LOOKUP_NAME: &'static [u8];
     const NS_TYPE: NSType;
@@ -1930,7 +1929,7 @@ impl Error {
                 return Some(Error::ENOTFOUND);
             }
 
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             if eai == EAI::SOCKTYPE {
                 return Some(Error::ECONNREFUSED);
             }

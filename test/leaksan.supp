@@ -46,7 +46,6 @@ leak:Bun__Path__join
 leak:Bun__Path__resolve
 leak:Zig::GlobalObject::moduleLoaderImportModule
 leak:bake.FrameworkRouter.JSFrameworkRouter.getFileIdForRouter
-leak:js_parser_jsc.Macro.MacroContext.call
 leak:runtime.webcore.Blob.findOrCreateFileFromPath__anon
 leak:BunString::toWTFString(BunString::ZeroCopyTag)
 leak:runtime.node.node_fs_binding.Bindings(.mkdtemp).runSync
@@ -58,8 +57,6 @@ leak:JSC::moduleLoaderModuleDeclarationInstantiation
 leak:JSC::arrayProtoFuncSort
 leak:bindgen_Fmt_jsFmtString
 leak:runtime.dns_jsc.dns.GetAddrInfoRequest.run
-leak:tcc_sys.tcc.State.init__anon
-leak:runtime.api.bun.dynamic_library.DlDynLib.open
 leak:Zig::ImportMetaObject::finishCreation
 leak:uws_add_server_name_with_options
 leak:runtime.webcore.Body.Value.fromJS
@@ -96,9 +93,6 @@ leak:WebCore__DOMURL__fileSystemPath
 leak:runtime.node.node_fs_watcher.FSWatcher.Arguments.fromJS
 leak:jsc.web_worker.create
 leak:runtime.node.zlib.NativeZlib.Context.init
-leak:sql_jsc.postgres.PostgresSQLStatement.structure
-leak:sql_jsc.postgres.DataCell.parseArray__anon
-leak:sql.postgres.protocol.FieldMessage.FieldMessage.init
 leak:JSC::intlCollatorAvailableLocales
 leak:Bun__canonicalizeIP
 leak:dlopen
@@ -125,5 +119,8 @@ leak:create_ssl_context_from_bun_options
 leak:jsc.Debugger.startJSDebuggerThread
 # test/js/sql/sqlite-sql.test.ts
 leak:WebCore::jsSQLStatementOpenStatementFunction
-# ci, test/js/node/test/parallel/test-dgram-unref-in-cluster.js
-leak:runtime.socket.udp_socket.UDPSocket.udpSocket
+# test/js/web/atomics.test.ts — RunLoop::dispatchAfter's DispatchTimer captures
+# a Ref to itself in m_function; the cycle only breaks when fired(). If stop()
+# is called before firing (WaiterListManager::clearTimer on notify/unregister),
+# the DispatchTimer and its Bun-side WTFTimer Box leak. JSC-owned ref-cycle.
+leak:WTF::RunLoop::dispatchAfter

@@ -36,7 +36,7 @@ pub fn detect_glob_syntax(potential_pattern: &[u8]) -> bool {
     // In descending order of how popular the token is
     const SPECIAL_SYNTAX: [u8; 4] = [b'*', b'{', b'[', b'?'];
 
-    // PERF(port): was `inline for` (unrolled at comptime) — profile in Phase B
+    // PERF(port): was `inline for` (unrolled at comptime).
     for &token in SPECIAL_SYNTAX.iter() {
         let mut slice = &potential_pattern[..];
         while !slice.is_empty() {

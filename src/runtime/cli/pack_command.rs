@@ -386,7 +386,7 @@ pub enum PackError<const FOR_PUBLISH: bool> {
     MissingPackageJSON,
     // The following two are only valid when FOR_PUBLISH == true.
     // TODO(port): Zig modeled this as a comptime-computed error set union; Rust
-    // const-generic enums cannot conditionally include variants. Phase B may
+    // const-generic enums cannot conditionally include variants. Could
     // split into two enums or gate construction.
     #[error("RestrictedUnscopedPackage")]
     RestrictedUnscopedPackage,
@@ -1718,7 +1718,7 @@ fn is_excluded<'a>(
 type BufferedFileReader = bun_core::deprecated::BufferedReader<{ 1024 * 512 }, bun_sys::File>;
 
 // ───────────────────────────────────────────────────────────────────────────
-// Local shims / extension traits for upstream API gaps (Phase D)
+// Local shims / extension traits for upstream API gaps
 // ───────────────────────────────────────────────────────────────────────────
 
 use bun_libarchive::lib::Result as ArchiveResult;
@@ -1944,9 +1944,9 @@ fn manager_env<'a>(m: &'a PackageManager) -> &'a bun_dotenv::Loader<'static> {
 // pack()
 // ───────────────────────────────────────────────────────────────────────────
 
-// TODO(port): Zig used `comptime for_publish: bool` to vary the return type
+// TODO(refactor): Zig used `comptime for_publish: bool` to vary the return type
 // (`Publish.Context(true)` vs `void`). Rust const generics cannot vary return
-// type directly; using an associated-type-like Option for now. Phase B: split
+// type directly; using an associated-type-like Option for now. Could split
 // into `pack()` and `pack_for_publish()` or use a trait.
 pub type PackReturn<'a, const FOR_PUBLISH: bool> = Option<Publish::Context<'a, true>>;
 
@@ -2094,6 +2094,22 @@ pub fn pack<const FOR_PUBLISH: bool>(
     );
     // SAFETY: `configure_env_for_run` fully initialized `this_transpiler`.
     let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
+    // `Transpiler::deinit` only frees the heap-owned `options`/`result`/
+    // `resolver.opts`/`resolve_results` fields; the `env` raw pointer
+    // (`transpiler_env` captured below) and the `log`/`fs` singletons are left
+    // intact, so running the deferred deinit at scope exit is sound even
+    // though `transpiler_env` is dereferenced past the guard's binding.
+    // `MaybeUninit` does not run `Drop` on its contents, so without this the
+    // `Arc<TransformOptions>` and resolver hash maps strand on every `bun pm
+    // pack` / `bun publish`.
+    let transpiler_for_deinit: *mut bun_bundler::Transpiler<'static> = this_transpiler;
+    scopeguard::defer! {
+        // SAFETY: `transpiler_for_deinit` points at the initialized
+        // `this_transpiler` stack slot, which outlives the guard. `defer!`
+        // fires exactly once so the `drop_in_place` calls inside `deinit` are
+        // not repeated.
+        unsafe { (*transpiler_for_deinit).deinit() };
+    }
     // `Transpiler::env` is a process-singleton `*mut` (set by `init`); pass as
     // raw pointer so `run_package_script_foreground` can `&mut` it without
     // conflicting with our `&Transpiler` borrow.
@@ -2401,7 +2417,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
                         &bins,
                         &includes,
                         &excludes,
-                        root_dir, // TODO(port): borrowck — root_dir reused after this; Phase B pass &Dir
+                        root_dir, // TODO(port): borrowck — root_dir reused after this; could pass &Dir
                         log_level,
                     )?;
                     break 'iterate_project_tree;
@@ -2419,7 +2435,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
                 &mut pack_queue,
                 &bins,
                 DirInfo(root_dir, Box::from(&b""[..]), 1),
-                // TODO(port): borrowck — root_dir reused after this; Phase B pass &Dir or dup fd
+                // TODO(port): borrowck — root_dir reused after this; could pass &Dir or dup fd
                 log_level,
             )?;
         }
@@ -4078,8 +4094,7 @@ pub mod bindings {
             return Err(global.throw(format_args!("expected tarball path string argument")));
         }
 
-        let tarball_path_str = args[0].to_bun_string(global)?;
-        // deref handled by Drop on BunString
+        let tarball_path_str = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
 
         let tarball_path = tarball_path_str.to_utf8();
 

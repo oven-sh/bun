@@ -23,11 +23,10 @@ use crate::webcore::s3::list_objects;
 
 // PORT NOTE: result/options structs below carry borrowed slices that are valid only for the
 // duration of the callback invocation (Zig comments say "not owned and need to be copied if used
-// after this callback"). They get an explicit `<'a>` even though PORTING.md's []const u8 row says
-// "never put a lifetime param on a struct in Phase A" — these are ephemeral stack-only callback
-// payloads (never heap-stored), which falls under LIFETIMES.tsv class BORROW_PARAM (struct gets
-// `<'a>`). Phase B may swap to raw `*const [u8]` if borrowck reshaping proves cleaner.
-// TODO(port): revisit <'a> vs raw-ptr for callback payload structs in Phase B
+// after this callback"). They take an explicit `<'a>` because they are ephemeral stack-only
+// callback payloads (never heap-stored) — the borrow lifetime accurately models ownership.
+// TODO(port): revisit `<'a>` vs raw `*const [u8]` for callback payload structs if borrowck
+// reshaping proves cleaner.
 
 #[derive(Default)]
 pub struct S3StatSuccess<'a> {
@@ -491,7 +490,12 @@ impl Drop for S3HttpSimpleTask {
         // `execute_simple_s3_request`); `Drop` only runs via `on_response` after that point.
         // Zig's `deinit` calls only `http.clearData()` and never runs a full AsyncHTTP destructor,
         // so we intentionally do NOT `assume_init_drop` here.
-        unsafe { self.http.assume_init_mut() }.clear_data();
+        let http = unsafe { self.http.assume_init_mut() };
+        http.clear_data();
+        // Zig shared one EntryList allocation between task.headers / request_headers /
+        // client.header_entries; Rust `init` clones, so free the two copies clear_data() skips.
+        http.request_headers = Default::default();
+        http.client.header_entries = Default::default();
     }
 }
 

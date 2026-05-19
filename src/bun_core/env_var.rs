@@ -31,8 +31,8 @@
 // embedded `static` cache. Rust cannot parameterize a generic type on `&'static str` + a struct
 // value in stable, so this port models `New`/`PlatformSpecificNew` as `macro_rules!` that emit a
 // module per env var. In Zig the declarations come first and the type-generator fns come last;
-// here the macros must be defined (or `#[macro_use]`d) before the declarations. Phase B may move
-// the macro definitions into a sibling `env_var_impl.rs` and `#[macro_use]` it to restore Zig
+// here the macros must be defined (or `#[macro_use]`d) before the declarations. The macro
+// definitions could move into a sibling `env_var_impl.rs` and be `#[macro_use]`d to restore Zig
 // declaration order in this file.
 
 use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicU64, AtomicUsize, Ordering};
@@ -386,7 +386,10 @@ pub(crate) mod kind {
 
         pub(crate) fn string_is_truthy(s: &[u8]) -> bool {
             // Most values are considered truthy, except for "", "0", "false", "no", and "off".
-            !crate::strings::eql_any_case_insensitive_ascii(s, &[b"", b"0", b"false", b"no", b"off"])
+            !crate::strings::eql_any_case_insensitive_ascii(
+                s,
+                &[b"", b"0", b"false", b"no", b"off"],
+            )
         }
 
         // This is a template which ignores its parameter, but is necessary so that a separate
@@ -692,7 +695,7 @@ macro_rules! platform_specific_new {
     // TODO(port): this macro is a draft of the Zig comptime type-generator. It expands to a
     // `pub mod $name { pub fn get() / key() / platform_get() / ... }` so call sites read
     // `env_var::HOME::get()` like Zig's `env_var.HOME.get()`. The opts-parsing arms below cover
-    // exactly the option shapes used in this file; Phase B should harden / generalize.
+    // exactly the option shapes used in this file; harden / generalize if new shapes appear.
     (
         $vis:vis $name:ident : $kind:ident,
         posix = $posix:tt, windows = $windows:tt,
@@ -786,7 +789,7 @@ macro_rules! platform_specific_new {
 
             // TODO(port): `getNotEmpty` only makes sense for string-kind vars (it calls `.len`).
             // In Zig, lazy compilation means it simply isn't instantiated for non-string vars.
-            // Phase B: gate this fn on `$kind == string` via a separate macro arm.
+            // Could gate this fn on `$kind == string` via a separate macro arm.
             pub fn get_not_empty() -> Option<K::ValueType>
             where
                 K::ValueType: $crate::env_var::HasLen,
@@ -862,8 +865,8 @@ macro_rules! platform_specific_new {
             fn assert_platform_supported() {
                 // Zig: `@compileError` when the current platform's key is null.
                 // TODO(port): Rust cannot `compile_error!` from inside a const-evaluated `if cfg!`
-                // without separate macro arms per (posix=None / windows=None) combination. Phase B
-                // should split the macro so e.g. `posix = None` emits `#[cfg(unix)] compile_error!`.
+                // without separate macro arms per (posix=None / windows=None) combination. Could
+                // split the macro so e.g. `posix = None` emits `#[cfg(unix)] compile_error!`.
                 #[cfg(windows)]
                 debug_assert!(
                     WINDOWS_KEY.is_some(),
@@ -890,7 +893,7 @@ macro_rules! platform_specific_new {
 pub(crate) use platform_specific_new;
 
 // ─── helper macros for platform_specific_new! ───
-// TODO(port): these are scaffolding for the draft macro; Phase B may replace with a cleaner
+// TODO(port): these are scaffolding for the draft macro; could be replaced with a cleaner
 // trait-based design once the call-site shape is settled.
 
 #[doc(hidden)]

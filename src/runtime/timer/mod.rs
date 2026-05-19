@@ -1,13 +1,13 @@
 //! Timer subsystem: setTimeout/setInterval/setImmediate scheduling and the
 //! event-loop timer heap.
 //!
-//! B-2 un-gate (this round): structs + state machines are real. JS-facing
-//! method bodies (`set_timeout`/`clear_timer`/`warn_invalid_countdown`/etc.)
-//! remain ``-gated on `bun_jsc` (commented out in Cargo.toml).
+//! Structs + state machines are real. JS-facing method bodies
+//! (`set_timeout`/`clear_timer`/`warn_invalid_countdown`/etc.) remain
+//! ``-gated on `bun_jsc` (commented out in Cargo.toml).
 //! `All::insert`/`remove`/`update`/`get_timeout`/`drain_timers` — the surface
-//! `EventLoop::auto_tick` blocks on per keystone C — are real.
+//! `EventLoop::auto_tick` blocks on — are real.
 //!
-//! Full Phase-A drafts are preserved gated under ` mod *_draft`
+//! Full earlier drafts are preserved gated under ` mod *_draft`
 //! so this file can be diffed against `Timer.rs` once `bun_jsc` is green.
 
 use core::mem::offset_of;
@@ -25,7 +25,7 @@ use bun_threading::Mutex;
 pub use bun_event_loop::EventLoopTimer::{
     EventLoopTimer, InHeap, IntrusiveField, State as EventLoopTimerState, Tag as EventLoopTimerTag,
 };
-// TODO(b2-blocked): bun_event_loop carries a local `Timespec` stub instead of
+// TODO(port): bun_event_loop carries a local `Timespec` stub instead of
 // `bun_core::Timespec`. Same `{sec: i64, nsec: i64}` shape; alias it here so
 // `fire()`/`next` accesses type-check without a transmute. Remove once the
 // lower tier switches to `bun_core::Timespec`.
@@ -714,7 +714,7 @@ impl All {
     /// On Windows there is no epoll/kqueue fallback; this `uv_timer_t` is the
     /// ONLY thing that wakes `uv_run` for JS timers.
     ///
-    /// PORT NOTE (b2-cycle): Zig recovers `*VirtualMachine` via
+    /// PORT NOTE (jsc/runtime crate cycle): Zig recovers `*VirtualMachine` via
     /// `@fieldParentPtr("timer", this)` (the VM that *owns* this `All`) and
     /// reads `vm.uvLoop()` == `vm.event_loop_handle`. In Rust `All` is a field
     /// of `RuntimeState` (not `VirtualMachine`) and `RuntimeState` carries no
@@ -727,7 +727,7 @@ impl All {
     /// (`uv_handle_get_loop`), so the hot path is TLS-free and always targets
     /// the loop the timer was actually registered on.
     ///
-    /// TODO(b2-cycle): thread `vm: *mut VirtualMachine` through
+    /// TODO(port): thread `vm: *mut VirtualMachine` through
     /// `insert`/`insert_lock_held`/`update` (matching the Zig signature) once
     /// the `RuntimeHooks::timer_insert` slot widens — see jsc_hooks.rs.
     #[cfg(windows)]
@@ -814,8 +814,8 @@ impl All {
         // Read `in_heap` and write the post-remove bookkeeping via raw deref.
         match unsafe { (*timer).in_heap } {
             InHeap::None => {
-                // PORT NOTE: `Environment.ci_assert` → `debug_assertions` (see ptr/ref_count.rs).
                 // can't remove a timer that was not inserted
+                // Zig: gated on `bun.Environment.ci_assert`.
                 debug_assert!(false);
             }
             // SAFETY: timer is in `self.timers` per `in_heap`
@@ -905,7 +905,7 @@ impl All {
         // call. Spec Timer.zig:247 takes `*All` (raw pointer) for the same
         // reason.
         //
-        // TODO(b2): same caveat as `drain_timers` — the call-site auto-ref
+        // TODO(port): same caveat as `drain_timers` — the call-site auto-ref
         // still creates a `&mut All` for the call frame; switch the signature
         // to `this: *mut Self` (see jsc_hooks.rs:525).
         let this: *mut Self = self;
@@ -1026,7 +1026,7 @@ impl All {
         // re-entrant call (mirroring the raw-ptr pattern in
         // `TimerObjectInternals::run_immediate_task`).
         //
-        // TODO(b2): the call-site auto-ref at jsc_hooks.rs (`(*state).timer
+        // TODO(port): the call-site auto-ref at jsc_hooks.rs (`(*state).timer
         // .drain_timers(...)`) still creates a `&mut All` for the call frame
         // itself; switch it to `All::drain_timers(core::ptr::addr_of_mut!(
         // (*state).timer), vm)` and change this signature to `this: *mut Self`.
@@ -1123,6 +1123,110 @@ impl All {
         }
         #[cfg(windows)]
         let _ = uws_loop;
+    }
+
+    /// VM-teardown pass: `cancel()` every `TimeoutObject` / `ImmediateObject`
+    /// still linked in `timers` / `fake_timers.timers` so the in-heap `+1` ref
+    /// and the JS pin (`this_value` Strong) are released before the GC sweep.
+    ///
+    /// Snapshots the heap under `lock` (cross-thread `WTFTimer__update` from
+    /// the GC scheduler thread can race the DFS otherwise), then cancels each
+    /// node *outside* the lock — `cancel()` re-enters [`All::remove`] which
+    /// re-acquires `lock` (non-recursive `bun_threading::Mutex`).
+    ///
+    /// # Safety
+    /// JS thread only, with the TLS `RuntimeState` still installed and `vm`
+    /// the live per-thread VM. Must run BEFORE JSC teardown
+    /// (`Zig__GlobalObject__destructOnExit` / `WebWorker__teardownJSCVM`) and
+    /// BEFORE `runtime_state` is nulled — the GC sweep frees the
+    /// `TimeoutObject` boxes whose `event_loop_timer` fields the heap nodes
+    /// alias.
+    pub unsafe fn cancel_all_timeout_objects(
+        this: *mut Self,
+        vm: *mut crate::jsc::virtual_machine::VirtualMachine,
+    ) {
+        let mut to_cancel: Vec<*const TimerObjectInternals> = Vec::new();
+        let mut signal_timeouts: Vec<*mut AbortSignalTimeout> = Vec::new();
+        let mut stack: Vec<*mut EventLoopTimer> = Vec::new();
+
+        // SAFETY: `this` is the live per-thread `All`; `lock` guards both heap
+        // roots against concurrent `WTFTimer` insert/remove from off-thread
+        // (GC scheduler thread). Lock/unlock is manual (non-RAII Mutex).
+        unsafe { (*this).lock.lock() };
+        // SAFETY: `this` live; both roots are heap roots or null.
+        let roots = unsafe { [(*this).timers.0.root, (*this).fake_timers.timers.0.root] };
+        for root in roots {
+            if !root.is_null() {
+                stack.push(root);
+            }
+        }
+        while let Some(node) = stack.pop() {
+            // SAFETY: intrusive-heap invariant — every node reachable from a
+            // root is a live `EventLoopTimer` while linked. Read-only walk.
+            let (tag, child, next) =
+                unsafe { ((*node).tag, (*node).heap.child, (*node).heap.next) };
+            if !child.is_null() {
+                stack.push(child);
+            }
+            if !next.is_null() {
+                stack.push(next);
+            }
+            match tag {
+                EventLoopTimerTag::TimeoutObject => {
+                    // SAFETY: tag invariant — `node` IS the `event_loop_timer`
+                    // field of a live `TimeoutObject`.
+                    let parent = unsafe { TimeoutObject::from_timer_ptr(node) };
+                    to_cancel.push(unsafe { core::ptr::addr_of!((*parent).internals) });
+                }
+                EventLoopTimerTag::ImmediateObject => {
+                    // SAFETY: tag invariant — see above.
+                    let parent = unsafe { ImmediateObject::from_timer_ptr(node) };
+                    to_cancel.push(unsafe { core::ptr::addr_of!((*parent).internals) });
+                }
+                EventLoopTimerTag::AbortSignalTimeout => {
+                    // SAFETY: tag invariant — `node` IS the `event_loop_timer`
+                    // field of a live boxed `abort_signal::Timeout`.
+                    signal_timeouts.push(unsafe { AbortSignalTimeout::from_timer_ptr(node) });
+                }
+                _ => {}
+            }
+        }
+        // SAFETY: paired with the `lock()` above. Must release before the
+        // cancel loop — `cancel()` re-enters `All::remove` which re-locks.
+        unsafe { (*this).lock.unlock() };
+
+        for internals in to_cancel {
+            // SAFETY: each pointer was collected from the live heap; the
+            // parent box is still alive (the +1 ref `cancel()` releases is
+            // exactly the one keeping it pinned). `cancel()` may free the
+            // parent on the final deref — never touched again.
+            unsafe { (*internals).cancel(vm) };
+        }
+
+        // `AbortSignal.timeout()` boxes form a refcount cycle: the C++
+        // `AbortSignal` owns `m_timeout` (raw `*mut Timeout`) and the Timeout
+        // holds a `+1` on the signal. Neither can release first, so a pending
+        // timeout at exit leaks both. Unlink the timer (so the eventual
+        // `~AbortSignal` → `cancelTimer` → `Timeout::deinit` re-cancel is a
+        // no-op against the already-destroyed heap) and release the `+1`; the
+        // box itself is freed via `cancelTimer()` either now (if this was the
+        // last ref) or at `lastChanceToFinalize` when the JS wrapper is
+        // collected.
+        for t in signal_timeouts {
+            // SAFETY: each `t` was collected from the live heap above; the
+            // `+1` we release here is the one keeping the signal (and thus
+            // the box, via `m_timeout`) pinned. JS thread.
+            unsafe {
+                if (*t).event_loop_timer.state == EventLoopTimerState::ACTIVE {
+                    (*this).remove(core::ptr::addr_of_mut!((*t).event_loop_timer));
+                }
+                let signal = (*t).signal;
+                (*t).signal = core::ptr::null_mut();
+                if !signal.is_null() {
+                    crate::jsc::abort_signal::AbortSignal::opaque_ref(signal).unref();
+                }
+            }
+        }
     }
 }
 

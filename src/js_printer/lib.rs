@@ -1,14 +1,12 @@
 //! JavaScript printer — translates the AST back to source text.
 //! Port of src/js_printer/js_printer.zig.
 //!
-//! B-2 UN-GATED. The `Printer<'a, W, ...>` struct and its full method surface
-//! (`print_expr`, `print_stmt`, `print_binding`, `print_property`, …) now
-//! compile against the real `bun_ast::{e,s,b,g,op,expr,stmt}`
-//! types. The top-level `print` / `print_with_writer{,_and_platform}` /
-//! `print_common_js` / `get_source_map_builder` driver fns are live at crate
-//! root (the `__gated_entry_points` wrapper has been flattened). Remaining
-//! `` islands are leaf optimizations blocked on lower-tier surface
-//! (see TODO(b2-blocked) markers below): the template-inlining fold, the
+//! The `Printer<'a, W, ...>` struct and its full method surface
+//! (`print_expr`, `print_stmt`, `print_binding`, `print_property`, …)
+//! compile against `bun_ast::{e,s,b,g,op,expr,stmt}`. The top-level
+//! `print` / `print_with_writer{,_and_platform}` / `print_common_js` /
+//! `get_source_map_builder` driver fns live at crate root. Remaining gaps
+//! (see TODO(port) markers below): the template-inlining fold, the
 //! ESM-to-CJS __export emission path, `print_dev_server_module`, the source-map
 //! self-borrow in `init`, and the `print_ast` minify-renamer driver / `print_json`.
 
@@ -65,10 +63,10 @@ pub use bun_options_types::schema::api::CssInJsBehavior;
 pub use bun_paths::fs::Path as FsPath;
 
 // ──────────────────────────────────────────────────────────────────────────
-// renamer — Phase-A draft in `renamer.rs`. The five former leak sites
+// renamer — defined in `renamer.rs`. The five former leak sites
 // have been replaced with `bumpalo::Bump`-backed allocation (PORTING.md §Forbidden);
 // renamed-name strings are arena-owned and typed `*const [u8]` (PORTING.md §Allocators).
-// Phase B threads the AST `'bump` lifetime to replace the raw pointers.
+// TODO(refactor): thread the AST `'bump` lifetime through Renamer to replace the raw pointers.
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "renamer.rs"]
 pub mod renamer;
@@ -1013,11 +1011,8 @@ where
                         strings::index_of_needs_escape_for_java_script_string(remain, quote_char)
                     {
                         let j = j as usize;
-                        let text_chunk = &text[i..i + clamped_width];
-                        writer.write_all(text_chunk)?;
-                        i += clamped_width;
-                        writer.write_all(&remain[..j])?;
-                        i += j;
+                        writer.write_all(&text[i..i + clamped_width + j])?;
+                        i += clamped_width + j;
                     } else {
                         writer.write_all(&text[i..])?;
                         i = n;
@@ -1141,7 +1136,15 @@ pub fn quote_for_json(
 ) -> Result<(), bun_core::Error> {
     // Zig: `comptime ascii_only: bool`. We now thread `ascii_only` at runtime so
     // the heavy escaper isn't monomorphized per ascii_only/quote-char combo.
-    bytes.grow_if_needed(estimate_length_for_utf8(text, ascii_only, b'"'))?;
+    //
+    // Heuristic reservation (~12.5% slack) instead of `estimate_length_for_utf8`,
+    // which would do a full SIMD scan + per-escape rune decode over `text` just
+    // to size the buffer — the same work `write_pre_quoted_string_inner` repeats
+    // immediately below. Tab-indented JS (e.g. three.js) has ~9.4% of bytes
+    // needing 2-byte escapes (tabs + newlines + quotes/backslashes), so 6.25%
+    // slack would under-shoot and force a 2x doubling memcpy of the whole
+    // source. The writer still grows on demand if this under-shoots.
+    bytes.grow_if_needed(text.len() + (text.len() >> 3) + 8)?;
     bytes.append_char(b'"')?;
     write_pre_quoted_string_inner::<_, { Encoding::Utf8 }>(text, bytes, b'"', ascii_only, true)?;
     bytes.append_char(b'"').expect("unreachable");
@@ -1162,9 +1165,9 @@ pub fn write_json_string<W: Write + ?Sized, const ENCODING: Encoding>(
 // SourceMapHandler / Options — gated on bun_sourcemap::Chunk::Builder and the
 // real bun_js_parser::{runtime, Ast::*} surface.
 // ───────────────────────────────────────────────────────────────────────────
-// TODO(b2-blocked): bun_sourcemap::Chunk::Builder
-// TODO(b2-blocked): bun_ast::runtime::Runtime::Imports
-// TODO(b2-blocked): bun_ast::Ast::CommonJSNamedExports
+// TODO(port): bun_sourcemap::Chunk::Builder
+// TODO(port): bun_ast::runtime::Runtime::Imports
+// TODO(port): bun_ast::Ast::CommonJSNamedExports
 pub struct SourceMapHandler<'a> {
     pub ctx: NonNull<()>,
     pub callback: fn(*mut (), SourceMap::Chunk, &bun_ast::Source) -> Result<(), bun_core::Error>,
@@ -1235,7 +1238,7 @@ pub struct Options<'a> {
     // TODO(port): source_map_allocator was Option<Allocator>; arena-backed in some callers
     pub source_map_handler: Option<SourceMapHandler<'a>>,
     pub source_map_builder: Option<&'a mut SourceMap::chunk::Builder>,
-    // TODO(b2-blocked): bun_options_types::schema::api::CssInJsBehavior — local stand-in.
+    // TODO(port): bun_options_types::schema::api::CssInJsBehavior — local stand-in.
     pub css_import_behavior: CssInJsBehavior,
     pub target: bun_ast::Target,
 
@@ -1619,17 +1622,8 @@ impl TopLevel {
 
 // ───────────────────────────────────────────────────────────────────────────
 // Printer (NewPrinter) — the impl body is the bulk of this crate and touches
-// nearly every bun_js_parser AST node type. `bun_js_parser` now links, but the
-// per-node API surface (op tables, FnFlags, BindingData dispatch, EString
-// `.data()` accessor, ImportRecord flag fields) does not yet match the shapes
-// the Phase-A draft assumed (~300 mismatches). Re-gated until those land.
+// nearly every bun_js_parser AST node type.
 // ───────────────────────────────────────────────────────────────────────────
-// TODO(b2-blocked): bun_ast::g::FnFlags
-// TODO(b2-blocked): bun_ast::binding::Data
-// TODO(b2-blocked): bun_ast::op::{TABLE::get_ptr_const, Code::is_prefix}
-// TODO(b2-blocked): bun_ast::e::EString::data
-// TODO(b2-blocked): bun_ast::ImportRecordFlags field-style accessors (contains_import_star/wrap_with_to_esm/handles_import_errors)
-// TODO(b2-blocked): bun_ast::ImportRecord::module_id
 pub mod __gated_printer {
     use super::*;
     use bun_ast::ImportRecordTag;
@@ -1642,7 +1636,7 @@ pub mod __gated_printer {
     use js_ast::{b as B, e as E, g as G, op as Op, s as S};
 
     // ──────────────────────────────────────────────────────────────────────────
-    // Phase-B local helpers — bridge gaps between Phase-A draft and the real
+    // Local helpers — bridge gaps between the printer and the
     // lower-tier crate API surface without editing those crates.
     // ──────────────────────────────────────────────────────────────────────────
 
@@ -1721,7 +1715,7 @@ pub mod __gated_printer {
     /// code in the JavaScript parser for details.
     pub struct BinaryExpressionVisitor<'ast> {
         // Inputs
-        // PORT NOTE: Zig stored `*const E.Binary`; Phase A keeps the StoreRef so the
+        // PORT NOTE: Zig stored `*const E.Binary`; we keep a StoreRef so the
         // visitor stack can outlive the by-value `Expr` argument to `print_expr`.
         pub e: js_ast::StoreRef<E::Binary>,
         _phantom: core::marker::PhantomData<&'ast ()>,
@@ -2744,8 +2738,8 @@ pub mod __gated_printer {
         /// either the AST arena (`Symbol::original_name: *const [u8]`) or the
         /// `Source::contents` buffer — both are kept alive for `'a` by the
         /// caller of `Printer::init`. Detach the borrow to a raw ptr per the
-        /// Phase-A ARENA convention (matching `slice_of` for AST fields).
-        /// // PORT NOTE: reshaped for borrowck — Phase B threads `'bump` through Renamer.
+        /// parser's ARENA convention (matching `slice_of` for AST fields).
+        /// PORT NOTE: reshaped for borrowck — TODO(refactor): thread `'bump` through Renamer.
         #[inline]
         fn name_for_symbol(&mut self, ref_: Ref) -> &'a [u8] {
             let p = std::ptr::from_ref::<[u8]>(self.renamer.name_for_symbol(ref_));
@@ -3076,7 +3070,7 @@ pub mod __gated_printer {
         }
 
         pub fn print_string_literal_utf8(&mut self, str: &[u8], allow_backtick: bool) {
-            // TODO(b2-blocked): bun_core::wtf8_validate_slice — debug-only assert dropped.
+            // TODO(port): bun_core::wtf8_validate_slice — debug-only assert dropped.
 
             let quote = if !IS_JSON {
                 best_quote_char_for_string(str, allow_backtick)
@@ -5512,7 +5506,7 @@ pub mod __gated_printer {
                     // PORT NOTE: Zig wraps `s.items` in an ArrayListUnmanaged and uses swapRemove
                     // in-place. `ClauseItem` isn't `Clone`, so build a Vec of arena borrows
                     // instead and swap-remove the borrows.
-                    // TODO(port): lifetime — Zig mutates `s.items` in place; Phase B may write back.
+                    // TODO(port): lifetime — Zig mutates `s.items` in place; consider writing back.
                     let mut array: Vec<&js_ast::ClauseItem> = slice_of(s.items).iter().collect();
                     {
                         let mut i: usize = 0;
@@ -6749,7 +6743,7 @@ pub mod __gated_printer {
             };
             self.print_decls(keyword, decls, ExprFlag::none(), tlm);
             self.print_semicolon_after_statement();
-            // TODO(b2-blocked): bun_ast::runtime::Imports::__export — the
+            // TODO(port): bun_ast::runtime::Imports::__export — the
             // full `runtime.rs` is ``-gated upstream; the active
             // `parser.rs::Runtime::Imports` stub is a fieldless unit struct.
 
@@ -7017,7 +7011,7 @@ pub mod __gated_printer {
             };
             // Spec js_printer.zig:5454-5460 caches `line_offset_tables.items(.byte_offset_to_start_of_line)`
             // into `line_offset_table_byte_offset_list`. The Rust `Builder` field is `&'static [u32]`
-            // pending Phase-B lifetime threading, so instead of caching a self-borrow here,
+            // pending lifetime threading, so instead of caching a self-borrow here,
             // `Builder::add_source_mapping` derives the slice on demand from `line_offset_tables`
             // via `ListExt::items_byte_offset_to_start_of_line()` (see Chunk.rs).
             let _ = GENERATE_SOURCE_MAP;
@@ -7814,7 +7808,7 @@ impl GenerateSourceMap {
 // `print_ast` is live (borrowck reshape: `opts` re-reads routed through
 // `printer.options`, `*mut Symbol` for `must_not_be_renamed`, raw-ptr
 // `Scope.parent` backref). `print_json` remains individually re-gated on
-// lower-tier surface (see TODO(b2-blocked) markers inline).
+// lower-tier surface (see TODO(port) markers inline).
 // ───────────────────────────────────────────────────────────────────────────
 use self::__gated_printer::{Printer, slice_of};
 use js_ast::Ast;
@@ -7873,6 +7867,18 @@ pub fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
             i32::try_from(tree.approximate_newline_count).expect("int cast"),
         );
     }
+    // Pre-size the VLQ mappings buffer. With `--minify` we emit roughly one
+    // mapping per token; growing from 0 by doubling means ~16 reallocs and
+    // O(n) memmoves on a large module. The estimate is intentionally
+    // conservative — undershooting still saves the early small reallocs and
+    // the buffer doubles from there. Only the bundler/external path uses
+    // `data` directly; the prepend-count (Lazy) path writes through
+    // `internal` and would just waste the reservation.
+    if builder.source_map.ctx.internal.is_none() {
+        let hint =
+            (source.contents.len() / 4).max(tree.approximate_newline_count.saturating_mul(4));
+        let _ = builder.source_map.ctx.data.grow_if_needed(hint);
+    }
     builder
 }
 
@@ -7925,6 +7931,8 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
             tree.nested_scope_slot_counts.clone(),
             reserved_names,
         )?;
+        // `symbols` is owned here (transpiler path) — let Drop free it.
+        minify_renamer.owns_symbols = true;
 
         let mut top_level_symbols = rename::StableSymbolCountArray::new();
 
@@ -8036,9 +8044,9 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
                 // `MultiArrayList::Drop` only frees the column buffer — it does
                 // NOT drop column elements (Zig allocated these into the arena
                 // so it didn't matter there). The per-row `columns_for_non_ascii`
-                // Vec<i32>s live on the global heap in the Rust port; drain them
+                // Box<[i32]>s live on the global heap in the Rust port; drain them
                 // before dropping the SoA storage to avoid leaking them.
-                for v in tables.items_mut::<"columns_for_non_ascii", Vec<i32>>() {
+                for v in tables.items_mut::<"columns_for_non_ascii", Box<[i32]>>() {
                     core::mem::take(v);
                 }
                 unsafe { core::mem::ManuallyDrop::drop(tables) };
@@ -8297,7 +8305,7 @@ pub fn print_with_writer_and_platform<
     );
     printer.was_lazy_export = ast.has_lazy_export;
     // PORT NOTE: `Printer::init` already moved `opts.module_info` (it's a field of
-    // `Options`); the Phase-A draft re-assigned it post-construction, which is a
+    // `Options`); re-assigning it post-construction (as Zig does) would be a
     // use-after-move in Rust. The field already lives on `printer.options.module_info`
     // and `printer.module_info` was set to `None` by `init`, so mirror Zig by
     // taking it back out of `printer.options`.
@@ -8413,8 +8421,8 @@ pub fn print_common_js<
                 // dropped exactly once here.
                 let tables = unsafe { &mut *p };
                 // `MultiArrayList::Drop` does not drop column elements; drain
-                // the global-heap Vec<i32>s before dropping the SoA storage.
-                for v in tables.items_mut::<"columns_for_non_ascii", Vec<i32>>() {
+                // the global-heap Box<[i32]>s before dropping the SoA storage.
+                for v in tables.items_mut::<"columns_for_non_ascii", Box<[i32]>>() {
                     core::mem::take(v);
                 }
                 unsafe { core::mem::ManuallyDrop::drop(tables) };

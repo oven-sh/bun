@@ -25,8 +25,8 @@ use crate::{
     invalid_package_id,
     resolution::{Tag as ResolutionTag, Value as ResolutionValue},
 };
-// Canonical `Dependency.Version.Tag` — `crate::dependency::Tag` is a Phase-A
-// duplicate enum (different nominal type) that does not unify with the
+// Canonical `Dependency.Version.Tag` — `crate::dependency::Tag` is a duplicate
+// enum (different nominal type) that does not unify with the
 // `bun_install_types::DependencyVersion::tag` field; use the install_types one
 // so assignments at the two `.tag = Workspace` sites type-check.
 use crate::bin_real::ToJsonStyle;
@@ -85,8 +85,8 @@ macro_rules! sbuf {
 }
 
 // TODO(port): narrow to a concrete byte-writer trait once bun_io stabilizes.
-// PERF(port): anytype → dyn dispatch — profile in Phase B (Zig used `writer: anytype`;
-// PORTING.md prefers `impl Trait`, but the trait shape is unsettled so dyn for now).
+// PERF(port): anytype → dyn dispatch (Zig used `writer: anytype`; PORTING.md
+// prefers `impl Trait`, but the trait shape is unsettled so dyn for now).
 type Writer = dyn bun_io::Write;
 // `bun_io::Write` returns `core::result::Result<_, bun_core::Error>` (see
 // `bun_io::write::Result`), so the writer error is just the global `bun_core::Error`.
@@ -939,7 +939,7 @@ impl Stringifier {
 
         let mut any = false;
         for &(group_name, group_behavior) in WORKSPACE_DEPENDENCY_GROUPS.iter() {
-            // PERF(port): was `inline for` — profile in Phase B
+            // PERF(port): was `inline for` — profile if it shows up on a hot path
             let mut first = true;
             for &dep_id in pkg_dep_ids {
                 let dep = &deps_buf[dep_id as usize];
@@ -1178,7 +1178,7 @@ impl Stringifier {
         }
 
         for &(group_name, group_behavior) in WORKSPACE_DEPENDENCY_GROUPS.iter() {
-            // PERF(port): was `inline for` — profile in Phase B
+            // PERF(port): was `inline for` — profile if it shows up on a hot path
             let mut first = true;
             for dep in pkg_deps[pkg_id as usize].get(deps_buf) {
                 if !dep.behavior.intersects(group_behavior) {
@@ -2797,11 +2797,15 @@ fn map_dep_to_pkg(
     if text_lockfile_version != Version::V0 {
         let res = &pkg_resolutions[pkg_id as usize];
         if res.tag == ResolutionTag::Workspace {
-            dep.version.tag = DependencyVersionTag::Workspace;
-            // SAFETY: `res.tag == Workspace` was just checked, so the
-            // `workspace` arm of the `Resolution.value` union is the active one.
-            dep.version.value = DependencyVersionValue {
-                workspace: *res.workspace(),
+            // Whole-struct assign so `DependencyVersion::Drop` frees any prior
+            // npm chain. SAFETY: `res.tag == Workspace` checked above.
+            let literal = dep.version.literal;
+            dep.version = DependencyVersion {
+                tag: DependencyVersionTag::Workspace,
+                literal,
+                value: DependencyVersionValue {
+                    workspace: *res.workspace(),
+                },
             };
         }
     }
@@ -2903,7 +2907,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
 
     let off = lockfile.buffers.dependencies.len();
     for &(group_name, group_behavior) in WORKSPACE_DEPENDENCY_GROUPS.iter() {
-        // PERF(port): was `inline for` — profile in Phase B
+        // PERF(port): was `inline for` — profile if it shows up on a hot path
         if let Some(deps) = obj.get(group_name.as_bytes()) {
             if !deps.is_object() {
                 log.add_error(Some(source), deps.loc, b"Expected an object");

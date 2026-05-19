@@ -62,7 +62,7 @@ struct PoolStats {
 
 // PORT NOTE: Zig's `packed struct(u32)` named `Sync` is kept as `Sync` here for
 // diffability with the .zig. It shadows `core::marker::Sync` within this module;
-// no `T: Sync` bounds are written in this file. Phase B may rename.
+// no `T: Sync` bounds are written in this file.
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 struct Sync(u32);
@@ -552,7 +552,7 @@ impl ThreadPool {
             run_fn,
         };
 
-        // PERF(port): was allocator.alloc(RunnerTask, values.len) — using Vec; profile in Phase B
+        // PERF(port): was allocator.alloc(RunnerTask, values.len) — using Vec; profile if hot.
         let mut tasks: Vec<RunnerTask<Ctx, V, F>> = Vec::with_capacity(values.len());
         let mut batch = Batch::default();
         let mut offset = values.len();
@@ -1221,7 +1221,19 @@ impl Thread {
             let wait_start = if stats { now_ns() } else { 0 };
             is_waking = match pool.wait(is_waking) {
                 Ok(w) => w,
-                Err(_) => return,
+                Err(_) => {
+                    // `shutdown()` raced `wake_for_idle_events()`: the bundler
+                    // pushes per-worker `deinit_task`s into `idle_queue`, wakes
+                    // us, then immediately drops the (CLI-owned) pool — and
+                    // `wait()` observes `Shutdown` before we loop back to
+                    // `drain_idle_events`. Run them once on the way out so the
+                    // worker thread tears down its own `Worker`/`WorkerData`
+                    // (whose `ThreadLocalArena` is mimalloc thread-local and
+                    // must be freed here, not from the bundler thread).
+                    // SAFETY: self_ptr is our own stack-local Thread.
+                    unsafe { (*self_ptr).drain_idle_events() };
+                    return;
+                }
             };
             if stats {
                 pool.stats
@@ -1698,7 +1710,7 @@ pub mod node {
     impl Buffer {
         // PORT NOTE: Zig's `.raw` field access (non-atomic) on Atomic(T) is mapped to
         // Relaxed loads here; Rust does not expose unsynchronized access on atomics.
-        // PERF(port): was non-atomic raw read — profile in Phase B.
+        // PERF(port): was non-atomic raw read — profile if hot.
         #[inline]
         fn tail_raw(&self) -> Index {
             self.tail.load(Ordering::Relaxed)

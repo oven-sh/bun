@@ -71,13 +71,10 @@ impl Echo {
                     if thearg.last() == Some(&b'\n') {
                         has_leading_newline = true;
                     }
-                    // Collapse repeated trailing '\n' to a single one
-                    // (matches bun.strings.trimSubsequentLeadingChars).
-                    let mut end = thearg.len();
-                    while end > 1 && thearg[end - 1] == b'\n' && thearg[end - 2] == b'\n' {
-                        end -= 1;
-                    }
-                    out.extend_from_slice(&thearg[..end]);
+                    // Collapse a trailing run of '\n'; matches Zig's trimSubsequentLeadingChars.
+                    out.extend_from_slice(bun_core::strings::trim_subsequent_leading_chars(
+                        thearg, b'\n',
+                    ));
                 } else {
                     out.extend_from_slice(thearg);
                 }

@@ -19,13 +19,11 @@ pub use self::unicode::{
 pub use unicode_draft::CodePointZero;
 
 // Sub-modules (peer files under `src/string/immutable/`).
-// B-2: heavy submodules gated; minimal inline `unicode` provides the 5 fns
-// immutable.rs itself needs. Un-gate each below as their deps land.
 #[path = "immutable/exact_size_matcher.rs"]
 pub mod exact_size_matcher;
 // AsciiVector/AsciiU16Vector are scalar `ScalarVec` wrappers (see below) so
 // the `if ENABLE_SIMD { .. }` branches type-check; `ENABLE_SIMD = false`
-// keeps them dead at runtime. PERF(port): swap to bun_highway in Phase B.
+// keeps them dead at runtime. PERF(port): swap to bun_highway.
 #[path = "immutable/escapeHTML.rs"]
 pub mod escape_html;
 pub use escape_html::{SCALAR_LENGTHS, html_escape_entity, xml_escape_entity};
@@ -59,14 +57,14 @@ mod escape_reg_exp {
 }
 
 /// `bun.strings.visible` — terminal-visible-width helpers (East-Asian-width +
-/// grapheme-aware; SIMD paths demoted to scalar `ScalarVec` for B-2).
+/// grapheme-aware; SIMD paths demoted to scalar `ScalarVec` — see [`ENABLE_SIMD`]).
 pub use visible_impl::{
     is_amgiguous_codepoint_type, is_full_width_codepoint_type, is_zero_width_codepoint_type,
     visible, visible_codepoint_width, visible_codepoint_width_maybe_emoji,
     visible_codepoint_width_type,
 };
 
-/// PORT NOTE (B-2): minimal scalar fallback that predates `visible_impl` —
+/// PORT NOTE: minimal scalar fallback that predates `visible_impl` —
 /// kept for diff parity with callers that imported `visible_fallback::*`.
 /// New code should use [`visible`] (the real impl).
 #[doc(hidden)]
@@ -116,9 +114,9 @@ pub mod visible_fallback {
             /// Visible terminal width of a UTF-8 string, treating ANSI escape
             /// sequences as zero-width.
             ///
-            /// PORT NOTE (B-2): scalar fallback — counts 1 column per
-            /// codepoint. Full East-Asian-width / grapheme handling is in the
-            /// gated `visible_draft` module; un-gate to replace this.
+            /// PORT NOTE: scalar fallback — counts 1 column per codepoint.
+            /// Full East-Asian-width / grapheme handling lives in
+            /// `visible_impl`; prefer `bun.strings.visible` for new code.
             pub fn utf8(input: &[u8]) -> usize {
                 let mut w = 0usize;
                 let mut i = 0usize;
@@ -177,10 +175,10 @@ pub mod visible_fallback {
             /// Visible terminal width of a UTF-16 string, treating ANSI
             /// escape sequences as zero-width.
             ///
-            /// PORT NOTE (B-2): scalar fallback — counts 1 column per
-            /// codepoint and ignores `ambiguous_as_wide`. Full
-            /// East-Asian-width / grapheme handling lives in the gated
-            /// `visible_draft` module; un-gate to replace this.
+            /// PORT NOTE: scalar fallback — counts 1 column per codepoint
+            /// and ignores `ambiguous_as_wide`. Full East-Asian-width /
+            /// grapheme handling lives in `visible_impl`; prefer
+            /// `bun.strings.visible` for new code.
             pub fn utf16(input: &[u16], ambiguous_as_wide: bool) -> usize {
                 let _ = ambiguous_as_wide;
                 let mut w = 0usize;
@@ -691,7 +689,7 @@ pub fn index_of_any_t<T: Copy + Eq>(str: &[T], chars: &'static [T]) -> Option<Op
     // dispatch on type identity without specialization; callers with u8 should
     // call index_of_any directly.
     for (i, c) in str.iter().enumerate() {
-        // PERF(port): was `inline for` over chars — profile in Phase B
+        // PERF(port): was `inline for` over chars — profile if hot.
         for a in chars {
             if *c == *a {
                 return Some(OptionalUsize::try_from(i).unwrap());
@@ -824,7 +822,7 @@ pub const UUID_LEN: usize = 36;
 
 pub fn index_any_comptime(target: &[u8], chars: &'static [u8]) -> Option<usize> {
     for (i, &parent) in target.iter().enumerate() {
-        // PERF(port): was `inline for` — profile in Phase B
+        // PERF(port): was `inline for` — profile if hot.
         for &char in chars {
             if char == parent {
                 return Some(i);
@@ -836,7 +834,7 @@ pub fn index_any_comptime(target: &[u8], chars: &'static [u8]) -> Option<usize> 
 
 pub fn index_any_comptime_t<T: Copy + Eq>(target: &[T], chars: &'static [T]) -> Option<usize> {
     for (i, parent) in target.iter().enumerate() {
-        // PERF(port): was `inline for` — profile in Phase B
+        // PERF(port): was `inline for` — profile if hot.
         for char in chars {
             if *char == *parent {
                 return Some(i);
@@ -893,7 +891,7 @@ pub fn last_index_before_char(in_: &[u8], char: u8, before: u8) -> Option<usize>
 
 #[inline]
 pub fn last_index_of_char(self_: &[u8], char: u8) -> Option<usize> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         // SAFETY: memrchr scans within [self_.ptr, self_.ptr + self_.len).
         let start = unsafe { libc::memrchr(self_.as_ptr().cast(), char as c_int, self_.len()) };
@@ -902,7 +900,7 @@ pub fn last_index_of_char(self_: &[u8], char: u8) -> Option<usize> {
         }
         return Some(start as usize - self_.as_ptr() as usize);
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
         last_index_of_char_t(self_, char)
     }
@@ -1362,7 +1360,7 @@ pub fn quoted_alloc(self_: &[u8]) -> Result<Box<[u8]>, AllocError> {
 }
 
 pub fn eql_any_comptime(self_: &[u8], list: &'static [&'static [u8]]) -> bool {
-    // PERF(port): was `inline for` — profile in Phase B
+    // PERF(port): was `inline for` — profile if hot.
     for item in list {
         if eql_comptime_check_len_with_type::<u8, true>(self_, item) {
             return true;
@@ -1374,8 +1372,8 @@ pub fn eql_any_comptime(self_: &[u8], list: &'static [&'static [u8]]) -> bool {
 /// Count the occurrences of a character in an ASCII byte array
 /// uses SIMD
 pub fn count_char(self_: &[u8], char: u8) -> usize {
-    // PERF(port): Zig used @Vector(16, u8) + @popCount + @reduce.
-    // Phase A: scalar count; Phase B: portable_simd or highway intrinsic.
+    // PERF(port): Zig used @Vector(16, u8) + @popCount + @reduce. Scalar
+    // count here; consider portable_simd or a highway intrinsic if hot.
     let mut total: usize = 0;
     for &c in self_ {
         total += (c == char) as usize;
@@ -1386,7 +1384,7 @@ pub fn count_char(self_: &[u8], char: u8) -> usize {
 pub fn ends_with_any_comptime(self_: &[u8], str: &'static [u8]) -> bool {
     if str.len() < 10 {
         let last = self_[self_.len() - 1];
-        // PERF(port): was `inline for` — profile in Phase B
+        // PERF(port): was `inline for` — profile if hot.
         for &char in str {
             if char == last {
                 return true;
@@ -1731,8 +1729,8 @@ pub fn substring(self_: &[u8], start: Option<usize>, stop: Option<usize>) -> &[u
 // PORT NOTE: AsciiVector / @Vector aliases — Zig SIMD types have no stable
 // Rust equivalent. Exposed as thin scalar wrappers so dead-SIMD branches
 // type-check; `ENABLE_SIMD = false` makes those branches unreachable at
-// runtime. Hot loops use scalar fallbacks with `// PERF(port)` markers;
-// Phase B routes through bun_highway/portable_simd.
+// runtime. Hot loops use scalar fallbacks with `// PERF(port)` markers.
+// TODO(perf): route through bun_highway/portable_simd and flip ENABLE_SIMD.
 pub const ENABLE_SIMD: bool = false;
 pub const ASCII_VECTOR_SIZE: usize = 16;
 pub const ASCII_U16_VECTOR_SIZE: usize = 8;
@@ -2013,7 +2011,7 @@ pub fn index_of_needs_url_encode(slice: &[u8]) -> Option<u32> {
     }
 
     // PERF(port): Zig used @Vector(16,u8) compare + @ctz on bitmask. Scalar loop
-    // here; Phase B: portable_simd or a highway entry point.
+    // here; consider portable_simd or a highway entry point if hot.
     for (i, &char) in slice.iter().enumerate() {
         if char > 127
             || char < 0x20
@@ -2178,7 +2176,7 @@ pub fn encode_bytes_to_hex(destination: &mut [u8], source: &[u8]) -> usize {
     let to_read = to_write / 2;
 
     // PERF(port): Zig had a @Vector(16,u8) interlace fast path. Scalar loop here;
-    // Phase B: portable_simd shuffle or LUT.
+    // consider a portable_simd shuffle or LUT if hot.
     crate::fmt::bytes_to_hex_lower(&source[..to_read], &mut destination[..to_read * 2])
 }
 
@@ -2416,7 +2414,7 @@ pub fn get_lines_in_text<const LINE_RANGE_COUNT: usize>(
 
 pub fn first_non_ascii16(slice: &[u16]) -> Option<u32> {
     // PERF(port): Zig used @Vector(8,u16) max-reduce + @ctz on bitmask. Scalar
-    // loop here; Phase B: portable_simd or simdutf utf16 validator.
+    // loop here; consider portable_simd or a simdutf utf16 validator if hot.
     for (i, &char) in slice.iter().enumerate() {
         if char > 127 {
             // PORT NOTE: Zig uses @truncate(i) (immutable.zig:1766); match wrapping semantics.
@@ -2869,7 +2867,7 @@ impl Default for QuoteEscapeFormatFlags {
 }
 
 /// usage: print(" string: '{}' ", format_escapes_js("hello'world!"));
-// PERF(port): was comptime monomorphization (Zig `comptime flags: QuoteEscapeFormatFlags`) — profile in Phase B
+// PERF(port): was comptime monomorphization (Zig `comptime flags: QuoteEscapeFormatFlags`) — profile if hot.
 pub fn format_escapes(str: &[u8], flags: QuoteEscapeFormatFlags) -> QuoteEscapeFormat<'_> {
     QuoteEscapeFormat { data: str, flags }
 }
@@ -2883,7 +2881,7 @@ impl core::fmt::Display for QuoteEscapeFormat<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // PERF(port): Zig wrote directly to the writer; here we buffer through
         // a Vec so `write_pre_quoted_string`'s `PrinterWriter` bound is met
-        // without an adapter for `core::fmt::Formatter`. Profile in Phase B.
+        // without an adapter for `core::fmt::Formatter`. Profile if hot.
         let mut buf: Vec<u8> = Vec::with_capacity(self.data.len() + 8);
         crate::string::printer::write_pre_quoted_string(
             self.data,
@@ -3028,14 +3026,13 @@ pub fn percent_encode_write(
 
 // ───────────── re-exports from sibling modules ─────────────
 
-// B-2: unicode core re-exported at top of file. Remaining submodule re-exports
-// land when `unicode_draft`/`visible_draft`/`paths_draft`/`escape_html_draft` un-gate.
+// Unicode core is re-exported at the top of the file; the remaining submodule
+// re-exports below are still incomplete.
 pub use crate::string::escape_reg_exp::{escape_reg_exp, escape_reg_exp_for_package_name_matching};
-// TODO(b2-gated): full transcoding suite from unicode_draft —
+// TODO(port): re-export the rest of the transcoding suite from unicode_draft —
 //   to_utf8_alloc / to_utf16_alloc / convert_* / copy_*_into_* / EncodeIntoResult / BOM / etc.
-// TODO(b2-gated): visible::{visible, visible_codepoint_width, ...}
-// TODO(b2-gated): paths::{to_w_path, basename, add_nt_path_prefix, ...}
-// TODO(b2-gated): escape_html::{escape_html_for_latin1_input, escape_html_for_utf16_input}
+// TODO(port): re-export paths::{to_w_path, basename, add_nt_path_prefix, ...}
+// TODO(port): re-export escape_html::{escape_html_for_latin1_input, escape_html_for_utf16_input}
 
 crate::declare_scope!(STR, hidden);
 // `log` is `bun.Output.scoped(.STR, .hidden)` — use `crate::scoped_log!(STR, ...)`.
@@ -3132,10 +3129,10 @@ pub fn to_utf8_alloc_with_type(utf16: &[u16]) -> Vec<u8> {
     crate::strings::to_utf8_alloc(utf16)
 }
 
-// ───────────── B-2 Track A: minimal real impls of gated-submodule fns ─────────────
-// These mirror the same-named fns in `unicode_draft`/`paths_draft` so dependents
-// can link against `bun_core::strings::*` without un-gating the full drafts.
-// Each is a thin wrapper over simdutf or the scalar logic from the .zig source.
+// ───────────── minimal real impls of submodule fns ─────────────
+// These mirror the same-named fns in `unicode_draft` so dependents can link
+// against `bun_core::strings::*` directly. Each is a thin wrapper over simdutf
+// or the scalar logic from the .zig source.
 
 pub use crate::strings_impl::utf8_byte_sequence_length;
 
@@ -3324,7 +3321,7 @@ pub fn to_utf8_list_with_type(mut list: Vec<u8>, utf16: &[u16]) -> Result<Vec<u8
     let length = simdutf::length::utf8::from::utf16::le(utf16);
     list.try_reserve(length + 16).map_err(|_| AllocError)?;
     // PORT NOTE: Zig's path validates UTF-16 first then falls back to a manual
-    // loop on failure (`toUTF8ListWithTypeBun`). For B-2 we route through
+    // loop on failure (`toUTF8ListWithTypeBun`). Here we route through
     // `crate::strings::convert_utf16_to_utf8_append`, which already replaces
     // unpaired surrogates with U+FFFD — semantically equivalent.
     crate::strings::convert_utf16_to_utf8_append(&mut list, utf16);

@@ -96,7 +96,7 @@ impl BuildCommand {
                     Vec::with_capacity(compile_define_keys.len() + define.keys.len());
                 keys.extend(compile_define_keys.iter().map(|s| Box::<[u8]>::from(*s)));
                 keys.extend(define.keys.drain(..));
-                // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
+                // PERF(port): was appendSliceAssumeCapacity — profile if it shows up on a hot path.
                 let mut values: Vec<Box<[u8]>> =
                     Vec::with_capacity(compile_define_values.len() + define.values.len());
                 values.extend(compile_define_values.iter().map(|s| Box::<[u8]>::from(*s)));
@@ -129,6 +129,10 @@ impl BuildCommand {
         // `exec` diverges so this is never dropped).
         let this_transpiler: &mut transpiler::Transpiler<'static> = arena.alloc(
             transpiler::Transpiler::init(arena, log, ctx.args.clone(), None)?,
+        );
+        bun_core::asan::register_root_region(
+            std::ptr::from_ref::<transpiler::Transpiler>(this_transpiler).cast(),
+            core::mem::size_of::<transpiler::Transpiler>(),
         );
         if let Some(fetch) = fetcher.as_deref() {
             this_transpiler.options.entry_points = fetch.entry_points.clone();
@@ -373,7 +377,7 @@ impl BuildCommand {
                     Global::exit(1);
                 }
             };
-            // TODO(port): defer dir.close() — using explicit close after use; consider RAII guard in Phase B
+            // TODO(port): defer dir.close() — using explicit close after use; consider an RAII guard.
 
             let result = match bun_sys::get_fd_path(dir, &mut src_root_dir_buf) {
                 Ok(p) => p,
@@ -567,15 +571,15 @@ impl BuildCommand {
                 // resolver subset; bundler-side `entry_naming` is sufficient.
             }
 
-            // Zig: `bun.jsc.AnyEventLoop.init(ctx.allocator)` — a Mini event loop
-            // owned by the arena. `generate_from_cli` → `wait_for_parse` derefs
-            // this via `r#loop()` to drain parse tasks; passing `None` panics.
-            let event_loop = arena.alloc(bun_event_loop::AnyEventLoop::init());
+            // Stack-owned Mini event loop so its tasks/concurrent_tasks queues
+            // drop at scope exit; the arena bulk-free skips Drop. Outlives the
+            // BACKREF passed to `generate_from_cli`.
+            let mut event_loop = bun_event_loop::AnyEventLoop::init();
 
             let build_result = match BundleV2::generate_from_cli(
                 this_transpiler,
                 arena,
-                Some(core::ptr::NonNull::from(event_loop)),
+                Some(core::ptr::NonNull::from(&mut event_loop)),
                 ctx.debug.hot_reload == HotReload::Watch,
                 &mut reachable_file_count,
                 &mut minify_duration,
@@ -1123,8 +1127,7 @@ fn print_summary(
         bundle_until_now
     };
 
-    let minified_digit_count: usize =
-        4usize.saturating_sub(bun_fmt::digit_count(minify_duration));
+    let minified_digit_count: usize = 4usize.saturating_sub(bun_fmt::digit_count(minify_duration));
     if minified {
         Output::pretty(format_args!(
             "{}",

@@ -19,7 +19,7 @@ pub const DEFAULT_EXPIRATION_MS: u64 = 24 * 60 * 60 * 1000;
 pub const DEFAULT_ALGORITHM: Algorithm = Algorithm::Sha256;
 
 /// Error types for CSRF operations
-// TODO(b1): thiserror not in deps — manual Display/Error impl for now
+// TODO(port): thiserror not in deps — manual Display/Error impl for now
 #[derive(strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
     InvalidToken,

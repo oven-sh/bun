@@ -1431,9 +1431,9 @@ impl PublishCommand {
         debug_assert!(json.is_object());
 
         let bump = bun_alloc::Arena::new();
-        // PORT NOTE: `E::String` stores `&'static [u8]` (Phase-A erasure); dupe
-        // formatted buffers into the process-lifetime CLI arena so they outlive
-        // the AST nodes through printing.
+        // PORT NOTE: `E::String` stores `&'static [u8]` (lifetime erased per the
+        // parser's Str convention); dupe formatted buffers into the
+        // process-lifetime CLI arena so they outlive the AST nodes through printing.
         macro_rules! leak {
             ($v:expr) => {
                 crate::cli::cli_dupe(&$v) as &'static [u8]
@@ -1639,8 +1639,8 @@ impl PublishCommand {
         workspace_root: Fd,
     ) -> Result<(), AllocError> {
         // PORT NOTE: see `normalized_package` — `E::String` stores
-        // `&'static [u8]` (Phase-A erasure); dupe into the process-lifetime
-        // CLI arena for buffers that flow into AST nodes.
+        // `&'static [u8]` (lifetime erased per the parser's Str convention);
+        // dupe into the process-lifetime CLI arena for buffers that flow into AST nodes.
         macro_rules! leak {
             ($v:expr) => {
                 crate::cli::cli_dupe($v) as &'static [u8]

@@ -138,6 +138,26 @@ impl<T> Default for SinglyLinkedList<T> {
     }
 }
 
+impl<T> Drop for SinglyLinkedList<T> {
+    fn drop(&mut self) {
+        // The free list owns its nodes (each `release()` hands ownership back).
+        // Without this, the TLS-backed pool's `DataStruct` strands every cached
+        // node when the thread exits.
+        let mut next = core::mem::replace(&mut self.first, ptr::null_mut());
+        while !next.is_null() {
+            let node = next;
+            next = Node::next_of(node);
+            // SAFETY: free-list nodes always carry initialized `data`
+            // (`release()` only stores nodes that were used) and are
+            // exclusively owned by the list.
+            unsafe {
+                (*node).data.assume_init_drop();
+                drop(bun_core::heap::take(node));
+            }
+        }
+    }
+}
+
 impl<T> SinglyLinkedList<T> {
     /// Insert a new node at the head.
     ///
@@ -161,7 +181,7 @@ impl<T> SinglyLinkedList<T> {
             // matched the null `node`, which callers never pass)
             let mut current_elm = self.first;
             // SAFETY: walk live list nodes; Zig's `.?` would panic on null —
-            // mirror that with an unchecked deref (debug_assert in Phase B).
+            // mirror that with an unchecked deref.
             unsafe {
                 while (*current_elm).next != node {
                     current_elm = (*current_elm).next;
@@ -224,7 +244,7 @@ pub struct DataStruct<T> {
     // PORT NOTE: Zig used `MaxCountInt = std.math.IntFittingRange(0, max_count)`.
     // Rust const generics cannot pick an integer type from a const value; use
     // `usize` and accept the few extra bytes.
-    // PERF(port): was IntFittingRange — profile in Phase B
+    // PERF(port): was IntFittingRange — narrow if it shows up on a hot path.
     pub count: usize,
 }
 
@@ -430,8 +450,8 @@ where
         }
 
         if LOG_ALLOCATIONS {
-            // PORT NOTE: Zig wrote to stderr via std.fs; banned here. Phase B
-            // can route through `bun_core::Output` if this is ever flipped on.
+            // PORT NOTE: Zig wrote to stderr via std.fs; banned here. Route
+            // through `bun_core::Output` if this is ever flipped on.
             // TODO(port): log "Allocate {type_name} - {size} bytes"
         }
 

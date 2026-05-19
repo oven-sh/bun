@@ -44,7 +44,7 @@ pub mod install_stubs {
         pub use ::bun_install_types::resolver_hooks::DependencyVersionTag as Tag;
     }
 }
-// TODO(b2-blocked): bun_bundler::options::{Framework, RouteConfig} — local opaque
+// TODO(port): bun_bundler::options::{Framework, RouteConfig} — local opaque
 // FORWARD_DECL: legacy `options::Framework` and friends. The Zig
 // `package_json.zig:loadFramework*` block references `options.Framework`, which
 // no longer exists in `options.zig` (removed upstream); the loaders have no
@@ -139,7 +139,7 @@ pub mod options {
     }
 }
 use bun_options_types::schema::api;
-// TODO(b2-blocked): bun_collections::StringMap (array-backed string→string map)
+// TODO(port): bun_collections::StringMap (array-backed string→string map)
 pub type StringMap = StringArrayHashMap<Box<[u8]>>;
 pub use bun_collections::StringHashMapUnownedKey;
 use bun_glob as glob;
@@ -483,7 +483,7 @@ impl FileSystemPackageJsonExt for crate::fs::FileSystem {
     }
 }
 
-// TODO(b2-blocked): bun_bundler::options + bun_ast::Expr full API + bun_install + bun_schema
+// TODO(port): bun_bundler::options + bun_ast::Expr full API + bun_install + bun_schema
 // — framework/define loaders stay gated until bun_bundler::options lands.
 
 impl PackageJSON {
@@ -1051,7 +1051,7 @@ impl PackageJSON {
         package_id: Option<PackageID>,
         include_scripts_: IncludeScripts,
     ) -> Option<PackageJSON> {
-        // PERF(port): include_scripts_ was a comptime enum param — profile in Phase B
+        // PERF(port): include_scripts_ was a comptime enum param — profile if hot
         let include_scripts = include_scripts_ == IncludeScripts::IncludeScripts;
 
         // SAFETY: PORT (Stacked Borrows) — `r.fs()`/`r.log()` return RAW `*mut`
@@ -1474,7 +1474,7 @@ impl PackageJSON {
             }
         }
 
-        // TODO(b2-blocked): bun_install::{Dependency, Architecture, OperatingSystem,
+        // TODO(port): bun_install::{Dependency, Architecture, OperatingSystem,
         // lockfile::Package::DependencyGroup, PackageManager}. The whole
         // dependencies/os/cpu block is install-tier.
 
@@ -1559,7 +1559,7 @@ impl PackageJSON {
                 } else {
                     &[DependencyGroup::DEPENDENCIES, DependencyGroup::OPTIONAL]
                 };
-                // PERF(port): was comptime monomorphization (inline for over comptime array) — profile in Phase B
+                // PERF(port): was comptime monomorphization (inline for over comptime array) — profile if hot
 
                 let mut total_dependency_count: usize = 0;
                 for group in dependency_groups {
@@ -1723,7 +1723,7 @@ impl PackageJSON {
     }
 }
 
-// TODO(b2-blocked): `self.hash` field referenced in Zig but not declared on
+// TODO(port): `self.hash` field referenced in Zig but not declared on
 // PackageJSON; gate until the field lands.
 
 impl PackageJSON {
@@ -1812,7 +1812,7 @@ impl<'a> Visitor<'a> {
                 // EntryDataMapList is a Vec<MapEntry> placeholder until
                 // bun_collections::MultiArrayList lands. Push whole entries instead of
                 // writing through three parallel column slices.
-                // TODO(b2-blocked): bun_collections::MultiArrayList column accessors
+                // TODO(port): bun_collections::MultiArrayList column accessors
                 let mut map_data: EntryDataMapList = Vec::with_capacity(prop_len);
                 let mut expansion_keys: Vec<MapEntry> = Vec::with_capacity(prop_len);
                 let mut is_conditional_sugar = false;
@@ -1945,7 +1945,7 @@ pub struct EntryDataMap {
     pub list: EntryDataMapList,
 }
 
-// TODO(b2-blocked): bun_collections::MultiArrayList<MapEntry> — needs MultiArrayElement derive +
+// TODO(port): bun_collections::MultiArrayList<MapEntry> — needs MultiArrayElement derive +
 // per-field column accessors. Using Vec<MapEntry> as a placeholder shape.
 pub type EntryDataMapList = Vec<MapEntry>;
 
@@ -1965,14 +1965,14 @@ pub enum MapEntryField {
 
 impl Entry {
     pub fn keys_start_with_dot(&self) -> bool {
-        // TODO(b2-blocked): bun_collections::MultiArrayList column accessor; Vec placeholder.
+        // TODO(port): bun_collections::MultiArrayList column accessor; Vec placeholder.
         matches!(&self.data, EntryData::Map(m) if !m.list.is_empty() && strings::starts_with_char(&m.list[0].key, b'.'))
     }
 
     pub fn value_for_key(&self, key_: &[u8]) -> Option<Entry> {
         match &self.data {
             EntryData::Map(m) => {
-                // TODO(b2-blocked): bun_collections::MultiArrayList column accessor; Vec placeholder.
+                // TODO(port): bun_collections::MultiArrayList column accessor; Vec placeholder.
                 for entry in m.list.iter() {
                     if strings::eql(&entry.key, key_) {
                         return Some(entry.value.clone());
@@ -2001,7 +2001,7 @@ pub struct Resolution {
     // PORT NOTE: Zig returned slices into threadlocal PathBuffers / the package.json source
     // buffer. In Rust the source-buffer case (`EntryData::String(Box<[u8]>)`) is owned by a
     // possibly-temporary `Entry`, so borrowing would dangle. Copy out into an owned buffer.
-    // PERF(port): Phase B — thread a real `'a` lifetime once `EntryData::String` is `&'a [u8]`.
+    // TODO(perf): thread a real `'a` lifetime once `EntryData::String` is `&'a [u8]`.
     pub path: Box<[u8]>,
     pub debug: ResolutionDebug,
 }
@@ -2269,7 +2269,7 @@ enum ReverseKind {
     Prefix,
 }
 
-// ── Local string helpers (TODO(b2-blocked): bun_core::{replacement_size, replace}) ──
+// ── Local string helpers (TODO(port): bun_core::{replacement_size, replace}) ──
 // Minimal local impls so the ESModule resolution algorithm compiles; replace with the
 // canonical bun_core versions once they land. Recorded in blocked_on.
 use bun_core::trim_right;
@@ -2325,7 +2325,7 @@ fn replace(input: &[u8], needle: &[u8], replacement: &[u8], output: &mut [u8]) -
 pub struct ReverseResolution {
     // PORT NOTE: Zig returned slices into threadlocal PathBuffers / the package.json source
     // buffer. Copy out into an owned buffer (see `Resolution.path` note above).
-    // PERF(port): Phase B — thread a real `'a` lifetime once `EntryData::String` is `&'a [u8]`.
+    // TODO(perf): thread a real `'a` lifetime once `EntryData::String` is `&'a [u8]`.
     pub subpath: Box<[u8]>,
     pub token: bun_ast::Range,
 }
@@ -2460,7 +2460,7 @@ impl<'a> ESModule<'a> {
         }
 
         // PORT NOTE: Zig returned a slice into the threadlocal resolved_path_buf_percent.
-        // Copy out — see `Resolution.path` note. PERF(port): avoid alloc in Phase B.
+        // Copy out — see `Resolution.path` note. PERF(port): avoid the alloc if hot.
         result.path = Box::<[u8]>::from(resolved_path);
         result
     }
@@ -2758,9 +2758,17 @@ impl<'a> ESModule<'a> {
                                 },
                             };
                         } else {
+                            // PORT NOTE: Zig used `.auto` here, carried over as a
+                            // latent Windows bug (#30839): this branch runs when an
+                            // `imports` target is itself a package specifier
+                            // (e.g. `@myproject/resolver`) that we hand back to
+                            // package-resolve. Per the Node.js packages spec these
+                            // are URL-like specifiers and must keep forward slashes;
+                            // `Auto` normalizes them to `\` on Windows and the
+                            // scoped-name match fails, falling through to `main`.
                             let parts2 = [str, subpath];
                             let result = resolve_path::resolve_path::join_string_buf::<
-                                resolve_path::platform::Auto,
+                                resolve_path::platform::Posix,
                             >(
                                 &mut resolve_target_buf2.0, &parts2
                             );
@@ -2902,7 +2910,7 @@ impl<'a> ESModule<'a> {
                 let mut did_find_map_entry = false;
                 let mut last_map_entry_i: usize = 0;
 
-                // PORT NOTE: Zig used MultiArrayList column slices; Phase-A `EntryDataMapList`
+                // PORT NOTE: Zig used MultiArrayList column slices; `EntryDataMapList`
                 // is `Vec<MapEntry>` so iterate AoS directly.
                 for (i, entry) in object.list.iter().enumerate() {
                     let key: &[u8] = &entry.key;

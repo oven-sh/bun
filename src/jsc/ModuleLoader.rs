@@ -1,12 +1,11 @@
 //! Port of `src/jsc/ModuleLoader.zig`.
 //!
-//! B-2 un-gate: real `ModuleLoader` struct, `FetchFlags`, and the
-//! `HardcodedModule` re-export compile against the `lib.rs` stub surface.
+//! The `ModuleLoader` struct, `FetchFlags`, and the `HardcodedModule`
+//! re-export compile against the `lib.rs` stub surface.
 //! `transpile_source_code` / `fetch_builtin_module` / `resolve_embedded_file`
-//! and the `Bun__*` extern entry points are preserved verbatim from the
-//! Phase-A draft inside `` blocks below — every body reaches into
-//! `bun_runtime::node::fs` / `bun_transpiler` internals / gated bundler types
-//! (forward-dep cycle on `bun_jsc`).
+//! and the `Bun__*` extern entry points reach into `bun_runtime::node::fs` /
+//! `bun_transpiler` internals / gated bundler types (forward-dep cycle on
+//! `bun_jsc`).
 
 use core::ffi::c_void;
 
@@ -473,7 +472,7 @@ pub extern "C" fn Bun__fetchBuiltinModule(
 }
 
 /// `HardcodedModule.Alias.bun_aliases.get(str)` — linear scan over the
-/// `BUN_ALIASES` const tables (PERF(port): Phase B replaces with phf).
+/// `BUN_ALIASES` const tables (PERF(port): could replace with phf).
 #[inline]
 fn bun_aliases_get(name: &[u8]) -> Option<bun_resolve_builtins::Alias> {
     for table in bun_resolve_builtins::HardcodedModule::BUN_ALIASES {
@@ -559,12 +558,16 @@ pub extern "C" fn ModuleLoader__isBuiltin(data: *const u8, len: usize) -> bool {
 use bun_bundler::transpiler::PluginRunner;
 
 // PORT NOTE: `ModuleLoader.resolveEmbeddedFile` (spec ModuleLoader.zig:33-71)
-// has been MOVED to `bun_runtime::jsc_hooks::resolve_embedded_node_file_hook`
+// has been MOVED to `bun_runtime::jsc_hooks::resolve_embedded_file_to_buf`
 // per PORTING.md §Forbidden ("dep-cycle: MOVE the code to the right crate") —
 // the body reaches into `bun_standalone_graph` + `bun_sys::Tmpfile` +
-// `node::fs`, none of which are `bun_jsc` deps. Both Zig callers
-// (`Bun__resolveEmbeddedNodeFile` above, and the `.sqlite` arm of
-// `transpileSourceCode`) now live in `bun_runtime`.
+// `node::fs`, none of which are `bun_jsc` deps. Three Zig callers live in
+// `bun_runtime`:
+//   - `Bun__resolveEmbeddedNodeFile` above (extname `"node"`, goes through
+//     `LoaderHooks::resolve_embedded_node_file` to bridge the crate gap).
+//   - The `.sqlite` arm of `transpileSourceCode`.
+//   - `ffi_body::FFI::open` (extname `"so"`/`"dylib"`/`"dll"`; same-crate
+//     call to `resolve_embedded_file_to_buf`, no hook needed).
 
 /// Spec ModuleLoader.zig:73-83.
 #[unsafe(no_mangle)]

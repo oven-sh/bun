@@ -411,7 +411,7 @@ pub struct BrotliWriter<'a, W> {
 
 impl<'a, W: bun_io::Write> BrotliWriter<'a, W> {
     // Zig: `WriteError = error{BrotliCompressionError} || InputWriter.Error`
-    // TODO(port): error-set union — using bun_core::Error in Phase A.
+    // PORT NOTE: error-set union collapsed to `bun_core::Error`.
 
     pub fn init(compressor: &'a mut BrotliCompressionStream, input_writer: W) -> Self {
         Self {
@@ -435,7 +435,7 @@ impl<'a, W: bun_io::Write> BrotliWriter<'a, W> {
     }
 
     // TODO(port): `std.Io.GenericWriter` adapter — provide `impl bun_io::Write`
-    // in Phase B if any caller needs the trait object.
+    // if any caller needs the trait object.
 }
 
 // ported from: src/brotli/brotli.zig

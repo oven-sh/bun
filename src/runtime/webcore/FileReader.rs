@@ -20,7 +20,7 @@ bun_core::declare_scope!(FileReader, visible);
 // TODO(port): `pending_view` and the `Js`/`Temporary` variants below borrow into a
 // JS-owned typed-array buffer kept alive by `pending_value: Strong` / `ensure_still_alive`.
 // Represented as unbounded `&mut [u8]` / `&[u8]` here to keep function bodies
-// readable; Phase B should replace with a proper raw-slice wrapper (BACKREF lifetime).
+// readable; TODO(refactor): replace with a proper raw-slice wrapper (BACKREF lifetime).
 
 // R-2 (host-fn re-entrancy): every JS-exposed / vtable-reachable method takes
 // `&self`; per-field interior mutability via `Cell` (Copy) / `JsCell` (non-
@@ -423,25 +423,27 @@ impl FileReader {
             // SAFETY: see `parent()`.
             unsafe { (*self.parent()).increment_count() };
             self.waiting_for_on_reader_done.set(true);
-            if let Some(offset) = self.start_offset {
-                match self
-                    .reader()
+            let start_result = if let Some(offset) = self.start_offset {
+                self.reader()
                     .start_file_offset(self.fd.get(), pollable, offset)
-                {
-                    Ok(()) => {}
-                    Err(e) => return streams::Start::Err(e),
-                }
             } else {
-                match self.reader().start(self.fd.get(), pollable) {
-                    Ok(()) => {}
-                    Err(e) => return streams::Start::Err(e),
-                }
+                self.reader().start(self.fd.get(), pollable)
+            };
+            if let Err(e) = start_result {
+                self.waiting_for_on_reader_done.set(false);
+                let parent = self.parent();
+                // SAFETY: see `parent()`; JS finalizer still holds a ref so this cannot free it.
+                let _ = unsafe { Source::decrement_count(parent) };
+                return streams::Start::Err(e);
             }
         } else {
             #[cfg(unix)]
             {
                 use bun_io::pipe_reader::PosixFlags;
-                if self.reader().flags.contains(PosixFlags::POLLABLE) && !self.reader().is_done() {
+                if !self.started.get()
+                    && self.reader().flags.contains(PosixFlags::POLLABLE)
+                    && !self.reader().is_done()
+                {
                     self.waiting_for_on_reader_done.set(true);
                     // SAFETY: see `parent()`.
                     unsafe { (*self.parent()).increment_count() };
@@ -533,6 +535,16 @@ impl FileReader {
     // — a dangling-reference UAF — so ownership release stays with the caller.
     fn deinit(&self) {
         self.reader().update_ref(false);
+    }
+
+    fn finalize_detach(&self) -> bool {
+        debug_assert!(!(self.done.get() && self.waiting_for_on_reader_done.get()));
+        if self.done.get() || !self.waiting_for_on_reader_done.get() {
+            return false;
+        }
+        self.waiting_for_on_reader_done.set(false);
+        self.done.set(true);
+        true
     }
 
     #[inline]
@@ -1002,6 +1014,13 @@ impl FileReader {
             p.result = streams::Result::Err(streams::StreamError::Error(err));
         });
         self.pending.with_mut(|p| p.run());
+
+        if self.waiting_for_on_reader_done.get() && !self.done.get() {
+            self.waiting_for_on_reader_done.set(false);
+            let parent = self.parent();
+            // SAFETY: see `parent()`; tail call, `self` is not accessed after.
+            let _ = unsafe { Source::decrement_count(parent) };
+        }
     }
 
     pub fn set_raw_mode(&self, flag: bool) -> sys::Result<()> {
@@ -1084,6 +1103,9 @@ impl readable_stream::SourceContext for FileReader {
     }
     fn deinit_fn(&mut self) {
         Self::deinit(self)
+    }
+    fn finalize_detach(&mut self) -> bool {
+        Self::finalize_detach(self)
     }
     fn set_ref_unref(&mut self, e: bool) {
         Self::set_ref_or_unref(self, e)

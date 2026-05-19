@@ -105,7 +105,7 @@ mod _impl {
             // PORT NOTE: reshaped for borrowck — Zig grew two slices (`contents`, `buf`) into the
             // same underlying buffer and mutated `contents.len` in place. Here we track offsets
             // and use copy_within (src/dst share `buf`).
-            // PERF(port): was memcpy (non-overlapping) — profile in Phase B if memmove-vs-memcpy matters.
+            // PERF(port): was memcpy (non-overlapping) — profile if memmove-vs-memcpy matters here.
             let mut contents_len = written;
             let mut buf_offset = written;
 

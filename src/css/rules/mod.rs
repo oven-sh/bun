@@ -5,19 +5,10 @@ use css::PrintErr;
 use css::Printer;
 use css::error::MinifyErr;
 
-// PERF(port): Phase-A shim — Zig used arena-backed `std.ArrayListUnmanaged`.
-// Phase B threads `'bump` and replaces this with `crate::generics::ArrayList<'bump, T>`
+// PERF(port): heap-backed shim — Zig used arena-backed `std.ArrayListUnmanaged`.
+// TODO(refactor): thread `'bump` and replace this with `crate::generics::ArrayList<'bump, T>`
 // (= `bun_alloc::ArenaVec`) crate-wide in one pass.
 pub(super) type ArrayList<T> = Vec<T>;
-
-// ─── B-2 round 6 status ────────────────────────────────────────────────────
-// Hub un-gated. `CssRule` / `CssRuleList` / `MinifyContext` are real and
-// `CssRuleList::{to_css,minify}` now compile so `StyleSheet::{minify,to_css}`
-// can call through. All leaf-rule `to_css` impls are now real — the
-// `to_css_shim!` ladder is gone. The heavy `.style` minify arm and
-// `merge_style_rules` body stay `` internally on
-// `StyleRule::{minify,is_compatible,update_prefix,hash_key,is_duplicate}` +
-// selector helpers.
 
 pub mod container;
 pub mod counter_style;
@@ -101,8 +92,8 @@ macro_rules! css_rule_variants {
             /// Zig: `css.implementDeepClone(@This(), this, arena)` — variant-wise
             /// dispatch to each leaf rule's `deep_clone`. Hand-written (not
             /// `#[derive(DeepClone)]`) because the leaf payloads expose `deep_clone`
-            /// as **inherent** methods rather than `DeepClone` trait impls during the
-            /// staggered Phase-B un-gate; method-syntax dispatch here picks up either.
+            /// as **inherent** methods rather than `DeepClone` trait impls;
+            /// method-syntax dispatch here picks up either.
             pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
             where
                 R: css::generics::DeepClone<'bump>,
@@ -311,9 +302,8 @@ pub(super) mod dc {
         this.deep_clone(bump)
     }
 
-    /// `SelectorList::deep_clone` — selectors/parser.rs intentionally drops
-    /// the `&Arena` parameter (its slices are arena-static). Adapt the call
-    /// shape so leaf rules can stay uniform.
+    /// `SelectorList::deep_clone` re-derives the source `ArenaPtr` instead of
+    /// taking `bump`; intra-arena only (footgun if a cross-arena clone is added).
     #[inline]
     pub fn selector_list(
         this: &crate::selectors::SelectorList,

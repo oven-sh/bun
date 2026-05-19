@@ -21,7 +21,7 @@ use crate::{
 };
 
 // TODO(port): `std.fs.Dir` is used pervasively here; Zig has a TODO to switch to `bun.FD.Dir`.
-// Phase A maps it to `bun_sys::Dir` (an Fd-backed dir handle). Method names (.close(), .fd,
+// Mapped to `bun_sys::Dir` (an Fd-backed dir handle). Method names (.close(), .fd,
 // .makeOpenPath, .deleteTree, .realpath, .makeDirZ) are assumed on that type.
 
 bun_output::declare_scope!(install, hidden);
@@ -31,7 +31,7 @@ pub struct PackageInstall<'a> {
     pub cache_dir: Dir,
     pub cache_dir_subpath: &'a ZStr,
     // TODO(port): `destination_dir_subpath` aliases into `destination_dir_subpath_buf`;
-    // borrowck will reject simultaneous &ZStr + &mut [u8]. Phase B may store only the len.
+    // borrowck will reject simultaneous &ZStr + &mut [u8]. Consider storing only the len.
     pub destination_dir_subpath: &'a ZStr,
     pub destination_dir_subpath_buf: &'a mut [u8],
 
@@ -853,7 +853,7 @@ impl<'a> PackageInstall<'a> {
             // dest_len < buf capacity (was the prior NUL position).
             move |p| unsafe { *p.add(dest_len) = 0 },
         );
-        // PERF(port): was stack-fallback alloc — profile in Phase B
+        // PERF(port): was stack-fallback alloc — profile if it shows up on a hot path.
 
         let Ok(bun_tag_file) = self
             .node_modules
@@ -2108,7 +2108,7 @@ impl<'a> PackageInstall<'a> {
     }
 
     pub fn is_dangling_symlink(path: &ZStr) -> bool {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             match sys::open(path, sys::O::PATH, 0) {
                 Err(_) => return true,
@@ -2128,7 +2128,7 @@ impl<'a> PackageInstall<'a> {
                 }
             }
         }
-        #[cfg(not(any(target_os = "linux", windows)))]
+        #[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
         {
             match sys::open(path, sys::O::PATH, 0) {
                 Err(_) => return true,

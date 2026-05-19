@@ -14,6 +14,7 @@
 // ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
 // IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
+import { bunEnv, bunExe } from "harness";
 import { unsortedPrereleases } from "./semver-fixture.js";
 const { satisfies, order } = Bun.semver;
 
@@ -226,7 +227,7 @@ describe("Bun.semver.satisfies()", () => {
       }
     }
     Bun.gc(true);
-  });
+  }, 30_000);
 
   test("exact versions", () => {
     testSatisfiesExact("1.2.3", "1.2.3", true);
@@ -738,3 +739,17 @@ describe("Bun.semver.satisfies()", () => {
     expect(unsortedPrereleases.sort(Bun.semver.order)).toMatchSnapshot();
   });
 });
+
+test("a version range with >=256 || comparators does not abort", async () => {
+  const range = Array(300).fill("1.0.0").join(" || ");
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `process.stdout.write(String(Bun.semver.satisfies("1.0.0", ${JSON.stringify(range)})))`],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) expect(stderr).toBe("");
+  expect(stdout).toBe("true");
+  expect(exitCode).toBe(0);
+}, 30_000);

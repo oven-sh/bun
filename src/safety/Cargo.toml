@@ -6,9 +6,8 @@ edition.workspace = true
 [lib]
 path = "lib.rs"
 
-[features]
-# Zig `Environment.ci_assert` → opt-in extra invariant checks (off by default).
-ci_assert = []
+[lints]
+workspace = true
 
 [dependencies]
 strum.workspace = true

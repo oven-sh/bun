@@ -57,9 +57,7 @@ fn format_name(f: codecs::Format) -> &'static str {
 pub use crate::generated_classes::js_Image as js;
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
-// shim still emits `this: &mut Image` until Phase 1 lands — `&mut T`
-// auto-derefs to `&T` so the impls below compile against either. `max_pixels`
+// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). `max_pixels`
 // / `auto_orient` are read-only after construction so stay bare.
 #[bun_jsc::JsClass]
 pub struct Image {
@@ -362,7 +360,7 @@ fn source_from_js(
 ) -> JsResult<Source> {
     // String → file path or data:/base64 URL. Everything else → bytes.
     if value.is_string() {
-        let str = value.to_bun_string(global)?;
+        let str = bun_core::OwnedString::new(value.to_bun_string(global)?);
         let utf8 = str.to_utf8();
         let s = utf8.slice();
         // `data:[<mime>][;base64],<payload>` — accept any image MIME (we sniff
@@ -673,7 +671,7 @@ impl Image {
     /// here surfaces as `None` instead of UAF). For off-thread, see `pin_for_task`.
     fn js_thread_bytes(&self, this_value: JSValue, global: &JSGlobalObject) -> Option<&[u8]> {
         // TODO(port): lifetime — JsBuffer arm returns a borrow into the JS heap,
-        // not into `self`. Phase B may need a different return type.
+        // not into `self`; may need a different return type.
         match self.source.get() {
             Source::JsBuffer => js::source_js_get_cached(this_value)
                 .and_then(|v: JSValue| v.as_array_buffer(global))
@@ -1010,7 +1008,7 @@ impl Image {
         // `"color"` without growing methods. Anything else throws so the
         // option space isn't accidentally squatted.
         if args.len() > 0 && !args[0].is_undefined_or_null() {
-            let s = args[0].to_bun_string(global)?;
+            let s = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
             if !s.eql_utf8(b"dataurl") {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "Image.placeholder(): only \"dataurl\" is supported",
@@ -1040,7 +1038,7 @@ impl Image {
         // carry no extension contract, so the explicit `.png()` etc. (or source
         // format) decides.
         if output.is_none() && args[0].is_string() {
-            let str = args[0].to_bun_string(global)?;
+            let str = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
             let utf8 = str.to_utf8();
             if let Some(f) = codecs::Format::from_extension(utf8.slice()) {
                 match f {
@@ -1793,7 +1791,7 @@ impl<'a> PipelineTask<'a> {
                         promise.resolve(global, <Blob as bun_jsc::JsClass>::to_js(blob, global))?;
                     }
                     tag @ (Deliver::Base64 | Deliver::DataUrl) => {
-                        // PERF(port): was comptime tag dispatch — profile in Phase B.
+                        // PERF(port): was comptime tag dispatch — profile if it shows up on a hot path.
                         // This arm copies the bytes out — re-arm `Encoded::drop` so
                         // the codec allocation is freed at scope exit (RAII), not by
                         // a JS finalizer.

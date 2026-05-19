@@ -1152,6 +1152,7 @@ dependencies = [
  "phf 0.11.3",
  "regex",
  "scopeguard",
+ "smallvec",
  "strum",
  "typed-arena",
 ]
@@ -1204,6 +1205,7 @@ dependencies = [
  "bun_ptr",
  "bun_sourcemap",
  "bun_sys",
+ "bun_wyhash",
  "bytemuck",
  "const_format",
  "enum-map",

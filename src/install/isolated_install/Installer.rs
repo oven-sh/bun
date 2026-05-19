@@ -33,7 +33,7 @@ use super::store::{self, Store};
 use super::store::{EntryColumns as _, NodeColumns as _};
 use super::symlinker::{self, Symlinker};
 use crate::bun_fs;
-use crate::lockfile_real::package::{PackageColumns as _};
+use crate::lockfile_real::package::PackageColumns as _;
 use crate::package_manager_real::directories;
 use crate::package_manager_real::package_manager_options::Do;
 
@@ -499,10 +499,9 @@ impl<'a> Installer<'a> {
         if Environment::CI_ASSERT {
             // .monotonic is okay because we should have already synchronized with the completed
             // task thread by virtue of popping from the `UnboundedQueue`.
-            bun_core::assert_with_location(
+            assert!(
                 self.store.entries.items_step()[entry_id.get() as usize].load(Ordering::Relaxed)
                     == Step::Done as u32,
-                core::panic::Location::caller(),
             );
         }
 
@@ -769,7 +768,7 @@ impl Yield {
 
 impl Task {
     /// Called from task thread
-    // PERF(port): was comptime enum monomorphization — profile in Phase B
+    // PERF(port): was comptime enum monomorphization — profile if hot.
     fn next_step(&self, current_step: Step) -> Step {
         let next_step: Step = match current_step {
             Step::LinkPackage => Step::SymlinkDependencies,
@@ -1098,10 +1097,7 @@ impl Task {
 
                                 _ => {
                                     if Environment::CI_ASSERT {
-                                        bun_core::assert_with_location(
-                                            false,
-                                            core::panic::Location::caller(),
-                                        );
+                                        unreachable!();
                                     }
 
                                     step = self.next_step(current_step);
@@ -1968,12 +1964,11 @@ impl Task {
             Yield::Yield => {}
             Yield::RunScripts(list) => {
                 if Environment::CI_ASSERT {
-                    bun_core::assert_with_location(
+                    assert!(
                         // `Cell::get` on a `Copy` payload — read-only check.
                         installer.store.entries.items_scripts()[this.entry_id.get() as usize]
                             .get()
                             .is_some(),
-                        core::panic::Location::caller(),
                     );
                 }
                 this.result = Result::RunScripts(list);
@@ -1983,11 +1978,10 @@ impl Task {
             Yield::Done => {
                 if Environment::CI_ASSERT {
                     // .monotonic is okay because this should have been set by this thread.
-                    bun_core::assert_with_location(
+                    assert!(
                         installer.store.entries.items_step()[this.entry_id.get() as usize]
                             .load(Ordering::Relaxed)
                             == Step::Done as u32,
-                        core::panic::Location::caller(),
                     );
                 }
                 this.result = Result::Done;
@@ -1997,11 +1991,10 @@ impl Task {
             Yield::Blocked => {
                 if Environment::CI_ASSERT {
                     // .monotonic is okay because this should have been set by this thread.
-                    bun_core::assert_with_location(
+                    assert!(
                         installer.store.entries.items_step()[this.entry_id.get() as usize]
                             .load(Ordering::Relaxed)
                             == Step::CheckIfBlocked as u32,
-                        core::panic::Location::caller(),
                     );
                 }
                 this.result = Result::Blocked;
@@ -2011,11 +2004,10 @@ impl Task {
             Yield::Fail(err) => {
                 if Environment::CI_ASSERT {
                     // .monotonic is okay because this should have been set by this thread.
-                    bun_core::assert_with_location(
+                    assert!(
                         installer.store.entries.items_step()[this.entry_id.get() as usize]
                             .load(Ordering::Relaxed)
                             != Step::Done as u32,
-                        core::panic::Location::caller(),
                     );
                 }
                 installer.store.entries.items_step()[this.entry_id.get() as usize]

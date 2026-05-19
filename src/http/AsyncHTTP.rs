@@ -98,6 +98,7 @@ const fn noop_callback() -> HTTPClientResultCallback {
     HTTPClientResultCallback {
         ctx: core::ptr::null_mut(),
         function: noop_result_callback,
+        release_at_shutdown: None,
     }
 }
 
@@ -133,7 +134,7 @@ fn build_proxy_authorization(proxy: &URL<'_>) -> Option<Vec<u8>> {
         return None;
     }
 
-    // PERF(port): was stack-fallback (4096) — profile in Phase B
+    // PERF(port): was stack-fallback (4096) — profile if hot
     let username = match PercentEncoding::decode_alloc(proxy.username) {
         Ok(u) => u,
         Err(err) => {
@@ -143,7 +144,7 @@ fn build_proxy_authorization(proxy: &URL<'_>) -> Option<Vec<u8>> {
     };
 
     let auth: Vec<u8> = if !proxy.password.is_empty() {
-        // PERF(port): was stack-fallback (4096) — profile in Phase B
+        // PERF(port): was stack-fallback (4096) — profile if hot
         let password = match PercentEncoding::decode_alloc(proxy.password) {
             Ok(p) => p,
             Err(err) => {
@@ -853,6 +854,15 @@ impl<'a> AsyncHTTP<'a> {
                 // to `this`/`async_http`; only static state is touched afterward.
                 let threadlocal_http: *mut ThreadlocalAsyncHTTP =
                     bun_core::from_field_ptr!(ThreadlocalAsyncHTTP, async_http, async_http);
+                {
+                    let in_flight = &mut crate::http_thread().in_flight;
+                    if let Some(i) = in_flight
+                        .iter()
+                        .position(|n| n.as_ptr() == threadlocal_http)
+                    {
+                        in_flight.swap_remove(i);
+                    }
+                }
                 // PORT NOTE: Zig `defer threadlocal_http.deinit()` is
                 // `bun.TrivialDeinit` — it frees the heap slot WITHOUT running
                 // any field destructors. Reclaiming as `Box<_>` here would

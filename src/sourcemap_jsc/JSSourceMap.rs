@@ -9,7 +9,7 @@ use bun_core::{self as bstring, strings};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc};
 use bun_sourcemap::{Mapping, Ordinal, ParseResult, ParsedSourceMap, mapping};
 
-// TODO(b2-blocked): bun_jsc::JsClass — `#[bun_jsc::JsClass]` derive proc-macro not yet
+// TODO(port): bun_jsc::JsClass — `#[bun_jsc::JsClass]` derive proc-macro not yet
 // implemented; the codegen-provided `to_js`/`from_js`/cached-setter accessors are
 // stubbed below until generate-classes.ts emits Rust.
 pub struct JSSourceMap {
@@ -129,6 +129,7 @@ impl JSSourceMap {
                 global.throw_invalid_arguments(format_args!("payload 'mappings' must be a string"))
             );
         };
+        let mappings_value = bstring::OwnedString::new(mappings_value);
 
         let mappings_str = mappings_value.to_utf8();
 
@@ -197,7 +198,7 @@ impl JSSourceMap {
     }
 
     // ── codegen accessors (provided by `#[bun_jsc::JsClass]` once it lands) ──
-    // TODO(b2-blocked): bun_jsc::JsClass — generate-classes.ts emits the real
+    // TODO(port): bun_jsc::JsClass — generate-classes.ts emits the real
     // `*_set_cached`/`to_js` thunks; these forward to extern stubs so the
     // constructor body type-checks today.
     #[inline]
@@ -240,13 +241,13 @@ impl JSSourceMap {
     }
 
     // The cached value should handle this.
-    // TODO(b2-blocked): bun_jsc::host_fn — `#[bun_jsc::host_fn(getter)]`
+    // TODO(port): bun_jsc::host_fn — `#[bun_jsc::host_fn(getter)]`
     pub fn get_payload(&self, _global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(JSValue::UNDEFINED)
     }
 
     // The cached value should handle this.
-    // TODO(b2-blocked): bun_jsc::host_fn — `#[bun_jsc::host_fn(getter)]`
+    // TODO(port): bun_jsc::host_fn — `#[bun_jsc::host_fn(getter)]`
     pub fn get_line_lengths(&self, _global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(JSValue::UNDEFINED)
     }
@@ -275,7 +276,7 @@ impl JSSourceMap {
         Ok(JSValue::UNDEFINED)
     }
 
-    // TODO(b2-blocked): bun_jsc::host_fn — `#[bun_jsc::host_fn(method)]`
+    // TODO(port): bun_jsc::host_fn — `#[bun_jsc::host_fn(method)]`
     pub fn find_origin(
         this: &Self,
         global: &JSGlobalObject,
@@ -305,7 +306,7 @@ impl JSSourceMap {
         })
     }
 
-    // TODO(b2-blocked): bun_jsc::host_fn — `#[bun_jsc::host_fn(method)]`
+    // TODO(port): bun_jsc::host_fn — `#[bun_jsc::host_fn(method)]`
     pub fn find_entry(
         this: &Self,
         global: &JSGlobalObject,

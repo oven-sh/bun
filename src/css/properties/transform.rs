@@ -24,13 +24,13 @@ pub struct TransformList {
     pub v: Vec<Transform>,
 }
 
-// PORT NOTE: split out of the gated parse/to_css `impl TransformList` below
-// (B-2 round 15) — `TransformHandler` only needs deep_clone/eql.
+// PORT NOTE: split out of the parse/to_css `impl TransformList` below —
+// `TransformHandler` only needs deep_clone/eql.
 impl TransformList {
     pub fn deep_clone(&self, _bump: &Bump) -> Self {
         // TODO(port): css.implementDeepClone reflection — `Transform`/`TransformList`
-        // are `Clone`-via-derive (Vec + POD payloads); arena-aware DeepClone trait
-        // lands crate-wide in Phase B.
+        // are `Clone`-via-derive (Vec + POD payloads); an arena-aware DeepClone
+        // trait should land crate-wide.
         self.clone()
     }
 }
@@ -748,9 +748,8 @@ impl Translate {
     }
 }
 
-// PORT NOTE: split out of the gated parse/to_css `impl Translate` above (B-2
-// round 15) — these don't depend on Parser/Printer surface and are needed by
-// `TransformHandler`.
+// PORT NOTE: split out of the parse/to_css `impl Translate` above — these
+// don't depend on Parser/Printer surface and are needed by `TransformHandler`.
 impl Translate {
     pub fn to_transform(&self, _bump: &Bump) -> Transform {
         match self {
@@ -869,8 +868,8 @@ impl Rotate {
     }
 }
 
-// PORT NOTE: split out of the gated parse/to_css `impl Rotate` above (B-2
-// round 15) — needed by `TransformHandler`.
+// PORT NOTE: split out of the parse/to_css `impl Rotate` above — needed by
+// `TransformHandler`.
 impl Rotate {
     /// Converts the rotation to a transform function.
     pub fn to_transform(&self, _bump: &Bump) -> Transform {
@@ -953,8 +952,8 @@ impl Scale {
     }
 }
 
-// PORT NOTE: split out of the gated parse/to_css `impl Scale` above (B-2
-// round 15) — needed by `TransformHandler`.
+// PORT NOTE: split out of the parse/to_css `impl Scale` above — needed by
+// `TransformHandler`.
 impl Scale {
     pub fn to_transform(&self, _bump: &Bump) -> Transform {
         match self {
@@ -976,7 +975,14 @@ impl Scale {
     }
 }
 
-crate::css_eql_partialeq!(TransformList, Transform, Perspective, Translate, Rotate, Scale);
+crate::css_eql_partialeq!(
+    TransformList,
+    Transform,
+    Perspective,
+    Translate,
+    Rotate,
+    Scale
+);
 
 // PORT NOTE: was `TransformHandler<'bump>` holding `TransformList<'bump>`; the
 // `Property` enum is lifetime-free (see TransformList above), so the handler
@@ -990,8 +996,7 @@ pub struct TransformHandler {
     pub has_any: bool,
 }
 
-// PORT NOTE: un-gated B-2 round 15 — Property variants + prefixes::Feature are
-// real; `context.arena` was dropped from PropertyHandlerContext, so the
+// PORT NOTE: `context.arena` was dropped from PropertyHandlerContext, so the
 // arena is recovered via `dest.bump()` (DeclarationList = bumpalo::Vec).
 impl TransformHandler {
     pub fn handle_property(

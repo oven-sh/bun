@@ -363,7 +363,7 @@ pub struct PackageManager {
     pub ast_arena: bun_alloc::Arena,
     // TODO(port): lifetime — LIFETIMES.tsv classifies this BORROW_PARAM → `&'a mut bun_ast::Log`
     // (struct gets `<'a>`). Kept as raw ptr because PackageManager is a leaked singleton stored
-    // in a `static`; threading `<'a>` through the global holder is deferred to Phase B.
+    // in a `static`; threading `<'a>` through the global holder is a TODO(refactor).
     pub log: *mut bun_ast::Log,
     pub resolve_tasks: ResolveTaskQueue,
     pub timestamp_for_manifest_cache_control: u32,
@@ -813,11 +813,14 @@ mod holder {
     // Zig uses `var ptr: *PackageManager = undefined` then assigns via allocatePackageManager()
     // and later writes `manager.* = ...` in-place. OnceLock<Box<T>> can't express
     // allocate-then-fill (no `&mut` after set). Keep a raw ptr for now.
-    // TODO(port): in-place init — reconcile with OnceLock<Box<PackageManager>> in Phase B.
+    // TODO(port): in-place init — reconcile with OnceLock<Box<PackageManager>>.
     // PORTING.md §Global mutable state: ptr written once on main thread, read
     // from worker threads → AtomicPtr (Release/Acquire pairs the publish).
     pub static RAW_PTR: core::sync::atomic::AtomicPtr<PackageManager> =
         core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
+    pub static INITIALIZED: core::sync::atomic::AtomicBool =
+        core::sync::atomic::AtomicBool::new(false);
 
     // Process-lifetime env storage for `init()`. `dot_env::Loader<'a>` borrows `&'a mut Map`,
     // so the pair is self-referential and cannot live in `OnceLock<T>` (which only yields `&T`).
@@ -861,6 +864,11 @@ pub static ROOT_PACKAGE_JSON_PATH: bun_core::RacyCell<&ZStr> = bun_core::RacyCel
 impl PackageManager {
     pub fn clear_cached_items_depending_on_lockfile_buffer(&mut self) {
         self.root_package_id.id = None;
+    }
+
+    pub fn deinit_caches(&mut self) {
+        self.workspace_package_json_cache = WorkspacePackageJSONCache::default();
+        self.update_requests = Box::default();
     }
 
     /// Zig: `pm.lockfile.loadFromCwd(pm, allocator, log, attempt_loading_from_other_lockfile)`.
@@ -1411,6 +1419,19 @@ pub fn allocate_package_manager() {
         }
         holder::RAW_PTR.store(ptr, core::sync::atomic::Ordering::Release);
     }
+    bun_core::add_exit_callback(deinit_caches_at_exit);
+}
+
+extern "C" fn deinit_caches_at_exit() {
+    if !holder::INITIALIZED.load(core::sync::atomic::Ordering::Acquire) {
+        return;
+    }
+    let ptr = get();
+    if ptr.is_null() {
+        return;
+    }
+    // SAFETY: `deinit_caches()` only touches main-thread-owned fields.
+    unsafe { (*ptr).deinit_caches() };
 }
 
 /// Returns the raw singleton pointer (Zig: `pub fn get() *PackageManager`).
@@ -2104,6 +2125,7 @@ pub fn init(
         wr!(last_reported_slow_lifecycle_script_at, 0);
         wr!(cached_tick_for_slow_lifecycle_script_logging, 0);
     }
+    holder::INITIALIZED.store(true, core::sync::atomic::Ordering::Release);
     // The per-field placement above fully initialized the singleton; the
     // `&mut PackageManager` validity invariant now holds (Zig PackageManager.zig:850
     // onward). We do NOT bind a long-lived `&'static mut` here: `http::HTTPThread::init`
@@ -2335,9 +2357,9 @@ pub fn init_with_runtime(
     log: &mut bun_ast::Log,
     // Spec PackageManager.zig:983 `bun_install: ?*Api.BunInstall` — used read-only
     // (PackageManagerOptions.zig:load lines 224-380 only ever reads `config.*`).
-    // Upstream storage is `Option<&api::BunInstall>` (options.rs) / `*const ()`
-    // (resolver opts); taking `&mut` here would force a const→mut provenance
-    // launder at the resolver call site.
+    // Upstream storage is `Option<NonNull<api::BunInstall>>` (bundler + resolver
+    // opts); taking `&mut` here would force a const→mut provenance launder at
+    // the resolver call site.
     bun_install: Option<&Api::BunInstall>,
     cli: CommandLineArguments,
     env: &mut dot_env::Loader<'static>,
@@ -2482,7 +2504,10 @@ pub fn init_with_runtime_once(
         // Zig leaves `.root_package_json_file = undefined` (never read in the runtime
         // path). Use the explicit invalid-fd sentinel rather than `mem::zeroed()` —
         // on posix `Fd(0)` is stdin, not the invalid marker.
-        wr!(root_package_json_file, bun_sys::File::from_fd(Fd::invalid()));
+        wr!(
+            root_package_json_file,
+            bun_sys::File::from_fd(Fd::invalid())
+        );
         // erased *mut () set by tier-6; `js_current()` resolves the per-thread JS
         // event loop via `bun_io::__bun_get_vm_ctx` (link-time, definer in bun_runtime).
         wr!(event_loop, AnyEventLoop::js_current());
@@ -2559,6 +2584,7 @@ pub fn init_with_runtime_once(
         wr!(last_reported_slow_lifecycle_script_at, 0);
         wr!(cached_tick_for_slow_lifecycle_script_logging, 0);
     }
+    holder::INITIALIZED.store(true, core::sync::atomic::Ordering::Release);
     // SAFETY: per-field placement above fully initialized the PackageManager;
     // the `&mut PackageManager` validity invariant now holds for the post-init
     // body (Zig PackageManager.zig:1031 onward).

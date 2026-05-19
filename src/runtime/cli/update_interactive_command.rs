@@ -12,7 +12,7 @@ use bun_collections::StringHashMap;
 use bun_core::{Global, Output};
 use bun_glob as glob;
 use bun_install::dependency::{self, Behavior};
-use bun_install::lockfile::package::{PackageColumns as _};
+use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::package_manager::{
     self, LogLevel, ManifestCacheOptions, ManifestLoad, ROOT_PACKAGE_JSON_PATH, Subcommand,
@@ -119,7 +119,7 @@ struct PackageUpdate {
 }
 
 pub struct CatalogUpdateRequest {
-    // TODO(port): lifetime — these borrow from caller in Zig; using owned for Phase A
+    // TODO(port): lifetime — these borrow from caller in Zig; using owned for now
     package_name: Box<[u8]>,
     new_version: Box<[u8]>,
     catalog_name: Option<Box<[u8]>>,
@@ -241,21 +241,14 @@ impl UpdateInteractiveCommand {
         // Update the cache so installWithManager sees the new package.json
         // This is critical - without this, installWithManager will use the cached old version
         //
-        // PORT NOTE: `Source.contents` is `Cow<'static, [u8]>`. The cached
-        // `root` AST's `EString.data` slices (every JSON key/value string)
-        // borrow the *old* contents buffer — `deep_clone` copies the slice,
-        // not the bytes. Zig overwrote `source.contents` as a raw slice and
-        // leaked the old buffer; assigning a new `Cow::Owned` here would drop
-        // it and leave every cached string dangling, which
-        // `process_workspace_name` then dereferences via `root.get("name")`
-        // during `installWithManager`. Leak the old buffer to match Zig.
-        // PERF(port): `WorkspacePackageJSONCache` is process-lifetime; both
-        // buffers live for the process anyway.
+        // PORT NOTE: cached `root` AST slices still borrow the *old*
+        // `source.contents`; stash it instead of `mem::forget`-ing so it's
+        // freed when the entry drops (`PackageManager::deinit_caches()`).
         let old = core::mem::replace(
             &mut package_json.source.contents,
             Cow::Owned(new_package_json_source.into_vec()),
         );
-        core::mem::forget(old);
+        package_json.stale_contents.push(old);
         Ok(())
     }
 
@@ -2285,7 +2278,7 @@ fn dep_type_priority(dep_type: &[u8]) -> u8 {
 
 /// Dupe a byte buffer into the process-lifetime CLI arena to obtain a
 /// `'static` slice for storage in `E::EString.data` (the AST `Str` alias is
-/// `&'static [u8]` until Phase B threads `'bump`). Mirrors Zig's
+/// `&'static [u8]` until `'bump` is threaded through). Mirrors Zig's
 /// `allocator.dupe(u8, ...)` against the singleton `manager.allocator`.
 #[inline]
 fn leak_dup(bytes: &[u8]) -> &'static [u8] {

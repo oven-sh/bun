@@ -395,7 +395,7 @@ impl ExtractTarball {
                     };
 
                     // PERF(port): was comptime bool dispatch on verbose_install — folded into
-                    // `ExtractOptions::log` (runtime) — profile in Phase B.
+                    // `ExtractOptions::log` (runtime) — profile if hot.
                     let _ = Archiver::extract_to_dir(
                         &zlib_pool.list,
                         extract_destination.fd(),
@@ -430,7 +430,7 @@ impl ExtractTarball {
                 }
                 _ => {
                     // PERF(port): was comptime bool dispatch on verbose_install — folded into
-                    // `ExtractOptions::log` (runtime) — profile in Phase B.
+                    // `ExtractOptions::log` (runtime) — profile if hot.
                     let _ = Archiver::extract_to_dir(
                         &zlib_pool.list,
                         extract_destination.fd(),
@@ -852,6 +852,9 @@ impl ExtractTarball {
 
             let ret_json_path = FileSystem::instance().dirname_store().append(json_path)?;
 
+            // Lands in `Task.data.*` (untagged `ManuallyDrop` union); freed by
+            // `Task::deinit_payload()` at the `runTasks.rs` re-pool site, which
+            // calls it before `preallocated_resolve_tasks.put()`.
             Ok(ExtractData {
                 url: url.into(),
                 resolved: resolved.into(),

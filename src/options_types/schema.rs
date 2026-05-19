@@ -2,7 +2,7 @@
 // source: src/options_types/schema.zig (3224 lines)
 // PORT STATUS: skipped — generated file (see PORTING.md §Don't translate)
 //
-// B-2: minimal hand-stubbed `api` namespace so Context.rs / BundleEnums.rs
+// Minimal hand-stubbed `api` namespace so Context.rs / BundleEnums.rs
 // struct fields type-check. Full body arrives when peechy emits .rs.
 
 /// Port of `schema.Writer(WritableStream)` (schema.zig:169) specialised to a
@@ -127,6 +127,9 @@ pub mod api {
     ///
     /// `Default` ⇔ `std.mem.zeroes(TransformOptions)` — every Option `None`,
     /// every slice empty, every scalar `0`/`false`.
+    ///
+    /// LIFECYCLE: `BundleOptions::from_api` parks this in an `Arc` whose final ref
+    /// lives on the process-lifetime `Transpiler` (LSan-rooted in build_command.rs).
     #[derive(Clone, Debug, Default)]
     pub struct TransformOptions {
         /// jsx
@@ -231,7 +234,7 @@ pub mod api {
         /// `NpmRegistry.dupe(allocator)` — Zig packs all five strings into one
         /// contiguous allocation and reslices. Rust can't hand back five
         /// `Box<[u8]>` views into one buffer without leaking, so this is a
-        /// plain field-wise clone. PERF(port): single-buffer pack — Phase B.
+        /// plain field-wise clone. PERF(port): could pack into a single buffer.
         #[inline]
         pub fn dupe(&self) -> NpmRegistry {
             self.clone()

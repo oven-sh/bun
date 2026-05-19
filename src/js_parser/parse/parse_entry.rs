@@ -16,8 +16,8 @@ use crate::defines::Define;
 use crate::lexer as js_lexer;
 use crate::p::P;
 use crate::parser::{
-    Jest, ParseStatementOptions, Runtime, RuntimeFeatures, RuntimeImports,
-    ScanPassResult, SideEffects, WrapMode,
+    Jest, ParseStatementOptions, Runtime, RuntimeFeatures, RuntimeImports, ScanPassResult,
+    SideEffects, WrapMode,
 };
 use bun_ast as js_ast;
 use bun_ast::g::Decl;
@@ -310,7 +310,7 @@ impl<'a> Options<'a> {
     }
 }
 
-// ── live `Parser::init` (round-E unblock) ─────────────────────────────────
+// ── live `Parser::init` ───────────────────────────────────────────────────
 // Zig held two aliasing `*Log` pointers (parser + lexer). Rust models this as
 // `NonNull<Log>` on both sides — neither stores a long-lived `&mut`, so no
 // Stacked-Borrows tag is invalidated when accesses interleave.
@@ -585,7 +585,7 @@ impl<'a> Parser<'a> {
         // PORT NOTE: Zig `moveToListManaged(arena)` rebinds the same
         // backing storage to an `ArrayList(arena)`. The Rust Vec
         // adapter returns a `std::Vec`; `p.symbols` is a bump-backed Vec, so
-        // copy elements into the arena. Phase B may grow a zero-copy adapter.
+        // copy elements into the arena. TODO(perf): consider a zero-copy adapter.
         p.symbols =
             bun_alloc::vec_from_iter_in(symbols_.move_to_list_managed().into_iter(), p.arena);
 
@@ -616,7 +616,7 @@ impl<'a> Parser<'a> {
             ..Default::default()
         };
         let mut parts = BumpVec::with_capacity_in(2, p.arena);
-        // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
+        // PERF(port): was appendSliceAssumeCapacity — profile if hot
         parts.push(ns_export_part);
         parts.push(part);
 
@@ -710,7 +710,7 @@ impl<'a> Parser<'a> {
                 // If the logger is backed by console.log, every print appends a newline.
                 // so buffering is kind of mandatory here
                 // TODO(port): Zig builds a custom GenericWriter wrapping Output::print and a
-                // buffered writer over it. Phase B should provide a `bun_core::Output::buffered()`
+                // buffered writer over it. Provide a `bun_core::Output::buffered()`
                 // that returns an `impl core::fmt::Write` flushed on drop.
                 for msg in p.log().msgs.as_slice() {
                     let mut m: bun_ast::Msg = *msg;
@@ -736,8 +736,8 @@ impl<'a> Parser<'a> {
 
     fn _parse<const TS: bool>(self) -> Result<crate::Result, Error> {
         // TODO(port): narrow error set
-        // TODO(b2-blocked): bun_crash_handler::current_action — `Action` stores
-        // `&'static [u8]` but `self.source.path.text` is `'a`; Phase B widens
+        // TODO(port): bun_crash_handler::current_action — `Action` stores
+        // `&'static [u8]` but `self.source.path.text` is `'a`; widen
         // the lifetime on `Action` (Zig held the same pointer). Once unblocked:
         //   let _restore = bun_crash_handler::scoped_action(Action::Parse(self.source.path.text));
         // (`ActionGuard` restores the previous action on Drop — no scopeguard.)
@@ -778,9 +778,9 @@ impl<'a> Parser<'a> {
             p.should_fold_typescript_constant_expressions = true;
         }
 
-        // PERF(port): was stack-fallback arena (42 * sizeof(BinaryExpressionVisitor)) — profile in Phase B
+        // PERF(port): was stack-fallback arena (42 * sizeof(BinaryExpressionVisitor)) — profile if hot
         p.binary_expression_stack = BumpVec::with_capacity_in(41, p.arena);
-        // PERF(port): was stack-fallback arena (48 * sizeof(BinaryExpressionSimplifyVisitor)) — profile in Phase B
+        // PERF(port): was stack-fallback arena (48 * sizeof(BinaryExpressionSimplifyVisitor)) — profile if hot
         p.binary_expression_simplify_stack = BumpVec::with_capacity_in(47, p.arena);
 
         // (Zig asserted the stack-fallback arena owns the buffer; not applicable here.)
@@ -811,7 +811,7 @@ impl<'a> Parser<'a> {
         // We don't want to ever put files with `// @bun` into this cache, as that would be wasteful.
         #[cfg(not(target_arch = "wasm32"))]
         if true
-        /* TODO(b2-blocked): feature_flag */
+        /* TODO(port): feature_flag */
         {
             if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
                 // TODO(port): `Path::is_node_module`/`is_jsx_file` live on the
@@ -877,7 +877,7 @@ impl<'a> Parser<'a> {
             return Err(err!("SyntaxError"));
         }
 
-        // TODO(b2-blocked): bun_crash_handler::CURRENT_ACTION.set(Action::Visit(self.source.path.text))
+        // TODO(port): bun_crash_handler::CURRENT_ACTION.set(Action::Visit(self.source.path.text))
         // — see lifetime note at top of fn.
 
         let mut visit_tracer = bun_core::perf::trace("JSParser::visit");
@@ -1573,7 +1573,7 @@ impl<'a> Parser<'a> {
             //    export * as ns from './foo'
             //
             if false
-            /* TODO(b2-blocked): feature_flag — Zig gates with comptime FeatureFlags.export_star_redirect (false) */
+            /* TODO(port): feature_flag — Zig gates with comptime FeatureFlags.export_star_redirect (false) */
             {
                 // If the file only contains "export * from './blah'
                 // we pretend the file never existed in the first place.
@@ -2018,7 +2018,9 @@ impl<'a> Parser<'a> {
                 before.push(js_ast::Part {
                     stmts: part_stmts.into(),
                     declared_symbols,
-                    import_record_indices: vec![import_record_id],
+                    import_record_indices: js_ast::PartImportRecordIndices::init_one(
+                        import_record_id,
+                    ),
                     tag: bun_ast::PartTag::BunTest,
                     ..Default::default()
                 });
@@ -2075,7 +2077,9 @@ impl<'a> Parser<'a> {
                 before.push(js_ast::Part {
                     stmts: part_stmts.into(),
                     declared_symbols,
-                    import_record_indices: vec![import_record_id],
+                    import_record_indices: js_ast::PartImportRecordIndices::init_one(
+                        import_record_id,
+                    ),
                     tag: bun_ast::PartTag::BunTest,
                     ..Default::default()
                 });
@@ -2231,7 +2235,7 @@ impl<'a> Parser<'a> {
 
         #[cfg(not(target_arch = "wasm32"))]
         if true
-        /* TODO(b2-blocked): feature_flag */
+        /* TODO(port): feature_flag */
         {
             if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
                 if p.macro_call_count != 0 {

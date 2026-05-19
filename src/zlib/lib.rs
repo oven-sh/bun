@@ -330,7 +330,7 @@ impl<'a, W, const BUFFER_SIZE: usize> Drop for ZlibReader<'a, W, BUFFER_SIZE> {
     }
 }
 
-// TODO(b1): thiserror not in workspace deps; manual Display impl below.
+// TODO(port): thiserror not in workspace deps; manual Display impl below.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum ZlibError {
     OutOfMemory,
@@ -1082,7 +1082,7 @@ impl<'a> Drop for ZlibCompressorArrayList<'a> {
 }
 
 // Zig: `@import("zlib-internal")` → `src/zlib_sys/{posix,win32}.zig` (see build.zig).
-// B-2: re-export from bun_zlib_sys, platform-selected to match build.zig.
+// Re-export from bun_zlib_sys, platform-selected to match build.zig.
 mod internal {
     #[cfg(not(windows))]
     pub(super) use bun_zlib_sys::posix::{DataType, zStream_struct};

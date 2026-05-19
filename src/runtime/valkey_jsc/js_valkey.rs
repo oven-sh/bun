@@ -25,9 +25,9 @@ use bun_jsc::url::URL;
 use bun_valkey::valkey_protocol as protocol;
 
 /// `bun.JSTerminated!T`
-// PORT NOTE: widened to `JsResult<T>` to match `valkey.rs` (Phase A — narrow
-// once `ValkeyClient::{fail,on_open,on_close,start}` are tightened to the
-// `jsc::JsTerminatedResult` alias from `bun_jsc::event_loop`).
+// PORT NOTE: widened to `JsResult<T>` to match `valkey.rs`; narrow once
+// `ValkeyClient::{fail,on_open,on_close,start}` are tightened to the
+// `jsc::JsTerminatedResult` alias from `bun_jsc::event_loop`.
 type JsTerminatedResult<T> = jsc::JsResult<T>;
 
 /// Narrow `valkey::ValkeyClient`'s `JsResult<()>` (its local `JsTerminated<T>`
@@ -48,7 +48,7 @@ fn narrow_terminated(r: JsResult<()>) -> JsTerminatedResult<()> {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Local shims / extension traits (Phase-D adapt-on-our-side)
+// Local shims / extension traits (adapt-on-our-side)
 // ───────────────────────────────────────────────────────────────────────────
 
 /// Bridge JS-thread `VirtualMachine` to the aio-level `EventLoopCtx` used by
@@ -378,7 +378,7 @@ impl SubscriptionCtx {
 // macro's 2-arg `constructor` shim doesn't fit the `js_this` flow here).
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
-// shim still emits `this: &mut RedisClient` until Phase 1 lands — `&mut T`
+// shim still emits `this: &mut RedisClient` — `&mut T`
 // auto-derefs to `&T` so the impls below compile against either. `JsCell` is
 // `#[repr(transparent)]`, so `from_field_ptr!`/`owner!` recovery (dispatch.rs,
 // `ValkeyClient::parent`) sees identical offsets.
@@ -1106,7 +1106,7 @@ impl JSValkeyClient {
             i64::from(next_timeout_ms),
         );
         // PORT NOTE: `bun_event_loop::Timespec` is a local stub distinct from
-        // `bun_core::Timespec`; convert by fields until B-2 unifies them.
+        // `bun_core::Timespec`; convert by fields until they are unified.
         timer.with_mut(|t| {
             t.next = Timer::Timespec {
                 sec: now.sec,
@@ -1170,6 +1170,8 @@ impl JSValkeyClient {
         // Increment ref to ensure 'self' stays alive throughout the function
         self.ref_();
         let _d = deref_guard(self);
+        // Release the keep-alive ref from add_timer; remove_timer/stop_timers skip FIRED timers.
+        unsafe { JSValkeyClient::deref(std::ptr::from_ref(self).cast_mut()) };
         if self.client.get().flags.failed {
             return;
         }
@@ -1224,6 +1226,8 @@ impl JSValkeyClient {
         // Increment ref to ensure 'self' stays alive throughout the function
         self.ref_();
         let _d = deref_guard(self);
+        // Release the keep-alive ref from add_timer; remove_timer/stop_timers skip FIRED timers.
+        unsafe { JSValkeyClient::deref(std::ptr::from_ref(self).cast_mut()) };
 
         // Execute reconnection logic
         self.reconnect();
@@ -1409,6 +1413,16 @@ impl JSValkeyClient {
         if delay_ms > 0 {
             self.add_timer(&self.reconnect_timer, delay_ms);
         }
+
+        // Release the keep-alive ref `connect()` took for the just-closed
+        // socket. We only reach here from `ValkeyClient::on_close()`'s reconnect
+        // branch, which (unlike its other branches) does not call
+        // `on_valkey_close()` and so never balances that ref. The reconnect
+        // timer (and the next `connect()`) take their own refs, so without this
+        // every retry leaks one ref and the client is never freed.
+        // SAFETY: caller (`SocketHandler::on_close`/`on_connect_error`) holds a
+        // scoped ref across this call, so the count stays > 0.
+        unsafe { JSValkeyClient::deref(std::ptr::from_ref(self).cast_mut()) };
     }
 
     // Callback for when Valkey client closes
@@ -1482,6 +1496,14 @@ impl JSValkeyClient {
 
     fn close_socket_next_tick(&self) {
         if self.client.get().socket.is_closed() {
+            return;
+        }
+
+        // During VM shutdown the event loop won't tick, so the deferred task below
+        // would never run; close inline (this_value is cleared, no JS re-entry).
+        if self.vm().is_shutting_down() {
+            bun_core::hint::cold();
+            self.client_mut().close();
             return;
         }
 
@@ -1629,8 +1651,7 @@ impl JSValkeyClient {
         // Balance the ref above if connect() throws — the caller (e.g. send())
         // only knows to clean up its own state, not the keep-alive ref.
         let self_ptr = self.as_ctx_ptr();
-        let errdefer_deref =
-            scopeguard::guard(self_ptr, |p| unsafe { JSValkeyClient::deref(p) });
+        let errdefer_deref = scopeguard::guard(self_ptr, |p| unsafe { JSValkeyClient::deref(p) });
         self.client_mut().status = valkey::Status::Connecting;
         self.update_poll_ref();
         let errdefer_status = scopeguard::guard(self_ptr, |p| unsafe {

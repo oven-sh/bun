@@ -5,7 +5,7 @@
 // vendor/libarchive) must reassemble them into the same on-disk layout
 // the buffered extractor would produce.
 
-import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, readdirSorted, tempDir } from "harness";
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -13,9 +13,7 @@ import { createServer, type Server } from "node:http";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 
-beforeAll(() => {
-  setDefaultTimeout(1000 * 60 * 5);
-});
+setDefaultTimeout(1000 * 60 * 5);
 
 // -------------------------------------------------------------------
 // Tarball construction helpers. We build the .tgz in-process so the

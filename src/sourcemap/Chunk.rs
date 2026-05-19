@@ -46,6 +46,13 @@ impl Chunk {
     // `pub fn deinit` dropped — body only freed `self.buffer`, which `Drop` on
     // `MutableString` handles automatically.
 
+    /// # Safety
+    /// The returned `Chunk` aliases `self.buffer`'s allocation; at most one may be dropped.
+    #[inline]
+    pub unsafe fn alias(&self) -> Chunk {
+        unsafe { core::ptr::read(self) }
+    }
+
     pub fn print_source_map_contents<const ASCII_ONLY: bool>(
         &self,
         source: &Source,
@@ -392,7 +399,7 @@ impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<T> {
 }
 
 /// A uniquely-owned [`line_offset_table::List`] whose per-row
-/// `columns_for_non_ascii: Vec<i32>` payloads are drained on drop.
+/// `columns_for_non_ascii: Box<[i32]>` payloads are drained on drop.
 ///
 /// `MultiArrayList::Drop` is **slab-only** — it frees the SoA buffer but never
 /// runs column destructors (a bitwise `clone` can alias two lists onto the same
@@ -406,7 +413,7 @@ pub struct OwnedLineOffsetTables(pub line_offset_table::List);
 
 impl Drop for OwnedLineOffsetTables {
     fn drop(&mut self) {
-        // Run every row's destructors (drops the `columns_for_non_ascii` Vecs);
+        // Run every row's destructors (drops the `columns_for_non_ascii` boxes);
         // the `MultiArrayList::Drop` that follows then frees the SoA slab.
         self.0.drop_elements();
     }
@@ -485,7 +492,17 @@ impl NewBuilder<VLQSourceMap> {
     #[inline]
     pub fn update_generated_line_and_column(&mut self, output: &[u8]) {
         let slice = &output[self.last_generated_update as usize..];
-        if strings::index_of_newline_or_non_ascii(slice, 0).is_none() {
+        // The window between consecutive mappings is usually a handful of bytes
+        // (one token, often less under --minify). Below the narrowest highway
+        // lane width the SIMD body never runs and the FFI dispatch is pure
+        // overhead, so scan inline. Predicate matches
+        // `IndexOfNewlineOrNonASCIIImpl`'s scalar tail (`> 127 || < 0x20`).
+        let pure_ascii = if slice.len() < 16 {
+            !slice.iter().any(|&b| b > 127 || b < 0x20)
+        } else {
+            strings::index_of_newline_or_non_ascii(slice, 0).is_none()
+        };
+        if pure_ascii {
             debug_assert!(slice.len() <= i32::MAX as usize);
             self.generated_column += slice.len() as i32;
             self.last_generated_update = output.len() as u32;
@@ -696,10 +713,15 @@ impl NewBuilder<VLQSourceMap> {
         // `items::<>` is a single `base + CONST*cap` pointer add.
         let mut original_column = loc.start - byte_offsets[idx] as i32;
         {
+            // `first_non_ascii` is `i32::MAX as u32` for ASCII-only lines, so the
+            // comparison below is false and the `columns_for_non_ascii` SoA column
+            // (the largest, ~16 B/line) is never touched on the hot ASCII path.
             let first_non_ascii = list.items::<"byte_offset_to_first_non_ascii", u32>()[idx];
-            let cols = &list.items::<"columns_for_non_ascii", Vec<i32>>()[idx];
-            if !cols.is_empty() && original_column >= first_non_ascii as i32 {
-                original_column = cols[(original_column as u32 - first_non_ascii) as usize];
+            if original_column >= first_non_ascii as i32 {
+                let cols = &list.items::<"columns_for_non_ascii", Box<[i32]>>()[idx];
+                if !cols.is_empty() {
+                    original_column = cols[(original_column as u32 - first_non_ascii) as usize];
+                }
             }
         }
 

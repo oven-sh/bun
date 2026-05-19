@@ -15,9 +15,9 @@
 // Layout is `#[repr(transparent)] NonZeroU16`, so `Option<Error>` is one u16
 // and FFI/packed-struct slots that held a Zig `anyerror` keep the same width.
 
+use crate::RwLock;
 use core::fmt;
 use core::num::NonZeroU16;
-use crate::RwLock;
 
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -133,7 +133,7 @@ impl Error {
     pub const UNEXPECTED: Self = Self(unsafe { NonZeroU16::new_unchecked(1) });
     pub const OUT_OF_MEMORY: Self = Self(unsafe { NonZeroU16::new_unchecked(2) });
     pub const WRITE_FAILED: Self = Self(unsafe { NonZeroU16::new_unchecked(6) });
-    /// Phase-A placeholder retained for callers not yet migrated to `err!()`.
+    /// Placeholder retained for callers not yet migrated to `err!()`.
     /// Aliases `Unexpected` so it round-trips through `name()` sensibly.
     pub const TODO: Self = Self::UNEXPECTED;
 
@@ -161,7 +161,7 @@ impl Error {
         Self(intern_slow(name))
     }
 
-    /// Alias for [`intern`]; kept for `err!(from e)` and Phase-A call sites.
+    /// Alias for [`intern`]; kept for `err!(from e)` and existing call sites.
     #[inline]
     pub fn from_name(name: &'static str) -> Self {
         Self::intern(name)

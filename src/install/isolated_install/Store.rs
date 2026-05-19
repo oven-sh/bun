@@ -104,6 +104,13 @@ impl<T> NewId<T> {
     }
 }
 
+impl Drop for Store {
+    fn drop(&mut self) {
+        self.entries.drop_elements();
+        self.nodes.drop_elements();
+    }
+}
+
 impl Store {
     /// Called from multiple threads. `parent_dedupe` should not be shared between threads.
     pub fn is_cycle(
@@ -263,13 +270,13 @@ impl<T: Copy> OrderedArraySet<T> {
             }
 
             if order == Ordering::Less {
-                // PERF(port): was insertAssumeCapacity — profile in Phase B
+                // PERF(port): was insertAssumeCapacity — profile if hot
                 self.list.insert(i, new);
                 return;
             }
         }
 
-        // PERF(port): was appendAssumeCapacity — profile in Phase B
+        // PERF(port): was appendAssumeCapacity — profile if hot
         self.list.push(new);
     }
 }

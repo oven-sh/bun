@@ -286,7 +286,7 @@ impl CreateOptions {
         if opts.positionals.len() >= 1
             && (opts.positionals[0] == b"c" || opts.positionals[0] == b"create")
         {
-            // TODO(port): re-slicing Box<[T]> — store as Vec or slice with offset in Phase B
+            // TODO(port): re-slicing Box<[T]> — store as Vec or slice with offset.
             opts.positionals = opts.positionals[1..].to_vec().into_boxed_slice();
         }
 
@@ -1072,7 +1072,7 @@ impl CreateCommand {
                 // InjectionPrefill below is commented out except `npx_react_scripts_build` and the
                 // three `.properties =` wiring lines (which themselves only feed commented-out
                 // code), we stub the module here and leave the full structure as a comment for
-                // Phase B reference.
+                // reference.
                 mod injection_prefill {
                     use super::*;
                     pub const DEPENDENCIES_STRING: &[u8] = b"dependencies";
@@ -1321,7 +1321,8 @@ impl CreateCommand {
                                             script_property_i += 1;
                                             continue;
                                         };
-                                        let Some(script_value) = script_value.data.e_string() else {
+                                        let Some(script_value) = script_value.data.e_string()
+                                        else {
                                             scripts_properties
                                                 .swap(script_property_out_i, script_property_i);
                                             script_property_out_i += 1;
@@ -2859,7 +2860,7 @@ impl GitHandler {
         SUCCESS.store(0, Ordering::Relaxed);
 
         // TODO(port): std.Thread.spawn — destination/path borrowed across thread; Zig relied on
-        // them being long-lived (filesystem dirname_store / env). Phase B: ensure 'static or own.
+        // them being long-lived (filesystem dirname_store / env). Ensure 'static or own.
         // SAFETY: `destination` lives in `filesystem.dirname_store` and `path` in env loader;
         // both are 'static for the CLI process. Extend lifetimes to satisfy `spawn`.
         let destination: &'static [u8] = unsafe { bun_ptr::detach_lifetime(destination) };

@@ -94,8 +94,8 @@ pub mod js {
 // `mod js` above and `extern "C" fn finalize` below.
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
-// shim still emits `this: &mut Terminal` until Phase 1 lands — `&mut T`
-// auto-derefs to `&T` so the impls below compile against either. The
+// shim still emits `this: &mut Terminal` — `&mut T` auto-derefs to `&T`
+// so the impls below compile against either. The
 // BufferedReader/StreamingWriter parent-vtable thunks deref `*mut Self` as
 // `&*this` (shared); all field mutation routes through the cells.
 #[bun_jsc::JsClass(no_construct, no_finalize)]
@@ -925,7 +925,7 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
                 | libc::BRKINT; // Signal interrupt on break
             // IUTF8: present in Linux/macOS/FreeBSD kernels but Zig std's
             // tc_iflag_t only exposes the field on Linux/macOS, so probe for it.
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
             {
                 t.c_iflag |= libc::IUTF8;
             }

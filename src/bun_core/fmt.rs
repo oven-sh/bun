@@ -443,9 +443,27 @@ pub fn format_json_string_utf8(
 
 type SharedTempBuffer = [u8; 32 * 1024];
 
+struct SharedTempBufferSlot(Cell<Option<NonNull<SharedTempBuffer>>>);
+impl Drop for SharedTempBufferSlot {
+    fn drop(&mut self) {
+        if let Some(p) = self.0.take() {
+            // SAFETY: produced by `heap::alloc_nn` in `SharedTempBufferBorrow::
+            // new` and parked here on borrow drop; the thread is exiting so no
+            // outstanding borrow holds it.
+            unsafe { crate::heap::destroy(p.as_ptr()) };
+        }
+    }
+}
+impl core::ops::Deref for SharedTempBufferSlot {
+    type Target = Cell<Option<NonNull<SharedTempBuffer>>>;
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 thread_local! {
-    static SHARED_TEMP_BUFFER_PTR: Cell<Option<NonNull<SharedTempBuffer>>> =
-        const { Cell::new(None) };
+    static SHARED_TEMP_BUFFER_PTR: SharedTempBufferSlot =
+        const { SharedTempBufferSlot(Cell::new(None)) };
 }
 
 /// RAII borrow of the thread-local shared temp buffer.
@@ -2274,7 +2292,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                             // while-else runs the else branch whenever the condition becomes false
                             // (i.e. on normal loop exit, since the body has no `break`). So the
                             // else ALWAYS fires here and the code below is dead in Zig too.
-                            // TODO(port): Zig while-else always fires here — likely upstream bug, verify in Phase B.
+                            // TODO(port): Zig while-else always fires here — likely upstream bug, worth verifying.
                             while i < text.len() && js_lexer::is_identifier_continue(text[i] as i32)
                             {
                                 i += 1;
@@ -2345,7 +2363,7 @@ pub fn quote(self_: &[u8]) -> QuotedFormatter<'_> {
 // EnumTagListFormatter
 // ───────────────────────────────────────────────────────────────────────────
 
-// B-1: ConstParamTy is nightly. Use as runtime value instead.
+// ConstParamTy is nightly, so use a runtime value instead.
 // adt_const_params rewrite: SEPARATOR enum → const bool (only 2 variants).
 pub const SEP_LIST: bool = true;
 pub const SEP_DASH: bool = false;
@@ -2393,8 +2411,8 @@ pub fn enum_tag_list<E: strum::VariantNames, const LIST: bool>() -> EnumTagListF
 // formatIp
 // ───────────────────────────────────────────────────────────────────────────
 
-// TODO(port): `std.net.Address` — bun_core stays I/O-free; Phase B should accept a
-// bun_sys/bun_net Address type here. Logic preserved against a placeholder Display.
+// TODO(port): `std.net.Address` — bun_core stays I/O-free; this should accept a
+// bun_sys/bun_net Address type. Logic preserved against a placeholder Display.
 pub fn format_ip<'a>(
     address: &impl Display,
     into: &'a mut [u8],
@@ -3035,7 +3053,7 @@ pub const fn hex_u16<const LOWER: bool>(v: u16) -> [u8; 4] {
 // TODO(port): Zig parameterizes on `comptime Int: type` and computes
 // `BufType = [@bitSizeOf(Int) / 4]u8`. Rust const generics can't derive an array
 // length from a type's bit-width. Represent as a generic over u64 with explicit
-// nibble count; Phase B can add per-width helpers if hot.
+// nibble count; add per-width helpers if this shows up on a hot path.
 pub struct HexIntFormatter<const LOWER: bool, const NIBBLES: usize> {
     pub value: u64,
 }

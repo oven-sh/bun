@@ -654,7 +654,7 @@ impl<'a> Run<'a> {
     // `Tag: core::marker::ConstParamTy`, which the upstream enum does not
     // derive. Reshaped to a runtime `tag` param — every call site in `run`
     // already matches once, so the comptime monomorphization was redundant.
-    // PERF(port): was comptime monomorphization — profile in Phase B.
+    // PERF(port): was comptime monomorphization — profile if it shows up on a hot path.
     pub fn coerce(
         &mut self,
         tag: ConsoleObject::formatter::Tag,
@@ -745,7 +745,7 @@ impl<'a> Run<'a> {
                 let mut iter = JSArrayIterator::init(value, self.global)?;
 
                 // Process all array items
-                // PERF(port): was allocator.alloc(Expr, iter.len) — profile in Phase B
+                // PERF(port): was allocator.alloc(Expr, iter.len) — profile if it shows up on a hot path
                 let mut array = ExprNodeList::init_capacity(iter.len as usize);
                 // (errdefer free deleted — drops on `?`)
                 let expr = Expr::init(
@@ -815,7 +815,7 @@ impl<'a> Run<'a> {
                     let object_value = self.run(object_iter.value)?;
 
                     // PORT NOTE: `EString::init` lifetime-erases its borrow
-                    // (arena-owned per the Phase-A `Str` convention). Copy the
+                    // (arena-owned per the parser's `Str` convention). Copy the
                     // key into the `MacroContext` bump arena so it outlives the
                     // temporary `to_owned_slice()` Vec and the returned `Expr`.
                     let key_bytes: &[u8] = self.bump.alloc_slice_copy(&prop.to_owned_slice());
@@ -869,11 +869,10 @@ impl<'a> Run<'a> {
                 ));
             }
             T::String => {
-                let bun_str = value.to_bun_string(self.global)?;
-                // `bun_str.deref()` on Drop
+                let bun_str = bun_core::OwnedString::new(value.to_bun_string(self.global)?);
 
                 // encode into utf16 so the printer escapes the string correctly
-                // PERF(port): was allocator.alloc(u16, len) — profile in Phase B
+                // PERF(port): was allocator.alloc(u16, len) — profile if it shows up on a hot path
                 //
                 // Zig went through `bun.String.encodeInto(out, .utf16le)`
                 // (string.zig:630), which lives in `bun_runtime::webcore::
@@ -888,7 +887,7 @@ impl<'a> Run<'a> {
                     bun_str.latin1().iter().map(|&b| b as u16).collect()
                 };
                 // PORT NOTE: `E::EString::init_utf16` lifetime-erases the slice
-                // (arena-owned per the Phase-A `Str` convention). Copy into
+                // (arena-owned per the parser's `Str` convention). Copy into
                 // the `MacroContext` bump arena — Zig used `this.allocator`
                 // (`default_allocator`, process-lifetime).
                 let arena_slice: &[u16] = self.bump.alloc_slice_copy(&utf16_bytes);

@@ -104,8 +104,8 @@ impl RunCommand {
     pub fn print_help(package_json: Option<&PackageJSON>) {
         // PORT NOTE: templates are passed as *string literals* so the
         // `pretty_fmt!` proc-macro rewrites the `<tag>` color markup at compile
-        // time. Routing them through a `const &str` + `{}` (as the original
-        // Phase-A draft did) prints the raw `<b>`/`<r>` tags verbatim.
+        // time. Routing them through a `const &str` + `{}` prints the raw
+        // `<b>`/`<r>` tags verbatim.
         pretty!("<b>Usage<r>: <b><green>bun run<r> <cyan>[flags]<r> \\<file or script\\>\n\n");
         pretty!("<b>Flags:<r>");
         bun_clap::simple_help(crate::cli::arguments::RUN_PARAMS);
@@ -537,7 +537,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         log_errors: bool,
         store_root_fd: bool,
     ) -> Result<bun_resolver::DirInfoRef, bun_core::Error> {
-        Self::configure_env_for_run_impl(ctx, this_transpiler, env, log_errors, store_root_fd, false)
+        Self::configure_env_for_run_impl(
+            ctx,
+            this_transpiler,
+            env,
+            log_errors,
+            store_root_fd,
+            false,
+        )
     }
 
     /// `configure_linker()` + `load_tsconfig_json` setup, factored into a
@@ -545,7 +552,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     /// not share `.text` pages with the hot `bun run <script>` dispatch path.
     #[cold]
     #[inline(never)]
-    #[cfg_attr(target_os = "linux", unsafe(link_section = ".text.unlikely"))]
+    #[cfg_attr(
+        any(target_os = "linux", target_os = "android"),
+        unsafe(link_section = ".text.unlikely")
+    )]
     fn configure_run_transpiler_linker(this_transpiler: &mut Transpiler<'static>) {
         this_transpiler.resolver.opts.load_tsconfig_json = true;
         this_transpiler.options.load_tsconfig_json = true;
@@ -769,10 +779,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // `NonNull::from` converts without the lifetime tie.
         let install_ptr = ctx.install.as_deref().map(::core::ptr::NonNull::from);
         b.options.install = install_ptr;
-        // resolver's `BundleOptions.install` is the FORWARD_DECL `*const ()`
-        // (breaks the bun_install dep cycle) — erase the type.
-        b.resolver.opts.install =
-            install_ptr.map_or(::core::ptr::null(), |p| p.as_ptr().cast::<()>());
+        b.resolver.opts.install = install_ptr;
         b.resolver.opts.global_cache = ctx.debug.global_cache;
         let offline = ctx
             .debug
@@ -863,7 +870,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     /// initializing JSC.
     #[cold]
     #[inline(never)]
-    #[cfg_attr(target_os = "linux", unsafe(link_section = ".text.unlikely"))]
+    #[cfg_attr(
+        any(target_os = "linux", target_os = "android"),
+        unsafe(link_section = ".text.unlikely")
+    )]
     fn boot_bun_shell(
         ctx: &mut ContextData,
         entry_path: &[u8],
@@ -1528,8 +1538,8 @@ impl Run {
             vm.global().vm().release_weak_refs();
             // PERF(port): `vm.arena.gc()` — Zig's `MimallocArena.gc()` is
             // `mi_heap_collect`; `bun_alloc::Arena = bumpalo::Bump` has no
-            // per-heap collect, so this is a no-op until Phase B swaps the
-            // arena type. Semantically a memory-usage hint, not correctness.
+            // per-heap collect, so this is a no-op unless the arena type
+            // changes. Semantically a memory-usage hint, not correctness.
             let _ = vm.global().vm().run_gc(false);
             vm.tick();
         }
@@ -1662,7 +1672,10 @@ fn log_clear_msgs(vm: &mut VirtualMachine) {
 
 #[cold]
 #[inline(never)]
-#[cfg_attr(target_os = "linux", unsafe(link_section = ".text.unlikely"))]
+#[cfg_attr(
+    any(target_os = "linux", target_os = "android"),
+    unsafe(link_section = ".text.unlikely")
+)]
 fn dump_build_error(vm: &mut VirtualMachine) {
     Output::flush();
     if let Some(log) = vm.log {
@@ -1682,7 +1695,10 @@ fn dump_build_error(vm: &mut VirtualMachine) {
 /// `.text.hot` fault-around window the `require('fs')` startup path pulls in.
 #[cold]
 #[inline(never)]
-#[cfg_attr(target_os = "linux", unsafe(link_section = ".text.unlikely"))]
+#[cfg_attr(
+    any(target_os = "linux", target_os = "android"),
+    unsafe(link_section = ".text.unlikely")
+)]
 fn exit_with_unhandled_note(vm: &mut VirtualMachine) -> ! {
     vm.exit_handler.exit_code = 1;
     vm.on_exit();
@@ -1696,7 +1712,10 @@ fn exit_with_unhandled_note(vm: &mut VirtualMachine) -> ! {
 /// Cold `Err(err)` arm of `vm.load_entry_point` in `Run::start`.
 #[cold]
 #[inline(never)]
-#[cfg_attr(target_os = "linux", unsafe(link_section = ".text.unlikely"))]
+#[cfg_attr(
+    any(target_os = "linux", target_os = "android"),
+    unsafe(link_section = ".text.unlikely")
+)]
 fn entry_point_load_failed(vm: &mut VirtualMachine, err: &bun_core::Error) -> ! {
     if log_has_msgs(vm) {
         dump_build_error(vm);
@@ -1715,7 +1734,10 @@ fn entry_point_load_failed(vm: &mut VirtualMachine, err: &bun_core::Error) -> ! 
 /// exit: bump the exit code and print the sourcemap note + version string.
 #[cold]
 #[inline(never)]
-#[cfg_attr(target_os = "linux", unsafe(link_section = ".text.unlikely"))]
+#[cfg_attr(
+    any(target_os = "linux", target_os = "android"),
+    unsafe(link_section = ".text.unlikely")
+)]
 fn print_unhandled_version_note(vm: &mut VirtualMachine) {
     vm.exit_handler.exit_code = 1;
     bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
@@ -1755,7 +1777,10 @@ impl RunCommand {
     /// `.text.hot` fault-around window the `require('fs')` startup path pulls in.
     #[cold]
     #[inline(never)]
-    #[cfg_attr(target_os = "linux", unsafe(link_section = ".text.unlikely"))]
+    #[cfg_attr(
+        any(target_os = "linux", target_os = "android"),
+        unsafe(link_section = ".text.unlikely")
+    )]
     fn boot_failed_exit(ctx: &mut ContextData, display_name: &[u8], err: &bun_core::Error) -> ! {
         // SAFETY: `ctx.log` was set in `create_context_data` (single-threaded
         // CLI startup) and is process-lifetime.
@@ -2399,10 +2424,11 @@ impl RunCommand {
         // transpiler — so the bundler-linker / `tsconfig.json` / JSX-runtime
         // setup would be dead weight (and the largest block of bundler code
         // otherwise faulted in for a plain `bun run <script>`).
-        let mut this_transpiler = ::core::mem::MaybeUninit::<Transpiler<'static>>::uninit();
+        let this_transpiler: &'static mut ::core::mem::MaybeUninit<Transpiler<'static>> =
+            runner_arena().alloc(::core::mem::MaybeUninit::<Transpiler<'static>>::uninit());
         let root_dir_info = Self::configure_env_for_run_without_linker(
             ctx,
-            &mut this_transpiler,
+            this_transpiler,
             None,
             log_errors,
             false,
@@ -2410,6 +2436,10 @@ impl RunCommand {
         // SAFETY: `configure_env_for_run_without_linker` returned `Ok`, so the
         // slot is fully initialized via `MaybeUninit::write`.
         let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
+        bun_core::asan::register_root_region(
+            std::ptr::from_ref::<Transpiler>(this_transpiler).cast(),
+            ::core::mem::size_of::<Transpiler>(),
+        );
         let force_using_bun = ctx.debug.run_in_bun;
         let mut original_path: Vec<u8> = Vec::new();
         Self::configure_path_for_run(
@@ -2878,7 +2908,7 @@ impl RunCommand {
         bun_core::scoped_log!(RUN_LOG, "Executing from stdin");
 
         // read from stdin
-        // PERF(port): Zig `stackFallback(2048, …)` — Phase B can swap to
+        // PERF(port): Zig `stackFallback(2048, …)` — could swap to
         // `SmallVec<[u8; 2048]>` if profiled hot; cold CLI path here.
         // PORT NOTE: `read_to_end_into` is the cursor-relative streaming reader
         // (stdin is a pipe/tty, not seekable; `read_to_end` would `pread(0)`).
@@ -3015,7 +3045,10 @@ impl RunCommand {
 
     #[cold]
     #[inline(never)]
-    #[cfg_attr(target_os = "linux", unsafe(link_section = ".text.unlikely"))]
+    #[cfg_attr(
+        any(target_os = "linux", target_os = "android"),
+        unsafe(link_section = ".text.unlikely")
+    )]
     fn exec_as_if_node_missing_script() -> ! {
         Output::err_generic(
             "Missing script to execute. Bun's provided 'node' cli wrapper does not support a repl.",
@@ -3026,7 +3059,10 @@ impl RunCommand {
 
     #[cold]
     #[inline(never)]
-    #[cfg_attr(target_os = "linux", unsafe(link_section = ".text.unlikely"))]
+    #[cfg_attr(
+        any(target_os = "linux", target_os = "android"),
+        unsafe(link_section = ".text.unlikely")
+    )]
     fn exec_as_if_node_boot_failed(
         ctx: &mut ContextData,
         basename: &[u8],
@@ -3863,7 +3899,11 @@ impl RunCommand {
         strings::sort_asc(&mut all_keys);
         // Park the owning maps in the runner arena (process-lifetime) so the
         // `'static` slices above remain valid without leaking/forgetting.
-        let _ = runner_arena().alloc(results);
+        let parked = runner_arena().alloc(results);
+        bun_core::asan::register_root_region(
+            std::ptr::from_ref::<ResultList>(parked).cast(),
+            ::core::mem::size_of::<ResultList>(),
+        );
         shell_out.commands = std::borrow::Cow::Borrowed(runner_arena().alloc_slice_copy(&all_keys));
         shell_out.descriptions = std::borrow::Cow::Borrowed(runner_arena().alloc_slice_copy(
             // SAFETY: descriptions borrow into the package.json source buffer

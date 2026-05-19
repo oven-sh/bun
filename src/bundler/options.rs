@@ -368,22 +368,20 @@ impl TargetExt for Target {
             b".js", b".cjs", b".mts", b".cts", b".ts", b".tsx", b".jsx", b".json",
         ];
 
-        // PERF(port): keys were `&'static` in Zig; `StringHashMap` owns keys via
-        // `Box<[u8]>` so `put` copies — tiny startup cost.
         if self == Target::Node {
             exts.ensure_total_capacity(OUT_EXTENSIONS_LIST.len() * 2)
                 .expect("OOM");
-            for ext in OUT_EXTENSIONS_LIST {
-                exts.put(ext, b".mjs").expect("OOM");
+            for &ext in OUT_EXTENSIONS_LIST {
+                exts.put_static_key(ext, b".mjs").expect("OOM");
             }
         } else {
             exts.ensure_total_capacity(OUT_EXTENSIONS_LIST.len() + 1)
                 .expect("OOM");
-            exts.put(b".mjs", b".js").expect("OOM");
+            exts.put_static_key(b".mjs", b".js").expect("OOM");
         }
 
-        for ext in OUT_EXTENSIONS_LIST {
-            exts.put(ext, b".js").expect("OOM");
+        for &ext in OUT_EXTENSIONS_LIST {
+            exts.put_static_key(ext, b".js").expect("OOM");
         }
 
         exts
@@ -414,7 +412,7 @@ pub trait LoaderExt: Copy {
 
     fn stdin_name_map() -> LoaderEnumMap {
         let mut map: LoaderEnumMap = EnumMap::from_array([b"" as &[u8]; 21]);
-        // TODO(port): EnumMap::from_array length must match variant count; verify in Phase B
+        // TODO(port): EnumMap::from_array length must match variant count.
         map[Loader::Jsx] = b"input.jsx";
         map[Loader::Js] = b"input.js";
         map[Loader::Ts] = b"input.ts";
@@ -1004,6 +1002,7 @@ pub fn defines_from_transform_options(
             &default_values,
             behavior,
             &framework.prefix,
+            bump,
         )?;
     }
 
@@ -1401,7 +1400,7 @@ pub struct BundleOptions<'a> {
     /// unrelated to `'a`; a typed reference forced an `unsafe { &*(p as *const _) }`
     /// lifetime-extension cast at every call site (PORTING.md §Forbidden).
     /// The sole consumer (`PackageManager::init_with_runtime` via the resolver's
-    /// erased `*const ()`) only reads through it.
+    /// `BundleOptions.install`) only reads through it.
     pub install: Option<core::ptr::NonNull<api::BunInstall>>,
 
     pub inlining: bool,
@@ -1506,8 +1505,8 @@ impl<'a> BundleOptions<'a> {
     ///
     /// PERF(port): Zig's `transpiler.* = from.*` is a shallow struct copy
     /// (slices alias the parent's arena). The Rust port owns these as `Box`,
-    /// so a per-worker clone allocates. Profile in Phase B; the hot fields
-    /// (`define`, `loaders`, `conditions`) are O(dozens) entries.
+    /// so a per-worker clone allocates. Profile if it shows up on a hot path;
+    /// the hot fields (`define`, `loaders`, `conditions`) are O(dozens) entries.
     pub fn for_worker(&self) -> BundleOptions<'a> {
         debug_assert!(
             self.defines_loaded,
@@ -1790,7 +1789,7 @@ impl<'a> BundleOptions<'a> {
         );
 
         // TODO(port): many fields below have Zig defaults via `= ...`; in Rust we initialize
-        // each explicitly. Phase B: add a `Default`-ish builder.
+        // each explicitly. Could add a `Default`-ish builder.
         let mut opts = BundleOptions {
             footer: Cow::Borrowed(b""),
             banner: Cow::Borrowed(b""),
@@ -1977,7 +1976,6 @@ impl<'a> BundleOptions<'a> {
                 opts.env.behavior = api::DotEnvBehavior::LoadAll;
                 if transform.extension_order.is_empty() {
                     // we must also support require'ing .node files
-                    // TODO(port): comptime concat — Phase B: precompute as static slices
                     static EXT_WITH_NODE: &[&[u8]] = &[
                         b".tsx", b".ts", b".jsx", b".cts", b".cjs", b".js", b".mjs", b".mts",
                         b".json", b".node",

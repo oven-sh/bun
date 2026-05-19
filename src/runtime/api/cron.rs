@@ -665,9 +665,9 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         )));
     }
 
-    let path_str = args[0].to_bun_string(global)?;
-    let schedule_str = args[1].to_bun_string(global)?;
-    let title_str = args[2].to_bun_string(global)?;
+    let path_str = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
+    let schedule_str = bun_core::OwnedString::new(args[1].to_bun_string(global)?);
+    let title_str = bun_core::OwnedString::new(args[2].to_bun_string(global)?);
 
     let path_slice = path_str.to_utf8();
     let schedule_slice = schedule_str.to_utf8();
@@ -1214,7 +1214,7 @@ pub fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
             .throw_invalid_arguments(format_args!("Bun.cron.remove() expects a string title")));
     }
 
-    let title_str = args[0].to_bun_string(global)?;
+    let title_str = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
     let title_slice = title_str.to_utf8();
 
     if !validate_title(title_slice.slice()) {
@@ -1754,7 +1754,7 @@ impl CronJob {
             )));
         }
 
-        let schedule_str = schedule_arg.to_bun_string(global)?;
+        let schedule_str = bun_core::OwnedString::new(schedule_arg.to_bun_string(global)?);
         let schedule_slice = schedule_str.to_utf8();
 
         let parsed = match CronExpression::parse(schedule_slice.slice()) {
@@ -1930,7 +1930,7 @@ pub fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
         )));
     }
 
-    let expr_str = args[0].to_bun_string(global)?;
+    let expr_str = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
     let expr_slice = expr_str.to_utf8();
 
     let parsed = match CronExpression::parse(expr_slice.slice()) {
@@ -1973,7 +1973,7 @@ pub fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
 // ============================================================================
 
 /// Trait abstracting over CronRegisterJob/CronRemoveJob for `spawn_cmd_generic`.
-// TODO(port): merge with CronJobBase in Phase B.
+// TODO(refactor): merge with CronJobBase.
 trait SpawnCmdTarget: CronJobBase + BufferedReaderParent {
     const EXIT_KIND: bun_spawn::ProcessExitKind;
     fn set_err(&mut self, args: core::fmt::Arguments<'_>);

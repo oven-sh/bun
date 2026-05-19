@@ -82,7 +82,6 @@ impl jsc::JsClass for PostgresSQLConnection {
 // `crate::jsc::verify_error_to_js`.
 use crate::jsc::verify_error_to_js;
 
-// TODO(b2-blocked): #[crate::jsc::JsClass] proc-macro attr
 //
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). `&mut self`
@@ -876,7 +875,8 @@ impl PostgresSQLConnection {
                                     .get_native_handle()
                                     .map_or(core::ptr::null_mut(), |p| p.cast());
                                 // SAFETY: `servername` is a NUL-terminated C string owned by `tls_config`.
-                                let hostname = unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
+                                let hostname =
+                                    unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
                                 // SAFETY: `ssl_ptr` is the live SSL* of a connected TLS socket.
                                 !ssl_ptr.is_null()
                                     && BoringSSL::check_server_identity(
@@ -1050,7 +1050,6 @@ impl PostgresSQLConnection {
         unsafe { Self::deref(self.as_ctx_ptr()) };
     }
 
-    // TODO(b2-blocked): #[crate::jsc::host_fn] proc-macro attr
     pub fn constructor(
         global_object: &JSGlobalObject,
         _callframe: &CallFrame,
@@ -1081,19 +1080,18 @@ bun_jsc::jsc_host_abi! {
     }
 }
 
-// TODO(b2-blocked): #[crate::jsc::host_fn] proc-macro attr
 pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     // `bun_vm()` → `&'static VirtualMachine` (per-thread singleton); `as_mut()`
     // is the canonical safe escape hatch (one audited unsafe in bun_jsc) for
     // `&mut self` helpers like `ssl_ctx_cache()` / `postgres_socket_group()`.
     let vm = global_object.bun_vm().as_mut();
     let arguments = callframe.arguments();
-    let hostname_str = arguments[0].to_bun_string(global_object)?;
+    let hostname_str = bun_core::OwnedString::new(arguments[0].to_bun_string(global_object)?);
     let port = arguments[1].coerce::<i32>(global_object)?;
 
-    let username_str = arguments[2].to_bun_string(global_object)?;
-    let password_str = arguments[3].to_bun_string(global_object)?;
-    let database_str = arguments[4].to_bun_string(global_object)?;
+    let username_str = bun_core::OwnedString::new(arguments[2].to_bun_string(global_object)?);
+    let password_str = bun_core::OwnedString::new(arguments[3].to_bun_string(global_object)?);
+    let database_str = bun_core::OwnedString::new(arguments[4].to_bun_string(global_object)?);
     let ssl_mode: SSLMode = match arguments[5].to_int32() {
         0 => SSLMode::Disable,
         1 => SSLMode::Prefer,
@@ -1173,9 +1171,9 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
     let mut options = bun_ptr::RawSlice::<u8>::EMPTY;
     let mut path = bun_ptr::RawSlice::<u8>::EMPTY;
 
-    let options_str = arguments[7].to_bun_string(global_object)?;
+    let options_str = bun_core::OwnedString::new(arguments[7].to_bun_string(global_object)?);
 
-    let path_str = arguments[8].to_bun_string(global_object)?;
+    let path_str = bun_core::OwnedString::new(arguments[8].to_bun_string(global_object)?);
 
     let options_buf: Box<[u8]> = 'brk: {
         let mut b = bun_core::StringBuilder::default();
@@ -1452,7 +1450,6 @@ impl PostgresSQLConnection {
         after = |this: &Self| this.update_has_pending_activity(),
     );
 
-    // TODO(b2-blocked): #[crate::jsc::host_fn(method)] proc-macro attr
     pub fn do_flush(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         this.register_auto_flusher();
         Ok(JSValue::UNDEFINED)
@@ -1464,7 +1461,6 @@ impl PostgresSQLConnection {
         self.write_buffer.with_mut(|b| b.clear_and_free());
     }
 
-    // TODO(b2-blocked): #[crate::jsc::host_fn(method)] proc-macro attr
     pub fn do_close(
         this: &Self,
         _global_object: &JSGlobalObject,
@@ -2450,7 +2446,7 @@ impl PostgresSQLConnection {
                 };
 
                 let mut stack_buf = [DataCell::SQLDataCell::default(); 70];
-                // PERF(port): was stack-fallback alloc — profile in Phase B
+                // PERF(port): was stack-fallback alloc — profile if it shows up on a hot path.
                 let max_inline = jsc::JSObject::max_inline_capacity() as usize;
                 let mut heap_cells: Vec<DataCell::SQLDataCell>;
                 let mut free_cells = false;
@@ -2715,13 +2711,44 @@ impl PostgresSQLConnection {
                         debug!("SASLContinue");
 
                         let iteration_count = cont.iteration_count().map_err(pg_err)?;
+                        // RFC 7677 §4: SCRAM-SHA-256 requires a minimum of 4096
+                        // iterations. Cap the upper bound to avoid a CPU-burn DoS
+                        // from a malicious/MITM'd server sending i ≈ u32::MAX.
+                        if !(4096..=10_000_000).contains(&iteration_count) {
+                            debug!(
+                                "SASLContinue iteration count out of range: {}",
+                                iteration_count
+                            );
+                            return Err(AnyPostgresError::InvalidMessage);
+                        }
 
-                        let server_salt_decoded_base64 = bun_base64::decode_alloc(cont.s.slice())
+                        // Bound the *encoded* length before allocating: a
+                        // malicious/MITM'd server can otherwise force an
+                        // arbitrarily large decode_alloc here. 1024 decoded
+                        // bytes ≈ 1368 base64 chars; round up generously.
+                        let server_salt_b64 = cont.s.slice();
+                        if server_salt_b64.is_empty() || server_salt_b64.len() > 2048 {
+                            debug!(
+                                "SASLContinue encoded salt length out of range: {}",
+                                server_salt_b64.len()
+                            );
+                            return Err(AnyPostgresError::InvalidMessage);
+                        }
+                        let server_salt_decoded_base64 = bun_base64::decode_alloc(server_salt_b64)
                             .map_err(|e| match e {
-                            bun_base64::DecodeAllocError::DecodingFailed => {
-                                AnyPostgresError::SASL_SIGNATURE_INVALID_BASE64
-                            }
-                        })?;
+                                bun_base64::DecodeAllocError::DecodingFailed => {
+                                    AnyPostgresError::SASL_SIGNATURE_INVALID_BASE64
+                                }
+                            })?;
+                        if server_salt_decoded_base64.is_empty()
+                            || server_salt_decoded_base64.len() > 1024
+                        {
+                            debug!(
+                                "SASLContinue salt length out of range: {}",
+                                server_salt_decoded_base64.len()
+                            );
+                            return Err(AnyPostgresError::InvalidMessage);
+                        }
                         sasl.compute_salted_password(
                             &server_salt_decoded_base64,
                             iteration_count,
@@ -3045,7 +3072,6 @@ impl PostgresSQLConnection {
         }
     }
 
-    // TODO(b2-blocked): #[crate::jsc::host_fn(getter)] proc-macro attr
     pub fn get_connected(this: &Self, _: &JSGlobalObject) -> JSValue {
         JSValue::from(this.status.get() == Status::Connected)
     }

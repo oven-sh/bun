@@ -19,9 +19,9 @@ unsafe extern "C" {
 impl JSArray {
     #[track_caller]
     pub fn create(global: &JSGlobalObject, items: &[JSValue]) -> JsResult<JSValue> {
-        // TODO(port): `fromJSHostCall(global, @src(), fn, .{args})` is a comptime-reflection
+        // PORT NOTE: `fromJSHostCall(global, @src(), fn, .{args})` is a comptime-reflection
         // wrapper that calls `fn(args...)` then checks the VM for a pending exception.
-        // Model it as a closure-taking helper here; Phase B may turn this into a macro.
+        // Modeled as a closure-taking helper here.
         crate::from_js_host_call(global, || unsafe {
             // SAFETY: items.ptr/len are a valid contiguous slice; global is a live &JSGlobalObject.
             JSArray__constructArray(global, items.as_ptr(), items.len())

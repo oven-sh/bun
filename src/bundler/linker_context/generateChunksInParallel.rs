@@ -53,8 +53,8 @@ use crate::linker_context_mod::debug;
 
 // TODO(port): Zig's return type is `!if (is_dev_server) void else ArrayList(OutputFile)`.
 // Rust const generics cannot vary the return type, so we always return
-// `Vec<OutputFile>` and the IS_DEV_SERVER path returns an empty Vec. Phase B may
-// split this into two monomorphized wrappers if the unused Vec matters.
+// `Vec<OutputFile>` and the IS_DEV_SERVER path returns an empty Vec. Could be
+// split into two monomorphized wrappers if the unused Vec matters.
 pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     c: &mut LinkerContext,
     chunks: &mut [Chunk],
@@ -636,8 +636,8 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     //
     // PORT NOTE: Zig `defer` frees each buffer with `Chunk.IntermediateOutput.allocatorForSize(len)`.
     // Rust `Vec<Option<Box<[u8]>>>` frees via `Drop` (global mimalloc); if `allocatorForSize`
-    // returns a distinct arena for large buffers, Phase B must restore matched-arena
-    // dealloc here.
+    // returns a distinct arena for large buffers, matched-arena dealloc must be
+    // restored here.
     let mut standalone_chunk_contents: Option<Vec<Option<Box<[u8]>>>> = None;
 
     if is_standalone {

@@ -260,7 +260,7 @@ impl OutputBuffer {
             return;
         }
         // PERF(port): was appendSlice with latched OOM — Vec::extend aborts
-        // on OOM under the global mimalloc allocator. Phase B may revisit.
+        // on OOM under the global mimalloc allocator.
         self.list.extend_from_slice(data);
     }
 
@@ -382,14 +382,7 @@ impl<'a> AnsiRenderer<'a> {
                         } else {
                             if checked { b"[x] " } else { b"[ ] " }
                         };
-                        break 'blk (
-                            g,
-                            if checked {
-                                ansi_b::GREEN
-                            } else {
-                                ansi_b::DIM
-                            },
-                        );
+                        break 'blk (g, if checked { ansi_b::GREEN } else { ansi_b::DIM });
                     }
                     if let Some(idx) = parent_list {
                         if self.block_stack[idx].kind == BlockKind::Ol {

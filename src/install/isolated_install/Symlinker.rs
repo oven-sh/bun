@@ -4,7 +4,7 @@ use bun_sys::{self, Errno, Fd, FdDirExt, FdExt};
 
 pub struct Symlinker {
     // TODO(port): bun.Path/RelPath/AbsPath are comptime-config generic (`.{ .sep = .auto }`);
-    // mapped to non-generic bun_paths types here — Phase B may need a `<const SEP: Sep>` param.
+    // mapped to non-generic bun_paths types here — may need a `<const SEP: Sep>` param.
     pub dest: bun_paths::Path,
     pub target: bun_paths::RelPath,
     pub fallback_junction_target: bun_paths::AbsPath,

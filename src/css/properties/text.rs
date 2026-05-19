@@ -285,7 +285,9 @@ pub enum TextSizeAdjust {
 
 /// A value for the [direction](https://drafts.csswg.org/css-writing-modes-3/#direction) property.
 // Zig wires eql/hash/parse/toCss/deepClone via `css.DefineEnumProperty(@This())`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty, crate::generics::CssHash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty, crate::generics::CssHash,
+)]
 pub enum Direction {
     /// This value sets inline base direction (bidi directionality) to line-left-to-line-right.
     Ltr,

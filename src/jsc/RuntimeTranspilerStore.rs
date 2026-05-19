@@ -1159,6 +1159,9 @@ impl TranspilerJob {
                 },
             );
             transpiler.print_with_source_map(
+                // Same per-call `arena` that `transpiler.set_arena(&arena)`
+                // and `parse_options.arena` used to build `parse_result.ast`.
+                &arena,
                 parse_result,
                 &mut printer,
                 js_printer::Format::EsmAscii,

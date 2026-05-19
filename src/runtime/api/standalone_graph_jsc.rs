@@ -78,7 +78,10 @@ impl FileJsc for File {
             // The real name goes here:
             // SAFETY: see above; `data` is `Bytes` by construction.
             if let Data::Bytes(bytes) = unsafe { &mut (*store_ptr).data } {
-                bytes.stored_name = PathString::init(self.name);
+                // `Bytes::Drop` and `jsdom_file_construct_` both require
+                // `stored_name` to be heap-owned (or empty); a borrowed
+                // `'static` slice would be invalid-freed there.
+                bytes.stored_name = PathString::init_owned(self.name.to_vec());
             }
 
             // The pretty name goes here:

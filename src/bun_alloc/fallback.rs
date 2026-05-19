@@ -59,7 +59,7 @@ impl CAllocator {
             let usable = unsafe { libc::malloc_size(buf.as_ptr().cast()) };
             return new_len <= usable;
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             // SAFETY: `buf` was allocated by libc malloc on this platform.
             let usable = unsafe { libc::malloc_usable_size(buf.as_mut_ptr().cast()) };

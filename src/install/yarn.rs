@@ -33,9 +33,8 @@ use bun_sys::Fd;
 
 // TODO(port): lifetime — Entry/YarnLock borrow from the input `data: &[u8]` passed to
 // `migrate_yarn_lockfile`. LIFETIMES.tsv had no rows for this file (no *T fields), so
-// `'a` here is the BORROW_PARAM classification applied to slice fields. Phase B should
-// verify the few owned slices (specs inner strings, file, git_repo_name) don't need
-// `Box<[u8]>` instead.
+// `'a` here is the BORROW_PARAM classification applied to slice fields. Verify the few
+// owned slices (specs inner strings, file, git_repo_name) don't need `Box<[u8]>` instead.
 
 pub struct YarnLock<'a> {
     pub entries: Vec<Entry<'a>>,
@@ -478,8 +477,8 @@ impl<'a> YarnLock<'a> {
                             // `github:` branch and stores that as `resolved`. Here
                             // `git_info.url` still borrows the stripped input slice and
                             // `owned_url` is discarded, so github: URLs resolve INCORRECTLY.
-                            // Phase B must change Entry.resolved to Cow<'a, [u8]> (or store
-                            // the owned buffer on Entry) so `owned_url` can be assigned here.
+                            // Fix: change Entry.resolved to Cow<'a, [u8]> (or store the
+                            // owned buffer on Entry) so `owned_url` can be assigned here.
                             entry.resolved = Some(git_info.url);
                             entry.commit = git_info.commit;
                             if let Some(repo_name) = git_info.repo {
@@ -604,7 +603,7 @@ fn process_deps(
     // TODO(port): narrow error set
     // PORT NOTE: returns count instead of slice to avoid borrowck conflict with caller's bufs
     let mut count: usize = 0;
-    // PERF(port): was stack-fallback alloc (1024 bytes) — profile in Phase B
+    // PERF(port): was stack-fallback alloc (1024 bytes) — profile if it shows up on a hot path
 
     for (dep_name_key, dep_version_ref) in deps.iter() {
         let dep_name: &[u8] = dep_name_key.as_ref();
@@ -630,7 +629,7 @@ fn process_deps(
                 dep_version
             };
 
-            deps_buf[count] = Dependency {
+            let dep = Dependency {
                 name: dep_name_str,
                 name_hash: dep_name_hash,
                 version: Dependency::parse(
@@ -655,6 +654,8 @@ fn process_deps(
             }
 
             if let Some(pkg_id) = found_package_id {
+                // SAFETY: `deps_buf` is uninitialized spare capacity; `ptr::write` skips Drop.
+                unsafe { core::ptr::write(deps_buf.as_mut_ptr().add(count), dep) };
                 res_buf[count] = pkg_id;
                 count += 1;
             }
@@ -673,7 +674,7 @@ struct RootDep {
 struct VersionInfo {
     version: Vec<u8>,
     // TODO(port): Zig stores `string` (borrow from input). Using Vec<u8> here to avoid
-    // a second lifetime on the local map; Phase B can switch to &'a [u8].
+    // a second lifetime on the local map; could switch to &'a [u8].
     package_id: PackageID,
     yarn_idx: usize,
 }
@@ -1271,20 +1272,28 @@ pub fn migrate_yarn_lockfile<'a>(
                 let dep_name_string = sbuf!().append_with_hash(&dep.name, name_hash)?;
                 let version_string = sbuf!().append(&dep.version)?;
 
-                dependencies_buf[actual_root_dep_count as usize] = Dependency {
-                    name: dep_name_string,
-                    name_hash,
-                    version: Dependency::parse(
-                        dep_name_string,
-                        Some(name_hash),
-                        version_string.slice(this.buffers.string_bytes.as_slice()),
-                        &version_string.sliced(this.buffers.string_bytes.as_slice()),
-                        Some(&mut *log),
-                        Some(&mut *manager),
-                    )
-                    .unwrap_or_default(),
-                    behavior: behavior_for(dep.dep_type, false),
-                };
+                // SAFETY: `dependencies_buf` is uninitialized spare capacity; `ptr::write` skips Drop.
+                unsafe {
+                    core::ptr::write(
+                        dependencies_buf
+                            .as_mut_ptr()
+                            .add(actual_root_dep_count as usize),
+                        Dependency {
+                            name: dep_name_string,
+                            name_hash,
+                            version: Dependency::parse(
+                                dep_name_string,
+                                Some(name_hash),
+                                version_string.slice(this.buffers.string_bytes.as_slice()),
+                                &version_string.sliced(this.buffers.string_bytes.as_slice()),
+                                Some(&mut *log),
+                                Some(&mut *manager),
+                            )
+                            .unwrap_or_default(),
+                            behavior: behavior_for(dep.dep_type, false),
+                        },
+                    );
+                }
 
                 resolutions_buf[actual_root_dep_count as usize] = yarn_entry_to_package_id[idx];
                 actual_root_dep_count += 1;
@@ -2046,7 +2055,7 @@ pub fn migrate_yarn_lockfile<'a>(
 
     let result = LoadResult::Ok(lockfile::LoadResultOk {
         lockfile: this,
-        // TODO(port): LoadResult.ok stores *Lockfile; lifetime/ownership to be resolved in Phase B
+        // TODO(port): LoadResult.ok stores *Lockfile; lifetime/ownership not yet resolved
         migrated: lockfile::Migrated::Yarn,
         loaded_from_binary_lockfile: false,
         serializer_result: Default::default(),

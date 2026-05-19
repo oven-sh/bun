@@ -5,8 +5,8 @@ use crate::js_lexer;
 use crate::js_lexer::T;
 use crate::p::P;
 use crate::parser::{
-    ARGUMENTS_STR as arguments_str, AwaitOrYield, FnOrArrowDataParse, FunctionKind,
-    LexicalDecl, ParseStatementOptions, TypeParameterFlag,
+    ARGUMENTS_STR as arguments_str, AwaitOrYield, FnOrArrowDataParse, FunctionKind, LexicalDecl,
+    ParseStatementOptions, TypeParameterFlag,
 };
 use bun_ast as js_ast;
 use bun_ast::op::Level;

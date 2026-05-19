@@ -623,15 +623,33 @@ impl<const SSL: bool> HTTPClient<SSL> {
             unsafe { Self::deref(this.as_ptr()) };
         }
 
-        // Copy `tcp` out so no `&mut Self` spans the close — uSockets fires
-        // `handle_close` inline, which derives a fresh `&mut`/`*mut` from
-        // userdata.
+        // Copy `tcp` out so no `&mut Self` spans the close.
         let tcp = this.tcp;
+        // Clear the socket's ext slot before closing. `us_socket_close` on a
+        // SEMI_SOCKET (TCP connect still in flight — the common case when
+        // `ws.close()` is called synchronously after `new WebSocket()`) skips
+        // dispatch entirely, so we cannot rely on `handle_close` /
+        // `handle_connect_error` to release the socket-userdata ref taken in
+        // `connect()`. Take it back here and deref it ourselves; any callback
+        // that does fire sees `ext == None` and no-ops via the
+        // `RawPtrHandler` guard.
+        let had_socket_ref = tcp
+            .ext::<Option<core::ptr::NonNull<Self>>>()
+            // SAFETY: ext slot is the `Option<NonNull<Self>>` written in
+            // `connect_group`; single-threaded (JS thread), no other `&mut`
+            // to it is live.
+            .is_some_and(|ext| unsafe { (*ext).take().is_some() });
         // no need to be .failure we still wanna to send pending SSL buffer + close_notify
         if SSL {
             tcp.close(uws::CloseCode::Normal);
         } else {
             tcp.close(uws::CloseCode::Failure);
+        }
+        if had_socket_ref {
+            // SAFETY: short-lived `&mut` for the field detach.
+            unsafe { (*this.as_ptr()).tcp.detach() };
+            // SAFETY: refcount > 1 (the +1 from `_guard` above).
+            unsafe { Self::deref(this.as_ptr()) };
         }
         // `_guard` drops here, balancing the ref above. May free `this`.
     }
@@ -939,7 +957,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let bytes_read = usize::try_from(response.bytes_read).expect("int cast");
         // PORT NOTE: reshaped for borrowck — copy remain_buf out before mutating self.
         let remain_buf: Vec<u8> = body[bytes_read..].to_vec();
-        // PERF(port): was zero-copy slice into self.body — profile in Phase B.
+        // PERF(port): was zero-copy slice into self.body.
         // SAFETY: `me`'s last use is the `body` slice above (now copied out);
         // no `&mut Self` spans this call.
         unsafe { Self::process_response(this.as_ptr(), response, &remain_buf) };
@@ -1007,7 +1025,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let bytes_read = usize::try_from(response.bytes_read).expect("int cast");
         // PORT NOTE: reshaped for borrowck — copy remain_buf before clearing self.body.
         let remain_buf: Vec<u8> = body[bytes_read..].to_vec();
-        // PERF(port): was zero-copy slice — profile in Phase B.
+        // PERF(port): was zero-copy slice.
 
         // SAFETY: re-derive a fresh `&mut` after the `body` borrow above.
         let me = unsafe { &mut *this };
@@ -1229,7 +1247,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let bytes_read = usize::try_from(response.bytes_read).expect("int cast");
         // PORT NOTE: reshaped for borrowck — copy remain_buf out before mutating self.
         let remain_buf: Vec<u8> = body[bytes_read..].to_vec();
-        // PERF(port): was zero-copy slice — profile in Phase B.
+        // PERF(port): was zero-copy slice.
         // SAFETY: `me`'s last use is the `body` slice above (now copied out);
         // no `&mut Self` spans this call.
         unsafe { Self::process_response(this, response, &remain_buf) };
@@ -1272,14 +1290,20 @@ impl<const SSL: bool> HTTPClient<SSL> {
             match header.name().len() {
                 len if len == b"Connection".len() => {
                     if connection_header.name().is_empty()
-                        && strings::eql_case_insensitive_ascii_ignore_length(header.name(), b"Connection")
+                        && strings::eql_case_insensitive_ascii_ignore_length(
+                            header.name(),
+                            b"Connection",
+                        )
                     {
                         connection_header = *header;
                     }
                 }
                 len if len == b"Upgrade".len() => {
                     if upgrade_header.name().is_empty()
-                        && strings::eql_case_insensitive_ascii_ignore_length(header.name(), b"Upgrade")
+                        && strings::eql_case_insensitive_ascii_ignore_length(
+                            header.name(),
+                            b"Upgrade",
+                        )
                     {
                         upgrade_header = *header;
                     }
@@ -2131,7 +2155,7 @@ fn compute_accept_value(key: &[u8]) -> [u8; 28] {
 // Rust cannot `#[no_mangle]` a generic, so monomorphize both here.
 // TODO(port): full C-ABI parameter mapping for `connect` (Option<&T> niche,
 // Option<Box<T>> niche, raw `*const BunString` arrays). Verify against the
-// C++ caller in JSWebSocket.cpp / WebSocket.cpp before Phase B.
+// C++ caller in JSWebSocket.cpp / WebSocket.cpp.
 // ──────────────────────────────────────────────────────────────────────────
 
 macro_rules! export_http_client {

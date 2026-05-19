@@ -25,7 +25,7 @@ pub enum Op {
     Or,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Query {
     pub range: Range,
 
@@ -130,6 +130,25 @@ pub struct List {
 // conservative here.
 unsafe impl Send for List {}
 unsafe impl Sync for List {}
+
+impl Clone for List {
+    fn clone(&self) -> Self {
+        let mut out = List {
+            head: self.head.clone(),
+            tail: None,
+            next: self.next.clone(),
+        };
+        if out.head.next.is_some() {
+            let mut tail = NonNull::from(&mut out.head);
+            // SAFETY: `tail` walks `out.head`'s exclusively-owned Box chain.
+            while let Some(next) = unsafe { tail.as_mut() }.next.as_deref_mut() {
+                tail = NonNull::from(next);
+            }
+            out.tail = Some(tail);
+        }
+        out
+    }
+}
 
 pub struct ListFormatter<'a> {
     list: &'a List,
@@ -261,6 +280,26 @@ pub struct Group {
 unsafe impl Send for Group {}
 unsafe impl Sync for Group {}
 
+impl Clone for Group {
+    fn clone(&self) -> Self {
+        let mut out = Group {
+            head: self.head.clone(),
+            tail: None,
+            input: self.input,
+            flags: self.flags,
+        };
+        if out.head.next.is_some() {
+            let mut tail = NonNull::from(&mut out.head);
+            // SAFETY: `tail` walks `out.head`'s exclusively-owned Box chain.
+            while let Some(next) = unsafe { tail.as_mut() }.next.as_deref_mut() {
+                tail = NonNull::from(next);
+            }
+            out.tail = Some(tail);
+        }
+        out
+    }
+}
+
 impl Default for Group {
     fn default() -> Self {
         Self {
@@ -317,14 +356,14 @@ impl Group {
             let _ = write!(&mut v, "{}", self.fmt(input));
             v
         };
-        // Placeholder: write raw; Phase B must JSON-escape.
+        // TODO(port): writes raw bytes; should JSON-escape.
         writer.write_str("\"")?;
         write!(writer, "{}", bstr::BStr::new(&temp))?;
         writer.write_str("\"")
     }
 
     // PORT NOTE: `deinit` deleted — `next: Option<Box<..>>` chains are freed by Drop.
-    // PERF(port): recursive Box drop could overflow stack on very long chains — profile in Phase B.
+    // PERF(port): recursive Box drop could overflow stack on very long chains.
 
     pub fn get_exact_version(&self) -> Option<Version> {
         let range = &self.head.head.range;
@@ -722,7 +761,7 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
     let mut token = Token::default();
     let mut prev_token = Token::default();
 
-    let mut count: u8 = 0;
+    let mut count: u32 = 0;
     let mut skip_round;
     let mut is_or = false;
 

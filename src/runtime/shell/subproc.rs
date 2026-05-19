@@ -479,13 +479,15 @@ impl ShellSubprocess {
                 }
                 Writable::Buffer(_) => {
                     self.on_static_pipe_writer_done();
-                    // PORT NOTE: reshaped for borrowck — re-match after the &mut self call above.
-                    if let Writable::Buffer(buffer) = &mut self.stdin {
-                        // SAFETY: single-threaded; no other borrow of the
-                        // payload is live across this temporary `&mut`.
-                        unsafe { buffer_mut(buffer) }.source.detach();
+                    // RefPtr has no Drop — move it out before reassigning so the
+                    // create ref is actually released (mirrors Zig `buffer.deref()`).
+                    if let Writable::Buffer(buffer) =
+                        core::mem::replace(&mut self.stdin, Writable::Ignore)
+                    {
+                        // SAFETY: single-threaded; sole borrow of the payload.
+                        unsafe { buffer_mut(&buffer) }.source.detach();
+                        buffer.deref();
                     }
-                    self.stdin = Writable::Ignore;
                 }
                 _ => {}
             },
@@ -1506,7 +1508,7 @@ impl EnvMapIterKey<'_> {
 pub struct EnvMapIterValue {
     /// Zig stores `[:0]const u8` allocated from the spawn arena. Port owns the
     /// NUL-terminated copy directly — `ZBox` is the `allocator.dupeZ` analogue.
-    // PERF(port): arena allocSentinel — profile in Phase B
+    // PERF(port): arena allocSentinel — profile if hot.
     pub val: bun_core::ZBox,
 }
 
@@ -1658,7 +1660,7 @@ pub struct PipeReader {
     // ref_count: handled by Arc<PipeReader> per LIFETIMES.tsv.
     // TODO(port): Zig uses intrusive bun.ptr.RefCount and recovers *PipeReader via
     // `container_of` from CapturedWriter — incompatible with Arc's header layout.
-    // Phase B should switch to bun_ptr::IntrusiveRc<PipeReader> + Cell<u32> ref_count
+    // Should switch to bun_ptr::IntrusiveRc<PipeReader> + Cell<u32> ref_count
     // and update Readable::Pipe accordingly.
 }
 
@@ -2281,7 +2283,7 @@ impl PipeReader {
         }
         out.into_boxed_slice()
         // PERF(port): Zig returned out.items (len < cap) without shrinking; into_boxed_slice
-        // may realloc to shrink. Profile in Phase B.
+        // may realloc to shrink. Profile if hot.
     }
 
     pub fn update_ref(&mut self, add: bool) {
@@ -2403,7 +2405,7 @@ impl PipeReader {
     }
 
     // Helper accessor used above to paper over Arc<PipeReader> interior mutability.
-    // TODO(port): remove once IntrusiveRc + Cell-wrapped fields land (Phase B).
+    // TODO(port): remove once IntrusiveRc + Cell-wrapped fields land.
     //
     // Takes `*mut Self` (not `&self`) because `Arc<PipeReader>` only yields
     // `&Self`, and casting `&Self as *const Self as *mut Self` to write through is

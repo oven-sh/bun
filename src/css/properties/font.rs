@@ -2,9 +2,8 @@
 //!
 //! Ported from `src/css/properties/font.zig`.
 //
-// ─── B-2 round 9 status ────────────────────────────────────────────────────
-// Module un-gated from `gated_prop!` so the *data types* (FontWeight /
-// AbsoluteFontWeight / FontSize / AbsoluteFontSize / RelativeFontSize /
+// The data types (FontWeight / AbsoluteFontWeight / FontSize /
+// AbsoluteFontSize / RelativeFontSize /
 // FontStretch / FontStretchKeyword / FontFamily / GenericFontFamily /
 // FontStyle / FontVariantCaps / LineHeight / Font / VerticalAlign /
 // VerticalAlignKeyword / FontProperty / FontHandler) are real and referenced
@@ -41,7 +40,7 @@ use css::CssResult;
 
 /// A value for the [font-weight](https://www.w3.org/TR/css-fonts-4/#font-weight-prop) property.
 #[derive(Clone, PartialEq)]
-// TODO(port): css.DeriveParse / css.DeriveToCss were comptime-reflection derives; provide proc-macro #[derive(Parse, ToCss)] in Phase B
+// TODO(port): css.DeriveParse / css.DeriveToCss were comptime-reflection derives; provide proc-macro #[derive(Parse, ToCss)]
 pub enum FontWeight {
     /// An absolute font weight.
     Absolute(AbsoluteFontWeight),
@@ -89,7 +88,7 @@ impl FontWeight {
     }
 
     // eql → derived PartialEq
-    // deepClone → derived Clone; TODO(port): arena-aware deep_clone if needed in Phase B
+    // deepClone → derived Clone; TODO(port): arena-aware deep_clone if needed
 }
 
 /// An [absolute font weight](https://www.w3.org/TR/css-fonts-4/#font-weight-absolute-values),
@@ -336,7 +335,7 @@ pub enum FontFamily {
     /// A generic family name.
     Generic(GenericFontFamily),
     /// A custom family name.
-    // TODO(port): arena-backed slice — should be &'bump [u8] once 'bump lifetime is threaded in Phase B
+    // TODO(port): arena-backed slice — should be &'bump [u8] once 'bump lifetime is threaded through
     // PORT NOTE: with *const [u8] derived PartialEq/Eq/Hash would compare by pointer; Zig's custom
     // HashContext hashes/compares by content (Wyhash over bytes) — provide manual impls below.
     FamilyName(*const [u8]),
@@ -719,8 +718,8 @@ pub struct Font {
 impl Font {
     // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.font, PropertyFieldMap);
 
-    // TODO(port): PropertyFieldMap was a comptime anon-struct mapping field names → PropertyIdTag,
-    // consumed by DefineShorthand reflection. Represent as a const array for Phase B codegen.
+    // PORT NOTE: PropertyFieldMap was a comptime anon-struct mapping field names → PropertyIdTag,
+    // consumed by DefineShorthand reflection. Represented here as a const array.
     pub const PROPERTY_FIELD_MAP: &'static [(&'static str, crate::properties::PropertyIdTag)] = &[
         ("family", crate::properties::PropertyIdTag::FontFamily),
         ("size", crate::properties::PropertyIdTag::FontSize),
@@ -861,8 +860,8 @@ impl Font {
         Ok(())
     }
 
-    // eql → css::implementEql (Phase B generics blanket)
-    // deepClone → css::implementDeepClone (Phase B generics blanket)
+    // eql → css::implementEql (generics blanket impl)
+    // deepClone → css::implementDeepClone (generics blanket impl)
 }
 
 /// A value for the [vertical align](https://drafts.csswg.org/css2/#propdef-vertical-align) property.
@@ -1082,7 +1081,7 @@ impl FontHandler {
         if let Some(f) = family.as_mut() {
             if f.len() > 1 {
                 // Dedupe
-                // PERF(port): was std.heap.stackFallback(664, default_allocator) — profile in Phase B
+                // PERF(port): was std.heap.stackFallback(664, default_allocator) — profile if it shows up on a hot path
                 let mut seen: FontFamilyHashMap<()> = Default::default();
 
                 let mut i: usize = 0;

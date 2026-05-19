@@ -278,7 +278,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
             match &task.result {
                 store_installer::Result::None => {
                     if Environment::CI_ASSERT {
-                        bun_core::assert_with_location(false, core::panic::Location::caller());
+                        unreachable!();
                     }
                     installer
                         .on_task_complete(task.entry_id, store_installer::CompleteState::Success);
@@ -334,10 +334,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         let step = installer.store.entries.items_step()
                             [task.entry_id.get() as usize]
                             .load(Ordering::Relaxed);
-                        bun_core::assert_with_location(
-                            step == store_installer::Step::Done as u32,
-                            core::panic::Location::caller(),
-                        );
+                        assert!(step == store_installer::Step::Done as u32);
                     }
                     installer
                         .on_task_complete(task.entry_id, store_installer::CompleteState::Success);
@@ -942,7 +939,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         scopeguard::defer! {
             // SAFETY: `manager_ptr` is the provenance root for every body access
             // to `manager`; `task_ptr` is the sole live handle to this pool slot.
-            unsafe { (*manager_ptr).preallocated_resolve_tasks.put(task_ptr) };
+            unsafe {
+                (*task_ptr).deinit_payload();
+                (*manager_ptr).preallocated_resolve_tasks.put(task_ptr);
+            }
         };
         manager.decrement_pending_tasks();
 
@@ -1009,9 +1009,21 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                     continue;
                 }
-                let manifest: &npm::PackageManifest = task.data_package_manifest();
+                debug_assert!(task.tag == Task::Tag::PackageManifest);
+                // SAFETY: tag-guarded read of the active union arm; default placeholder restored immediately.
+                let manifest: npm::PackageManifest = unsafe {
+                    let m = core::mem::ManuallyDrop::take(&mut task.data.package_manifest);
+                    task.data.package_manifest =
+                        core::mem::ManuallyDrop::new(npm::PackageManifest::default());
+                    m
+                };
+                let name_hash = manifest.pkg.name.hash;
+                let progress_name: Option<Vec<u8>> = (!C::MANIFESTS_ONLY
+                    && log_level.show_progress()
+                    && !has_updated_this_run.get())
+                .then(|| manifest.name().to_vec());
 
-                manager.manifests.insert(manifest.pkg.name.hash, manifest)?;
+                manager.manifests.insert(name_hash, manifest)?;
 
                 if C::MANIFESTS_ONLY {
                     continue;
@@ -1030,15 +1042,13 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     install_peer,
                 )?;
 
-                if log_level.show_progress() {
-                    if !has_updated_this_run.get() {
-                        manager.set_node_name::<true>(
-                            manager.downloads_node_mut(),
-                            manifest.name(),
-                            ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
-                        );
-                        has_updated_this_run.set(true);
-                    }
+                if let Some(name) = progress_name {
+                    manager.set_node_name::<true>(
+                        manager.downloads_node_mut(),
+                        &name,
+                        ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
+                    );
+                    has_updated_this_run.set(true);
                 }
             }
             Task::Tag::Extract | Task::Tag::LocalTarball => {

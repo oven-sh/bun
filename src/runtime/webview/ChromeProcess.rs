@@ -242,7 +242,7 @@ fn find_chrome(explicit_path: Option<&CStr>) -> Option<ZBox> {
             }
         }
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         let absolute: [&ZStr; 8] = [
             zstr!("/usr/bin/google-chrome-stable"),
@@ -358,7 +358,10 @@ fn find_playwright_shell() -> Option<ZBox> {
     }
 
     // Fall back to the non-cft linux arm64 layout.
-    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+    #[cfg(all(
+        any(target_os = "linux", target_os = "android"),
+        target_arch = "aarch64"
+    ))]
     {
         let bin_parts2: [&[u8]; 3] = [
             cache_dir,
@@ -594,7 +597,7 @@ fn read_dev_tools_active_port(out_buf: &mut Vec<u8>) -> Option<()> {
     // names come from each browser's installer — hardcoded, not
     // discoverable. Edge uses the same CDP + file format as Chrome.
     // NB: do NOT route Windows through bun_core::getenv_z — it is stubbed to
-    // None on cfg(windows) (TODO(b2-blocked) in bun_core/util.rs), which made
+    // None on cfg(windows) (TODO(port) in bun_core/util.rs), which made
     // this whole function dead on Windows. Zig's bun.getenvZ walks the env
     // block case-insensitively and returns a real value; std::env::var is the
     // working equivalent here (LOCALAPPDATA is always valid Unicode).
@@ -614,7 +617,7 @@ fn read_dev_tools_active_port(out_buf: &mut Vec<u8>) -> Option<()> {
         b"Library/Application Support/BraveSoftware/Brave-Browser/DevToolsActivePort",
         b"Library/Application Support/Microsoft Edge/DevToolsActivePort",
     ];
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     let candidates: &[&[u8]] = &[
         b".config/google-chrome/DevToolsActivePort",
         b".config/google-chrome-beta/DevToolsActivePort",
@@ -633,7 +636,12 @@ fn read_dev_tools_active_port(out_buf: &mut Vec<u8>) -> Option<()> {
         b"BraveSoftware\\Brave-Browser\\User Data\\DevToolsActivePort",
         b"Microsoft\\Edge\\User Data\\DevToolsActivePort",
     ];
-    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "android",
+        windows
+    )))]
     let candidates: &[&[u8]] = &[];
 
     let mut path_buf = path_buffer_pool::get();

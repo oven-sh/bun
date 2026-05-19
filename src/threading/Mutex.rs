@@ -336,7 +336,7 @@ impl FutexImpl {
         {
             let locked_bit: u32 = Self::LOCKED.trailing_zeros();
             // PERF(port): Zig emits `lock bts` via atomic bitSet; fetch_or is the closest stable
-            // Rust atomic — profile in Phase B and consider inline asm if needed.
+            // Rust atomic — profile if it shows up on a hot path and consider inline asm if needed.
             return (self.state.fetch_or(1 << locked_bit, Ordering::Acquire) & (1 << locked_bit))
                 == 0;
         }

@@ -7,8 +7,8 @@ use bun_core::strings;
 use bun_core::{Global, Output, Progress};
 use bun_install::lockfile::{
     LoadResult, Lockfile,
+    package::PackageColumns as _,
     package::scripts::{List as ScriptsList, PrintFormat, Scripts},
-    package::{PackageColumns as _},
     tree,
 };
 use bun_install::package_manager_real::{
@@ -285,7 +285,7 @@ impl TrustCommand {
         for arg in &args[2..] {
             if !arg.is_empty() && arg[0] != b'-' {
                 packages_to_trust.push(arg);
-                // PERF(port): was appendAssumeCapacity — profile in Phase B
+                // PERF(port): was appendAssumeCapacity.
             }
         }
         let trust_all =

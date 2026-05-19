@@ -467,7 +467,7 @@ impl App {
                 thunk::zst::<H>()(ud, thunk::handle_mut(req), thunk::handle_mut(res));
             }
         }
-        // PERF(port): was comptime enum dispatch — profile in Phase B
+        // PERF(port): was comptime enum dispatch — profile if it shows up on a hot path
         let f = match which {
             RouteKind::Get => c::uws_h3_app_get,
             RouteKind::Post => c::uws_h3_app_post,

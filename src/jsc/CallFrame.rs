@@ -1,10 +1,11 @@
 use alloc::borrow::Cow;
-use core::ffi::{c_char, c_uint, c_void};
+use core::ffi::{c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 
 use crate::virtual_machine::VirtualMachine;
 use crate::{JSGlobalObject, JSValue, VM};
 use bun_collections::IntegerBitSet;
+#[cfg(debug_assertions)]
 use bun_core::ZStr;
 
 #[allow(deprecated)]
@@ -144,7 +145,7 @@ impl CallFrame {
     pub fn arguments_old<const MAX: usize>(&self) -> Arguments<MAX> {
         let slice = self.arguments();
         debug_assert!(MAX <= 15);
-        // PERF(port): was `switch { inline 1...15 => |count| ... }` comptime monomorphization — profile in Phase B
+        // PERF(port): was `switch { inline 1...15 => |count| ... }` comptime monomorphization — profile if it shows up on a hot path.
         let count = slice.len().min(MAX);
         if count == 0 {
             Arguments {
@@ -161,7 +162,7 @@ impl CallFrame {
     pub fn arguments_undef<const MAX: usize>(&self) -> Arguments<MAX> {
         let slice = self.arguments();
         debug_assert!(MAX <= 9);
-        // PERF(port): was `switch { inline 1...9 => |count| ... }` comptime monomorphization — profile in Phase B
+        // PERF(port): was `switch { inline 1...9 => |count| ... }` comptime monomorphization — profile if it shows up on a hot path.
         let count = slice.len().min(MAX);
         if count == 0 {
             Arguments {
@@ -185,6 +186,7 @@ impl CallFrame {
         CallerSrcLoc { str, line, column }
     }
 
+    #[cfg(debug_assertions)]
     pub fn describe_frame(&self) -> &ZStr {
         // SAFETY: FFI returns a NUL-terminated C string with lifetime tied to the frame.
         unsafe {
@@ -433,7 +435,8 @@ unsafe extern "C" {
         out_line: &mut c_uint,
         out_column: &mut c_uint,
     );
-    fn Bun__CallFrame__describeFrame(cf: *const CallFrame) -> *const c_char;
+    #[cfg(debug_assertions)]
+    fn Bun__CallFrame__describeFrame(cf: *const CallFrame) -> *const core::ffi::c_char;
 }
 
 // ported from: src/jsc/CallFrame.zig

@@ -2,8 +2,6 @@
 //! wraps `bun_threading::thread_pool::ThreadPool` and owns the per-thread
 //! [`Worker`] state (mimalloc arena, per-thread `Transpiler` clone, AST store).
 //!
-//! Un-gated B-2: structural surface (struct fields, schedule, IO pool, worker
-//! map) is real so `ParseTask` / `bundle_v2` / `Graph` can name and drive it.
 //! `Worker::create` / `initialize_transpiler` build the per-worker
 //! `Transpiler` via `Transpiler::for_worker` (per-field deep clone — no
 //! bitwise struct copy); the `linker.resolver` backref is wired by
@@ -26,8 +24,8 @@ use crate::linker_context_mod::StmtList;
 // PORT NOTE: `crate::options::Target` is the lower-tier `bun_options_types`
 // enum (re-exported for downstream crates); `BundleOptions.target` is the
 // file-backed `options_impl::Target`. Compare against the latter so
-// `primary.options.target == target` type-checks. The two enums collapse in
-// Phase B-3 (see lib.rs `pub mod options` shadow note).
+// `primary.options.target == target` type-checks. TODO(refactor): collapse
+// the two enums into one (see lib.rs `pub mod options` shadow note).
 use crate::BundleV2;
 use crate::options_impl::Target;
 use crate::parse_task::{ContentsOrFd, ParseTask, ParseTaskStage};
@@ -207,14 +205,8 @@ impl ThreadPool {
     /// resolve without a separate module path.
     pub type Worker = Worker;
 
-    // PORT NOTE: generic over `V2` because `bundle_v2.rs` currently carries two
-    // `BundleV2` definitions (the canonical one + `_the gated draft block (now dissolved)::BundleV2`)
-    // during the phased port, and both call `ThreadPool::init`. The backref is
-    // stored as a type-erased raw pointer (`.cast()`) regardless, so the
-    // monomorphised body is identical. Collapses to `&BundleV2<'_>` once the
-    // draft module is dropped.
-    pub fn init<V2>(
-        v2: &V2,
+    pub fn init(
+        v2: &BundleV2<'_>,
         // `Option<NonNull<_>>` (not `Option<&mut _>`): callers pass the
         // process-wide `WorkPool` singleton (`OnceLock`-backed, shared across
         // worker threads). Materializing `&mut` from that provenance is UB
@@ -249,7 +241,10 @@ impl ThreadPool {
         Ok(this)
     }
 
-    pub fn init_with_pool<V2>(v2: &V2, worker_pool: *mut ThreadPoolLib::ThreadPool) -> ThreadPool {
+    pub fn init_with_pool(
+        v2: &BundleV2<'_>,
+        worker_pool: *mut ThreadPoolLib::ThreadPool,
+    ) -> ThreadPool {
         ThreadPool {
             worker_pool,
             io_pool: if Self::uses_io_pool() {
@@ -258,7 +253,7 @@ impl ThreadPool {
                 None
             },
             // BACKREF: lifetime erased behind the raw pointer.
-            v2: std::ptr::from_ref::<V2>(v2).cast(),
+            v2: std::ptr::from_ref(v2).cast::<BundleV2<'static>>(),
             worker_pool_is_owned: false,
             workers_assignments: bun_threading::Guarded::new(ArrayHashMap::default()),
         }
@@ -596,6 +591,22 @@ impl Worker {
         // SAFETY: caller contract.
         let worker = unsafe { &mut *this };
         if worker.has_created {
+            // `wire_after_move` boxed a `bun_js_parser_jsc::Macro::MacroContext`
+            // behind `macro_context.data` (raw `*mut`, no `Drop` glue);
+            // `Transpiler` has no `Drop` impl, so `worker.data = None` below
+            // would strand it. Free both transpilers' boxes explicitly — the
+            // box only owns a `MacroMap` and a lazy `bun_alloc::Arena`, no JSC
+            // handles, so the worker thread tearing it down is safe.
+            if let Some(data) = worker.data.as_mut() {
+                if let Some(ctx) = data.transpiler.macro_context.take() {
+                    ctx.deinit();
+                }
+                if let Some(other) = data.other_transpiler.as_deref_mut() {
+                    if let Some(ctx) = other.macro_context.take() {
+                        ctx.deinit();
+                    }
+                }
+            }
             // Drop order: `data` (whose `transpiler.arena` borrows `heap`)
             // first, then the arenas it references.
             worker.data = None;

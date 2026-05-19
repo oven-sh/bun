@@ -1,7 +1,7 @@
 // PORT NOTE: SIMD code originally targeted `core::simd` (portable_simd,
-// nightly-only). For B-2, `u8x16`/`u16x8` alias the scalar `ScalarVec`
-// stand-ins from `crate::string::immutable`; the per-lane methods are scalar loops.
-// PERF(port): swap to `bun_highway` / `std::arch` intrinsics in Phase B.
+// nightly-only). `u8x16`/`u16x8` alias the scalar `ScalarVec` stand-ins
+// from `crate::string::immutable`; the per-lane methods are scalar loops.
+// PERF(port): swap to `bun_highway` / `std::arch` intrinsics.
 use core::ffi::c_uint;
 
 use crate::string::immutable::{
@@ -769,10 +769,10 @@ pub mod visible {
     // None if not found. Used to find the CSI final byte (0x40-0x7E).
     //
     // PORT NOTE: was a SIMD lane-scan via `core::simd::Simd<T, STRIDE>`
-    // (nightly-only). Demoted to a scalar loop for B-2 — `STRIDE` is kept as a
+    // (nightly-only). Demoted to a scalar loop — `STRIDE` is kept as a
     // dead const-generic so call sites (`scan_lane_in_range::<u8, 16>(...)`)
     // diff cleanly against the Zig.
-    // PERF(port): re-SIMD via bun_highway in Phase B.
+    // PERF(port): re-SIMD via bun_highway.
     pub(super) fn scan_lane_in_range<T, const STRIDE: usize>(
         lo: T,
         hi: T,
@@ -793,9 +793,9 @@ pub mod visible {
     // Scan for the first element equal to any of `targets`. Returns None if
     // not found. Used to find OSC terminators (BEL/ESC and the C1 ST 0x9C).
     //
-    // PORT NOTE: was a SIMD lane-scan via `core::simd`. Demoted to scalar for
-    // B-2; `STRIDE` is kept for call-site diff parity.
-    // PERF(port): re-SIMD via bun_highway in Phase B.
+    // PORT NOTE: was a SIMD lane-scan via `core::simd`. Demoted to scalar;
+    // `STRIDE` is kept for call-site diff parity.
+    // PERF(port): re-SIMD via bun_highway.
     pub(super) fn scan_lane_any_of<T, const STRIDE: usize>(
         targets: &[T],
         slice: &[T],
@@ -916,7 +916,7 @@ pub mod visible {
     /// Packed state for grapheme tracking - all small fields in one u32
     // PERF(port): was `packed struct(u32)` (u10/u2/u8 + 7 bools). Ported as a
     // plain Copy struct; if the single-register copy in `width()` matters,
-    // re-pack as #[repr(transparent)] u32 with shift accessors in Phase B.
+    // re-pack as #[repr(transparent)] u32 with shift accessors.
     // NOTE: `non_emoji_width` widened u10→u16 but `add()` clamps to 1023 to
     // preserve the Zig `+|=` saturation point.
     #[derive(Copy, Clone, Default)]

@@ -39,8 +39,8 @@ pub struct LinkerGraph {
     // arena is owned by `BundleV2` and outlives every `LinkerGraph` — kept as
     // a raw pointer (matching `LinkerContext.parse_graph: *mut Graph`) so the
     // struct stays `'static`-ish and `LinkerContext`/`Chunk` callers don't
-    // grow a `'bump` parameter yet. Phase B: thread `'bump` once `Chunk` and
-    // `html_import_manifest` gain lifetimes.
+    // grow a `'bump` parameter yet. TODO(refactor): thread `'bump` once `Chunk`
+    // and `html_import_manifest` gain lifetimes.
     pub bump: bun_ptr::BackRef<Arena>,
 
     pub code_splitting: bool,
@@ -284,7 +284,7 @@ pub fn generate_symbol_import_and_use(
     use_count: u32,
     // PORT NOTE: callers are split between `crate::Index` (options_types)
     // and the structurally identical `bun_ast::Index` until the two newtypes
-    // unify (Phase B-3). Accept either via `Into` and normalize once.
+    // unify. Accept either via `Into` and normalize once.
     source_index_to_import_from: impl Into<Index>,
 ) -> Result<(), bun_alloc::AllocError> {
     let source_index_to_import_from: Index = source_index_to_import_from.into();
@@ -351,7 +351,7 @@ pub fn generate_symbol_import_and_use(
         *dependency = Dependency {
             // PORT NOTE: `Dependency.source_index` is the structurally
             // identical `bun_ast::Index`; convert by value until the
-            // two `Index` newtypes unify (Phase B-3).
+            // two `Index` newtypes unify.
             source_index: bun_ast::Index::init(source_index_to_import_from.get()),
             part_index: *part_id, // @truncate (already u32)
         };
@@ -877,7 +877,7 @@ pub struct File {
     pub entry_point_chunk_index: u32,
 
     pub line_offset_table: bun_sourcemap::line_offset_table::List,
-    pub quoted_source_contents: Option<Box<[u8]>>,
+    pub quoted_source_contents: Option<Vec<u8>>,
 }
 
 impl File {
@@ -893,9 +893,8 @@ impl File {
 impl Default for File {
     fn default() -> Self {
         Self {
-            // TODO(port): Zig had `entry_bits: AutoBitSet = undefined` — using
-            // an empty static-arm bitset here; Phase B: confirm zero-init is
-            // acceptable (load() overwrites before any read).
+            // PORT NOTE: Zig had `entry_bits: AutoBitSet = undefined` — using an
+            // empty static-arm bitset here; load() overwrites before any read.
             entry_bits: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
             input_file: Index::source(0u32),
             distance_from_entry_point: u32::MAX,
@@ -917,7 +916,7 @@ bun_collections::multi_array_columns! {
         entry_point_kind: EntryPoint::Kind,
         entry_point_chunk_index: u32,
         line_offset_table: bun_sourcemap::line_offset_table::List,
-        quoted_source_contents: Option<Box<[u8]>>,
+        quoted_source_contents: Option<Vec<u8>>,
     }
 }
 

@@ -118,7 +118,7 @@ pub extern "C" fn Bun__internal_ensureDateHeaderTimerIsEnabled(loop_: *mut Loop)
         let loop_ref = unsafe { &*loop_ };
         // SAFETY: single JS thread; `timer_all()` returns the live per-thread
         // `All` (non-null after init). `update_date_header_timer_if_necessary`
-        // takes the VM by raw pointer to avoid aliased-`&mut` (b2-cycle).
+        // takes the VM by raw pointer to avoid aliased-`&mut` (jsc/runtime crate cycle).
         unsafe { (*timer_all()).update_date_header_timer_if_necessary(loop_ref, vm_ptr) };
     }
 }

@@ -93,7 +93,7 @@ pub type DynamicRouteMap = ArrayHashMap<EncodedPattern, RouteIndex, EffectiveUrl
 /// A logical route, for which layouts are looked up on after resolving a route.
 pub struct Route {
     // TODO(port): lifetime — payload bytes borrow from `pattern_string_arena` (ARENA class).
-    // Erased to 'static via `to_owned_part()` at insertion; Phase B may switch to `*const [u8]`.
+    // Erased to 'static via `to_owned_part()` at insertion; could switch to `*const [u8]`.
     pub part: Part<'static>,
     pub r#type: TypeIndex,
 
@@ -697,7 +697,7 @@ impl Style {
     // TODO(port): move to *_jsc — calls JSValue methods
     pub fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Style> {
         if value.is_string() {
-            let bun_string = value.to_bun_string(global)?;
+            let bun_string = bun_core::OwnedString::new(value.to_bun_string(global)?);
             // PERF(port): was stack-fallback allocator
             let utf8 = bun_string.to_utf8();
             if let Some(style) = STYLE_MAP.get(utf8.slice()) {
@@ -1074,7 +1074,7 @@ pub enum InsertKind {
 }
 
 // PERF(port): Zig used `comptime insertion_kind` with dependent type `insertion_kind.Pattern()`.
-// Rust models this as a runtime enum carrying both pattern shapes; profile in Phase B.
+// Rust models this as a runtime enum carrying both pattern shapes; profile if hot.
 pub enum InsertPattern {
     Static(StaticPattern),
     Dynamic(EncodedPattern),
@@ -1249,8 +1249,8 @@ impl<'a> Part<'a> {
     ///
     /// # Safety
     /// Every payload slice must point into `FrameworkRouter::pattern_string_arena`
-    /// (or other storage that outlives the owning `FrameworkRouter`). Phase B
-    /// should model this with `'bump`.
+    /// (or other storage that outlives the owning `FrameworkRouter`).
+    /// TODO(refactor): model this with a `'bump` lifetime instead of `'static`.
     #[allow(unsafe_op_in_unsafe_fn)]
     unsafe fn to_owned_part(self) -> Part<'static> {
         // Variant-by-variant detach (no bitcast). `d` stays `unsafe fn` so a
@@ -1261,8 +1261,8 @@ impl<'a> Part<'a> {
             // payload slice points into `FrameworkRouter::pattern_string_arena`,
             // which is owned by the `FrameworkRouter` and freed only on
             // router drop/reset — strictly after every `Route` holding a
-            // `Part<'static>` is gone. NOT process-lifetime; Phase B should
-            // model this with a `'bump` parameter on `Part`.
+            // `Part<'static>` is gone. NOT process-lifetime; a `'bump`
+            // parameter on `Part` would model this more precisely.
             unsafe { bun_ptr::Interned::assume(s) }.as_bytes()
         }
         match self {
@@ -1760,7 +1760,7 @@ impl FrameworkRouter {
                             }
                         };
 
-                        // PERF(port): was comptime bool dispatch on `param_count > 0` — profile in Phase B
+                        // PERF(port): was comptime bool dispatch on `param_count > 0` — profile if hot
                         let result = if param_count > 0 {
                             let pattern = EncodedPattern::init_from_parts(
                                 parsed.parts,

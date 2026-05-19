@@ -121,7 +121,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendE
         CG_OK => {}
         rc => return Err(map_err(rc)),
     }
-    // PERF(port): Zig used uninitialized alloc; vec![0u8; n] zero-fills — profile in Phase B
+    // PERF(port): Zig used uninitialized alloc; vec![0u8; n] zero-fills — profile if hot.
     let mut out = vec![0u8; (w as usize) * (h as usize) * 4];
     // Phase 2: render. The C side re-creates the CGImageSource (cheap — the
     // header parse is the only repeated work) so we don't have to thread an
@@ -176,7 +176,7 @@ pub fn encode(
         CG_OK => {}
         rc => return Err(map_err(rc)),
     }
-    // PERF(port): Zig used uninitialized alloc — profile in Phase B
+    // PERF(port): Zig used uninitialized alloc — profile if hot.
     let mut out = vec![0u8; len];
     // Phase 2: copy out and release the CFData.
     // SAFETY: out has `len` bytes; shim writes ≤ len and updates `len`.
@@ -243,7 +243,7 @@ pub fn scale(
     if filter != codecs::Filter::Lanczos3 {
         return Err(BackendError::BackendUnavailable);
     }
-    // PERF(port): Zig used uninitialized alloc — profile in Phase B
+    // PERF(port): Zig used uninitialized alloc — profile if hot.
     let mut out = vec![0u8; (dw as usize) * (dh as usize) * 4];
     // SAFETY: src has sw*sh*4 bytes (caller invariant); out has dw*dh*4 bytes.
     if unsafe { bun_coregraphics_scale(src.as_ptr(), sw, sh, out.as_mut_ptr(), dw, dh) } != CG_OK {
@@ -253,7 +253,7 @@ pub fn scale(
 }
 
 pub fn rotate(src: &[u8], w: u32, h: u32, quarters: u32) -> Result<Vec<u8>, BackendError> {
-    // PERF(port): Zig used uninitialized alloc — profile in Phase B
+    // PERF(port): Zig used uninitialized alloc — profile if hot.
     let mut out = vec![0u8; (w as usize) * (h as usize) * 4];
     // SAFETY: src and out both have w*h*4 bytes.
     if unsafe { bun_coregraphics_rotate90(src.as_ptr(), w, h, out.as_mut_ptr(), quarters) } != CG_OK
@@ -264,7 +264,7 @@ pub fn rotate(src: &[u8], w: u32, h: u32, quarters: u32) -> Result<Vec<u8>, Back
 }
 
 pub fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u8>, BackendError> {
-    // PERF(port): Zig used uninitialized alloc — profile in Phase B
+    // PERF(port): Zig used uninitialized alloc — profile if hot.
     let mut out = vec![0u8; (w as usize) * (h as usize) * 4];
     // SAFETY: src and out both have w*h*4 bytes.
     if unsafe { bun_coregraphics_reflect(src.as_ptr(), w, h, out.as_mut_ptr(), horizontal as i32) }
@@ -297,7 +297,7 @@ pub fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
     if len == 0 {
         return Ok(None);
     }
-    // PERF(port): Zig used uninitialized alloc — profile in Phase B
+    // PERF(port): Zig used uninitialized alloc — profile if hot.
     let mut out = vec![0u8; len];
     // SAFETY: out has `len` bytes; shim writes ≤ len and updates `len`.
     if unsafe { bun_coregraphics_clipboard(out.as_mut_ptr(), &raw mut len, 0) } != CG_OK {

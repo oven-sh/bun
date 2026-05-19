@@ -159,7 +159,7 @@ impl MutableString {
         // TODO(port): Zig returned `[]const u8` which could be either the input
         // borrow or a fresh allocation. Rust cannot express that without a
         // lifetime + Cow; for now we always return owned `Box<[u8]>` and copy
-        // on the borrow paths. Phase B: consider `Cow<'a, [u8]>`.
+        // on the borrow paths. Consider `Cow<'a, [u8]>`.
         if str.is_empty() {
             return Ok(Box::<[u8]>::from(b"_".as_slice()));
         }
@@ -175,7 +175,7 @@ impl MutableString {
             return Ok(Box::<[u8]>::from(b"_".as_slice()));
         }
 
-        // TODO(b0): lexer / lexer_tables arrive from move-in (MOVE_DOWN bun_js_parser::{lexer,lexer_tables} → string)
+        // TODO(port): lexer / lexer_tables arrive from move-in (MOVE_DOWN bun_js_parser::{lexer,lexer_tables} → string)
         use crate::string::lexer as js_lexer;
         use crate::string::lexer_tables as js_lexer_tables;
 

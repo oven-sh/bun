@@ -13,8 +13,7 @@ use crate::{PrintErr, Printer, VendorPrefix};
 use bun_alloc::Arena;
 use bun_core::strings;
 
-// ─── B-2 round 6 notes ────────────────────────────────────────────────────
-// Un-gated. `'bump` arena threading dropped for now: `BumpVec<'bump,_>` →
+// `'bump` arena threading dropped for now: `BumpVec<'bump,_>` →
 // `Vec<_>` (matches `Parser::parse_comma_separated → Vec<T>`); re-thread once
 // `Parser<'bump,'_>` two-lifetime arity lands and `arena()` returns
 // `&'bump Bump`. The generic `D` bound (`LengthPercentage` / `AnglePercentage`)
@@ -447,7 +446,11 @@ impl LinearGradient {
     }
 
     pub fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> LinearGradient {
-        let fallback_items: Vec<_> = self.items.iter().map(|i| i.get_fallback(bump, kind)).collect();
+        let fallback_items: Vec<_> = self
+            .items
+            .iter()
+            .map(|i| i.get_fallback(bump, kind))
+            .collect();
 
         LinearGradient {
             direction: self.direction.clone(),
@@ -525,7 +528,11 @@ impl RadialGradient {
     }
 
     pub fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> RadialGradient {
-        let items: Vec<_> = self.items.iter().map(|i| i.get_fallback(bump, kind)).collect();
+        let items: Vec<_> = self
+            .items
+            .iter()
+            .map(|i| i.get_fallback(bump, kind))
+            .collect();
 
         RadialGradient {
             shape: self.shape.clone(),
@@ -617,7 +624,11 @@ impl ConicGradient {
     }
 
     pub fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> ConicGradient {
-        let items: Vec<_> = self.items.iter().map(|i| i.get_fallback(bump, kind)).collect();
+        let items: Vec<_> = self
+            .items
+            .iter()
+            .map(|i| i.get_fallback(bump, kind))
+            .collect();
 
         ConicGradient {
             angle: self.angle.clone(),
@@ -779,7 +790,11 @@ impl WebKitGradient {
     pub fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> WebKitGradient {
         match self {
             WebKitGradient::Linear(linear) => {
-                let stops: Vec<_> = linear.stops.iter().map(|s| s.get_fallback(bump, kind)).collect();
+                let stops: Vec<_> = linear
+                    .stops
+                    .iter()
+                    .map(|s| s.get_fallback(bump, kind))
+                    .collect();
                 WebKitGradient::Linear(WebKitGradientLinear {
                     from: linear.from.clone(),
                     to: linear.to.clone(),
@@ -787,7 +802,11 @@ impl WebKitGradient {
                 })
             }
             WebKitGradient::Radial(radial) => {
-                let stops: Vec<_> = radial.stops.iter().map(|s| s.get_fallback(bump, kind)).collect();
+                let stops: Vec<_> = radial
+                    .stops
+                    .iter()
+                    .map(|s| s.get_fallback(bump, kind))
+                    .collect();
                 WebKitGradient::Radial(WebKitGradientRadial {
                     from: radial.from.clone(),
                     r0: radial.r0,

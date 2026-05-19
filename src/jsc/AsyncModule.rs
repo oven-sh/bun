@@ -1,14 +1,4 @@
 //! Port of `src/jsc/AsyncModule.zig`.
-//!
-//! B-2 un-gate: real `AsyncModule` / `Queue` / `InitOpts` types compile against
-//! the `lib.rs` stub surface so `ModuleLoader` can re-export them and
-//! `VirtualMachine.modules` can widen from `()` → `Queue`. `fulfill()` and the
-//! `Bun__onFulfillAsyncModule` extern are real (called from
-//! `RuntimeTranspilerStore::run_from_js_thread`). The package-manager-driven
-//! bodies (`Queue::poll_modules` / `resolve_error` / `download_error` /
-//! `resume_loading_module`) are preserved verbatim from the Phase-A draft
-//! `bun_install::PackageManager` runTasks / `MultiArrayList` column accessors /
-//! `bun_bundler::linker` that aren't wired yet.
 
 use bun_collections::{ByteVecExt, VecExt};
 use core::ffi::c_void;
@@ -1265,24 +1255,28 @@ impl AsyncModule {
         // raw-ptr aliasing matches the Zig `*VirtualMachine` field accesses
         // (`transpiler.log`/`resolver.log`/`linker.log` are themselves raw
         // `*mut Log` aliased deliberately — see `Transpiler::set_log`).
-        let old_log = unsafe { (*jsc_vm).log };
+        // `vm.log` is set unconditionally in `init` and never cleared, so the
+        // `expect` is infallible.
+        let old_log: core::ptr::NonNull<bun_ast::Log> =
+            unsafe { (*jsc_vm).log }.expect("vm.log set in init");
 
+        let log_nn = core::ptr::NonNull::new(log).expect("AsyncModule log is non-null");
         let log_ptr: *mut bun_ast::Log = log;
         // SAFETY: see above — single-thread VM; raw-ptr field stores.
         unsafe {
             (*jsc_vm).transpiler.linker.log = log_ptr;
             (*jsc_vm).transpiler.log = log_ptr;
-            (*jsc_vm).transpiler.resolver.log = log_ptr;
+            (*jsc_vm).transpiler.resolver.log = log_nn;
             (*jsc_vm).package_manager().log = log_ptr;
         }
         let _restore = scopeguard::guard((jsc_vm, old_log), |(jsc_vm, old_log)| {
-            // SAFETY: same per-thread VM; restoring the original `*mut Log`
-            // values stored above.
+            // SAFETY: same per-thread VM; restoring the original log pointers
+            // stored above.
             unsafe {
-                let old_log_ptr = old_log.map(|p| p.as_ptr()).unwrap_or(core::ptr::null_mut());
+                let old_log_ptr = old_log.as_ptr();
                 (*jsc_vm).transpiler.linker.log = old_log_ptr;
                 (*jsc_vm).transpiler.log = old_log_ptr;
-                (*jsc_vm).transpiler.resolver.log = old_log_ptr;
+                (*jsc_vm).transpiler.resolver.log = old_log;
                 (*jsc_vm).package_manager().log = old_log_ptr;
             }
         });
@@ -1350,6 +1344,12 @@ impl AsyncModule {
             // SAFETY: per-thread VM.
             let _ = unsafe {
                 (*jsc_vm).transpiler.print_with_source_map(
+                    // `self.arena` is the same per-call arena that built
+                    // `parse_result.ast` (handed to the queue via
+                    // `InitOpts::arena` after the original parse). The
+                    // printer's rope-flattening scratch belongs in it, not
+                    // in the per-VM `transpiler_arena`.
+                    &self.arena,
                     parse_result,
                     &mut printer,
                     bun_js_printer::Format::EsmAscii,

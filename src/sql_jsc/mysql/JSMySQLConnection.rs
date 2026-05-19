@@ -43,8 +43,8 @@ use bun_core::time::NS_PER_MS;
 // switching to the derive is a mechanical follow-up, not a layering blocker.
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
-// shim still emits `this: &mut JSMySQLConnection` until Phase 1 lands —
-// `&mut T` auto-derefs to `&T` so the impls below compile against either.
+// shim still emits `this: &mut JSMySQLConnection` — `&mut T` auto-derefs
+// to `&T` so the impls below compile against either.
 // `JsCell` is `#[repr(transparent)]`, so `from_field_ptr!` recovery
 // (`from_timer_ptr` / `MySQLConnection::get_js_connection`) sees identical
 // offsets.
@@ -349,7 +349,7 @@ impl JSMySQLConnection {
         });
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn] — free-fn shim emitted inside an
+    // TODO(port): #[bun_jsc::host_fn] — free-fn shim emitted inside an
     // `impl` block tries to call `constructor()` unqualified; re-enable once the
     // proc-macro emits `Self::constructor` for receiverless impl items.
     pub fn constructor(
@@ -470,7 +470,6 @@ impl JSMySQLConnection {
         self.poll_ref.with_mut(|p| p.unref(ctx));
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(export = "MySQLConnection__createInstance")]
     // — same proc-macro limitation as `constructor` above.
     pub fn create_instance(
         global_object: &JSGlobalObject,
@@ -480,13 +479,12 @@ impl JSMySQLConnection {
         // no other live borrow in this scope.
         let vm = global_object.bun_vm().as_mut();
         let arguments = callframe.arguments();
-        let hostname_str = arguments[0].to_bun_string(global_object)?;
-        // defer hostname_str.deref() — Drop on bun_core::String
+        let hostname_str = bun_core::OwnedString::new(arguments[0].to_bun_string(global_object)?);
         let port = arguments[1].coerce::<i32>(global_object)?;
 
-        let username_str = arguments[2].to_bun_string(global_object)?;
-        let password_str = arguments[3].to_bun_string(global_object)?;
-        let database_str = arguments[4].to_bun_string(global_object)?;
+        let username_str = bun_core::OwnedString::new(arguments[2].to_bun_string(global_object)?);
+        let password_str = bun_core::OwnedString::new(arguments[3].to_bun_string(global_object)?);
+        let database_str = bun_core::OwnedString::new(arguments[4].to_bun_string(global_object)?);
         // TODO: update this to match MySQL.
         let ssl_mode: SSLMode = match arguments[5].to_int32() {
             0 => SSLMode::Disable,
@@ -551,8 +549,8 @@ impl JSMySQLConnection {
             drop(cfg);
         });
 
-        let options_str = arguments[7].to_bun_string(global_object)?;
-        let path_str = arguments[8].to_bun_string(global_object)?;
+        let options_str = bun_core::OwnedString::new(arguments[7].to_bun_string(global_object)?);
+        let path_str = bun_core::OwnedString::new(arguments[8].to_bun_string(global_object)?);
 
         // PORT NOTE: Zig packed all five strings into one `StringBuilder`-owned
         // arena and handed `[]const u8` slices into it to `MySQLConnection.init`.
@@ -689,18 +687,18 @@ impl JSMySQLConnection {
 
     bun_jsc::poll_ref_hostfns!(field = poll_ref, ctx = vm_ctx);
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)] — see JsClass note above.
+    // TODO(port): #[bun_jsc::host_fn(getter)] — see JsClass note above.
     pub fn get_connected(this: &Self, _: &JSGlobalObject) -> JSValue {
         JSValue::from(this.connection.get().status == my_sql_connection::Status::Connected)
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)] — see JsClass note above.
+    // TODO(port): #[bun_jsc::host_fn(method)] — see JsClass note above.
     pub fn do_flush(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         this.register_auto_flusher();
         Ok(JSValue::UNDEFINED)
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)] — see JsClass note above.
+    // TODO(port): #[bun_jsc::host_fn(method)] — see JsClass note above.
     pub fn do_close(
         this: &Self,
         _global_object: &JSGlobalObject,

@@ -8,8 +8,8 @@
 #![warn(unused_must_use)]
 //! `bun_sys` — syscall wrappers (port of `src/sys/sys.zig`).
 
-// RESOLVED (B-2 round 7): `Fd` struct + pure-data accessors hoisted to
-// `bun_core::Fd` (canonical T0). `fd.rs` is now `pub trait FdExt` over that.
+// `Fd` struct + pure-data accessors are hoisted to `bun_core::Fd`
+// (canonical T0). `fd.rs` is `pub trait FdExt` over that.
 #![warn(unreachable_pub)]
 
 // `bun_str` is the historical Zig namespace name; keep a public alias to
@@ -122,7 +122,7 @@ impl core::fmt::Display for SystemError {
 }
 pub mod walker_skippable;
 // `copy_file.rs` — full ioctl_ficlone / copy_file_range / sendfile / r-w-loop
-// state machine (port of `src/sys/copy_file.zig`). Un-gated B-2: raw kernel
+// state machine (port of `src/sys/copy_file.zig`). Raw kernel
 // thunks live in `crate::linux`, errno tags use the prefixed `E::E*` form,
 // kernel-version probe goes through `bun_core::linux_kernel_version()`.
 #[path = "copy_file.rs"]
@@ -868,7 +868,7 @@ pub fn open_dir_for_iteration_os_path(dir: Fd, path: &bun_paths::OSPathSlice) ->
 }
 
 pub fn lstatat(fd: Fd, path: &ZStr) -> Result<Stat> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         // sys.zig:874 — `bun.invalid_fd` means cwd-relative.
         let dirfd = if fd.is_valid() {
@@ -880,7 +880,7 @@ pub fn lstatat(fd: Fd, path: &ZStr) -> Result<Stat> {
         linux_syscall::fstatat(dirfd, path, libc::AT_SYMLINK_NOFOLLOW)
             .map_err(|e| Error::from_code_int(e, Tag::fstatat).with_path(path.as_bytes()))
     }
-    #[cfg(all(unix, not(target_os = "linux")))]
+    #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
     {
         let mut st = core::mem::MaybeUninit::<libc::stat>::uninit();
         // sys.zig:874 — `bun.invalid_fd` means cwd-relative.
@@ -1039,7 +1039,7 @@ pub use bun_errno::uv_e as UV_E;
 // module which re-exports the errno stub and layers libc on top.
 
 /// `Maybe(T)` — Zig's `union(enum) { result: T, err: Error }`. In Rust this is
-/// just `Result<T, Error>`; keep the alias so Phase-A drafts type-check.
+/// just `Result<T, Error>`; keep the alias so ported call sites type-check.
 pub type Maybe<T> = core::result::Result<T, Error>;
 pub type Result<T> = core::result::Result<T, Error>;
 
@@ -1119,16 +1119,16 @@ impl Renameat2Flags {
                 flags |= 0x10;
             }
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             if self.exchange {
-                flags |= libc::RENAME_EXCHANGE;
+                flags |= libc::RENAME_EXCHANGE as u32;
             }
             if self.exclude {
-                flags |= libc::RENAME_NOREPLACE;
+                flags |= libc::RENAME_NOREPLACE as u32;
             }
         }
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
         {
             if self.exchange {
                 flags |= 1;
@@ -1198,11 +1198,11 @@ pub mod O {
     // routes `openat_windows_impl` to the directory NtCreateFile path.
     #[cfg(windows)]
     pub const DIRECTORY: i32 = 0o200000;
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub const PATH: i32 = libc::O_PATH;
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub const NOATIME: i32 = libc::O_NOATIME;
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub const TMPFILE: i32 = libc::O_TMPFILE;
     // sys.zig:209-212 — Windows defines these (non-zero) so the `O.PATH` /
     // `O.NOATIME` bit-tests in `openat_windows_impl` are meaningful.
@@ -1212,11 +1212,11 @@ pub mod O {
     pub const NOATIME: i32 = 0o1000000;
     #[cfg(windows)]
     pub const TMPFILE: i32 = 0o20200000;
-    #[cfg(all(unix, not(target_os = "linux")))]
+    #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
     pub const PATH: i32 = 0;
-    #[cfg(all(unix, not(target_os = "linux")))]
+    #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
     pub const NOATIME: i32 = 0;
-    #[cfg(all(unix, not(target_os = "linux")))]
+    #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
     pub const TMPFILE: i32 = 0;
     // sys.zig:66-216 — defined for every platform; Darwin-only flags map to 0
     // elsewhere so `flags & O.EVTONLY` etc. compile and are no-ops.
@@ -1567,9 +1567,9 @@ impl From<Tag> for &'static str {
 
 /// Max single read/write count (sys.zig:1832): Linux caps at 0x7ffff000;
 /// Darwin/BSD use signed 32-bit byte counts.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub const MAX_COUNT: usize = 0x7ffff000;
-#[cfg(all(unix, not(target_os = "linux")))]
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
 pub const MAX_COUNT: usize = i32::MAX as usize;
 #[cfg(windows)]
 pub const MAX_COUNT: usize = u32::MAX as usize;
@@ -1767,7 +1767,7 @@ mod posix_impl {
     // dispatchers entirely — see the `#[cfg(target_os = "linux")]` arms on
     // each public fn below — because rustix returns the errno in-band and we
     // don't want to round-trip through thread-local `errno`.
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     #[inline]
     unsafe fn sys_openat(d: i32, p: *const libc::c_char, f: i32, m: libc::c_uint) -> i32 {
         #[cfg(target_os = "macos")]
@@ -1779,7 +1779,7 @@ mod posix_impl {
             unsafe { libc::openat(d, p, f, m) }
         }
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     #[inline]
     unsafe fn sys_read(fd: i32, buf: *mut libc::c_void, n: usize) -> isize {
         #[cfg(target_os = "macos")]
@@ -1791,7 +1791,7 @@ mod posix_impl {
             unsafe { libc::read(fd, buf, n) }
         }
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     #[inline]
     unsafe fn sys_write(fd: i32, buf: *const libc::c_void, n: usize) -> isize {
         #[cfg(target_os = "macos")]
@@ -1803,7 +1803,7 @@ mod posix_impl {
             unsafe { libc::write(fd, buf, n) }
         }
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     #[inline]
     unsafe fn sys_pread(fd: i32, buf: *mut libc::c_void, n: usize, off: i64) -> isize {
         #[cfg(target_os = "macos")]
@@ -1815,7 +1815,7 @@ mod posix_impl {
             unsafe { libc::pread(fd, buf, n, off) }
         }
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     #[inline]
     unsafe fn sys_pwrite(fd: i32, buf: *const libc::c_void, n: usize, off: i64) -> isize {
         #[cfg(target_os = "macos")]
@@ -1951,12 +1951,12 @@ mod posix_impl {
             );
             Ok(Fd::from_native(rc))
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             super::linux_syscall::openat(dir, path, flags, mode)
                 .map_err(|e| Error::from_code_int(e, Tag::open).with_path(path.as_bytes()))
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
         {
             let rc = check_p!(
                 unsafe { sys_openat(dir.native(), path.as_ptr(), flags, mode as libc::c_uint) },
@@ -1970,7 +1970,7 @@ mod posix_impl {
         // fd.zig:266 — call close ONCE; never retry on EINTR (Linux may have already
         // released the fd, retrying would close someone else's). Only EBADF surfaces.
         // fd.zig:273 — Darwin uses `close$NOCANCEL` (avoid pthread cancellation point).
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             return match super::linux_syscall::close(fd.native()) {
                 Err(e) if e == libc::EBADF => {
@@ -1979,7 +1979,7 @@ mod posix_impl {
                 _ => Ok(()),
             };
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             #[cfg(target_os = "macos")]
             let rc = super::nocancel::close(fd.native());
@@ -2002,12 +2002,12 @@ mod posix_impl {
             );
             Ok(n as usize)
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             super::linux_syscall::read(fd, &mut buf[..len])
                 .map_err(|e| Error::from_code_int(e, Tag::read))
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
         {
             let n = check!(
                 unsafe { sys_read(fd.native(), buf.as_mut_ptr().cast(), len) },
@@ -2027,12 +2027,12 @@ mod posix_impl {
             );
             Ok(n as usize)
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             super::linux_syscall::write(fd, &buf[..len])
                 .map_err(|e| Error::from_code_int(e, Tag::write))
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
         {
             let n = check!(
                 unsafe { sys_write(fd.native(), buf.as_ptr().cast(), len) },
@@ -2043,12 +2043,12 @@ mod posix_impl {
     }
     pub fn pread(fd: Fd, buf: &mut [u8], off: i64) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             return super::linux_syscall::pread(fd, &mut buf[..len], off)
                 .map_err(|e| Error::from_code_int(e, Tag::pread));
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             let n = check!(
                 unsafe { sys_pread(fd.native(), buf.as_mut_ptr().cast(), len, off) },
@@ -2059,12 +2059,12 @@ mod posix_impl {
     }
     pub fn pwrite(fd: Fd, buf: &[u8], off: i64) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             return super::linux_syscall::pwrite(fd, &buf[..len], off)
                 .map_err(|e| Error::from_code_int(e, Tag::pwrite));
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             let n = check!(
                 unsafe { sys_pwrite(fd.native(), buf.as_ptr().cast(), len, off) },
@@ -2074,12 +2074,12 @@ mod posix_impl {
         }
     }
     pub fn stat(path: &ZStr) -> Maybe<Stat> {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             return super::linux_syscall::stat(path)
                 .map_err(|e| Error::from_code_int(e, Tag::stat).with_path(path.as_bytes()));
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             let mut st = core::mem::MaybeUninit::<Stat>::uninit();
             check_p!(
@@ -2091,12 +2091,12 @@ mod posix_impl {
         }
     }
     pub fn fstat(fd: Fd) -> Maybe<Stat> {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             return super::linux_syscall::fstat(fd)
                 .map_err(|e| Error::from_code_int(e, Tag::fstat));
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             let mut st = core::mem::MaybeUninit::<Stat>::uninit();
             check!(
@@ -2107,12 +2107,12 @@ mod posix_impl {
         }
     }
     pub fn lstat(path: &ZStr) -> Maybe<Stat> {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             return super::linux_syscall::lstat(path)
                 .map_err(|e| Error::from_code_int(e, Tag::lstat).with_path(path.as_bytes()));
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             let mut st = core::mem::MaybeUninit::<Stat>::uninit();
             check_p!(
@@ -2132,26 +2132,28 @@ mod posix_impl {
     // every Linux ABI. The Rust port uses `libc::statx`, which the `libc` crate
     // only exposes for glibc/Android (and musl behind the build-time
     // `musl_v1_2_3` cfg the cross-compile build never sets). The `linux_statx`
-    // shim below smooths that over: glibc/android re-export `libc`, musl gets a
-    // hand-rolled struct + raw-`syscall(SYS_statx, …)` wrapper. The kernel ABI
-    // (struct layout, `STATX_*` bits) is identical across libcs.
+    // shim below smooths that over: glibc re-exports `libc`; musl and Android
+    // (bionic only added the `statx()` libc wrapper at API 30, we link against
+    // 28) get a hand-rolled struct + raw-`syscall(SYS_statx, …)` wrapper. The
+    // kernel ABI (struct layout, `STATX_*` bits) is identical across libcs.
     // ──────────────────────────────────────────────────────────────────────
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     mod linux_statx {
-        // glibc / Android: libc 0.2.x exposes the full surface directly.
-        #[cfg(not(target_env = "musl"))]
+        // glibc: libc 0.2.x exposes the full surface directly.
+        #[cfg(all(target_os = "linux", not(target_env = "musl")))]
         pub(super) use libc::{
             AT_STATX_SYNC_AS_STAT, STATX_ATIME, STATX_BLOCKS, STATX_BTIME, STATX_CTIME, STATX_GID,
             STATX_INO, STATX_MODE, STATX_MTIME, STATX_NLINK, STATX_SIZE, STATX_TYPE, STATX_UID,
             statx,
         };
 
-        // musl: `libc` gates `statx`/`STATX_*` behind a build-script-detected
-        // `musl_v1_2_3` cfg that cross-compiles can't trigger. Define the
-        // kernel-ABI struct + bits ourselves and dispatch via raw `syscall`,
-        // matching what Zig's `std.os.linux.statx` does on every Linux ABI.
-        #[cfg(target_env = "musl")]
-        mod musl {
+        // musl/Android: `libc` gates `statx`/`STATX_*` behind a build-script
+        // `musl_v1_2_3` cfg that cross-compiles can't trigger, and bionic's
+        // `statx()` wrapper requires API 30. Define the kernel-ABI struct +
+        // bits ourselves and dispatch via raw `syscall`, matching what Zig's
+        // `std.os.linux.statx` does on every Linux ABI.
+        #[cfg(any(target_env = "musl", target_os = "android"))]
+        mod raw {
             #![allow(non_camel_case_types)]
             use core::ffi::{c_char, c_int, c_uint};
 
@@ -2227,20 +2229,20 @@ mod posix_impl {
                 unsafe { libc::syscall(libc::SYS_statx, dirfd, path, flags, mask, buf) as c_int }
             }
         }
-        #[cfg(target_env = "musl")]
-        pub(super) use musl::*;
+        #[cfg(any(target_env = "musl", target_os = "android"))]
+        pub(super) use raw::*;
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     use linux_statx as lx;
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub static SUPPORTS_STATX_ON_LINUX: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(true);
 
     /// `STATX_*` request mask covering every field `node:fs Stats` consumes
     /// (sys.zig:614 `StatxField` — all variants OR'd, the only mask the Zig
     /// callers ever pass).
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub const STATX_MASK_FOR_STATS: u32 = lx::STATX_TYPE
         | lx::STATX_MODE
         | lx::STATX_NLINK
@@ -2255,7 +2257,7 @@ mod posix_impl {
         | lx::STATX_BLOCKS;
 
     /// Linux kernel makedev encoding (glibc sys/sysmacros.h / <linux/kdev_t.h>).
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     #[inline]
     const fn statx_makedev(major: u32, minor: u32) -> u64 {
         let maj: u64 = (major & 0xFFF) as u64;
@@ -2263,7 +2265,7 @@ mod posix_impl {
         (maj << 8) | (min & 0xFF) | ((min & 0xFFF00) << 12)
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     fn statx_fallback(fd: Fd, path: Option<&ZStr>, flags: c_int) -> Maybe<PosixStat> {
         if let Some(p) = path {
             let r = if flags & libc::AT_SYMLINK_NOFOLLOW != 0 {
@@ -2277,7 +2279,7 @@ mod posix_impl {
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     fn statx_impl(fd: Fd, path: Option<&ZStr>, flags: c_int, mask: u32) -> Maybe<PosixStat> {
         use core::sync::atomic::Ordering;
         let mut buf = core::mem::MaybeUninit::<lx::statx>::uninit();
@@ -2361,15 +2363,15 @@ mod posix_impl {
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn fstatx(fd: Fd, mask: u32) -> Maybe<PosixStat> {
         statx_impl(fd, None, libc::AT_EMPTY_PATH, mask)
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn statx(path: &ZStr, mask: u32) -> Maybe<PosixStat> {
         statx_impl(Fd::from_native(libc::AT_FDCWD), Some(path), 0, mask)
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn lstatx(path: &ZStr, mask: u32) -> Maybe<PosixStat> {
         statx_impl(
             Fd::from_native(libc::AT_FDCWD),
@@ -2463,7 +2465,7 @@ mod posix_impl {
         to: &ZStr,
         flags: Renameat2Flags,
     ) -> Maybe<()> {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             // SAFETY: FFI; all pointers/fds valid for the duration of the call.
             check_p!(
@@ -2509,7 +2511,7 @@ mod posix_impl {
             );
             return Ok(());
         }
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
         {
             if flags.int() != 0 {
                 return Err(
@@ -2600,7 +2602,7 @@ mod posix_impl {
         Ok(unsafe { libc::strlen(p) })
     }
 
-    // ── B-2 round 9: link/perm/time/access group (sys.zig:406-3973 posix arms) ──
+    // ── link/perm/time/access group (sys.zig:406-3973 posix arms) ──
     pub fn link(src: &ZStr, dest: &ZStr) -> Maybe<()> {
         check_p!(
             unsafe { libc::link(src.as_ptr(), dest.as_ptr()) },
@@ -2630,7 +2632,7 @@ mod posix_impl {
     /// uses `linkat(tmpfd, "", dirfd, name, AT_EMPTY_PATH)` (requires
     /// CAP_DAC_READ_SEARCH); falls back to `/proc/self/fd/N` + AT_SYMLINK_FOLLOW.
     /// Linux-only; on other unix this errors with EOPNOTSUPP (Zig same).
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn linkat_tmpfile(tmpfd: Fd, dirfd: Fd, name: &ZStr) -> Maybe<()> {
         // 0=unknown, 1=have CAP_DAC_READ_SEARCH, -1=no cap → use /proc fallback.
         static CAP_STATUS: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(0);
@@ -2687,7 +2689,7 @@ mod posix_impl {
             return Ok(());
         }
     }
-    #[cfg(all(unix, not(target_os = "linux")))]
+    #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
     pub fn linkat_tmpfile(_tmpfd: Fd, _dirfd: Fd, name: &ZStr) -> Maybe<()> {
         // sys.zig:4010 — `linkatTmpfile` tags as `.link` (matches Linux arm).
         Err(Error::from_code_int(libc::EOPNOTSUPP, Tag::link).with_path(name.as_bytes()))
@@ -2792,12 +2794,12 @@ mod posix_impl {
         } else {
             libc::AT_FDCWD
         };
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             return super::linux_syscall::fstatat(dirfd, path, 0)
                 .map_err(|e| Error::from_code_int(e, Tag::fstatat).with_path(path.as_bytes()));
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             let mut st = core::mem::MaybeUninit::<Stat>::uninit();
             check_p!(
@@ -2895,7 +2897,7 @@ mod posix_impl {
         Ok(&buf.0[..len])
     }
 
-    // ── B-2 round 9: fcntl/dup/pipe/io group ──
+    // ── fcntl/dup/pipe/io group ──
     pub type FcntlInt = isize;
     pub fn fcntl(fd: Fd, cmd: i32, arg: isize) -> Maybe<FcntlInt> {
         // sys.zig:959-971 — `errnoSysFd(result, .fcntl, fd)`: attach the fd to the error.
@@ -2954,7 +2956,7 @@ mod posix_impl {
         safe_libc::umask(mode as libc::mode_t) as Mode
     }
 
-    // ── B-2 round 9: socket primitives (recv/send/socketpair) ──
+    // ── socket primitives (recv/send/socketpair) ──
     // Full networking lives in `bun_uws_sys`; these are the bare libc wrappers
     // sys.zig exposes for shell/pipe IPC.
     pub fn recv(fd: Fd, buf: &mut [u8], flags: i32) -> Maybe<usize> {
@@ -3041,7 +3043,7 @@ mod posix_impl {
     ) -> Maybe<[Fd; 2]> {
         let _ = for_shell; // only meaningful on macOS
         let mut fds = [0i32; 2];
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             let ty = ty | libc::SOCK_CLOEXEC | if nonblock { libc::SOCK_NONBLOCK } else { 0 };
             check!(
@@ -3049,7 +3051,7 @@ mod posix_impl {
                 Tag::socketpair
             );
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             check!(
                 safe_libc::socketpair(domain, ty, proto, &mut fds),
@@ -3126,13 +3128,13 @@ mod posix_impl {
 
     /// `pidfd_open(2)` — Linux ≥ 5.3. Returns a pollable fd referring to `pid`.
     /// Callers fall back to the waiter-thread on `ENOSYS`/`EPERM`/`EACCES`.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn pidfd_open(pid: libc::pid_t, flags: u32) -> Maybe<Fd> {
         super::linux_syscall::pidfd_open(pid, flags)
             .map_err(|e| Error::from_code_int(e, Tag::pidfd_open))
     }
 
-    // ── B-2 round 9: macOS clonefile / copyfile ──
+    // ── macOS clonefile / copyfile ──
     #[cfg(target_os = "macos")]
     mod darwin_copy {
         use super::*;
@@ -3209,7 +3211,7 @@ mod posix_impl {
         fcopyfile_ as fcopyfile,
     };
 
-    // ── B-2 round 9: mmap/munmap ──
+    // ── mmap/munmap ──
     pub fn mmap(
         addr: *mut u8,
         len: usize,
@@ -3272,7 +3274,7 @@ mod posix_impl {
 
     // ── memfd (Linux only) — sys.zig:3237-3296 ──
     /// `bun.sys.MemfdFlags` (Zig: `enum(u32)`).
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[repr(u32)]
     pub enum MemfdFlags {
@@ -3283,7 +3285,7 @@ mod posix_impl {
         /// `MFD_NOEXEC_SEAL`
         CrossProcess = 0x0008,
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     impl MemfdFlags {
         #[inline]
         fn older_kernel_flag(self) -> u32 {
@@ -3297,19 +3299,19 @@ mod posix_impl {
     /// `memfd_create` requires kernel ≥ 3.17. Latched true on first ENOSYS so
     /// callers can take their existing fallback (heap buffer / pipe / socketpair)
     /// without retrying the syscall on every Blob/spawn.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     static MEMFD_ENOSYS: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(false);
 
     /// `bun.sys.canUseMemfd()` — false on non-Linux; on Linux, false once
     /// `memfd_create` has returned ENOSYS/EPERM/EACCES.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     #[inline]
     pub fn can_use_memfd() -> bool {
         // TODO(port): also gate on `BUN_FEATURE_FLAG_DISABLE_MEMFD`.
         !MEMFD_ENOSYS.load(core::sync::atomic::Ordering::Relaxed)
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     #[inline]
     pub fn can_use_memfd() -> bool {
         false
@@ -3319,11 +3321,19 @@ mod posix_impl {
     /// Retries on EINTR; on EINVAL retries once with the pre-6.3 flag set
     /// (drops `MFD_EXEC`/`MFD_NOEXEC_SEAL`); on ENOSYS/EPERM/EACCES latches
     /// [`can_use_memfd`] to false.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn memfd_create(name: &core::ffi::CStr, flags_: MemfdFlags) -> Maybe<Fd> {
         let mut flags: u32 = flags_ as u32;
         loop {
+            // bionic only added the `memfd_create()` libc wrapper at API 30; we
+            // link against API 28. Raw-syscall it (kernel has had it since 3.17).
             // SAFETY: `name` is a valid NUL-terminated C string.
+            #[cfg(target_os = "android")]
+            let rc = unsafe {
+                libc::syscall(libc::SYS_memfd_create, name.as_ptr(), flags) as core::ffi::c_int
+            };
+            // SAFETY: `name` is a valid NUL-terminated C string.
+            #[cfg(target_os = "linux")]
             let rc = unsafe { libc::memfd_create(name.as_ptr(), flags) };
             if rc < 0 {
                 let e = last_errno();
@@ -3347,7 +3357,7 @@ mod posix_impl {
     /// sys.zig:504 — `sendfile(src, dest, len)`. Clamps `len` (avoid EINVAL on
     /// >2GB), EINTR-retries, and attaches the *source* fd to the error
     /// (sys.zig:513 `errnoSysFd(rc, .sendfile, src)`).
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn sendfile(src: Fd, dest: Fd, len: usize) -> Maybe<usize> {
         let len = len.min(i32::MAX as usize - 1);
         loop {
@@ -3363,7 +3373,7 @@ mod posix_impl {
             return Ok(rc as usize);
         }
     }
-    #[cfg(all(unix, not(target_os = "linux")))]
+    #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
     pub fn sendfile(src: Fd, _dest: Fd, _len: usize) -> Maybe<usize> {
         // sys.zig:513 `errnoSysFd(rc, .sendfile, src)` — attach the *source* fd.
         Err(Error::from_code_int(libc::ENOSYS, Tag::sendfile).with_fd(src))
@@ -4378,7 +4388,7 @@ pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize>
             }
             return Ok(rc as usize);
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             // SAFETY: `PlatformIoVecConst` is layout-identical to `libc::iovec`.
             return unsafe {
@@ -4386,7 +4396,7 @@ pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize>
             }
             .map_err(|e| Error::from_code_int(e, Tag::pwritev));
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
         loop {
             let rc = unsafe {
                 libc::pwritev(
@@ -4425,7 +4435,7 @@ pub type PlatformIoVec = libc::iovec;
 #[cfg(windows)]
 pub type PlatformIoVec = bun_libuv_sys::uv_buf_t;
 // Zig spells these `PlatformIOVec` / `PlatformIOVecConst`; provide both
-// casings so phase-A drafts (`sys_uv.rs`) compile without churn.
+// casings so ported call sites (`sys_uv.rs`) compile without churn.
 pub use PlatformIoVec as PlatformIOVec;
 pub use PlatformIoVecConst as PlatformIOVecConst;
 
@@ -4494,13 +4504,13 @@ pub fn writev(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
             }
             return Ok(rc as usize);
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             // SAFETY: `PlatformIoVec` is `libc::iovec`.
             return unsafe { linux_syscall::writev(fd, vecs.as_ptr(), vecs.len()) }
                 .map_err(|e| Error::from_code_int(e, Tag::writev).with_fd(fd));
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
         loop {
             // SAFETY: see above.
             let rc =
@@ -4517,7 +4527,7 @@ pub fn writev(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
     }
     #[cfg(not(unix))]
     {
-        // TODO(b2-windows): route through `uv_fs_write` with `uv_buf_t[]`.
+        // TODO(windows): route through `uv_fs_write` with `uv_buf_t[]`.
         let _ = (fd, vecs);
         Err(Error::from_code_int(libc::ENOSYS, Tag::writev))
     }
@@ -4544,13 +4554,13 @@ pub fn readv(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
             }
             return Ok(rc as usize);
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             // SAFETY: `PlatformIoVec` is `libc::iovec`.
             return unsafe { linux_syscall::readv(fd, vecs.as_ptr(), vecs.len()) }
                 .map_err(|e| Error::from_code_int(e, Tag::readv).with_fd(fd));
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
         loop {
             // SAFETY: see above.
             let rc =
@@ -4597,13 +4607,13 @@ pub fn preadv(fd: Fd, vecs: &[PlatformIoVec], position: i64) -> Maybe<usize> {
             }
             return Ok(rc as usize);
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             // SAFETY: `PlatformIoVec` is `libc::iovec`.
             return unsafe { linux_syscall::preadv(fd, vecs.as_ptr(), vecs.len(), position) }
                 .map_err(|e| Error::from_code_int(e, Tag::preadv).with_fd(fd));
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
         loop {
             // SAFETY: see `readv`.
             let rc = unsafe {
@@ -4720,7 +4730,7 @@ impl std::io::Read for FileReader {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// B-2 Track A — additional surface unblocked for dependents.
+// Additional surface unblocked for dependents.
 // Symbols are real posix wrappers (sys.zig posix arms 1:1); Windows arms route
 // through the libuv/kernel32 layer in `windows_impl` above.
 // ──────────────────────────────────────────────────────────────────────────
@@ -7053,7 +7063,7 @@ pub fn set_file_offset(fd: Fd, offset: u64) -> Maybe<()> {
 
 // ── nonblocking read/write (preadv2/pwritev2 RWF_NOWAIT on Linux) ──
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 unsafe extern "C" {
     fn sys_preadv2(
         fd: c_int,
@@ -7070,12 +7080,12 @@ unsafe extern "C" {
         flags: u32,
     ) -> isize;
 }
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 const RWF_NOWAIT: u32 = 0x00000008;
 
 /// sys.zig:4046 — Linux: `preadv2(.., RWF_NOWAIT)`; else plain `read`.
 pub fn read_nonblocking(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     while linux::RWFFlagSupport::is_maybe_supported() {
         let iov = [libc::iovec {
             iov_base: buf.as_mut_ptr().cast(),
@@ -7105,7 +7115,7 @@ pub fn read_nonblocking(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
 }
 /// sys.zig:4099 — Linux: `pwritev2(.., RWF_NOWAIT)`; else plain `write`.
 pub fn write_nonblocking(fd: Fd, buf: &[u8]) -> Maybe<usize> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     while linux::RWFFlagSupport::is_maybe_supported() {
         let iov = [libc::iovec {
             iov_base: buf.as_ptr().cast_mut().cast::<_>(),
@@ -7143,7 +7153,7 @@ pub fn preallocate_file(
     offset: i64,
     len: i64,
 ) -> core::result::Result<(), bun_core::Error> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         // Result intentionally discarded (Zig: `_ = std.os.linux.fallocate(...)`)
         // — preallocation is best-effort.
@@ -7215,13 +7225,13 @@ pub fn clonefileat(_from_dir: Fd, from: &ZStr, _to_dir: Fd, to: &ZStr) -> Maybe<
 /// (linprocfs hardcodes "des@freebsd.org"). Under FreeBSD's Linuxulator
 /// `/proc/self/fd/*` doesn't readlink, but `/dev/fd/*` does.
 /// 0=unknown, 1=linux, 2=freebsd.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 static LINUX_KERNEL_CACHED: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
 
 /// sys.zig:3032 `LinuxKernel.cached.load(.acquire) == .freebsd` — non-probing
 /// fast-path check. Returns `true` only when a previous probe already proved
 /// FreeBSD's Linuxulator; never triggers the `/proc/version` read itself.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 #[inline]
 fn linux_kernel_cached_is_freebsd() -> bool {
     LINUX_KERNEL_CACHED.load(core::sync::atomic::Ordering::Acquire) == 2
@@ -7229,7 +7239,7 @@ fn linux_kernel_cached_is_freebsd() -> bool {
 
 /// sys.zig:659 `LinuxKernel.get()` — probing variant: reads `/proc/version`
 /// once (memoized) and returns whether this is FreeBSD's Linuxulator.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn linux_kernel_is_freebsd() -> bool {
     use core::sync::atomic::Ordering;
     let v = LINUX_KERNEL_CACHED.load(Ordering::Acquire);
@@ -7259,7 +7269,7 @@ fn linux_kernel_is_freebsd() -> bool {
 }
 
 /// sys.zig:2999 `getFdPathFreeBSDLinuxulator` — readlink `/dev/fd/N` (fdescfs).
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn get_fd_path_freebsd_linuxulator<'a>(
     fd: Fd,
     out: &'a mut bun_paths::PathBuffer,
@@ -7280,7 +7290,7 @@ fn get_fd_path_freebsd_linuxulator<'a>(
 /// sys.zig:2940 — fd → absolute path. Linux: readlink `/proc/self/fd/N`;
 /// macOS: `fcntl(F_GETPATH)`; Windows: `GetFinalPathNameByHandle`.
 pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a mut [u8]> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         // sys.zig:3032 — fast path: a previous call already proved this is
         // FreeBSD's Linuxulator. Skip the doomed `/proc/self/fd/N` readlink.
@@ -7357,6 +7367,7 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
     }
     #[cfg(not(any(
         target_os = "linux",
+        target_os = "android",
         target_os = "macos",
         target_os = "freebsd",
         windows
@@ -7478,7 +7489,7 @@ pub fn move_file_z_with_handle(
                 0o644,
             )
             .map_err(bun_core::Error::from)?;
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 // Preallocation is best-effort.
                 let _ = safe_libc::fallocate(dst.native(), 0, 0, st.st_size);
@@ -7799,11 +7810,11 @@ pub mod posix {
     #[cfg(unix)]
     #[inline]
     pub unsafe fn read(fd: c_int, buf: *mut u8, count: usize) -> isize {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             unsafe { super::linux_syscall::read_raw(fd, buf, count) }
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             unsafe { libc::read(fd, buf.cast(), count) }
         }
@@ -7811,11 +7822,11 @@ pub mod posix {
     #[cfg(unix)]
     #[inline]
     pub unsafe fn write(fd: c_int, buf: *const u8, count: usize) -> isize {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             unsafe { super::linux_syscall::write_raw(fd, buf, count) }
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             unsafe { libc::write(fd, buf.cast(), count) }
         }
@@ -7944,7 +7955,7 @@ pub mod posix {
 
     // ── dynamic loading (Linux/FreeBSD) ──
     /// `std.posix.dl_iterate_phdr` — iterate loaded ELF objects.
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     #[inline]
     pub unsafe fn dl_iterate_phdr(
         callback: unsafe extern "C" fn(*mut libc::dl_phdr_info, usize, *mut c_void) -> c_int,
@@ -8766,7 +8777,7 @@ pub fn copy_file_z_slow_with_handle(in_handle: Fd, to_dir: Fd, destination: &ZSt
         O::WRONLY | O::CREAT | O::CLOEXEC | O::TRUNC,
         0o644,
     )?;
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         // Preallocation is best-effort.
         let _ = safe_libc::fallocate(dst.native(), 0, 0, st.st_size);
@@ -8796,7 +8807,7 @@ pub fn renameat_z(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr) -> Maybe<()>
 pub struct RenameatConcurrentlyOptions {
     pub move_fallback: bool,
 }
-/// Alias: `bun_install` Phase-A drafts spelled this `RenameOptions`.
+/// Alias: `bun_install` call sites spell this `RenameOptions`.
 pub type RenameOptions = RenameatConcurrentlyOptions;
 
 /// sys.zig:4296 — `moveFileZSlowMaybe`. Thin wrapper kept for source parity
@@ -9163,7 +9174,7 @@ fn sink_tty_winsize(fd: Fd) -> Option<bun_core::Winsize> {
 }
 #[cfg(not(unix))]
 fn sink_tty_winsize(_fd: Fd) -> Option<bun_core::Winsize> {
-    // TODO(b2-windows): GetConsoleScreenBufferInfo.
+    // TODO(windows): GetConsoleScreenBufferInfo.
     None
 }
 

@@ -299,7 +299,7 @@ impl Expect {
         // pass, so the prose may contain `<r>`/`<red>`/etc.
         message: fmt::Arguments<'_>,
     ) -> JsError {
-        // PERF(port): was comptime bool dispatch on Output.enable_ansi_colors_stderr — profile in Phase B
+        // PERF(port): was comptime bool dispatch on Output.enable_ansi_colors_stderr — profile if hot.
         let colors = Output::enable_ansi_colors_stderr();
         let chain = match flags.promise() {
             Promise::Resolves => {
@@ -324,7 +324,7 @@ impl Expect {
                 }
             }
         };
-        // PERF(port): was comptime bool dispatch on use_default_label — profile in Phase B
+        // PERF(port): was comptime bool dispatch on use_default_label — profile if hot.
         // PORT NOTE: expect.zig:119-128 binds `use_default_label = !custom_label.isEmpty()`
         // and so prints the *signature* when a custom label is present and the
         // (empty) `{custom_label}` when it is absent — a misnamed variable in
@@ -396,7 +396,7 @@ impl Expect {
         };
         value.ensure_still_alive();
 
-        // PERF(port): was comptime bool dispatch — profile in Phase B
+        // PERF(port): was comptime bool dispatch — profile if hot.
         let matcher_params = Output::pretty_fmt_rt(matcher_params_fmt, Output::enable_ansi_colors_stderr());
         Self::process_promise(
             self.custom_label.clone(),
@@ -421,7 +421,7 @@ impl Expect {
         matcher_params: impl fmt::Display,
         silent: bool,
     ) -> JsResult<JSValue> {
-        // PERF(port): was comptime monomorphization on `silent` and `resolution` — profile in Phase B
+        // PERF(port): was comptime monomorphization on `silent` and `resolution` — profile if hot.
         match flags.promise() {
             resolution @ (Promise::Resolves | Promise::Rejects) => {
                 if let Some(promise) = value.as_any_promise() {
@@ -1622,7 +1622,7 @@ impl Expect {
 
         // prepare the args array
         let args = call_frame.arguments();
-        // PERF(port): was stack-fallback allocator — profile in Phase B
+        // PERF(port): was stack-fallback allocator — profile if hot.
         // PORT NOTE: MarkedArgumentBuffer::new is scoped (closure-borrow); collect into a Vec
         // since execute_custom_matcher takes &[JSValue].
         let mut matcher_args: Vec<JSValue> = Vec::with_capacity(args.len() + 1);
@@ -1870,7 +1870,7 @@ impl fmt::Display for CustomMatcherParamsFormatter<'_> {
         }
 
         // fallback
-        // PERF(port): was comptime bool dispatch — profile in Phase B
+        // PERF(port): was comptime bool dispatch — profile if hot.
         write!(writer, "{}", Output::pretty_fmt_rt("<green>...args<r>", self.colors))
     }
 }
@@ -2280,8 +2280,8 @@ impl Expect {
 // The generate-classes.ts Rust emitter calls every prototype matcher as
 // `Expect::to_*(&mut *this, global, callframe)`. Roughly half the
 // `expect/to*.rs` files already attach via `impl Expect { .. }`; the rest are
-// free `pub fn to_*(this: &mut Expect, ..)` functions (Phase-A drafts couldn't
-// open `impl Expect` from a sibling crate-module without seeing the struct
+// free `pub fn to_*(this: &mut Expect, ..)` functions (those sibling
+// crate-modules can't open `impl Expect` without seeing the struct
 // definition first). Those modules are mounted under the `super::expect`
 // façade (mod.rs `matchers!`), so we add inherent forwarders here — the real
 // bodies stay in their per-matcher files, this is the layering bridge.
@@ -2661,7 +2661,7 @@ impl ExpectCustomAsymmetricMatcher {
 
         // prepare the args array as `[received, ...captured_args]`
         let args_count = captured_args.get_length(global_this)?;
-        // PERF(port): was stack-fallback allocator — profile in Phase B
+        // PERF(port): was stack-fallback allocator — profile if hot.
         let mut matcher_args: Vec<JSValue> = Vec::with_capacity((args_count as usize).saturating_add(1));
         matcher_args.push(received);
         // PERF(port): was assume_capacity
@@ -2721,7 +2721,7 @@ impl ExpectCustomAsymmetricMatcher {
         if let Some(fn_value) = fn_value {
             if fn_value.js_type().is_function() {
                 let Some(captured_args) = expect_custom_asymmetric_matcher_js::captured_args_get_cached(this_value) else { return Ok(false) };
-                // PERF(port): was stack-fallback allocator — profile in Phase B
+                // PERF(port): was stack-fallback allocator — profile if hot.
                 let args_len = match captured_args.get_length(global_this) {
                     Ok(n) => n,
                     Err(e) => return Self::maybe_clear(global_this, e, dont_throw),
@@ -2743,10 +2743,10 @@ impl ExpectCustomAsymmetricMatcher {
                     Ok(r) => r,
                     Err(e) => return Self::maybe_clear(global_this, e, dont_throw),
                 };
-                let s = match result.to_bun_string(global_this) {
+                let s = bun_core::OwnedString::new(match result.to_bun_string(global_this) {
                     Ok(s) => s,
                     Err(e) => return Self::maybe_clear(global_this, e, dont_throw),
-                };
+                });
                 write!(writer, "{}", s)?;
             }
         }
@@ -2755,7 +2755,7 @@ impl ExpectCustomAsymmetricMatcher {
 
     #[bun_jsc::host_fn(method)]
     pub fn to_asymmetric_matcher(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        // PERF(port): was stack-fallback allocator — profile in Phase B
+        // PERF(port): was stack-fallback allocator — profile if hot.
         let mut mutable_string = bun_core::MutableString::init_2048()?;
 
         // PORT NOTE: Zig call site (expect.zig:1772) omits the `comptime dontThrow`
@@ -2849,7 +2849,7 @@ impl ExpectMatcherUtils {
     ) -> JsResult<JSValue> {
         use std::io::Write as _;
         // TODO(port): narrow error set
-        // PERF(port): was stack-fallback allocator — profile in Phase B
+        // PERF(port): was stack-fallback allocator — profile if hot.
         let mut mutable_string = bun_core::MutableString::init_2048()?;
 
         // TODO(port): BufferedWriter wrapper
@@ -2977,7 +2977,7 @@ impl ExpectMatcherUtils {
         // `diff_formatter` are spliced in afterwards (matches `throw_pretty`'s
         // render-then-rewrite ordering, since Display output here contains no
         // `<tag>` literals).
-        // PERF(port): Zig used a 2048-byte stack-fallback MutableString — profile in Phase B.
+        // PERF(port): Zig used a 2048-byte stack-fallback MutableString — profile if hot.
         let colors = Output::enable_ansi_colors_stderr();
         let head = Output::pretty_fmt_rt("<d>expect(<r><red>received<r><d>).<r>", colors);
         let not = if is_not { Output::pretty_fmt_rt("not<d>.<r>", colors) } else { bun_core::output::PrettyBuf(Vec::new()) };

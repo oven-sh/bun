@@ -2,7 +2,7 @@ use core::ffi::c_void;
 
 use crate::options::Loader;
 // `bake::Side` / `jsc.api.BuildArtifact.OutputKind` are TYPE_ONLY move-ins;
-// the B-1 stub `options` module already defines them locally.
+// the `options` module already defines them locally.
 use crate::options::{OutputKind, Side};
 use bun_core::Error;
 use bun_core::{PathString, String as BunString};
@@ -18,14 +18,11 @@ use crate::bun_fs::RealFS;
 // 2. (Optional) move the file to the destination
 // This saves us from allocating a buffer
 
-#[derive(Clone)]
 pub struct OutputFile {
     pub loader: Loader,
     pub input_loader: Loader,
-    // TODO(port): `src_path.text` ownership — Zig `deinit` freed it via
-    // `default_allocator` even though it's a field of `Fs.Path`. Ensure
-    // `bun_fs::Path` owns `text` so dropping `OutputFile` frees it implicitly.
     pub src_path: fs::Path<'static>,
+    pub owned_src_path_text: Box<[u8]>,
     pub value: Value,
     pub size: usize,
     pub size_without_sourcemap: usize,
@@ -55,6 +52,7 @@ impl OutputFile {
             loader: Loader::File,
             input_loader: Loader::Js,
             src_path: fs::Path::init(b""),
+            owned_src_path_text: Box::default(),
             value: Value::Noop,
             size: 0,
             size_without_sourcemap: 0,
@@ -70,6 +68,45 @@ impl OutputFile {
             referenced_css_chunks: Box::default(),
             source_index: IndexOptional::NONE,
             bake_extra: BakeExtra::default(),
+        }
+    }
+}
+
+impl Clone for OutputFile {
+    fn clone(&self) -> Self {
+        let owned_src_path_text = self.owned_src_path_text.clone();
+        // SAFETY: `owned_src_path_text` is a sibling field that outlives `src_path`; the boxed buffer never moves.
+        let text: &'static [u8] =
+            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(&owned_src_path_text) };
+        let src_path = if !self.owned_src_path_text.is_empty() {
+            fs::Path {
+                is_disabled: self.src_path.is_disabled,
+                is_symlink: self.src_path.is_symlink,
+                ..fs::Path::init(text)
+            }
+        } else {
+            self.src_path.clone()
+        };
+        OutputFile {
+            loader: self.loader,
+            input_loader: self.input_loader,
+            src_path,
+            owned_src_path_text,
+            value: self.value.clone(),
+            size: self.size,
+            size_without_sourcemap: self.size_without_sourcemap,
+            hash: self.hash,
+            is_executable: self.is_executable,
+            source_map_index: self.source_map_index,
+            bytecode_index: self.bytecode_index,
+            module_info_index: self.module_info_index,
+            output_kind: self.output_kind,
+            dest_path: self.dest_path.clone(),
+            side: self.side,
+            entry_point_index: self.entry_point_index,
+            referenced_css_chunks: self.referenced_css_chunks.clone(),
+            source_index: self.source_index,
+            bake_extra: self.bake_extra,
         }
     }
 }
@@ -240,7 +277,7 @@ impl Value {
             Value::Pending(_) => unreachable!(),
             // Zig: `else => |tag| bun.todoPanic(@src(), "handle .{s}", .{@tagName(tag)})`
             // — an intentional shipped runtime panic for `.move`/`.copy`/`.saved`,
-            // not a Phase-A placeholder.
+            // not a port placeholder.
             other => bun_core::todo_panic!("handle .{}", <&'static str>::from(other.kind())),
         }
     }
@@ -382,25 +419,15 @@ impl OutputFile {
             OptionsData::File { size, .. } => *size,
             OptionsData::Saved(_) => 0,
         });
-        // PORT NOTE: Zig `Fs.Path.init(options.input_path)` stored the borrowed
-        // slice and `OutputFile.deinit` freed it via `default_allocator` — i.e.
-        // `OutputFile` *owns* `src_path.text`. `bun_paths::fs::Path<'static>` currently
-        // borrows `&'static [u8]`, so ownership of this `Box<[u8]>` is parked
-        // (logically held by `OutputFile`, but with no Drop hook to reclaim it
-        // yet — see TODO). Do NOT route through `linker::relative_paths_list` —
-        // that is an extra memcpy plus a forged `&mut` on a shared global per
-        // output file, and still never frees.
-        // TODO(port): give `fs::Path` an owning `text: Cow<'static,[u8]>` so
-        // this becomes a plain move and Drop frees it (matches Zig deinit).
-        let input_path: &'static [u8] = if options.input_path.is_empty() {
-            b""
-        } else {
-            bun_core::heap::release(options.input_path)
-        };
+        let owned_src_path_text: Box<[u8]> = options.input_path;
+        // SAFETY: `owned_src_path_text` is a sibling field that outlives `src_path`; the boxed buffer never moves.
+        let input_path: &'static [u8] =
+            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(&owned_src_path_text) };
         OutputFile {
             loader: options.loader,
             input_loader: options.input_loader,
             src_path: fs::Path::init(input_path),
+            owned_src_path_text,
             dest_path: options.output_path.clone(),
             source_index: options.source_index,
             size,

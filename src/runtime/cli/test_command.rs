@@ -118,8 +118,8 @@ mod coverage {
 }
 use coverage::{ByteRangeMapping, CodeCoverageReport, Fraction};
 
-// ─── un-gate: map Phase-A draft paths onto the now-real test_runner crate ────
-// The Phase-A body was written against `bun_jsc::jest::{bun_test, Snapshots,
+// ─── compat shim: map Zig-shaped paths onto the test_runner crate ────────────
+// The body was originally written against `bun_jsc::jest::{bun_test, Snapshots,
 // TestRunner}` before `crate::test_runner` existed. Those types now live under
 // `crate::test_runner::*`; the façade below adapts the body's nested-path
 // usage (`bun_test::Execution::Result`, `bun_test::BasicResult`, …) without a
@@ -138,8 +138,8 @@ mod bun_test {
     //! `bun_test::DescribeScope`, …). Drop once the body is normalised.
     /// Zig nests `FirstLast` under `BunTestRoot`; the Rust port hoisted it to
     /// module scope. Alias here so `bun_test::FirstLast` paths in
-    /// the body resolve without a 2k-line rewrite. Phase B may collapse the
-    /// alias back into an inherent associated type once the body is normalised.
+    /// the body resolve without a 2k-line rewrite. Could be collapsed back into
+    /// an inherent associated type once the body is normalised.
     pub use crate::test_runner::bun_test::FirstLast as BunTestRootFirstLast;
     /// `add_result()` queue payload — Zig spells it `bun_test.ResultMsg.start`;
     /// Rust port collapsed it into `RefDataValue`.
@@ -222,7 +222,7 @@ pub fn write_test_status_line(
 ) {
     // PORT NOTE: was `comptime status` in Zig; `Execution::Result` lacks
     // `ConstParamTy`, so this is a runtime arg.
-    // PERF(port): was comptime monomorphization — profile in Phase B.
+    // PERF(port): was comptime monomorphization — profile if it shows up on a hot path.
     if Output::enable_ansi_colors_stderr() {
         let _ = writer.write_all(&fmt_status_text_line(status, true));
     } else {
@@ -357,7 +357,7 @@ impl JunitReporter {
             ci: &'a [u8],
             commit: &'a [u8],
         }
-        // PERF(port): was arena bulk-free + stack-fallback alloc — profile in Phase B
+        // PERF(port): was arena bulk-free + stack-fallback alloc — profile if it shows up on a hot path.
 
         let ci_buf: Vec<u8>;
         let ci: &[u8] = 'brk: {
@@ -534,7 +534,7 @@ impl JunitReporter {
         self.current_depth -= 1;
         let suite_info = self.suite_stack.swap_remove(self.suite_stack.len() - 1);
 
-        // PERF(port): was arena bulk-free + stack-fallback alloc — profile in Phase B
+        // PERF(port): was arena bulk-free + stack-fallback alloc — profile if it shows up on a hot path.
 
         let elapsed_time_ms = suite_info.metrics.elapsed_time;
         let elapsed_time_ms_f64: f64 = elapsed_time_ms as f64;
@@ -761,7 +761,7 @@ impl JunitReporter {
         }
 
         {
-            // PERF(port): was arena bulk-free + stack-fallback alloc — profile in Phase B
+            // PERF(port): was arena bulk-free + stack-fallback alloc — profile if it shows up on a hot path.
             let metrics = self.total_metrics;
             let elapsed_time = (bun::time::nano_timestamp() - bun::start_time()) as f64
                 / bun::time::NS_PER_S as f64;
@@ -875,7 +875,7 @@ impl CommandLineReporter {
         elapsed_ns: u64,
         writer: &mut impl bun_io::Write,
     ) {
-        // PERF(port): was comptime monomorphization on `status` — profile in Phase B
+        // PERF(port): was comptime monomorphization on `status` — profile if it shows up on a hot path.
         let initial_retry_count = test_entry.retry_count;
         let attempts = (initial_retry_count - sequence.remaining_retry_count) + 1;
         let initial_repeat_count = test_entry.repeat_count;
@@ -1042,7 +1042,7 @@ impl CommandLineReporter {
             let _ = writer.write_all(b"\n");
 
             let colors = Output::enable_ansi_colors_stderr();
-            // PERF(port): was comptime bool dispatch — profile in Phase B
+            // PERF(port): was comptime bool dispatch — profile if it shows up on a hot path.
             use bun_test::Execution::Result as R;
             match status {
                 R::Pending | R::Pass | R::Skip | R::SkippedBecauseLabel | R::Todo | R::Fail => {}
@@ -1096,7 +1096,7 @@ impl CommandLineReporter {
         test_entry: &mut bun_test::ExecutionEntry,
         elapsed_ns: u64,
     ) {
-        // PERF(port): was comptime monomorphization on `status` — profile in Phase B
+        // PERF(port): was comptime monomorphization on `status` — profile if it shows up on a hot path.
         let Some(cmd_reporter) = buntest.reporter else {
             return;
         };
@@ -1253,7 +1253,7 @@ impl CommandLineReporter {
                 describe_suite_index += 1;
             }
 
-            // PERF(port): was arena bulk-free + stack-fallback alloc — profile in Phase B
+            // PERF(port): was arena bulk-free + stack-fallback alloc — profile if it shows up on a hot path.
             let mut concatenated_describe_scopes: Vec<u8> = Vec::new();
 
             {
@@ -1317,7 +1317,7 @@ impl CommandLineReporter {
 
         // PORT NOTE: `switch (sequence.result) { inline else => |result| ... }` — Zig comptime
         // dispatch on enum value. Demoted to runtime match.
-        // PERF(port): was comptime monomorphization — profile in Phase B
+        // PERF(port): was comptime monomorphization — profile if it shows up on a hot path.
         let result = sequence.result;
         if result != bun_test::Execution::Result::SkippedBecauseLabel {
             // SAFETY: `BunTest.reporter` is `NonNull<CommandLineReporter>` with write
@@ -1338,7 +1338,7 @@ impl CommandLineReporter {
                 );
             if dots_branch {
                 let colors = Output::enable_ansi_colors_stderr();
-                // PERF(port): was comptime bool dispatch — profile in Phase B
+                // PERF(port): was comptime bool dispatch — profile if it shows up on a hot path.
                 match basic {
                     bun_test::BasicResult::Pass => {
                         let _ = writer.write_all(&Output::pretty_fmt_rt("<r><green>.<r>", colors));
@@ -1509,7 +1509,7 @@ impl CommandLineReporter {
         opts: &mut CodeCoverageOptions,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): Zig used `comptime reporters: TestCommand.Reporters` (a struct value).
-        // Split into two const-generic bools here. Phase B may use a const-param struct.
+        // Split into const-generic bools here; could be a const-param struct instead.
         if !REPORTERS_TEXT && !REPORTERS_LCOV {
             return Ok(());
         }
@@ -1642,7 +1642,7 @@ impl CommandLineReporter {
         } else if REPORTERS_LCOV {
             bun::perf::trace("TestCommand.printCodeCoverageLCov")
         } else {
-            // TODO(port): @compileError("No reporters enabled") — Phase B can enforce via const assert
+            // TODO(port): @compileError("No reporters enabled") — could enforce via a const assert.
             unreachable!("No reporters enabled")
         };
 
@@ -2524,7 +2524,7 @@ impl TestCommand {
                 if all_test_files.is_empty() {
                     break 'brk &mut all_test_files[..];
                 }
-                // TODO(port): borrowck — all_test_files ownership vs slicing; Phase B reshape
+                // TODO(port): all_test_files ownership vs slicing — reshape to avoid the borrowck workaround.
 
                 let result = match ChangedFilesFilter::filter(
                     &ctx,
@@ -2701,7 +2701,7 @@ impl TestCommand {
             // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set by
             // `enable_hot_module_reloading`; non-null because
             // `is_watcher_enabled()` checked it. The `c_void` type is a
-            // b2-cycle erasure (see field comment in VirtualMachine.rs); the
+            // jsc/runtime crate-cycle erasure (see field comment in VirtualMachine.rs); the
             // cast recovers the concrete type.
             let watcher =
                 unsafe { &mut *vm.bun_watcher.cast::<jsc::hot_reloader::ImportWatcher>() };
@@ -2835,7 +2835,7 @@ impl TestCommand {
 
             if coverage_options.enabled && !ran_parallel {
                 // PORT NOTE: nested `switch ... inline else` over 3 runtime bools → 8-way dispatch.
-                // PERF(port): was comptime bool dispatch — profile in Phase B
+                // PERF(port): was comptime bool dispatch — profile if it shows up on a hot path.
                 match (
                     Output::enable_ansi_colors_stderr(),
                     coverage_options.reporters.text,
@@ -2858,7 +2858,7 @@ impl TestCommand {
                     (false, false, false) => reporter
                         .generate_code_coverage::<false, false, false>(vm, &mut coverage_options)?,
                 }
-                // TODO(port): generic param order is <TEXT, LCOV, COLORS>; verify mapping in Phase B
+                // Generic param order is <TEXT, LCOV, COLORS>; the match tuple is (colors, text, lcov).
             }
 
             // `Summary` is `Copy`; take a value snapshot so the `&mut` from
@@ -3026,6 +3026,16 @@ impl TestCommand {
             vm.exit_handler.exit_code = 1;
         }
         vm.is_shutting_down = true;
+        // Release `bun:test` GC roots before `global_exit()` so
+        // `destructOnExit()`'s `collectNow()` can reach the closures they pin
+        // (preload hooks, per-file describe/test callbacks). Clear `RUNNER`
+        // before dropping `reporter` so finalizers running inside the GC can't
+        // observe a dangling `TestRunner`.
+        reporter.jest.bun_test_root.deinit_for_exit();
+        unsafe {
+            jest::Jest::RUNNER.write(None);
+        }
+        drop(reporter);
         {
             let vm_ptr: *mut VirtualMachine = vm;
             vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
@@ -3105,9 +3115,9 @@ impl TestCommand {
             }
         }
 
-        // PERF(port): was MimallocArena bulk-free — profile in Phase B
+        // PERF(port): was MimallocArena bulk-free — profile if it shows up on a hot path.
         // TODO(port): vm_.arena = &arena; vm_.allocator = arena.arena(); — arena threading
-        // dropped here. Phase B should reintroduce a bun_alloc::Arena and assign to vm.
+        // dropped here. Reintroduce a bun_alloc::Arena and assign to vm.
         vm_.event_loop_ref().ensure_waker();
         // SAFETY: run_with_api_lock(&self) only acquires the JSC API lock around the
         // closure; ctx holds the unique &mut to the same VM and is the sole mutator.
@@ -3257,6 +3267,18 @@ impl TestCommand {
 
                         vm.exit_handler.exit_code = 1;
                         vm.is_shutting_down = true;
+                        // `global_exit()` diverges, so the `exit_file()` defer
+                        // above never fires. Release the active file's
+                        // `Strong`s and the preload-hook scope here so
+                        // `destructOnExit()`'s `collectNow()` can reclaim them,
+                        // then clear `RUNNER` so finalizers can't observe a
+                        // partially-torn-down `TestRunner`.
+                        // SAFETY: single-threaded; raw-ptr reborrow mirrors the
+                        // defer's escape.
+                        unsafe {
+                            (*bun_test_root_ptr).deinit_for_exit();
+                            jest::Jest::RUNNER.write(None);
+                        }
                         // SAFETY: global_exit diverges; raw-ptr reborrow mirrors Zig
                         // runWithAPILock(*VM, vm, globalExit).
                         let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm);

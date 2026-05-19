@@ -102,9 +102,9 @@ pub const O_DSYNC: i32 = O::DSYNC;
 /// Constant for fs.open(). Flag indicating to open the symbolic link itself rather than the resource it is pointing to.
 pub const O_SYMLINK: i32 = O::SYMLINK;
 /// Constant for fs.open(). When set, an attempt will be made to minimize caching effects of file I/O.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub const O_DIRECT: i32 = libc::O_DIRECT;
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
 pub const O_DIRECT: i32 = 0;
 /// Constant for fs.open(). Flag indicating to open the file in nonblocking mode when possible.
 pub const O_NONBLOCK: i32 = O::NONBLOCK;
@@ -160,7 +160,6 @@ pub const S_IXOTH: i32 = posix::S::IXOTH as i32;
 pub const UV_FS_O_FILEMAP: i32 = 536870912;
 
 // TODO(port): verify constant types — Zig left these as comptime_int / inherited
-// from bun.O / std.posix.S; Phase B should align with bun_sys's actual repr
-// (u32 vs i32) once that crate lands.
+// from bun.O / std.posix.S; align with bun_sys's actual repr (u32 vs i32).
 
 // ported from: src/runtime/node/node_fs_constant.zig

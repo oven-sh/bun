@@ -41,6 +41,9 @@ pub struct MapEntry {
     /// can allocate those nodes here instead of in the resettable `Store` —
     /// the cached `root` outlives `initialize_store()` resets.
     pub json_arena: bun_alloc::Arena,
+    /// Superseded `source.contents` buffers, pinned so cached `root` slices
+    /// stay valid; freed when the entry drops.
+    pub stale_contents: Vec<std::borrow::Cow<'static, [u8]>>,
 }
 
 impl Default for MapEntry {
@@ -51,6 +54,7 @@ impl Default for MapEntry {
             indentation: Indentation::default(),
             path_storage: bun_core::ZBox::default(),
             json_arena: bun_alloc::Arena::new(),
+            stale_contents: Vec::new(),
         }
     }
 }
@@ -155,7 +159,7 @@ impl WorkspacePackageJSONCache {
         &mut self,
         log: &mut Log,
         abs_package_json_path: &[u8],
-        // PERF(port): was comptime monomorphization — profile in Phase B
+        // PERF(port): was comptime monomorphization — profile if hot
         opts: GetJSONOptions,
     ) -> GetResult<'_> {
         debug_assert!(is_absolute(abs_package_json_path));
@@ -219,6 +223,7 @@ impl WorkspacePackageJSONCache {
             // address is stable across the move into the map.
             path_storage: key,
             json_arena: json_bump,
+            stale_contents: Vec::new(),
         };
 
         let entry = bun_core::handle_oom(self.map.get_or_put(path));
@@ -233,7 +238,7 @@ impl WorkspacePackageJSONCache {
         &mut self,
         log: &mut Log,
         source: &Source,
-        // PERF(port): was comptime monomorphization — profile in Phase B
+        // PERF(port): was comptime monomorphization — profile if hot
         opts: GetJSONOptions,
     ) -> GetResult<'_> {
         debug_assert!(is_absolute(source.path.text()));
@@ -273,6 +278,7 @@ impl WorkspacePackageJSONCache {
             indentation: parsed.indentation,
             path_storage: bun_core::ZBox::default(),
             json_arena: json_bump,
+            stale_contents: Vec::new(),
         };
 
         let entry = bun_core::handle_oom(self.map.get_or_put(path));

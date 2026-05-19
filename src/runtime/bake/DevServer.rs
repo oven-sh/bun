@@ -422,6 +422,7 @@ pub struct DevServer {
     pub bundles_since_last_error: usize,
 
     pub framework: bake::Framework,
+    pub bundler_framework_views: Vec<*mut bun_bundler::bake_types::Framework>,
     pub bundler_options: bake::SplitBundlerOptions,
     // Each logical graph gets its own bundler configuration.
     // PORT NOTE: `'static` is the DevServer-self lifetime stand-in (see
@@ -731,12 +732,14 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // SAFETY: `options.arena` outlives every `Transpiler` field it backs (see
     // `Options::arena` doc — "must live until DevServer drops").
     let arena: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(options.arena) };
+    let mut bundler_framework_views: Vec<*mut bun_bundler::bake_types::Framework> =
+        Vec::with_capacity(4);
     unsafe {
         let framework = &mut *addr_of_mut!((*p).framework);
         let log = &mut *addr_of_mut!((*p).log);
         let bundler_options = &mut *addr_of_mut!((*p).bundler_options);
 
-        if let Err(err) = framework.init_transpiler(
+        match framework.init_transpiler(
             arena,
             log,
             bake::Mode::Development,
@@ -744,9 +747,10 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             &mut *addr_of_mut!((*p).server_transpiler),
             &bundler_options.server,
         ) {
-            return Err(global.throw_error(err, generic_action));
+            Ok(view) => bundler_framework_views.push(view),
+            Err(err) => return Err(global.throw_error(err, generic_action)),
         }
-        if let Err(err) = framework.init_transpiler(
+        match framework.init_transpiler(
             arena,
             log,
             bake::Mode::Development,
@@ -754,10 +758,11 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             &mut *addr_of_mut!((*p).client_transpiler),
             &bundler_options.client,
         ) {
-            return Err(global.throw_error(err, generic_action));
+            Ok(view) => bundler_framework_views.push(view),
+            Err(err) => return Err(global.throw_error(err, generic_action)),
         }
         if separate_ssr_graph {
-            if let Err(err) = framework.init_transpiler(
+            match framework.init_transpiler(
                 arena,
                 log,
                 bake::Mode::Development,
@@ -765,21 +770,26 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
                 &mut *addr_of_mut!((*p).ssr_transpiler),
                 &bundler_options.ssr,
             ) {
-                return Err(global.throw_error(err, generic_action));
+                Ok(view) => bundler_framework_views.push(view),
+                Err(err) => return Err(global.throw_error(err, generic_action)),
             }
         } else {
             // PORT NOTE: Zig left `ssr_transpiler` `undefined` when
             // `!separate_ssr_graph` and never read it. Rust must still write a
             // valid value before `assume_init()`. Bitwise-alias the server
-            // transpiler (it is never independently dropped: `Drop for DevServer`
-            // does not free transpiler heap fields — see `useAllFields` mapping
-            // where `.ssr_transpiler = {}` is a no-op in Zig).
+            // transpiler. This is sound only because `Drop for DevServer` gates
+            // `ssr_transpiler.assume_init_drop()` behind the same
+            // `separate_ssr_graph` check (see Drop impl): in the `!separate`
+            // branch the alias is never independently dropped, so there is no
+            // double-free. Do not remove that gate.
             ::core::ptr::copy_nonoverlapping(
                 addr_of_mut!((*p).server_transpiler).cast_const(),
                 addr_of_mut!((*p).ssr_transpiler),
                 1,
             );
         }
+
+        w!(bundler_framework_views, bundler_framework_views);
     }
 
     // ── every field is now written ───────────────────────────────────────────
@@ -852,8 +862,11 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // `serverRuntimeImportSource` in `wrap_exports_for_client_reference`) see
     // absolute paths instead of the user's relative `"./framework/server.ts"`.
     {
-        let resolved_view: &'static bun_bundler::bake_types::Framework =
-            &*arena.alloc(dev.framework.as_bundler_view());
+        let resolved_ptr: *mut bun_bundler::bake_types::Framework =
+            arena.alloc(dev.framework.as_bundler_view());
+        dev.bundler_framework_views.push(resolved_ptr);
+        // SAFETY: `resolved_ptr` is a fresh arena slot, no aliasing borrows.
+        let resolved_view: &'static bun_bundler::bake_types::Framework = unsafe { &*resolved_ptr };
         dev.server_transpiler_mut().options.framework = Some(resolved_view);
         dev.client_transpiler_mut().options.framework = Some(resolved_view);
         if separate_ssr_graph {
@@ -964,10 +977,11 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // Add react fast refresh if needed. This is the first file on the client side,
     // as it will be referred to by index.
     if let Some(rfr) = &dev.framework.react_fast_refresh {
-        debug_assert!(
-            dev.client_graph.insert_stale(&rfr.import_source, false)?
-                == incremental_graph::FileIndex::<{ bake::Side::Client }>::init(0) // Zig: react_refresh_index = .init(0)
-        );
+        // Spec (DevServer.zig:511): `bun.assert` always evaluates its argument;
+        // `debug_assert!` does not in release. Hoist the side-effecting `insert_stale`
+        // out so the refresh runtime is registered at index 0 in all builds.
+        let idx = dev.client_graph.insert_stale(&rfr.import_source, false)?;
+        debug_assert!(idx == incremental_graph::FileIndex::<{ bake::Side::Client }>::init(0)); // Zig: react_refresh_index = .init(0)
     }
 
     if !dev.frontend_only {
@@ -1171,6 +1185,39 @@ impl Drop for DevServer {
                 &mut batch.entry_points,
                 EntryPointList::empty(),
             ));
+        }
+
+        let separate_ssr_graph = self
+            .framework
+            .server_components
+            .as_ref()
+            .is_some_and(|sc| sc.separate_ssr_graph);
+        // SAFETY: each transpiler is initialized exactly once in `init()`.
+        unsafe {
+            self.server_transpiler.assume_init_drop();
+            self.client_transpiler.assume_init_drop();
+            if separate_ssr_graph {
+                self.ssr_transpiler.assume_init_drop();
+            }
+        }
+
+        // SAFETY: each ptr is a unique arena slot written once in `init()`.
+        for &ptr in &self.bundler_framework_views {
+            unsafe { ::core::ptr::drop_in_place(ptr) };
+        }
+        self.bundler_framework_views.clear();
+
+        for rb in &mut self.route_bundles {
+            if let Some(bundle) = rb.client_bundle.take() {
+                // SAFETY: stored ref from `StaticRoute::init_*`; no live borrow.
+                unsafe { StaticRoute::deref_(bundle.as_ptr()) };
+            }
+            if let route_bundle::Data::Html(html) = &mut rb.data {
+                if let Some(cached) = html.cached_response.take() {
+                    // SAFETY: stored ref from `init_from_any_blob`; no live borrow.
+                    unsafe { StaticRoute::deref_(cached.as_ptr()) };
+                }
+            }
         }
 
         debug_assert!(self.magic == Magic::Valid);
@@ -3807,6 +3854,14 @@ pub fn finalize_bundle(
     // without re-borrowing `result.chunks` (already split).
     let chunks_ptr: *mut bundler::chunk::Chunk = result.chunks.as_mut_ptr();
     let chunks_len = result.chunks.len();
+    scopeguard::defer! {
+        // SAFETY: `chunks_ptr/len` snapshot the arena slice before any `split_at_mut`.
+        unsafe {
+            ::core::ptr::drop_in_place(::core::ptr::slice_from_raw_parts_mut(
+                chunks_ptr, chunks_len,
+            ));
+        }
+    };
     let (js_chunk_slice, rest_chunks) = result.chunks.split_at_mut(1);
     let js_chunk = &mut js_chunk_slice[0];
     let (css_chunks_mut, html_rest) = rest_chunks.split_at_mut(n_css);
@@ -3896,7 +3951,7 @@ pub fn finalize_bundle(
                     code: compile_result.code().to_vec().into_boxed_slice(),
                     source_map: Some(incremental_graph::ReceiveChunkSourceMap {
                         chunk: source_map,
-                        escaped_source: quoted_contents.clone(),
+                        escaped_source: quoted_contents.clone().map(Vec::into_boxed_slice),
                     }),
                 },
                 false,
@@ -3908,7 +3963,7 @@ pub fn finalize_bundle(
                     code: compile_result.code().to_vec().into_boxed_slice(),
                     source_map: Some(incremental_graph::ReceiveChunkSourceMap {
                         chunk: source_map,
-                        escaped_source: quoted_contents.clone(),
+                        escaped_source: quoted_contents.clone().map(Vec::into_boxed_slice),
                     }),
                 },
                 graph == bake::Graph::Ssr,

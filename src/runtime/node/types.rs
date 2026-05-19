@@ -532,7 +532,13 @@ impl StringOrBuffer {
         }
 
         if encoding == Encoding::Utf8 {
-            return Self::from_js_maybe_async_into(out, global, value, is_async, allow_string_object);
+            return Self::from_js_maybe_async_into(
+                out,
+                global,
+                value,
+                is_async,
+                allow_string_object,
+            );
         }
 
         if value.is_string() {
@@ -643,11 +649,10 @@ pub enum Encoding {
 }
 
 // PORT NOTE: Zig used `ComptimeStringMap` (`fromJSCaseInsensitive` /
-// `inMapCaseInsensitive`). Phase A originally lowered this to a `phf::Map`,
-// but with only 13 short keys spread across 7 distinct lengths (max 4 keys at
-// len==6) a length-gated byte match beats phf's hash+probe — see
-// `Encoding::from` below. The case-insensitive entry points lowercase into a
-// stack buffer first.
+// `inMapCaseInsensitive`). With only 13 short keys spread across 7 distinct
+// lengths (max 4 keys at len==6) a length-gated byte match beats a
+// `phf::Map`'s hash+probe — see `Encoding::from` below. The case-insensitive
+// entry points lowercase into a stack buffer first.
 
 impl From<Encoding> for bun_core::NodeEncoding {
     fn from(e: Encoding) -> Self {
@@ -863,7 +868,7 @@ impl Encoding {
                 encoded.transfer_to_js(global_object)
             }
             Self::Buffer => jsc::ArrayBuffer::create_buffer(global_object, input),
-            // PERF(port): was comptime monomorphization (`inline else`) — profile in Phase B
+            // PERF(port): was comptime monomorphization (`inline else`) — profile if it shows up on a hot path
             enc => crate::webcore::encoding::to_string(input, global_object, enc),
         }
     }
@@ -924,8 +929,8 @@ pub struct CallbackTask<Result> {
 }
 
 // PORT NOTE: Zig uses an untagged `union` discriminated by `success: bool`.
-// Represented here as a Rust enum; callers must keep `success` in sync or
-// drop the `success` field entirely in Phase B.
+// Represented here as a Rust enum; callers must keep `success` in sync.
+// TODO(refactor): drop the redundant `success` field entirely.
 pub enum CallbackTaskOption<Result> {
     Err(bun_sys::SystemError),
     Result(Result),
@@ -1031,7 +1036,7 @@ pub trait PathOrFdExt {
 impl PathLikeExt for PathLike {
     // TODO(port): Zig return type is `if (force) [:0]u8 else [:0]const u8`.
     // Rust const-generics can't change return mutability; we always return `&ZStr`.
-    // The single force=true caller (if any) needs `&mut ZStr` — handle in Phase B.
+    // The single force=true caller (if any) needs `&mut ZStr` — handle if it comes up.
     fn slice_z_with_force_copy<'a, const FORCE: bool>(
         &'a self,
         buf: &'a mut PathBuffer,
@@ -1318,8 +1323,13 @@ impl PathLikeExt for PathLike {
 
             sliced.report_extra_memory(global.vm());
 
-            // It is expensive to keep both around.
-            Ok(Self::EncodedSlice(core::mem::take(&mut sliced.utf8)))
+            // It is expensive to keep both around. `utf8` here is an Owned
+            // transcoded copy (UTF-16 or non-ASCII Latin-1 input), so the
+            // returned EncodedSlice is independent of `underlying` — release
+            // the WTFStringImpl ref `to_slice` moved into it.
+            let utf8 = core::mem::take(&mut sliced.utf8);
+            sliced.deinit();
+            Ok(Self::EncodedSlice(utf8))
         }
     }
 }
@@ -1615,7 +1625,7 @@ impl FileSystemFlags {
             }
 
             let flags: Option<i32> = 'brk: {
-                // PERF(port): was comptime bool dispatch (`inline else`) — profile in Phase B
+                // PERF(port): was comptime bool dispatch (`inline else`) — profile if it shows up on a hot path
                 if str.is_16bit() {
                     let chars = str.utf16_slice_aligned();
                     if (chars[0] as u8).is_ascii_digit() {
@@ -1709,10 +1719,10 @@ impl FileSystemFlags {
 }
 
 // PERF(port): Zig used `ComptimeStringMap.getWithEql(str, ZigString.eqlComptime)`.
-// Phase A lowered this to a 44-entry `phf::Map`, but the keys are tiny (1..=3
-// bytes) and cluster heavily by length (6/22/16). phf's hash+probe is dominated
-// by the SipHash of the input slice; a length-gated byte match rejects on a
-// single `usize` compare and lowers the inner arms to 1-2 register compares.
+// A 44-entry `phf::Map` would work, but the keys are tiny (1..=3 bytes) and
+// cluster heavily by length (6/22/16). phf's hash+probe is dominated by the
+// SipHash of the input slice; a length-gated byte match rejects on a single
+// `usize` compare and lowers the inner arms to 1-2 register compares.
 // Same pattern as `clap::find_param` (12577e958d71).
 //
 // 2-level dispatch: `len` → `(b0, b1)` tuple. The original 44 keys are 22
@@ -1895,9 +1905,9 @@ impl PathOrBlob {
         if let Some(blob) = arg.as_class_ref::<Blob>() {
             // Zig: `blob.*` — a raw bitwise copy with no ref bumps that callers
             // never `deinit()`. `borrowed_view()` is the sound Rust spelling: it
-            // clones only the `StoreRef` (whose `Drop` balances the +1) and
-            // aliases `name`/`content_type`; `dupe()` would leak both since
-            // `Blob` has no `Drop`. `as_class_ref` is the safe shared-borrow
+            // clones the `StoreRef`/`name` (whose `Drop`s balance the +1) and
+            // aliases `content_type`; `dupe()` would leak the boxed
+            // `content_type` copy. `as_class_ref` is the safe shared-borrow
             // downcast — the JS wrapper roots the payload while `arg` is on the
             // stack.
             return Ok(PathOrBlob::Blob(blob.borrowed_view()));

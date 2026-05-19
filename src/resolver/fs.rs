@@ -164,7 +164,7 @@ pub(crate) type DirnameStoreBacking =
 pub(crate) type FilenameStoreBacking =
     allocators::BSSStringList<{ preallocate::counts::FILES * 2 }, { 64 + 1 }>;
 // PORT NOTE: Zig `BSSList(_COUNT)` → Rust `BSSList<{_COUNT * 2}>`.
-pub type EntryStoreBacking = allocators::BSSList<Entry, { preallocate::counts::FILES * 2 }>;
+pub(crate) type EntryStoreBacking = allocators::BSSList<Entry, { preallocate::counts::FILES * 2 }>;
 
 // Per-monomorphization singleton storage — Zig kept `var instance` inside the
 // generic; Rust emits it at the declare site via `bss_*!` macros (returns `*mut`).
@@ -548,7 +548,7 @@ impl Default for EntryCache {
 pub struct Entry {
     pub cache: core::cell::Cell<EntryCache>,
     // TODO(port): rule deviation — Zig deinit calls allocator.free(e.dir) so guide says Box<[u8]>,
-    // but this points into DirnameStore (a &'static BSSList). Keeping &'static; Phase B revisit.
+    // but this points into DirnameStore (a &'static BSSList). Keeping &'static.
     pub dir: &'static [u8],
 
     pub base_: strings::StringOrTinyString,
@@ -824,7 +824,7 @@ impl<T: DirEntryIterator + ?Sized> DirEntryIterator for &T {
 /// Port of `FileSystem.DirEntry` in `fs.zig`.
 pub struct DirEntry {
     // TODO(port): rule deviation — Zig deinit calls allocator.free(d.dir) so guide says Box<[u8]>,
-    // but this is interned in DirnameStore (a &'static BSSList). Keeping &'static; Phase B revisit.
+    // but this is interned in DirnameStore (a &'static BSSList). Keeping &'static.
     pub dir: &'static [u8],
     pub fd: Fd,
     pub generation: Generation,
@@ -906,9 +906,11 @@ impl DirEntry {
             if name_slice.len() <= MAX_PATH_BYTES {
                 None
             } else {
-                Some(bun_collections::StringHashMapContext::PrehashedCaseInsensitive::init(
-                    name_slice,
-                ))
+                Some(
+                    bun_collections::StringHashMapContext::PrehashedCaseInsensitive::init(
+                        name_slice,
+                    ),
+                )
             };
         let name_lc: &[u8] = match &name_lc_heap {
             Some(p) => &p.input[..],
@@ -1082,7 +1084,7 @@ impl DirEntry {
     // PORT NOTE: Zig used comptime string lowering + comptime hash; Rust port
     // takes a &'static [u8] that is already lowercase.
     pub fn get_comptime_query<'a>(&'a self, query_lower: &'static [u8]) -> Option<EntryLookup<'a>> {
-        // PERF(port): was comptime hash precompute — profile in Phase B
+        // PERF(port): was comptime hash precompute — profile if hot
         let &result_ptr = self.data.get(query_lower)?;
         // SAFETY: EntryStore-owned pointer; read-only basename compare.
         let basename = unsafe { &*result_ptr }.base();
@@ -1109,7 +1111,7 @@ impl DirEntry {
 
     /// Port of `DirEntry.hasComptimeQuery` in `fs.zig`.
     pub fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
-        // PERF(port): was comptime hash precompute — profile in Phase B
+        // PERF(port): was comptime hash precompute — profile if hot
         self.data.contains_key(query_lower)
     }
 
@@ -1722,7 +1724,7 @@ impl ModKey {
     pub const SAFETY_GAP: i32 = 3;
 
     pub fn hash_name(&self, basename: &[u8]) -> Result<&'static [u8], bun_core::Error> {
-        // TODO(port): returns slice into threadlocal buffer; lifetime is unsound — Phase B should take caller buf
+        // TODO(port): returns slice into threadlocal buffer; lifetime is unsound — should take a caller-supplied buffer
         let hex_int = self.hash();
 
         HASH_NAME_BUF.with_borrow_mut(|buf| {
@@ -1908,14 +1910,14 @@ impl TmpfilePosix {
     pub(crate) fn close_and_delete(&mut self, name: &ZStr) {
         self.close();
 
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             if self.dir_fd == Fd::INVALID {
                 return;
             }
             let _ = bun_sys::unlinkat(self.dir_fd, name);
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             let _ = name;
         }
@@ -2086,9 +2088,8 @@ impl RealFS {
         // `while (try iter.next()) |*e| dir.addEntry(e)`. Floor at 64 even when
         // a `prev_map` exists but is tiny/empty — a directory that just grew
         // would otherwise rebuild `data` from a zero-capacity table.
-        dir.data.ensure_unused_capacity(
-            prev_map.as_deref().map(|m| m.count()).unwrap_or(0).max(64),
-        )?;
+        dir.data
+            .ensure_unused_capacity(prev_map.as_deref().map(|m| m.count()).unwrap_or(0).max(64))?;
 
         // Hoist the `FilenameStore` singleton resolution (Once + LazyLock atomic
         // checks) out of the per-entry loop.
@@ -2802,9 +2803,9 @@ impl RealFS {
             } else {
                 // PORT NOTE: Zig `bun.openFileForPath` (bun.zig:1900-1910) — O_PATH is
                 // Linux-only; macOS/BSD use O_RDONLY. Both add O_NOCTTY|O_CLOEXEC.
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "android"))]
                 let flags = bun_sys::O::PATH | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
-                #[cfg(not(target_os = "linux"))]
+                #[cfg(not(any(target_os = "linux", target_os = "android")))]
                 let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
                 bun_sys::open(absolute_path, flags, 0)?
             };
@@ -2979,9 +2980,9 @@ impl RealFS {
                 } else {
                     // PORT NOTE: Zig `bun.openFileForPath` (bun.zig:1900-1910) — O_PATH is
                     // Linux-only; macOS/BSD use O_RDONLY. Both add O_NOCTTY|O_CLOEXEC.
-                    #[cfg(target_os = "linux")]
+                    #[cfg(any(target_os = "linux", target_os = "android"))]
                     let flags = bun_sys::O::PATH | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
-                    #[cfg(not(target_os = "linux"))]
+                    #[cfg(not(any(target_os = "linux", target_os = "android")))]
                     let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
                     bun_sys::open(absolute_path_c, flags, 0)?
                 };
@@ -3190,7 +3191,7 @@ impl core::fmt::Display for PrintHandle<Fd> {
 
 #[path = "fs/stat_hash.rs"]
 pub mod stat_hash;
-// TODO(b2-blocked): src/resolver/fs/stat_hash.rs depends on bun_hash::XxHash64 +
+// TODO(port): src/resolver/fs/stat_hash.rs depends on bun_hash::XxHash64 +
 // bun_http_types::wtf::write_http_date — gated until those land.
 
 // ported from: src/resolver/fs.zig

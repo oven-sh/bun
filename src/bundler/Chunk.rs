@@ -38,7 +38,7 @@ pub struct ChunkImport {
 }
 
 // TODO(port): arena lifetime — string/slice fields below borrow from the bundler arena
-// (no deinit in Zig). Phase A uses &'static [u8] / Box<[T]> as placeholders; Phase B
+// (no deinit in Zig). Currently uses &'static [u8] / Box<[T]> as placeholders;
 // should thread a `'bump` lifetime or use arena slice newtypes.
 pub struct Chunk {
     /// This is a random string and is used to represent the output path of this
@@ -648,11 +648,10 @@ impl IntermediateOutput {
         force_absolute_path: bool,
         standalone_chunk_contents: Option<&[Option<Box<[u8]>>]>,
     ) -> Result<CodeResult, AllocError> {
-        // B-2 second pass: un-gated. `Graph.input_files` SoA accessors are now
-        // real (`Graph::InputFileColumns`); `LinkerGraph.files` SoA
-        // (`items_entry_point_chunk_index`) lands with the LinkerGraph un-gate.
-        // `bun_paths` / `bun_core::fmt::count` / `bun_alloc::alloc_slice`
-        // surfaces are tracked upstream.
+        // `Graph.input_files` SoA accessors live in `Graph::InputFileColumns`;
+        // `LinkerGraph.files` SoA (`items_entry_point_chunk_index`) lands with
+        // the LinkerGraph work. `bun_paths` / `bun_core::fmt::count` /
+        // `bun_alloc::alloc_slice` surfaces are tracked upstream.
         // TODO(port): MultiArrayList SoA accessors — assuming `.items(.field)` → method returning slice
         let additional_files = graph.input_files.items_additional_files();
         let unique_key_for_additional_files =
@@ -1326,7 +1325,9 @@ impl Drop for CssChunk {
         // copies (see `prepareCssAstsForChunk` `ptr::read`). Multiple slots may
         // alias the same source AST's heap buffers when a file is imported more
         // than once, so element-wise drop would double-free.
-        core::mem::forget(core::mem::take(&mut self.asts));
+        let mut asts = core::mem::take(&mut self.asts).into_vec();
+        // SAFETY: `set_len(0)` then `Vec::drop` frees the slab without running element destructors.
+        unsafe { asts.set_len(0) };
     }
 }
 
@@ -1347,8 +1348,8 @@ impl Drop for CssImportOrder {
     fn drop(&mut self) {
         // `conditions`: bitwise-shared across multiple order entries by
         // `findImportedFilesInCSSOrder` (`bitwise_copy(wrapping_conditions)`);
-        // freeing here would double-free. Global-backed → leaks until the
-        // aliasing is replaced (PORTING.md §CSS-import-order).
+        // freeing here would double-free. The slab is allocated from the
+        // `LinkerGraph` arena and is bulk-freed with it.
         core::mem::forget(core::mem::take(&mut self.conditions));
         // `condition_import_records`: every populated value is uniquely owned
         // (moved `all_import_records`) or an empty-Vec bitwise copy (cap == 0,
@@ -1374,7 +1375,7 @@ pub enum CssImportOrderKind {
 // TODO(port): bun.ptr.Cow(Vec<LayerName>, { copy = deepCloneInfallible, deinit = clearAndFree })
 // LayerName payload allocations live in the arena, so the Zig deinit is a shallow clearAndFree.
 // `std::borrow::Cow<'_, Vec<_>>` requires `Vec: Clone` (not implemented). Port the
-// Zig `bun.ptr.Cow` shape directly: a tag + raw pointer for the borrowed arm. Phase B should
+// Zig `bun.ptr.Cow` shape directly: a tag + raw pointer for the borrowed arm. Should
 // thread `'bump` (arena-borrowed) and confirm Clone semantics match deepCloneInfallible.
 pub enum Layers {
     /// Borrowed from another `CssImportOrder`'s `Layers` or the parsed stylesheet.

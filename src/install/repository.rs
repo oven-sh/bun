@@ -6,7 +6,7 @@ use bstr::BStr;
 
 use bun_alloc::AllocError;
 use bun_core::strings;
-use bun_core::{self, Error, err};
+use bun_core::{self, Error, Output, err};
 use bun_paths::{self as Path, PathBuffer};
 use bun_semver::String;
 use bun_semver::StringBuilder as StringBuilderLike;
@@ -20,7 +20,7 @@ use crate::install::{self as Install, ExtractData, PackageManager};
 
 // TODO(port): bun.ThreadlocalBuffers — Zig returns a raw pointer into thread-local
 // storage so callers can return slices that outlive the access. Rust thread_local!
-// closures cannot express this without unsafe. Phase B should either (a) make
+// closures cannot express this without unsafe. TODO(refactor): either (a) make
 // try_ssh/try_https take an out-buffer, or (b) wrap in a type that hands out
 // a raw `*mut PathBuffer` via UnsafeCell with documented single-use invariant.
 struct TlBufs {
@@ -39,7 +39,7 @@ thread_local! {
 }
 
 fn tl_bufs() -> *mut TlBufs {
-    // SAFETY (audited phase-d):
+    // SAFETY (audited):
     // - `TL_BUFS` is thread-local `Cell<*mut TlBufs>`: no cross-thread sharing; the
     //   pointer is `Copy` so `.get()/.set()` are zero-unsafe. The payload itself is a
     //   leaked heap alloc (lazy-init below), so the `*mut` stays valid for thread life.
@@ -130,7 +130,7 @@ impl SloppyGlobalGitConfig {
         let config_file_path = bun_paths::resolve_path::join_abs_string_buf_z::<
             bun_paths::platform::Auto,
         >(home_dir, &mut config_file_path_buf, &[b".gitconfig"]);
-        // PERF(port): was stack-fallback alloc (4096) — profile in Phase B
+        // PERF(port): was stack-fallback alloc (4096)
         // MOVE_DOWN: `File::toSource` lives in `bun_logger` (T1→T2 cyclebreak).
         let Ok(source) = bun_ast::to_source(
             config_file_path,
@@ -394,6 +394,28 @@ fn exec(env: &bun_dotenv::Map, argv: &[&[u8]]) -> Result<Vec<u8>, Error> {
         _ => {}
     }
 
+    // Surface git's own diagnostics — the "git fetch/clone failed" log messages
+    // at the call sites only mention the package name, which leaves CI failures
+    // (auth, ssh, signal) opaque. Mirror git's stderr to ours and report the
+    // termination kind so the actual cause is visible.
+    {
+        let term = match result.term {
+            bun_spawn::Term::Exited(code) => format!("exit code {code}"),
+            bun_spawn::Term::Signal(sig) => format!("signal {sig}"),
+            bun_spawn::Term::Stopped(sig) => format!("stopped (signal {sig})"),
+            bun_spawn::Term::Unknown(_) => "unknown status".to_string(),
+        };
+        Output::err_generic("{} failed with {}", (BStr::new(argv[0]), term.as_str()));
+        if !result.stderr.is_empty() {
+            let ew = Output::error_writer();
+            let _ = ew.write_all(&result.stderr);
+            if result.stderr.last() != Some(&b'\n') {
+                let _ = ew.write_all(b"\n");
+            }
+        }
+        Output::flush();
+    }
+
     Err(err!("InstallFailed"))
 }
 
@@ -649,7 +671,7 @@ impl RepositoryExt for Repository {
         url: &[u8],
         attempt: u8,
     ) -> Result<bun_sys::Dir, Error> {
-        // TODO(port): std::fs::Dir is banned — using bun_sys::Dir placeholder; verify API in Phase B.
+        // TODO(port): verify bun_sys::Dir API matches the Zig original (std::fs::Dir is banned).
         bun_analytics::features::git_dependencies
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         // Per-field accessor — retags only `folder_name_buf`, leaving any live
@@ -805,7 +827,7 @@ impl RepositoryExt for Repository {
         url: &[u8],
         resolved: &[u8],
     ) -> Result<ExtractData, Error> {
-        // TODO(port): std::fs::Dir is banned — using bun_sys::Dir placeholder; verify API in Phase B.
+        // TODO(port): verify bun_sys::Dir API matches the Zig original (std::fs::Dir is banned).
         bun_analytics::features::git_dependencies
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let folder_name_buf = TlBufs::folder_name_buf();

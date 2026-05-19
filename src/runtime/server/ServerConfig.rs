@@ -57,8 +57,8 @@ pub struct ServerConfig {
     pub id: Box<[u8]>,
     pub allow_hot: bool,
     pub ipv6_only: bool,
-    pub h3: bool,
-    pub h1: bool,
+    pub http3: bool,
+    pub http1: bool,
 
     pub is_node_http: bool,
     pub had_routes_object: bool,
@@ -91,8 +91,8 @@ impl Default for ServerConfig {
             id: Box::default(),
             allow_hot: true,
             ipv6_only: false,
-            h3: false,
-            h1: true,
+            http3: false,
+            http1: true,
             is_node_http: false,
             had_routes_object: false,
             static_routes: Vec::new(),
@@ -282,7 +282,7 @@ impl ServerConfig {
         // Rust cannot alias owned Vec/Box/Strong; instead move every owning
         // field into `that` and leave the Copy scalars in place on `self` —
         // matching Zig's observable post-state for `self` (idle_timeout,
-        // development, reuse_port, h1/h3, etc. retained; resources gone) and
+        // development, reuse_port, http1/http3, etc. retained; resources gone) and
         // ensuring the assignment-drop of the residual `self` is a no-op.
         let mut that = ServerConfig {
             address: core::mem::take(&mut self.address),
@@ -305,8 +305,8 @@ impl ServerConfig {
             id: core::mem::take(&mut self.id),
             allow_hot: self.allow_hot,
             ipv6_only: self.ipv6_only,
-            h3: self.h3,
-            h1: self.h1,
+            http3: self.http3,
+            http1: self.http1,
             is_node_http: self.is_node_http,
             had_routes_object: self.had_routes_object,
             static_routes: core::mem::take(&mut self.static_routes),
@@ -483,7 +483,7 @@ pub trait StaticRouteLike<const SSL: bool>: 'static {
     );
 }
 
-// PORT NOTE (layering): the Phase-A `RequestUnion`/`ResponseUnion` placeholders
+// PORT NOTE (layering): the original `RequestUnion`/`ResponseUnion` placeholders
 // were duplicates of `bun_uws_sys::AnyRequest`/`AnyResponse` (which already
 // model Zig's `.{ .h1 = req }` / `.{ .SSL = resp }`). Re-export the real types
 // so any straggler reference resolves to the canonical opaque.
@@ -650,7 +650,7 @@ fn get_routes_object(global: &JSGlobalObject, arg: JSValue) -> JsResult<Option<J
 /// Bridge `crate::bake::FileSystemRouterType` (Cow-backed, populated by
 /// `server_body::AnyRoute::from_js`) into `bake_body::FileSystemRouterType`
 /// (`&'static [u8]`-backed, consumed by `Framework::auto`). Both mirror Zig's
-/// single `bake.Framework.FileSystemRouterType`; the duplication is a Phase-A
+/// single `bake.Framework.FileSystemRouterType`; the duplication is a
 /// layering wart and this conversion stands in for an arena-dupe until the two
 /// structs unify. All bytes are duped into `arena` so the resulting `&'static`
 /// slices live as long as `UserOptions.arena`.
@@ -661,9 +661,9 @@ fn convert_file_system_router_type(
     use crate::bake::bake_body as bb;
     // PORT NOTE: `bb::arena_erase` is the single sanctioned `'bump → 'static`
     // erasure for the `UserOptions.arena` self-referential pattern; bake_body's
-    // own `Framework::from_js` / `resolve` use it identically. Phase B threads
-    // a real `'bump` through `bb::Framework`/`bb::FileSystemRouterType` and
-    // removes this together with `arena_erase`.
+    // own `Framework::from_js` / `resolve` use it identically.
+    // TODO(refactor): thread a real `'bump` through `bb::Framework`/
+    // `bb::FileSystemRouterType` and remove this together with `arena_erase`.
     fn dupe(arena: &bun_alloc::Arena, bytes: &[u8]) -> &'static [u8] {
         bb::arena_erase(arena.alloc_slice_copy(bytes))
     }
@@ -1027,7 +1027,7 @@ impl ServerConfig {
 
                     // Convert `crate::bake::FileSystemRouterType` (Cow-backed)
                     // into `bake_body::FileSystemRouterType` (`&'static` slices)
-                    // by duping every string into the arena. Phase-A type
+                    // by duping every string into the arena. Type
                     // duplication; remove once the two structs unify.
                     let router_types: Vec<bb::FileSystemRouterType> =
                         core::mem::take(&mut init_ctx.framework_router_list)
@@ -1177,7 +1177,7 @@ impl ServerConfig {
             arg.get_stringish(global, "host")?
         };
         if let Some(host) = host {
-            // host derefs on drop
+            let host = bun_core::OwnedString::new(host);
             let host_str = host.to_utf8();
 
             if !host_str.slice().is_empty() {
@@ -1265,14 +1265,14 @@ impl ServerConfig {
         }
 
         if let Some(v) = arg.get(global, "http3")? {
-            args.h3 = v.to_boolean();
+            args.http3 = v.to_boolean();
         }
         if global.has_exception() {
             return Err(JsError::Thrown);
         }
 
         if let Some(v) = arg.get(global, "http1")? {
-            args.h1 = v.to_boolean();
+            args.http1 = v.to_boolean();
         }
         if global.has_exception() {
             return Err(JsError::Thrown);
@@ -1409,18 +1409,18 @@ impl ServerConfig {
             }
         }
 
-        if args.h3 {
+        if args.http3 {
             if args.ssl_config.is_none() {
                 return Err(
                     global.throw_invalid_arguments(format_args!("HTTP/3 requires 'tls' to be set"))
                 );
             }
-        } else if !args.h1 {
+        } else if !args.http1 {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Cannot disable http1 without enabling http3"
             )));
         }
-        if !args.h1 && matches!(args.address, Address::Unix(_)) {
+        if !args.http1 && matches!(args.address, Address::Unix(_)) {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Cannot disable http1 with a unix socket — HTTP/3 over AF_UNIX is not supported",
             )));

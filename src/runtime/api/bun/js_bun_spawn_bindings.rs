@@ -300,8 +300,7 @@ fn get_argv(
 
     let mut arg_index: usize = 1;
     while let Some(value) = cmds_array.next()? {
-        let arg = value.to_bun_string(global_this)?;
-        // `arg` derefs on drop (was `defer arg.deref()`).
+        let arg = bun_core::OwnedString::new(value.to_bun_string(global_this)?);
 
         // Check for null bytes in argument (security: prevent null byte injection)
         if arg.index_of_ascii_char(0).is_some() {
@@ -365,7 +364,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
     }
 
-    // PERF(port): was arena bulk-free — argv/env strings allocated per-iteration; profile in Phase B.
+    // PERF(port): was arena bulk-free — argv/env strings allocated per-iteration; profile if hot.
     // Backing store for every NUL-terminated string whose `*const c_char` is
     // pushed into `argv` / `argv0` / `env_array` below. Zig used a bump arena
     // (`arena.deinit()` at fn exit); this `Vec` is the Rust equivalent and
@@ -916,7 +915,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     // PORT NOTE: reshaped for borrowck — re-borrow through the guard tuple so the guard
     // stays armed (runs on every early return) until disarmed by `**should_close_memfd = false` below.
     // TODO(port): errdefer — if borrowck rejects the double-&mut reborrow at later use sites,
-    // Phase B may need to move stdio into the guard by value and reborrow via DerefMut.
+    // may need to move stdio into the guard by value and reborrow via DerefMut.
     let (should_close_memfd, stdio) = &mut *memfd_guard;
 
     // "NODE_CHANNEL_FD=" is 16 bytes long, 15 bytes for the number, and 1 byte for the null terminator should be enough/safe
@@ -1241,8 +1240,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         stdin: JsCell::new(Writable::Ignore),
         stdout: JsCell::new(Readable::Ignore),
         stderr: JsCell::new(Readable::Ignore),
-        // 1. JavaScript.
-        // 2. Process.
+        // 1=JS (released in Subprocess::finalize), 2=Process exit handler
+        // (released in Subprocess::on_process_exit; stranded if child outlives VM teardown).
         ref_count: bun_ptr::RefCount::init_exact_refs(2),
         stdio_pipes: JsCell::new(core::mem::take(&mut spawned_extra_pipes)),
         ipc_data: JsCell::new(None),
@@ -2021,8 +2020,7 @@ pub fn append_envp_from_js(
             continue;
         }
 
-        let value_bunstr = value.to_bun_string(global_this)?;
-        // derefs on drop (was `defer value_bunstr.deref()`).
+        let value_bunstr = bun_core::OwnedString::new(value.to_bun_string(global_this)?);
 
         // Check for null bytes in env key and value (security: prevent null byte injection)
         if key.index_of_ascii_char(0).is_some() {
@@ -2051,7 +2049,7 @@ pub fn append_envp_from_js(
         }
 
         // PORT NOTE: Zig `std.fmt.allocPrintSentinel(envp.allocator, "{f}={f}", .{key, value}, 0)`
-        // PERF(port): was arena bulk-free — profile in Phase B.
+        // PERF(port): was arena bulk-free — profile if it shows up on a hot path.
         let line: ZBox = {
             let mut buf: Vec<u8> = Vec::new();
             write!(&mut buf, "{}={}", key, value_bunstr.to_zig_string())

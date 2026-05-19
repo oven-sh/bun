@@ -1212,19 +1212,12 @@ it.skipIf(isWindows)(
           console.log(code);
         `,
       ],
-      // Disable symbolization so an ASAN abort exits promptly instead of spending
-      // seconds in llvm-symbolizer against the large debug binary.
-      env: {
-        ...bunEnv,
-        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allow_user_segv_handler=1", "symbolize=0", "abort_on_error=1"]
-          .filter(Boolean)
-          .join(":"),
-      },
+      env: bunEnv,
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "inherit",
     });
 
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
     expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ELOOP", exitCode: 0 });
   },
@@ -4029,5 +4022,24 @@ describe("synchronous I/O string flags", () => {
     closeSync(fd);
 
     expect(buf.toString("utf8", 0, bytesRead)).toBe("hello");
+  });
+});
+
+describe.skipIf(isWindows)("readFileSync on a FIFO larger than the stat size", () => {
+  it("does not balloon the read buffer", async () => {
+    using dir = tempDir("fs-readfile-fifo", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "fs-readfile-fifo-fixture.js"), String(dir)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // Pre-fix this never returns (RawVec doubling balloons RSS to multiple GB);
+    // the per-test timeout would fire. Fixed: completes promptly with the full
+    // 400 KB of content intact.
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("len=409600 allA=true");
+    expect(exitCode).toBe(0);
   });
 });

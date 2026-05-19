@@ -67,8 +67,8 @@ pub struct DeduplicatedImportResult {
 }
 
 impl<'a> ConvertESMExportsForHmr<'a> {
-    // PORT NOTE: round-E un-gate — `<P>` unbounded generic → concrete `P<'p, TS, SCAN>`.
-    // TODO(b2-ast-E): Zig `p: anytype` also accepts AstBuilder; add `ParserLike` trait bound
+    // PORT NOTE: `<P>` unbounded generic → concrete `P<'p, TS, SCAN>`.
+    // TODO(port): Zig `p: anytype` also accepts AstBuilder; add `ParserLike` trait bound
     //   when bundle_v2 lands.
     pub fn convert_stmt<'p, const TS: bool, const SCAN: bool>(
         &mut self,

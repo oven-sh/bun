@@ -104,10 +104,9 @@ fn throw_core_error(global: &JSGlobalObject, e: bun_core::Error, ctx: &'static s
     global.throw_error(e, ctx)
 }
 
-/// Erase the `'bump` lifetime of an arena-backed slice. Phase-A convention
-/// (see file-level TODO(port)): `UserOptions.arena` outlives every borrower,
-/// so the bytes are valid for the program-relevant lifetime; Phase B threads
-/// a real `'bump` parameter through `Framework`/`FileSystemRouterType`.
+/// Erase the `'bump` lifetime of an arena-backed slice. Arena-erasure
+/// convention (see file-level TODO(port)): `UserOptions.arena` outlives every
+/// borrower, so the bytes are valid for the program-relevant lifetime.
 #[inline(always)]
 pub(crate) fn arena_erase<T: ?Sized>(r: &T) -> &'static T {
     // SAFETY: arena-backed; UserOptions owns the bump and is dropped last.
@@ -117,7 +116,7 @@ pub(crate) fn arena_erase<T: ?Sized>(r: &T) -> &'static T {
 }
 
 /// `arena.dupeZ(u8, bytes)` — copy `bytes` + trailing NUL into the bump arena.
-/// Returns `&'static ZStr` per the file-level Phase-A `'static` convention
+/// Returns `&'static ZStr` per the file-level `'static` convention
 /// (arena-backed; lifetime erased — see TODO(port) at top of file).
 pub(crate) fn arena_dupe_z(arena: &Arena, bytes: &[u8]) -> &'static ZStr {
     let buf: &mut [u8] = arena.alloc_slice_fill_default(bytes.len() + 1);
@@ -125,8 +124,8 @@ pub(crate) fn arena_dupe_z(arena: &Arena, bytes: &[u8]) -> &'static ZStr {
     buf[bytes.len()] = 0;
     // SAFETY: buf is NUL-terminated; arena outlives all borrowers per the
     // self-referential UserOptions pattern. Not `from_buf`: the `'static`
-    // return type intentionally erases the arena lifetime — Phase B threads
-    // `'bump` and replaces this with `from_buf`.
+    // return type intentionally erases the arena lifetime; threading a real
+    // `'bump` would replace this with `from_buf`.
     unsafe { ZStr::from_raw(buf.as_ptr(), bytes.len()) }
 }
 
@@ -135,8 +134,8 @@ pub const API_NAME: &str = "app";
 
 // TODO(port): lifetime — many `&'static [u8]` fields below are actually backed
 // by `UserOptions.arena` (bumpalo::Bump) or `UserOptions.allocations`
-// (StringRefList). Phase A uses `&'static` to avoid struct lifetime params per
-// PORTING.md; Phase B should thread `'bump` or introduce `ArenaStr`.
+// (StringRefList). `&'static` is used to avoid struct lifetime params per
+// PORTING.md; could thread `'bump` or introduce `ArenaStr`.
 
 /// Zig version of the TS definition 'Bake.Options' in 'bake.d.ts'
 pub struct UserOptions {
@@ -177,7 +176,7 @@ impl UserOptions {
         if !config.is_object() {
             // Allow users to do `export default { app: 'react' }` for convenience
             if config.is_string() {
-                let bunstr = config.to_bun_string(global)?;
+                let bunstr = bun_core::OwnedString::new(config.to_bun_string(global)?);
                 let utf8_string = bunstr.to_utf8();
 
                 if strings::eql(utf8_string.slice(), b"react") {
@@ -293,8 +292,8 @@ impl StringRefList {
         // returned slice is stored only in `Framework` / `FileSystemRouterType`
         // / `ServerComponents` fields that are themselves owned by the same
         // `UserOptions`, so no read outlives the holder. NOT process-lifetime
-        // — Phase B must re-thread a real `'bump` lifetime here (see file-level
-        // TODO(port)); `assume` makes the lie grep-able until then.
+        // — a real `'bump` lifetime should eventually be threaded here (see
+        // file-level TODO(port)); `assume` makes the lie grep-able until then.
         unsafe { bun_ptr::Interned::assume(slice) }.as_bytes()
     }
 }
@@ -762,7 +761,7 @@ impl Framework {
         arena: &Arena,
     ) -> JsResult<Framework> {
         if opts.is_string() {
-            let str = opts.to_bun_string(global)?;
+            let str = bun_core::OwnedString::new(opts.to_bun_string(global)?);
 
             // Deprecated
             if str.eql_comptime("react-server-components") {
@@ -819,7 +818,7 @@ impl Framework {
                 }
             };
 
-            let str = prop.to_bun_string(global)?;
+            let str = bun_core::OwnedString::new(prop.to_bun_string(global)?);
 
             Some(ReactFastRefresh {
                 import_source: refs.track(str.to_utf8()),
@@ -1439,7 +1438,7 @@ fn get_optional_string(
     if value.is_undefined_or_null() {
         return Ok(None);
     }
-    let str = value.to_bun_string(global)?;
+    let str = bun_core::OwnedString::new(value.to_bun_string(global)?);
     let _ = arena; // TODO(port): arena param unused after to_utf8() drops allocator
     Ok(Some(allocations.track(str.to_utf8())))
 }

@@ -850,7 +850,7 @@ pub fn migrate_npm_lockfile<'a>(
     let resolutions_base: *mut PackageID = this.buffers.resolutions.as_mut_ptr();
     let mut deps_cursor: usize = 0;
     let mut res_cursor: usize = 0;
-    // TODO(port/phase-b): Stacked-Borrows audit — these raw ptrs into
+    // TODO(port): Stacked-Borrows audit — these raw ptrs into
     // `buffers.{dependencies,resolutions}` and the `packages` columns below are
     // held across `&mut self` calls to `string_buf()` / `get_or_put_id()`. The
     // fields actually touched are disjoint (string_bytes/string_pool resp.

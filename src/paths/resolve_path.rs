@@ -128,7 +128,7 @@ pub fn get_if_exists_longest_common_path_generic<'a, P: PlatformT>(
         _ => |n, i, inp| nql_at_index_dyn(n, i, inp),
     };
     // PERF(port): Zig used `inline 2..8 => |N|` to unroll per-count; Rust uses
-    // a runtime `n` here. Profile in Phase B.
+    // a runtime `n` here. Profile if it shows up on a hot path.
 
     let mut min_length: usize = usize::MAX;
     for str in input {
@@ -247,7 +247,7 @@ pub fn longest_common_path_generic<'a, P: PlatformT>(input: &[&'a [u8]]) -> &'a 
         Platform::Windows => nql_at_index_case_insensitive_dyn,
         _ => nql_at_index_dyn,
     };
-    // PERF(port): Zig used `inline 2..8 => |N|` to unroll per-count — profile in Phase B
+    // PERF(port): Zig used `inline 2..8 => |N|` to unroll per-count — profile if hot
 
     let mut min_length: usize = usize::MAX;
     for str in input {
@@ -377,30 +377,38 @@ pub fn longest_common_path_posix<'a>(input: &[&'a [u8]]) -> &'a [u8] {
 // from/to buffers while `relative_to_common_path_buf()` is borrowed elsewhere
 // without aliasing a single parent payload. Only 3×8 bytes in static TLS instead
 // of 3×PathBuffer (see test/js/bun/binary/tls-segment-size).
+struct LazyPathBuf(core::cell::Cell<*mut PathBuffer>);
+
+impl Drop for LazyPathBuf {
+    fn drop(&mut self) {
+        let p = self.0.get();
+        if !p.is_null() {
+            // SAFETY: `p` came from `heap::into_raw` in `lazy_path_buf`; sole accessor.
+            unsafe { drop(bun_core::heap::take(p)) };
+        }
+    }
+}
+
 thread_local! {
-    static RELATIVE_TO_COMMON_PATH_BUF: core::cell::Cell<*mut PathBuffer> =
-        const { core::cell::Cell::new(core::ptr::null_mut()) };
-    static RELATIVE_FROM_BUF: core::cell::Cell<*mut PathBuffer> =
-        const { core::cell::Cell::new(core::ptr::null_mut()) };
-    static RELATIVE_TO_BUF: core::cell::Cell<*mut PathBuffer> =
-        const { core::cell::Cell::new(core::ptr::null_mut()) };
+    static RELATIVE_TO_COMMON_PATH_BUF: LazyPathBuf =
+        const { LazyPathBuf(core::cell::Cell::new(core::ptr::null_mut())) };
+    static RELATIVE_FROM_BUF: LazyPathBuf =
+        const { LazyPathBuf(core::cell::Cell::new(core::ptr::null_mut())) };
+    static RELATIVE_TO_BUF: LazyPathBuf =
+        const { LazyPathBuf(core::cell::Cell::new(core::ptr::null_mut())) };
 }
 
 /// Lazily allocate (on first use) and borrow a thread-local `PathBuffer`. One
 /// `unsafe` site for all `RELATIVE_*_BUF` accessors (nonnull-asref reduction:
 /// 5 sites → 1).
 #[inline]
-fn lazy_path_buf(c: &core::cell::Cell<*mut PathBuffer>) -> &'static mut PathBuffer {
-    let mut p = c.get();
+fn lazy_path_buf(c: &LazyPathBuf) -> &'static mut PathBuffer {
+    let mut p = c.0.get();
     if p.is_null() {
         p = bun_core::heap::into_raw(Box::new(PathBuffer::ZEROED));
-        c.set(p);
+        c.0.set(p);
     }
-    // SAFETY: `p` is non-null after the init branch above and points at a
-    // leaked `Box<PathBuffer>` (process-lifetime heap allocation). The `Cell`
-    // lives in a `thread_local!`, so this thread is the sole accessor; callers
-    // uphold the single-live-borrow-per-thread invariant documented at the
-    // thread-local declaration.
+    // SAFETY: `p` is non-null after the init branch; this thread is the sole accessor.
     unsafe { &mut *p }
 }
 
@@ -422,7 +430,7 @@ pub fn relative_to_common_path<'a, const ALWAYS_COPY: bool, P: PlatformT>(
     normalized_to_: &'a [u8],
     buf: &'a mut [u8],
 ) -> &'a [u8] {
-    // TODO(port): return borrows either `buf` or `normalized_to_`; lifetime needs unification in Phase B
+    // TODO(port): return borrows either `buf` or `normalized_to_`; lifetimes need unification.
     let mut normalized_from = normalized_from_;
     let mut normalized_to = normalized_to_;
     let win_root_len: Option<usize> = if P::P == Platform::Windows {
@@ -814,7 +822,7 @@ pub fn windows_volume_name_len_t<T: PathChar>(path: &[T]) -> (usize, usize) {
         && path[2] != T::from_u8(b'.')
     {
         // TODO(port): Zig branched on T==u8 to use SIMD index_of_any vs generic;
-        // collapse to a single generic helper here. PERF(port): profile in Phase B.
+        // collapse to a single generic helper here. PERF(port): profile if hot.
         if let Some(idx) = strings::index_of_any_t::<T>(&path[3..], T::lit(b"/\\")) {
             // TODO: handle input "//abc//def" should be picked up as a unc path
             if path.len() > idx + 4 && !Platform::Windows.is_separator_t::<T>(path[idx + 4]) {
@@ -1708,7 +1716,7 @@ pub fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(
 /// common case.
 struct JoinScratch {
     // PERF(port): was StackFallbackAllocator(MAX_PATH_BYTES * 2) — using Vec.
-    // Phase B: consider smallvec / stack-alloc fast path.
+    // TODO(perf): consider a smallvec / stack-alloc fast path.
     buf: Vec<u8>,
 }
 
@@ -1756,7 +1764,7 @@ pub fn join_abs_string_buf_checked<'a, P: PlatformT>(
     // Slow path: allocate a large scratch for the result. The inner
     // join_abs_string_buf will heap-allocate its own temp buffer for the concat
     // since `total > MAX_PATH_BYTES * 2 > sfa inline size` is likely here.
-    // PERF(port): was stack-fallback alloc — profile in Phase B
+    // PERF(port): was stack-fallback alloc — profile if hot
     let mut scratch = vec![0u8; total];
     let joined = join_abs_string_buf::<P>(cwd, &mut scratch, parts);
     if joined.len() > buf.len() {
@@ -2351,12 +2359,16 @@ pub fn next_dirname(path_: &[u8]) -> Option<&[u8]> {
 ///
 /// To use this, stack allocate the following struct, and then call `resolve`.
 ///
-///     let mut normalizer = PosixToWinNormalizer::default();
-///     let result = normalizer.resolve(b"C:\\dev\\bun", b"/dev/bun/test/etc.js");
+/// ```ignore
+/// let mut normalizer = PosixToWinNormalizer::default();
+/// let result = normalizer.resolve(b"C:\\dev\\bun", b"/dev/bun/test/etc.js");
+/// ```
 ///
 /// When you are certain that using the current working directory is fine, you can use
 ///
-///     let result = normalizer.resolve_cwd(b"/dev/bun/test/etc.js");
+/// ```ignore
+/// let result = normalizer.resolve_cwd(b"/dev/bun/test/etc.js");
+/// ```
 ///
 /// This API does nothing on Linux (it has a size of zero)
 pub struct PosixToWinNormalizer {
@@ -2415,7 +2427,7 @@ impl PosixToWinNormalizer {
     ) -> Result<&'a mut ZStr, bun_core::Error> {
         Self::resolve_cwd_with_external_buf_z(&mut self._raw_bytes, maybe_posix_path)
     }
-    // TODO(b2-windows): on posix `_raw_bytes` is `()`; the Zig version still
+    // TODO(windows): on posix `_raw_bytes` is `()`; the Zig version still
     // null-terminates into a buffer. Callers on posix should use
     // `resolve_cwd_with_external_buf_z` with an explicit PathBuffer.
 

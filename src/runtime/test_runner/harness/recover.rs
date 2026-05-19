@@ -114,7 +114,7 @@ unsafe extern "C" {
 mod musl {
     use core::ffi::c_int;
     // TODO(port): Zig used @cImport(@cInclude("setjmp.h")).jmp_buf — confirm
-    // exact musl jmp_buf size/align per target arch in Phase B. This is a
+    // exact musl jmp_buf size/align per target arch. This is a
     // STACK VALUE (`var ctx = std.mem.zeroes(Context); setjmp(&ctx)`), not an
     // opaque handle, so it must reserve real storage — a ZST would let setjmp
     // scribble past the allocation. 32×u64 over-reserves vs every musl arch.
@@ -179,8 +179,8 @@ unsafe fn set_context(ctx: *const Context) -> ! {
 /// Install at root source file as `pub const panic = @import("recover").panic;`
 // TODO(port): Zig exposed this as `std.debug.FullPanic(handler)` — a type
 // installed at the root file as `pub const panic`. Rust has no equivalent
-// declarative panic-handler slot; Phase B should wire this via
-// `std::panic::set_hook` (or a `#[panic_handler]` in no_std) at startup.
+// declarative panic-handler slot; wire this via `std::panic::set_hook`
+// (or a `#[panic_handler]` in no_std) at startup.
 pub fn panic(msg: &[u8], first_trace_addr: Option<usize>) -> ! {
     panicked();
     // TODO(port): std.debug.defaultPanic — route to bun_core's default panic.

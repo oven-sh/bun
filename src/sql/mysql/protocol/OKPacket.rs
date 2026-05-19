@@ -17,7 +17,7 @@ pub struct OKPacket {
 
 // Zig field defaults: header=0x00, affected_rows=0, last_insert_id=0, status_flags={},
 // warnings=0, info=.empty, session_state_changes=.empty. `packet_size` has NO default
-// (caller must supply it), so no `Default` impl — Phase B may add `OKPacket::new(packet_size)`.
+// (caller must supply it), so no `Default` impl — consider adding `OKPacket::new(packet_size)`.
 
 // Zig `deinit` only called `this.info.deinit()` and `this.session_state_changes.deinit()`.
 // `Data` owns its buffer and has `Drop`, so Rust drops fields automatically — no explicit

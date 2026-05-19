@@ -20,9 +20,9 @@ pub use crate::generated_perf_trace_events::PerfEvent;
 
 #[cfg(target_os = "macos")]
 pub type EnabledImpl = Darwin;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub type EnabledImpl = Linux;
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
 pub type EnabledImpl = Disabled;
 
 pub enum Ctx {
@@ -89,7 +89,7 @@ fn is_enabled_once() {
             IS_ENABLED.store(false, Ordering::SeqCst);
         }
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         is_enabled_on_linux_once();
         if !Linux::is_supported() {
@@ -118,21 +118,21 @@ pub fn is_enabled() -> bool {
 // the type system — the @hasField/@compileError block is dropped.
 pub fn trace(event: PerfEvent) -> Ctx {
     if !is_enabled() {
-        // PERF(port): @branchHint(.likely) — profile in Phase B
+        // PERF(port): @branchHint(.likely) — profile if it shows up on a hot path.
         return Ctx::Disabled(Disabled);
     }
 
     #[cfg(target_os = "macos")]
     {
-        // PERF(port): was comptime monomorphization (event id was comptime i32) — profile in Phase B
+        // PERF(port): was comptime monomorphization (event id was comptime i32) — profile if it shows up on a hot path.
         return Ctx::Enabled(Darwin::init(event as i32));
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         return Ctx::Enabled(Linux::init(event));
     }
     #[allow(unreachable_code)]
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
     {
         let _ = event;
         return Ctx::Disabled(Disabled);
@@ -156,7 +156,7 @@ mod darwin_impl {
     }
 
     impl Darwin {
-        // PERF(port): was `comptime name: i32` — profile in Phase B
+        // PERF(port): was `comptime name: i32` — profile if it shows up on a hot path.
         pub fn init(name: i32) -> Self {
             Self {
                 // SAFETY: `is_enabled()` returned true, which implies `Darwin::get()` is Some
@@ -195,13 +195,13 @@ mod darwin_impl {
     static OS_LOG_ONCE: Once = Once::new();
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub struct Linux {
     start_time: u64,
     event: PerfEvent,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 impl Linux {
     pub fn is_supported() -> bool {
         INIT_ONCE.call_once(Self::init_once);
@@ -242,12 +242,12 @@ impl Linux {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 static IS_INITIALIZED: AtomicBool = AtomicBool::new(false);
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 static INIT_ONCE: Once = Once::new();
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_core::perf::sys::{Bun__linux_trace_emit, Bun__linux_trace_init};
 
 // ported from: src/perf/perf.zig

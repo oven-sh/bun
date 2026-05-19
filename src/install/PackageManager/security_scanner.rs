@@ -23,7 +23,7 @@ use bun_install::{
 use bun_io::Loop as AsyncLoop;
 use bun_io::pipe_reader::PosixFlags;
 use bun_io::{BufferedReader, ReadState};
-use bun_ptr::{RefPtr, ThreadSafeRefCount};
+use bun_ptr::{RefCount, RefPtr, ThreadSafeRefCount};
 use bun_spawn::subprocess::{self, StdioResult};
 use bun_spawn::{
     self as spawn, Exited, Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions,
@@ -70,7 +70,7 @@ pub struct SecurityScanResults {
     pub packages_scanned: usize,
     pub duration_ms: i64,
     // TODO(port): Zig borrows this from manager.options.security_scanner; using Box<[u8]> to avoid
-    // a struct lifetime in Phase A. Revisit if the copy matters.
+    // a struct lifetime. Revisit if the copy matters.
     pub security_scanner: Box<[u8]>,
 }
 
@@ -1386,7 +1386,13 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         // SAFETY: `writer_local` holds a live ref; `start()` mutates the writer
         // in place (raw intrusive object — no Rust aliasing across the RefPtr).
-        match unsafe { (*writer_local.as_ptr()).start() } {
+        let writer_ptr = writer_local.as_ptr();
+        let start_result = unsafe { (*writer_ptr).start() };
+        // SAFETY: `writer_local` keeps `*writer_ptr` live; we own the `start()` ref.
+        unsafe { RefCount::<StaticPipeWriter>::deref(writer_ptr) };
+        // SAFETY: `writer_local` keeps `*writer_ptr` live.
+        unsafe { (*writer_ptr).started = false };
+        match start_result {
             Err(e) => {
                 writer_local.deref();
                 Output::err_generic(

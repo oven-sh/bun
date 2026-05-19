@@ -149,7 +149,7 @@ impl SpawnSyncEventLoop {
     // TODO(port): in-place init — `self.event_loop` is captured by
     // `setParentEventLoop` below, so `Self` must not move after `init` returns.
     // Zig caller passes `undefined` storage, hence `MaybeUninit<Self>` (out-param ctor exception).
-    // Phase B: consider `Pin<&mut Self>` or document the no-move invariant at the caller.
+    // TODO(refactor): consider `Pin<&mut Self>` or document the no-move invariant at the caller.
     pub fn init(
         this: &mut core::mem::MaybeUninit<Self>,
         vm: *mut (), /* SAFETY: erased *mut VirtualMachine */

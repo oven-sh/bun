@@ -16,7 +16,7 @@ use bun_core::{self, Error, err};
 mod zig_std_debug {
     #[allow(unused_imports)]
     use core::ffi::{c_int, c_void};
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     use core::sync::atomic::{AtomicI32, Ordering};
 
     use bun_core::{Error, err};
@@ -133,25 +133,25 @@ mod zig_std_debug {
     /// syscalls, bypassing memory page protection. Used by `StackIterator` to
     /// safely walk frame pointers without segfaulting on a corrupt stack.
     struct MemoryAccessor {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         mem: c_int, // -1 = uninit, -2 = unavailable, else /proc/<pid>/mem fd
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         mem: (),
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     static CACHED_PID: AtomicI32 = AtomicI32::new(-1);
 
     impl MemoryAccessor {
         const INIT: Self = Self {
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             mem: -1,
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(not(any(target_os = "linux", target_os = "android")))]
             mem: (),
         };
 
         fn read(&mut self, address: usize, buf: &mut [u8]) -> bool {
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             loop {
                 match self.mem {
                     -2 => break,
@@ -244,7 +244,7 @@ mod zig_std_debug {
 
     impl Drop for MemoryAccessor {
         fn drop(&mut self) {
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             if self.mem >= 0 {
                 // SAFETY: self.mem is a valid fd we opened.
                 unsafe { libc::close(self.mem) };
@@ -839,7 +839,7 @@ fn print_line_from_file_any_os(
     // Need this to always block even in async I/O mode, because this could potentially
     // be called from e.g. the event loop code crashing.
     // TODO(port): Zig used std.fs.cwd().openFile directly (bypassing bun.sys). PORTING.md
-    // forbids std::fs; using bun_sys here. Phase B: confirm bun_sys::File is safe to call
+    // forbids std::fs; using bun_sys here. Confirm bun_sys::File is safe to call
     // from inside a crash handler / lldb (must not re-enter event loop).
     let f = bun_sys::File::open_at(
         bun_sys::Fd::cwd(),

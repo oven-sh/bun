@@ -36,7 +36,7 @@ bun_core::named_error_set!(ToFileSystemPathError);
 
 impl DOMURL {
     pub fn cast_<'a>(value: JSValue, vm: &'a VM) -> Option<&'a mut DOMURL> {
-        // TODO(port): lifetime — DOMURL is a GC-owned C++ cell; no Rust-expressible lifetime. Phase B revisit.
+        // TODO(port): lifetime — DOMURL is a GC-owned C++ cell; no Rust-expressible lifetime.
         // `DOMURL` is an `opaque_ffi!` ZST handle; `opaque_mut` is the
         // centralised non-null-ZST deref proof (zero-byte `&mut` cannot alias).
         let p = WebCore__DOMURL__cast_(value, vm);

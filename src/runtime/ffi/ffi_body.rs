@@ -116,7 +116,7 @@ fn dangerously_run_without_jit_protections<R>(func: impl FnOnce() -> R) -> R {
             unsafe { pthread_jit_write_protect_np(true as c_int) };
         }
     }
-    // PERF(port): was @call(bun.callmod_inline, ...) — profile in Phase B
+    // PERF(port): was @call(bun.callmod_inline, ...) — profile if it shows up on a hot path.
     func()
 }
 
@@ -249,11 +249,21 @@ impl Default for FFI {
 impl FFI {
     pub fn finalize(self: Box<Self>) {
         // Zig spec (ffi.zig:69): `pub fn finalize(_: *FFI) callconv(.c) void {}` —
-        // INTENTIONAL no-op. Compiled trampolines / dlopen'd symbols may still be
-        // reachable from JS after the wrapper is GC'd; teardown is owned by
-        // `close()`. Under the `Box<Self>` finalize contract an empty body would
-        // drop, so leak the allocation back to preserve the spec'd no-op.
-        let _ = bun_core::heap::release(self);
+        // INTENTIONAL no-op when not closed. Compiled trampolines / dlopen'd
+        // symbols may still be reachable from JS after the wrapper is GC'd
+        // (e.g. `const { fn } = dlopen(...).symbols`); teardown is owned by
+        // `close()`. Dropping the Box would run `Function::drop` →
+        // `tcc_delete()`, freeing the executable pages those JSFunctions still
+        // jump into.
+        //
+        // When `close()` HAS run, the functions map is empty and the dylib /
+        // shared TCC state are already gone, so the Box only owns the (empty)
+        // hashmap's retained-capacity buffer. Drop it instead of leaking.
+        if self.closed.get() {
+            drop(self);
+        } else {
+            let _ = bun_core::heap::release(self);
+        }
     }
 }
 
@@ -535,7 +545,7 @@ impl CompileC {
             // "-show-sdk-path"], stdout = .buffer, ... })` to auto-detect the
             // active SDK root. The Rust `bun::spawn_sync` helper isn't ported
             // yet (see install/repository.rs TODO), so use std::process as a
-            // Phase-A shim — semantics match: inherit env, ignore stdin/stderr,
+            // shim — semantics match: inherit env, ignore stdin/stderr,
             // capture stdout, treat any spawn/exit failure as "not found"
             // (Zig: `catch return` / `if (process.result.isOK())`).
             // `Command::new("xcrun")` does PATH lookup like `bun.which`, and
@@ -1473,7 +1483,7 @@ impl FFI {
 
         let mut filepath_buf = bun_paths::path_buffer_pool::get();
         let name: &[u8] = 'brk: {
-            let _ext: &[u8] = match () {
+            let ext: &[u8] = match () {
                 // Android shared libraries are `.so` (ELF, same as Linux/FreeBSD).
                 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
                 () => b"so",
@@ -1483,14 +1493,25 @@ impl FFI {
                 () => b"dll",
                 // TODO(port): wasm @compileError("TODO")
             };
-            // TODO(b2-blocked): `ModuleLoader::resolve_embedded_file` lives in
-            // `crate::jsc_hooks` (private hook with a different signature) —
-            // wire the standalone-graph extraction once that surface is public.
-            let _ = (vm, &mut *filepath_buf);
-            #[allow(unreachable_code)]
-            if let Some(resolved) = None::<&[u8]> {
-                filepath_buf[resolved.len()] = 0;
-                break 'brk &filepath_buf[0..resolved.len()];
+            // Spec `ffi.zig:1030` — `ModuleLoader.resolveEmbeddedFile(vm, buf,
+            // name_slice.slice(), ext)` extracts a bunfs-embedded shared
+            // library (added via `import lib from "./lib.so" with { type:
+            // "file" }` and shipped through `bun build --compile`) to a real
+            // on-disk temp file, returning the tmpfile path; libc `dlopen(2)`
+            // can't see the bunfs virtual FS. The helper lives in
+            // `crate::jsc_hooks` — same crate, so a direct call.
+            let _ = vm;
+            if let Some(len) = crate::jsc_hooks::resolve_embedded_file_to_buf(
+                name_slice.slice(),
+                ext,
+                &mut filepath_buf[..],
+            ) {
+                // Spec `ffi.zig:1041` — NUL-terminate in place so `DynLib::open`
+                // can pass the slice to libc without copying. `resolve_*_to_buf`
+                // is bounded by `Fs::FileSystem::tmpname` + a tmpdir join (both
+                // fit in `PATH_MAX`), so `filepath_buf[len]` is in bounds.
+                filepath_buf[len] = 0;
+                break 'brk &filepath_buf[0..len];
             }
 
             break 'brk name_slice.slice();
@@ -2577,7 +2598,7 @@ pub enum Step {
 
 pub struct Compiled {
     pub ptr: *mut c_void,
-    // TODO(port): bare JSValue on heap — rooted via JSFFI.symbolsValue own: property; revisit Strong/JsRef in Phase B
+    // TODO(port): bare JSValue on heap — rooted via JSFFI.symbolsValue own: property; revisit Strong/JsRef.
     pub js_function: JSValue,
     // Zig: `?*anyopaque` — opaque storage, never dereferenced. NonNull avoids
     // a &T → *mut T cast at the assignment site in compile_callback().

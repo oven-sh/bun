@@ -240,7 +240,7 @@ pub type Pipe = [Fd; 2];
 /// Stand-in for the shell's `SmolList<T, N>` (inline small-vec). The real
 /// implementation lives in `shell_body.rs` (gated); state nodes only need
 /// `push`/`len`/indexing, which `Vec` provides.
-// TODO(b2-blocked): replace with shell_body::SmolList once parser un-gates.
+// TODO(port): replace with shell_body::SmolList once parser un-gates.
 pub type SmolList<T, const N: usize> = Vec<T>;
 
 #[repr(u8)]
@@ -297,10 +297,6 @@ pub const STDERR_NO: usize = 2;
 // another `ShellInterpreter` host fn (or, via `Yield::run`, another
 // interpreter entirely — see `DbgDepthGuard::MAX_DEPTH`). With every field
 // behind `UnsafeCell`, an overlapping `&Interpreter` is sound.
-//
-// The codegen shim still emits `this: &mut Interpreter` until R-2 Phase 1
-// lands; `&mut T` auto-derefs to `&T` so the impls below compile against
-// either.
 pub struct Interpreter {
     /// Flat arena of state-machine nodes. Indices are `NodeId`s; freed slots
     /// are recycled via `free_list`.
@@ -315,8 +311,8 @@ pub struct Interpreter {
     /// `ArrayList(JSValue).items` borrow becomes `Vec` ownership in the port —
     /// `create_shell_interpreter` moves the parsed-script's vec in here).
     // TODO(port): GC root — bare JSValue heap storage is invisible to the
-    // conservative stack scan. Phase B: switch to MarkedArgumentBuffer or root
-    // via wrapper visitChildren.
+    // conservative stack scan. Switch to MarkedArgumentBuffer or root via the
+    // wrapper's visitChildren.
     pub jsobjs: Vec<crate::jsc::JSValue>,
 
     pub root_shell: JsCell<ShellExecEnv>,
@@ -1478,8 +1474,31 @@ impl Interpreter {
 
         match this.cleanup_state.get() {
             CleanupState::NeedsFullCleanup => {
-                // The interpreter never finished normally (e.g. early error or
-                // never started), so we need to clean up IO and shell env here.
+                // A node owns `base.shell` iff it was created via `dupe_for_subshell`,
+                // i.e. its `base.shell` differs from its parent's.
+                {
+                    let root_shell_ptr: *mut ShellExecEnv = this.root_shell.as_ptr();
+                    let nodes = this.nodes.get();
+                    let owned_envs: Vec<*mut ShellExecEnv> = nodes
+                        .iter()
+                        .filter_map(|n| {
+                            let base = n.base()?;
+                            if base.shell.is_null() {
+                                return None;
+                            }
+                            let parent_shell: *mut ShellExecEnv =
+                                if base.parent == NodeId::INTERPRETER {
+                                    root_shell_ptr
+                                } else {
+                                    nodes.get(base.parent.idx())?.base()?.shell
+                                };
+                            (base.shell != parent_shell).then_some(base.shell)
+                        })
+                        .collect();
+                    for env in owned_envs {
+                        ShellExecEnv::deinit_impl(env);
+                    }
+                }
                 this.root_io.set(IO::default());
                 this.root_shell.with_mut(|rs| rs.deinit_embedded(true));
             }
@@ -1568,7 +1587,7 @@ impl Interpreter {
             let slice = value_str.to_owned_slice();
             // PORT NOTE: Zig `initRefCounted` adopts the slice; the Rust
             // `init_ref_counted` dups (see EnvStr.rs TODO), so the `Vec`s drop
-            // here without leaking. Phase B revisits the ownership contract.
+            // here without leaking. TODO(refactor): revisit the ownership contract.
             let keyref = EnvStr::init_ref_counted(&keyslice);
             let valueref = EnvStr::init_ref_counted(&slice);
             self.root_shell
@@ -3187,7 +3206,8 @@ pub fn create_shell_interpreter(
 
     let (shargs, jsobjs, quiet, cwd, export_env) = parsed_shell_script.take(global);
 
-    let cwd_slice = cwd.as_ref().map(|c| c.to_utf8());
+    let cwd = cwd.map(bun_core::OwnedString::new);
+    let cwd_slice = cwd.as_deref().map(|c| c.to_utf8());
 
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global;
     // dereferencing for `event_loop()` is sound on the mutator thread.

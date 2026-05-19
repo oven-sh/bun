@@ -65,9 +65,9 @@ pub fn post_process_js_chunk(
 
     // TODO(port): `defer chunk.renamer.deinit(bun.default_allocator)` — Zig explicitly
     // tears down the renamer at end of scope. In Rust this should be handled by Drop on
-    // the renamer field, or an explicit `chunk.renamer.take()` at fn exit. Verify in Phase B.
+    // the renamer field, or an explicit `chunk.renamer.take()` at fn exit. Verify.
 
-    // PERF(port): was arena bulk-free — profile in Phase B
+    // PERF(port): was arena bulk-free — profile if hot.
     let mut arena = Arena::new();
 
     // Also generate the cross-chunk binding code
@@ -619,8 +619,7 @@ pub fn post_process_js_chunk(
 
     let mut compile_results_for_source_map: MultiArrayList<CompileResultForSourceMap> =
         MultiArrayList::default();
-    let _ = compile_results_for_source_map.set_capacity(compile_results.len()); // OOM/capacity: Zig aborts; port keeps fire-and-forget
-    // bun.handleOom dropped — Rust aborts on OOM
+    bun_core::handle_oom(compile_results_for_source_map.set_capacity(compile_results.len()));
 
     let show_comments = c.options.mode == LinkerOptionsMode::Bundle && !c.options.minify_whitespace;
 
@@ -717,14 +716,19 @@ pub fn post_process_js_chunk(
 
             if let Some(source_map_chunk) = compile_result.source_map_chunk() {
                 if c.options.source_maps != options::SourceMapOption::None {
-                    compile_results_for_source_map.append(CompileResultForSourceMap {
-                        source_map_chunk: source_map_chunk.clone(),
-                        generated_offset: match line_offset {
-                            SourceMap::LineColumnOffsetOptional::Value(v) => v,
-                            SourceMap::LineColumnOffsetOptional::Null => Default::default(),
+                    bun_core::handle_oom(compile_results_for_source_map.append(
+                        CompileResultForSourceMap {
+                            // SAFETY: bitwise alias of `chunk.compile_results_for_chunk`
+                            // (read-only and outlives this fn); slab-only MAL drop means
+                            // the alias is never freed — original keeps the single owner.
+                            source_map_chunk: unsafe { source_map_chunk.alias() },
+                            generated_offset: match line_offset {
+                                SourceMap::LineColumnOffsetOptional::Value(v) => v,
+                                SourceMap::LineColumnOffsetOptional::Null => Default::default(),
+                            },
+                            source_index: compile_result.source_index(),
                         },
-                        source_index: compile_result.source_index(),
-                    })?;
+                    ));
                 }
 
                 line_offset.reset();
@@ -900,14 +904,14 @@ pub fn generate_entry_point_tail_js<'a>(
     to_esm_ref: Ref,
     source_index: IndexInt,
     // bundler is an AST crate: std.mem.Allocator param → &'bump Bump (Arena)
-    // TODO(port): thread &'bump Bump from worker.arena end-to-end in Phase B
+    // TODO(port): thread &'bump Bump from worker.arena end-to-end.
     arena: &'a Arena,
     temp_arena: &Arena,
     mut r: js_printer::renamer::Renamer<'a, 'a>,
     mut module_info: Option<&'a mut ModuleInfo>,
 ) -> CompileResult {
     let flags: crate::js_meta::Flags = c.graph.meta.items_flags()[source_index as usize];
-    // PERF(port): was arena-backed ArrayList(Stmt) — profile in Phase B
+    // PERF(port): was arena-backed ArrayList(Stmt) — profile if hot.
     let mut stmts: Vec<Stmt> = Vec::new();
     // PORT NOTE: `MultiArrayList::get` returns `ManuallyDrop<BundledAst>`; the
     // storage retains ownership of every Drop field, so neither this
@@ -1000,7 +1004,7 @@ pub fn generate_entry_point_tail_js<'a>(
                         // entry point is a CommonJS-style module, since that would generate an ES6
                         // export statement that's not top-level. Instead, we will export the CommonJS
                         // exports as a default export later on.
-                        // PERF(port): was arena-backed ArrayList(ClauseItem) — profile in Phase B
+                        // PERF(port): was arena-backed ArrayList(ClauseItem) — profile if hot.
                         let mut items: Vec<bun_ast::ClauseItem> = Vec::new();
                         let cjs_export_copies =
                             &c.graph.meta.items_cjs_export_copies()[source_index as usize];

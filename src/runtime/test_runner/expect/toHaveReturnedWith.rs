@@ -39,7 +39,7 @@ pub fn to_have_returned_with(
         if result.is_object() {
             let result_type = result.get(global, "type")?.unwrap_or(JSValue::UNDEFINED);
             if result_type.is_string() {
-                let type_str = result_type.to_bun_string(global)?;
+                let type_str = bun_core::OwnedString::new(result_type.to_bun_string(global)?);
 
                 if type_str.eql_comptime("return") {
                     let result_value = result.get(global, "value")?.unwrap_or(JSValue::UNDEFINED);
@@ -127,7 +127,7 @@ pub fn to_have_returned_with(
         // TODO(port): Output.prettyFmt comptime color dispatch — Zig branches on
         // `Output.enable_ansi_colors_stderr` to substitute/strip `<green>`/`<r>` tags at comptime.
         // `Expect::throw` → `throw_pretty` handles tag substitution at runtime, so collapse both arms.
-        // PERF(port): was comptime bool dispatch (`switch inline else`) — profile in Phase B
+        // PERF(port): was comptime bool dispatch (`switch inline else`).
         return this.throw(
             global,
             signature,
@@ -149,7 +149,7 @@ pub fn to_have_returned_with(
         // TODO(port): Output.prettyFmt comptime color dispatch — Zig branches on
         // `Output.enable_ansi_colors_stderr` to substitute/strip `<green>`/`<red>` tags at comptime.
         // `Expect::throw` → `throw_pretty` handles tag substitution at runtime, so collapse both arms.
-        // PERF(port): was comptime bool dispatch (`switch inline else`) — profile in Phase B
+        // PERF(port): was comptime bool dispatch (`switch inline else`).
         return this.throw(
             global,
             signature,

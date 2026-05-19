@@ -421,7 +421,7 @@ pub enum BuilderMethod {
 
 // TODO(port): Zig conditionally typed `manager`/`workspace_filters`/`install_root_dependencies`/
 // `packages_to_install` as `void` when method != .filter. Rust const generics cannot vary field
-// types; using Option<_>/empty defaults instead. Phase B may split into two structs or use a
+// types; using Option<_>/empty defaults instead. TODO(refactor): split into two structs or use a
 // trait-associated type if the size matters.
 pub struct Builder<'a, const METHOD: BuilderMethod> {
     // PORT NOTE: Zig `std.mem.Allocator` param field dropped. Sole construction site is
@@ -515,7 +515,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         // TODO(port): Zig captured `list.bytes` raw pointer to reuse the MultiArrayList backing
         // allocation for the output `trees` slice. That optimization depends on MultiArrayList
         // internal layout. Porting the straightforward path (fresh Vec<Tree>) instead.
-        // PERF(port): was MultiArrayList buffer reuse — profile in Phase B.
+        // PERF(port): was MultiArrayList buffer reuse — profile if hot.
         let mut slice = self.list.to_owned_slice();
         let mut trees: Vec<Tree> = slice.items_tree().to_vec();
         let dependencies: &mut [DependencyIDList] = slice.items_dependencies_mut();
@@ -528,7 +528,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 
         debug_assert_eq!(trees.len(), dependencies.len());
         for (tree, child) in trees.iter_mut().zip(dependencies.iter_mut()) {
-            // `child` (Vec) drops at end of `slice` scope; explicit deinit removed.
+            let child = core::mem::take(child);
 
             // PERF(port): `dep_ids` is pre-reserved to `total` (sum of all
             // `tree.dependencies.len: u32`), so `len()` is provably < 2^32.
@@ -552,6 +552,8 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 
         // queue / sort_buf / pending_optional_peers freed by Drop; explicit deinit removed.
         // TODO(port): if Builder outlives clean(), explicitly clear these fields here.
+
+        slice.deinit_owned();
 
         Ok(CleanResult { trees, dep_ids })
     }

@@ -3,21 +3,22 @@ use crate::css_rules::{CssRuleList, Location, MinifyContext};
 use crate::error::MinifyErr;
 use crate::properties::PropertyId;
 use crate::{PrintErr, Printer};
+use bun_alloc::ArenaPtr;
 
 /// A [`<supports-condition>`](https://drafts.csswg.org/css-conditional-3/#typedef-supports-condition),
 /// as used in the `@supports` and `@import` rules.
 // PORT NOTE: Zig threaded the parser-input lifetime (`[]const u8` slices borrow
-// the source). Phase A keeps `&'static [u8]` per PORTING.md §AST crates; Phase
-// B re-threads `'i` once `PropertyId<'i>` and the parser arena are real.
+// the source). Currently uses `&'static [u8]` per PORTING.md §AST crates;
+// TODO(refactor): re-thread `'i` once `PropertyId<'i>` and the parser arena are real.
 pub enum SupportsCondition {
     /// A `not` expression.
-    Not(Box<SupportsCondition>),
+    Not(Box<SupportsCondition, ArenaPtr>),
 
     /// An `and` expression.
-    And(Vec<SupportsCondition>),
+    And(Vec<SupportsCondition, ArenaPtr>),
 
     /// An `or` expression.
-    Or(Vec<SupportsCondition>),
+    Or(Vec<SupportsCondition, ArenaPtr>),
 
     /// A declaration to evaluate.
     Declaration(Declaration),
@@ -77,21 +78,32 @@ impl SupportsCondition {
         // `#[derive(DeepClone)]` can't be used while `Selector`/`Unknown`
         // carry `&'static [u8]`; the blanket `&'bump [u8]` impl doesn't unify
         // with a fresh `'__bump`).
+        let alloc = ArenaPtr::new(bump);
         match self {
-            Self::Not(c) => Self::Not(Box::new(c.deep_clone(bump))),
-            Self::And(v) => Self::And(v.iter().map(|c| c.deep_clone(bump)).collect()),
-            Self::Or(v) => Self::Or(v.iter().map(|c| c.deep_clone(bump)).collect()),
+            Self::Not(c) => Self::Not(Box::new_in(c.deep_clone(bump), alloc)),
+            Self::And(v) => Self::And(Self::clone_vec_in(v, bump, alloc)),
+            Self::Or(v) => Self::Or(Self::clone_vec_in(v, bump, alloc)),
             Self::Declaration(d) => Self::Declaration(d.deep_clone(bump)),
             Self::Selector(s) => Self::Selector(s),
             Self::Unknown(s) => Self::Unknown(s),
         }
+    }
+
+    fn clone_vec_in(
+        v: &[SupportsCondition],
+        bump: &bun_alloc::Arena,
+        alloc: ArenaPtr,
+    ) -> Vec<SupportsCondition, ArenaPtr> {
+        let mut out = Vec::with_capacity_in(v.len(), alloc);
+        out.extend(v.iter().map(|c| c.deep_clone(bump)));
+        out
     }
 }
 
 impl SupportsCondition {
     // blocked_on: generics::CssHash for PropertyId — `#[derive(CssHash)]` /
     // `implement_hash` need every field type to provide `.hash(&mut Wyhash)`.
-    // `PropertyId` only impls `core::hash::Hash` today. Phase B: add
+    // `PropertyId` only impls `core::hash::Hash` today. TODO(refactor): add
     // `impl CssHash for PropertyId` then swap to `#[derive(CssHash)]`.
 
     pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
@@ -261,13 +273,16 @@ impl SupportsCondition {
 
         if input.try_parse(|i| i.expect_ident_matching(b"not")).is_ok() {
             let in_parens = SupportsCondition::parse_in_parens(input)?;
-            return Ok(SupportsCondition::Not(Box::new(in_parens)));
+            return Ok(SupportsCondition::Not(Box::new_in(
+                in_parens,
+                ArenaPtr::new(input.arena()),
+            )));
         }
 
         let in_parens: SupportsCondition = SupportsCondition::parse_in_parens(input)?;
         let mut expected_type: Option<i32> = None;
-        // PERF(port): was arena-backed ArrayListUnmanaged — profile in Phase B
-        let mut conditions: Vec<SupportsCondition> = Vec::new();
+        let mut conditions: Vec<SupportsCondition, ArenaPtr> =
+            Vec::new_in(ArenaPtr::new(input.arena()));
         // PORT NOTE: Zig used std.ArrayHashMap with an inline custom hash/eql context;
         // SeenDeclKey below carries equivalent Hash/Eq impls.
         let mut seen_declarations: ArrayHashMap<SeenDeclKey, usize> = ArrayHashMap::new();
@@ -300,7 +315,6 @@ impl SupportsCondition {
             match _condition {
                 Ok(condition) => {
                     if conditions.is_empty() {
-                        // PERF(port): was arena alloc via input.arena() — profile in Phase B
                         conditions.push(in_parens.deep_clone(input.arena()));
                         if let SupportsCondition::Declaration(decl) = &in_parens {
                             let property_id = &decl.property_id;
@@ -416,7 +430,7 @@ struct SeenDeclKey(PropertyId, &'static [u8]);
 impl core::hash::Hash for SeenDeclKey {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         // TODO(port): Zig used std.array_hash_map.hashString (wyhash, 32-bit) +% @intFromEnum.
-        // bun_collections::ArrayHashMap is wyhash-backed; confirm hasher parity in Phase B.
+        // bun_collections::ArrayHashMap is wyhash-backed; confirm hasher parity.
         // PORT NOTE: hash_string returns u32 directly (mirrors Zig hashString) — no narrowing cast.
         let h: u32 = bun_collections::array_hash_map::hash_string(self.1);
         state.write_u32(h.wrapping_add(self.0.tag() as u32));

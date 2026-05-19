@@ -15,19 +15,44 @@
 //! a slice of field values.
 //!
 //! Implementation note: this port uses nightly `core::mem::type_info`
-//! reflection to discover `T`'s fields at compile time, replacing the
-//! Phase-A `MultiArrayElement` trait + derive macro. Field metadata (name,
+//! reflection to discover `T`'s fields at compile time, replacing an earlier
+//! `MultiArrayElement` trait + derive macro. Field metadata (name,
 //! size, alignment, in-struct offset) is computed in `const` context; column
 //! accessors take a `const NAME: &'static str` generic and verify both the
 //! name and the requested column type against the reflected field's `TypeId`
 //! at compile time, so the column API is fully type-safe with no derive.
+//!
+//! ## Unsafe budget
+//!
+//! This module is the designated `#[allow(unsafe_code)]` exception in
+//! `bun_collections`: a single-allocation SoA buffer with typed column
+//! projection has no safe-std equivalent. Every raw operation is funnelled
+//! through a small primitive set so that each irreducible unsafe pattern
+//! appears exactly once:
+//!
+//! | primitive                       | unsafe op                |
+//! | ------------------------------- | ------------------------ |
+//! | [`column_base`]                 | `NonNull::add`           |
+//! | [`Col::as_slice`]               | `slice::from_raw_parts`  |
+//! | [`ColMut::as_mut_slice`]        | `slice::from_raw_parts_mut` |
+//! | [`Slice::scatter`]              | per-field byte copy      |
+//! | [`Slice::gather`]               | per-field byte copy + `assume_init` |
+//! | [`MultiArrayList::zero`]        | `ptr::write_bytes`       |
+//! | [`MultiArrayList::free_allocated_bytes`] | `Allocator::deallocate` |
+//! | [`__mal_split_mut_impl`] macro  | N-way disjoint `from_raw_parts_mut` |
+//!
+//! plus `unsafe impl Send`/`Sync` and the `pub unsafe fn` caller-contract
+//! signatures on [`set_len`](MultiArrayList::set_len) and
+//! [`column_bytes_mut`](Slice::column_bytes_mut). All row-level mutations
+//! (insert/remove/swap/append/grow/clone) are rebuilt on safe
+//! `<[MaybeUninit<u8>]>` slice ops over [`Col`]/[`ColMut`] views.
 
 use core::alloc::Layout;
 use core::any::TypeId;
 use core::marker::PhantomData;
 use core::mem::type_info::{Type as TypeInfo, TypeKind};
 use core::mem::{ManuallyDrop, MaybeUninit};
-use core::ptr;
+use core::ptr::{self, NonNull};
 use std::alloc::{Allocator, Global};
 
 use bun_alloc::AllocError;
@@ -303,6 +328,11 @@ impl<T> Reflected<T> {
     const COUNT: usize = field_count::<T>();
     const ALIGN: usize = core::mem::align_of::<T>();
 
+    /// Dangling sentinel for an empty buffer. Aligned to `align_of::<T>()`,
+    /// which is `≥ align_of::<F>()` for every field `F`, so casting it to any
+    /// `*const F` yields a valid (non-null, aligned) zero-length-slice base.
+    const DANGLING: NonNull<u8> = NonNull::<T>::dangling().cast::<u8>();
+
     /// `[FieldMeta; COUNT]` in declaration order.
     const META: [FieldMeta; MAX_FIELDS] = {
         let fields = fields_of::<T>();
@@ -433,6 +463,80 @@ impl<T> Reflected<T> {
     }
 }
 
+// ───────────────────────── column primitives ─────────────────────────
+
+/// Base pointer of column `fi` within a buffer of `cap` elements.
+///
+/// **Module invariant** (`INVARIANT:column_base`): `bytes` is either
+/// `Reflected::<T>::DANGLING` with `cap == 0`, or the start of a live
+/// allocation of `ELEM_BYTES * cap` bytes at `align_of::<T>()` alignment.
+/// Under that invariant the result is `T`-aligned for `cap == 0` and aligned
+/// to field `fi`'s true alignment for `cap > 0` (see [`align_sort_key`]).
+#[inline(always)]
+fn column_base<T>(bytes: NonNull<u8>, cap: usize, fi: usize) -> NonNull<u8> {
+    debug_assert!(fi < Reflected::<T>::COUNT);
+    let off = Reflected::<T>::COLUMN_OFFSET_PER_CAP[fi] * cap;
+    // SAFETY: `INVARIANT:column_base` — `cap == 0` ⇒ `off == 0` and `add(0)`
+    // is always defined; `cap > 0` ⇒ `off ≤ ELEM_BYTES * cap` so the result
+    // stays in-bounds of the allocation. `add` retains the `inbounds` GEP
+    // hint that `wrapping_add` would drop.
+    unsafe { bytes.add(off) }
+}
+
+/// Shared typed view of one column. Thin wrapper that exists solely so that
+/// every `from_raw_parts` in this module routes through one audited site.
+struct Col<'a, F> {
+    ptr: NonNull<F>,
+    len: usize,
+    _marker: PhantomData<&'a [F]>,
+}
+
+impl<'a, F> Col<'a, F> {
+    /// **Module invariant** (`INVARIANT:col`): only fed `(ptr, len)` where
+    /// `ptr` is non-null, aligned for `F`, and either dangling with `len == 0`
+    /// or pointing into a column holding `≥ len` initialized `F`s valid for
+    /// `'a`. Upheld by every internal caller; not exposed.
+    #[inline(always)]
+    fn new(ptr: NonNull<F>, len: usize) -> Self {
+        Self {
+            ptr,
+            len,
+            _marker: PhantomData,
+        }
+    }
+
+    #[inline(always)]
+    fn as_slice(self) -> &'a [F] {
+        // SAFETY: `INVARIANT:col`.
+        unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+    }
+}
+
+/// Exclusive typed view of one column. See [`Col`].
+struct ColMut<'a, F> {
+    ptr: NonNull<F>,
+    len: usize,
+    _marker: PhantomData<&'a mut [F]>,
+}
+
+impl<'a, F> ColMut<'a, F> {
+    /// `INVARIANT:col`, plus exclusive access for `'a`.
+    #[inline(always)]
+    fn new(ptr: NonNull<F>, len: usize) -> Self {
+        Self {
+            ptr,
+            len,
+            _marker: PhantomData,
+        }
+    }
+
+    #[inline(always)]
+    fn as_mut_slice(self) -> &'a mut [F] {
+        // SAFETY: `INVARIANT:col` + exclusive access.
+        unsafe { core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
+    }
+}
+
 /// Index-based comparison context for `sort` / `sort_span` / `sort_unstable`.
 /// Zig: `ctx: anytype` with `fn lessThan(ctx, a_index: usize, b_index: usize) bool`.
 pub trait SortContext {
@@ -441,7 +545,7 @@ pub trait SortContext {
 
 /// Struct-of-arrays list. See module docs.
 pub struct MultiArrayList<T, A: Allocator = Global> {
-    bytes: *mut u8,
+    bytes: NonNull<u8>,
     len: usize,
     capacity: usize,
     alloc: A,
@@ -456,9 +560,15 @@ unsafe impl<T: Sync, A: Allocator + Sync> Sync for MultiArrayList<T, A> {}
 /// the list. These pointers are not normally stored to reduce the size of the
 /// list in memory. If you are accessing multiple fields, call `slice()` first
 /// to compute the pointers, and then get the field arrays from the slice.
+///
+/// **Known soundness gap**: `Slice<T>: Copy` lets a caller hold two copies and
+/// call `items_mut` / `set` on both, aliasing `&mut`. Removing `Copy` breaks a
+/// large number of `.slice()` snapshot sites that intentionally exploit it for
+/// borrowck (see `LinkerGraph::load`, `bundle_v2`). Tracked separately; treat
+/// `Slice<T>` as a raw-pointer set and avoid overlapping mutable views.
 pub struct Slice<T> {
     /// Indexed by declaration-order field index.
-    ptrs: [*mut u8; MAX_FIELDS],
+    ptrs: [NonNull<u8>; MAX_FIELDS],
     len: usize,
     capacity: usize,
     _marker: PhantomData<T>,
@@ -475,11 +585,28 @@ impl<T> Copy for Slice<T> {}
 
 impl<T> Slice<T> {
     pub const EMPTY: Self = Self {
-        ptrs: [ptr::null_mut(); MAX_FIELDS],
+        ptrs: [Reflected::<T>::DANGLING; MAX_FIELDS],
         len: 0,
         capacity: 0,
         _marker: PhantomData,
     };
+
+    /// Build a `Slice` over a raw buffer. `INVARIANT:column_base` applies.
+    #[inline]
+    fn from_raw(bytes: NonNull<u8>, len: usize, cap: usize) -> Self {
+        let mut ptrs = [Reflected::<T>::DANGLING; MAX_FIELDS];
+        let mut fi = 0;
+        while fi < Reflected::<T>::COUNT {
+            ptrs[fi] = column_base::<T>(bytes, cap, fi);
+            fi += 1;
+        }
+        Self {
+            ptrs,
+            len,
+            capacity: cap,
+            _marker: PhantomData,
+        }
+    }
 
     #[inline]
     pub fn len(&self) -> usize {
@@ -491,6 +618,19 @@ impl<T> Slice<T> {
         self.len == 0
     }
 
+    /// Typed column base for field `fi`. Substitutes a properly-aligned
+    /// dangling pointer when `F` is a ZST (the computed column offset is not
+    /// guaranteed `align_of::<F>()`-aligned for over-aligned ZSTs). For
+    /// `cap == 0` no substitution is needed: `ptrs[fi]` is
+    /// `Reflected::<T>::DANGLING`, which is already aligned for every field.
+    #[inline(always)]
+    fn col_ptr<F>(&self, fi: usize) -> NonNull<F> {
+        if core::mem::size_of::<F>() == 0 {
+            return NonNull::<F>::dangling();
+        }
+        self.ptrs[fi].cast::<F>()
+    }
+
     /// Returns the column slice for field `NAME` typed as `&[F]`.
     ///
     /// Compile-time checked: a const-eval assertion verifies that `T` has a
@@ -498,27 +638,14 @@ impl<T> Slice<T> {
     #[inline]
     pub fn items<const NAME: &'static str, F>(&self) -> &[F] {
         let fi = const { Reflected::<T>::check::<NAME, F>() };
-        let p = if self.capacity == 0 || core::mem::size_of::<F>() == 0 {
-            ptr::NonNull::<F>::dangling().as_ptr()
-        } else {
-            self.ptrs[fi].cast::<F>()
-        };
-        // SAFETY: ZST/empty → dangling is valid for any length; otherwise
-        // column `fi` is `capacity` contiguous `F`s and `len <= capacity`.
-        unsafe { core::slice::from_raw_parts(p, self.len) }
+        Col::new(self.col_ptr::<F>(fi), self.len).as_slice()
     }
 
     /// Returns the mutable column slice for field `NAME` typed as `&mut [F]`.
     #[inline]
     pub fn items_mut<const NAME: &'static str, F>(&mut self) -> &mut [F] {
         let fi = const { Reflected::<T>::check::<NAME, F>() };
-        let p = if self.capacity == 0 || core::mem::size_of::<F>() == 0 {
-            ptr::NonNull::<F>::dangling().as_ptr()
-        } else {
-            self.ptrs[fi].cast::<F>()
-        };
-        // SAFETY: see `items`. `&mut self` enforces exclusive column access.
-        unsafe { core::slice::from_raw_parts_mut(p, self.len) }
+        ColMut::new(self.col_ptr::<F>(fi), self.len).as_mut_slice()
     }
 
     /// Raw column pointer for callers that need simultaneous mutable access to
@@ -533,16 +660,23 @@ impl<T> Slice<T> {
     #[inline]
     pub fn items_raw<const NAME: &'static str, F>(&self) -> *mut F {
         let fi = const { Reflected::<T>::check::<NAME, F>() };
-        if self.capacity == 0 || core::mem::size_of::<F>() == 0 {
-            return ptr::NonNull::<F>::dangling().as_ptr();
-        }
-        self.ptrs[fi].cast::<F>()
+        self.col_ptr::<F>(fi).as_ptr()
     }
 
-    /// Raw column pointer for byte-level operations (internal use).
-    #[inline]
-    fn ptr(&self, field_index: usize) -> *mut u8 {
-        self.ptrs[field_index]
+    /// `&[MaybeUninit<u8>]` over column `fi`'s `len` initialized elements.
+    /// `MaybeUninit<u8>` has alignment 1, so any column base satisfies
+    /// `INVARIANT:col`.
+    #[inline(always)]
+    fn column_uninit(&self, fi: usize) -> &[MaybeUninit<u8>] {
+        let sz = Reflected::<T>::META[fi].size;
+        Col::new(self.ptrs[fi].cast::<MaybeUninit<u8>>(), self.len * sz).as_slice()
+    }
+
+    /// `&mut [MaybeUninit<u8>]` over column `fi`'s `len` elements.
+    #[inline(always)]
+    fn column_uninit_mut(&mut self, fi: usize) -> &mut [MaybeUninit<u8>] {
+        let sz = Reflected::<T>::META[fi].size;
+        ColMut::new(self.ptrs[fi].cast::<MaybeUninit<u8>>(), self.len * sz).as_mut_slice()
     }
 
     /// Raw byte view of column `field_index` (declaration order). For
@@ -554,12 +688,8 @@ impl<T> Slice<T> {
     #[inline]
     pub unsafe fn column_bytes_mut(&mut self, field_index: usize) -> &mut [u8] {
         debug_assert!(field_index < Reflected::<T>::COUNT);
-        let size = Reflected::<T>::META[field_index].size;
-        if size == 0 || self.capacity == 0 {
-            return &mut [];
-        }
-        // SAFETY: column `field_index` is `len * size` bytes within the allocation.
-        unsafe { core::slice::from_raw_parts_mut(self.ptrs[field_index], self.len * size) }
+        let sz = Reflected::<T>::META[field_index].size;
+        ColMut::new(self.ptrs[field_index].cast::<u8>(), self.len * sz).as_mut_slice()
     }
 
     /// `size_of` the `field_index`th field (declaration order).
@@ -573,8 +703,7 @@ impl<T> Slice<T> {
             index < self.len,
             "MultiArrayList::Slice::set: index out of bounds"
         );
-        // SAFETY: `index < len <= capacity`; ptrs are valid columns.
-        unsafe { scatter::<T>(&self.ptrs, index, elem) };
+        self.scatter(index, elem);
     }
 
     /// Gather a `T` by per-field `ptr::read` from each column.
@@ -589,8 +718,7 @@ impl<T> Slice<T> {
             index < self.len,
             "MultiArrayList::Slice::get: index out of bounds"
         );
-        // SAFETY: `index < len <= capacity`; ptrs are valid columns.
-        ManuallyDrop::new(unsafe { gather::<T>(&self.ptrs, index) })
+        ManuallyDrop::new(self.gather(index))
     }
 
     pub fn to_multi_array_list(self) -> MultiArrayList<T> {
@@ -608,59 +736,128 @@ impl<T> Slice<T> {
             _marker: PhantomData,
         }
     }
-}
 
-// ───────────────────── scatter / gather (byte-level) ──────────────────────
+    // ── private row ops (safe std slice ops over `column_uninit_mut`) ──
 
-/// Scatter `elem`'s fields into the per-field column pointers at `index`.
-///
-/// # Safety
-/// `ptrs[i]` must point to a column of at least `index + 1` elements of the
-/// `i`th field's type.
-#[inline]
-unsafe fn scatter<T>(ptrs: &[*mut u8; MAX_FIELDS], index: usize, elem: T) {
-    let elem = ManuallyDrop::new(elem);
-    let src = (&raw const *elem).cast::<u8>();
-    let n = Reflected::<T>::COUNT;
-    let mut i = 0;
-    while i < n {
-        let m = Reflected::<T>::META[i];
-        if m.size != 0 {
-            // SAFETY: `src + offset` points to the field within `elem`;
-            // `ptrs[i] + index * size` is the column slot. Both regions are
-            // `m.size` bytes and do not overlap (stack vs heap).
-            unsafe {
-                ptr::copy_nonoverlapping(src.add(m.offset), ptrs[i].add(index * m.size), m.size);
+    /// memmove rows `[src, src+n)` → `[dst, dst+n)` in every column.
+    #[inline]
+    fn copy_rows_within(&mut self, src: usize, dst: usize, n: usize) {
+        if n == 0 {
+            return;
+        }
+        debug_assert!(src.max(dst) + n <= self.len);
+        for fi in 0..Reflected::<T>::COUNT {
+            let sz = Reflected::<T>::META[fi].size;
+            if sz == 0 {
+                continue;
+            }
+            self.column_uninit_mut(fi)
+                .copy_within(src * sz..(src + n) * sz, dst * sz);
+        }
+    }
+
+    /// Swap rows `a` and `b` in every column.
+    #[inline]
+    fn swap_rows(&mut self, a: usize, b: usize) {
+        if a == b {
+            return;
+        }
+        let (lo, hi) = if a < b { (a, b) } else { (b, a) };
+        debug_assert!(hi < self.len);
+        for fi in 0..Reflected::<T>::COUNT {
+            let sz = Reflected::<T>::META[fi].size;
+            if sz == 0 {
+                continue;
+            }
+            let col = self.column_uninit_mut(fi);
+            let (l, r) = col.split_at_mut(hi * sz);
+            l[lo * sz..(lo + 1) * sz].swap_with_slice(&mut r[..sz]);
+        }
+    }
+
+    /// memcpy rows `[0, n)` of `src` → `[dst_off, dst_off+n)` of `self`.
+    /// `src` and `self` must be backed by **distinct** allocations (every
+    /// internal caller — grow / shrink / clone / append-other — satisfies this).
+    #[inline]
+    fn copy_rows_from(&mut self, dst_off: usize, src: &Slice<T>, n: usize) {
+        if n == 0 {
+            return;
+        }
+        debug_assert!(n <= src.len);
+        debug_assert!(dst_off + n <= self.len);
+        for fi in 0..Reflected::<T>::COUNT {
+            let sz = Reflected::<T>::META[fi].size;
+            if sz == 0 {
+                continue;
+            }
+            debug_assert_ne!(
+                self.ptrs[fi], src.ptrs[fi],
+                "copy_rows_from: aliased columns"
+            );
+            let dst = &mut self.column_uninit_mut(fi)[dst_off * sz..(dst_off + n) * sz];
+            dst.copy_from_slice(&src.column_uninit(fi)[..n * sz]);
+        }
+    }
+
+    /// Scatter `elem`'s fields into the column slots at `index`.
+    /// Safe: `index < self.len` is the only precondition, asserted by [`set`].
+    #[inline]
+    fn scatter(&mut self, index: usize, elem: T) {
+        debug_assert!(index < self.len);
+        let elem = ManuallyDrop::new(elem);
+        let src = (&raw const *elem).cast::<u8>();
+        // SAFETY: per `INVARIANT:column_base`, `ptrs[i]` addresses a column of
+        // `≥ len` slots of field `i`; `index < len`. `src + offset` addresses
+        // field `i` within the stack `elem`. Regions are `m.size` bytes, stack
+        // vs heap, never overlap.
+        unsafe {
+            let mut i = 0;
+            while i < Reflected::<T>::COUNT {
+                let m = Reflected::<T>::META[i];
+                if m.size != 0 {
+                    ptr::copy_nonoverlapping(
+                        src.add(m.offset),
+                        self.ptrs[i].as_ptr().add(index * m.size),
+                        m.size,
+                    );
+                }
+                i += 1;
             }
         }
-        i += 1;
     }
-}
 
-/// Gather a `T` from the per-field column pointers at `index`.
-///
-/// # Safety
-/// `ptrs[i]` must point to a column of at least `index + 1` initialized
-/// elements of the `i`th field's type.
-#[inline]
-unsafe fn gather<T>(ptrs: &[*mut u8; MAX_FIELDS], index: usize) -> T {
-    let mut out = MaybeUninit::<T>::uninit();
-    let dst = out.as_mut_ptr().cast::<u8>();
-    let n = Reflected::<T>::COUNT;
-    let mut i = 0;
-    while i < n {
-        let m = Reflected::<T>::META[i];
-        if m.size != 0 {
-            // SAFETY: see `scatter`.
-            unsafe {
-                ptr::copy_nonoverlapping(ptrs[i].add(index * m.size), dst.add(m.offset), m.size);
+    /// Gather a `T` from the column slots at `index`. Bitwise copy; caller
+    /// is responsible for ownership semantics (see [`get`] / [`drop_elements`]).
+    #[inline]
+    fn gather(&self, index: usize) -> T {
+        debug_assert!(index < self.len);
+        let mut out = MaybeUninit::<T>::uninit();
+        let dst = out.as_mut_ptr().cast::<u8>();
+        // SAFETY: see `scatter`. Every named-field byte of `out` is written;
+        // padding stays uninitialized, which `assume_init` permits (matches
+        // `ptr::read` semantics).
+        unsafe {
+            let mut i = 0;
+            while i < Reflected::<T>::COUNT {
+                let m = Reflected::<T>::META[i];
+                if m.size != 0 {
+                    ptr::copy_nonoverlapping(
+                        self.ptrs[i].as_ptr().add(index * m.size),
+                        dst.add(m.offset),
+                        m.size,
+                    );
+                }
+                i += 1;
             }
+            out.assume_init()
         }
-        i += 1;
     }
-    // SAFETY: every named field byte has been written; padding bytes remain
-    // uninitialized, which is permitted for `T` (matches `ptr::read` semantics).
-    unsafe { out.assume_init() }
+
+    /// Frees the slab backing a `Slice` from [`MultiArrayList::to_owned_slice`].
+    /// Per-element destructors do not run. `Slice` is `Copy`: call exactly once.
+    pub fn deinit_owned(self) {
+        drop(self.to_multi_array_list());
+    }
 }
 
 // ───────────────────────────── MultiArrayList ─────────────────────────────
@@ -673,7 +870,7 @@ impl<T> Default for MultiArrayList<T, Global> {
 
 impl<T> MultiArrayList<T, Global> {
     pub const EMPTY: Self = Self {
-        bytes: ptr::null_mut(),
+        bytes: Reflected::<T>::DANGLING,
         len: 0,
         capacity: 0,
         alloc: Global,
@@ -686,7 +883,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     #[inline]
     pub const fn new_in(alloc: A) -> Self {
         Self {
-            bytes: ptr::null_mut(),
+            bytes: Reflected::<T>::DANGLING,
             len: 0,
             capacity: 0,
             alloc,
@@ -712,7 +909,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
 
     /// The caller owns the returned memory. Empties this MultiArrayList.
     /// Only available with the global allocator (the returned `Slice` carries
-    /// no allocator handle).
+    /// no allocator handle). `Slice` has no `Drop`; call [`Slice::deinit_owned`].
     pub fn to_owned_slice(&mut self) -> Slice<T>
     where
         A: Default,
@@ -726,40 +923,18 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     /// Compute pointers to the start of each field of the array.
     /// If you need to access multiple fields, calling this may
     /// be more efficient than calling `items()` multiple times.
+    #[inline]
     pub fn slice(&self) -> Slice<T> {
-        let mut result = Slice::<T> {
-            ptrs: [ptr::null_mut(); MAX_FIELDS],
-            len: self.len,
-            capacity: self.capacity,
-            _marker: PhantomData,
-        };
-        let (bytes, fields) = Reflected::<T>::SIZES;
-        let mut p = self.bytes;
-        let mut k = 0;
-        while k < Reflected::<T>::COUNT {
-            result.ptrs[fields[k]] = p;
-            // SAFETY: `p` walks within the single allocation of
-            // `capacity_in_bytes(self.capacity)` bytes (or is null when
-            // capacity == 0, in which case bytes[k] * 0 == 0 and add(0) is OK).
-            // `add` keeps the `inbounds` GEP hint that `wrapping_add` drops.
-            p = unsafe { p.add(bytes[k] * self.capacity) };
-            k += 1;
-        }
-        result
+        Slice::from_raw(self.bytes, self.len, self.capacity)
     }
 
-    /// Compute the column base pointer for field index `fi`.
-    #[inline]
-    fn column_ptr_by_index(&self, fi: usize) -> *mut u8 {
-        if self.capacity == 0 {
-            return ptr::null_mut();
+    /// Typed column base for field `fi`. See [`Slice::col_ptr`].
+    #[inline(always)]
+    fn col_ptr<F>(&self, fi: usize) -> NonNull<F> {
+        if core::mem::size_of::<F>() == 0 {
+            return NonNull::<F>::dangling();
         }
-        // SAFETY: column offset within the single allocation; always in-bounds.
-        // `add` keeps the `inbounds` GEP hint that `wrapping_add` drops.
-        unsafe {
-            self.bytes
-                .add(Reflected::<T>::COLUMN_OFFSET_PER_CAP[fi] * self.capacity)
-        }
+        column_base::<T>(self.bytes, self.capacity, fi).cast::<F>()
     }
 
     /// Get the shared slice of values for field `NAME`.
@@ -769,27 +944,14 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     #[inline]
     pub fn items<const NAME: &'static str, F>(&self) -> &[F] {
         let fi = const { Reflected::<T>::check::<NAME, F>() };
-        let p = if self.capacity == 0 || core::mem::size_of::<F>() == 0 {
-            ptr::NonNull::<F>::dangling().as_ptr()
-        } else {
-            self.column_ptr_by_index(fi).cast::<F>()
-        };
-        // SAFETY: ZST/empty → dangling is valid for any length; otherwise the
-        // column holds `capacity` aligned `F`s and `len <= capacity`.
-        unsafe { core::slice::from_raw_parts(p, self.len) }
+        Col::new(self.col_ptr::<F>(fi), self.len).as_slice()
     }
 
     /// Get the mutable slice of values for field `NAME`.
     #[inline]
     pub fn items_mut<const NAME: &'static str, F>(&mut self) -> &mut [F] {
         let fi = const { Reflected::<T>::check::<NAME, F>() };
-        let p = if self.capacity == 0 || core::mem::size_of::<F>() == 0 {
-            ptr::NonNull::<F>::dangling().as_ptr()
-        } else {
-            self.column_ptr_by_index(fi).cast::<F>()
-        };
-        // SAFETY: see `items`. `&mut self` enforces exclusive column access.
-        unsafe { core::slice::from_raw_parts_mut(p, self.len) }
+        ColMut::new(self.col_ptr::<F>(fi), self.len).as_mut_slice()
     }
 
     /// Raw column pointer; see [`Slice::items_raw`]. Obtaining the pointer is
@@ -797,10 +959,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     #[inline]
     pub fn items_raw<const NAME: &'static str, F>(&self) -> *mut F {
         let fi = const { Reflected::<T>::check::<NAME, F>() };
-        if self.capacity == 0 || core::mem::size_of::<F>() == 0 {
-            return ptr::NonNull::<F>::dangling().as_ptr();
-        }
-        self.column_ptr_by_index(fi).cast::<F>()
+        self.col_ptr::<F>(fi).as_ptr()
     }
 
     /// Overwrite one array element with new data.
@@ -883,45 +1042,18 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     pub fn insert_assume_capacity(&mut self, index: usize, elem: T) {
         debug_assert!(self.len < self.capacity);
         debug_assert!(index <= self.len);
+        let tail = self.len - index;
         self.len += 1;
-        let mut slices = self.slice();
-        for fi in 0..Reflected::<T>::COUNT {
-            let size = Reflected::<T>::META[fi].size;
-            if size == 0 {
-                continue;
-            }
-            let base = slices.ptr(fi);
-            let mut i = self.len - 1;
-            while i > index {
-                // SAFETY: `i` and `i-1` are < len <= capacity; column is contiguous.
-                unsafe {
-                    ptr::copy_nonoverlapping(base.add((i - 1) * size), base.add(i * size), size);
-                }
-                i -= 1;
-            }
-        }
-        slices.set(index, elem);
+        let mut s = self.slice();
+        s.copy_rows_within(index, index + 1, tail);
+        s.scatter(index, elem);
     }
 
     pub fn append_list_assume_capacity(&mut self, other: &Self) {
         let offset = self.len;
         self.len += other.len;
-        let other_slice = other.slice();
-        let this_slice = self.slice();
-        for fi in 0..Reflected::<T>::COUNT {
-            let size = Reflected::<T>::META[fi].size;
-            if size != 0 {
-                // SAFETY: `offset + other.len <= self.capacity` (caller contract);
-                // columns are contiguous and non-overlapping (distinct allocations).
-                unsafe {
-                    ptr::copy_nonoverlapping(
-                        other_slice.ptr(fi),
-                        this_slice.ptr(fi).add(offset * size),
-                        other.len * size,
-                    );
-                }
-            }
-        }
+        let mut s = self.slice();
+        s.copy_rows_from(offset, &other.slice(), other.len);
     }
 
     /// Remove the specified item from the list, swapping the last
@@ -932,23 +1064,9 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
             index < self.len,
             "MultiArrayList::swap_remove: index out of bounds"
         );
-        let slices = self.slice();
-        for fi in 0..Reflected::<T>::COUNT {
-            let size = Reflected::<T>::META[fi].size;
-            if size == 0 {
-                continue;
-            }
-            let base = slices.ptr(fi);
-            // SAFETY: `index < len` and `len-1 < len <= capacity`. Regions overlap
-            // exactly when `index == len-1` (src == dst), which `copy` handles.
-            unsafe {
-                ptr::copy(
-                    base.add((self.len - 1) * size),
-                    base.add(index * size),
-                    size,
-                );
-            }
-        }
+        let last = self.len - 1;
+        let mut s = self.slice();
+        s.copy_rows_within(last, index, 1);
         self.len -= 1;
     }
 
@@ -959,22 +1077,9 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
             index < self.len,
             "MultiArrayList::ordered_remove: index out of bounds"
         );
-        let slices = self.slice();
-        for fi in 0..Reflected::<T>::COUNT {
-            let size = Reflected::<T>::META[fi].size;
-            if size == 0 {
-                continue;
-            }
-            let base = slices.ptr(fi);
-            let mut i = index;
-            while i < self.len - 1 {
-                // SAFETY: `i` and `i+1` are < len <= capacity.
-                unsafe {
-                    ptr::copy_nonoverlapping(base.add((i + 1) * size), base.add(i * size), size);
-                }
-                i += 1;
-            }
-        }
+        let tail = self.len - 1 - index;
+        let mut s = self.slice();
+        s.copy_rows_within(index + 1, index, tail);
         self.len -= 1;
     }
 
@@ -994,38 +1099,24 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         debug_assert!(new_len <= self.capacity);
         debug_assert!(new_len <= self.len);
 
-        let other_layout = layout_for::<T>(new_len);
-        let other_bytes = match aligned_alloc(&self.alloc, other_layout) {
+        let new_bytes = match aligned_alloc::<T, _>(&self.alloc, layout_for::<T>(new_len)) {
             Ok(p) => p,
             Err(_) => {
                 self.len = new_len;
                 return;
             }
         };
-        // Copy columns into the fresh allocation.
         self.len = new_len;
-        let self_slice = self.slice();
-        let mut dst = other_bytes;
-        let (bytes, fields) = Reflected::<T>::SIZES;
-        for k in 0..Reflected::<T>::COUNT {
-            let size = bytes[k];
-            if size != 0 {
-                // SAFETY: both columns hold `new_len` elements; allocations distinct.
-                unsafe {
-                    ptr::copy_nonoverlapping(self_slice.ptr(fields[k]), dst, new_len * size);
-                }
-            }
-            // SAFETY: within the fresh allocation; always in-bounds.
-            dst = unsafe { dst.add(size * new_len) };
-        }
+        let mut dst = Slice::<T>::from_raw(new_bytes, new_len, new_len);
+        dst.copy_rows_from(0, &self.slice(), new_len);
         self.free_allocated_bytes();
-        self.bytes = other_bytes;
+        self.bytes = new_bytes;
         self.capacity = new_len;
     }
 
     pub fn clear_and_free(&mut self) {
         self.free_allocated_bytes();
-        self.bytes = ptr::null_mut();
+        self.bytes = Reflected::<T>::DANGLING;
         self.len = 0;
         self.capacity = 0;
     }
@@ -1046,12 +1137,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         if core::mem::needs_drop::<T>() && self.len != 0 {
             let s = self.slice();
             for i in 0..self.len {
-                // SAFETY: `i < len <= capacity`; every column holds an
-                // initialized field at `i`. `gather` bit-copies those bytes
-                // into a stack `T`; dropping it runs each field's destructor
-                // exactly once. The SoA bytes for row `i` are not read again:
-                // `len` is zeroed immediately after the loop.
-                unsafe { drop(gather::<T>(&s.ptrs, i)) };
+                drop(s.gather(i));
             }
         }
         self.len = 0;
@@ -1084,28 +1170,10 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     /// `new_capacity` must be greater or equal to `len`.
     pub fn set_capacity(&mut self, new_capacity: usize) -> Result<(), AllocError> {
         debug_assert!(new_capacity >= self.len);
-        let new_layout = layout_for::<T>(new_capacity);
-        let new_bytes = aligned_alloc(&self.alloc, new_layout)?;
-        if self.len == 0 {
-            self.free_allocated_bytes();
-            self.bytes = new_bytes;
-            self.capacity = new_capacity;
-            return Ok(());
-        }
-        // Copy each column into the new allocation, then free the old one.
-        let self_slice = self.slice();
-        let mut dst = new_bytes;
-        let (bytes, fields) = Reflected::<T>::SIZES;
-        for k in 0..Reflected::<T>::COUNT {
-            let size = bytes[k];
-            if size != 0 {
-                // SAFETY: both columns hold `self.len` elements; allocations distinct.
-                unsafe {
-                    ptr::copy_nonoverlapping(self_slice.ptr(fields[k]), dst, self.len * size);
-                }
-            }
-            // SAFETY: within the fresh allocation; always in-bounds.
-            dst = unsafe { dst.add(size * new_capacity) };
+        let new_bytes = aligned_alloc::<T, _>(&self.alloc, layout_for::<T>(new_capacity))?;
+        if self.len != 0 {
+            let mut dst = Slice::<T>::from_raw(new_bytes, self.len, new_capacity);
+            dst.copy_rows_from(0, &self.slice(), self.len);
         }
         self.free_allocated_bytes();
         self.bytes = new_bytes;
@@ -1121,43 +1189,14 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         let mut result = Self::new_in(self.alloc.clone());
         result.ensure_total_capacity(self.len)?;
         result.len = self.len;
-        let self_slice = self.slice();
-        let result_slice = result.slice();
-        for fi in 0..Reflected::<T>::COUNT {
-            let size = Reflected::<T>::META[fi].size;
-            if size != 0 {
-                // SAFETY: both columns hold `self.len` elements; allocations distinct.
-                unsafe {
-                    ptr::copy_nonoverlapping(
-                        self_slice.ptr(fi),
-                        result_slice.ptr(fi),
-                        self.len * size,
-                    );
-                }
-            }
-        }
+        let mut dst = result.slice();
+        dst.copy_rows_from(0, &self.slice(), self.len);
         Ok(result)
     }
 
-    fn sort_internal<C: SortContext, const STABLE: bool>(&self, a: usize, b: usize, ctx: C) {
-        let slice = self.slice();
-        let swap = |a_index: usize, b_index: usize| {
-            for fi in 0..Reflected::<T>::COUNT {
-                let size = Reflected::<T>::META[fi].size;
-                if size != 0 {
-                    let base = slice.ptr(fi);
-                    // SAFETY: indices are < len; columns are contiguous; a != b
-                    // is guaranteed by sort impls.
-                    unsafe {
-                        ptr::swap_nonoverlapping(
-                            base.add(a_index * size),
-                            base.add(b_index * size),
-                            size,
-                        );
-                    }
-                }
-            }
-        };
+    fn sort_internal<C: SortContext, const STABLE: bool>(&mut self, a: usize, b: usize, ctx: C) {
+        let mut slice = self.slice();
+        let swap = |ai: usize, bi: usize| slice.swap_rows(ai, bi);
         let less = |ai: usize, bi: usize| ctx.less_than(ai, bi);
 
         match STABLE {
@@ -1167,31 +1206,27 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     }
 
     /// Stable sort by index-based context.
-    pub fn sort<C: SortContext>(&self, ctx: C) {
+    pub fn sort<C: SortContext>(&mut self, ctx: C) {
         self.sort_internal::<C, true>(0, self.len, ctx);
     }
 
     /// Stable sort of `[a, b)` by index-based context.
-    pub fn sort_span<C: SortContext>(&self, a: usize, b: usize, ctx: C) {
+    pub fn sort_span<C: SortContext>(&mut self, a: usize, b: usize, ctx: C) {
         self.sort_internal::<C, true>(a, b, ctx);
     }
 
     /// Unstable sort by index-based context.
-    pub fn sort_unstable<C: SortContext>(&self, ctx: C) {
+    pub fn sort_unstable<C: SortContext>(&mut self, ctx: C) {
         self.sort_internal::<C, false>(0, self.len, ctx);
     }
 
     /// Unstable sort of `[a, b)` by index-based context.
-    pub fn sort_span_unstable<C: SortContext>(&self, a: usize, b: usize, ctx: C) {
+    pub fn sort_span_unstable<C: SortContext>(&mut self, a: usize, b: usize, ctx: C) {
         self.sort_internal::<C, false>(a, b, ctx);
     }
 
     pub fn capacity_in_bytes(capacity: usize) -> usize {
         Reflected::<T>::ELEM_BYTES * capacity
-    }
-
-    fn allocated_bytes(&self) -> (*mut u8, usize) {
-        (self.bytes, Self::capacity_in_bytes(self.capacity))
     }
 
     /// Returns the amount of memory used by this list, in bytes.
@@ -1200,11 +1235,14 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     }
 
     /// Zero-initialize all allocated memory.
-    pub fn zero(&self) {
-        let (p, n) = self.allocated_bytes();
+    pub fn zero(&mut self) {
+        let n = Self::capacity_in_bytes(self.capacity);
         if n != 0 {
-            // SAFETY: `p` is the start of an allocation of `n` bytes.
-            unsafe { ptr::write_bytes(p, 0, n) };
+            // SAFETY: `bytes` is the start of an allocation of `n` bytes
+            // (`INVARIANT:column_base`, with `capacity > 0` implied by `n > 0`).
+            // Kept as `write_bytes`: `[MaybeUninit<u8>]::fill` is not
+            // memset-specialized, and this is on the bundler hot path.
+            unsafe { ptr::write_bytes(self.bytes.as_ptr(), 0, n) };
         }
     }
 
@@ -1212,16 +1250,13 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     /// repeat call is a no-op. Safe: `bytes`/`capacity` are private and every
     /// constructor/mutator upholds the invariant that when
     /// `layout_for::<T>(self.capacity)` is `Some(layout)`, `self.bytes` is a
-    /// live non-null allocation from `self.alloc` with exactly `layout` (see
+    /// live allocation from `self.alloc` with exactly `layout` (see
     /// [`aligned_alloc`] / [`set_capacity`]).
     fn free_allocated_bytes(&mut self) {
         if let Some(layout) = layout_for::<T>(self.capacity) {
-            // SAFETY: type invariant above — `self.bytes` is non-null and was
-            // allocated by `self.alloc` with exactly `layout`.
-            unsafe {
-                self.alloc
-                    .deallocate(ptr::NonNull::new_unchecked(self.bytes), layout)
-            };
+            // SAFETY: type invariant above — `self.bytes` was allocated by
+            // `self.alloc` with exactly `layout`.
+            unsafe { self.alloc.deallocate(self.bytes, layout) };
             // Re-establish the invariant immediately so an (accidental) second
             // call before the caller installs a new buffer is a no-op rather
             // than a double-free. Callers overwrite both fields right after.
@@ -1250,17 +1285,10 @@ impl<T, A: Allocator> Drop for MultiArrayList<T, A> {
         // element destructors here would double-free that side.
         //
         // For lists that *do* uniquely own heap-backed columns (e.g.
-        // `LineOffsetTable.columns_for_non_ascii: Vec<i32>`), call
+        // `LineOffsetTable.columns_for_non_ascii: Box<[i32]>`), call
         // [`MultiArrayList::drop_elements`] before letting this run, or the
         // column payloads leak.
-        if let Some(layout) = layout_for::<T>(self.capacity) {
-            // SAFETY: `bytes` was allocated with exactly `layout` and is
-            // freed exactly once here.
-            unsafe {
-                self.alloc
-                    .deallocate(ptr::NonNull::new_unchecked(self.bytes), layout)
-            };
-        }
+        self.free_allocated_bytes();
     }
 }
 
@@ -1306,13 +1334,16 @@ fn layout_for<T>(capacity: usize) -> Option<Layout> {
     Some(Layout::from_size_align(n, Reflected::<T>::ALIGN).expect("MultiArrayList layout overflow"))
 }
 
-fn aligned_alloc<A: Allocator>(alloc: &A, layout: Option<Layout>) -> Result<*mut u8, AllocError> {
+fn aligned_alloc<T, A: Allocator>(
+    alloc: &A,
+    layout: Option<Layout>,
+) -> Result<NonNull<u8>, AllocError> {
     let Some(layout) = layout else {
-        return Ok(ptr::null_mut());
+        return Ok(Reflected::<T>::DANGLING);
     };
     alloc
         .allocate(layout)
-        .map(|p| p.as_ptr().cast::<u8>())
+        .map(|p| p.cast::<u8>())
         .map_err(|_| AllocError)
 }
 
@@ -1322,7 +1353,7 @@ fn bun_collections_sort_context(
     a: usize,
     b: usize,
     less: impl Fn(usize, usize) -> bool,
-    swap: impl Fn(usize, usize),
+    mut swap: impl FnMut(usize, usize),
 ) {
     debug_assert!(a <= b);
     if a >= b {
@@ -1343,7 +1374,7 @@ fn bun_collections_sort_unstable_context(
     a: usize,
     b: usize,
     less: impl Fn(usize, usize) -> bool,
-    swap: impl Fn(usize, usize),
+    mut swap: impl FnMut(usize, usize),
 ) {
     debug_assert!(a <= b);
     if b - a < 2 {
@@ -1353,7 +1384,7 @@ fn bun_collections_sort_unstable_context(
     let mut i = a + (b - a) / 2;
     while i > a {
         i -= 1;
-        sift_down(a, i, b, &less, &swap);
+        sift_down(a, i, b, &less, &mut swap);
     }
 
     i = b;
@@ -1363,7 +1394,7 @@ fn bun_collections_sort_unstable_context(
             break;
         }
         swap(a, i);
-        sift_down(a, a, i, &less, &swap);
+        sift_down(a, a, i, &less, &mut swap);
     }
 }
 
@@ -1372,7 +1403,7 @@ fn sift_down(
     target: usize,
     b: usize,
     less: &impl Fn(usize, usize) -> bool,
-    swap: &impl Fn(usize, usize),
+    swap: &mut impl FnMut(usize, usize),
 ) {
     let mut cur = target;
     loop {
@@ -1461,6 +1492,71 @@ mod tests {
         list.push(Borrowed { name: b"hi", n: 7 }).unwrap();
         assert_eq!(list.items::<"name", &[u8]>()[0], b"hi");
         assert_eq!(list.items::<"n", u32>()[0], 7);
+    }
+
+    #[test]
+    fn empty_items_aligned() {
+        // Exercise the `cap == 0` path: must yield a valid empty `&[u64]`
+        // (i.e. a `u64`-aligned dangling base, not `NonNull::<u8>::dangling()`).
+        let list = MultiArrayList::<Foo>::default();
+        assert_eq!(list.items::<"c", u64>(), &[] as &[u64]);
+        let s = Slice::<Foo>::EMPTY;
+        assert_eq!(s.items::<"c", u64>(), &[] as &[u64]);
+    }
+
+    #[test]
+    fn insert_ordered_remove_memmove() {
+        let mut list = MultiArrayList::<Foo>::default();
+        for i in 0..6u32 {
+            list.push(Foo {
+                a: i,
+                b: i as u8,
+                c: i as u64,
+            })
+            .unwrap();
+        }
+        list.insert(
+            2,
+            Foo {
+                a: 99,
+                b: 99,
+                c: 99,
+            },
+        )
+        .unwrap();
+        assert_eq!(list.items::<"a", u32>(), &[0, 1, 99, 2, 3, 4, 5]);
+        list.ordered_remove(2);
+        assert_eq!(list.items::<"a", u32>(), &[0, 1, 2, 3, 4, 5]);
+        list.swap_remove(1);
+        assert_eq!(list.items::<"a", u32>(), &[0, 5, 2, 3, 4]);
+    }
+
+    #[test]
+    fn sort_swaps_all_columns() {
+        let mut list = MultiArrayList::<Foo>::default();
+        for i in (0..5u32).rev() {
+            list.push(Foo {
+                a: i,
+                b: i as u8,
+                c: i as u64 * 10,
+            })
+            .unwrap();
+        }
+        let raw = list.items_raw::<"a", u32>();
+        let len = list.len();
+        struct Ctx {
+            a: *const u32,
+            len: usize,
+        }
+        impl SortContext for Ctx {
+            fn less_than(&self, ai: usize, bi: usize) -> bool {
+                debug_assert!(ai < self.len && bi < self.len);
+                unsafe { *self.a.add(ai) < *self.a.add(bi) }
+            }
+        }
+        list.sort(Ctx { a: raw, len });
+        assert_eq!(list.items::<"a", u32>(), &[0, 1, 2, 3, 4]);
+        assert_eq!(list.items::<"c", u64>(), &[0, 10, 20, 30, 40]);
     }
 }
 

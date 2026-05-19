@@ -499,7 +499,7 @@ mod transition_handler_body {
             // Expand vendor prefixes into multiple transitions.
             // PORT NOTE: Zig used `inline for (VendorPrefix.FIELDS)` over packed-struct
             // bool fields. With bitflags, iterate the individual flag bits.
-            // PERF(port): was comptime-unrolled inline-for — profile in Phase B.
+            // PERF(port): was comptime-unrolled inline-for — profile if it shows up on a hot path.
             for &prefix_flag in VendorPrefix::FIELDS {
                 if prefix_to_iter.contains(prefix_flag) {
                     let mut t = if cloned {
@@ -572,10 +572,13 @@ mod transition_handler_body {
                 _ => {
                     let index = i;
                     // Expand vendor prefixes for targets.
-                    properties.slice_mut()[index as usize].set_prefixes_for_targets(context.targets);
+                    properties.slice_mut()[index as usize]
+                        .set_prefixes_for_targets(context.targets);
 
                     // Expand mask properties, which use different vendor-prefixed names.
-                    if let Some(property_id) = masking::get_webkit_mask_property(properties.at(index)) {
+                    if let Some(property_id) =
+                        masking::get_webkit_mask_property(properties.at(index))
+                    {
                         if context
                             .targets
                             .prefixes(VendorPrefix::NONE, Feature::MaskBorder)
@@ -587,7 +590,8 @@ mod transition_handler_body {
                     }
 
                     if let Some(rtl_props) = &mut rtl_properties {
-                        rtl_props.slice_mut()[index as usize].set_prefixes_for_targets(context.targets);
+                        rtl_props.slice_mut()[index as usize]
+                            .set_prefixes_for_targets(context.targets);
 
                         if let Some(property_id) =
                             masking::get_webkit_mask_property(rtl_props.at(index))
@@ -622,8 +626,6 @@ mod transition_handler_body {
     fn get_logical_properties(property_id: &PropertyId) -> LogicalPropertyId {
         use LogicalPropertyId::{Block, Inline};
         use compat::Feature as F;
-        // TODO(port): PropertyId variant names assumed PascalCase from Zig kebab-case
-        // (e.g. `.@"block-size"` → `BlockSize`). Adjust to actual generated names in Phase B.
         match property_id {
             PropertyId::BlockSize => Block(F::LogicalSize, &[PropertyId::Height]),
             PropertyId::InlineSize => {

@@ -482,9 +482,14 @@ impl ArrayBuffer {
             return Ok(self.value);
         }
 
-        // If it's not a mimalloc heap buffer, we're not going to call a deallocator
+        // If it's not a mimalloc heap buffer, we're not going to call a deallocator.
+        // Only meaningful when mimalloc is the global allocator; otherwise the
+        // probe always returns false and we'd drop the deallocator for buffers we own.
         // SAFETY: `mi_is_in_heap_region` accepts any pointer value (incl. null/non-mimalloc).
-        if self.len > 0 && !unsafe { mimalloc::mi_is_in_heap_region(self.ptr.cast()) } {
+        if self.len > 0
+            && bun_alloc::USE_MIMALLOC
+            && !unsafe { mimalloc::mi_is_in_heap_region(self.ptr.cast()) }
+        {
             bun_core::scoped_log!(ArrayBuffer, "toJS but will never free: {} bytes", self.len);
 
             if self.typed_array_type == JSType::ArrayBuffer {
@@ -920,12 +925,13 @@ impl MarkedArrayBuffer {
     }
 
     pub fn from_string(str: &[u8]) -> Result<MarkedArrayBuffer, bun_alloc::AllocError> {
-        // allocator.dupe(u8, str) → Box::<[u8]>::from(str), but we need a raw mimalloc ptr
-        // because the buffer is later freed via mi_free (MarkedArrayBuffer_deallocator).
+        // allocator.dupe(u8, str) → Box::<[u8]>::from(str), but we need a raw
+        // pointer because the buffer is later freed via the default allocator
+        // (`MarkedArrayBuffer_deallocator` → `default_alloc::free`).
         let buf: Box<[u8]> = Box::from(str);
         let len = buf.len();
         let ptr = bun_core::heap::into_raw(buf).cast::<u8>();
-        // SAFETY: ptr/len from heap::alloc; backed by global mimalloc.
+        // SAFETY: ptr/len from heap::alloc; backed by the global allocator.
         let bytes = unsafe { bun_core::ffi::slice_mut(ptr, len) };
         Ok(MarkedArrayBuffer::from_bytes(bytes, JSType::Uint8Array))
     }
@@ -966,8 +972,8 @@ impl MarkedArrayBuffer {
     pub fn destroy(&mut self) {
         if self.owns_buffer {
             self.owns_buffer = false;
-            // SAFETY: buffer.ptr was allocated via global mimalloc (heap::alloc / allocator.dupe).
-            unsafe { mimalloc::mi_free(self.buffer.ptr.cast()) };
+            // SAFETY: buffer.ptr was allocated by the global allocator (heap::alloc / allocator.dupe).
+            unsafe { bun_alloc::default_alloc::free(self.buffer.ptr.cast()) };
         }
     }
 

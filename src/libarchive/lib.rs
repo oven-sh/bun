@@ -2,9 +2,9 @@
 #![allow(unused, dead_code, clippy::all)]
 #![warn(unused_must_use)]
 // ──────────────────────────────────────────────────────────────────────────
-// Phase D: libarchive FFI surface is fully wired. Thin `extern "C"` wrappers
-// over the C library live in `mod lib` below; higher-level extraction logic
-// (`Archiver`, `BufferReadStream`) sits on top and uses `bun_sys` for I/O.
+// Thin `extern "C"` wrappers over the libarchive C library live in `mod lib`
+// below; higher-level extraction logic (`Archiver`, `BufferReadStream`) sits
+// on top and uses `bun_sys` for I/O.
 // ──────────────────────────────────────────────────────────────────────────
 #![warn(unreachable_pub)]
 use core::ffi::{c_char, c_int, c_void};
@@ -1063,7 +1063,7 @@ pub enum Seek {
 pub struct BufferReadStream {
     // TODO(port): lifetime — `buf` is borrowed for the stream's lifetime (callers
     // construct on stack, init, defer deinit). Stored as raw fat ptr to avoid
-    // a struct lifetime param in Phase A.
+    // a struct lifetime param.
     buf: *const [u8],
     pos: usize,
 
@@ -1078,7 +1078,7 @@ impl BufferReadStream {
     ///
     /// # Safety
     /// `buf` is type-erased to a raw `*const [u8]` (no lifetime parameter on
-    /// `BufferReadStream` — see field comment / Phase-B TODO). The caller
+    /// `BufferReadStream` — see field comment). The caller
     /// **must** guarantee that the slice `buf` points to remains valid and
     /// unmoved for the entire lifetime of the returned `BufferReadStream`
     /// (including its `Drop`). Violating this makes [`buf()`], [`buf_left()`],
@@ -1316,6 +1316,30 @@ fn is_symlink_target_safe(
     resolved.starts_with(fake_root)
 }
 
+/// Returns true if any leading component of `path` (including the full path)
+/// matches a symlink already created by this extraction. `is_symlink_target_safe`
+/// is purely lexical, so once a symlink is on disk the kernel will follow it
+/// during later `mkdirat`/`openat`/`symlinkat` calls — such entries must be
+/// rejected rather than resolved.
+#[cfg(unix)]
+fn path_traverses_created_symlink(path: &[u8], created_symlinks: &[Vec<u8>]) -> bool {
+    if created_symlinks.is_empty() {
+        return false;
+    }
+    let sep = b'/';
+    let mut end = 0usize;
+    while end <= path.len() {
+        if end == path.len() || path[end] == sep {
+            let prefix = &path[..end];
+            if !prefix.is_empty() && created_symlinks.iter().any(|s| s.as_slice() == prefix) {
+                return true;
+            }
+        }
+        end += 1;
+    }
+    false
+}
+
 /// Port of `bun.MakePath.makePath(u16, dir, sub_path)` (bun.zig:2481) — the
 /// Windows arm calls `makeOpenPathAccessMaskW`, which component-iterates the
 /// wide path and `NtCreateFile`s each prefix with `FILE_OPEN_IF`, walking back
@@ -1507,7 +1531,7 @@ impl Archiver {
 
                     // TODO(port): std.mem.tokenizeScalar + .rest() — approximated by
                     // skipping DEPTH_TO_SKIP separator-delimited tokens then taking the
-                    // remainder. Phase B: verify edge cases (leading/trailing seps).
+                    // remainder. TODO: verify edge cases (leading/trailing seps).
                     let mut remaining = pathname_bytes;
                     let mut depth_i = 0usize;
                     while depth_i < DEPTH_TO_SKIP {
@@ -1616,6 +1640,9 @@ impl Archiver {
 
         let mut symlink_join_buf: Option<bun_paths::path_buffer_pool::Guard> = None;
         // (guard Drop puts the buffer back to the pool)
+
+        #[cfg(unix)]
+        let mut created_symlinks: Vec<Vec<u8>> = Vec::new();
 
         let mut normalized_buf = OSPathBuffer::uninit();
         let mut use_pwrite = cfg!(unix);
@@ -1778,6 +1805,17 @@ impl Archiver {
 
                     let path_slice: &[OSPathChar] = &path[..];
 
+                    #[cfg(unix)]
+                    if path_traverses_created_symlink(path_slice, &created_symlinks) {
+                        if options.log {
+                            Output::warn(&format_args!(
+                                "Skipping entry that traverses a previously extracted symlink: {}\n",
+                                bun_core::fmt::fmt_os_path(path_slice, Default::default()),
+                            ));
+                        }
+                        continue;
+                    }
+
                     if options.log {
                         bun_core::prettyln!(
                             " {}",
@@ -1889,6 +1927,7 @@ impl Archiver {
                                         _ => return Err(err.into()),
                                     },
                                 }
+                                created_symlinks.push(path_slice.to_vec());
                             }
                             #[cfg(not(unix))]
                             {
@@ -2045,7 +2084,7 @@ impl Archiver {
                                 }
                                 // archive_read_data_into_fd reads in chunks of 1 MB
                                 // #define    MAX_WRITE    (1024 * 1024)
-                                #[cfg(target_os = "linux")]
+                                #[cfg(any(target_os = "linux", target_os = "android"))]
                                 {
                                     if size > 1_000_000 {
                                         let _ = bun_sys::preallocate_file(
@@ -2125,7 +2164,7 @@ impl Archiver {
         options: ExtractOptions,
     ) -> Result<u32, bun_core::Error> {
         // TODO(port): `options` was `comptime` in Zig — not used in a type position,
-        // so demoted to runtime. // PERF(port): was comptime monomorphization — profile in Phase B
+        // so demoted to runtime. // PERF(port): was comptime monomorphization
         // TODO(port): narrow error set
         let dir: Fd = 'brk: {
             let cwd = Fd::cwd();

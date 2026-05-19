@@ -1082,7 +1082,7 @@ impl UDPSocket {
         callframe: &CallFrame,
         function: fn(&mut uws::udp::Socket, i32) -> c_int,
     ) -> JsResult<JSValue> {
-        // PERF(port): was comptime monomorphization — profile in Phase B.
+        // PERF(port): was comptime monomorphization — profile if hot.
         if this.closed.get() {
             return Err(global_this.throw_value(
                 bun_sys::Error::from_code_int(
@@ -1201,7 +1201,7 @@ impl UDPSocket {
 
         let len = if connected { array_len } else { array_len / 3 };
 
-        // PERF(port): was arena bulk-free — profile in Phase B.
+        // PERF(port): was arena bulk-free — profile if hot.
         let mut payload_vals: Vec<JSValue> = Vec::with_capacity(len);
         payload_vals.resize(len, JSValue::ZERO);
         let mut payloads: Vec<*const u8> = vec![core::ptr::null(); len];
@@ -1446,7 +1446,7 @@ impl UDPSocket {
             u16::try_from(number).expect("int cast")
         };
 
-        let str = address_val.to_bun_string(global_this)?;
+        let str = bun_core::OwnedString::new(address_val.to_bun_string(global_this)?);
         // Owned NUL-terminated copy as a mutable Vec so we can write a NUL at
         // the `%` position for scope-id parsing.
         let mut address_slice: Vec<u8> = str.to_owned_slice_z().into_vec_with_nul();
@@ -1636,10 +1636,11 @@ impl UDPSocket {
         if this.closed.get() {
             return JSValue::UNDEFINED;
         }
+        let Some(socket) = this.socket.get() else {
+            return JSValue::UNDEFINED;
+        };
         // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        JSValue::js_number(
-            uws::udp::Socket::opaque_mut(this.socket.get().unwrap()).bound_port() as f64,
-        )
+        JSValue::js_number(uws::udp::Socket::opaque_mut(socket).bound_port() as f64)
     }
 
     fn create_sock_addr(global_this: &JSGlobalObject, address_bytes: &[u8], port: u16) -> JSValue {
@@ -1655,10 +1656,13 @@ impl UDPSocket {
         if this.closed.get() {
             return JSValue::UNDEFINED;
         }
+        let Some(socket) = this.socket.get() else {
+            return JSValue::UNDEFINED;
+        };
         let mut buf = [0u8; 64];
         let mut length: i32 = 64;
         // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        let socket = uws::udp::Socket::opaque_mut(this.socket.get().unwrap());
+        let socket = uws::udp::Socket::opaque_mut(socket);
         socket.bound_ip(buf.as_mut_ptr(), &mut length);
 
         let address_bytes = &buf[..usize::try_from(length).expect("int cast")];
@@ -1678,11 +1682,13 @@ impl UDPSocket {
         let Some(connect_info) = this.connect_info.get() else {
             return JSValue::UNDEFINED;
         };
+        let Some(socket) = this.socket.get() else {
+            return JSValue::UNDEFINED;
+        };
         let mut buf = [0u8; 64];
         let mut length: i32 = 64;
         // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        uws::udp::Socket::opaque_mut(this.socket.get().unwrap())
-            .remote_ip(buf.as_mut_ptr(), &mut length);
+        uws::udp::Socket::opaque_mut(socket).remote_ip(buf.as_mut_ptr(), &mut length);
 
         let address_bytes = &buf[..usize::try_from(length).expect("int cast")];
         Self::create_sock_addr(global_this, address_bytes, connect_info.port)
@@ -1710,6 +1716,18 @@ impl UDPSocket {
         // SAFETY: called from finalize with valid Box-allocated payload.
         let this_ref = unsafe { &*this };
         debug_assert!(this_ref.closed.get() || VirtualMachine::get().is_shutting_down());
+        // VM-shutdown path: `lastChanceToFinalize` can finalize the wrapper
+        // while the underlying poll is still open (the Strong in `this_value`
+        // kept it GC-rooted until now). Close it so the `us_udp_socket_t`
+        // lands on `closed_udp_head` for the post-destruct
+        // `drain_closed_sockets()` sweep instead of leaking. `on_close`
+        // re-derives `&UDPSocket` from the uws user pointer (= `this`, still
+        // live) and only touches `Cell`/`JsCell` fields; `this_value` is
+        // already `Finalized` so its `downgrade()` is a no-op.
+        if let Some(socket) = this_ref.socket.take() {
+            this_ref.closed.set(true);
+            uws::udp::Socket::opaque_mut(socket).close();
+        }
         this_ref.poll_ref.with_mut(|p| p.disable());
         // config drop handled by heap::take below.
         // this_value.deinit() handled by JsRef Drop.
@@ -1743,7 +1761,7 @@ impl UDPSocket {
             return Err(global_this.throw_invalid_arguments(format_args!("Expected 2 arguments")));
         }
 
-        let str = args.ptr[0].to_bun_string(global_this)?;
+        let str = bun_core::OwnedString::new(args.ptr[0].to_bun_string(global_this)?);
         let connect_host = str.to_owned_slice_z();
 
         let connect_port_js = args.ptr[1];

@@ -59,9 +59,9 @@ pub mod Classes {
     pub use crate::test_runner::expect::ExpectTypeOf;
     pub use crate::test_runner::scope_functions::ScopeFunctions;
     pub use crate::webcore::Blob;
-    // `crate::shell::ParsedShellScript` is a `(())` placeholder left over from
-    // the Phase-A scaffold; the real struct lives in the `parsed_shell_script`
-    // submodule. Re-export the real one so codegen sees the correct payload.
+    // `crate::shell::ParsedShellScript` is a `(())` placeholder; the real struct
+    // lives in the `parsed_shell_script` submodule. Re-export the real one so
+    // codegen sees the correct payload.
     pub use crate::api::bun::h2_frame_parser::H2FrameParser;
     pub use crate::api::bun::subprocess as Subprocess;
     pub use crate::api::bun::subprocess::ResourceUsage;

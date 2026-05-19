@@ -9,8 +9,8 @@ use std::sync::{Arc, Weak};
 
 use bun_uws as uws;
 // Zig: `std.hash.Wyhash` (final4 variant). NOT `Wyhash11`.
-use bun_wyhash::Wyhash;
 use bun_threading::Guarded as Mutex;
+use bun_wyhash::Wyhash;
 
 /// Owned, NUL-terminated C-string slice (`?[*:0]const u8` in Zig). The
 /// pointer is heap-owned (allocated via `dupeZ`); freed via
@@ -524,7 +524,7 @@ pub mod global_registry {
     // Backed by a flat `Vec` (linear scan): the number of distinct SSL configs
     // per process is tiny (typically <16) and `ArrayHashMap` is also linear
     // for `eql` collisions, so this is the same complexity class.
-    // PERF(port): was ArrayHashMapUnmanaged — profile in Phase B.
+    // PERF(port): was ArrayHashMapUnmanaged.
     static REGISTRY: Mutex<Vec<(u64, WeakPtr)>> = Mutex::new(Vec::new());
 
     /// Takes a by-value SSLConfig, wraps it in a `SharedPtr` (strong=1), and

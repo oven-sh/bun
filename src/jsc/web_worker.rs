@@ -1275,6 +1275,20 @@ impl WebWorker {
             }
             exit_code = i32::from(vm.exit_handler.exit_code);
             global_object = Some(vm.global);
+
+            // Free any `EventLoopTask`/`ConcurrentTask` pairs that were posted
+            // to this worker (Worker.postMessage's drain task holding
+            // `Ref<Worker>` → the entire `m_toWorker.queue`; MessagePortPipe
+            // drain tasks; a nested worker's close task; etc.) but never ran
+            // — otherwise each leaks until process exit. Must precede
+            // `teardownJSCVM` for the same reason as the `global_exit` caller:
+            // deleting after `~VM` would run `~JSEventListener` against freed
+            // Weak-handle storage (a nested worker's close task captures
+            // `Ref<WorkerB>` whose listener Weak handles live in *this* heap).
+            // A task posted between this drain and `removeFromContextsMap()`
+            // inside `teardownJSCVM` still leaks — same as before this change,
+            // just a much smaller window.
+            vm.event_loop_mut().drop_concurrent_cpp_tasks();
         }
 
         // ---- 3. JSC VM teardown --------------------------------------------

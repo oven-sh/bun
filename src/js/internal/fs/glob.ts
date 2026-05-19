@@ -73,7 +73,16 @@ function validatePattern(pattern: string | string[]): string[] {
   return [isWindows ? pattern.replaceAll("/", sep) : pattern];
 }
 
-function mapOptions(options: GlobOptions): GlobScanOptions & { exclude: GlobOptions["exclude"] } {
+// `descendLiteralSymlinks` / `swallowMissingCwd` are internal `Bun.Glob`
+// scan options (see `src/runtime/api/glob.zig`) that the `node:fs.glob`
+// layer uses to pick up Node-compatible semantics. They aren't part of
+// the public `GlobScanOptions` type; widen the return type locally so
+// the object literal below typechecks without exposing the knobs.
+function mapOptions(options: GlobOptions): GlobScanOptions & {
+  exclude: GlobOptions["exclude"];
+  descendLiteralSymlinks: boolean;
+  swallowMissingCwd: boolean;
+} {
   validateObject(options, "options");
 
   let exclude = options.exclude ?? no;
@@ -95,8 +104,16 @@ function mapOptions(options: GlobOptions): GlobScanOptions & { exclude: GlobOpti
     // `process.cwd()` may be overridden by JS code, but native code will used the
     // cached `getcwd` on BunProcess.
     cwd: options?.cwd ?? process.cwd(),
-    // https://github.com/nodejs/node/blob/a9546024975d0bfb0a8ae47da323b10fb5cbb88b/lib/internal/fs/glob.js#L655
-    followSymlinks: true,
+    // Node's `fs.glob` does not follow directory symlinks under wildcards
+    // (it would infinite-loop on pnpm-style symlink cycles). The walker
+    // still descends through *literal* path segments that name a symlink,
+    // so e.g. `link/*.txt` with `link` a symlinked directory keeps working.
+    followSymlinks: false,
+    descendLiteralSymlinks: true,
+    // Node's `fs.glob` returns `[]` rather than throwing when the cwd is
+    // missing, is a regular file, or hits a symlink cycle — let the walker
+    // handle that natively.
+    swallowMissingCwd: true,
     // https://github.com/oven-sh/bun/issues/20507
     onlyFiles: false,
     exclude,

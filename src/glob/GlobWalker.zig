@@ -110,6 +110,24 @@ pub fn statatWindows(fd: bun.FD, path: [:0]const u8) Maybe(bun.Stat) {
     return Syscall.stat(statpath);
 }
 
+/// Windows `lstatat`. Mirrors `statatWindows` but ends in `Syscall.lstat`
+/// instead of `Syscall.stat` so the dirent's own mode is returned (ISLNK
+/// for symlinks). Used by `SyscallAccessor.lstatat` on Windows.
+pub fn lstatatWindows(fd: bun.FD, path: [:0]const u8) Maybe(bun.Stat) {
+    if (comptime !bun.Environment.isWindows) @compileError("oi don't use this");
+    var buf: bun.PathBuffer = undefined;
+    const dir = switch (Syscall.getFdPath(fd, &buf)) {
+        .err => |e| return .{ .err = e },
+        .result => |s| s,
+    };
+    const parts: []const []const u8 = &.{
+        dir[0..dir.len],
+        path,
+    };
+    const statpath = ResolvePath.joinZBuf(&buf, parts, .auto);
+    return Syscall.lstat(statpath);
+}
+
 pub const SyscallAccessor = struct {
     const count_fds = true;
 
@@ -144,7 +162,16 @@ pub const SyscallAccessor = struct {
     };
 
     pub fn open(path: [:0]const u8) !Maybe(Handle) {
-        return switch (Syscall.open(path, bun.O.DIRECTORY | bun.O.RDONLY, 0)) {
+        // Route via `openat(.cwd(), ...)` rather than `Syscall.open` so the
+        // `O_DIRECTORY` flag is honored on Windows. The libuv path that
+        // `Syscall.open` takes on Windows silently drops `O_DIRECTORY`,
+        // which means opening a regular file with the flag succeeds
+        // (returns a file fd) instead of failing with `ENOTDIR`. The NT
+        // path `openat` takes uses `FILE_DIRECTORY_FILE` and maps
+        // `STATUS_NOT_A_DIRECTORY` → `ENOTDIR` correctly. On POSIX the
+        // two paths are identical (`Syscall.open` already delegates to
+        // `openat(.cwd(), ...)` there).
+        return switch (Syscall.openat(.cwd(), path, bun.O.DIRECTORY | bun.O.RDONLY, 0)) {
             .err => |err| .{ .err = err },
             .result => |fd| .{ .result = Handle{ .value = fd } },
         };
@@ -160,7 +187,7 @@ pub const SyscallAccessor = struct {
 
     /// Like statat but does not follow symlinks.
     pub fn lstatat(handle: Handle, path: [:0]const u8) Maybe(bun.Stat) {
-        if (comptime bun.Environment.isWindows) return statatWindows(handle.value, path);
+        if (comptime bun.Environment.isWindows) return lstatatWindows(handle.value, path);
         return Syscall.lstatat(handle.value, path);
     }
 
@@ -350,6 +377,15 @@ pub fn GlobWalker_(
 
         cwd: []const u8 = "",
         follow_symlinks: bool = false,
+        /// Node `fs.glob` semantics: when `follow_symlinks` is false, still
+        /// descend into a directory symlink if the pattern segment naming it
+        /// is a literal (no wildcards). Leaves pure-wildcard descent blocked.
+        descend_literal_symlinks: bool = false,
+        /// Node `fs.glob` returns an empty match set when the cwd doesn't
+        /// exist, names a file rather than a directory, or traverses a
+        /// symlink cycle. `Bun.Glob` defaults to throwing — set this when
+        /// you want the Node-flavored silent-empty behavior instead.
+        swallow_missing_cwd: bool = false,
         error_on_broken_symlinks: bool = false,
         only_files: bool = true,
 
@@ -477,24 +513,220 @@ pub fn GlobWalker_(
                         //
                         // In that case we don't need to do any walking and can just open up the FS entry
                         if (starting_component_idx >= this.walker.patternComponents.items.len) {
+                            // Two paths here, on purpose:
+                            //
+                            // * `path` is the *unstripped* slice. Passed to
+                            //   `Accessor.open(path, O_DIRECTORY)` so the
+                            //   kernel follows the link (if any) and
+                            //   reports mid-path errors against the actual
+                            //   intended target.
+                            //
+                            // * `emit_path` is the stripped slice — what
+                            //   goes into `matchedPaths` / `.matched` AND
+                            //   what `Syscall.lstat` receives. POSIX
+                            //   `lstat` with a trailing slash *follows*
+                            //   symlinks (`lstat('symlink-to-file/')` →
+                            //   ENOTDIR), which would hide the dirent's
+                            //   own type and make it impossible to match
+                            //   Node's "emit any symlink under trailing
+                            //   slash" rule. Stripping first keeps
+                            //   `lstat` on the raw dirent.
+                            //
+                            //   `buildPatternComponents` keeps the
+                            //   trailing separator in
+                            //   `path_without_special_syntax`, but Node
+                            //   normalizes (`fs.globSync('/abs/dir/')` →
+                            //   `['/abs/dir']`) and the sibling relative
+                            //   literal-tail branch strips via
+                            //   `patternSlice()` too. Strip a run of
+                            //   trailing separators, guarded against bare
+                            //   roots (`/`, `C:\` on Windows). The `while`
+                            //   collapses `//` and `///` runs.
                             const path = try this.walker.arena.allocator().dupeZ(u8, path_without_special_syntax);
+                            var trimmed = path_without_special_syntax;
+                            while (trimmed.len > 1 and
+                                (trimmed[trimmed.len - 1] == '/' or (bun.Environment.isWindows and trimmed[trimmed.len - 1] == '\\')) and
+                                !(bun.Environment.isWindows and trimmed.len == 3 and trimmed[1] == ':'))
+                            {
+                                trimmed = trimmed[0 .. trimmed.len - 1];
+                            }
+                            const emit_path: [:0]const u8 = if (trimmed.len == path_without_special_syntax.len)
+                                path
+                            else
+                                try this.walker.arena.allocator().dupeZ(u8, trimmed);
+                            // Every success-shaped arm below sets
+                            // `iter_state = .matched` AND pushes into
+                            // `matchedPaths`: the `next()` iterator yields
+                            // the path once from `.matched`, but
+                            // `GlobWalker.walk()` discards the yield and
+                            // `globWalkResultToJS` reads `matchedPaths.keys()`
+                            // — so the put is what actually populates the
+                            // result array for `scanSync`/`fs.glob`.
+                            // Last pattern component: if it had a trailing
+                            // separator, the pattern means "directories only"
+                            // — `/abs/file.txt/` (trailing slash on a regular
+                            // file) must return `[]`. On POSIX `lstat()` with
+                            // trailing slash on a non-directory fails ENOTDIR
+                            // and the lstat-err path handles it. Windows
+                            // `lstat` does NOT enforce that rule — we need an
+                            // explicit check against the component flag.
+                            const trailing_sep = this.walker.patternComponents.items.len > 0 and
+                                this.walker.patternComponents.items[this.walker.patternComponents.items.len - 1].trailing_sep;
                             const fd = switch (try Accessor.open(path)) {
                                 .err => |e| {
                                     if (e.getErrno() == bun.sys.E.NOTDIR) {
-                                        this.iter_state = .{ .matched = path };
-                                        return .success;
+                                        // `open(path, O_DIRECTORY)` returns
+                                        // NOTDIR both for a terminal
+                                        // non-directory (`/abs/file.txt`,
+                                        // entry exists — emit it) and for a
+                                        // mid-path non-directory
+                                        // (`/abs/file.txt/something`, path
+                                        // doesn't exist — Node returns `[]`).
+                                        // `lstat` disambiguates: succeeds for
+                                        // terminal, fails NOTDIR/ENOENT for
+                                        // mid-path. Call with `emit_path`
+                                        // (trailing slash stripped) so POSIX
+                                        // `lstat`'s follow-on-trailing-slash
+                                        // semantics don't mask the dirent's
+                                        // own type. The `trailing_sep` flag
+                                        // below then applies Node's rule
+                                        // uniformly on both POSIX and
+                                        // Windows. Use `Syscall.lstat`
+                                        // directly rather than
+                                        // `Accessor.lstatat(.empty, ...)` —
+                                        // `lstatatWindows` dereferences the
+                                        // handle before checking whether
+                                        // `path` is absolute, so passing
+                                        // `.empty` fails with EBADF on
+                                        // Windows. `emit_path` is known
+                                        // absolute here (we're inside
+                                        // `is_absolute`).
+                                        switch (Syscall.lstat(emit_path)) {
+                                            .result => |stat| {
+                                                // Trailing slash = directories
+                                                // only, but symlinks pass —
+                                                // Node's `fs.glob` uses
+                                                // `lstat` and treats every
+                                                // symlink (dangling, self-
+                                                // ref loop, symlink-to-file,
+                                                // symlink-to-dir) as a
+                                                // potential directory. Only
+                                                // ISREG and other plain
+                                                // non-dir non-link entries
+                                                // get filtered.
+                                                if (trailing_sep and !bun.S.ISDIR(@intCast(stat.mode)) and !bun.S.ISLNK(@intCast(stat.mode))) {
+                                                    this.iter_state = .get_next;
+                                                    return .success;
+                                                }
+                                                try this.walker.appendMatchedPathSymlink(emit_path);
+                                                this.iter_state = .{ .matched = emit_path };
+                                                return .success;
+                                            },
+                                            .err => {
+                                                this.iter_state = .get_next;
+                                                return .success;
+                                            },
+                                        }
                                     }
-                                    // Doesn't exist
+                                    // `open(path, O_DIRECTORY)` returns ENOENT
+                                    // both for a truly-missing path (no
+                                    // dirent — `[]`) and for a *dangling*
+                                    // symlink (dirent exists, kernel
+                                    // follows the link, target is missing).
+                                    // Node's `fs.glob` emits the dirent for
+                                    // the dangling case. Gated on
+                                    // `swallow_missing_cwd` so `fs.glob`
+                                    // gets the dangling-symlink dirent and
+                                    // direct `Bun.Glob` consumers (which
+                                    // don't opt in) keep the empty result
+                                    // — same pattern as the ELOOP arm below
+                                    // and the literal-tail branch in
+                                    // `transitionToDirIterState`.
+                                    if (this.walker.swallow_missing_cwd and e.getErrno() == bun.sys.E.NOENT) {
+                                        switch (Syscall.lstat(emit_path)) {
+                                            .result => |stat| {
+                                                if (trailing_sep and !bun.S.ISDIR(@intCast(stat.mode)) and !bun.S.ISLNK(@intCast(stat.mode))) {
+                                                    this.iter_state = .get_next;
+                                                    return .success;
+                                                }
+                                                try this.walker.appendMatchedPathSymlink(emit_path);
+                                                this.iter_state = .{ .matched = emit_path };
+                                                return .success;
+                                            },
+                                            .err => {
+                                                this.iter_state = .get_next;
+                                                return .success;
+                                            },
+                                        }
+                                    }
+                                    // Truly missing path (or dangling symlink
+                                    // under public `Bun.Glob` that didn't opt
+                                    // into `swallow_missing_cwd`): `[]`.
                                     if (e.getErrno() == bun.sys.E.NOENT) {
                                         this.iter_state = .get_next;
                                         return .success;
+                                    }
+                                    // Windows: bare drive-relative roots like
+                                    // `\` fall through `openat(.cwd(), "\\",
+                                    // O_DIRECTORY)` with EBADF (the NT
+                                    // normalizer can't produce a handle).
+                                    // Node's `fs.glob('\\')` returns an array
+                                    // rather than throwing; treat EBADF as
+                                    // "cannot open cwd-equivalent" under the
+                                    // `swallow_missing_cwd` opt-in.
+                                    if (comptime bun.Environment.isWindows) {
+                                        if (this.walker.swallow_missing_cwd and e.getErrno() == bun.sys.E.BADF) {
+                                            this.iter_state = .get_next;
+                                            return .success;
+                                        }
+                                    }
+                                    // Symlink cycle — Node's `fs.glob` reports
+                                    // the dirent when the self-referential
+                                    // symlink is the *terminal* segment
+                                    // (`/abs/loop`), and returns `[]` (or
+                                    // throws, matching the kernel) when the
+                                    // loop is mid-path (`/abs/loop/inside`).
+                                    // `lstat` disambiguates: succeeds for the
+                                    // terminal case, fails ELOOP for mid-path.
+                                    // Mirrors the literal-tail branch in
+                                    // `transitionToDirIterState`.
+                                    if (this.walker.swallow_missing_cwd and e.getErrno() == bun.sys.E.LOOP) {
+                                        // Use `Syscall.lstat` directly (see
+                                        // NOTDIR arm above for rationale —
+                                        // same `emit_path` / trailing-slash
+                                        // reasoning applies).
+                                        switch (Syscall.lstat(emit_path)) {
+                                            .result => |stat| {
+                                                if (trailing_sep and !bun.S.ISDIR(@intCast(stat.mode)) and !bun.S.ISLNK(@intCast(stat.mode))) {
+                                                    this.iter_state = .get_next;
+                                                    return .success;
+                                                }
+                                                try this.walker.appendMatchedPathSymlink(emit_path);
+                                                this.iter_state = .{ .matched = emit_path };
+                                                return .success;
+                                            },
+                                            .err => {
+                                                this.iter_state = .get_next;
+                                                return .success;
+                                            },
+                                        }
                                     }
                                     return .{ .err = e.withPath(path) };
                                 },
                                 .result => |fd| fd,
                             };
                             _ = Accessor.close(fd);
-                            this.iter_state = .{ .matched = path };
+                            // `open` with `O_DIRECTORY` succeeded → `path` is a
+                            // directory. Emit it only when `only_files` is
+                            // false, matching the relative literal-tail branch
+                            // in `transitionToDirIterState` that gates on
+                            // `bun.S.ISDIR(mode) and !only_files`.
+                            if (!this.walker.only_files) {
+                                try this.walker.appendMatchedPathSymlink(emit_path);
+                                this.iter_state = .{ .matched = emit_path };
+                            } else {
+                                this.iter_state = .get_next;
+                            }
                             return .success;
                         }
 
@@ -521,7 +753,20 @@ pub fn GlobWalker_(
                 @memcpy(path_buf[0..root_path.len], root_path[0..root_path.len]);
                 path_buf[root_path.len] = 0;
                 const cwd_fd = switch (try Accessor.open(path_buf[0..root_path.len :0])) {
-                    .err => |err| return .{ .err = this.walker.handleSysErrWithPath(err, @ptrCast(path_buf[0 .. root_path.len + 1])) },
+                    .err => |err| {
+                        // Missing / non-directory / cyclic cwd: Node's `fs.glob`
+                        // returns `[]` rather than throwing. Emit nothing and
+                        // wind the iterator straight to completion when the
+                        // caller opted in.
+                        if (this.walker.swallow_missing_cwd) {
+                            const errno = err.getErrno();
+                            if (errno == bun.sys.E.NOENT or errno == bun.sys.E.NOTDIR or errno == bun.sys.E.LOOP) {
+                                this.iter_state = .get_next;
+                                return .success;
+                            }
+                        }
+                        return .{ .err = this.walker.handleSysErrWithPath(err, @ptrCast(path_buf[0 .. root_path.len + 1])) };
+                    },
                     .result => |fd| fd,
                 };
 
@@ -688,17 +933,82 @@ pub fn GlobWalker_(
                         const stackbuf_size = 256;
                         var stfb = std.heap.stackFallback(stackbuf_size, this.walker.arena.allocator());
                         const pathz = try stfb.get().dupeZ(u8, this.walker.patternComponents.items[idx].patternSlice(this.walker.pattern));
-                        const stat_result: bun.Stat = switch (Accessor.statat(fd, pathz)) {
+                        const stat_result: bun.Stat = stat_result: switch (Accessor.statat(fd, pathz)) {
                             .err => |e_| {
                                 var e: bun.sys.Error = e_;
+                                // Dangling symlink: `statat` follows the link
+                                // and fails with ENOENT because the target
+                                // is missing, but the dirent itself exists.
+                                // Node's `fs.glob` reports the dirent; fall
+                                // back to `lstatat` so the `matches`
+                                // expression below sees the symlink's own
+                                // mode (`lstatat` fails ENOENT too for a
+                                // truly-missing path → `[]`). Gated on the
+                                // Node-compat flag so public `Bun.Glob`
+                                // keeps the historical empty-result behavior
+                                // — mirrors the ENOENT arm of the absolute-
+                                // literal fast-path.
+                                if (this.walker.swallow_missing_cwd and e.getErrno() == .NOENT) {
+                                    break :stat_result switch (Accessor.lstatat(fd, pathz)) {
+                                        .err => {
+                                            this.iter_state = .get_next;
+                                            return .success;
+                                        },
+                                        .result => |stat| stat,
+                                    };
+                                }
                                 if (e.getErrno() == .NOENT) {
                                     this.iter_state = .get_next;
                                     return .success;
+                                }
+                                // Self-referential symlink: `statat` follows
+                                // the link and fails with ELOOP. Node's
+                                // `fs.glob` reports the dirent as-is
+                                // (`['loop']`); fall back to `lstatat` so
+                                // the `matches` expression below sees the
+                                // symlink's own mode. Gated on the Node-
+                                // compat flag so public Bun.Glob still
+                                // surfaces the error for its callers.
+                                if (this.walker.swallow_missing_cwd and e.getErrno() == .LOOP) {
+                                    break :stat_result switch (Accessor.lstatat(fd, pathz)) {
+                                        .err => {
+                                            this.iter_state = .get_next;
+                                            return .success;
+                                        },
+                                        .result => |stat| stat,
+                                    };
                                 }
                                 return .{ .err = e.withPath(this.walker.patternComponents.items[idx].patternSlice(this.walker.pattern)) };
                             },
                             .result => |stat| stat,
                         };
+                        // Trailing slash on the pattern means "directories
+                        // only". Node's `fs.glob` uses `lstat` and treats
+                        // every symlink as a potential directory, so we
+                        // only filter when the dirent is both non-dir and
+                        // non-link — regular files, block/char devices,
+                        // fifos, sockets. `statat` follows links, so when
+                        // `trailing_sep` is set and the statat target
+                        // isn't a directory we need a separate `lstatat`
+                        // to see the dirent's own mode (ISLNK → emit,
+                        // anything else → filter). The `!ISLNK` clause
+                        // short-circuits when `stat_result` already came
+                        // from the ENOENT/ELOOP lstatat fallbacks above
+                        // — `statat` itself can never return ISLNK since
+                        // it follows symlinks, so ISLNK is a reliable
+                        // signal that the fallback already produced a
+                        // true-lstat view.
+                        const trailing_sep = this.walker.patternComponents.items[idx].trailing_sep;
+                        if (trailing_sep and !bun.S.ISDIR(@intCast(stat_result.mode)) and !bun.S.ISLNK(@intCast(stat_result.mode))) {
+                            const dirent_is_symlink = switch (Accessor.lstatat(fd, pathz)) {
+                                .err => false,
+                                .result => |s| bun.S.ISLNK(@intCast(s.mode)),
+                            };
+                            if (!dirent_is_symlink) {
+                                this.iter_state = .get_next;
+                                return .success;
+                            }
+                        }
                         const matches = (bun.S.ISDIR(@intCast(stat_result.mode)) and !this.walker.only_files) or bun.S.ISREG(@intCast(stat_result.mode)) or !this.walker.only_files;
                         if (matches) {
                             if (try this.walker.prepareMatchedPath(pathz, dir_path)) |path| {
@@ -908,9 +1218,27 @@ pub fn GlobWalker_(
                                     continue;
                                 },
                                 .sym_link => {
-                                    if (this.walker.follow_symlinks) {
-                                        if (!this.walker.evalImpl(active, entry_name)) continue;
+                                    // Pick the active set that should be live *on the far side*
+                                    // of the symlink, or `null` to mean "don't descend". Node's
+                                    // `fs.glob` rule: wildcards don't cross symlinks, literals do.
+                                    // When descent is triggered by a literal match, narrow the set
+                                    // to just the literal indices so `**` doesn't re-expand after
+                                    // the boundary — that's what prevents self-referential cycles
+                                    // like `a/node_modules/a -> ../..` under `**/node_modules/a/*`
+                                    // from looping until ENAMETOOLONG.
+                                    const far_side: ?ComponentSet = blk: {
+                                        if (this.walker.follow_symlinks) {
+                                            if (!this.walker.evalImpl(active, entry_name)) break :blk null;
+                                            break :blk active;
+                                        }
+                                        if (this.walker.descend_literal_symlinks) {
+                                            const lit = this.walker.literalMatchSet(active, entry_name);
+                                            if (lit.count() != 0) break :blk lit;
+                                        }
+                                        break :blk null;
+                                    };
 
+                                    if (far_side) |lit_active| {
                                         const subdir_parts: []const []const u8 = &[_][]const u8{
                                             dir.dir_path[0..dir.dir_path.len],
                                             entry_name,
@@ -920,8 +1248,19 @@ pub fn GlobWalker_(
 
                                         try this.walker.workbuf.append(
                                             this.walker.arena.allocator(),
-                                            WorkItem.newSymlink(subdir_entry_name, active, entry_start),
+                                            WorkItem.newSymlink(subdir_entry_name, lit_active, entry_start),
                                         );
+
+                                        // The narrowed `lit_active` is what descends, but the
+                                        // **full** active set may also contain a terminal index
+                                        // that matches the symlink *as a leaf* (e.g. a terminal
+                                        // `*` against the symlink name). Check that here — the
+                                        // descent we just queued won't emit it because the
+                                        // work-item handler only sees `lit_active`.
+                                        if (!this.walker.follow_symlinks and !this.walker.only_files and this.walker.evalFile(active, entry_name)) {
+                                            const prepared_path = try this.walker.prepareMatchedPath(entry_name, dir.dir_path) orelse continue;
+                                            return .{ .result = prepared_path };
+                                        }
                                         continue;
                                     }
 
@@ -972,7 +1311,19 @@ pub fn GlobWalker_(
                                             }
                                         },
                                         .sym_link => {
-                                            if (this.walker.follow_symlinks) {
+                                            // Same descent policy as the direct `.sym_link` path
+                                            // above — see the comment there for why the literal
+                                            // case narrows the far-side active set.
+                                            const far_side: ?ComponentSet = blk: {
+                                                if (this.walker.follow_symlinks) break :blk active;
+                                                if (this.walker.descend_literal_symlinks) {
+                                                    const lit = this.walker.literalMatchSet(active, entry_name);
+                                                    if (lit.count() != 0) break :blk lit;
+                                                }
+                                                break :blk null;
+                                            };
+
+                                            if (far_side) |lit_active| {
                                                 const subdir_parts: []const []const u8 = &[_][]const u8{
                                                     dir.dir_path[0..dir.dir_path.len],
                                                     entry_name,
@@ -981,8 +1332,14 @@ pub fn GlobWalker_(
                                                 const subdir_entry_name = try this.walker.join(subdir_parts);
                                                 try this.walker.workbuf.append(
                                                     this.walker.arena.allocator(),
-                                                    WorkItem.newSymlink(subdir_entry_name, active, entry_start),
+                                                    WorkItem.newSymlink(subdir_entry_name, lit_active, entry_start),
                                                 );
+                                                // See the matching comment in the direct .sym_link branch: the
+                                                // narrowed descent doesn't cover terminal-index leaf matches.
+                                                if (!this.walker.follow_symlinks and !this.walker.only_files and this.walker.evalFile(active, entry_name)) {
+                                                    const prepared_path = try this.walker.prepareMatchedPath(entry_name, dir.dir_path) orelse continue;
+                                                    return .{ .result = prepared_path };
+                                                }
                                             } else if (!this.walker.only_files) {
                                                 if (this.walker.evalFile(active, entry_name)) {
                                                     const prepared_path = try this.walker.prepareMatchedPath(entry_name, dir.dir_path) orelse continue;
@@ -1470,6 +1827,177 @@ pub fn GlobWalker_(
                 if (this.matchPatternImpl(&this.patternComponents.items[idx], entry_name)) return true;
             }
             return false;
+        }
+
+        /// Returns the subset of `active` whose components match `entry_name`
+        /// *via a literal branch*. Node's `fs.glob` descends into a directory
+        /// symlink only when the pattern segment naming it is literal;
+        /// wildcard components stop at the symlink.
+        ///
+        /// The returned set is what should be active on the *far side* of
+        /// the symlink — and crucially it drops any `.Double` (`**`) index
+        /// that was active alongside the literal, so `**` cannot re-expand
+        /// after crossing a symlink. That matches Node's behavior and
+        /// prevents self-referential symlink cycles like
+        /// `a/node_modules/a -> ../..` under `**/node_modules/a/*.txt`.
+        ///
+        /// Mixed-brace components are handled branch-by-branch — for
+        /// `{link,d*}`, matching `link` via the literal alt `"link"` counts
+        /// as a literal match; matching `dir` via the wildcard alt `"d*"`
+        /// does NOT. See `hasLiteralMatch` for the per-branch logic.
+        fn literalMatchSet(this: *GlobWalker, active: ComponentSet, entry_name: []const u8) ComponentSet {
+            var out = this.makeSet();
+            const comps = this.patternComponents.items;
+            var it = active.iterator(.{});
+            while (it.next()) |i| {
+                const idx: u32 = @intCast(i);
+                const comp = &comps[idx];
+                const slice = comp.patternSlice(this.pattern);
+                const is_literal_match = switch (comp.syntax_hint) {
+                    .Literal => matchWildcardLiteral(slice, entry_name),
+                    .None => hasLiteralMatch(slice, entry_name),
+                    // `Single`/`Double`/`WildcardFilepath` are by
+                    // construction unbounded — never literal.
+                    else => false,
+                };
+                if (is_literal_match) out.set(idx);
+            }
+            return out;
+        }
+
+        /// Max recursion depth for `matchLiteral` brace expansion. Each
+        /// `{` increments the counter; tail recursion into the next
+        /// sequential group also increments. Bounds worst-case work to
+        /// `N^max_brace_depth` per call — matches the existing
+        /// `src/glob/matcher.zig` `BraceStack = BoundedArray(Brace, 10)`
+        /// budget. Beyond this we conservatively return `false` (= don't
+        /// cross the symlink via this component); under-matching is
+        /// always safe, over-matching would re-enable pnpm-style
+        /// symlink cycles. `{,}'.repeat(50)` and similar pathological
+        /// patterns hit the cap and bail cleanly instead of hanging at
+        /// ~2^50 recursive calls.
+        const max_brace_depth: u32 = 10;
+
+        /// Does `pattern` match `entry_name` via a **literal branch** — i.e.
+        /// a concatenation of brace alternatives containing no `*`, `?`, or
+        /// `[...]` character class? For `{link,d*}` the only literal branch
+        /// is `link`. For `{a,b}/{x,y}` there are four (`a/x`, `a/y`, `b/x`,
+        /// `b/y`) — but this helper is only ever called on a single path
+        /// segment, so top-level separators are unreachable.
+        ///
+        /// Escaped metacharacters (`\*foo`) count as literal.
+        fn hasLiteralMatch(pattern: []const u8, entry_name: []const u8) bool {
+            return matchLiteral(pattern, 0, @intCast(pattern.len), entry_name, 0, @intCast(entry_name.len), 0);
+        }
+
+        /// Match `pattern[pi..phi]` against `entry[ei..ehi]` as a literal
+        /// branch. `*`, `?`, `[` inside the current branch are fatal
+        /// (wildcard makes the branch non-literal). Both ranges must be
+        /// consumed exactly; at `{` recurse into each top-level alternative
+        /// followed by the post-brace tail.
+        fn matchLiteral(
+            pattern: []const u8,
+            pi_in: u32,
+            phi: u32,
+            entry: []const u8,
+            ei_in: u32,
+            ehi: u32,
+            depth: u32,
+        ) bool {
+            var pi = pi_in;
+            var ei = ei_in;
+            while (pi < phi) {
+                const c = pattern[pi];
+                switch (c) {
+                    '*', '?', '[' => return false,
+                    '\\' => {
+                        if (pi + 1 >= phi) return false;
+                        if (ei >= ehi or entry[ei] != pattern[pi + 1]) return false;
+                        pi += 2;
+                        ei += 1;
+                    },
+                    '{' => {
+                        if (depth >= max_brace_depth) return false;
+                        const close = findMatchingBraceEnd(pattern, pi, phi) orelse return false;
+                        var alt_lo: u32 = pi + 1;
+                        var inner_depth: u32 = 1;
+                        var scan: u32 = pi + 1;
+                        while (scan < close) : (scan += 1) {
+                            const sc = pattern[scan];
+                            if (sc == '\\') {
+                                scan += 1;
+                                continue;
+                            }
+                            if (sc == '{') {
+                                inner_depth += 1;
+                            } else if (sc == '}') {
+                                inner_depth -= 1;
+                            } else if (sc == ',' and inner_depth == 1) {
+                                if (tryBranch(pattern, alt_lo, scan, close + 1, phi, entry, ei, ehi, depth + 1)) return true;
+                                alt_lo = scan + 1;
+                            }
+                        }
+                        return tryBranch(pattern, alt_lo, close, close + 1, phi, entry, ei, ehi, depth + 1);
+                    },
+                    else => {
+                        if (ei >= ehi or entry[ei] != c) return false;
+                        pi += 1;
+                        ei += 1;
+                    },
+                }
+            }
+            return ei == ehi;
+        }
+
+        /// For alternative `pattern[alt_lo..alt_hi]` followed by tail
+        /// `pattern[tail_lo..tail_hi]`, try every split point of
+        /// `entry[ei..ehi]` — if the alt matches the prefix literally AND
+        /// the tail matches the suffix literally, this branch works.
+        /// A single path segment is short (typically < 255 bytes), so the
+        /// O(n²) split iteration is cheap in practice. `depth` is
+        /// threaded from `matchLiteral` and bounds total brace-nesting
+        /// work (see `max_brace_depth`).
+        fn tryBranch(
+            pattern: []const u8,
+            alt_lo: u32,
+            alt_hi: u32,
+            tail_lo: u32,
+            tail_hi: u32,
+            entry: []const u8,
+            ei: u32,
+            ehi: u32,
+            depth: u32,
+        ) bool {
+            var k: u32 = ei;
+            while (k <= ehi) : (k += 1) {
+                if (matchLiteral(pattern, alt_lo, alt_hi, entry, ei, k, depth) and
+                    matchLiteral(pattern, tail_lo, tail_hi, entry, k, ehi, depth))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// Given `pattern[open] == '{'`, find the matching `}` within
+        /// `[open+1, hi)`. Returns null if unbalanced.
+        fn findMatchingBraceEnd(pattern: []const u8, open: u32, hi: u32) ?u32 {
+            var depth: u32 = 1;
+            var i: u32 = open + 1;
+            while (i < hi) : (i += 1) {
+                const c = pattern[i];
+                if (c == '\\') {
+                    i += 1;
+                    continue;
+                }
+                if (c == '{') {
+                    depth += 1;
+                } else if (c == '}') {
+                    depth -= 1;
+                    if (depth == 0) return i;
+                }
+            }
+            return null;
         }
 
         inline fn normalizeIdx(this: *const GlobWalker, idx: u32) u32 {

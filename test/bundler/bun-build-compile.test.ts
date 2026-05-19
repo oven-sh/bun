@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isMusl, isWindows, tempDir } from "harness";
-import { chmodSync, cpSync, existsSync } from "node:fs";
+import { chmodSync, closeSync, cpSync, existsSync, openSync, readSync } from "node:fs";
 import { join } from "path";
 
 describe("Bun.build compile", () => {
@@ -489,7 +489,51 @@ if (isLinux) {
         : isMusl
           ? "/lib/ld-musl-x86_64.so.1"
           : "/lib64/ld-linux-x86-64.so.2";
-    test.skipIf(!patchelf || !existsSync(ldso))(
+
+    // Mirror of `hostUsesNixStoreInterpreter()` in src/exe_format/elf.rs:
+    // gate out NixOS/Guix hosts where the FHS ldso path is a stub that
+    // refuses to exec generic binaries. Without this the final
+    // `Bun.spawn({cmd:[outfile]})` check fails on a NixOS host because
+    // stub-ld rejects the compiled output, not because the fix is broken.
+    // Same pattern as the sibling patchelf tests in
+    // test/regression/issue/29290.test.ts and 24742.test.ts.
+    function readInterp(buf: Buffer): string | null {
+      if (buf.length < 64 || buf.readUInt32BE(0) !== 0x7f454c46) return null;
+      const e_phoff = Number(buf.readBigUInt64LE(32));
+      const e_phnum = buf.readUInt16LE(56);
+      for (let i = 0; i < e_phnum; i++) {
+        const ph = e_phoff + i * 56;
+        if (buf.readUInt32LE(ph) !== 3 /* PT_INTERP */) continue;
+        const p_offset = Number(buf.readBigUInt64LE(ph + 8));
+        const p_filesz = Number(buf.readBigUInt64LE(ph + 32));
+        const region = buf.subarray(p_offset, p_offset + p_filesz);
+        const nul = region.indexOf(0);
+        return region.subarray(0, nul === -1 ? region.length : nul).toString("utf8");
+      }
+      return null;
+    }
+    function hostLooksNix(): boolean {
+      if (existsSync("/etc/NIXOS")) return true;
+      if (existsSync("/gnu/store")) return true;
+      try {
+        // bun is ~1 GB in debug builds; PT_INTERP lives in the first page,
+        // so read only the leading 4 KiB.
+        const fd = openSync(bunExe(), "r");
+        try {
+          const buf = Buffer.alloc(4096);
+          const n = readSync(fd, buf, 0, 4096, 0);
+          const selfInterp = readInterp(buf.subarray(0, n));
+          if (selfInterp && (selfInterp.startsWith("/nix/store/") || selfInterp.startsWith("/gnu/store/"))) {
+            return true;
+          }
+        } finally {
+          closeSync(fd);
+        }
+      } catch {}
+      return false;
+    }
+
+    test.skipIf(!patchelf || !existsSync(ldso) || hostLooksNix())(
       "compiled binary works when template bun has patchelf-inserted RW PT_LOAD (#31023)",
       async () => {
         using dir = tempDir("build-compile-patchelf-rw-regression", {

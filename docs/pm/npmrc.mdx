@@ -195,6 +195,10 @@ These options can be combined with other authentication options like `_authToken
 //my-registry.example.com/:_authToken=${NPM_TOKEN}
 ```
 
+**Supported formats:** Certificate and key files must be in PEM format, the default and most common format. DER format is not supported.
+
+**Security note:** Protect your `keyfile` (and any private keys) with appropriate filesystem permissions. Restrict access to the owner only (e.g., `chmod 600`), validate file ownership, avoid storing keys in version control, and prefer secure stores or OS keyrings when possible.
+
 ### `omit` and `include`: Control dependency types
 
 Control which dependency types are installed:

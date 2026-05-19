@@ -932,26 +932,42 @@ pub const H2FrameParser = struct {
                 if (this.dataFrameQueue.peekFront()) |frame| {
                     const no_backpressure = brk: {
                         var is_flow_control_limited = false;
+                        const stream_id_local = this.id;
                         defer {
                             if (!is_flow_control_limited) {
                                 // only call the callback + free the frame if we write to the socket the full frame
                                 var _frame = this.dataFrameQueue.dequeue().?;
                                 client.outboundQueueSize -= 1;
 
+                                // Dispatching the write callback re-enters JS.
+                                // User code may synchronously destroy or reset
+                                // this stream (stream.close → rstStream →
+                                // endStream → removeStreamByID), in which case
+                                // `this` is freed and the stream no longer
+                                // exists in `client.streams`. Look up by id
+                                // after dispatch rather than trusting `this`.
                                 if (_frame.callback.get()) |callback_value| client.dispatchWriteCallback(callback_value);
-                                if (this.dataFrameQueue.isEmpty()) {
-                                    if (_frame.end_stream) {
-                                        if (this.waitForTrailers) {
-                                            client.dispatch(.onWantTrailers, this.getIdentifier());
-                                        } else {
-                                            const identifier = this.getIdentifier();
-                                            identifier.ensureStillAlive();
-                                            if (this.state == .HALF_CLOSED_REMOTE) {
-                                                this.state = .CLOSED;
+                                if (client.streams.get(stream_id_local)) |stream| {
+                                    if (stream.dataFrameQueue.isEmpty()) {
+                                        if (_frame.end_stream) {
+                                            if (stream.waitForTrailers) {
+                                                client.dispatch(.onWantTrailers, stream.getIdentifier());
                                             } else {
-                                                this.state = .HALF_CLOSED_LOCAL;
+                                                const identifier = stream.getIdentifier();
+                                                identifier.ensureStillAlive();
+                                                if (stream.state == .HALF_CLOSED_REMOTE) {
+                                                    stream.state = .CLOSED;
+                                                    stream.freeResources(client, false);
+                                                } else if (stream.state != .CLOSED) {
+                                                    stream.state = .HALF_CLOSED_LOCAL;
+                                                }
+                                                client.dispatchWithExtra(.onStreamEnd, identifier, jsc.JSValue.jsNumber(@intFromEnum(stream.state)));
+                                                // Do not `removeStreamByID` here; we are inside a
+                                                // StreamResumableIterator walk in flushStreamQueue.
+                                                // Closed streams are reclaimed via the
+                                                // `defer removeAllClosedStreams()` in flushStreamQueue
+                                                // itself, which runs once when that function returns.
                                             }
-                                            client.dispatchWithExtra(.onStreamEnd, identifier, jsc.JSValue.jsNumber(@intFromEnum(this.state)));
                                         }
                                     }
                                 }
@@ -1217,6 +1233,57 @@ pub const H2FrameParser = struct {
         }
     };
 
+    /// Remove a stream entry from the streams map and free its heap allocation.
+    /// Callers must ensure:
+    ///  - The stream's terminal JS dispatch (onStreamEnd/onStreamError/onAborted)
+    ///    has already run, so no further code here looks up the id.
+    ///  - We are NOT inside a `StreamResumableIterator` walk over `streams` that
+    ///    could be disturbed by insertions (removal is safe; growth is not).
+    /// No-op if the id is not in the map (defensive; normal paths always find it).
+    fn removeStreamByID(this: *H2FrameParser, stream_id: u32) void {
+        // Server-side removal is disabled. Bun's own client emits child
+        // HEADERS ahead of the parent's HEADERS when a request() options
+        // getter re-enters (see node-http2-streams-rehash), so ids can
+        // arrive out of order on the wire and a brand-new id can land at
+        // or below our high-water mark. Without a reliable way to tell
+        // "stale removed stream" from "out-of-order new stream" on the
+        // server, the safer choice is to keep closed streams in the map
+        // as before. The #30415 leak is strictly client-side (AWS SDK
+        // pooled `http2.connect()` sessions); the server-side unbounded
+        // map growth was the pre-PR status quo.
+        if (this.isServer) return;
+        if (this.streams.fetchRemove(stream_id)) |kv| {
+            const stream = kv.value;
+            // freeResources is idempotent; call again in case an earlier path
+            // skipped it (e.g. request() error branches that set state = .CLOSED
+            // without invoking freeResources).
+            stream.freeResources(this, false);
+            bun.destroy(stream);
+        }
+    }
+
+    /// Unlink a stream from the map without freeing it. Used by the
+    /// endStream/abortStream path to prevent a re-entrant
+    /// `removeAllClosedStreams` sweep (triggered by a user
+    /// `session.destroy()` inside a write callback dispatched by
+    /// `freeResources` → `cleanQueue`) from freeing the stream before the
+    /// outer frame finishes its post-dispatch reads. Caller is responsible
+    /// for `destroyDetachedStream` once all accesses to the `*Stream`
+    /// complete.
+    fn detachStreamFromMap(this: *H2FrameParser, stream_id: u32) void {
+        if (this.isServer) return; // mirror removeStreamByID's server gate
+        _ = this.streams.fetchRemove(stream_id);
+    }
+
+    /// Free a `*Stream` that was previously unlinked via
+    /// `detachStreamFromMap` and drained via `freeResources`. Server-side
+    /// streams are never detached, so this is a no-op on the server to
+    /// match `removeStreamByID`.
+    fn destroyDetachedStream(this: *H2FrameParser, stream: *Stream) void {
+        if (this.isServer) return;
+        bun.destroy(stream);
+    }
+
     const HeaderValue = lshpack.HPACK.DecodeResult;
 
     pub fn decode(this: *H2FrameParser, src_buffer: []const u8) !HeaderValue {
@@ -1240,17 +1307,24 @@ pub const H2FrameParser = struct {
         this.usedWindowSize +|= payloadSize;
         log("adjustWindowSize {} {} {} {}", .{ this.usedWindowSize, this.windowSize, this.isServer, payloadSize });
         if (this.usedWindowSize > this.windowSize) {
-            // we are receiving more data than we are allowed to
-            this.sendGoAway(0, .FLOW_CONTROL_ERROR, "Window size overflow", this.lastStreamID, true);
+            // we are receiving more data than we are allowed to.
+            // sendGoAway dispatches onError/onEnd to JS; if the JS handler
+            // destroys the session (which is typical), every stream — including
+            // the one passed in here — is removed via emitErrorToAllStreams →
+            // removeAllClosedStreams. Roll back usedWindowSize *before*
+            // dispatch and bail afterwards so we never touch `stream` again.
             this.usedWindowSize -= payloadSize;
+            this.sendGoAway(0, .FLOW_CONTROL_ERROR, "Window size overflow", this.lastStreamID, true);
+            return;
         }
 
         if (stream) |s| {
             s.usedWindowSize += payloadSize;
             if (s.usedWindowSize > s.windowSize) {
-                // we are receiving more data than we are allowed to
-                this.sendGoAway(s.id, .FLOW_CONTROL_ERROR, "Window size overflow", this.lastStreamID, true);
+                // Same UAF concern as above: roll back first, then dispatch.
+                const stream_id = s.id;
                 s.usedWindowSize -= payloadSize;
+                this.sendGoAway(stream_id, .FLOW_CONTROL_ERROR, "Window size overflow", this.lastStreamID, true);
             }
         }
     }
@@ -1325,11 +1399,21 @@ pub const H2FrameParser = struct {
         _ = writer.write(std.mem.asBytes(&value)) catch 0;
         const old_state = stream.state;
         stream.state = .CLOSED;
+        const stream_id = stream.id;
         const identifier = stream.getIdentifier();
         identifier.ensureStillAlive();
+        // Unlink from the map *before* freeResources runs. freeResources →
+        // cleanQueue dispatches queued DATA write callbacks back into JS;
+        // if that callback calls session.destroy() → emitErrorToAllStreams
+        // → removeAllClosedStreams() finds this already-.CLOSED stream in
+        // the map and bun.destroy()s it, leaving the outer freeResources
+        // reading this.signal on freed memory. Dropping it from the map
+        // first means the re-entrant sweep can't see it.
+        this.detachStreamFromMap(stream_id);
         stream.freeResources(this, false);
         this.dispatchWith2Extra(.onAborted, identifier, abortReason, jsc.JSValue.jsNumber(@intFromEnum(old_state)));
         _ = this.write(&buffer);
+        this.destroyDetachedStream(stream);
     }
 
     pub fn endStream(this: *H2FrameParser, stream: *Stream, rstCode: ErrorCode) void {
@@ -1355,16 +1439,24 @@ pub const H2FrameParser = struct {
         _ = writer.write(std.mem.asBytes(&value)) catch 0;
 
         stream.state = .CLOSED;
+        const stream_id = stream.id;
         const identifier = stream.getIdentifier();
         identifier.ensureStillAlive();
+        // Unlink before freeResources runs; see abortStream for the
+        // dispatch-re-entry UAF this avoids.
+        this.detachStreamFromMap(stream_id);
         stream.freeResources(this, false);
         if (rstCode == .NO_ERROR) {
-            this.dispatchWithExtra(.onStreamEnd, identifier, jsc.JSValue.jsNumber(@intFromEnum(stream.state)));
+            // stream.state is guaranteed .CLOSED here; no reason to
+            // re-read it from a pointer that outlived dispatchWriteCallback.
+            const closed_state_value = @intFromEnum(@as(@FieldType(Stream, "state"), .CLOSED));
+            this.dispatchWithExtra(.onStreamEnd, identifier, jsc.JSValue.jsNumber(closed_state_value));
         } else {
             this.dispatchWithExtra(.onStreamError, identifier, jsc.JSValue.jsNumber(@intFromEnum(rstCode)));
         }
 
         _ = this.write(&buffer);
+        this.destroyDetachedStream(stream);
     }
 
     pub fn sendGoAway(this: *H2FrameParser, streamIdentifier: u32, rstCode: ErrorCode, debug_data: []const u8, lastStreamID: u32, emitError: bool) void {
@@ -1667,6 +1759,11 @@ pub const H2FrameParser = struct {
         var written: usize = 0;
         var something_was_flushed = true;
 
+        // Any streams that flushQueue transitioned to CLOSED are reclaimed
+        // here after the iterator walk completes, so mid-iteration removal
+        // can't disturb the StreamResumableIterator's position.
+        defer this.removeAllClosedStreams();
+
         // try to send as much as we can until we reach backpressure or until we can't flush anymore
         while (this.outboundQueueSize > 0 and something_was_flushed) {
             var it = StreamResumableIterator.init(this);
@@ -1834,6 +1931,61 @@ pub const H2FrameParser = struct {
         end: usize,
     };
 
+    /// Drop exactly one frame's payload without dispatching it. Used when a
+    /// frame arrives for a stream we've already removed (RFC 7540 §5.1 permits
+    /// late frames during the brief window before the peer sees our
+    /// RST/END_STREAM). Advances `remainingLength` / clears `currentFrame` the
+    /// same way a normal `handleIncommingPayload` loop would, so the parser
+    /// moves past the frame and doesn't re-enter the null-stream branch
+    /// forever on subsequent reads. For DATA, the connection-level
+    /// flow-control window is charged so the peer's view of our receive window
+    /// stays consistent. For HEADERS/CONTINUATION the HPACK dynamic table is
+    /// advanced through the payload even though nothing is dispatched — HPACK
+    /// state is shared across streams, so skipping decode would desync the
+    /// table and corrupt every subsequent request on this session.
+    fn discardFramePayload(this: *H2FrameParser, frame: FrameHeader, data: []const u8) usize {
+        // DATA frames count against the connection-level receive window even
+        // when the stream is gone.
+        if (frame.type == @intFromEnum(FrameType.HTTP_FRAME_DATA)) {
+            const chunk_len: u32 = @intCast(@min(@as(usize, @intCast(this.remainingLength)), data.len));
+            this.adjustWindowSize(null, chunk_len);
+        }
+        if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
+            defer this.readBuffer.reset();
+            // For header block fragments, walk the decoder over the payload
+            // so the HPACK dynamic table stays in sync with the peer.
+            if (frame.type == @intFromEnum(FrameType.HTTP_FRAME_HEADERS) or
+                frame.type == @intFromEnum(FrameType.HTTP_FRAME_CONTINUATION))
+            {
+                var payload = content.data;
+                // HEADERS carries optional padding length + optional priority
+                // before the header block. CONTINUATION has no padding/priority.
+                if (frame.type == @intFromEnum(FrameType.HTTP_FRAME_HEADERS)) {
+                    var offset: usize = 0;
+                    if (frame.flags & @intFromEnum(HeadersFrameFlags.PADDED) != 0 and payload.len >= 1) {
+                        const padding: usize = payload[0];
+                        offset += 1;
+                        if (padding + offset > payload.len) return content.end; // malformed, give up
+                        payload = payload[offset .. payload.len - padding];
+                    } else {
+                        payload = payload[offset..];
+                    }
+                    if (frame.flags & @intFromEnum(HeadersFrameFlags.PRIORITY) != 0) {
+                        if (payload.len < 5) return content.end;
+                        payload = payload[5..];
+                    }
+                }
+                while (payload.len > 0) {
+                    const header = this.decode(payload) catch break;
+                    if (header.next == 0) break; // decoder didn't advance; bail
+                    payload = payload[header.next..];
+                }
+            }
+            return content.end;
+        }
+        return data.len;
+    }
+
     // Default handling for payload is buffering it
     // for data frames we use another strategy
     pub fn handleIncommingPayload(this: *H2FrameParser, data: []const u8, streamIdentifier: u32) ?Payload {
@@ -1886,9 +2038,16 @@ pub const H2FrameParser = struct {
             this.readBuffer.reset();
             if (stream) |s| {
                 s.remoteWindowSize += windowSizeIncrement.uint31;
-            } else {
+            } else if (frame.streamIdentifier == 0) {
+                // Connection-level WINDOW_UPDATE (RFC 7540 §6.9).
                 this.remoteWindowSize += windowSizeIncrement.uint31;
             }
+            // else: nonzero id with no matching stream — stale stream-level
+            // WINDOW_UPDATE for a close we've already reclaimed. RFC 7540
+            // §5.1 permits these in the brief window before the peer sees
+            // our RST/END_STREAM. Crediting this to `this.remoteWindowSize`
+            // would overshoot the peer's connection window and eventually
+            // trip GOAWAY(FLOW_CONTROL_ERROR) on long-lived pooled sessions.
             log("windowSizeIncrement stream {} value {}", .{ frame.streamIdentifier, windowSizeIncrement });
             return content.end;
         }
@@ -1994,8 +2153,18 @@ pub const H2FrameParser = struct {
 
         var stream = stream_ orelse {
             log("received data frame on stream that does not exist", .{});
-            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Data frame on connection stream", this.lastStreamID, true);
-            return data.len;
+            // id=0 is a protocol error (DATA frames require a stream). For a
+            // nonzero id that isn't in the map, the stream was closed and
+            // removed; drop the frame silently (RFC 7540 §5.1 permits late
+            // frames during the brief window before the peer sees our
+            // RST/END_STREAM). In either case the payload still has to be
+            // drained so `remainingLength`/`currentFrame` advance past the
+            // frame — otherwise the parser loops on this header forever.
+            if (frame.streamIdentifier == 0) {
+                this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Data frame on connection stream", this.lastStreamID, true);
+                return data.len;
+            }
+            return this.discardFramePayload(frame, data);
         };
 
         const settings = this.remoteSettings orelse this.localSettings;
@@ -2008,8 +2177,13 @@ pub const H2FrameParser = struct {
 
         const end: usize = @min(@as(usize, @intCast(this.remainingLength)), data.len);
         var payload = data[0..end];
-        // window size considering the full frame.length received so far
+        // window size considering the full frame.length received so far.
+        // On a flow-control violation adjustWindowSize sends GOAWAY and the
+        // JS onError handler may synchronously destroy the session, removing
+        // every stream. Re-resolve afterwards and bail if the stream is gone.
+        const stream_id = stream.id;
         this.adjustWindowSize(stream, @truncate(payload.len));
+        stream = this.streams.get(stream_id) orelse return data.len;
         const previous_remaining_length: isize = this.remainingLength;
 
         this.remainingLength -= @intCast(end);
@@ -2083,21 +2257,28 @@ pub const H2FrameParser = struct {
         }
         if (this.remainingLength == 0) {
             this.currentFrame = null;
-            stream.padding = null;
+            // `dispatchWithExtra(.onStreamData, ...)` above may have re-entered
+            // JS and freed this stream (user destroy/abort inside an on("data")
+            // listener). Re-resolve before any further *Stream access.
             if (emitted) {
                 stream = this.streams.get(frame.streamIdentifier) orelse return end;
             }
+            stream.padding = null;
             if (frame.flags & @intFromEnum(DataFrameFlags.END_STREAM) != 0) {
                 const identifier = stream.getIdentifier();
                 identifier.ensureStillAlive();
 
+                var closed = false;
                 if (stream.state == .HALF_CLOSED_LOCAL) {
                     stream.state = .CLOSED;
                     stream.freeResources(this, false);
+                    closed = true;
                 } else {
                     stream.state = .HALF_CLOSED_REMOTE;
                 }
+                const closed_id = stream.id;
                 this.dispatchWithExtra(.onStreamEnd, identifier, jsc.JSValue.jsNumber(@intFromEnum(stream.state)));
+                if (closed) this.removeStreamByID(closed_id);
             }
         }
 
@@ -2105,8 +2286,13 @@ pub const H2FrameParser = struct {
     }
 
     pub fn handleGoAwayFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) usize {
+        _ = stream_;
         log("handleGoAwayFrame {} {s}", .{ frame.streamIdentifier, data });
-        if (stream_ != null) {
+        // RFC 7540 §6.8: GOAWAY MUST have streamIdentifier == 0. Check the
+        // wire field directly rather than `stream_ != null` — on the client
+        // side handleReceivedStreamID now returns null for stale nonzero
+        // ids, which would otherwise sneak an RFC-violating GOAWAY past us.
+        if (frame.streamIdentifier != 0) {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "GoAway frame on stream", this.lastStreamID, true);
             return data.len;
         }
@@ -2227,8 +2413,14 @@ pub const H2FrameParser = struct {
     pub fn handleRSTStreamFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) usize {
         log("handleRSTStreamFrame {s}", .{data});
         var stream = stream_ orelse {
-            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "RST_STREAM frame on connection stream", this.lastStreamID, true);
-            return data.len;
+            if (frame.streamIdentifier == 0) {
+                this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "RST_STREAM frame on connection stream", this.lastStreamID, true);
+                return data.len;
+            }
+            // Stale RST for an already-closed stream: the peer is acknowledging
+            // a close we already performed — drain the 4-byte payload so the
+            // parser moves past this frame.
+            return this.discardFramePayload(frame, data);
         };
 
         if (frame.length != 4) {
@@ -2247,21 +2439,36 @@ pub const H2FrameParser = struct {
             stream.rstCode = rst_code;
             this.readBuffer.reset();
             stream.state = .CLOSED;
+            const stream_id = stream.id;
             const identifier = stream.getIdentifier();
             identifier.ensureStillAlive();
+            // Unlink before freeResources runs: freeResources → cleanQueue
+            // dispatches queued DATA write callbacks, and a user callback
+            // that calls session.destroy() would reach
+            // emitErrorToAllStreams → removeAllClosedStreams and free this
+            // stream out from under us. Mirror the endStream/abortStream
+            // detach-then-destroy pattern.
+            this.detachStreamFromMap(stream_id);
             stream.freeResources(this, false);
+            const closed_state_value = @intFromEnum(@as(@FieldType(Stream, "state"), .CLOSED));
             if (rst_code == @intFromEnum(ErrorCode.NO_ERROR)) {
-                this.dispatchWithExtra(.onStreamEnd, identifier, jsc.JSValue.jsNumber(@intFromEnum(stream.state)));
+                this.dispatchWithExtra(.onStreamEnd, identifier, jsc.JSValue.jsNumber(closed_state_value));
             } else {
                 this.dispatchWithExtra(.onStreamError, identifier, jsc.JSValue.jsNumber(rst_code));
             }
+            this.destroyDetachedStream(stream);
             return content.end;
         }
         return data.len;
     }
 
     pub fn handlePingFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) usize {
-        if (stream_ != null) {
+        _ = stream_;
+        // RFC 7540 §6.7: PING MUST have streamIdentifier == 0. Check the
+        // wire field directly rather than `stream_ != null` — on the client
+        // side handleReceivedStreamID now returns null for stale nonzero
+        // ids, which would otherwise sneak an RFC-violating PING past us.
+        if (frame.streamIdentifier != 0) {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Ping frame on stream", this.lastStreamID, true);
             return data.len;
         }
@@ -2291,8 +2498,13 @@ pub const H2FrameParser = struct {
 
     pub fn handlePriorityFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) usize {
         var stream = stream_ orelse {
-            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Priority frame on connection stream", this.lastStreamID, true);
-            return data.len;
+            if (frame.streamIdentifier == 0) {
+                this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Priority frame on connection stream", this.lastStreamID, true);
+                return data.len;
+            }
+            // Priority frames for already-closed streams are harmless; drain
+            // the 5-byte payload and move on.
+            return this.discardFramePayload(frame, data);
         };
 
         if (frame.length != StreamPriority.byteSize) {
@@ -2329,8 +2541,16 @@ pub const H2FrameParser = struct {
     pub fn handleContinuationFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) bun.JSError!usize {
         log("handleContinuationFrame", .{});
         var stream = stream_ orelse {
-            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Continuation on connection stream", this.lastStreamID, true);
-            return data.len;
+            if (frame.streamIdentifier == 0) {
+                this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Continuation on connection stream", this.lastStreamID, true);
+                return data.len;
+            }
+            // CONTINUATION for an already-closed stream: nothing to attach
+            // headers to. discardFramePayload walks the HPACK decoder over
+            // the fragment so the connection-scoped dynamic table stays in
+            // sync, then drains the payload so the parser moves past this
+            // frame.
+            return this.discardFramePayload(frame, data);
         };
 
         if (!stream.isWaitingMoreHeaders) {
@@ -2349,14 +2569,18 @@ pub const H2FrameParser = struct {
                 if (frame.flags & @intFromEnum(HeadersFrameFlags.END_STREAM) != 0) {
                     const identifier = stream.getIdentifier();
                     identifier.ensureStillAlive();
+                    var closed = false;
                     if (stream.state == .HALF_CLOSED_REMOTE) {
                         // no more continuation headers we can call it closed
                         stream.state = .CLOSED;
                         stream.freeResources(this, false);
+                        closed = true;
                     } else {
                         stream.state = .HALF_CLOSED_LOCAL;
                     }
+                    const closed_id = stream.id;
                     this.dispatchWithExtra(.onStreamEnd, identifier, jsc.JSValue.jsNumber(@intFromEnum(stream.state)));
+                    if (closed) this.removeStreamByID(closed_id);
                 }
             }
 
@@ -2370,8 +2594,14 @@ pub const H2FrameParser = struct {
     pub fn handleHeadersFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) bun.JSError!usize {
         log("handleHeadersFrame {s}", .{if (this.isServer) "server" else "client"});
         var stream = stream_ orelse {
-            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Headers frame on connection stream", this.lastStreamID, true);
-            return data.len;
+            if (frame.streamIdentifier == 0) {
+                this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Headers frame on connection stream", this.lastStreamID, true);
+                return data.len;
+            }
+            // Late HEADERS/trailers for an already-closed stream: drain the
+            // payload and keep the HPACK dynamic table in sync so subsequent
+            // streams on this session still decode correctly.
+            return this.discardFramePayload(frame, data);
         };
 
         const settings = this.remoteSettings orelse this.localSettings;
@@ -2430,6 +2660,7 @@ pub const H2FrameParser = struct {
                 const identifier = stream.getIdentifier();
                 identifier.ensureStillAlive();
 
+                var closed = false;
                 if (stream.isWaitingMoreHeaders) {
                     stream.state = .HALF_CLOSED_REMOTE;
                 } else {
@@ -2437,11 +2668,14 @@ pub const H2FrameParser = struct {
                     if (stream.state == .HALF_CLOSED_LOCAL) {
                         stream.state = .CLOSED;
                         stream.freeResources(this, false);
+                        closed = true;
                     } else {
                         stream.state = .HALF_CLOSED_REMOTE;
                     }
                 }
+                const closed_id = stream.id;
                 this.dispatchWithExtra(.onStreamEnd, identifier, jsc.JSValue.jsNumber(@intFromEnum(stream.state)));
+                if (closed) this.removeStreamByID(closed_id);
             }
             return content.end;
         }
@@ -2557,7 +2791,8 @@ pub const H2FrameParser = struct {
         return data.len;
     }
 
-    /// Returned *Stream is heap-allocated and stable for the lifetime of this H2FrameParser.
+    /// Returned *Stream is heap-allocated and stable until the stream closes
+    /// (see removeStreamByID) or until H2FrameParser deinit.
     fn handleReceivedStreamID(this: *H2FrameParser, streamIdentifier: u32) ?*Stream {
         // connection stream
         if (streamIdentifier == 0) {
@@ -2567,6 +2802,21 @@ pub const H2FrameParser = struct {
         // already exists
         if (this.streams.get(streamIdentifier)) |stream| {
             return stream;
+        }
+
+        // Stale stream on the client side: client ids are allocated
+        // monotonically via getNextStream(), so any id <= lastStreamID that
+        // isn't in the map was closed and removed (RFC 7540 §5.1 permits
+        // late frames from the peer before it sees our RST/END_STREAM).
+        // Frame handlers distinguish "stream-level stale" from
+        // "connection-level (id=0)" using streamIdentifier itself.
+        //
+        // Server-side removal is disabled in removeStreamByID (see comment
+        // there), so server-side closed streams stay in the map and this
+        // branch is unreachable from the server — a server-observed id
+        // that isn't in the map is genuinely new.
+        if (!this.isServer and streamIdentifier <= this.lastStreamID) {
+            return null;
         }
 
         if (streamIdentifier > this.lastStreamID) {
@@ -2931,7 +3181,7 @@ pub const H2FrameParser = struct {
 
     pub fn getCurrentState(this: *H2FrameParser, globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
         jsc.markBinding(@src());
-        var result = JSValue.createEmptyObject(globalObject, 9);
+        var result = JSValue.createEmptyObject(globalObject, 10);
         result.put(globalObject, jsc.ZigString.static("effectiveLocalWindowSize"), jsc.JSValue.jsNumber(this.windowSize));
         result.put(globalObject, jsc.ZigString.static("effectiveRecvDataLength"), jsc.JSValue.jsNumber(this.windowSize - this.usedWindowSize));
         result.put(globalObject, jsc.ZigString.static("nextStreamID"), jsc.JSValue.jsNumber(this.getNextStreamID()));
@@ -2943,6 +3193,10 @@ pub const H2FrameParser = struct {
         result.put(globalObject, jsc.ZigString.static("deflateDynamicTableSize"), jsc.JSValue.jsNumber(this.localSettings.headerTableSize));
         result.put(globalObject, jsc.ZigString.static("inflateDynamicTableSize"), jsc.JSValue.jsNumber(this.localSettings.headerTableSize));
         result.put(globalObject, jsc.ZigString.static("outboundQueueSize"), jsc.JSValue.jsNumber(this.outboundQueueSize));
+        // Count of tracked streams still in the hashmap. Used by the
+        // regression test for oven-sh/bun#30415 to confirm closed streams
+        // are reclaimed instead of accumulating.
+        result.put(globalObject, jsc.ZigString.static("streamCount"), jsc.JSValue.jsNumber(this.streams.count()));
         return result;
     }
 
@@ -3169,8 +3423,9 @@ pub const H2FrameParser = struct {
             return globalObject.throw("Invalid stream id", .{});
         }
 
+        // Stream was already removed after close; treat as no-end-after-headers.
         const stream = this.streams.get(stream_id) orelse {
-            return globalObject.throw("Invalid stream id", .{});
+            return .false;
         };
 
         return jsc.JSValue.jsBoolean(stream.endAfterHeaders);
@@ -3193,8 +3448,9 @@ pub const H2FrameParser = struct {
             return globalObject.throw("Invalid stream id", .{});
         }
 
+        // Stream was already removed after close; not aborted (ended normally).
         const stream = this.streams.get(stream_id) orelse {
-            return globalObject.throw("Invalid stream id", .{});
+            return .false;
         };
 
         if (stream.signal) |signal_ref| {
@@ -3221,8 +3477,18 @@ pub const H2FrameParser = struct {
             return globalObject.throw("Invalid stream id", .{});
         }
 
-        var stream = this.streams.get(stream_id) orelse {
-            return globalObject.throw("Invalid stream id", .{});
+        const stream = this.streams.get(stream_id) orelse {
+            // Stream was removed after close — report a CLOSED state so
+            // JS consumers get a consistent answer instead of a throw.
+            const closed_state_value = @intFromEnum(@as(@FieldType(Stream, "state"), .CLOSED));
+            var closed_state = jsc.JSValue.createEmptyObject(globalObject, 6);
+            closed_state.put(globalObject, jsc.ZigString.static("localWindowSize"), jsc.JSValue.jsNumber(0));
+            closed_state.put(globalObject, jsc.ZigString.static("state"), jsc.JSValue.jsNumber(closed_state_value));
+            closed_state.put(globalObject, jsc.ZigString.static("localClose"), jsc.JSValue.jsNumber(1));
+            closed_state.put(globalObject, jsc.ZigString.static("remoteClose"), jsc.JSValue.jsNumber(1));
+            closed_state.put(globalObject, jsc.ZigString.static("sumDependencyWeight"), jsc.JSValue.jsNumber(0));
+            closed_state.put(globalObject, jsc.ZigString.static("weight"), jsc.JSValue.jsNumber(0));
+            return closed_state;
         };
         var state = jsc.JSValue.createEmptyObject(globalObject, 6);
 
@@ -3255,8 +3521,14 @@ pub const H2FrameParser = struct {
             return globalObject.throw("Invalid stream id", .{});
         }
 
+        // Pre-PR, a closed stream lingered in the map and this method
+        // silently returned `.false` via the canSendData/canReceiveData
+        // check below. Now that closed entries are reclaimed, mirror that
+        // behavior for a removed id so `stream.priority({...})` doesn't
+        // throw in the brief window between native removal and JS
+        // `_destroy` nulling `bunHTTP2Session`.
         var stream = this.streams.get(stream_id) orelse {
-            return globalObject.throw("Invalid stream id", .{});
+            return .false;
         };
 
         if (!stream.canSendData() and !stream.canReceiveData()) {
@@ -3301,6 +3573,13 @@ pub const H2FrameParser = struct {
                 return globalObject.ERR(.INVALID_ARG_TYPE, "options.silent must be a boolean", .{}).throw();
             }
         }
+        // Any of the `options.get(...)` calls above can invoke a user
+        // getter / Proxy trap that synchronously aborts the stream's
+        // AbortSignal — SignalRef.abortListener runs inline → abortStream
+        // → removeStreamByID → bun.destroy(stream). Re-resolve before
+        // touching `stream.*` again so the subsequent writes/reads don't
+        // land on freed heap.
+        stream = this.streams.get(stream_id) orelse return .false;
         if (parent_id == stream.id) {
             this.sendGoAway(stream.id, ErrorCode.PROTOCOL_ERROR, "Stream with self dependency", this.lastStreamID, true);
             return .false;
@@ -3353,8 +3632,12 @@ pub const H2FrameParser = struct {
             return globalObject.throw("Invalid stream id", .{});
         }
 
+        // JS stream destroy schedules this via setImmediate after the stream
+        // already transitioned to CLOSED natively and was removed from the
+        // map. Treat a missing entry as a benign "already closed" signal
+        // rather than a programming error.
         const stream = this.streams.get(stream_id) orelse {
-            return globalObject.throw("Invalid stream id", .{});
+            return .false;
         };
         if (!error_arg.isNumber()) {
             return globalObject.throw("Invalid ErrorCode", .{});
@@ -3403,22 +3686,33 @@ pub const H2FrameParser = struct {
 
         defer {
             if (!enqueued) {
+                // Dispatching the write callback re-enters JS. User code may
+                // synchronously abort the attached AbortSignal (→ SignalRef
+                // abortListener → abortStream → removeStreamByID) or destroy
+                // the session, either of which frees the *Stream. Re-resolve
+                // by id after dispatch and skip the close path if the stream
+                // is gone (abortStream already emitted the terminal event).
                 this.dispatchWriteCallback(callback);
+                var closed = false;
                 if (close) {
-                    if (stream.waitForTrailers) {
-                        this.dispatch(.onWantTrailers, stream.getIdentifier());
-                    } else {
-                        const identifier = stream.getIdentifier();
-                        identifier.ensureStillAlive();
-                        if (stream.state == .HALF_CLOSED_REMOTE) {
-                            stream.state = .CLOSED;
-                            stream.freeResources(this, false);
+                    if (this.streams.get(stream_id)) |s| {
+                        if (s.waitForTrailers) {
+                            this.dispatch(.onWantTrailers, s.getIdentifier());
                         } else {
-                            stream.state = .HALF_CLOSED_LOCAL;
+                            const identifier = s.getIdentifier();
+                            identifier.ensureStillAlive();
+                            if (s.state == .HALF_CLOSED_REMOTE) {
+                                s.state = .CLOSED;
+                                s.freeResources(this, false);
+                                closed = true;
+                            } else if (s.state != .CLOSED) {
+                                s.state = .HALF_CLOSED_LOCAL;
+                            }
+                            this.dispatchWithExtra(.onStreamEnd, identifier, jsc.JSValue.jsNumber(@intFromEnum(s.state)));
                         }
-                        this.dispatchWithExtra(.onStreamEnd, identifier, jsc.JSValue.jsNumber(@intFromEnum(stream.state)));
                     }
                 }
+                if (closed) this.removeStreamByID(stream_id);
             }
             this.deref();
         }
@@ -3508,8 +3802,9 @@ pub const H2FrameParser = struct {
             return globalObject.throw("Invalid stream id", .{});
         }
 
+        // Stream was already closed and removed — nothing to trail.
         var stream = this.streams.get(@intCast(stream_id)) orelse {
-            return globalObject.throw("Invalid stream id", .{});
+            return .js_undefined;
         };
 
         stream.waitForTrailers = false;
@@ -3583,8 +3878,9 @@ pub const H2FrameParser = struct {
             return globalObject.throw("Invalid stream id", .{});
         }
 
+        // Stream was already closed and removed — nothing to trail.
         var stream = this.streams.get(@intCast(stream_id)) orelse {
-            return globalObject.throw("Invalid stream id", .{});
+            return .js_undefined;
         };
 
         const headers_obj = headers_arg.getObject() orelse {
@@ -3680,6 +3976,12 @@ pub const H2FrameParser = struct {
                         if (err == error.OutOfMemory) {
                             return globalObject.throw("Failed to allocate header buffer", .{});
                         }
+                        // `item.toJSString()` and `sensitive_arg.getTruthyPropertyValue()`
+                        // above (and in prior iterations) can invoke a user Proxy trap
+                        // / Symbol.toPrimitive that aborts the stream's AbortSignal →
+                        // SignalRef.abortListener → abortStream → bun.destroy(stream).
+                        // Re-resolve before touching `stream.*`.
+                        stream = this.streams.get(stream_id) orelse return .js_undefined;
                         stream.state = .CLOSED;
                         const identifier = stream.getIdentifier();
                         identifier.ensureStillAlive();
@@ -3692,6 +3994,7 @@ pub const H2FrameParser = struct {
                             jsc.JSValue.jsNumber(@intFromEnum(ErrorCode.FRAME_SIZE_ERROR)),
                         );
                         this.dispatchWithExtra(.onStreamError, identifier, jsc.JSValue.jsNumber(stream.rstCode));
+                        this.removeStreamByID(stream_id);
                         return .js_undefined;
                     };
                 }
@@ -3720,6 +4023,8 @@ pub const H2FrameParser = struct {
                     if (err == error.OutOfMemory) {
                         return globalObject.throw("Failed to allocate header buffer", .{});
                     }
+                    // Same UAF concern as the sibling branch above.
+                    stream = this.streams.get(stream_id) orelse return .js_undefined;
                     stream.state = .CLOSED;
                     const identifier = stream.getIdentifier();
                     identifier.ensureStillAlive();
@@ -3732,6 +4037,7 @@ pub const H2FrameParser = struct {
                         jsc.JSValue.jsNumber(@intFromEnum(ErrorCode.FRAME_SIZE_ERROR)),
                     );
                     this.dispatchWithExtra(.onStreamError, identifier, jsc.JSValue.jsNumber(stream.rstCode));
+                    this.removeStreamByID(stream_id);
                     return .js_undefined;
                 };
             }
@@ -3747,6 +4053,15 @@ pub const H2FrameParser = struct {
         log("trailers encoded_size {}", .{encoded_size});
 
         const writer = this.toWriter();
+
+        // The header-iteration loop above called `item.toJSString()` and
+        // `sensitive_arg.getTruthyPropertyValue(...)` on user-supplied
+        // values, either of which can invoke a Proxy trap / Symbol.toPrimitive
+        // that synchronously aborts the stream's AbortSignal →
+        // SignalRef.abortListener → abortStream → removeStreamByID →
+        // bun.destroy(stream). Re-resolve before any further `stream.*`
+        // access so the subsequent writes/reads don't land on freed heap.
+        stream = this.streams.get(stream_id) orelse return .js_undefined;
 
         // RFC 7540 Section 6.2 & 6.10: Check if we need CONTINUATION frames
         if (encoded_size <= actual_max_frame_size) {
@@ -3802,13 +4117,17 @@ pub const H2FrameParser = struct {
         }
         const identifier = stream.getIdentifier();
         identifier.ensureStillAlive();
+        var closed = false;
         if (stream.state == .HALF_CLOSED_REMOTE) {
             stream.state = .CLOSED;
             stream.freeResources(this, false);
+            closed = true;
         } else {
             stream.state = .HALF_CLOSED_LOCAL;
         }
+        const closed_id = stream.id;
         this.dispatchWithExtra(.onStreamEnd, identifier, jsc.JSValue.jsNumber(@intFromEnum(stream.state)));
+        if (closed) this.removeStreamByID(closed_id);
         return .js_undefined;
     }
 
@@ -3827,8 +4146,11 @@ pub const H2FrameParser = struct {
         }
         const close = close_arg.toBoolean();
 
+        // Stream was already closed and removed — deliver the pending write
+        // callback so the Duplex can settle, then no-op.
         var stream = this.streams.get(@intCast(stream_id)) orelse {
-            return globalObject.throw("Invalid stream id", .{});
+            this.dispatchWriteCallback(callback_arg);
+            return .false;
         };
         if (!stream.canSendData()) {
             this.dispatchWriteCallback(callback_arg);
@@ -3990,6 +4312,7 @@ pub const H2FrameParser = struct {
 
     pub fn emitAbortToAllStreams(this: *H2FrameParser, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         jsc.markBinding(@src());
+        this.removeAllClosedStreams();
         var it = StreamResumableIterator.init(this);
         while (it.next()) |stream| {
 
@@ -4001,12 +4324,24 @@ pub const H2FrameParser = struct {
                 const old_state = stream.state;
                 stream.state = .CLOSED;
                 stream.rstCode = @intFromEnum(ErrorCode.CANCEL);
+                const stream_id = stream.id;
                 const identifier = stream.getIdentifier();
                 identifier.ensureStillAlive();
+                // Detach before freeResources: freeResources → cleanQueue
+                // dispatches queued DATA write callbacks, and a user
+                // callback that calls session.destroy() would re-enter
+                // emitErrorToAllStreams whose leading
+                // removeAllClosedStreams() would see this CLOSED-in-map
+                // entry and free it, leaving the outer freeResources
+                // touching this.signal on freed heap. Mirror abortStream/
+                // endStream's detach-then-destroy pattern.
+                this.detachStreamFromMap(stream_id);
                 stream.freeResources(this, false);
                 this.dispatchWith2Extra(.onAborted, identifier, .js_undefined, jsc.JSValue.jsNumber(@intFromEnum(old_state)));
+                this.destroyDetachedStream(stream);
             }
         }
+        this.removeAllClosedStreams();
         return .js_undefined;
     }
 
@@ -4018,6 +4353,7 @@ pub const H2FrameParser = struct {
             return globalObject.throw("Expected error argument", .{});
         }
 
+        this.removeAllClosedStreams();
         var it = StreamResumableIterator.init(this);
         while (it.next()) |stream| {
             // if (this.isServer) {
@@ -4026,13 +4362,48 @@ pub const H2FrameParser = struct {
             if (stream.state != .CLOSED) {
                 stream.state = .CLOSED;
                 stream.rstCode = args_list.ptr[0].to(u32);
+                const stream_id = stream.id;
                 const identifier = stream.getIdentifier();
                 identifier.ensureStillAlive();
+                // Detach before freeResources — same re-entrancy hazard as
+                // emitAbortToAllStreams above.
+                this.detachStreamFromMap(stream_id);
                 stream.freeResources(this, false);
                 this.dispatchWithExtra(.onStreamError, identifier, args_list.ptr[0]);
+                this.destroyDetachedStream(stream);
             }
         }
+        this.removeAllClosedStreams();
         return .js_undefined;
+    }
+
+    /// Sweep and free every stream entry whose state is CLOSED. Used by
+    /// `flushStreamQueue`'s defer to reclaim streams that `flushQueue`
+    /// transitioned to CLOSED but intentionally left in the map (see the
+    /// comment block there), and as a belt-and-suspenders leading/trailing
+    /// sweep around the `emitAbortToAllStreams` / `emitErrorToAllStreams`
+    /// walks to catch any pre-existing CLOSED entries that their loops
+    /// skip. `std.HashMap.fetchRemove` only tombstones the slot — it never
+    /// rehashes or shifts — so mid-iteration removal itself is safe; this
+    /// batching is a deferred cleanup for paths that deliberately defer
+    /// reclamation, not a workaround for iterator fragility.
+    fn removeAllClosedStreams(this: *H2FrameParser) void {
+        // Mirror removeStreamByID's server-side gate so we don't walk the
+        // map + heap-allocate an O(N) id list on every flushStreamQueue for
+        // a long-lived server session (the sweep would no-op via
+        // removeStreamByID anyway).
+        if (this.isServer) return;
+        // Collect ids to remove. Iteration is stable as long as nothing grows
+        // the map; we only read keys here.
+        var to_remove: std.ArrayListUnmanaged(u32) = .{};
+        defer to_remove.deinit(this.allocator);
+        var it = this.streams.iterator();
+        while (it.next()) |entry| {
+            if (entry.value_ptr.*.state == .CLOSED) {
+                bun.handleOom(to_remove.append(this.allocator, entry.key_ptr.*));
+            }
+        }
+        for (to_remove.items) |id| this.removeStreamByID(id);
     }
 
     pub fn flushFromJS(this: *H2FrameParser, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
@@ -4186,6 +4557,7 @@ pub const H2FrameParser = struct {
                             stream.state = .CLOSED;
                             stream.rstCode = @intFromEnum(ErrorCode.COMPRESSION_ERROR);
                             this.dispatchWithExtra(.onStreamError, stream.getIdentifier(), jsc.JSValue.jsNumber(stream.rstCode));
+                            this.removeStreamByID(stream_id);
                             return .js_undefined;
                         };
                     }
@@ -4223,6 +4595,7 @@ pub const H2FrameParser = struct {
                         }
                         stream.rstCode = @intFromEnum(ErrorCode.COMPRESSION_ERROR);
                         this.dispatchWithExtra(.onStreamError, stream.getIdentifier(), jsc.JSValue.jsNumber(stream.rstCode));
+                        this.removeStreamByID(stream_id);
                         return jsc.JSValue.jsNumber(stream_id);
                     };
                 }
@@ -4231,7 +4604,7 @@ pub const H2FrameParser = struct {
         const encoded_data = encoded_headers.items;
         const encoded_size = encoded_data.len;
 
-        const stream = this.handleReceivedStreamID(stream_id) orelse {
+        var stream = this.handleReceivedStreamID(stream_id) orelse {
             return jsc.JSValue.jsNumber(-1);
         };
         if (!stream_ctx_arg.isEmptyOrUndefinedOrNull() and stream_ctx_arg.isObject()) {
@@ -4251,10 +4624,20 @@ pub const H2FrameParser = struct {
                 stream.state = .CLOSED;
                 stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);
                 this.dispatchWithExtra(.onStreamError, stream.getIdentifier(), jsc.JSValue.jsNumber(stream.rstCode));
+                this.removeStreamByID(stream_id);
                 return jsc.JSValue.jsNumber(stream_id);
             }
 
+            // Every `options.get(globalObject, ...)` below can invoke a
+            // user getter / Proxy trap that synchronously calls
+            // `session.destroy()` → `emitErrorToAllStreams` →
+            // `removeAllClosedStreams()` → `bun.destroy(stream)`. Any
+            // subsequent `stream.*` access would then hit freed heap.
+            // Re-resolve from the map after each `options.get`, bail out
+            // if the stream was destroyed. Same pattern as
+            // setStreamPriority / sendTrailers.
             if (try options.get(globalObject, "paddingStrategy")) |padding_js| {
+                stream = this.streams.get(stream_id) orelse return jsc.JSValue.jsNumber(stream_id);
                 if (padding_js.isNumber()) {
                     stream.paddingStrategy = switch (padding_js.to(u32)) {
                         1 => .aligned,
@@ -4265,6 +4648,7 @@ pub const H2FrameParser = struct {
             }
 
             if (try options.get(globalObject, "waitForTrailers")) |trailes_js| {
+                stream = this.streams.get(stream_id) orelse return jsc.JSValue.jsNumber(stream_id);
                 if (trailes_js.isBoolean()) {
                     waitForTrailers = trailes_js.asBoolean();
                     stream.waitForTrailers = waitForTrailers;
@@ -4296,6 +4680,7 @@ pub const H2FrameParser = struct {
             if (try options.get(globalObject, "exclusive")) |exclusive_js| {
                 if (exclusive_js.isBoolean()) {
                     if (exclusive_js.asBoolean()) {
+                        stream = this.streams.get(stream_id) orelse return jsc.JSValue.jsNumber(stream_id);
                         exclusive = true;
                         stream.exclusive = true;
                         has_priority = true;
@@ -4307,13 +4692,15 @@ pub const H2FrameParser = struct {
 
             if (try options.get(globalObject, "parent")) |parent_js| {
                 if (parent_js.isNumber() or parent_js.isInt32()) {
+                    stream = this.streams.get(stream_id) orelse return jsc.JSValue.jsNumber(stream_id);
                     has_priority = true;
                     parent = parent_js.toInt32();
                     if (parent <= 0 or parent > MAX_STREAM_ID) {
                         stream.state = .CLOSED;
                         stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);
                         this.dispatchWithExtra(.onStreamError, stream.getIdentifier(), jsc.JSValue.jsNumber(stream.rstCode));
-                        return jsc.JSValue.jsNumber(stream.id);
+                        this.removeStreamByID(stream_id);
+                        return jsc.JSValue.jsNumber(stream_id);
                     }
                     stream.streamDependency = @intCast(parent);
                 } else {
@@ -4323,12 +4710,14 @@ pub const H2FrameParser = struct {
 
             if (try options.get(globalObject, "weight")) |weight_js| {
                 if (weight_js.isNumber() or weight_js.isInt32()) {
+                    stream = this.streams.get(stream_id) orelse return jsc.JSValue.jsNumber(stream_id);
                     has_priority = true;
                     weight = weight_js.toInt32();
                     if (weight < 1 or weight > std.math.maxInt(u8)) {
                         stream.state = .CLOSED;
                         stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);
                         this.dispatchWithExtra(.onStreamError, stream.getIdentifier(), jsc.JSValue.jsNumber(stream.rstCode));
+                        this.removeStreamByID(stream_id);
                         return jsc.JSValue.jsNumber(stream_id);
                     }
                     stream.weight = @intCast(weight);
@@ -4340,6 +4729,7 @@ pub const H2FrameParser = struct {
                     stream.state = .CLOSED;
                     stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);
                     this.dispatchWithExtra(.onStreamError, stream.getIdentifier(), jsc.JSValue.jsNumber(stream.rstCode));
+                    this.removeStreamByID(stream_id);
                     return jsc.JSValue.jsNumber(stream_id);
                 }
 
@@ -4347,6 +4737,7 @@ pub const H2FrameParser = struct {
             }
 
             if (try options.get(globalObject, "signal")) |signal_arg| {
+                stream = this.streams.get(stream_id) orelse return jsc.JSValue.jsNumber(stream_id);
                 if (signal_arg.as(jsc.WebCore.AbortSignal)) |signal_| {
                     if (signal_.aborted()) {
                         stream.state = .IDLE;
@@ -4358,6 +4749,12 @@ pub const H2FrameParser = struct {
                     return globalObject.throwInvalidArgumentTypeValue("options.signal", "AbortSignal", signal_arg);
                 }
             }
+
+            // Final re-resolve after the options block — covers the
+            // subsequent stream.* accesses (getSessionMemoryUsage gate,
+            // encoded_size check, frame writes). If a trailing options.get
+            // above wiped the stream out, bail.
+            stream = this.streams.get(stream_id) orelse return jsc.JSValue.jsNumber(stream_id);
         }
 
         // too much memory being use
@@ -4370,6 +4767,7 @@ pub const H2FrameParser = struct {
                 const chunk = try this.handlers.binary_type.toJS("ENHANCE_YOUR_CALM", this.handlers.globalObject);
                 this.dispatchWith2Extra(.onError, jsc.JSValue.jsNumber(@intFromEnum(ErrorCode.ENHANCE_YOUR_CALM)), jsc.JSValue.jsNumber(this.lastStreamID), chunk);
             }
+            this.removeStreamByID(stream_id);
             return jsc.JSValue.jsNumber(stream_id);
         }
         var length: usize = encoded_size;
@@ -4393,6 +4791,7 @@ pub const H2FrameParser = struct {
             );
 
             this.dispatchWithExtra(.onStreamError, stream.getIdentifier(), jsc.JSValue.jsNumber(stream.rstCode));
+            this.removeStreamByID(stream_id);
             return jsc.JSValue.jsNumber(stream_id);
         }
 

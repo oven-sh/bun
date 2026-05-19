@@ -10,9 +10,9 @@ use core::cell::Cell;
 
 #[cfg(windows)]
 type Context = bun_sys::windows::CONTEXT;
-#[cfg(all(target_os = "linux", target_env = "musl"))]
+#[cfg(all(target_os = "linux", any(target_env = "musl", target_env = "ohos")))]
 type Context = musl::jmp_buf;
-#[cfg(not(any(windows, all(target_os = "linux", target_env = "musl"))))]
+#[cfg(not(any(windows, all(target_os = "linux", any(target_env = "musl", target_env = "ohos")))))]
 type Context = libc::ucontext_t; // TODO(port): std.c.ucontext_t — confirm libc crate vs bun_sys::c
 
 thread_local! {
@@ -104,13 +104,13 @@ unsafe extern "system" {
 }
 
 // darwin, bsd, gnu linux
-#[cfg(not(any(windows, all(target_os = "linux", target_env = "musl"))))]
+#[cfg(not(any(windows, all(target_os = "linux", any(target_env = "musl", target_env = "ohos")))))]
 unsafe extern "C" {
     pub fn setcontext(ucp: *const libc::ucontext_t) -> !;
 }
 
 // linux musl
-#[cfg(all(target_os = "linux", target_env = "musl"))]
+#[cfg(all(target_os = "linux", any(target_env = "musl", target_env = "ohos")))]
 mod musl {
     use core::ffi::c_int;
     // TODO(port): Zig used @cImport(@cInclude("setjmp.h")).jmp_buf — confirm
@@ -136,12 +136,12 @@ unsafe fn get_context(ctx: *mut Context) {
         // SAFETY: ctx is a valid, writable, properly-aligned CONTEXT (caller contract).
         unsafe { bun_sys::windows::ntdll_context::RtlCaptureContext(ctx) };
     }
-    #[cfg(all(target_os = "linux", target_env = "musl"))]
+    #[cfg(all(target_os = "linux", any(target_env = "musl", target_env = "ohos")))]
     {
         // SAFETY: ctx is a valid, writable, properly-aligned jmp_buf (caller contract).
         let _ = unsafe { musl::setjmp(ctx) };
     }
-    #[cfg(not(any(windows, all(target_os = "linux", target_env = "musl"))))]
+    #[cfg(not(any(windows, all(target_os = "linux", any(target_env = "musl", target_env = "ohos")))))]
     {
         // Zig called std.debug.getContext(ctx) which wraps getcontext(3).
         // The `libc` crate omits the binding on Darwin and the BSDs; declare
@@ -160,13 +160,13 @@ unsafe fn set_context(ctx: *const Context) -> ! {
         // this thread; the captured frame is still live (caller contract).
         unsafe { RtlRestoreContext(ctx, core::ptr::null()) };
     }
-    #[cfg(all(target_os = "linux", target_env = "musl"))]
+    #[cfg(all(target_os = "linux", any(target_env = "musl", target_env = "ohos")))]
     {
         // SAFETY: ctx points to a jmp_buf previously filled by setjmp on this
         // thread; the captured frame is still live (caller contract).
         unsafe { musl::longjmp(ctx, 1) };
     }
-    #[cfg(not(any(windows, all(target_os = "linux", target_env = "musl"))))]
+    #[cfg(not(any(windows, all(target_os = "linux", any(target_env = "musl", target_env = "ohos")))))]
     {
         // SAFETY: ctx points to a ucontext_t previously filled by getcontext on
         // this thread; the captured frame is still live (caller contract).

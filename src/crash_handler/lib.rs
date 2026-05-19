@@ -2130,14 +2130,16 @@ mod draft {
                         .map_err(fmt_err)?;
                     }
                 }
-                #[cfg(all(target_os = "linux", target_env = "musl"))]
+                #[cfg(all(target_os = "linux", any(target_env = "musl", target_env = "ohos")))]
                 {
                     let kernel_version =
                         bun_analytics::GenerateHeader::generate_platform::kernel_version();
+                    let libc = if cfg!(target_env = "ohos") { "ohos (musl)" } else { "musl" };
                     write!(
                         writer,
-                        "Linux Kernel v{}.{}.{} | musl\n",
-                        kernel_version.major, kernel_version.minor, kernel_version.patch
+                        "Linux Kernel v{}.{}.{} | {}\n",
+                        kernel_version.major, kernel_version.minor, kernel_version.patch,
+                        libc,
                     )
                     .map_err(fmt_err)?;
                 }

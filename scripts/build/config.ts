@@ -16,7 +16,7 @@ import { assert, BuildError } from "./error.ts";
 import { clangTargetArch } from "./tools.ts";
 import { cyan, dim, green } from "./tty.ts";
 
-export type OS = "linux" | "darwin" | "windows" | "freebsd";
+export type OS = "linux" | "darwin" | "windows" | "freebsd" | "ohos";
 export type Arch = "x64" | "aarch64";
 export type Abi = "gnu" | "musl" | "android";
 export type BuildType = "Debug" | "Release" | "RelWithDebInfo" | "MinSizeRel";
@@ -80,6 +80,7 @@ export interface Config {
   darwin: boolean;
   windows: boolean;
   freebsd: boolean;
+  ohos: boolean;
   /** linux || darwin || freebsd */
   unix: boolean;
   /** darwin || freebsd — kqueue-based event loop */
@@ -175,6 +176,9 @@ export interface Config {
 
   // ─── Toolchain (resolved absolute paths) ───
   cc: string;
+  /** Host-native C compiler for build-time codegen (no --target/--sysroot).
+   *  Same as cc for native builds; bare clang/cc for cross-compiles like OHOS. */
+  hostCc: string;
   cxx: string;
   /** Parsed X.Y.Z from clang --version. Captured once at resolve time. */
   clangVersion: string | undefined;
@@ -262,6 +266,16 @@ export interface Config {
   /** FreeBSD release version targeted (e.g. "14.3"). undefined when os != "freebsd". */
   freebsdVersion: string | undefined;
 
+  // ─── OHOS cross-compilation (ohos only, undefined elsewhere) ───
+  /** Sysroot path for OHOS NDK. */
+  ohosSysroot: string | undefined;
+  /** OHOS SDK root path. */
+  ohosSdkRoot: string | undefined;
+  /** Cross-compiled libc++/libunwind path. */
+  ohosCrossLibs: string | undefined;
+  /** Cross-compiled ICU path. */
+  ohosIcuDir: string | undefined;
+
   // ─── Versioning ───
   /** Bun's own version (from package.json). */
   version: string;
@@ -314,6 +328,16 @@ export interface PartialConfig {
   freebsdSysroot?: string;
   /** FreeBSD release version (default: FREEBSD_VERSION_DEFAULT). Only used when os=freebsd. */
   freebsdVersion?: string;
+  /** OHOS sysroot path. Only used when os=ohos. */
+  ohosSysroot?: string;
+  /** OHOS SDK root. Auto-detected if not provided. */
+  ohosSdkRoot?: string;
+  /** OHOS cross-compiled LLVM runtime libs (libc++/libc++abi/libunwind). Auto-detected if not provided. */
+  ohosCrossLibs?: string;
+  /** OHOS cross-compiled ICU directory. Auto-detected if not provided. */
+  ohosIcuDir?: string;
+  /** Override cross-compilation target triple (e.g. "aarch64-linux-ohos"). */
+  crossTarget?: string;
   // Version pins (defaults in versions.ts).
   nodejsVersion?: string;
   nodejsAbiVersion?: string;
@@ -587,13 +611,14 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // target is what we actually build for.
   const compilerArch = os === "windows" ? clangTargetArch(toolchain.cc) : undefined;
   const arch = partial.arch ?? compilerArch ?? host.arch;
-  const abi: Abi | undefined = os === "linux" ? (partial.abi ?? detectLinuxAbi()) : undefined;
+  const abi: Abi | undefined = os === "linux" ? (partial.abi ?? detectLinuxAbi()) : os === "ohos" ? "musl" : undefined;
 
   const linux = os === "linux";
   const darwin = os === "darwin";
   const windows = os === "windows";
   const freebsd = os === "freebsd";
-  const unix = linux || darwin || freebsd;
+  const ohos = os === "ohos";
+  const unix = linux || darwin || freebsd || ohos;
   const kqueue = darwin || freebsd;
   const x64 = arch === "x64";
   const arm64 = arch === "aarch64";
@@ -810,6 +835,29 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     }
   }
 
+  // ─── OHOS ───
+  let ohosSysroot: string | undefined;
+  let ohosSdkRoot: string | undefined;
+  let ohosCrossLibs: string | undefined;
+  let ohosIcuDir: string | undefined;
+  if (ohos) {
+    ohosSdkRoot = partial.ohosSdkRoot ? resolve(cwd, partial.ohosSdkRoot) : findOhosSdkRoot();
+    if (!ohosSdkRoot) {
+      throw new BuildError("OHOS build requires --ohos-sdk-root=<path> or setup-ohos-sdk in home", {
+        hint: "Install OHOS SDK from https://gitee.com/openharmony and point --ohos-sdk-root to the SDK root.",
+      });
+    }
+    ohosSysroot = partial.ohosSysroot ? resolve(cwd, partial.ohosSysroot) : resolve(ohosSdkRoot, "ohos/native/sysroot");
+    if (!existsSync(ohosSysroot)) {
+      throw new BuildError(`OHOS sysroot not found at ${ohosSysroot}`);
+    }
+    ohosCrossLibs = partial.ohosCrossLibs ? resolve(cwd, partial.ohosCrossLibs) : resolve(cwd, "build", "ohos-cross-libs");
+    ohosIcuDir = partial.ohosIcuDir ? resolve(cwd, partial.ohosIcuDir) : resolve(cwd, "build", "ohos-icu", "target");
+    // Populate generic cross-compile fields so downstream plumbing sees OHOS settings
+    sysroot = ohosSysroot;
+    crossTarget = partial.crossTarget ?? "aarch64-linux-ohos";
+  }
+
   // ─── Versioning ───
   const pkgJsonPath = resolve(cwd, "package.json");
   const pkgJson = JSON.parse(readFileSync(pkgJsonPath, "utf8")) as { version: string };
@@ -840,6 +888,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     darwin,
     windows,
     freebsd,
+    ohos,
     unix,
     kqueue,
     x64,
@@ -880,6 +929,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     cacheDir,
     vendorDir,
     cc: toolchain.cc,
+    hostCc: ohos ? findHostCc() : toolchain.cc,
     cxx: toolchain.cxx,
     clangVersion: toolchain.clangVersion,
     ar: toolchain.ar,
@@ -911,6 +961,10 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     androidApiLevel,
     androidNdkRuntimeDir,
     freebsdVersion,
+    ohosSysroot,
+    ohosSdkRoot,
+    ohosCrossLibs,
+    ohosIcuDir,
     version,
     revision,
     nodejsVersion,
@@ -1137,6 +1191,34 @@ export function bunExeName(cfg: Config): string {
   if (cfg.assertions) return "bun-assertions";
   // Plain release: called bun-profile (the stripped one is `bun`).
   return "bun-profile";
+}
+
+function findHostCc(): string {
+  // OHOS cross-compilation requires the system GCC (not LLVM clang) because
+  // GCC supplies crtbegin.o/crtend.o and compatible crt startup files/link
+  // behavior that the OHOS toolchain expects. This may fail on systems where
+  // /usr/bin/gcc is symlinked to clang (e.g., some container images).
+  for (const name of ["/usr/bin/gcc", "/usr/bin/cc", "/bin/gcc", "/bin/cc"]) {
+    if (existsSync(name)) return name;
+  }
+  return "cc"; // fallback
+}
+
+function findOhosSdkRoot(): string | undefined {
+  // Environment variable takes priority (standard for cross-compilation toolchains).
+  const envRoot = process.env.OHOS_SDK_ROOT;
+  if (envRoot && existsSync(resolve(envRoot, "ohos/native/sysroot"))) {
+    return envRoot;
+  }
+  const candidates = [
+    resolve(homedir(), "setup-ohos-sdk"),
+    resolve(homedir(), "ohos-sdk"),
+    "/opt/ohos-sdk",
+  ];
+  for (const dir of candidates) {
+    if (existsSync(resolve(dir, "ohos/native/sysroot"))) return dir;
+  }
+  return undefined;
 }
 
 /**

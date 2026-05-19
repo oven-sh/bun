@@ -39,6 +39,7 @@ export const WEBKIT_VERSION = "3167a44fb92c268c83f09b232b38a9f3e7f9655a";
  *   like the old cmake — avoids debug/release mixing.
  */
 
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { Config } from "../config.ts";
@@ -235,7 +236,7 @@ export const webkit: Dependency = {
     // -no-pie rides along in CMAKE_C_FLAGS so try_compile() probes link on
     // PIE-default distros — without it the driver still passes -pie and the
     // -fno-pic probe object fails R_X86_64_32S relocation, killing FindThreads.
-    if (cfg.unix && cfg.abi !== "android") optFlags.push("-fno-pic", "-fno-pie", "-no-pie");
+    if (cfg.unix && cfg.abi !== "android" && !cfg.ohos) optFlags.push("-fno-pic", "-fno-pie", "-no-pie");
     if (cfg.lto) optFlags.push("-flto=full");
     if (cfg.pgoGenerate) optFlags.push(`-fprofile-generate=${cfg.pgoGenerate}`);
     if (cfg.pgoUse) {
@@ -303,12 +304,30 @@ export const webkit: Dependency = {
             CMAKE_FIND_ROOT_PATH_MODE_INCLUDE: "BOTH",
           }
         : {}),
+      ...(cfg.ohos
+        ? {
+            CMAKE_SYSTEM_NAME: "Linux",
+            CMAKE_SYSTEM_PROCESSOR: "aarch64",
+            CMAKE_C_COMPILER: cfg.cc,
+            CMAKE_CXX_COMPILER: cfg.cxx,
+            CMAKE_TRY_COMPILE_TARGET_TYPE: "STATIC_LIBRARY",
+            CMAKE_FIND_ROOT_PATH: cfg.ohosSysroot,
+            CMAKE_PREFIX_PATH: cfg.ohosIcuDir,
+            ICU_ROOT: cfg.ohosIcuDir,
+            CMAKE_THREAD_LIBS_INIT: "-lpthread",
+            CMAKE_HAVE_THREADS_LIBRARY: "1",
+            CMAKE_DL_LIBS: "",
+            CMAKE_FIND_ROOT_PATH_MODE_PACKAGE: "BOTH",
+            CMAKE_FIND_ROOT_PATH_MODE_LIBRARY: "BOTH",
+            CMAKE_FIND_ROOT_PATH_MODE_INCLUDE: "BOTH",
+          }
+        : {}),
       // Match bun's -fno-pic: WebKit's CMake defaults POSITION_INDEPENDENT_CODE
       // to ON for static-archive targets, which puts ~550 KB of vtables into
       // .data.rel.ro. We link -no-pie so this is dead weight in the RW
       // PT_LOAD. Android (PIE) overrides via the -fPIC in optFlags above
       // never being suppressed there.
-      ...(cfg.abi !== "android" ? { CMAKE_POSITION_INDEPENDENT_CODE: "OFF" } : {}),
+      ...(cfg.abi !== "android" && !cfg.ohos ? { CMAKE_POSITION_INDEPENDENT_CODE: "OFF" } : {}),
       PORT: "JSCOnly",
       ENABLE_STATIC_JSC: "ON",
       USE_THIN_ARCHIVES: "OFF",
@@ -366,6 +385,41 @@ export const webkit: Dependency = {
         cwd: srcDir,
         outputs: localIcuLibs(cfg),
       };
+    }
+
+    if (cfg.ohos) {
+      const { ohosSysroot, ohosCrossLibs, ohosIcuDir, cc, cxx } = cfg;
+      const targetFlag = `--target=aarch64-linux-ohos`;
+      const sysrootFlag = ohosSysroot ? `--sysroot=${ohosSysroot}` : "";
+      const icuInclude = ohosIcuDir ? `-I${ohosIcuDir}/include` : "";
+      if (ohosCrossLibs) {
+        args.CMAKE_CXX_FLAGS = [
+          optFlagStr, targetFlag, sysrootFlag, "-D__MUSL__",
+          "-mbranch-protection=none", "-mno-outline-atomics",
+          `-nostdinc++ -I${ohosCrossLibs}/libcxx/include/v1`,
+          `-I${ohosCrossLibs}/libcxxabi/include`,
+          icuInclude,
+          "-fno-c++-static-destructors",
+          "-std=gnu++23",
+        ].filter(Boolean).join(" ");
+        args.CMAKE_C_FLAGS = [
+          optFlagStr, targetFlag, sysrootFlag, "-D__MUSL__",
+          "-mbranch-protection=none", "-mno-outline-atomics",
+          icuInclude,
+        ].filter(Boolean).join(" ");
+        args.CMAKE_EXE_LINKER_FLAGS = `-L${ohosCrossLibs}/libcxx/lib -L${ohosCrossLibs}/libcxxabi/lib -L${ohosCrossLibs}/libunwind/lib -lc++ -lc++abi -lunwind`;
+        args.CMAKE_SHARED_LINKER_FLAGS = `-L${ohosCrossLibs}/libcxx/lib -L${ohosCrossLibs}/libcxxabi/lib -L${ohosCrossLibs}/libunwind/lib -lc++ -lc++abi -lunwind`;
+      }
+      if (ohosIcuDir) {
+        // hostBin is sibling of ohosIcuDir's parent: ohosIcuDir="<prefix>/target" → hostBin="<prefix>/host/bin"
+        const hostBin = resolve(ohosIcuDir, "..", "host", "bin");
+        for (const [key, exe] of [["ICU_GENDATA_EXECUTABLE", "genrb"], ["ICU_GENCCODE_EXECUTABLE", "genccode"], ["ICU_GENCMN_EXECUTABLE", "gencmn"], ["ICU_PKGDATA_EXECUTABLE", "pkgdata"]] as const) {
+          const exePath = resolve(hostBin, exe);
+          if (existsSync(exePath)) {
+            args[key] = exePath;
+          }
+        }
+      }
     }
 
     return spec;

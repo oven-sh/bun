@@ -8478,6 +8478,30 @@ declare module "bun" {
       modifiers?: Modifier[];
     }
 
+    interface NavigateOptions {
+      /**
+       * When to consider the navigation finished:
+       *
+       * - `"load"` — wait for the window `load` event (all subresources
+       *   finished). Matches Playwright's default.
+       * - `"domcontentloaded"` — wait for `DOMContentLoaded`. Use this for
+       *   pages that hold a connection open (SSE, long-polling, a hung
+       *   subresource) and so never fire `load`.
+       *
+       * With the Chrome backend this subscribes to CDP
+       * `Page.lifecycleEvent`. The WebKit backend has no separate
+       * DOMContentLoaded delegate hook, so `"domcontentloaded"` behaves
+       * like `"load"` there — use `timeout` to bound the wait instead.
+       * @default "load"
+       */
+      waitUntil?: "load" | "domcontentloaded";
+      /**
+       * Maximum time to wait in milliseconds. `0` disables the timeout.
+       * @default 30000
+       */
+      timeout?: number;
+    }
+
     /**
      * Browser backend selection.
      *
@@ -8704,16 +8728,22 @@ declare module "bun" {
     onNavigationFailed: ((error: Error) => void) | null;
 
     /**
-     * Navigate to a URL. Resolves when the main frame's load completes
-     * (WKNavigationDelegate `didFinishNavigation`).
+     * Navigate to a URL. Resolves when the navigation reaches the
+     * `options.waitUntil` milestone (default: the window `load` event),
+     * or rejects after `options.timeout` ms.
      *
      * @example
      * ```ts
      * await view.navigate("https://example.com");
      * await view.navigate("data:text/html,<h1>hello</h1>");
+     *
+     * // Page holds an SSE stream open — `load` never fires.
+     * await view.navigate("https://example.com/stream", {
+     *   waitUntil: "domcontentloaded",
+     * });
      * ```
      */
-    navigate(url: string): Promise<void>;
+    navigate(url: string, options?: WebView.NavigateOptions): Promise<void>;
 
     /**
      * Run a JavaScript expression in the page's main frame and return the
@@ -8931,11 +8961,11 @@ declare module "bun" {
     resize(width: number, height: number): Promise<void>;
 
     /** Navigate back in session history. */
-    back(): Promise<void>;
+    goBack(options?: WebView.NavigateOptions): Promise<void>;
     /** Navigate forward in session history. */
-    forward(): Promise<void>;
+    goForward(options?: WebView.NavigateOptions): Promise<void>;
     /** Reload the current page. */
-    reload(): Promise<void>;
+    reload(options?: WebView.NavigateOptions): Promise<void>;
 
     /**
      * Close the view and release its WebContent process. After close,

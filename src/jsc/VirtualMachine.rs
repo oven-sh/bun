@@ -597,8 +597,15 @@ impl MacroModeGuard {
     pub fn new(vm: *mut VirtualMachine) -> Self {
         let vm = bun_ptr::BackRef::from(NonNull::new(vm).expect("vm non-null"));
         let vm_mut = vm.get().as_mut();
-        vm_mut.enable_macro_mode();
+        // Reentrant: only the outermost guard flips the VM into macro mode and
+        // back; inner guards (e.g. a macro that calls
+        // `Bun.Transpiler#transformSync` which itself enters a guard) just bump
+        // the depth so their `Drop` doesn't reset `macro_mode`/`event_loop`/
+        // `transpiler.target`/`transpiler_store.enabled` underneath the outer.
         vm_mut.macro_guard_depth += 1;
+        if vm_mut.macro_guard_depth == 1 {
+            vm_mut.enable_macro_mode();
+        }
         Self { vm }
     }
 }
@@ -608,7 +615,9 @@ impl Drop for MacroModeGuard {
         // Per `new` contract — `vm` outlives the guard (BackRef invariant).
         let vm_mut = self.vm.get().as_mut();
         vm_mut.macro_guard_depth = vm_mut.macro_guard_depth.saturating_sub(1);
-        vm_mut.disable_macro_mode();
+        if vm_mut.macro_guard_depth == 0 {
+            vm_mut.disable_macro_mode();
+        }
     }
 }
 

@@ -242,7 +242,10 @@ impl FileCopier {
                             return sys::Result::Err(err);
                         }
                     };
-                // `defer src.close()` → handled by Drop on `src`.
+                // Zig: `defer src.close()`. `Fd` is Copy with no Drop impl,
+                // so close explicitly via guard — otherwise every iteration
+                // leaks an fd until the rlimit is exhausted.
+                let _close_src = sys::CloseOnDrop::new(src);
 
                 let dest = match dest_dir.create_file_z(entry.path, Default::default()) {
                     Ok(f) => f,
@@ -269,7 +272,8 @@ impl FileCopier {
                         }
                     }
                 };
-                // `defer dest.close()` → handled by Drop on `dest`.
+                // Zig: `defer dest.close()`. `File` is Copy with no Drop impl.
+                let _close_dest = sys::CloseOnDrop::file(&dest);
 
                 #[cfg(unix)]
                 {

@@ -1,5 +1,6 @@
 import { ChildProcess, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { AddressInfo, createServer, Socket } from "node:net";
 import * as path from "node:path";
 import { remoteObjectToString, WebSocketInspector } from "../../../bun-inspector-protocol/index.ts";
@@ -21,6 +22,335 @@ export async function getAvailablePort(): Promise<number> {
       });
     });
   });
+}
+
+/**
+ * Resolve a command for `child_process.spawn` on Windows. Returns the path to
+ * hand to `spawn`, plus whether a `cmd.exe` shell invocation is required.
+ *
+ * Two Windows-specific gotchas need handling together:
+ *
+ * 1. Node's `spawn` does not walk `PATHEXT`, so a bare name like `"bun"` is
+ *    never auto-resolved to `bun.exe`/`bun.cmd`. When Bun is installed via
+ *    the npm wrapper, `bun.exe` lives in `node_modules\bun\bin\` (not on
+ *    `PATH`) and only `bun.cmd` is discoverable — so `spawn("bun", ...)`
+ *    fails with `ENOENT`.
+ *
+ * 2. Post–CVE-2024-27980 (Node 18.20.2 / 20.12.2 / 21.7.3+), Node's C++
+ *    `ProcessWrap::Spawn` unconditionally rejects any `options.file` whose
+ *    extension is `.bat`/`.cmd` with `EINVAL`. The check is suffix-based,
+ *    so an absolute `.cmd` path fails the same way as a bare one. See
+ *    `node:src/util-inl.h IsWindowsBatchFile`.
+ *
+ * Resolving PATH+PATHEXT handles (1). For (2), the caller must invoke
+ * `cmd.exe /d /s /c "..."` so that `options.file` Node sees is `cmd.exe`
+ * rather than the `.cmd` file. `useShell: true` flags that requirement —
+ * `buildShellCommand` constructs the properly quoted `/d /s /c` argument.
+ *
+ * We deliberately DO NOT use Node's built-in `shell: true`, because its
+ * Windows implementation joins `[file, ...args]` with a naive space and no
+ * per-argument quoting — so any space in the resolved path (e.g. the
+ * common `C:\\Users\\Name With Space\\AppData\\Roaming\\npm\\bun.cmd`) or
+ * in an argument breaks tokenization and cmd.exe fails with
+ * `'C:\\Users\\Name' is not recognized as an internal or external command`.
+ * See lib/child_process.js normalizeSpawnArguments in Node.
+ *
+ * On POSIX the helper returns `{ command, useShell: false }` and defers to
+ * `spawn`'s native PATH lookup. `platform` is an explicit parameter so
+ * tests can exercise the Windows path on any host.
+ */
+export function resolveCommand(
+  command: string,
+  env: Record<string, string | undefined> | NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): { command: string; useShell: boolean } {
+  if (platform !== "win32") return { command, useShell: false };
+
+  // Absolute or relative paths skip PATH lookup, but still need the
+  // batch-file check below so `spawn("C:\\...\\bun.cmd", ...)` works.
+  const hasSeparator = command.includes("/") || command.includes("\\");
+  const hasExtension = path.extname(command) !== "";
+
+  let resolved = command;
+  if (!hasSeparator && !hasExtension) {
+    // Windows env vars are case-insensitive at the OS layer but JS exposes
+    // `process.env` with whatever casing the launching shell used. Scan the
+    // env object for any casing variant of these two.
+    const pathVar = lookupEnvCaseInsensitive(env, "PATH") ?? "";
+    // PATHEXT drives extension resolution on Windows. Fall back to the
+    // typical default if the environment doesn't define it.
+    const pathExt = lookupEnvCaseInsensitive(env, "PATHEXT") ?? ".COM;.EXE;.BAT;.CMD";
+    const extensions = pathExt.split(";").filter(Boolean);
+
+    outer: for (const rawDir of pathVar.split(";")) {
+      if (!rawDir) continue;
+      // Windows PATH entries are sometimes wrapped in double quotes —
+      // added by installers or manual System-Properties edits on dirs
+      // that don't actually need quoting. (A dir containing a literal
+      // `;` can't be represented this way because we already split on
+      // `;`; handling that properly would require a quote-aware split.)
+      // node-which, libuv's `search_path`, and cmd.exe all strip a
+      // wrapping pair before probing, so we do the same — otherwise
+      // `path.join('"C:\\...\\dir"', 'bun.exe')` keeps the literal
+      // quotes and `existsSync` misses.
+      const dir = rawDir.replace(/^"(.*)"$/, "$1");
+      if (!dir) continue;
+      for (const ext of extensions) {
+        const candidate = path.join(dir, command + ext);
+        if (existsSync(candidate)) {
+          resolved = candidate;
+          break outer;
+        }
+      }
+    }
+  }
+
+  // Covers both `bun.cmd` and `C:\...\bun.cmd` — Node's batch-file check
+  // is suffix-only, so absoluteness doesn't exempt us.
+  const ext = path.extname(resolved).toLowerCase();
+  const useShell = ext === ".cmd" || ext === ".bat";
+
+  return { command: resolved, useShell };
+}
+
+/**
+ * Case-insensitive lookup of `name` in `env`, matching Node's Windows
+ * env-dedup rule so the resolver walks the same PATH that the spawned
+ * child will actually receive.
+ *
+ * Windows env vars are case-insensitive at the OS layer, but JS exposes
+ * `process.env` with whatever casing the launching shell used (typically
+ * `Path`, not `PATH`). A merged `{...process.env, ...userEnv}` can end up
+ * with BOTH casings as distinct keys. Node's spawn on Windows (see
+ * lib/child_process.js normalizeSpawnArguments, sort+first branch) sorts
+ * keys and keeps the first case-insensitive match; since uppercase sorts
+ * before lowercase, `PATH` wins over `Path`.
+ *
+ * We replicate that rule so a user's launch.json `"env": {"PATH": "..."}`
+ * override is honoured here too — otherwise `resolveCommand` would walk
+ * the system `Path` while the child runs with the user's `PATH`, and
+ * `bun` would resolve to a different binary than the one actually on the
+ * child's PATH.
+ */
+function lookupEnvCaseInsensitive(
+  env: Record<string, string | undefined> | NodeJS.ProcessEnv,
+  name: string,
+): string | undefined {
+  const target = name.toUpperCase();
+  // Sort matches Node's dedup: earliest lexicographic key wins. `PATH` <
+  // `Path` < `path` by ASCII, so any uppercase variant will take priority
+  // over mixed- or lowercase ones present alongside it.
+  const keys = Object.keys(env)
+    .filter(key => key.toUpperCase() === target)
+    .sort();
+  for (const key of keys) {
+    const value = (env as Record<string, string | undefined>)[key];
+    if (typeof value === "string") return value;
+  }
+  return undefined;
+}
+
+// cmd.exe metacharacters that need caret-escaping to be taken literally by
+// the parser. Includes `"` and space so the caret-escape pass below can do
+// "the one thing" and produce a command line that cmd.exe never enters
+// quote-state for — see `buildShellCommand`.
+const CMD_META_CHARS = /([()[\]%!^"`<>&|;, ])/g;
+
+/**
+ * Build the argument string for `cmd.exe /d /s /c <...>` that invokes
+ * `command` with `args` safely — paths and arguments with spaces, cmd
+ * metacharacters, or `%VAR%` sequences all survive to the debuggee intact.
+ *
+ * Usage:
+ *   spawn(cmdExe, ["/d", "/s", "/c", buildShellCommand(cmd, args)], {
+ *     windowsVerbatimArguments: true,
+ *     ...,
+ *   });
+ *
+ * Escaping follows cross-spawn (lib/util/escape.js) because the obvious
+ * approaches all have subtle failure modes:
+ *
+ * 1. Simply wrapping in `"..."`. Fails because cmd.exe does `%VAR%`
+ *    expansion in **phase 1** of parsing, BEFORE quote recognition in
+ *    phase 2 — so `"--flag=%PATH%"` is expanded to the user's PATH
+ *    regardless of quotes.
+ *
+ * 2. Wrapping then replacing `%` → `^%` inside the quotes. Looks right,
+ *    but `^` is the escape character only when the quote-flag is OFF.
+ *    Inside a `"..."` region `^` is taken literally, so the carets
+ *    survive phase 2 and reach the debuggee as part of the argument.
+ *    The arg becomes `--flag=^%PATH^%` — worse than doing nothing.
+ *
+ * 3. Caret-escaping **everything including the wrapping quotes**. What
+ *    cross-spawn does. Because every `"` appears as `^"` in the final
+ *    command line, cmd.exe's phase 2 never enters quote-state; all
+ *    carets are consumed as escapes; and the `^"` pairs that survive
+ *    through to `CommandLineToArgvW` delimit tokens for the target
+ *    process. This is the only approach that handles all three of
+ *    spaces-in-paths, metacharacters, and `%VAR%` at once.
+ *
+ * Because `useShell: true` fires only for a `.cmd`/`.bat` target, the
+ * shim's body (`"%~dp0\...\bun.exe" %*` or similar) is re-parsed by cmd
+ * after `%*` expands — and in that second parse `\` is NOT an escape
+ * character, so the `\"` sequences produced by the qntm pass toggle
+ * quote-state. A `&`/`|`/`<`/`>` sitting between two inner `"` bytes
+ * would therefore land OUTSIDE quote-state in the batch re-parse and be
+ * treated as a command separator (the BatBadBut pattern). The caret
+ * pass is applied TWICE: one layer is consumed by the outer cmd.exe,
+ * the second layer survives into the batch-line phase 2 and keeps
+ * metacharacters literal there too. This mirrors cross-spawn's
+ * `doubleEscapeMetaChars` flag, which is always-on for cmd-shim targets.
+ *
+ * Argument handling uses the qntm.org/cmd algorithm for backslash/quote
+ * interaction inside the quoted region (necessary so inner `"` characters
+ * survive `CommandLineToArgvW`'s unescape pass). The command itself is
+ * caret-escaped just once — it is used to locate the program to run and
+ * is not re-parsed inside the shim's batch body, unlike args — and without
+ * the qntm pass because it's a file path we assume has no embedded `"`.
+ * Matches cross-spawn exactly.
+ */
+export function buildShellCommand(command: string, args: readonly string[]): string {
+  // The command itself goes through only the outer cmd.exe parse (cmd uses
+  // it to locate the program to run; it is not re-interpreted as part of
+  // the batch file's body). One caret layer is enough.
+  const escapeCommand = (token: string) => token.replace(CMD_META_CHARS, "^$1");
+
+  const escapeArgument = (token: string) => {
+    // qntm algorithm: a run of backslashes abutting a `"` gets doubled
+    // (and the `"` escaped with `\`) so `CommandLineToArgvW` sees the
+    // right number of literal backslashes + a literal quote.
+    let escaped = token.replace(/(\\*)"/g, '$1$1\\"');
+    // A trailing backslash run would abut the closing wrapper `"` we are
+    // about to add, so the same doubling applies.
+    escaped = escaped.replace(/(\\*)$/, "$1$1");
+    // Wrap, then caret-escape EVERY metachar TWICE — including the
+    // wrapping quotes. The outer cmd.exe consumes one layer; the second
+    // layer survives into the shim's own cmd re-parse (where `%*` expands
+    // these tokens into its `"%~dp0\...\bun.exe" %*` line) and keeps
+    // metachars literal there too. Without the second pass, an arg like
+    // `fetch("http://a?x=1&y=2")` splits on `&` in the inner parse —
+    // the BatBadBut pattern — because `\` is not an escape in cmd.
+    return `"${escaped}"`.replace(CMD_META_CHARS, "^$1").replace(CMD_META_CHARS, "^$1");
+  };
+
+  const body = [escapeCommand(command), ...args.map(escapeArgument)].join(" ");
+  // Outer wrap so cmd.exe `/s` has something to strip. After the outer
+  // parse consumes one caret layer, `%*` inside the shim holds the
+  // still-single-escaped tokens, and the shim's inner parse consumes the
+  // last layer before handing the final argv to `CommandLineToArgvW`.
+  return `"${body}"`;
+}
+
+/**
+ * Rewrite an argv array to avoid multi-line content when we're about to
+ * route it through `cmd.exe /d /s /c`. cmd.exe's phase 2 parser ends the
+ * command at the first unescaped `\n` — and there is no caret sequence
+ * that produces a literal LF in a cmd command line (`^<LF>` is line
+ * continuation, which *removes* both bytes). So multi-line argv entries
+ * silently truncate the script at the first newline.
+ *
+ * The only place the debug adapter generates multi-line argv content is
+ * `--eval <source>` for VS Code's "Run/Debug Unsaved Code" feature. When
+ * that fires, spill the source to a file and rewrite `--eval src` → the
+ * file path. Bun then runs the file as a program.
+ *
+ * The file is written at `path.join(cwd, "[eval]")` — the exact path the
+ * VS Code extension's source-mapping layer (`bun-vscode/src/features/
+ * debug.ts`) derives from `cwd` and compares against Bun's reported
+ * script URL. Bun uses `[eval]` as the synthetic name for `--eval` source,
+ * so the file on disk and the debuggee's self-reported URL match, which
+ * lets the extension round-trip breakpoints between the untitled editor
+ * and the running script. Placing the file in `cwd` also keeps relative
+ * imports (`import './lib'`) resolving the same way they would with
+ * `--eval` (relative to `cwd`). An `os.tmpdir()` location would break both.
+ *
+ * Returns the (possibly rewritten) argv along with a cleanup function
+ * that removes the temp file once the spawned process exits. Throws if
+ * a multi-line arg appears outside the `--eval <source>` pattern — we
+ * have no safe transformation for that, and silent truncation is worse
+ * than a clear error.
+ */
+export function escapeMultilineArgsForCmd(
+  args: readonly string[],
+  cwd?: string,
+): {
+  args: string[];
+  cleanup: () => void;
+} {
+  const hasMultiline = (s: string) => s.includes("\n") || s.includes("\r");
+  if (!args.some(hasMultiline)) return { args: [...args], cleanup: () => {} };
+
+  const tempFiles: string[] = [];
+  const cleanup = () => {
+    for (const file of tempFiles) {
+      try {
+        rmSync(file, { force: true });
+      } catch {}
+    }
+  };
+
+  const rewritten: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (!hasMultiline(arg)) {
+      rewritten.push(arg);
+      continue;
+    }
+    // Only `--eval <multiline>` has a safe transformation: write the source
+    // to a file named `[eval]` in `cwd` and run that. Any other multi-line
+    // arg we have no way to losslessly forward through cmd.exe.
+    if (rewritten[rewritten.length - 1] !== "--eval" && rewritten[rewritten.length - 1] !== "-e") {
+      cleanup();
+      throw new Error(
+        "Cannot spawn Bun through cmd.exe with a multi-line argument. " +
+          "The VS Code debugger resolved Bun to a `.cmd` shim (usually from `npm i -g bun`) " +
+          "which routes through cmd.exe; cmd.exe's parser ends the command line at any " +
+          "unescaped newline. Install Bun via the official installer so `bun.exe` lives on " +
+          "PATH directly, or pass single-line arguments only.",
+      );
+    }
+    // A cwd is required so the on-disk path matches the extension's
+    // derived `bunEvalPath = join(cwd, "[eval]")`. Without one the
+    // generated file would live elsewhere and breakpoints wouldn't bind.
+    const effectiveCwd = cwd ?? process.cwd();
+    const file = path.join(effectiveCwd, "[eval]");
+    // Refuse to touch a pre-existing `[eval]`. Someone else owns that file
+    // (extremely uncommon given the square-brackets name, but possible if a
+    // prior crashed debug session left one behind, or if the user created
+    // it intentionally). Silently overwriting it and then `rmSync`-ing it
+    // in cleanup would destroy their data; a clear error lets them
+    // resolve the collision manually.
+    if (existsSync(file)) {
+      cleanup();
+      throw new Error(
+        `A file already exists at ${file}. The debug adapter needs to use that ` +
+          `exact path to spill multi-line --eval source for the cmd.exe routing — ` +
+          `overwriting would destroy your file. Delete or rename it, or install ` +
+          `Bun via the official installer so bun.exe is on PATH directly and the ` +
+          `cmd.exe routing (and this spill file) is not needed.`,
+      );
+    }
+    try {
+      writeFileSync(file, arg);
+    } catch (cause) {
+      cleanup();
+      throw new Error(
+        `Failed to materialise multi-line --eval source for the cmd.exe path ` +
+          `(could not write to ${file}). Install Bun via the official installer ` +
+          `so bun.exe is on PATH directly and avoid the cmd.exe routing.`,
+        { cause },
+      );
+    }
+    // Only push onto `tempFiles` (which `cleanup` unconditionally rmSyncs)
+    // AFTER a successful write that also passed the existsSync guard — so
+    // we never delete a file we did not just create.
+    tempFiles.push(file);
+    // Drop the preceding `--eval`/`-e` flag and push the file path.
+    rewritten.pop();
+    rewritten.push(file);
+  }
+
+  return { args: rewritten, cleanup };
 }
 
 const capabilities: DAP.Capabilities = {
@@ -2079,6 +2409,12 @@ export class NodeSocketDebugAdapter extends BaseDebugAdapter<NodeSocketInspector
  */
 export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> {
   #process?: ChildProcess;
+  // True when `#process` is `cmd.exe` wrapping a `.cmd`/`.bat` via
+  // `buildShellCommand`. A plain `kill()` on Windows terminates `cmd.exe`
+  // only — the child (`bun.exe` launched by the batch file) is reparented
+  // and keeps running. We use `taskkill /T /F` to tear down the whole tree
+  // instead; see `#killProcess`.
+  #processUsesShell = false;
 
   public constructor(url?: string | URL, untitledDocPath?: string, bunEvalPath?: string) {
     super(new WebSocketInspector(url), untitledDocPath, bunEvalPath);
@@ -2093,11 +2429,43 @@ export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> 
   }
 
   protected exitJSProcess() {
-    if (!this.#process?.kill()) {
+    if (!this.#killProcess()) {
       this.evaluateInternal({
         expression: "process.exit(0)",
       });
     }
+  }
+
+  /**
+   * Terminate the debuggee process. Returns `true` if a termination signal
+   * was delivered, `false` if there's no process to kill — matching the
+   * return convention of `ChildProcess.kill()` so callers can fall back to
+   * an in-process `process.exit()` RPC when this returns false.
+   *
+   * On Windows, when we spawned via `cmd.exe /d /s /c <bun.cmd>`, the
+   * `#process` handle is `cmd.exe` and its child (`bun.exe`) is NOT killed
+   * by `TerminateProcess`. Use `taskkill /T /F` to walk the process tree
+   * instead. `taskkill` is in System32 which is always on the adapter
+   * process's own PATH, so a bare invocation is safe here.
+   */
+  #killProcess(): boolean {
+    const proc = this.#process;
+    if (!proc || proc.exitCode !== null) return false;
+
+    if (this.#processUsesShell && process.platform === "win32" && typeof proc.pid === "number") {
+      // Fire-and-forget: the inherited pipe output is discarded. Attach an
+      // 'error' listener because spawn() surfaces ENOENT asynchronously —
+      // without a listener, a missing taskkill would become an uncaught
+      // exception in the extension host. If taskkill fails for any reason
+      // we still follow up with proc.kill() so at worst we revert to the
+      // pre-fix behaviour of orphaning bun.exe rather than crashing.
+      spawn("taskkill", ["/pid", String(proc.pid), "/T", "/F"], { stdio: "ignore" }).on("error", () => {
+        proc.kill();
+      });
+      return true;
+    }
+
+    return proc.kill();
   }
 
   /**
@@ -2110,7 +2478,7 @@ export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> 
   }
 
   close() {
-    this.#process?.kill();
+    this.#killProcess();
     super.close();
   }
 
@@ -2260,13 +2628,54 @@ export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> 
     const request = { command, args, cwd, env };
     this.emit("Process.requested", request);
 
+    // On Windows, resolve a bare command name via PATH/PATHEXT. If the result
+    // is a `.cmd`/`.bat` file, route through `cmd.exe /d /s /c` ourselves
+    // (with `windowsVerbatimArguments`) rather than using Node's `shell: true`
+    // — see `resolveCommand` and `buildShellCommand` for the reasoning.
+    const { command: resolvedCommand, useShell } = resolveCommand(command, env);
+
+    // When routing through cmd.exe, multi-line argv content would silently
+    // truncate the script at the first newline. Spill the source to a temp
+    // file in that case and remember cleanup for process exit. Pass `cwd`
+    // so the temp file lands at `<cwd>/[eval]` — the exact path the VS Code
+    // extension's source-mapping layer expects for `--eval` scripts.
+    //
+    // This runs BEFORE the `try` that wraps `spawn()` so that when the
+    // helper throws its actionable "install Bun via the official
+    // installer…" guidance, the thrown Error propagates out of `#spawn`
+    // → `#launch` → `launch()`'s catch, which surfaces `cause.message`
+    // verbatim via the stderr output event. Catching here would either
+    // drop the message (emit `Process.exited` with no listener) or wrap
+    // it ("Failed to spawn process") and bury it in the cause chain.
+    let spawnArgs = args;
+    let cleanupTempFiles = () => {};
+    if (useShell) {
+      const prepared = escapeMultilineArgsForCmd(args, cwd);
+      spawnArgs = prepared.args;
+      cleanupTempFiles = prepared.cleanup;
+    }
+
     let subprocess: ChildProcess;
     try {
-      subprocess = spawn(command, args, {
-        ...request,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+      if (useShell) {
+        // Resolve the shell via %ComSpec% first. libuv's search_path uses the
+        // child's env PATH, not the extension host's, so in `strictEnv: true`
+        // launch configs a bare `"cmd.exe"` could miss System32. Matches
+        // Node's own shell:true resolution (lib/child_process.js).
+        const comSpec = lookupEnvCaseInsensitive(env ?? {}, "ComSpec") ?? process.env.ComSpec ?? "cmd.exe";
+        subprocess = spawn(comSpec, ["/d", "/s", "/c", buildShellCommand(resolvedCommand, spawnArgs)], {
+          ...request,
+          stdio: ["ignore", "pipe", "pipe"],
+          windowsVerbatimArguments: true,
+        });
+      } else {
+        subprocess = spawn(resolvedCommand, spawnArgs, {
+          ...request,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      }
     } catch (cause) {
+      cleanupTempFiles();
       this.emit("Process.exited", new Error("Failed to spawn process", { cause }), null);
       return false;
     }
@@ -2276,8 +2685,11 @@ export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> 
 
       if (isDebugee) {
         this.#process = subprocess;
+        // Remember whether this process is the cmd.exe wrapper so
+        // `#killProcess` knows to tear down the whole tree on Windows.
+        this.#processUsesShell = useShell;
         this.emitAdapterEvent("process", {
-          name: `${command} ${args.join(" ")}`,
+          name: `${command} ${spawnArgs.join(" ")}`,
           systemProcessId: subprocess.pid,
           isLocalProcess: true,
           startMethod: "launch",
@@ -2286,16 +2698,24 @@ export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> 
     });
 
     subprocess.on("exit", (code, signal) => {
+      cleanupTempFiles();
       this.emit("Process.exited", code, signal);
 
       if (isDebugee) {
         this.#process = undefined;
+        this.#processUsesShell = false;
         this.emitAdapterEvent("exited", {
           exitCode: code ?? -1,
         });
         this.emitAdapterEvent("terminated");
       }
     });
+
+    // Async spawn failures (ENOENT/EACCES on `cmd.exe`, etc.) surface via
+    // `error` and never emit `exit`, so the `exit` cleanup above would
+    // leak the temp file. `rmSync(..., {force: true})` inside `cleanup`
+    // is idempotent so double-firing across `error` and `exit` is safe.
+    subprocess.on("error", cleanupTempFiles);
 
     subprocess.stdout?.on("data", data => {
       this.emit("Process.stdout", data.toString());

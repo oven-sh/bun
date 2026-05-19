@@ -276,6 +276,9 @@ pub struct CurrentBundle {
     /// make `DevServer` self-referential; raw-ptr aliasing inside `BundleV2`
     /// already encodes that contract.
     pub bv2: Box<BundleV2<'static>>,
+    /// Owns the arena that `bv2.graph.heap` borrows (`'static` self-ref via the
+    /// boxed allocation's stable address; same erasure as `bv2` above).
+    pub heap: Box<bun_alloc::MimallocArena>,
     /// Information BundleV2 needs to finalize the bundle
     pub start_data: bundler::bundle_v2::DevServerInput,
     /// Started when the bundle was queued
@@ -2848,7 +2851,7 @@ impl DevServer {
     fn generate_javascript_code_for_html_file(
         &mut self,
         index: bun_ast::Index,
-        import_records: &[Vec<ImportRecord>],
+        import_records: &[bun_ast::import_record::List<'_>],
         input_file_sources: &[bun_ast::Source],
         loaders: &[Loader],
     ) -> Result<Box<[u8]>, bun_core::Error> {
@@ -2863,7 +2866,7 @@ impl DevServer {
         )?;
         w.extend_from_slice(b": [ [");
         let mut any = false;
-        for import in import_records[index.get() as usize].slice() {
+        for import in import_records[index.get() as usize].as_slice() {
             if import.source_index.is_valid() {
                 if !loaders[import.source_index.get() as usize].is_javascript_like() {
                     continue; // ignore non-JavaScript imports
@@ -3156,16 +3159,11 @@ impl DevServer {
             server.on_pending_request();
         }
 
-        let heap = bun_alloc::MimallocArena::new();
-        // TODO(port): heap is moved into BundleV2; errdefer heap.deinit() handled by Drop
-        // PORT NOTE: `MimallocArena = bumpalo::Bump` (no `.arena()` accessor);
-        // `Bump::alloc` is the inherent method, and `BundleV2::init`'s `alloc`
-        // param is `&bun_alloc::Arena` (== `&Bump`).
+        // Boxed so its address is stable: `bv2.graph.heap: &'static Arena`
+        // borrows it (self-ref via `CurrentBundle`, see PORT NOTE on
+        // `CurrentBundle.bv2`).
+        let heap: Box<bun_alloc::MimallocArena> = Box::new(bun_alloc::MimallocArena::new());
         // TODO(port): ASTMemoryAllocator scope — bake is an AST crate; arena threading required
-        // PORT NOTE: `heap.alloc` returns `&mut T` borrowing `heap`, but `heap` is
-        // later moved into `bv2.graph.heap`. Bumpalo chunk storage is heap-allocated
-        // and stable across the move of the `Bump` handle, so erase the borrow to a
-        // raw pointer (same rationale as `event_loop` below).
         let ast_memory_store: *mut bun_ast::ASTMemoryAllocator =
             heap.alloc(bun_ast::ASTMemoryAllocator::default());
         // SAFETY: the `ASTMemoryAllocator` lives in a bumpalo chunk owned by
@@ -3184,20 +3182,10 @@ impl DevServer {
                 bun_event_loop::AnyEventLoop::js(self.vm().event_loop().cast()),
             )));
 
-        // PORT NOTE: `BundleV2::init` consumes `heap` and also wants
-        // `alloc: &Arena` derived from it. Zig's `heap.arena()` is a
-        // `Copy` vtable handle that survives the move; in Rust the `Bump` is
-        // moved into `bv2.graph.heap`, so any pre-move borrow would dangle.
-        // `BundleV2::init` itself re-derives `linker.graph.bump = &this.graph
-        // .heap` internally and only uses `alloc` for short-lived setup —
-        // pass the heap's address via raw pointer (it lives at a stable
-        // `Box`-interior slot once `init` writes it).
-        //
-        // SAFETY: `heap_ptr` is read by `BundleV2::init` only after `heap` is
-        // moved into `this.graph.heap` (same allocation, stable address inside
-        // the freshly-`Box::new`'d `BundleV2`). The borrow is scoped to the
-        // call; we never reuse `heap_ptr` after `init` returns.
-        let heap_ptr: *const bun_alloc::Arena = &raw const heap;
+        // SAFETY: `heap` is `Box`-allocated above and moved into
+        // `CurrentBundle` (which also owns `bv2`); the boxed arena's address
+        // is stable for the lifetime of `bv2.graph.heap`'s borrow.
+        let heap_ptr: *const bun_alloc::Arena = &raw const *heap;
         // PORT NOTE: split `&mut self` into disjoint field reborrows so
         // `server_transpiler` (`&'a mut`) and `client/ssr_transpiler`
         // (NonNull) don't trip the single-`&mut self` rule.
@@ -3224,7 +3212,8 @@ impl DevServer {
             Some(::core::ptr::NonNull::from(
                 bun_threading::work_pool::WorkPool::get(),
             )),
-            heap,
+            // SAFETY: see `heap_ptr` note above.
+            unsafe { &*heap_ptr },
         )?;
         bv2.bun_watcher = Some(::core::ptr::NonNull::from(&mut **self.bun_watcher));
         bv2.asynchronous = true;
@@ -3257,6 +3246,7 @@ impl DevServer {
         drop(entry_points);
         self.current_bundle = Some(CurrentBundle {
             bv2,
+            heap,
             timer,
             start_data,
             had_reload_event,
@@ -3671,7 +3661,7 @@ pub struct HotUpdateContext<'a> {
     /// bundle_v2.Graph.input_files.items(.source)
     pub sources: &'a [bun_ast::Source],
     /// bundle_v2.Graph.ast.items(.import_records)
-    pub import_records: &'a [Vec<ImportRecord>],
+    pub import_records: &'a [bun_ast::import_record::List<'a>],
     /// bundle_v2.Graph.server_component_boundaries.slice()
     pub scbs: bun_ast::server_component_boundary::Slice<'a>,
     /// bundle_v2.Graph.input_files.items(.loader)
@@ -3762,15 +3752,13 @@ pub fn finalize_bundle(
         // SAFETY: `dev`/`bv2` are `&mut` params; both outlive this fn-scoped guard.
         let dev = unsafe { &mut *dev_ptr_outer };
         let bv2 = unsafe { &mut *bv2_ptr_outer };
-        // TODO(port): heap moved out before deinit
-        let mut heap = ::core::mem::replace(&mut bv2.graph.heap, bun_alloc::Arena::new());
         bv2.deinit_without_freeing_arena();
         if let Some(cb) = &mut dev.current_bundle {
             cb.promise.deinit_idempotently();
         }
+        // Drops `CurrentBundle.heap` (the arena `bv2.graph.heap` borrows).
         dev.current_bundle = None;
         dev.log.clear_and_free();
-        drop(heap);
 
         let _ = dev.assets.reindex_if_needed(); // not fatal
 

@@ -60,17 +60,17 @@ pub struct BundledAst<'arena> {
 
     /// These are stored at the AST level instead of on individual AST nodes so
     /// they can be manipulated efficiently without a full AST traversal
-    pub import_records: import_record::List,
+    pub import_records: import_record::List<'arena>,
 
     // PORT NOTE: Ast.hashbang is `StoreStr`; mirror it here so init/to_ast can
     // round-trip.
     pub hashbang: StoreStr,
-    pub parts: part::List,
+    pub parts: part::List<'arena>,
     // Zig: `?*bun.css.BundlerStyleSheet`. See `CssAstRef` doc for the arena
     // drop-order invariant that backs the safe `Deref`.
     pub css: CssCol,
     pub url_for_css: &'arena [u8],
-    pub symbols: symbol::List,
+    pub symbols: symbol::List<'arena>,
     pub module_scope: Scope,
     // TODO(port): Zig used `= undefined`; only valid when flags.HAS_CHAR_FREQ is set.
     pub char_freq: CharFreq,
@@ -112,12 +112,12 @@ bun_collections::multi_array_columns! {
         approximate_newline_count: u32,
         nested_scope_slot_counts: SlotCounts,
         exports_kind: ExportsKind,
-        import_records: import_record::List,
+        import_records: import_record::List<'arena>,
         hashbang: StoreStr,
-        parts: part::List,
+        parts: part::List<'arena>,
         css: CssCol,
         url_for_css: &'arena [u8],
-        symbols: symbol::List,
+        symbols: symbol::List<'arena>,
         module_scope: Scope,
         char_freq: CharFreq,
         exports_ref: Ref,
@@ -159,17 +159,46 @@ bitflags::bitflags! {
 }
 
 impl<'arena> BundledAst<'arena> {
-    // TODO(port): Zig `pub const empty = BundledAst.init(Ast.empty);` — cannot be a `const` in Rust
-    // because `init` is not const-evaluable. Consider a `static` via `OnceLock` or make
-    // `init`/`Ast::empty` const fn if feasible.
-    pub fn empty() -> Self {
-        Self::init(Ast::empty())
+    // Zig: `pub const empty = BundledAst.init(Ast.empty)` (comptime). The three `ArenaVec`
+    // fields prevent `const fn` here, but spell out the defaults directly instead of
+    // round-tripping through `Ast::empty_in` + `init` — this runs once per discovered
+    // module on the main thread.
+    pub fn empty_in(arena: &'arena bun_alloc::Arena) -> Self {
+        Self {
+            approximate_newline_count: 0,
+            nested_scope_slot_counts: SlotCounts::default(),
+            exports_kind: ExportsKind::None,
+            import_records: import_record::List::new_in(arena),
+            hashbang: StoreStr::EMPTY,
+            parts: part::List::new_in(arena),
+            css: None,
+            url_for_css: b"",
+            symbols: symbol::List::new_in(arena),
+            module_scope: Scope::default(),
+            char_freq: CharFreq::default(),
+            exports_ref: Ref::NONE,
+            module_ref: Ref::NONE,
+            wrapper_ref: Ref::NONE,
+            require_ref: Ref::NONE,
+            top_level_await_keyword: bun_ast::Range::NONE,
+            tla_check: TlaCheck::default(),
+            named_imports: NamedImports::default(),
+            named_exports: NamedExports::default(),
+            export_star_import_records: Box::default(),
+            top_level_symbols_to_parts: TopLevelSymbolToParts::default(),
+            commonjs_named_exports: CommonJSNamedExports::default(),
+            redirect_import_record_index: u32::MAX,
+            target: bun_ast::Target::Browser,
+            ts_enums: bun_ast::ast_result::TsEnumsMap::default(),
+            flags: Flags::empty(),
+        }
     }
 
     // PORT NOTE: Zig's `*const BundledAst` bitwise-copies every field; the Rust
     // collection types aren't Copy, so consume `self` to move them (toAST is a
     // one-shot conversion back to the fat Ast).
-    pub fn to_ast(self) -> Ast {
+    pub fn to_ast(self) -> Ast<'arena> {
+        let arena: &'arena bun_alloc::Arena = *self.parts.allocator();
         Ast {
             approximate_newline_count: self.approximate_newline_count as usize,
             nested_scope_slot_counts: self.nested_scope_slot_counts,
@@ -241,11 +270,11 @@ impl<'arena> BundledAst<'arena> {
                 None
             },
             has_import_meta: self.flags.contains(Flags::HAS_IMPORT_META),
-            ..Ast::default()
+            ..Ast::empty_in(arena)
         }
     }
 
-    pub fn init(ast: Ast) -> Self {
+    pub fn init(ast: Ast<'arena>) -> Self {
         let mut flags = Flags::empty();
         flags.set(Flags::USES_EXPORTS_REF, ast.uses_exports_ref);
         flags.set(Flags::USES_MODULE_REF, ast.uses_module_ref);

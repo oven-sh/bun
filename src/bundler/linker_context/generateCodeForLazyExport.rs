@@ -19,7 +19,7 @@ use crate::bun_css::{BundlerStyleSheet, CssRef, CssRefTag};
 use crate::{Index, IndexInt, LinkerContext};
 use bun_collections::DynamicBitSetUnmanaged as BitSet;
 
-type SymbolList = Vec<Symbol>;
+type SymbolList<'a> = bun_ast::symbol::List<'a>;
 
 /// `ArrayHashAdapter` so `LocalScope` (`ArrayHashMap<Box<[u8]>, LocalEntry>`)
 /// can be queried by borrowed `&[u8]` (CSS idents are arena `*const [u8]`).
@@ -42,7 +42,7 @@ pub fn generate_code_for_lazy_export(
     let exports_kind = this.graph.ast.items_exports_kind()[source_index as usize];
     // PORT NOTE: reshaped for borrowck — take `parts` as a raw pointer *before* the
     // long-lived immutable `items_css()` borrow below; re-borrowed again later as needed.
-    let parts: *mut [Part] = this.graph.ast.items_parts_mut()[source_index as usize].slice_mut();
+    let parts: *mut [Part] = this.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice();
     // SAFETY: parse_graph backref; raw deref because `all_sources` is held
     // across `&mut *this.log` below (split borrow).
     let all_sources = unsafe { &(*this.parse_graph).input_files }.items_source();
@@ -81,8 +81,8 @@ pub fn generate_code_for_lazy_export(
             }
             let mut exports = E::Object::default();
 
-            let symbols: &SymbolList = &this.graph.ast.items_symbols()[source_index as usize];
-            let all_import_records: &[Vec<ImportRecord>] = this.graph.ast.items_import_records();
+            let symbols: &SymbolList<'_> = &this.graph.ast.items_symbols()[source_index as usize];
+            let all_import_records = this.graph.ast.items_import_records();
 
             let values = css_ast.local_scope.values();
             if values.len() == 0 {
@@ -106,11 +106,11 @@ pub fn generate_code_for_lazy_export(
                 // Zig: `std.AutoArrayHashMap(Ref, void)` → `ArrayHashMap` per collections map.
                 composes_visited: &'a mut ArrayHashMap<Ref, ()>,
                 parts: &'a mut Vec<E::TemplatePart>,
-                all_import_records: &'a [Vec<ImportRecord>],
+                all_import_records: &'a [bun_ast::import_record::List<'a>],
                 // `BundledAst.css` SoA column.
                 all_css_asts: &'a [crate::bundled_ast::CssCol],
                 all_sources: &'a [Source],
-                all_symbols: &'a [SymbolList],
+                all_symbols: &'a [SymbolList<'a>],
                 source_index: IndexInt,
                 log: &'a mut Log,
                 loc: Loc,
@@ -163,12 +163,10 @@ pub fn generate_code_for_lazy_export(
                     compose_loc: Loc,
                 ) {
                     let _ = self.arena;
-                    let syms: &SymbolList = &self.all_symbols[css_ref.source_index(idx) as usize];
+                    let syms: &SymbolList<'_> =
+                        &self.all_symbols[css_ref.source_index(idx) as usize];
                     // `Symbol.original_name: StoreStr` — arena-owned for the link pass.
-                    let name: &[u8] = syms
-                        .at(css_ref.inner_index() as usize)
-                        .original_name
-                        .slice();
+                    let name: &[u8] = syms[css_ref.inner_index() as usize].original_name.slice();
                     let loc = ast
                         .local_scope
                         .get_adapted(name, SliceBoxAdapter)
@@ -209,10 +207,9 @@ pub fn generate_code_for_lazy_export(
                             match &compose.from {
                                 // it is imported
                                 Some(CssSpecifier::ImportRecordIndex(import_record_idx)) => {
-                                    let import_records: &Vec<ImportRecord> =
-                                        &self.all_import_records[idx as usize];
+                                    let import_records = &self.all_import_records[idx as usize];
                                     let import_record =
-                                        import_records.at(*import_record_idx as usize);
+                                        &import_records[*import_record_idx as usize];
                                     if import_record.source_index.is_valid() {
                                         let Some(other_file) = self.all_css_asts
                                             [import_record.source_index.get() as usize]
@@ -378,10 +375,7 @@ pub fn generate_code_for_lazy_export(
                 }
 
                 // `Symbol.original_name: StoreStr` — arena-owned for the link pass.
-                let key: &[u8] = symbols
-                    .at(ref_.inner_index() as usize)
-                    .original_name
-                    .slice();
+                let key: &[u8] = symbols[ref_.inner_index() as usize].original_name.slice();
                 exports.put(arena, key, value)?;
             }
 
@@ -504,7 +498,8 @@ pub fn generate_code_for_lazy_export(
                             key.loc,
                         )));
                     // PORT NOTE: `parts.ptr[generated[1]]` — re-borrow `parts` here for borrowck.
-                    let parts = this.graph.ast.items_parts_mut()[source_index as usize].slice_mut();
+                    let parts =
+                        this.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice();
                     parts[generated.1 as usize].stmts = bun_ast::StoreSlice::new_mut(new_stmts);
                 }
             }
@@ -539,7 +534,7 @@ pub fn generate_code_for_lazy_export(
                         },
                         stmt.loc,
                     )));
-                let parts = this.graph.ast.items_parts_mut()[source_index as usize].slice_mut();
+                let parts = this.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice();
                 parts[generated.1 as usize].stmts = bun_ast::StoreSlice::new_mut(new_stmts);
             }
         }

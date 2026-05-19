@@ -1063,7 +1063,7 @@ impl TranspilerJob {
             return;
         }
 
-        for import_record in parse_result.ast.import_records.slice_mut() {
+        for import_record in parse_result.ast.import_records.as_mut_slice() {
             let import_record: &mut ImportRecord = import_record;
 
             if let Some(replacement) = HardcodedAlias::get(

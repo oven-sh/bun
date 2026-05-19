@@ -108,7 +108,7 @@ bitflags::bitflags! {
     }
 }
 
-pub type List = Vec<ImportRecord>;
+pub type List<'a> = bun_alloc::ArenaVec<'a, ImportRecord>;
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]

@@ -226,10 +226,10 @@ use bun_ast::{Ast, Ref};
 // `Ast` variant collapses `Result` to 16 B so only a thin pointer is moved up
 // the stack — one mimalloc-arena alloc per parsed module is far cheaper than
 // 4+ kilobyte memmoves. The other variants are already tiny.
-pub enum Result {
+pub enum Result<'a> {
     AlreadyBundled(AlreadyBundled),
     Cached,
-    Ast(Box<Ast>),
+    Ast(Box<Ast<'a>>),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

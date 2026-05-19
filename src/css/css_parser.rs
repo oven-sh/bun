@@ -21,7 +21,7 @@ use bun_core::strings;
 /// `bun.ast.Index` — bundler source-file index. Hoisted into
 /// `bun_options_types` to keep css below the parser tier.
 use bun_ast::Index as SrcIndex;
-use bun_ast::symbol::List as SymbolList;
+type SymbolList = Vec<bun_ast::Symbol>;
 use bun_ast::{ImportKind, ImportRecord};
 
 pub use crate::compat::{self, Feature};

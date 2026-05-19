@@ -1710,24 +1710,35 @@ pub fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(
     normalize_string_node_t::<T, P>(&temp_buf[0..written], buf)
 }
 
-/// Inline `MAX_PATH_BYTES * 2` stack buffer that heap-allocates when the
-/// requested size exceeds it. Keeps `_join_abs_string_buf`'s scratch buffer safe
-/// for arbitrarily long inputs while preserving zero-alloc behaviour for the
-/// common case.
-struct JoinScratch {
-    // PERF(port): was StackFallbackAllocator(MAX_PATH_BYTES * 2) — using Vec.
-    // TODO(perf): consider a smallvec / stack-alloc fast path.
-    buf: Vec<u8>,
+/// Scratch buffer for `_join_abs_string_buf`'s unnormalized concatenation.
+/// Zig used `std.heap.stackFallback(MAX_PATH_BYTES * 2)`; we draw from the
+/// thread-local `path_buffer_pool` for the common case and only heap-allocate
+/// when the concatenation would overflow a single `PathBuffer`. The pooled
+/// buffer is not re-zeroed — callers write every byte they later read.
+enum JoinScratch {
+    Pooled(crate::path_buffer_pool::Guard),
+    Heap(Vec<u8>),
 }
 
 impl JoinScratch {
+    #[inline]
     pub(crate) fn init(base: usize, parts: &[&[u8]]) -> Self {
         let mut total = base + 2;
         for p in parts {
             total += p.len() + 1;
         }
-        Self {
-            buf: vec![0u8; total],
+        if total <= MAX_PATH_BYTES {
+            JoinScratch::Pooled(crate::path_buffer_pool::get())
+        } else {
+            JoinScratch::Heap(vec![0u8; total])
+        }
+    }
+
+    #[inline]
+    fn buf(&mut self) -> &mut [u8] {
+        match self {
+            JoinScratch::Pooled(g) => &mut g[..],
+            JoinScratch::Heap(v) => &mut v[..],
         }
     }
 }
@@ -1895,7 +1906,7 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
     }
 
     let mut scratch = JoinScratch::init(cwd.len(), parts);
-    let temp_buf = &mut scratch.buf;
+    let temp_buf = scratch.buf();
 
     temp_buf[..cwd.len()].copy_from_slice(cwd);
     out = cwd.len();
@@ -2014,7 +2025,7 @@ fn _join_abs_string_buf_windows<'a, const IS_SENTINEL: bool>(
     }
 
     let mut scratch = JoinScratch::init(root.len() + set_cwd.len(), &parts[n_start..]);
-    let temp_buf = &mut scratch.buf;
+    let temp_buf = scratch.buf();
 
     temp_buf[0..root.len()].copy_from_slice(root);
     temp_buf[root.len()..root.len() + set_cwd.len()].copy_from_slice(set_cwd);

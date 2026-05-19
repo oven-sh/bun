@@ -29,7 +29,7 @@ bun_core::declare_scope!(LinkerGraph, visible);
 // were drafted against an older `.items().field_name` shape; rewritten to the
 // `items_<field>()` spelling (matches `LinkerContext.rs`).
 
-pub struct LinkerGraph {
+pub struct LinkerGraph<'a> {
     pub files: FileList,
     pub files_live: BitSet,
     pub entry_points: entry_point::List,
@@ -47,7 +47,7 @@ pub struct LinkerGraph {
 
     // This is an alias from Graph
     // it is not a clone!
-    pub ast: MultiArrayList<JSAst>,
+    pub ast: MultiArrayList<JSAst<'a>>,
     pub meta: MultiArrayList<JSMeta>,
 
     /// We should avoid traversing all files in the bundle, because the linker
@@ -93,10 +93,10 @@ pub struct LinkerGraph {
 // `Send` is required because `LinkerGraph` is moved into `LinkerContext`
 // which is itself sent to the link task; the only `!Send` constituent is the
 // raw `*const Arena`, whose pointee is `Sync` and outlives the graph.
-unsafe impl Send for LinkerGraph {}
-unsafe impl Sync for LinkerGraph {}
+unsafe impl Send for LinkerGraph<'_> {}
+unsafe impl Sync for LinkerGraph<'_> {}
 
-impl LinkerGraph {
+impl<'a> LinkerGraph<'a> {
     /// `&Arena` accessor — `bump` is a raw backref into `BundleV2`.
     #[inline]
     pub fn arena(&self) -> &Arena {
@@ -106,7 +106,7 @@ impl LinkerGraph {
     }
 }
 
-impl LinkerGraph {
+impl<'a> LinkerGraph<'a> {
     pub fn init(bump: &Arena, file_count: usize) -> Result<Self, bun_core::Error> {
         // TODO(port): narrow error set
         Ok(LinkerGraph {
@@ -126,7 +126,7 @@ impl LinkerGraph {
     }
 }
 
-impl Default for LinkerGraph {
+impl Default for LinkerGraph<'_> {
     fn default() -> Self {
         LinkerGraph {
             files: FileList::default(),
@@ -213,7 +213,7 @@ pub fn top_level_symbol_to_parts<'a>(
 }
 
 pub fn add_part_to_file(
-    parts: &mut [part::List],
+    parts: &mut [part::List<'_>],
     top_level_symbol_to_parts_overlay: &mut [TopLevelSymbolToParts],
     top_level_symbols_to_parts: &[bundled_ast::TopLevelSymbolToParts],
     id: u32,
@@ -232,7 +232,7 @@ pub fn add_part_to_file(
     // call (O(1); the cache was a Zig micro-opt that does not survive
     // Stacked Borrows).
     let declared_symbols: &mut DeclaredSymbolList =
-        &mut parts[id as usize].mut_(part_id as usize).declared_symbols;
+        &mut parts[id as usize][part_id as usize].declared_symbols;
 
     struct Ctx<'a> {
         overlay: &'a mut [TopLevelSymbolToParts],
@@ -271,7 +271,7 @@ pub fn add_part_to_file(
 
 #[allow(clippy::too_many_arguments)]
 pub fn generate_symbol_import_and_use(
-    parts: &mut [part::List],
+    parts: &mut [part::List<'_>],
     ast_flags: &mut [bundled_ast::Flags],
     exports_ref: &[Ref],
     module_ref: &[Ref],
@@ -297,7 +297,7 @@ pub fn generate_symbol_import_and_use(
 
     // Mark this symbol as used by this part
     {
-        let part: &mut Part = &mut parts[source_index as usize].slice_mut()[part_index as usize];
+        let part: &mut Part = &mut parts[source_index as usize].as_mut_slice()[part_index as usize];
         let uses_entry = part.symbol_uses.get_or_put(ref_)?;
         if !uses_entry.found_existing {
             *uses_entry.value_ptr = symbol::Use {
@@ -342,7 +342,7 @@ pub fn generate_symbol_import_and_use(
         ref_,
     );
     let dependencies =
-        &mut parts[source_index as usize].slice_mut()[part_index as usize].dependencies;
+        &mut parts[source_index as usize].as_mut_slice()[part_index as usize].dependencies;
     // SAFETY: every element of `new_dependencies` is overwritten in the
     // zip-loop immediately below before any read/drop.
     let new_dependencies = unsafe { dependencies.writable_slice(part_ids.len()) };
@@ -359,7 +359,7 @@ pub fn generate_symbol_import_and_use(
     Ok(())
 }
 
-impl LinkerGraph {
+impl<'a> LinkerGraph<'a> {
     pub fn runtime_function(&self, name: &[u8]) -> Ref {
         runtime_function(self.ast.items_named_exports(), name)
     }
@@ -489,7 +489,7 @@ impl LinkerGraph {
     }
 }
 
-impl LinkerGraph {
+impl<'a> LinkerGraph<'a> {
     pub fn load(
         &mut self,
         entry_points: &[Index],
@@ -626,11 +626,11 @@ impl LinkerGraph {
                 }
 
                 // For client components, the import record index currently points to the original source index, instead of the reference source index.
-                let import_records_list: &mut [import_record::List] =
+                let import_records_list: &mut [import_record::List<'_>] =
                     self.ast.items_import_records_mut();
                 for source_id in self.reachable_files.slice() {
                     for import_record in import_records_list[source_id.get() as usize]
-                        .slice_mut()
+                        .as_mut_slice()
                         .iter_mut()
                     {
                         if import_record.source_index.is_valid()
@@ -686,7 +686,7 @@ impl LinkerGraph {
             let mut symbols: symbol::NestedList = Vec::with_capacity(src_symbols.len());
             for src in src_symbols {
                 let n = src.len();
-                let mut dest: symbol::List = Vec::with_capacity(n);
+                let mut dest: Vec<symbol::Symbol> = Vec::with_capacity(n);
                 // SAFETY: `dest` has capacity `n`; `src` is `n` initialized
                 // `Symbol`s; `Symbol` is bitwise-copyable (no `Drop`).
                 unsafe {
@@ -772,17 +772,34 @@ impl LinkerGraph {
         Ok(())
     }
 
-    /// No-op: with `Vec` replaced by `Vec` (cat-4, BABYLIST_REPLACEMENT.md),
-    /// the parser hands the linker globally-owned `Vec`s directly — there is
-    /// nothing to "transfer". Kept as an empty fn so the call site in
-    /// `LinkerGraph::load` stays diff-stable; delete once that caller drops it.
-    pub fn take_ast_ownership(&mut self) {}
+    /// Port of `LinkerGraph.zig:takeAstOwnership`. `clone_ast` left each
+    /// `PartList`/import-record list with its allocator handle pointing at
+    /// the per-worker `mi_heap` that built it; re-tag to `heap` (the
+    /// bundle-thread arena) so linker-side `add_part_to_file` pushes call
+    /// `mi_heap_realloc_aligned(heap, worker_ptr, ..)` from the thread that
+    /// owns `heap`. Zero-copy: only files the linker actually grows pay a
+    /// (lazy, mimalloc-internal) cross-heap migration on first realloc.
+    ///
+    /// Zig is a release no-op because `BabyList` passes the allocator at each
+    /// `append` call site; the Rust `Vec<T, &Arena>` stores it, so swap here.
+    /// Zig also transfers `part.dependencies` and `symbols`; the Rust port
+    /// keeps `DependencyList` on the global allocator and feeds new symbols
+    /// through `self.symbols: symbol::Map` (also global) — both thread-safe
+    /// to grow, so no transfer needed.
+    pub fn take_ast_ownership(&mut self, heap: &'a Arena) {
+        for v in self.ast.items_import_records_mut() {
+            bun_alloc::transfer_arena(v, heap);
+        }
+        for v in self.ast.items_parts_mut() {
+            bun_alloc::transfer_arena(v, heap);
+        }
+    }
 
     pub fn propagate_async_dependencies(&mut self) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         struct State<'a> {
             visited: AutoBitSet,
-            import_records: &'a [import_record::List],
+            import_records: &'a [import_record::List<'a>],
             flags: &'a mut [js_meta::Flags],
         }
 
@@ -802,7 +819,7 @@ impl LinkerGraph {
                     return;
                 }
 
-                for import_record in self.import_records[index].slice_const().iter() {
+                for import_record in self.import_records[index].as_slice().iter() {
                     match import_record.kind {
                         ImportKind::Stmt => {}
 

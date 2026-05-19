@@ -94,5 +94,5 @@ describe("$.braces", () => {
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
-  }, 30_000);
+  });
 });

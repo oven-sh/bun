@@ -240,6 +240,15 @@ pub struct VirtualMachine {
     // TODO(b2-cycle): `MacroEntryPoint` from `bun_bundler::entry_points` (gated).
     pub macro_entry_points: bun_collections::ArrayHashMap<i32, *mut c_void>,
     pub macro_mode: bool,
+    /// Depth of live [`MacroModeGuard`]s on this thread. Distinct from
+    /// `macro_mode` (which is a non-reentrant bool toggled by
+    /// `enable_/disable_macro_mode` and read by the resolve/transpile path):
+    /// `macro_mode` can be cleared by an inner guard's drop while an outer
+    /// guard is still on the stack, or left stuck `true` on `Macro::init`'s
+    /// `?` error path before any guard exists. The depth is the precise "a
+    /// guard is on the stack" signal that
+    /// [`drop_source_code_printer_if_macro_owned`] needs.
+    pub macro_guard_depth: u32,
     pub no_macros: bool,
     pub auto_killer: ProcessAutoKiller::ProcessAutoKiller,
 
@@ -587,7 +596,9 @@ impl MacroModeGuard {
     #[inline]
     pub fn new(vm: *mut VirtualMachine) -> Self {
         let vm = bun_ptr::BackRef::from(NonNull::new(vm).expect("vm non-null"));
-        vm.get().as_mut().enable_macro_mode();
+        let vm_mut = vm.get().as_mut();
+        vm_mut.enable_macro_mode();
+        vm_mut.macro_guard_depth += 1;
         Self { vm }
     }
 }
@@ -595,7 +606,9 @@ impl Drop for MacroModeGuard {
     #[inline]
     fn drop(&mut self) {
         // Per `new` contract — `vm` outlives the guard (BackRef invariant).
-        self.vm.get().as_mut().disable_macro_mode();
+        let vm_mut = self.vm.get().as_mut();
+        vm_mut.macro_guard_depth = vm_mut.macro_guard_depth.saturating_sub(1);
+        vm_mut.disable_macro_mode();
     }
 }
 
@@ -3033,17 +3046,19 @@ fn drop_source_code_printer() {
 /// `TranspilerStateGuard::drop` deinits the nested `MacroContext`), and freeing
 /// here would panic the next module fetch at
 /// `SOURCE_CODE_PRINTER.get().expect(...)` with no intervening
-/// `enable_macro_mode()`. The outermost guard's `disable_macro_mode()` clears
-/// `macro_mode`, after which `Worker::deinit` (or the next per-job deinit)
-/// reaches the free.
+/// `enable_macro_mode()`. Gated on `macro_guard_depth` (not `macro_mode`): an
+/// inner guard's drop unconditionally clears `macro_mode` while the outer guard
+/// is still on the stack, and `Macro::init`'s `?` error path can leave
+/// `macro_mode` stuck `true` before any guard exists — the depth counter is
+/// nonzero exactly while a guard is on the stack.
 pub fn drop_source_code_printer_if_macro_owned() {
     if !SOURCE_CODE_PRINTER_FROM_MACRO.get() {
         return;
     }
     if let Some(vm) = VM.get() {
         // SAFETY: `VM` is this thread's per-JS-thread VM singleton; we only
-        // read the `macro_mode` flag and never alias `&mut`.
-        if unsafe { (*vm).macro_mode } {
+        // read the depth counter and never alias `&mut`.
+        if unsafe { (*vm).macro_guard_depth } > 0 {
             return;
         }
     }

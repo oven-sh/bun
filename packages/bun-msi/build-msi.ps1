@@ -1,0 +1,302 @@
+#!/usr/bin/env pwsh
+<#
+.SYNOPSIS
+  Builds the unified Bun MSI installer from the three Windows bun.exe
+  payloads (x64, x64-baseline, arm64).
+
+.DESCRIPTION
+  Installs the WiX v5 dotnet tool if missing, compiles the DetectCpu
+  custom-action DLL from detect-cpu.c (so nothing binary is checked into
+  git), renders the dialog/banner bitmaps from src/bun.ico, generates the
+  RTF license from LICENSE.md, then invokes `wix build` against
+  packages/bun-msi/bun.wxs.
+
+  Intended to be called from the `msi` job in .github/workflows/release.yml
+  on a windows-latest runner with the already-signed bun.exe extracted from
+  each bun-windows-<variant>.zip release asset.
+
+.PARAMETER BunExeX64
+  Path to the x64 (AVX2-enabled) bun.exe.
+
+.PARAMETER BunExeX64Baseline
+  Path to the x64-baseline (pre-AVX2) bun.exe.
+
+.PARAMETER BunExeArm64
+  Path to the arm64 bun.exe.
+
+.PARAMETER Version
+  Dotted version string for Package/@Version and ARP DisplayVersion, e.g.
+  "1.3.12". Defaults to the contents of the repo's LATEST file.
+
+.PARAMETER Output
+  Path to write the resulting .msi. Defaults to ./bun-windows.msi next to
+  this script.
+
+.EXAMPLE
+  ./build-msi.ps1 -BunExeX64 x64/bun.exe -BunExeX64Baseline baseline/bun.exe -BunExeArm64 arm64/bun.exe
+#>
+
+[CmdletBinding()]
+param(
+  [Parameter(Mandatory = $true)]
+  [string]$BunExeX64,
+
+  [Parameter(Mandatory = $true)]
+  [string]$BunExeX64Baseline,
+
+  [Parameter(Mandatory = $true)]
+  [string]$BunExeArm64,
+
+  [string]$Version,
+
+  [string]$Output
+)
+
+$ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"
+
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
+$RepoRoot  = Resolve-Path (Join-Path $ScriptDir "..\..")
+
+if (-not $Version) {
+  $Version = (Get-Content (Join-Path $RepoRoot "LATEST") -Raw).Trim()
+}
+if ($Version -notmatch '^\d+\.\d+\.\d+$') {
+  # MSI ProductVersion must be purely numeric major.minor.build; strip any
+  # pre-release suffix (canary tags etc.) and fall back to 0.0.0 if nothing
+  # usable remains so local/dev builds still produce a valid package.
+  if ($Version -match '(\d+)\.(\d+)\.(\d+)') {
+    $Version = "$($Matches[1]).$($Matches[2]).$($Matches[3])"
+  } else {
+    $Version = "0.0.0"
+  }
+}
+
+if (-not $Output) {
+  $Output = Join-Path $ScriptDir "bun-windows.msi"
+}
+
+foreach ($p in @{X64 = $BunExeX64; X64Baseline = $BunExeX64Baseline; Arm64 = $BunExeArm64}.GetEnumerator()) {
+  if (-not (Test-Path $p.Value)) { throw "BunExe$($p.Key) not found: $($p.Value)" }
+}
+$BunExeX64         = (Resolve-Path $BunExeX64).Path
+$BunExeX64Baseline = (Resolve-Path $BunExeX64Baseline).Path
+$BunExeArm64       = (Resolve-Path $BunExeArm64).Path
+
+$WorkDir = Join-Path $ScriptDir ".build"
+if (Test-Path $WorkDir) { Remove-Item $WorkDir -Recurse -Force }
+New-Item -ItemType Directory -Path $WorkDir -Force | Out-Null
+
+# ── WiX toolchain ───────────────────────────────────────────────────────────
+# WiX v5 ships as a dotnet global tool. The Windows runner already has a
+# .NET SDK, so `dotnet` is on PATH. Install to a local tool dir so we don't
+# dirty the runner's global tool cache and so reruns are idempotent.
+$WixVersion = "5.0.2"
+$ToolDir    = Join-Path $ScriptDir ".wix"
+$WixExe     = Join-Path $ToolDir "wix.exe"
+
+if (-not (Test-Path $WixExe)) {
+  Write-Host "-- Installing WiX $WixVersion dotnet tool -> $ToolDir"
+  if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
+    throw "dotnet SDK not found on PATH; cannot install the WiX tool."
+  }
+  & dotnet tool install --tool-path $ToolDir --version $WixVersion wix | Out-Host
+  if ($LASTEXITCODE -ne 0) { throw "dotnet tool install wix failed ($LASTEXITCODE)" }
+}
+if (-not (Test-Path $WixExe)) { throw "wix.exe not found after install: $WixExe" }
+
+# The UI dialog set (WixUI_InstallDir) lives in a separate extension package.
+# `extension add` is idempotent, but a NuGet fetch can still fail on a cold
+# cache — surface that here rather than as an opaque "extension not found"
+# from `wix build` forty lines later.
+Write-Host "-- Ensuring WixToolset.UI.wixext is available"
+& $WixExe extension add -g WixToolset.UI.wixext/$WixVersion 2>&1 | Out-Host
+if ($LASTEXITCODE -ne 0) { throw "wix extension add WixToolset.UI.wixext failed ($LASTEXITCODE)" }
+
+# ── DetectCpu custom-action DLL ─────────────────────────────────────────────
+# Compile detect-cpu.c with the MSVC toolchain. Built as an x64 DLL because
+# the package platform is x64 (it runs under emulation on ARM64 hosts and
+# IsWow64Process2 reports the native machine from there). Linked against
+# msi.lib for MsiGet/SetProperty and kernel32 for the detection calls.
+#
+# /MT (static CRT) is load-bearing: without it MSVC defaults to /MD and
+# the DLL imports VCRUNTIME140.dll, which is a redistributable and NOT an
+# OS component — absent on clean Server Core / LTSC / stripped enterprise
+# images, which makes LoadLibrary fail and the whole install abort with
+# 1720/1723 on exactly the fleets we're targeting. detect-cpu.c calls zero
+# CRT functions so /MT only pulls in the tiny DllMainCRTStartup stub.
+# /GS- drops the stack-cookie init (no buffers to overrun) which would
+# otherwise be the one remaining CRT reference.
+#
+# The MSVC environment isn't ambient on a GitHub Actions windows-latest
+# runner — cl.exe is laid down by Visual Studio but not on PATH until the
+# developer command prompt is entered. Rather than dot-sourcing the repo's
+# VS helper (which is tuned for Buildkite agents), locate vcvars64.bat via
+# vswhere and spawn a child cmd.exe that sources it and then runs cl; that
+# keeps this script self-contained and runner-agnostic.
+$DetectSrc = Join-Path $ScriptDir "detect-cpu.c"
+$DetectDll = Join-Path $WorkDir   "detect-cpu.dll"
+$ClFlags   = "/nologo /O1 /W4 /MT /GS- /LD"
+$ClLibs    = "msi.lib kernel32.lib"
+
+if (-not (Get-Command cl -ErrorAction SilentlyContinue)) {
+  $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+  if (-not (Test-Path $vswhere)) { throw "vswhere.exe not found; cannot locate MSVC to build detect-cpu.dll" }
+  $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+  if (-not $vs) { throw "Visual Studio with the C++ toolset not found" }
+  $vcvars = Join-Path $vs "VC\Auxiliary\Build\vcvars64.bat"
+  if (-not (Test-Path $vcvars)) { throw "vcvars64.bat not found under $vs" }
+  Write-Host "-- Compiling detect-cpu.dll via $vcvars"
+  & cmd /c "`"$vcvars`" >nul && cl $ClFlags `"$DetectSrc`" $ClLibs /Fe:`"$DetectDll`" /Fo:`"$WorkDir\\`""
+} else {
+  Write-Host "-- Compiling detect-cpu.dll (cl already on PATH)"
+  & cmd /c "cl $ClFlags `"$DetectSrc`" $ClLibs /Fe:`"$DetectDll`" /Fo:`"$WorkDir\\`""
+}
+if ($LASTEXITCODE -ne 0) { throw "cl failed to compile detect-cpu.c ($LASTEXITCODE)" }
+if (-not (Test-Path $DetectDll)) { throw "detect-cpu.dll not produced" }
+Write-Host "-- Built detect-cpu.dll ($((Get-Item $DetectDll).Length) bytes)"
+
+# ── License RTF ─────────────────────────────────────────────────────────────
+# WixUI requires RTF. Wrap the repo's LICENSE.md verbatim in a minimal RTF
+# envelope so the text is accurate without maintaining a second copy.
+# LICENSE.md contains smart quotes (U+2019 etc.), so we can't get away with
+# a naive ASCII dump: escape RTF specials, turn newlines into \par, and emit
+# every non-ASCII codepoint as an RTF Unicode keyword (\uN?) with '?' as the
+# ANSI fallback. The resulting stream is pure 7-bit so any RichEdit version
+# renders it regardless of the user's system codepage.
+$LicenseSrc = Join-Path $RepoRoot "LICENSE.md"
+$LicenseRtf = Join-Path $WorkDir "license.rtf"
+$licenseText = (Get-Content $LicenseSrc -Raw) -replace "`r`n", "`n"
+$sb = [System.Text.StringBuilder]::new($licenseText.Length * 2)
+foreach ($ch in $licenseText.ToCharArray()) {
+  switch ($ch) {
+    '\' { [void]$sb.Append('\\') }
+    '{' { [void]$sb.Append('\{') }
+    '}' { [void]$sb.Append('\}') }
+    "`n" { [void]$sb.Append('\par ') }
+    default {
+      $cp = [int]$ch
+      if ($cp -ge 0x20 -and $cp -lt 0x80) {
+        [void]$sb.Append($ch)
+      } else {
+        # \uN takes a signed 16-bit decimal; .NET chars are UTF-16 code
+        # units so surrogate halves pass through as-is and RichEdit
+        # recombines them. The trailing '?' is the \ansicpg fallback glyph.
+        if ($cp -gt 32767) { $cp -= 65536 }
+        [void]$sb.Append('\u').Append($cp).Append('?')
+      }
+    }
+  }
+}
+$rtf = "{\rtf1\ansi\ansicpg1252\deff0{\fonttbl{\f0 Segoe UI;}}\fs18 " + $sb.ToString() + "}"
+[System.IO.File]::WriteAllText($LicenseRtf, $rtf, [System.Text.Encoding]::ASCII)
+
+# ── Dialog / banner bitmaps ─────────────────────────────────────────────────
+# Generated at build time from src/bun.ico so no binary BMPs live in git.
+# The dialog bitmap is the full 493x312 welcome/exit canvas: cream Bun
+# background (#fbf0df) with the logo rendered as large as fits while leaving
+# room for the dialog's text column on the right. The banner is the 493x58
+# strip along the top of interior pages with a small logo tucked into the
+# right-hand corner where WixUI expects it.
+Add-Type -AssemblyName System.Drawing
+
+$IconPath = Join-Path $RepoRoot "src\bun.ico"
+if (-not (Test-Path $IconPath)) { throw "Icon not found: $IconPath" }
+
+function New-BunBitmap {
+  param(
+    [int]$Width,
+    [int]$Height,
+    [int]$LogoSize,
+    [int]$LogoX,
+    [int]$LogoY,
+    [string]$OutPath
+  )
+  $bmp = New-Object System.Drawing.Bitmap $Width, $Height
+  $g   = [System.Drawing.Graphics]::FromImage($bmp)
+  try {
+    $g.SmoothingMode      = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+    $g.InterpolationMode  = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+    $g.PixelOffsetMode    = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+    $g.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighQuality
+
+    # Bun brand gradient: cream #fbf0df -> blush #f6dece. These are the
+    # exact stops from bun.com's hero; keeping them literal (not derived)
+    # so a website palette tweak doesn't silently drift the installer.
+    $top    = [System.Drawing.Color]::FromArgb(0xFB, 0xF0, 0xDF) # #fbf0df
+    $bottom = [System.Drawing.Color]::FromArgb(0xF6, 0xDE, 0xCE) # #f6dece
+    $rect   = New-Object System.Drawing.Rectangle 0, 0, $Width, $Height
+    $brush  = New-Object System.Drawing.Drawing2D.LinearGradientBrush `
+      $rect, $top, $bottom, [System.Drawing.Drawing2D.LinearGradientMode]::Vertical
+    $g.FillRectangle($brush, $rect)
+    $brush.Dispose()
+
+    # Soft drop shadow under the logo so the face reads on the light
+    # gradient without adding an outline to the icon itself.
+    $shadow = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(40, 0, 0, 0))
+    $g.FillEllipse($shadow, $LogoX + 3, $LogoY + ($LogoSize - [int]($LogoSize * 0.12)), $LogoSize - 6, [int]($LogoSize * 0.12))
+    $shadow.Dispose()
+
+    # Pull the largest frame out of the .ico (256x256) and draw it scaled.
+    $icon = New-Object System.Drawing.Icon $IconPath, 256, 256
+    $logo = $icon.ToBitmap()
+    $g.DrawImage($logo, $LogoX, $LogoY, $LogoSize, $LogoSize)
+    $logo.Dispose()
+    $icon.Dispose()
+
+    $bmp.Save($OutPath, [System.Drawing.Imaging.ImageFormat]::Bmp)
+  } finally {
+    $g.Dispose()
+    $bmp.Dispose()
+  }
+}
+
+$DialogBmp = Join-Path $WorkDir "dialog.bmp"
+$BannerBmp = Join-Path $WorkDir "banner.bmp"
+
+# Welcome/exit canvas: WixUI reserves roughly the right 330px for copy, so a
+# ~200px logo hugging the left edge fills the visual column without clipping
+# under localized strings. Vertical centering keeps the face centered on the
+# "Welcome to the Bun Setup Wizard" headline.
+New-BunBitmap -Width 493 -Height 312 -LogoSize 200 -LogoX 16 -LogoY 56 -OutPath $DialogBmp
+
+# Interior banner: WixUI draws title text on the left ~400px, so the logo
+# sits flush-right in the 58px strip with a small margin.
+New-BunBitmap -Width 493 -Height 58  -LogoSize 48  -LogoX 440 -LogoY 5  -OutPath $BannerBmp
+
+Write-Host "-- Rendered dialog/banner bitmaps"
+
+# ── Build ───────────────────────────────────────────────────────────────────
+$Wxs = Join-Path $ScriptDir "bun.wxs"
+Write-Host "-- wix build (v$Version) -> $Output"
+
+# Package platform is always x64: ARM64 Windows runs x64 MSIs under
+# emulation, and the DetectCpu CA reads the *native* machine via
+# IsWow64Process2, so ARM64 hosts still get the arm64 payload.
+#
+# -sw1076: AllowSameVersionUpgrades intentionally set; WiX warns that same
+#          version upgrades are detected as major upgrades. That's the point.
+# -sw1151: multiple components install to the same filename (bun.exe) — by
+#          design, their conditions are mutually exclusive via BUNVARIANT.
+& $WixExe build `
+  -arch x64 `
+  -ext WixToolset.UI.wixext `
+  -d "BunVersion=$Version" `
+  -d "BunExeX64=$BunExeX64" `
+  -d "BunExeX64Baseline=$BunExeX64Baseline" `
+  -d "BunExeArm64=$BunExeArm64" `
+  -d "DetectCpuDll=$DetectDll" `
+  -d "BunIcon=$IconPath" `
+  -d "BunBannerBmp=$BannerBmp" `
+  -d "BunDialogBmp=$DialogBmp" `
+  -d "BunLicense=$LicenseRtf" `
+  -sw1076 -sw1151 `
+  -o $Output `
+  $Wxs | Out-Host
+
+if ($LASTEXITCODE -ne 0) { throw "wix build failed ($LASTEXITCODE)" }
+if (-not (Test-Path $Output)) { throw "wix build reported success but $Output is missing" }
+
+Write-Host "-- Built $Output ($('{0:N1}' -f ((Get-Item $Output).Length / 1MB)) MB)"
+
+Remove-Item $WorkDir -Recurse -Force -ErrorAction SilentlyContinue

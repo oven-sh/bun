@@ -1192,4 +1192,64 @@ describe("bundler", () => {
       stdout: "object\nobject\nobject",
     },
   });
+
+  // https://github.com/oven-sh/bun/issues/30669
+  // `require("bun")` rewrites to `globalThis.Bun` for --target=bun; under
+  // --minify-whitespace the previous token can be an identifier (e.g. `return`,
+  // `typeof`), and the printer must emit a space so the tokens don't fuse into
+  // `returnglobalThis.Bun` (which ASI parses as `return;`, breaking runtime
+  // monkey-patching of Bun.SQL / Bun.* by OpenTelemetry-style instrumentation).
+  itBundled("minify/BunRequireAfterReturnKeyword", {
+    files: {
+      "/entry.js": /* js */ `
+        function getBunModule() {
+          try {
+            return require("bun");
+          } catch {
+            return undefined;
+          }
+        }
+        function viaTypeof() {
+          return typeof require("bun");
+        }
+        const m = getBunModule();
+        console.log(m === undefined ? "FAIL-undefined" : "PASS-" + typeof m.SQL);
+        console.log(viaTypeof());
+      `,
+    },
+    minifyWhitespace: true,
+    target: "bun",
+    onAfterBundle(api) {
+      const file = api.readFile("out.js");
+      // The printer must NOT fuse adjacent identifier-continue tokens.
+      expect(file).not.toContain("returnglobalThis");
+      expect(file).not.toContain("typeofglobalThis");
+    },
+    run: {
+      stdout: "PASS-function\nobject",
+    },
+  });
+
+  // Dynamic `import("bun")` rewrites to `Promise.resolve(globalThis.Bun)` and
+  // must not fuse with a preceding identifier-continue token either.
+  itBundled("minify/BunDynamicImportAfterAwait", {
+    files: {
+      "/entry.js": /* js */ `
+        async function getBun() {
+          return await import("bun");
+        }
+        getBun().then((m) => console.log(typeof m.SQL));
+      `,
+    },
+    minifyWhitespace: true,
+    target: "bun",
+    onAfterBundle(api) {
+      const file = api.readFile("out.js");
+      expect(file).not.toContain("awaitPromise");
+      expect(file).not.toContain("returnPromise");
+    },
+    run: {
+      stdout: "function",
+    },
+  });
 });

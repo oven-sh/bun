@@ -2095,106 +2095,134 @@ impl DevServer {
         req: ReqOrSaved,
         resp: AnyResponse,
     ) -> Result<(), bun_core::Error> {
-        let deferred_ptr = self.deferred_request_pool.get();
-        // SAFETY: HiveArrayFallback::get returns an exclusively-owned, live node ptr
-        // (heap-allocates on overflow; never null).
-        let deferred = unsafe { &mut *deferred_ptr };
-        // Precompute the data slot pointer (used inside the initializer for
-        // abort-callback registration) before borrowing `deferred.data` for `.write()`.
-        let deferred_data_ptr: *mut c_void = deferred.data.as_mut_ptr().cast::<c_void>();
-        debug_log!("DeferredRequest(0x{:x}).init", deferred_data_ptr as usize);
-
         let method = match &req {
             // SAFETY: r is a uws Request ptr valid for the duration of the handler callback
             ReqOrSaved::Req(r) => Method::which(unsafe { &**r }.method()).unwrap_or(Method::GET),
             ReqOrSaved::Saved(saved) => unsafe { (*saved.request).method },
             _ => unreachable!(),
         };
+        // Back-pointer captured before the pool borrow; raw, no live borrow.
+        let dev_ptr: *const DevServer = std::ptr::from_ref(self);
 
-        deferred.data.write(DeferredRequest {
-            route_bundle_index,
-            dev: std::ptr::from_ref(self),
-            referenced_by_devserver: true,
-            weakly_referenced_by_requestcontext: false,
-            handler: match kind {
-                deferred_request::HandlerKind::BundledHtmlPage => 'brk: {
-                    // PORT NOTE: `on_aborted<U: 'static>` rejects `DeferredRequest`;
-                    // erase to `c_void` and cast back inside the trampoline.
-                    resp.on_aborted(
-                        |p: *mut c_void, r: AnyResponse| {
-                            // SAFETY: p is the &mut deferred.data registered below; lifetime erased
-                            unsafe { &mut *p.cast::<DeferredRequest>() }.on_abort(r)
-                        },
-                        deferred_data_ptr,
-                    );
-                    break 'brk Handler::BundledHtmlPage(ResponseAndMethod {
-                        response: resp,
-                        method,
-                    });
-                }
-                deferred_request::HandlerKind::ServerHandler => 'brk: {
-                    let server_handler: SavedRequest = match req {
-                        ReqOrSaved::Req(r) => {
-                            let global = self.vm().global();
-                            match self
-                                .server
-                                .as_ref()
-                                .unwrap()
-                                .prepare_and_save_js_request_context(
-                                    // SAFETY: r is the live µWS request for this handler frame.
-                                    unsafe { &mut *r },
-                                    resp,
-                                    global,
-                                    Some(method),
-                                )? {
-                                Some(saved) => saved,
-                                // Zig: `catch return` — abort the deferral on failure.
-                                None => {
-                                    // SAFETY: `deferred_ptr` is a hive slot from
-                                    // `get()` above; `deferred.data.write()` has
-                                    // not run on this branch (we're still inside
-                                    // the struct-literal initializer), so the slot
-                                    // does not satisfy `put()`'s "fully-initialized
-                                    // T" contract. `put_raw` recycles/frees without
-                                    // `drop_in_place`, matching Zig's `pool.put`
-                                    // (no destructor).
-                                    unsafe { self.deferred_request_pool.put_raw(deferred_ptr) };
-                                    return Ok(());
-                                }
-                            }
+        // Phase 1 — fallible, `self`-reentrant work runs *before* a slot is
+        // claimed. The old code claimed first and recycled via `put_raw` on the
+        // `None` path (and *leaked* the slot on the `?`-error path); resolving
+        // the handler first means the early-return paths have no slot at all.
+        enum HandlerInput {
+            BundledHtmlPage,
+            ServerHandler(SavedRequest),
+        }
+        let handler_input = match kind {
+            deferred_request::HandlerKind::BundledHtmlPage => HandlerInput::BundledHtmlPage,
+            deferred_request::HandlerKind::ServerHandler => {
+                let server_handler: SavedRequest = match req {
+                    ReqOrSaved::Req(r) => {
+                        let global = self.vm().global();
+                        match self
+                            .server
+                            .as_ref()
+                            .unwrap()
+                            .prepare_and_save_js_request_context(
+                                // SAFETY: r is the live µWS request for this handler frame.
+                                unsafe { &mut *r },
+                                resp,
+                                global,
+                                Some(method),
+                            )? {
+                            Some(saved) => saved,
+                            // Zig: `catch return` — abort the deferral on failure.
+                            None => return Ok(()),
                         }
-                        ReqOrSaved::Saved(saved) => saved,
-                        _ => unreachable!(),
-                    };
-                    server_handler.ctx.ref_();
-                    server_handler.ctx.set_additional_on_abort_callback(Some(
-                        crate::server::any_request_context::AdditionalOnAbortCallback {
-                            cb: {
-                                fn cb(ptr: *mut c_void) {
-                                    DeferredRequest::on_abort_wrapper(ptr)
-                                }
-                                cb
-                            },
-                            // SAFETY: deferred.data is a live field of a HiveArray-owned node
-                            data: unsafe { ::core::ptr::NonNull::new_unchecked(deferred_data_ptr) },
-                            deref_fn: {
-                                fn deref_fn(ptr: *mut c_void) {
-                                    // SAFETY: ptr is &mut DeferredRequest from above
-                                    let self_: &mut DeferredRequest =
-                                        unsafe { &mut *ptr.cast::<DeferredRequest>() };
-                                    self_.weak_deref();
-                                }
-                                deref_fn
-                            },
-                        },
-                    ));
-                    break 'brk Handler::ServerHandler(server_handler);
-                }
-            },
-        });
+                    }
+                    ReqOrSaved::Saved(saved) => saved,
+                    _ => unreachable!(),
+                };
+                HandlerInput::ServerHandler(server_handler)
+            }
+        };
 
-        // SAFETY: `deferred.data` was just initialized above.
-        let deferred_data = unsafe { deferred.data.assume_init_mut() };
+        // Phase 2 — infallible, no `self` access (the back-pointer is the
+        // precomputed raw `dev_ptr`). `claim()` reserves a stable slot; the
+        // `HiveSlot` token's `Drop` would recycle it without `T::drop` if we
+        // returned early here (we never do — kept as the correctness net).
+        let slot = self.deferred_request_pool.claim();
+        let deferred_ptr: *mut deferred_request::Node = slot.addr().as_ptr();
+        // SAFETY: `slot` is a freshly-claimed, exclusively-owned `Node`. Write
+        // `.next` (prepend overwrites it on success) and take the stable
+        // address of `.data` for the self-referential abort registration.
+        let deferred_data_ptr: *mut c_void = unsafe {
+            std::ptr::addr_of_mut!((*deferred_ptr).next).write(std::ptr::null_mut());
+            std::ptr::addr_of_mut!((*deferred_ptr).data)
+                .cast::<DeferredRequest>()
+                .cast::<c_void>()
+        };
+        debug_log!("DeferredRequest(0x{:x}).init", deferred_data_ptr as usize);
+
+        let handler = match handler_input {
+            HandlerInput::BundledHtmlPage => {
+                // PORT NOTE: `on_aborted<U: 'static>` rejects `DeferredRequest`;
+                // erase to `c_void` and cast back inside the trampoline.
+                resp.on_aborted(
+                    |p: *mut c_void, r: AnyResponse| {
+                        // SAFETY: p is the &mut deferred.data registered here; lifetime erased
+                        unsafe { &mut *p.cast::<DeferredRequest>() }.on_abort(r)
+                    },
+                    deferred_data_ptr,
+                );
+                Handler::BundledHtmlPage(ResponseAndMethod {
+                    response: resp,
+                    method,
+                })
+            }
+            HandlerInput::ServerHandler(server_handler) => {
+                server_handler.ctx.ref_();
+                server_handler.ctx.set_additional_on_abort_callback(Some(
+                    crate::server::any_request_context::AdditionalOnAbortCallback {
+                        cb: {
+                            fn cb(ptr: *mut c_void) {
+                                DeferredRequest::on_abort_wrapper(ptr)
+                            }
+                            cb
+                        },
+                        // SAFETY: deferred.data is a live field of a HiveArray-owned node
+                        data: unsafe { ::core::ptr::NonNull::new_unchecked(deferred_data_ptr) },
+                        deref_fn: {
+                            fn deref_fn(ptr: *mut c_void) {
+                                // SAFETY: ptr is &mut DeferredRequest from above
+                                let self_: &mut DeferredRequest =
+                                    unsafe { &mut *ptr.cast::<DeferredRequest>() };
+                                self_.weak_deref();
+                            }
+                            deref_fn
+                        },
+                    },
+                ));
+                Handler::ServerHandler(server_handler)
+            }
+        };
+
+        // SAFETY: place the fully-formed value into the slot's `data` field
+        // (raw `ptr::write` — no drop of the prior uninitialized bytes).
+        unsafe {
+            std::ptr::addr_of_mut!((*deferred_ptr).data)
+                .cast::<DeferredRequest>()
+                .write(DeferredRequest {
+                    route_bundle_index,
+                    dev: dev_ptr,
+                    referenced_by_devserver: true,
+                    weakly_referenced_by_requestcontext: false,
+                    handler,
+                });
+        }
+        // SAFETY: both `Node` fields (`next`, `data`) are now initialized;
+        // `assume_init` returns the now-live node pointer and consumes the
+        // token so its `Drop` does not recycle the in-use slot.
+        let deferred_ptr = unsafe { slot.assume_init() }.as_ptr();
+
+        // SAFETY: `.data` initialized just above; `deferred_data_ptr` is its
+        // stable address.
+        let deferred_data: &mut DeferredRequest =
+            unsafe { &mut *deferred_data_ptr.cast::<DeferredRequest>() };
         if matches!(deferred_data.handler, Handler::ServerHandler(_)) {
             deferred_data.weak_ref();
         }
@@ -3535,7 +3563,7 @@ impl DevServer {
         Ok(arr)
     }
 
-    // PERF(port): was comptime monomorphization (`comptime goal: TraceImportGoal`) — profile in Phase B
+    // PERF(port): was comptime monomorphization (`comptime goal: TraceImportGoal`) — profile if hot.
     fn trace_all_route_imports(
         &mut self,
         route_bundle: &RouteBundle,
@@ -3702,7 +3730,7 @@ pub fn finalize_bundle(
     let had_sent_hmr_event = ::core::cell::Cell::new(false);
 
     // TODO(port): the giant `defer` block at the start of finalizeBundle has been
-    // moved into a scopeguard. Phase B must verify ordering relative to ?-returns.
+    // moved into a scopeguard. Verify ordering relative to ?-returns.
     // PORT NOTE: erase `dev`/`bv2` to raw pointers inside the guard so the
     // long-lived closure capture doesn't lock borrowck for the entire fn body
     // (Zig `defer` had no aliasing analysis).
@@ -5407,8 +5435,8 @@ impl DevServer {
 }
 
 // PORT NOTE: FileKind/ChunkKind/TraceImportGoal/IncrementalResult/GraphTraceState
-// are defined once in `crate::bake::dev_server` and re-exported here so the
-// Phase-A draft body and the keystone struct module agree on identity.
+// are defined once in `crate::bake::dev_server` and re-exported here so this
+// module and the keystone struct module agree on identity.
 pub use crate::bake::dev_server::FileKind;
 
 pub use crate::bake::dev_server::IncrementalResult;
@@ -5872,7 +5900,7 @@ mod c {
     }
 }
 
-// PERF(port): was comptime monomorphization (`comptime n: comptime_int, bits: [n]*DynamicBitSetUnmanaged`) — profile in Phase B
+// PERF(port): was comptime monomorphization (`comptime n: comptime_int, bits: [n]*DynamicBitSetUnmanaged`) — profile if hot.
 fn mark_all_route_children(
     router: &FrameworkRouter,
     bits: &mut [&mut DynamicBitSet],
@@ -6271,7 +6299,7 @@ fn dump_state_due_to_crash(dev: &mut DevServer) -> Result<(), bun_core::Error> {
 
     // TODO(port): comptime brk: { @setEvalBranchQuota; @embedFile; lastIndexOf }
     const VISUALIZER: &[u8] = include_bytes!("incremental_visualizer.html");
-    // TODO(port): const split at compile time — Phase B
+    // TODO(perf): split the embedded file at compile time instead of at runtime.
     let i = strings::last_index_of(VISUALIZER, b"<script>").unwrap() + b"<script>".len();
     let (start, end) = (&VISUALIZER[..i], &VISUALIZER[i..]);
 
@@ -6319,9 +6347,6 @@ impl RouteIndexAndRecurseFlag {
         (self.0 >> 31) != 0
     }
 }
-// TODO(port): Zig field-init `.{ .route_index = .., .should_recurse_when_visiting = .. }`
-// is used throughout; Phase B should add a `new()` and update callsites.
-
 /// Bake needs to specify which graph (client/server/ssr) each entry point is.
 #[derive(Default)]
 pub struct EntryPointList {
@@ -7059,7 +7084,7 @@ fn extract_pathname_from_url(url: &[u8]) -> &[u8] {
     pathname
 }
 
-// Type aliases referenced throughout (Phase B will resolve to real paths)
+// Type aliases referenced throughout.
 use crate::bake::dev_server::incremental_graph;
 use crate::bake::dev_server::route_bundle;
 use crate::bake::dev_server::serialized_failure;

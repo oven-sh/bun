@@ -114,14 +114,13 @@ where
 #[allow(clippy::too_many_arguments)]
 pub trait RequestCtxOps: RequestCtx {
     type Server;
-    fn create_in(
-        slot: *mut Self,
-        server: *const Self::Server,
+    fn create(
+        server: NonNull<Self::Server>,
         req: &mut Self::Req,
         resp: &mut Self::Resp,
         should_deinit_context: Option<DeferDeinitFlag>,
         method: Option<http::Method>,
-    );
+    ) -> Self;
     fn on_response(
         &mut self,
         server: &Self::Server,
@@ -163,26 +162,21 @@ where
 {
     type Server = ThisServer;
     #[inline]
-    fn create_in(
-        slot: *mut Self,
-        server: *const ThisServer,
+    fn create(
+        server: NonNull<ThisServer>,
         req: &mut Self::Req,
         resp: &mut Self::Resp,
         should_deinit_context: Option<DeferDeinitFlag>,
         method: Option<http::Method>,
-    ) {
-        // SAFETY: `slot` points at a fresh HiveArray pool entry; treat as
-        // MaybeUninit for in-place construction.
-        let slot = unsafe { &mut *slot.cast::<core::mem::MaybeUninit<Self>>() };
+    ) -> Self {
         let any_resp = RespLike::to_any_response(resp);
-        Self::create(
-            slot,
+        Self::new(
             server,
             std::ptr::from_mut(req).cast(),
             any_resp,
             should_deinit_context,
             method,
-        );
+        )
     }
     #[inline]
     fn on_response(&mut self, server: &ThisServer, rq: JSValue, rv: JSValue) {
@@ -973,7 +967,7 @@ pub enum ServePluginsState {
         promise: jsc::JSPromiseStrong,
         html_bundle_routes: Vec<*mut html_bundle::Route>,
         // TODO(port): LIFETIMES.tsv classifies this BORROW_PARAM → Option<&'a DevServer>;
-        // threading <'a> through ServePluginsState/ServePlugins deferred to Phase B.
+        // threading <'a> through ServePluginsState/ServePlugins not yet done.
         dev_server: Option<NonNull<DevServer>>,
     },
     Loaded(Box<JSBundler::Plugin>),
@@ -1377,7 +1371,7 @@ pub enum PluginsResult<'a> {
 // `CreateJsRequest`, `PreparedRequest`, `SavedRequest`, `SavedRequestUnion`,
 // `ServerAllConnectionsClosedTask`, `AnyServer` and the four type aliases are
 // defined once in `super` (mod.rs). This file contributes additional inherent
-// methods on the same type — there is no separate Phase-A struct.
+// methods on the same type — there is no separate struct here.
 pub use super::{
     AnyServer, AnyServerTag, CreateJsRequest, DebugHTTPSServer, DebugHTTPServer, HTTPSServer,
     HTTPServer, NewServer, PreparedRequest, SavedRequest, SavedRequestUnion,
@@ -3126,50 +3120,41 @@ where
             );
         }
 
-        let self_ptr: *const Self = self;
-        // SAFETY: both allocators hand out `*mut RequestContext<_, SSL, DEBUG, _>`; the
-        // const-bool H3 parameter only affects associated consts/types, not layout, so
-        // reinterpreting the slot pointer as the caller's `Ctx` monomorphization is sound.
-        //
-        // `claim()` reserves the slot as a `HiveSlot`; `create_in` does
-        // `MaybeUninit::write` placement-new through the slot's stable
-        // address, after which `assume_init()` consumes the token.
-        // `RequestContext` carries the heaviest drop glue in the codebase, so
-        // a panic inside `create_in` (or `to_any_response`) now releases the
-        // slot via `HiveSlot::drop` without running `RequestContext::drop` on
-        // garbage.
-        let ctx_slot: *mut Ctx = unsafe {
-            if Ctx::IS_H3 {
-                debug_assert!(
-                    !self.h3_request_pool.is_null(),
-                    "H3 request dispatched but h3_request_pool was never allocated (listen() H3 path not taken)"
-                );
-                let slot = (*self.h3_request_pool).claim();
-                Ctx::create_in(
-                    slot.addr().as_ptr().cast(),
-                    self_ptr,
-                    req,
-                    resp,
-                    should_deinit_context,
-                    method,
-                );
-                // SAFETY: `create_in` fully initialized the slot via `MaybeUninit::write`.
-                slot.assume_init().as_ptr().cast()
-            } else {
-                let slot = (*self.request_pool).claim();
-                Ctx::create_in(
-                    slot.addr().as_ptr().cast(),
-                    self_ptr,
-                    req,
-                    resp,
-                    should_deinit_context,
-                    method,
-                );
-                // SAFETY: `create_in` fully initialized the slot via `MaybeUninit::write`.
-                slot.assume_init().as_ptr().cast()
-            }
+        let self_ptr: NonNull<Self> = NonNull::from(&*self);
+        // Both pools are layout-identical across the `H3` const (it only affects
+        // associated consts/types, not layout), so the server-owned pool pointer
+        // can be reinterpreted to `Ctx`'s monomorphization with a safe
+        // `<*mut _>::cast()`. Construction is the safe `Fallback::get_init`
+        // (claim + `MaybeUninit::write`): no caller forms `&mut`/`*mut` over
+        // uninitialized storage, and a panic in `Ctx::create` cannot leave a
+        // half-initialized `RequestContext` (its drop glue is the heaviest in
+        // the codebase). The only `unsafe` is the server-owned-pool deref.
+        let pool: *mut bun_collections::hive_array::Fallback<
+            Ctx,
+            { super::request_context::REQUEST_CONTEXT_POOL_CAPACITY },
+        > = if Ctx::IS_H3 {
+            debug_assert!(
+                !self.h3_request_pool.is_null(),
+                "H3 request dispatched but h3_request_pool was never allocated (listen() H3 path not taken)"
+            );
+            self.h3_request_pool.cast()
+        } else {
+            self.request_pool.cast()
         };
-        // SAFETY: ctx_slot was just initialized by create_in.
+        // SAFETY: `pool` is the live, server-owned request-context pool.
+        let ctx_slot: *mut Ctx = unsafe {
+            (*pool)
+                .get_init(Ctx::create(
+                    self_ptr,
+                    req,
+                    resp,
+                    should_deinit_context,
+                    method,
+                ))
+                .as_ptr()
+        };
+        ctx_log!("create<d> ({:p})<r>", ctx_slot);
+        // SAFETY: `ctx_slot` points at the freshly initialized pool slot.
         let ctx = unsafe { &mut *ctx_slot };
         // `VirtualMachine::jsc_vm()` is the safe accessor for the JSC VM
         // owned by the per-thread VirtualMachine.
@@ -3401,19 +3386,29 @@ where
         }
         this.pending_requests += 1;
         req.set_yield(false);
-        // SAFETY: pointer is non-null and owns a fresh pool slot.
-        let ctx_slot = unsafe { (*this.request_pool).get() };
         let should_deinit_context = core::cell::Cell::new(false);
-        <ServerRequestContext<SSL, DEBUG> as RequestCtxOps>::create_in(
-            ctx_slot,
-            self_ptr,
-            req,
-            resp,
-            Some(bun_ptr::BackRef::new(&should_deinit_context)),
-            None,
-        );
-        // SAFETY: ctx_slot was just initialized by create_in.
-        let ctx = unsafe { &mut *ctx_slot };
+        // `request_pool`'s element is layout-identical to `ServerRequestContext`
+        // across the `H3` const; `<*mut _>::cast()` is safe. Construction is the
+        // safe `Fallback::get_init`; only the server-owned-pool deref is unsafe.
+        let pool: *mut super::request_context::RequestContextStackAllocator<
+            Self,
+            SSL,
+            DEBUG,
+            false,
+        > = this.request_pool.cast();
+        // SAFETY: `pool` is non-null and valid for the server lifetime.
+        let ctx = unsafe {
+            &mut *(*pool)
+                .get_init(<ServerRequestContext<SSL, DEBUG> as RequestCtxOps>::create(
+                    NonNull::from(&*this),
+                    req,
+                    resp,
+                    Some(bun_ptr::BackRef::new(&should_deinit_context)),
+                    None,
+                ))
+                .as_ptr()
+        };
+        ctx_log!("create<d> ({:p})<r>", ctx);
 
         // Pooled body slot, ref_count = 1.
         let body_hive = crate::webcore::body::hive_alloc(BodyValue::Null);

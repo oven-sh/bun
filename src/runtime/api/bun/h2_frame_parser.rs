@@ -464,7 +464,7 @@ impl SettingsPayloadUnit {
 }
 
 // packed struct(u336) — 7 × (u16 type + u32 value) = 42 bytes
-// TODO(port): #[repr(C, packed)] for wire layout; verify byteSwapAllFields equivalence in Phase B
+// TODO(port): #[repr(C, packed)] for wire layout; verify byteSwapAllFields equivalence.
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct FullSettingsPayload {
@@ -638,7 +638,7 @@ const SINGLE_VALUE_HEADERS_LEN: usize = 40;
 /// for duplicate detection — the concrete numeric value has no other meaning.
 ///
 /// PERF(port): Zig used `ComptimeStringMap.indexOf`, which compiles to a
-/// length-gated switch. The Phase-A draft used a `phf::Map` but, because phf
+/// length-gated switch. An earlier draft used a `phf::Map` but, because phf
 /// does not expose stable indices, had to fall back to a *linear*
 /// `.entries().position()` scan — 40 slice compares per header per HTTP/2
 /// request. The hand-rolled match below restores the Zig dispatch shape: one
@@ -1248,9 +1248,7 @@ thread_local! {
 }
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
-// shim still emits `this: &mut H2FrameParser` until Phase 1 lands —
-// `&mut T` auto-derefs to `&T` so the impls below compile against either.
+// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
 #[bun_jsc::JsClass]
 #[derive(bun_ptr::RefCounted)]
 #[ref_count(destroy = Self::deinit_raw)]
@@ -7372,12 +7370,7 @@ impl H2FrameParser {
         let this: *mut H2FrameParser = if ENABLE_ALLOCATOR_POOL {
             POOL.with_borrow_mut(|pool| {
                 let pool = pool.get_or_insert_with(|| Box::new(H2FrameParserHiveAllocator::init()));
-                let slot = pool.try_get();
-                // SAFETY: `slot` is a freshly-claimed, uninitialised `*mut H2FrameParser`
-                // (HiveArray slot or fallback `Box<MaybeUninit<_>>`); `write` moves
-                // `init` in without dropping prior contents.
-                unsafe { slot.write(init) };
-                slot
+                pool.get_init(init).as_ptr()
             })
         } else {
             bun_core::heap::into_raw(Box::new(init))

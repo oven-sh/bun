@@ -3157,53 +3157,11 @@ pub mod __gated_printer {
         }
 
         fn print_raw_template_literal(&mut self, bytes: &[u8]) {
-            if IS_JSON || !ASCII_ONLY {
-                self.print(bytes);
-                return;
-            }
-
-            // Translate any non-ASCII to unicode escape sequences
-            // Note that this does not correctly handle malformed template literal strings
-            // template literal strings can contain invalid unicode code points
-            // and pretty much anything else
-            //
-            // we use WTF-8 here, but that's still not good enough.
-            //
-            let mut ascii_start: usize = 0;
-            let mut is_ascii = false;
-            let mut iter = CodepointIterator::init(bytes);
-            let mut cursor = strings::Cursor::default();
-
-            while iter.next(&mut cursor) {
-                match cursor.c as u32 {
-                    // unlike other versions, we only want to mutate > 0x7F
-                    0..=LAST_ASCII => {
-                        if !is_ascii {
-                            ascii_start = (cursor.i as usize);
-                            is_ascii = true;
-                        }
-                    }
-                    _ => {
-                        if is_ascii {
-                            self.print(&bytes[ascii_start..(cursor.i as usize)]);
-                            is_ascii = false;
-                        }
-
-                        match cursor.c as u32 {
-                            c @ 0..=0xFFFF => self.print(&bmp_escape(c)[..]),
-                            _ => {
-                                self.print(b"\\u{");
-                                let _ = self.fmt(format_args!("{:x}", cursor.c));
-                                self.print(b"}");
-                            }
-                        }
-                    }
-                }
-            }
-
-            if is_ascii {
-                self.print(&bytes[ascii_start..]);
-            }
+            // Raw template literals must preserve bytes verbatim because they are
+            // exposed to JavaScript via the .raw property and String.raw. Escaping
+            // non-ASCII characters to unicode escape sequences would change the
+            // runtime string value.
+            self.print(bytes);
         }
 
         pub fn print_expr(&mut self, expr: Expr, level: Level, in_flags: ExprFlagSet) {
@@ -4556,41 +4514,10 @@ pub mod __gated_printer {
                 self.print(b" ");
             }
 
-            if IS_BUN_PLATFORM {
-                // Translate any non-ASCII to unicode escape sequences
-                let mut ascii_start: usize = 0;
-                let mut is_ascii = false;
-                let mut iter = CodepointIterator::init(&e.value);
-                let mut cursor = strings::Cursor::default();
-                while iter.next(&mut cursor) {
-                    match cursor.c as u32 {
-                        FIRST_ASCII..=LAST_ASCII => {
-                            if !is_ascii {
-                                ascii_start = (cursor.i as usize);
-                                is_ascii = true;
-                            }
-                        }
-                        _ => {
-                            if is_ascii {
-                                self.print(&e.value[ascii_start..(cursor.i as usize)]);
-                                is_ascii = false;
-                            }
-
-                            match cursor.c as u32 {
-                                c @ 0..=0xFFFF => self.print(&bmp_escape(c)[..]),
-                                c => self.print(&surrogate_pair_escape(c)[..]),
-                            }
-                        }
-                    }
-                }
-
-                if is_ascii {
-                    self.print(&e.value[ascii_start..]);
-                }
-            } else {
-                // UTF8 sequence is fine
-                self.print(&e.value[..]);
-            }
+            // RegExp literals cannot be printed ascii-only because they expose a
+            // .source property to JavaScript. Escaping non-ASCII would change the
+            // runtime value of that property.
+            self.print(&e.value[..]);
 
             // Need a space before the next identifier to avoid it turning into flags
             self.prev_reg_exp_end = self.writer.written();

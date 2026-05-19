@@ -39,7 +39,8 @@ bun_core::declare_scope!(cache, visible);
 /// Version 18: Include ESM record (module info) with an ES Module, see #15758
 /// Version 19: Sourcemap blob is InternalSourceMap (varint stream + sync points), not VLQ.
 /// Version 20: InternalSourceMap stream is bit-packed windows.
-const EXPECTED_VERSION: u32 = 20;
+/// Version 21: Emits UTF-8 files in rare cases (tagged templates, regex with unicode)
+const EXPECTED_VERSION: u32 = 21;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a
@@ -1042,7 +1043,7 @@ impl RuntimeTranspilerCache {
             return;
         }
         debug_assert!(self.entry.is_none());
-        let output_code = BunString::clone_latin1(output_code_bytes);
+        let output_code = BunString::clone_utf8(output_code_bytes);
         // Zig: `this.output_code = output_code;` — refcount stays at 1, sole owner.
         // BunString is Copy with no Drop, so an extra dupe_ref here would leak.
         self.output_code = Some(output_code);
@@ -1113,7 +1114,7 @@ bun_ast::link_impl_TranspilerCacheImpl! {
             debug_assert!(this.entry.is_none());
             this.output_code = Some(Box::<[u8]>::from(output_code_bytes));
 
-            let output_code = BunString::clone_latin1(output_code_bytes);
+            let output_code = BunString::clone_utf8(output_code_bytes);
             let result = RuntimeTranspilerCache::to_file(
                 this.input_byte_length.unwrap(),
                 this.input_hash.unwrap(),

@@ -910,7 +910,17 @@ pub fn to_bytes(
             loader: output_file.loader,
             contents: string_builder.append_count_z(buf_bytes),
             encoding: match output_file.loader {
-                Loader::Js | Loader::Jsx | Loader::Ts | Loader::Tsx => Encoding::Latin1,
+                // Bundler output is usually pure ASCII, which lets us use the
+                // zero-copy Latin-1 path at load time. Only fall back to UTF-8
+                // when the output actually contains non-ASCII bytes from tagged
+                // template literals or regex source.
+                Loader::Js | Loader::Jsx | Loader::Ts | Loader::Tsx => {
+                    if bun_core::strings::is_all_ascii(buf_bytes) {
+                        Encoding::Latin1
+                    } else {
+                        Encoding::Utf8
+                    }
+                }
                 _ => Encoding::Binary,
             },
             module_format: if output_file.loader.is_javascript_like() {

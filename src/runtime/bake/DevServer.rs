@@ -4198,7 +4198,7 @@ pub fn finalize_bundle(
                 }
             }
         } else {
-            match c::bake_load_server_hmr_patch(global, BunString::clone_latin1(&server_bundle)) {
+            match c::bake_load_server_hmr_patch(global, BunString::clone_utf8(&server_bundle)) {
                 Ok(v) => v,
                 Err(err) => {
                     // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime;

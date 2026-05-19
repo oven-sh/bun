@@ -2625,7 +2625,7 @@ fn transpile_source_code_inner(
                         _ => (core::ptr::null_mut(), 0),
                     };
                     return Ok(OwnedResolvedSource::new(ResolvedSource {
-                        source_code: bun_core::String::clone_latin1(&source.contents),
+                        source_code: bun_core::String::clone_utf8(&source.contents),
                         specifier: input_specifier.dupe_ref(),
                         source_url: create_if_different(input_specifier, path.text),
                         already_bundled: true,
@@ -2885,7 +2885,21 @@ fn transpile_source_code_inner(
                 // `is_commonjs_module`/`module_info` patched on). Gated so the
                 // fall-through to the non-watcher tail below is an explicit,
                 // intentional degradation rather than a silent live divergence.
-                if unsafe { &*jsc_vm }.is_watcher_enabled() {
+                //
+                // The ref-counted watcher path creates Latin-1 strings, which
+                // cannot represent multi-byte UTF-8 sequences. If the output
+                // contains non-ASCII (from raw template literals or regex
+                // source), fall through to the normal path which uses
+                // `clone_utf8`.
+                if unsafe { &*jsc_vm }.is_watcher_enabled()
+                    && bun_core::strings::is_all_ascii({
+                        // SAFETY: `extra.source_code_printer` is non-null per
+                        // `TranspileExtra` contract.
+                        let p: &bun_js_printer::BufferPrinter =
+                            unsafe { &*(*extra).source_code_printer };
+                        p.ctx.get_written()
+                    })
+                {
                     // SAFETY: `extra.source_code_printer` is non-null per
                     // `TranspileExtra` contract; rederive after the print block
                     // (Stacked Borrows — see the matching note below).
@@ -2970,8 +2984,8 @@ fn transpile_source_code_inner(
                 // `bun.String` either way. Spec :573 hands the `bun.String`
                 // straight through.
                 let source_code = match cache.output_code.take() {
-                    Some(b) => bun_core::String::clone_latin1(&b),
-                    None => bun_core::String::clone_latin1(written),
+                    Some(b) => bun_core::String::clone_utf8(&b),
+                    None => bun_core::String::clone_utf8(written),
                 };
                 if written.len() > 1024 * 1024 * 2 || unsafe { &*jsc_vm }.smol {
                     // PERF(port): spec deinits the printer buffer; Rust drops on

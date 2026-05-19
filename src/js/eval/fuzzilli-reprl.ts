@@ -8,6 +8,9 @@ const REPRL_DRFD = 102; // Data read FD
 
 const fs = require("node:fs");
 
+// Capture the original console.log before any fuzz script can replace it.
+const originalConsoleLog = console.log.bind(console);
+
 // Make common Node modules available
 globalThis.require = require;
 globalThis.__dirname = "/";
@@ -75,8 +78,18 @@ while (true) {
     // Use indirect eval to execute in global scope
     (0, eval)(script);
   } catch (_e) {
-    // Print uncaught exception like workerd does
-    console.log(`uncaught:${_e}`);
+    // Print uncaught exception like workerd does. The thrown value can be
+    // an arbitrary object whose string coercion itself throws (e.g. a
+    // Symbol.toPrimitive that returns a non-primitive), and the fuzz script
+    // may have replaced console.log, so guard the logging so the REPRL loop
+    // never exits from inside the catch.
+    try {
+      originalConsoleLog(`uncaught:${_e}`);
+    } catch {
+      try {
+        originalConsoleLog("uncaught:<unprintable>");
+      } catch {}
+    }
     exit_code = 1;
   }
 

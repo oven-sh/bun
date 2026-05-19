@@ -1247,7 +1247,7 @@ impl BunTest {
                             // `dcb_ref_value.dupe()` — bump 1→2.
                             unsafe { bun_ptr::IntrusiveRc::init_ref(dcb_ref_value.as_ptr()) }
                         } else {
-                            Self::ref_(&this_strong, cfg_data.clone())
+                            Self::ref_(&this_strong, cfg_data)
                         };
                         // Track the `+1` handed to `Promise.then()` in case the promise never settles.
                         let raw_ref: *mut RefData = bun_ptr::IntrusiveRc::into_raw(this_ref);

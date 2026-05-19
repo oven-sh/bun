@@ -561,9 +561,11 @@ impl Worker {
     /// `detach_lifetime_ref` (the previous pattern at `ParseTask::run`).
     #[inline]
     pub fn arena(&self) -> &'static ThreadLocalArena {
-        // SAFETY: `self.arena` is a `BackRef` to the worker-owned heap, set in
-        // `Worker::create` and never reassigned; the heap is pinned for the
-        // process lifetime (workers are never destroyed before exit).
+        // SAFETY: `self.arena` is a `BackRef` to `self.heap`, set in
+        // `Worker::create` and never reassigned. `Worker::get` already returns
+        // `&'static mut Worker`; callers are task callbacks that complete
+        // before `deinit_soon` tears the worker down, so the arena outlives
+        // every reference handed out here.
         unsafe { bun_ptr::detach_lifetime_ref(self.arena.get()) }
     }
 }

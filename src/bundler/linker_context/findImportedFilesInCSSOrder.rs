@@ -154,15 +154,14 @@ pub fn find_imported_files_in_css_order<'a>(
             //     })
             // }
 
-            // PORT NOTE: `defer { _ = visitor.visited.pop(); }` — explicit pop at end.
-            // The defer is registered AFTER the `orelse return` above, so skipping the
-            // pop on that early-return path matches the original semantics.
+            // PORT NOTE: explicit pop at end of fn body. Skipping it on the
+            // early-return above matches the original semantics (the cleanup is
+            // registered AFTER that return).
 
             // Iterate over the top-level "@import" rules
             let mut import_record_idx: usize = 0;
             for rule in top_level_rules.v.iter() {
                 if let BundlerCssRule::Import(import_rule) = rule {
-                    // `defer import_record_idx += 1;` — increment at end of this arm
                     let record =
                         &self.all_import_records[source_index.get() as usize][import_record_idx];
 
@@ -286,7 +285,6 @@ pub fn find_imported_files_in_css_order<'a>(
                 condition_import_records: Vec::new(),
             });
 
-            // PORT NOTE: explicit pop replacing `defer { _ = visitor.visited.pop(); }`
             let _ = self.visited.pop();
         }
     }

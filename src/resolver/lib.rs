@@ -1242,7 +1242,6 @@ pub mod fs {
                 },
             };
 
-            // PORT NOTE: Zig `defer { if (...) handle.close() }` — runs on every exit. Use
             // scopeguard so close happens even if `readdir`/`put` early-return with `?`.
             let should_close_handle = !had_handle && (!store_fd || self.need_to_close_files());
             let _close_guard = scopeguard::guard(handle, move |h| {
@@ -1483,9 +1482,8 @@ pub mod fs {
                     };
                     FileSystem::set_max_fd(file.native());
 
-                    // PORT NOTE: Zig `defer { if (...) file.close() else cache.fd = file }` runs on
-                    // BOTH success and error paths — use scopeguard so close-or-store happens even if
-                    // fstat()/get_fd_path() return early with `?`.
+                    // scopeguard so close-or-store happens on BOTH success and error
+                    // paths, including `fstat()`/`get_fd_path()` early-return with `?`.
                     let need_to_close_files = self.need_to_close_files();
                     let cache_ptr: *mut EntryCache = &raw mut cache;
                     let _guard = scopeguard::guard(file, move |file| {
@@ -1589,7 +1587,6 @@ pub mod fs {
                             return self.read_directory_error(dir, err.into()).ok();
                         }
                     };
-                    // PORT NOTE: Zig `defer handle.close()` — runs on every exit.
                     let _close_guard = scopeguard::guard(handle, |h| {
                         let _ = bun_sys::close(h);
                     });

@@ -152,7 +152,6 @@ pub fn dump_source_string_failiable(
         // transpiler store); only the `source_mappings` leaf field is borrowed,
         // and `SavedSourceMap::get` takes its own internal mutex.
         if let Some(mappings) = unsafe { (*vm).source_mappings.get(specifier) } {
-            // `defer mappings.deref()` → Arc::drop.
             let mut map_path = Vec::with_capacity(base.len() + b".map".len());
             map_path.extend_from_slice(base);
             map_path.extend_from_slice(b".map");
@@ -620,9 +619,6 @@ impl TranspilerJob {
     }
 
     pub fn run(&mut self) {
-        // Zig: `var arena = bun.ArenaAllocator.init(bun.default_allocator);
-        //       defer arena.deinit();`
-        //
         // Stack-local per call, bulk-freed on return. An earlier port hoisted
         // this to a per-worker-thread leaked `Box<MimallocArena>` (and a second
         // one inside a leaked `ASTMemoryAllocator`) and only `reset()` it at
@@ -639,7 +635,7 @@ impl TranspilerJob {
         // between calls.
         let arena = Arena::new();
 
-        // `defer this.dispatchToMainThread()` — fires on every return path.
+        // Fires on every return path.
         let this_ptr: *mut TranspilerJob = self;
         scopeguard::defer! {
             // SAFETY: `self` outlives this guard (guard drops before fn return);
@@ -670,7 +666,6 @@ impl TranspilerJob {
             return;
         }
 
-        // Zig: `var ast_scope = ast_memory_store.?.enter(allocator); defer ast_scope.exit();`
         // PORT NOTE: Zig's per-thread `ast_memory_store` was a `StackFallback
         // Allocator` that *borrowed* the per-call `arena` above as its
         // fallback, so its allocations were bulk-freed by `arena.deinit()`. The
@@ -701,7 +696,6 @@ impl TranspilerJob {
         };
 
         let mut log = bun_ast::Log::init();
-        // `defer { this.log = ...; log.cloneToWithRecycled(&this.log, true) }`
         let _log_clone_guard = scopeguard::guard(
             (ptr::addr_of_mut!(self.log), ptr::addr_of_mut!(log)),
             |(dst, src)| {
@@ -893,7 +887,6 @@ impl TranspilerJob {
             allow_bytecode_cache: true,
         };
 
-        // `defer { if should_close && input_file_fd.isValid() { close } }`
         let _close_fd_guard = scopeguard::guard(
             (
                 &should_close_input_file_fd,

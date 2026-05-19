@@ -139,7 +139,6 @@ impl<'a> Snapshots<'a> {
         let mut buntest_strong = expect
             .bun_test()
             .ok_or(bun_core::err!("SnapshotFailed"))?;
-        // defer buntest_strong.deinit() → Drop
         let bun_test = buntest_strong.get();
         match self.get_snapshot_file(bun_test.file_id)? {
             bun_sys::Result::Ok(()) => {}
@@ -166,7 +165,6 @@ impl<'a> Snapshots<'a> {
         name_with_counter.extend_from_slice(&name);
         name_with_counter.push(b' ');
         name_with_counter.extend_from_slice(counter_string);
-        // defer free → Drop
 
         let name_hash: u64 = hash(&name_with_counter);
         // PORT NOTE: reshaped for borrowck — `get` then early-return borrows `*self.values`
@@ -269,7 +267,6 @@ impl<'a> Snapshots<'a> {
             bun_js_parser::Result::Ast(ast) => ast,
             _ => return Err(bun_core::err!("ParseError")),
         };
-        // defer ast.deinit() → Drop
 
         if ast.exports_ref.is_empty() {
             return Ok(());
@@ -307,7 +304,6 @@ impl<'a> Snapshots<'a> {
                                             {
                                                 let key = index.slice(&arena);
                                                 let value = value_string.slice(&arena);
-                                                // defer { if !isUTF8 free } → arena drop
                                                 let value_clone: Box<[u8]> =
                                                     Box::<[u8]>::from(value);
                                                 let name_hash: u64 = hash(key);
@@ -368,7 +364,7 @@ impl<'a> Snapshots<'a> {
         // PERF(port): was arena bulk-free per iteration — profile if it shows up on a hot path.
         // TODO(port): js_parser/lexer APIs likely still require `&Bump`; arena threading not done here.
 
-        // PORT NOTE: `success` is a Cell so the per-iteration `defer if (log.errors > 0)` guard
+        // PORT NOTE: `success` is a Cell so the per-iteration log-error guard
         // closure can flip it without holding a &mut across the loop body.
         let success = core::cell::Cell::new(true);
         // SAFETY: see `parse_file` — thread-local VM singleton, short-lived reborrow.
@@ -386,7 +382,6 @@ impl<'a> Snapshots<'a> {
                 .get_mut(&file_id)
                 .expect("unreachable");
 
-            // Zig: `defer if (log.errors > 0) { log.print(...); success = false; }`
             // Runs on every exit of the loop body (continue, fall-through, AND `?` early-return).
             let mut log = scopeguard::guard(bun_ast::Log::init(), |log| {
                 if log.errors > 0 {
@@ -438,9 +433,8 @@ impl<'a> Snapshots<'a> {
                     continue;
                 }
             };
-            // Zig: `errdefer file.file.close()` — fires on `?` error returns only.
-            // PORT NOTE: Zig never closes on the success path (or `continue`); preserve that by
-            // disarming via `into_inner` on every non-`?` exit below.
+            // Close on `?` error returns only — disarm via `into_inner` on every
+            // non-`?` exit below (success path / `continue` must not close).
             let mut file = scopeguard::guard(
                 File { id: file_id, file: bun_sys::File::from_fd(fd) },
                 |f| { let _ = bun_sys::close(f.file.handle); },

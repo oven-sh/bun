@@ -97,9 +97,7 @@ pub fn generate_code_for_lazy_export(
             };
 
             let mut inner_visited = BitSet::init_empty(size as usize)?;
-            // `defer inner_visited.deinit(...)` — handled by Drop.
             let mut composes_visited: ArrayHashMap<Ref, ()> = ArrayHashMap::new();
-            // `defer composes_visited.deinit()` — handled by Drop.
 
             struct Visitor<'a> {
                 inner_visited: &'a mut BitSet,

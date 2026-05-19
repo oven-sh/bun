@@ -547,8 +547,8 @@ impl JavaScript {
         }
 
         let mut temp_log = bun_ast::Log::init();
-        // PORT NOTE: reshaped for borrowck — Zig `defer temp_log.appendToMaybeRecycled(log, source)`;
-        // scopeguard cannot capture &mut temp_log while it's used below. Explicit calls at each exit.
+        // PORT NOTE: reshaped for borrowck — scopeguard cannot capture &mut temp_log
+        // while it's used below. Explicit `appendToMaybeRecycled` calls at each exit.
 
         let mut parser = match js_parser::Parser::init(opts, &mut temp_log, source, defines, bump) {
             Ok(p) => p,

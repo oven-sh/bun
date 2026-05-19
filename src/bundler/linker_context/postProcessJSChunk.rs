@@ -63,8 +63,7 @@ pub fn post_process_js_chunk(
     // embedded `Vec<Property>`/`Vec<Expr>` buffers leak from the global heap.
     let _ast_alloc_heap = js_ast::StoreAstAllocHeap::new();
 
-    // TODO(port): `defer chunk.renamer.deinit(bun.default_allocator)` — Zig explicitly
-    // tears down the renamer at end of scope. In Rust this should be handled by Drop on
+    // TODO(port): renamer teardown at end of scope — should be handled by Drop on
     // the renamer field, or an explicit `chunk.renamer.take()` at fn exit. Verify.
 
     // PERF(port): was arena bulk-free — profile if hot.

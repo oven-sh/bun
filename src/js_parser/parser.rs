@@ -1547,7 +1547,7 @@ impl StringVoidMap {
     }
 
     /// Returns an RAII guard that derefs to `&mut StringVoidMap` and is
-    /// returned to the pool on `Drop` (replaces Zig's `get` + `defer release`).
+    /// returned to the pool on `Drop`.
     #[inline]
     pub fn get() -> bun_collections::pool::PoolGuard<'static, StringVoidMap> {
         StringVoidMapPool::get()

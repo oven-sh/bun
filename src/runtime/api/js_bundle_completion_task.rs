@@ -274,8 +274,8 @@ impl JSBundleCompletionTask {
 
     /// Port of `JSBundleCompletionTask.doCompilation`.
     fn do_compilation(&mut self, output_files: &mut Vec<OutputFile>) -> CompileResult {
-        /// `defer { if root_dir != cwd, root_dir.close() }` — Zig captures
-        /// `root_dir` by reference; the POSIX path reassigns it.
+        /// Close `root_dir` on drop unless it's `cwd`. Captured by reference —
+        /// the POSIX path reassigns it.
         struct DirGuard(Dir);
         impl Drop for DirGuard {
             fn drop(&mut self) {
@@ -599,8 +599,6 @@ impl JSBundleCompletionTask {
                 _ => unsafe { core::hint::unreachable_unchecked() },
             };
             let compile_result = this.do_compilation(&mut output_files);
-            // `defer compile_result.deinit()` — `CompileResult` is a Rust enum
-            // with owned `Vec<u8>` payloads; drops at end of scope.
 
             if let CompileResult::Err(err) = &compile_result {
                 // `bun.handleOom(log.addError(..., bun.handleOom(dupe(..))))`
@@ -1133,9 +1131,6 @@ impl CompletionStruct for JSBundleCompletionTask {
 
         let run = bv2.run_from_js_in_new_thread(&entry_points);
 
-        // Zig: `defer { ast_memory_allocator.pop(); this.deinitWithoutFreeingArena(); }`
-        // (the AST-allocator pop lives in `generate_in_new_thread`).
-        // `errdefer { source_maps.*_wait_group.wait(); }` — only on error path.
         match run {
             Ok(build) => {
                 self.set_result(BundleV2Result::Value(build));

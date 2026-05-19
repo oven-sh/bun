@@ -92,7 +92,7 @@ impl Start {
     pub fn to_js(self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
             Start::Empty | Start::Ready => Ok(JSValue::UNDEFINED),
-            Start::ChunkSize(chunk) => Ok(JSValue::js_number(chunk as f64)),
+            Start::ChunkSize(chunk) => Ok(JSValue::from(chunk)),
             Start::Err(err) => Err(err.throw(global_this)),
             Start::OwnedAndDone(mut list) => {
                 // PORT NOTE: Zig captures `|list|` by bitwise copy with no destructor and
@@ -583,12 +583,12 @@ impl Writable {
             Writable::Err(err) => {
                 JSPromise::rejected_promise(global_this, err.to_js(global_this)).to_js()
             }
-            Writable::Owned(len) => JSValue::js_number(len as f64),
-            Writable::OwnedAndDone(len) => JSValue::js_number(len as f64),
-            Writable::TemporaryAndDone(len) => JSValue::js_number(len as f64),
-            Writable::Temporary(len) => JSValue::js_number(len as f64),
-            Writable::IntoArray(len) => JSValue::js_number(len as f64),
-            Writable::IntoArrayAndDone(len) => JSValue::js_number(len as f64),
+            Writable::Owned(len) => JSValue::from(len),
+            Writable::OwnedAndDone(len) => JSValue::from(len),
+            Writable::TemporaryAndDone(len) => JSValue::from(len),
+            Writable::Temporary(len) => JSValue::from(len),
+            Writable::IntoArray(len) => JSValue::from(len),
+            Writable::IntoArrayAndDone(len) => JSValue::from(len),
             // false == controller.close()
             // undefined == noop, but we probably won't send it
             Writable::Done => JSValue::TRUE,
@@ -891,10 +891,8 @@ impl StreamResult {
                 // back to ArrayBuffer::create (copies) until the no-init path lands.
                 ArrayBuffer::create::<{ JSType::Uint8Array }>(global_this, temp.slice())
             }
-            StreamResult::IntoArray(array) => Ok(JSValue::js_number_from_uint64(array.len as u64)),
-            StreamResult::IntoArrayAndDone(array) => {
-                Ok(JSValue::js_number_from_uint64(array.len as u64))
-            }
+            StreamResult::IntoArray(array) => Ok(JSValue::from(array.len)),
+            StreamResult::IntoArrayAndDone(array) => Ok(JSValue::from(array.len)),
             StreamResult::Pending(pending) => {
                 // SAFETY: pending is a valid borrowed pointer per BORROW_PARAM classification
                 let promise = unsafe { &mut **pending }.promise(global_this);
@@ -1552,7 +1550,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
     fn flush_from_js_no_wait(&mut self) -> bun_sys::Result<JSValue> {
         bun_core::scoped_log!(HTTPServerWritableLog, "flushFromJSNoWait");
-        bun_sys::Result::Ok(JSValue::js_number(self.flush_no_wait() as f64))
+        bun_sys::Result::Ok(JSValue::from(self.flush_no_wait()))
     }
 
     pub fn flush_no_wait(&mut self) -> usize {
@@ -1592,7 +1590,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         if self.buffer.len() == 0 || self.done {
             return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
                 global_this,
-                JSValue::js_number_from_int32(0),
+                JSValue::from(0i32),
             ));
         }
 
@@ -1602,7 +1600,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             if self.send_readable(0) {
                 return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
                     global_this,
-                    JSValue::js_number(slice_len as f64),
+                    JSValue::from(slice_len),
                 ));
             }
         }
@@ -1808,7 +1806,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         bun_core::scoped_log!(HTTPServerWritableLog, "endFromJS()");
 
         if self.requested_end {
-            return bun_sys::Result::Ok(JSValue::js_number(0.0));
+            return bun_sys::Result::Ok(JSValue::from(0i32));
         }
 
         if self.done || self.res.is_none() || self.any_res().unwrap().has_responded() {
@@ -1816,7 +1814,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             self.signal.close(None);
             self.mark_done();
             self.finalize();
-            return bun_sys::Result::Ok(JSValue::js_number(0.0));
+            return bun_sys::Result::Ok(JSValue::from(0i32));
         }
 
         self.requested_end = true;
@@ -1843,7 +1841,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         self.signal.close(None);
         self.finalize();
 
-        bun_sys::Result::Ok(JSValue::js_number(self.wrote as f64))
+        bun_sys::Result::Ok(JSValue::from(self.wrote))
     }
 
     pub fn sink(&mut self) -> Sink<'_> {
@@ -1873,7 +1871,9 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
     fn register_auto_flusher(&mut self) {
         let Some(res) = self.any_res() else { return };
-        // if we enqueue data we should reset the timeout
+        // Match streams.zig:1231 — reset per-enqueue so a long stream of
+        // sub-highWaterMark writes between auto-flushes still bumps the idle
+        // timeout.
         res.reset_timeout();
         if !self.auto_flusher.registered.get() {
             let vm = self.global_this().bun_vm();

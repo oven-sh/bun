@@ -879,17 +879,14 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
             return Err(global.throw_value(err));
         }
 
-        let args_list = frame.arguments_old::<4>();
-        let args = args_list.slice();
-
-        if args.is_empty() {
+        if frame.arguments_count() == 0 {
             return Err(global.throw_value(global.to_type_error(
                 bun_jsc::ErrorCode::MISSING_ARGS,
                 format_args!("write() expects a string, ArrayBufferView, or ArrayBuffer"),
             )));
         }
 
-        let arg = args[0];
+        let arg = frame.argument(0);
         arg.ensure_still_alive();
         let _keep = bun_jsc::EnsureStillAlive(arg);
 

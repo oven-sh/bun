@@ -202,8 +202,8 @@ impl Start {
                         empty = false;
                         // Zig: `@intCast(@max(0, @as(i51, @truncate(toInt64()))))`
                         // — `(x << 13) >> 13` is `@as(i51, @truncate(x))`.
-                        chunk_size = 0i64.max((chunk_size_val.to_int64() << 13) >> 13)
-                            as BlobSizeType;
+                        chunk_size =
+                            0i64.max((chunk_size_val.to_int64() << 13) >> 13) as BlobSizeType;
                     }
                 }
 
@@ -224,8 +224,8 @@ impl Start {
                     if chunk_size_val.is_number() {
                         // Zig: `@intCast(@max(0, @as(i51, @truncate(toInt64()))))`
                         // — `(x << 13) >> 13` is `@as(i51, @truncate(x))`.
-                        chunk_size = 0i64.max((chunk_size_val.to_int64() << 13) >> 13)
-                            as BlobSizeType;
+                        chunk_size =
+                            0i64.max((chunk_size_val.to_int64() << 13) >> 13) as BlobSizeType;
                     }
                 }
 
@@ -292,8 +292,8 @@ impl Start {
                         empty = false;
                         // Zig: `@intCast(@max(256, @as(i51, @truncate(toInt64()))))`
                         // — `(x << 13) >> 13` is `@as(i51, @truncate(x))`.
-                        chunk_size = 256i64.max((chunk_size_val.to_int64() << 13) >> 13)
-                            as BlobSizeType;
+                        chunk_size =
+                            256i64.max((chunk_size_val.to_int64() << 13) >> 13) as BlobSizeType;
                     }
                 }
 

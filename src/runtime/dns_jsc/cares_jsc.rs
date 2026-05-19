@@ -747,14 +747,11 @@ impl ErrorDeferred {
             ..Default::default()
         };
 
+        // Node's DNS errors are plain `Error` instances — `err.name` is
+        // inherited from `Error.prototype.name`, not an own property.
+        // `to_error_instance*` already uses `ErrorType::Error`, so no `.put` needed.
         let instance =
             system_error.to_error_instance_with_async_stack(global_this, self.promise.get());
-        // Node's DNS errors are plain `Error` instances (`err.name === "Error"`).
-        instance.put(
-            global_this,
-            b"name",
-            bstr::String::static_(b"Error").to_js(global_this)?,
-        );
 
         // `self` (and thus self.promise / self.hostname) drops at scope exit — matches
         // Zig's `defer this.deinit()`; hostname was `take()`n above to avoid double-deref.
@@ -817,7 +814,7 @@ pub fn error_to_js_with_syscall(
     syscall: &'static [u8],
 ) -> JsResult<JSValue> {
     let code = this.code();
-    let instance = SystemError {
+    Ok(SystemError {
         errno: this as i32,
         code: bstr::String::static_(&code[4..]),
         syscall: bstr::String::static_(syscall),
@@ -828,13 +825,7 @@ pub fn error_to_js_with_syscall(
         )),
         ..Default::default()
     }
-    .to_error_instance(global_this);
-    instance.put(
-        global_this,
-        b"name",
-        bstr::String::static_(b"Error").to_js(global_this)?,
-    );
-    Ok(instance)
+    .to_error_instance(global_this))
 }
 
 pub fn error_to_js_with_syscall_and_hostname(
@@ -844,7 +835,7 @@ pub fn error_to_js_with_syscall_and_hostname(
     hostname: &[u8],
 ) -> JsResult<JSValue> {
     let code = this.code();
-    let instance = SystemError {
+    Ok(SystemError {
         errno: this as i32,
         code: bstr::String::static_(&code[4..]),
         message: bstr::String::create_format(format_args!(
@@ -857,13 +848,7 @@ pub fn error_to_js_with_syscall_and_hostname(
         hostname: bstr::String::clone_utf8(hostname),
         ..Default::default()
     }
-    .to_error_instance(global_this);
-    instance.put(
-        global_this,
-        b"name",
-        bstr::String::static_(b"Error").to_js(global_this)?,
-    );
-    Ok(instance)
+    .to_error_instance(global_this))
 }
 
 // ── canonicalizeIP host fn ─────────────────────────────────────────────────

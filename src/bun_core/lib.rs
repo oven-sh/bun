@@ -629,10 +629,7 @@ bun_dispatch::link_interface! {
 }
 
 impl OutputSink {
-    pub const SYS: Self = Self {
-        kind: OutputSinkKind::Sys,
-        owner: core::ptr::null_mut(),
-    };
+    pub const SYS: Self = unsafe { Self::new(OutputSinkKind::Sys, core::ptr::null_mut::<()>()) };
 }
 
 // `bun_core` (T0) cannot name `bun_errno` (cycle). Single-variant link-interface
@@ -646,10 +643,7 @@ bun_dispatch::link_interface! {
 }
 
 impl ErrnoNames {
-    pub const SYS: Self = Self {
-        kind: ErrnoNamesKind::Sys,
-        owner: core::ptr::null_mut(),
-    };
+    pub const SYS: Self = unsafe { Self::new(ErrnoNamesKind::Sys, core::ptr::null_mut::<()>()) };
 }
 
 /// Compile-time `<tag>` → ANSI rewrite (proc-macro). Re-exported at crate root

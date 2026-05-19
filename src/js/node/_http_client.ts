@@ -532,17 +532,19 @@ function ClientRequest(input, options, cb) {
 
         let candidates = results.sort((a, b) => b.family - a.family); // prefer IPv6
 
-        const fail = (message, name, code, syscall) => {
+        const fail = (message, name, code, syscall, errno?, hostname?) => {
           const error = new Error(message);
           error.name = name;
           error.code = code;
           error.syscall = syscall;
+          if (errno !== undefined) error.errno = errno;
+          if (hostname !== undefined) error.hostname = hostname;
           if (!!$debug) globalReportError(error);
           process.nextTick((self, err) => self.emit("error", err), this, error);
         };
 
         if (candidates.length === 0) {
-          fail("No records found", "DNSException", "ENOTFOUND", "getaddrinfo");
+          fail(`getaddrinfo ENOTFOUND ${host}`, "Error", "ENOTFOUND", "getaddrinfo", -3008, host);
           return;
         }
 

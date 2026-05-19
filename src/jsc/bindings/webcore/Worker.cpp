@@ -91,6 +91,11 @@ void WebWorker__releaseParentPollRef(void* worker);
 // Free the Zig WebWorker struct. Called from ~Worker.
 void WebWorker__destroy(void* worker);
 
+// Drain-and-drop the worker VM's pending concurrent-task queue. Called from
+// teardownJSCVM on the worker thread, after the context is unregistered and
+// before JSC teardown. See the comment at the call site.
+void Bun__dropConcurrentCppTasksForWorker(Zig::GlobalObject* globalObject);
+
 } // extern "C"
 // -------------------------------------------------------------------------------------------------
 
@@ -591,6 +596,18 @@ extern "C" void WebWorker__teardownJSCVM(Zig::GlobalObject* globalObject)
         // is cleared.
         if (auto* ctx = globalObject->scriptExecutionContext())
             ctx->removeFromContextsMap();
+        // With the context out of the map, no new cross-thread posts can
+        // arrive. Drain-and-drop whatever is already sitting in the Rust
+        // EventLoop's concurrent_tasks queue so the ConcurrentTask boxes
+        // and their captured EventLoopTask* payloads (Ref<MessagePortPipe>,
+        // Ref<Worker>, ...) are released while this JSC VM is still alive.
+        // The main-thread exit path does the equivalent in global_exit();
+        // workers had no such hook, so any postTaskTo landing between the
+        // last tick_concurrent() and the map removal above leaked under
+        // LSAN (node:worker_threads stdio makes that window trivially
+        // reachable — the parent's WANTS_MORE_DATA reply arrives after the
+        // worker has stopped ticking).
+        Bun__dropConcurrentCppTasksForWorker(globalObject);
         gcUnprotect(globalObject);
         globalObject = nullptr;
     }

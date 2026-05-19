@@ -9,6 +9,7 @@
 #include <JavaScriptCore/BytecodeCacheError.h>
 #include "ZigGlobalObject.h"
 #include "wtf/Assertions.h"
+#include "wtf/SIMDUTF.h"
 
 #include <JavaScriptCore/Completion.h>
 #include <wtf/Scope.h>
@@ -208,10 +209,26 @@ static JSC::VM& getVMForBytecodeCache()
     return *vmForBytecodeCache;
 }
 
+// Bundler output may contain raw UTF-8 multi-byte sequences (non-ASCII chars
+// in tagged template literals and regex `.source`). If interpreted as Latin-1,
+// the SourceCodeKey computed here at build time will not match the key
+// computed at runtime when the same chunk is loaded via the UTF-8 path
+// (helpers.h `toStringCopy` decodes UTF-8-tagged ZigStrings with
+// `fromUTF8ReplacingInvalidSequences`), and the cached bytecode is silently
+// discarded. Detect non-ASCII and decode as UTF-8 so the two keys agree.
+static WTF::String makeBundledSourceString(const Latin1Character* inputSourceCode, size_t inputSourceCodeSize)
+{
+    if (simdutf::validate_ascii(reinterpret_cast<const char*>(inputSourceCode), inputSourceCodeSize))
+        return WTF::String(std::span<const Latin1Character>(inputSourceCode, inputSourceCodeSize));
+    return WTF::String::fromUTF8ReplacingInvalidSequences(std::span<const Latin1Character>(inputSourceCode, inputSourceCodeSize));
+}
+
 extern "C" bool generateCachedModuleByteCodeFromSourceCode(BunString* sourceProviderURL, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr)
 {
-    std::span<const Latin1Character> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
-    JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
+    WTF::String source = makeBundledSourceString(inputSourceCode, inputSourceCodeSize);
+    if (source.isNull())
+        return false;
+    JSC::SourceCode sourceCode = JSC::makeSource(WTF::move(source), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
 
     JSC::VM& vm = getVMForBytecodeCache();
 
@@ -245,9 +262,10 @@ extern "C" bool generateCachedModuleByteCodeFromSourceCode(BunString* sourceProv
 
 extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(BunString* sourceProviderURL, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr)
 {
-    std::span<const Latin1Character> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
-
-    JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
+    WTF::String source = makeBundledSourceString(inputSourceCode, inputSourceCodeSize);
+    if (source.isNull())
+        return false;
+    JSC::SourceCode sourceCode = JSC::makeSource(WTF::move(source), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
     JSC::VM& vm = getVMForBytecodeCache();
 
     JSC::JSLockHolder locker(vm);

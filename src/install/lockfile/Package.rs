@@ -547,6 +547,12 @@ impl Package<u64> {
 
         let new_package = new.append_package_with_id(pkg_value, id)?;
 
+        // `self.meta.id` is range-checked at load time (bun.lockb.rs), but
+        // defend here as well since an error returned from `clean_with_logger`
+        // is not recoverable — it aborts the install instead of re-resolving.
+        if self.meta.id as usize >= package_id_mapping.len() {
+            return Err(bun_core::err!("InvalidLockfile"));
+        }
         package_id_mapping[self.meta.id as usize] = new_package.meta.id;
 
         if cloner.manager.preinstall_state.len() > 0 {

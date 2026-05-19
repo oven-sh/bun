@@ -350,11 +350,14 @@ test("sanity check", () => {
     Error.prepareStackTrace = (e, s) => {
       // getThis returns undefined in strict mode
       expect(s[0].getThis()).toBe(undefined);
-      expect(s[0].getTypeName()).toBe("undefined");
+      // getTypeName returns null when the receiver is null/undefined or strict.
+      // Matches V8 (previously Bun returned the literal string "undefined").
+      expect(s[0].getTypeName()).toBe(null);
       // getFunction returns undefined in strict mode
       expect(s[0].getFunction()).toBe(undefined);
       expect(s[0].getFunctionName()).toBe("f3");
-      expect(s[0].getMethodName()).toBe("f3");
+      // f3 is a top-level function, not a method of any object, so V8 returns null.
+      expect(s[0].getMethodName()).toBe(null);
       expect(typeof s[0].getLineNumber()).toBe("number");
       expect(typeof s[0].getColumnNumber()).toBe("number");
       expect(s[0].getFileName().includes("capture-stack-trace.test.js")).toBe(true);
@@ -465,6 +468,52 @@ test("CallFrame.p.isConstructor", () => {
   Error.prepareStackTrace = prevPrepareStackTrace;
 });
 
+// Regression for https://github.com/oven-sh/bun/issues/30938
+// getTypeName/getFunctionName/getMethodName must match V8 (return null,
+// not the string "undefined" or the empty string). tap + source-map-support
+// concatenates `typeName + "."` into the formatted frame, so the old
+// behaviour rendered as `undefined.<anonymous>` in TAP error output.
+test("CallSite.p.getTypeName returns null (not 'undefined') when receiver is not an object", () => {
+  let prevPrepareStackTrace = Error.prepareStackTrace;
+  Error.prepareStackTrace = (_, s) => {
+    expect(s[0].getTypeName()).toBe(null);
+  };
+  const e = new Error();
+  Error.captureStackTrace(e);
+  e.stack;
+  Error.prepareStackTrace = prevPrepareStackTrace;
+});
+
+test("CallSite.p.getFunctionName returns null for anonymous frames", () => {
+  let prevPrepareStackTrace = Error.prepareStackTrace;
+  Error.prepareStackTrace = (_, s) => {
+    // Top frame is the anonymous arrow below.
+    expect(s[0].getFunctionName()).toBe(null);
+  };
+  (() => {
+    const e = new Error();
+    Error.captureStackTrace(e);
+    e.stack;
+  })();
+  Error.prepareStackTrace = prevPrepareStackTrace;
+});
+
+test("CallSite.p.getMethodName returns null for non-method frames", () => {
+  let prevPrepareStackTrace = Error.prepareStackTrace;
+  function topLevelFn() {
+    const e = new Error();
+    Error.captureStackTrace(e);
+    e.stack;
+  }
+  Error.prepareStackTrace = (_, s) => {
+    // topLevelFn is a plain function call — it's not stored at a property of
+    // `this`, so V8 returns null. Previously Bun delegated to getFunctionName.
+    expect(s[0].getMethodName()).toBe(null);
+  };
+  topLevelFn();
+  Error.prepareStackTrace = prevPrepareStackTrace;
+});
+
 test("CallFrame.p.isNative", () => {
   let prevPrepareStackTrace = Error.prepareStackTrace;
   Error.prepareStackTrace = (e, s) => {
@@ -523,8 +572,8 @@ test("err.stack should invoke prepareStackTrace", () => {
   functionWithAName();
 
   expect(functionName).toBe("functionWithAName");
-  expect(lineNumber).toBe(518);
-  expect(parentLineNumber).toBe(523);
+  expect(lineNumber).toBe(567);
+  expect(parentLineNumber).toBe(572);
 });
 
 test("Error.prepareStackTrace inside a node:vm works", () => {

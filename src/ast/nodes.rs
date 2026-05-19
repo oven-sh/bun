@@ -578,6 +578,16 @@ mod store_slice_tests {
         impl<T: Clone + ?Sized> IsCloneTag for Probe<T> {}
 
         let probe = Probe::<StoreSlice<u8>>(core::marker::PhantomData);
+        // `(&probe).is_copy()` is the autoref form: method resolution first
+        // tries the `Probe<T>` inherent/bounded candidate (the `Copy`/`Clone`
+        // impls), and only falls back to the `&Probe<T>` candidate when the
+        // trait bound can't be satisfied. Calling `probe.is_copy()` on the
+        // value form *fails to compile* when StoreSlice is not Copy (no
+        // autoref fallback), which defeats the regression-guard purpose —
+        // verified locally:
+        //     cargo test -p bun_ast store_slice_tests::not_copy_not_clone
+        //     (with `impl<T> Copy for StoreSlice<T> {}` added)
+        // fires the assertion only in the `(&probe)` form.
         assert!(
             !(&probe).is_copy(),
             "StoreSlice<T> must not implement Copy — that impl reintroduces the slice_mut aliasing UB (oven-sh/bun#31088)",

@@ -8449,18 +8449,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 )?;
             }
             // Re-run for the last part (Zig iterated all `parts.items` including last).
+            // Take ownership of `last_part.stmts` so the `&mut
+            // hmr_transform_ctx` passed to the scanner cannot reach the
+            // same `[Stmt]` backing allocation (the stmts field is EMPTY
+            // for the duration of the call; restored right after).
             {
-                // SAFETY: arena-lifetime `&mut [Stmt]` borrow. The scanner
-                // reads+mutates only `last_part.stmts` contents; the
-                // `&mut hmr_transform_ctx` passed alongside touches other
-                // `hmr_transform_ctx` fields, not the stmts slice backing.
-                let last_stmts = unsafe { hmr_transform_ctx.last_part.stmts.slice_mut_unbound() };
-                let _ = ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, true>(
-                    self,
-                    last_stmts,
-                    wrap_mode != WrapMode::None,
-                    Some(&mut hmr_transform_ctx),
-                )?;
+                let mut taken_stmts: bun_ast::StoreSlice<Stmt> =
+                    core::mem::take(&mut hmr_transform_ctx.last_part.stmts);
+                {
+                    let _ = ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, true>(
+                        self,
+                        taken_stmts.slice_mut(),
+                        wrap_mode != WrapMode::None,
+                        Some(&mut hmr_transform_ctx),
+                    )?;
+                } // `ImportScanner<'_>` borrow of `taken_stmts` ends here
+                // so the assignment below doesn't contend with it.
+                // The scanner only mutates `stmts` contents in place, so
+                // `taken_stmts` still points at the same (mutated) arena
+                // memory the HMR finalize pass expects.
+                hmr_transform_ctx.last_part.stmts = taken_stmts;
             }
 
             hmr_transform_ctx.finalize(self, head_parts)?;

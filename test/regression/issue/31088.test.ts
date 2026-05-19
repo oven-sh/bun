@@ -77,9 +77,8 @@ test.concurrent("class decorators + constructor field init + deep imports transp
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect({ stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+  expect({ stderr, signalCode: proc.signalCode }).toEqual({
     stderr: "",
-    exitCode: 0,
     signalCode: null,
   });
   expect(JSON.parse(stdout)).toEqual({
@@ -90,14 +89,16 @@ test.concurrent("class decorators + constructor field init + deep imports transp
     counts: [10, 20, 30],
     greeting: "hello, world!",
   });
+  expect(exitCode).toBe(0);
 });
 
 test.concurrent("template-literal folding + deep-clone of arrow bodies transpiles cleanly", async () => {
   // `fold_string_addition.rs` fuses string + template and template + template;
   // `expr.rs` deep-clone of `E::Arrow` (body.stmts) and `E::Template` (parts)
-  // used to copy the `StoreSlice` field implicitly. After the fix, those sites
-  // go through `reborrow_shared()`; a misuse would either produce wrong output
-  // or blow up at runtime.
+  // used to copy the `StoreSlice` field implicitly. After the fix, those
+  // sites go through `shallow_copy_in(bump)` so each clone owns its own
+  // arena-backed slice; a misuse would either produce wrong output or blow
+  // up at runtime.
   const src = `
     const who = "world";
     const greet = (name: string) => \`hello, \${name}!\`;
@@ -132,9 +133,8 @@ test.concurrent("template-literal folding + deep-clone of arrow bodies transpile
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect({ stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+  expect({ stderr, signalCode: proc.signalCode }).toEqual({
     stderr: "",
-    exitCode: 0,
     signalCode: null,
   });
   expect(JSON.parse(stdout)).toEqual({
@@ -144,6 +144,7 @@ test.concurrent("template-literal folding + deep-clone of arrow bodies transpile
     greet2: "hello, cls!",
     greet3: "hello, default!",
   });
+  expect(exitCode).toBe(0);
 });
 
 test.concurrent("import deduplication across multiple named imports preserves bindings", async () => {
@@ -184,8 +185,9 @@ test.concurrent("import deduplication across multiple named imports preserves bi
     buildProc.stderr.text(),
     buildProc.exited,
   ]);
-  expect({ buildErr, buildExit }).toEqual({ buildErr: "", buildExit: 0 });
+  expect(buildErr).toBe("");
   expect(buildOut).toContain("out.js");
+  expect(buildExit).toBe(0);
 
   // Run the bundled output — all three bindings must resolve correctly.
   await using runProc = Bun.spawn({
@@ -197,9 +199,8 @@ test.concurrent("import deduplication across multiple named imports preserves bi
     stderr: "pipe",
   });
   const [runOut, runErr, runExit] = await Promise.all([runProc.stdout.text(), runProc.stderr.text(), runProc.exited]);
-  expect({ runErr, runExit, signalCode: runProc.signalCode }).toEqual({
+  expect({ runErr, signalCode: runProc.signalCode }).toEqual({
     runErr: "",
-    runExit: 0,
     signalCode: null,
   });
   expect(JSON.parse(runOut)).toEqual({
@@ -207,4 +208,5 @@ test.concurrent("import deduplication across multiple named imports preserves bi
     two: "two-val",
     three: "three-val",
   });
+  expect(runExit).toBe(0);
 });

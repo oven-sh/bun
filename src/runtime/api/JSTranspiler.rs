@@ -872,10 +872,22 @@ impl<'a> TransformTask<'a> {
 
         if printed > 0 {
             buffer_writer = printer.ctx;
-            // TODO(port): `buffer_writer.buffer.list.items = buffer_writer.written;` —
-            // Zig truncates the Vec's view to `written`. Map to `.truncate(written.len())` or
-            // a slice copy depending on BufferWriter shape.
-            self.output_code = BunString::clone_utf8(buffer_writer.written());
+            // `done()` sets `written_len == buffer.list.len()`, so `written()` is
+            // the whole backing buffer. Move the owned `Vec` into a
+            // WTF::ExternalStringImpl (its finalizer frees via the global
+            // allocator) instead of copying — but only for pure-ASCII output.
+            // `ascii_only == is_bun` for this print path, so non-Bun targets can
+            // emit raw UTF-8; those keep `clone_utf8`, which transcodes (an
+            // external string can't).
+            let buf_len = buffer_writer.buffer.list.len();
+            if buffer_writer.written().len() == buf_len
+                && bun_core::strings::is_all_ascii(buffer_writer.written())
+            {
+                let bytes = core::mem::take(&mut buffer_writer.buffer.list);
+                self.output_code = BunString::create_external_globally_allocated_latin1(bytes);
+            } else {
+                self.output_code = BunString::clone_utf8(buffer_writer.written());
+            }
         } else {
             self.output_code = BunString::empty();
         }

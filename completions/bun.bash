@@ -170,6 +170,14 @@ _bun_completions() {
             _read_scripts_in_package_json;
             _subcommand_comp_reply "${cur_word}" "${SUBCOMMANDS}";
 
+            # `bun <file> <args...>` — the first word isn't a recognised
+            # subcommand, so treat it as a script path and complete
+            # positional args after the script with files. Without this
+            # branch, `bun myscript.ts foo<TAB>` does nothing.
+            (( COMP_CWORD >= 2 )) && {
+                COMPREPLY+=( $(compgen -f -- "${cur_word}") );
+            }
+
             # determine if completion should be continued
             # when the current word is an empty string
             # the previous word is not part of the allowed completion

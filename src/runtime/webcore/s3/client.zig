@@ -328,6 +328,9 @@ pub fn writableStream(
     task.poll_ref.ref(task.vm);
 
     var response_stream = jsc.WebCore.NetworkSink.new(.{
+        // +1 for the JS wrapper (dropped by the C++ finalizer on GC),
+        // +1 for the task's `callback_context` (dropped by Wrapper.callback).
+        .ref_count = .initExactRefs(2),
         .task = task,
         .globalThis = globalThis,
         .highWaterMark = @truncate(options.partSize),

@@ -5,7 +5,7 @@ use crate::{Parser, PrintErr, Printer, Token, VendorPrefix};
 use bun_core::strings;
 
 /// A value for the [position](https://www.w3.org/TR/css-position-3/#position-property) property.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Position {
     /// The box is laid in the document flow.
     Static,

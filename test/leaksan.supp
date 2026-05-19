@@ -7,7 +7,6 @@ leak:JSC::Identifier::fromString
 leak:jsc.JSGlobalObject.JSGlobalObject.create
 leak:Zig__GlobalObject__create
 leak:_objc_msgSend_uncached
-leak:WTF::fastMalloc
 leak:WTF::AutomaticThread::start
 leak:Bun__transpileFile
 leak:WTF::SymbolRegistry::symbolForKey

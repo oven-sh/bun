@@ -6418,7 +6418,10 @@ impl Any {
 
         if let Any::WTFStringImpl(_) = self {
             let blob = Blob::create(self.slice(), global, true);
-            *self = Any::Blob(Blob::default());
+            // `Blob::create(.., true)` copied the bytes; `Any` still owns the
+            // +1 WTF ref. `detach()` releases it and resets `*self` (the bare
+            // `*self = Any::Blob(default)` here previously leaked that ref).
+            self.detach();
             return blob;
         }
 

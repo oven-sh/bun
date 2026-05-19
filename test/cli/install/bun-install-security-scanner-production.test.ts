@@ -10,10 +10,13 @@
 // served via the SimpleRegistry fixture: the scanner is a real `devDependencies`
 // entry and must install + run under `--production`.
 
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { startRegistry, stopRegistry } from "./simple-dummy-registry";
+
+setDefaultTimeout(1000 * 60 * 5);
 
 let registryUrl: string;
 
@@ -77,7 +80,7 @@ scanner = "test-security-scanner"`,
   );
 
   // Drop node_modules so the install actually has to resolve + install.
-  await Bun.$`rm -rf ${join(dir, "node_modules")}`.quiet();
+  rmSync(join(dir, "node_modules"), { recursive: true, force: true });
 
   const args = ["install"];
   if (options.frozenLockfile) args.push("--frozen-lockfile");

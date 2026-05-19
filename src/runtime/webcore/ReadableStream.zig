@@ -432,6 +432,12 @@ pub fn NewSource(
         close_jsvalue: jsc.Strong.Optional = .empty,
         cancel_handler: ?*const fn (?*anyopaque) void = null,
         cancel_ctx: ?*anyopaque = null,
+        /// Invoked whenever `Context` hands bytes to the JS reader (as
+        /// opposed to parking them in an internal buffer). Used by fetch
+        /// to release response-body receive backpressure (h2 per-stream
+        /// WINDOW_UPDATE, h1 socket resume, h3 `wantRead`).
+        drain_handler: ?*const fn (?*anyopaque, usize) void = null,
+        drain_ctx: ?*anyopaque = null,
         globalThis: *JSGlobalObject = undefined,
         this_jsvalue: jsc.JSValue = .zero,
         is_closed: bool = false,

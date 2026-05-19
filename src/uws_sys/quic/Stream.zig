@@ -35,6 +35,16 @@ pub const Stream = opaque {
         us_quic_stream_want_write(s, @intFromBool(want));
     }
 
+    extern fn us_quic_stream_want_read(s: *Stream, want: c_int) void;
+    /// Toggle lsquic's `on_read` callback for this stream. When `false`,
+    /// bytes accumulate inside lsquic's receive buffer and it withholds
+    /// `MAX_STREAM_DATA` credit — the QUIC-level equivalent of pausing a
+    /// TCP socket read. Used by the HTTP/3 client to backpressure the
+    /// server when the JS `ReadableStream` reader has stalled.
+    pub fn wantRead(s: *Stream, want: bool) void {
+        us_quic_stream_want_read(s, @intFromBool(want));
+    }
+
     extern fn us_quic_stream_send_headers(s: *Stream, h: [*]const Header, n: c_uint, end_stream: c_int) c_int;
     pub fn sendHeaders(s: *Stream, headers: []const Header, end_stream: bool) c_int {
         return us_quic_stream_send_headers(s, headers.ptr, @intCast(headers.len), @intFromBool(end_stream));

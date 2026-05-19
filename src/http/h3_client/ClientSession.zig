@@ -78,6 +78,30 @@ pub fn streamBodyByHttpId(this: *ClientSession, async_http_id: u32, ended: bool)
     }
 }
 
+/// HTTP-thread wake-up from `scheduleResponseBodyConsumed`: the JS reader
+/// drained `bytes` from the ByteStream. Decrement the outstanding count
+/// and, if the stream's `on_read` was paused for backpressure, re-enable
+/// it so lsquic resumes draining the QUIC receive buffer and issuing
+/// `MAX_STREAM_DATA` credit.
+pub fn consumeResponseBodyByHttpId(this: *ClientSession, async_http_id: u32, bytes: u32) bool {
+    for (this.pending.items) |stream| {
+        const client = stream.client orelse continue;
+        if (client.async_http_id != async_http_id) continue;
+        stream.outstanding_body_bytes -|= @min(@as(usize, bytes), stream.outstanding_body_bytes);
+        if (!stream.read_paused) return true;
+        const should_resume = stream.outstanding_body_bytes <= bun.http.receive_body_low_water or
+            !client.signals.get(.body_consumption_tracked);
+        if (!should_resume) return true;
+        stream.read_paused = false;
+        if (stream.qstream) |qs| qs.wantRead(true);
+        // lsquic's `process_conns` runs from the loop's post-tick hook,
+        // so the re-enabled `on_read` fires on the very next iteration
+        // (this handler runs from `drainEvents`, before that tick).
+        return true;
+    }
+    return false;
+}
+
 pub fn detach(this: *ClientSession, stream: *Stream) void {
     if (stream.client) |cl| cl.h3 = null;
     stream.client = null;

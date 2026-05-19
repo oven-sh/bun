@@ -45,6 +45,12 @@ describe("backpressure", () => {
 
       expect(totalBytes).toBe(payloadSize);
     },
-    60_000,
+    // 60 s was tight on darwin-14-x64 once fetch()'s response-body
+    // backpressure started pausing the socket whenever the reader
+    // briefly fell behind (~50 pause/resume cycles over 4 GiB; each
+    // cycle is a kevent change + a short stall while the consume
+    // report round-trips). ~8-13% overhead on an already-loaded
+    // x64 mac mini pushed it past 60 s.
+    120_000,
   );
 });

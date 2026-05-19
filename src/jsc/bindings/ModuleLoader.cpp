@@ -470,7 +470,10 @@ extern "C" void Bun__onFulfillAsyncModule(
     JSC::JSPromise* promise = uncheckedDowncast<JSC::JSPromise>(JSC::JSValue::decode(encodedPromiseValue));
 
     if (!res->success) {
-        RELEASE_AND_RETURN(scope, promise->reject(vm, globalObject, JSValue::decode(res->result.err.value)));
+        JSValue errorValue = JSValue::decode(res->result.err.value);
+        if (auto* exception = dynamicDowncast<JSC::Exception>(errorValue))
+            errorValue = exception->value();
+        RELEASE_AND_RETURN(scope, promise->reject(vm, globalObject, errorValue));
     }
 
     auto* specifierValue = Bun::toJS(globalObject, *specifier);

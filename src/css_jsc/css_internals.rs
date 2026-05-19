@@ -386,4 +386,93 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     }
 }
 
+/// Test-only binding: returns four `IdentOrRef::hash` outputs for the regression
+/// coverage of issue #30772 (ref-tagged `IdentOrRef` hashed only 2 of the 16
+/// bytes of its packed `u128`).
+///
+/// Given `(a_inner, a_source, b_inner, b_source)`:
+///
+/// - `[0]`: hash of `IdentOrRef::from_ref(Ref(a_inner, a_source), debug="a")`
+/// - `[1]`: hash of `IdentOrRef::from_ref(Ref(a_inner, a_source), debug="a2")`
+///          — same logical ref as `[0]` but a different debug-build ptrbits lane
+/// - `[2]`: hash of `IdentOrRef::from_ref(Ref(b_inner, b_source), debug="b")`
+/// - `[3]`: hash of `IdentOrRef::from_ref(Ref(b_inner, b_source), debug="b2")`
+///
+/// A correct hash satisfies: `[0] == [1]` and `[2] == [3]` (equal refs hash
+/// identically — matches `eql`, which masks the user-bit lane and ignores
+/// debug-only ptrbits) and `[0] != [2]` (distinct refs produce distinct hashes
+/// with overwhelming probability for wyhash over distinct 8-byte inputs).
+pub fn ident_or_ref_hash_refs(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    use bun_ast::Ref;
+    use bun_css::css_values::ident::{IdentOrRef, debug_ident};
+    use bun_wyhash::Wyhash;
+
+    let arena = Arena::new();
+    let arguments_ = frame.arguments_old::<4>();
+    // SAFETY: bunVM() never returns null for a Bun-owned global.
+    let mut arguments = bun_jsc::ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
+
+    // Inline instead of a closure so the `?` operator's trait resolution can see
+    // the enclosing return type. (A `-> JsResult<u32>` closure returns its own
+    // `JsResult`, not this fn's, so `?` on the outer Result has to adapt.)
+    macro_rules! eat_u32 {
+        ($label:literal) => {{
+            let Some(arg) = arguments.next_eat() else {
+                return Err(global.throw(format_args!(
+                    "identOrRefHashRefs: expected 4 arguments ({} missing)",
+                    $label
+                )));
+            };
+            let Some(n) = arg.get_number() else {
+                return Err(global.throw(format_args!(
+                    "identOrRefHashRefs: expected {} to be a number",
+                    $label
+                )));
+            };
+            n as u32
+        }};
+    }
+
+    let a_inner = eat_u32!("a_inner");
+    let a_source = eat_u32!("a_source");
+    let b_inner = eat_u32!("b_inner");
+    let b_source = eat_u32!("b_source");
+
+    let ref_a = Ref::init(a_inner, a_source, false);
+    let ref_b = Ref::init(b_inner, b_source, false);
+
+    // Allocate four distinct debug slices so each `from_ref` packs a different
+    // `ptrbits` lane in debug builds. The four resulting `IdentOrRef` values
+    // pair off into logically-equal refs — `eql` ignores `ptrbits`, so a
+    // correct `hash` must too.
+    let slice_a = arena.alloc_slice_copy(b"a");
+    let slice_a2 = arena.alloc_slice_copy(b"a2");
+    let slice_b = arena.alloc_slice_copy(b"b");
+    let slice_b2 = arena.alloc_slice_copy(b"b2");
+
+    let ior_a = IdentOrRef::from_ref(ref_a, debug_ident(slice_a, &arena));
+    let ior_a2 = IdentOrRef::from_ref(ref_a, debug_ident(slice_a2, &arena));
+    let ior_b = IdentOrRef::from_ref(ref_b, debug_ident(slice_b, &arena));
+    let ior_b2 = IdentOrRef::from_ref(ref_b, debug_ident(slice_b2, &arena));
+
+    let hash_one = |ior: &IdentOrRef| -> u64 {
+        let mut h = Wyhash::init(0);
+        ior.hash(&mut h);
+        h.final_()
+    };
+
+    let arr = JSValue::create_empty_array(global, 4)?;
+    for (idx, ior) in [&ior_a, &ior_a2, &ior_b, &ior_b2].iter().enumerate() {
+        // Fold the u64 wyhash output into the low 30 bits so the JS Number
+        // return value stays in int32 range (no f64 precision loss above
+        // 2^53). XOR of high and low halves preserves distinctness for any
+        // distinct wyhash outputs whose two halves don't happen to agree —
+        // astronomically unlikely for wyhash over distinct 8-byte keys.
+        let full = hash_one(ior);
+        let folded: i32 = (((full ^ (full >> 32)) as u32) & 0x3fff_ffff) as i32;
+        arr.put_index(global, idx as u32, JSValue::js_number_from_int32(folded))?;
+    }
+    Ok(arr)
+}
+
 // ported from: src/css_jsc/css_internals.zig

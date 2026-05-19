@@ -427,14 +427,17 @@ impl IdentOrRef {
     pub fn hash(&self, hasher: &mut Wyhash) {
         if let Some(ident) = self.as_ident() {
             hasher.update(ident.v());
-        } else {
-            // SAFETY: self is #[repr(transparent)] u128; reading first 2 bytes matches Zig's
-            // `slice_u8[0..2]` (which is almost certainly a Zig bug — hashes 2 bytes, not 16).
-            // TODO(port): verify upstream intent; preserving behavior verbatim.
-            let bytes = unsafe {
-                core::slice::from_raw_parts(std::ptr::from_ref::<Self>(self).cast::<u8>(), 2)
-            };
-            hasher.update(bytes);
+        } else if let Some(r) = self.as_ref() {
+            // Hash the `Ref`'s identity bits. Matches `eql`, which compares via
+            // `Ref::eql` (user-bit lane masked out) and — in debug builds —
+            // ignores the `ptrbits` heap pointer that differs between
+            // logically-equal refs constructed via separate `from_ref` calls.
+            //
+            // The Zig original (`slice_u8[0..2]`) hashed only 2 of the 16 bytes
+            // of the packed `u128`: in release builds `ptrbits` is 0 and those
+            // two bytes are always `[0x00, 0x00]`, so every ref-tagged value
+            // collided to the same hash regardless of which `Ref` it encoded.
+            hasher.update(&r.as_u64().to_ne_bytes());
         }
     }
 

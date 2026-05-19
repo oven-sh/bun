@@ -419,9 +419,10 @@ fn update_package_json_and_install_with_manager_with_updates(
     // must store an *owning* copy to avoid a dangling borrow. PERF(port): one extra
     // alloc+copy vs Zig's single dupe — profile if hot.
     current_package_json.source.contents = Cow::Owned(new_package_json_source.clone());
-    // Re-parse the printed source so the cached AST (consumed by `FolderResolver`
-    // for workspace members during `install_with_manager`) reflects the new
-    // dependency list.
+    // PORT NOTE: Zig edited `current_package_json.root` in place above; the Rust
+    // port edited a promoted copy (`current_package_json_root`), so re-parse the
+    // printed source so the cached AST (consumed by `FolderResolver` for workspace
+    // members during `install_with_manager`) reflects the new dependency list.
     if let Err(err) = current_package_json.reparse_root(manager.log_mut()) {
         Output::pretty_errorln(format_args!(
             "package.json failed to parse due to error {}",

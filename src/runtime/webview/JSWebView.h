@@ -211,10 +211,8 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<JSWebView, WebCore::UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSWebView.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSWebView = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSWebView.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSWebView = std::forward<decltype(space)>(space); });
+            [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForJSWebView; },
+            [](auto& spaces) -> auto& { return spaces.m_subspaceForJSWebView; });
     }
 
 private:

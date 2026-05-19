@@ -79,10 +79,8 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<ServerRouteList, WebCore::UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForServerRouteList.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForServerRouteList = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForServerRouteList.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForServerRouteList = std::forward<decltype(space)>(space); });
+            [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForServerRouteList; },
+            [](auto& spaces) -> auto& { return spaces.m_subspaceForServerRouteList; });
     }
 
     DECLARE_INFO;

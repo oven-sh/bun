@@ -40,10 +40,8 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<JSDiffieHellmanGroup, WebCore::UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSDiffieHellmanGroup.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSDiffieHellmanGroup = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSDiffieHellmanGroup.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSDiffieHellmanGroup = std::forward<decltype(space)>(space); });
+            [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForJSDiffieHellmanGroup; },
+            [](auto& spaces) -> auto& { return spaces.m_subspaceForJSDiffieHellmanGroup; });
     }
 
 private:

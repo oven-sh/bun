@@ -776,10 +776,8 @@ JSC::GCClient::IsoSubspace* JSDOMURL::subspaceForImpl(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<JSDOMURL, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForDOMURL.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForDOMURL = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForDOMURL.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForDOMURL = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForDOMURL; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForDOMURL; });
 }
 
 template<typename Visitor>

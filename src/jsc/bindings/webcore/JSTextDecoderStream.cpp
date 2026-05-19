@@ -166,7 +166,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTextDecoderStreamConstructor, (JSGlobalObject * lexic
 JSC::GCClient::IsoSubspace* JSTextDecoderStream::subspaceForImpl(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<JSTextDecoderStream, UseCustomHeapCellType::No>(
-        vm, [](auto& spaces) { return spaces.m_clientSubspaceForTextDecoderStream.get(); }, [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTextDecoderStream = std::forward<decltype(space)>(space); }, [](auto& spaces) { return spaces.m_subspaceForTextDecoderStream.get(); }, [](auto& spaces, auto&& space) { spaces.m_subspaceForTextDecoderStream = std::forward<decltype(space)>(space); });
+        vm, [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForTextDecoderStream; }, [](auto& spaces) -> auto& { return spaces.m_subspaceForTextDecoderStream; });
 }
 
 }

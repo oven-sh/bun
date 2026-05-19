@@ -195,10 +195,8 @@ JSC::GCClient::IsoSubspace* JSReadableStreamSink::subspaceForImpl(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<JSReadableStreamSink, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForReadableStreamSink.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableStreamSink = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForReadableStreamSink.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableStreamSink = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForReadableStreamSink; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForReadableStreamSink; });
 }
 
 void JSReadableStreamSink::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

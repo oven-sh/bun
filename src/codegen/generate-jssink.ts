@@ -42,10 +42,8 @@ function header() {
                     return nullptr;                                                                                                                                                 
                 return WebCore::subspaceForImpl<${constructor}, WebCore::UseCustomHeapCellType::No>(                                                                    
                     vm,                                                                                                                                                             
-                    [](auto& spaces) { return spaces.m_clientSubspaceForJSSinkConstructor.get(); },                                                                                 
-                    [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSinkConstructor = std::forward<decltype(space)>(space); },                                                               
-                    [](auto& spaces) { return spaces.m_subspaceForJSSinkConstructor.get(); },                                                                                       
-                    [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSinkConstructor = std::forward<decltype(space)>(space); });                                                                    
+                    [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForJSSinkConstructor; },                                                                                 
+                    [](auto& spaces) -> auto& { return spaces.m_subspaceForJSSinkConstructor; });                                                                    
             }                                                                                                                                                                       
                                                                                                                                                                                     
             static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)                                                          
@@ -81,10 +79,8 @@ function header() {
                     return nullptr;                                                                                                                                                 
                 return WebCore::subspaceForImpl<${className}, WebCore::UseCustomHeapCellType::No>(                                                                                 
                     vm,                                                                                                                                                             
-                    [](auto& spaces) { return spaces.m_clientSubspaceForJSSink.get(); },                                                                                            
-                    [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSink = std::forward<decltype(space)>(space); },                                                                          
-                    [](auto& spaces) { return spaces.m_subspaceForJSSink.get(); },                                                                                                  
-                    [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSink = std::forward<decltype(space)>(space); });                                                                               
+                    [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForJSSink; },                                                                                            
+                    [](auto& spaces) -> auto& { return spaces.m_subspaceForJSSink; });                                                                               
             }                                                                                                                                                                       
                                                                                                                                                                                     
             static void destroy(JSC::JSCell*);                                                                                                                                      
@@ -143,10 +139,8 @@ function header() {
                         return nullptr;                                                                                                                                                 
                     return WebCore::subspaceForImpl<${controller}, WebCore::UseCustomHeapCellType::No>(                                                                                 
                         vm,                                                                                                                                                             
-                        [](auto& spaces) { return spaces.m_clientSubspaceForJSSinkController.get(); },                                                                                            
-                        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSinkController = std::forward<decltype(space)>(space); },                                                                          
-                        [](auto& spaces) { return spaces.m_subspaceForJSSinkController.get(); },                                                                                                  
-                        [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSinkController = std::forward<decltype(space)>(space); });                                                                               
+                        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForJSSinkController; },                                                                                            
+                        [](auto& spaces) -> auto& { return spaces.m_subspaceForJSSinkController; });                                                                               
                 }                                                                                                                                                                       
                                                                                                                                                                                         
                 static void destroy(JSC::JSCell*);                                                                                                                                      

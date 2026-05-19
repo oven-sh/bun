@@ -64,10 +64,8 @@ public:
 
         return WebCore::subspaceForImpl<CallSite, UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForCallSite.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCallSite = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForCallSite.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForCallSite = std::forward<decltype(space)>(space); });
+            [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForCallSite; },
+            [](auto& spaces) -> auto& { return spaces.m_subspaceForCallSite; });
     }
 
     JSC::JSValue thisValue() const { return m_thisValue.get(); }

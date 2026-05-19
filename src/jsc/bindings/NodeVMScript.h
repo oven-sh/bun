@@ -51,10 +51,8 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<NodeVMScript, WebCore::UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForNodeVMScript.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNodeVMScript = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForNodeVMScript.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForNodeVMScript = std::forward<decltype(space)>(space); });
+            [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForNodeVMScript; },
+            [](auto& spaces) -> auto& { return spaces.m_subspaceForNodeVMScript; });
     }
 
     static void destroy(JSC::JSCell*);

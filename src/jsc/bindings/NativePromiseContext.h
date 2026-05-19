@@ -61,10 +61,8 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<NativePromiseContext, WebCore::UseCustomHeapCellType::Yes>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForNativePromiseContext.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNativePromiseContext = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForNativePromiseContext.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForNativePromiseContext = std::forward<decltype(space)>(space); },
+            [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForNativePromiseContext; },
+            [](auto& spaces) -> auto& { return spaces.m_subspaceForNativePromiseContext; },
             [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForNativePromiseContext; });
     }
 

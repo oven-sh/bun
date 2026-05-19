@@ -587,6 +587,125 @@ it("click(selector) is injection-safe", async () => {
   expect(await view.evaluate("String(__pwned)")).toBe("0");
 });
 
+// --- Low-level pointer primitives (mouseDown / mouseUp / mouseMove) --------
+// The drag automation API from the issue. mouseDown without x/y uses the
+// last mouseMove coordinate; parent-side tracks m_mouseX/Y and m_mouseButtons.
+// Each op maps to one NSEvent (LeftMouseDown/Up, MouseMoved, LeftMouseDragged)
+// in the host and waits on _doAfterProcessingAllPendingMouseEvents: — same
+// barrier click() uses.
+
+it("mouseDown/mouseUp/mouseMove drag sequence fires trusted events", async () => {
+  await using view = new Bun.WebView({ width: 300, height: 300 });
+  await view.navigate(
+    html(`
+      <script>
+        window.__ev = [];
+        for (const t of ["mousedown","mouseup","mousemove","click"]) {
+          document.addEventListener(t, e => __ev.push({
+            t, x: e.clientX, y: e.clientY, btn: e.button, btns: e.buttons, trusted: e.isTrusted,
+          }), true);
+        }
+      </script>
+      <div style="position:fixed;left:0;top:0;width:300px;height:300px"></div>
+    `),
+  );
+
+  // Position cursor → press → drag through intermediates → release —
+  // the canvas drag pattern from the issue. WebKit dispatches
+  // LeftMouseDragged NSEvents for the intermediate moves (because a
+  // button is held) and _doAfterProcessingAllPendingMouseEvents:
+  // drains them before each promise resolves.
+  //
+  // On WebKit the initial mouseMove (no buttons) is a position-only
+  // update and does NOT dispatch a DOM mousemove — the
+  // _simulateMouseMove: SPI hangs on macOS 14/15 aarch64. Tests can
+  // still assert on the drag semantics, which is what matters for the
+  // feature. (Chrome fires the hover mousemove normally; see
+  // webview-chrome.test.ts for the Chrome assertions.)
+  await view.mouseMove(40, 40);
+  await view.mouseDown();
+  await view.mouseMove(160, 160, { steps: 4 });
+  await view.mouseUp();
+
+  const events = JSON.parse(await view.evaluate("JSON.stringify(__ev)")) as Array<{
+    t: string;
+    x: number;
+    y: number;
+    btn: number;
+    btns: number;
+    trusted: boolean;
+  }>;
+
+  // mousedown fires at the position set by the preceding mouseMove,
+  // with event.buttons=1 (left held).
+  const down = events.find(e => e.t === "mousedown")!;
+  expect(down).toEqual({ t: "mousedown", x: 40, y: 40, btn: 0, btns: 1, trusted: true });
+  // mouseup fires at the final drag position with event.buttons=0.
+  const up = events.find(e => e.t === "mouseup")!;
+  expect(up).toEqual({ t: "mouseup", x: 160, y: 160, btn: 0, btns: 0, trusted: true });
+  // Drag intermediates — all with buttons: 1, final at target.
+  const dragMoves = events.filter(e => e.t === "mousemove" && e.btns === 1);
+  expect(dragMoves.length).toBeGreaterThan(0);
+  expect(dragMoves[dragMoves.length - 1]).toEqual({
+    t: "mousemove",
+    x: 160,
+    y: 160,
+    btn: 0,
+    btns: 1,
+    trusted: true,
+  });
+});
+
+it("mouseDown + mouseUp at same position synthesizes a click", async () => {
+  await using view = new Bun.WebView({ width: 300, height: 300 });
+  await view.navigate(
+    html(`
+      <script>
+        window.__clicks = 0;
+        document.addEventListener("click", e => { if (e.isTrusted) window.__clicks++; });
+      </script>
+      <div style="position:fixed;left:0;top:0;width:300px;height:300px"></div>
+    `),
+  );
+  await view.mouseMove(50, 50);
+  await view.mouseDown();
+  await view.mouseUp();
+  // No move between → WebKit synthesizes the click event.
+  expect(await view.evaluate("String(__clicks)")).toBe("1");
+});
+
+it("mouseDown right button dispatches with button=2 and buttons bitmask bit 1", async () => {
+  await using view = new Bun.WebView({ width: 300, height: 300 });
+  await view.navigate(
+    html(`
+      <script>
+        window.__ev = [];
+        document.addEventListener("mousedown", e => __ev.push({
+          btn: e.button, btns: e.buttons, shift: e.shiftKey, ctrl: e.ctrlKey,
+        }), true);
+        document.addEventListener("contextmenu", e => e.preventDefault(), true);
+      </script>
+      <div style="position:fixed;left:0;top:0;width:300px;height:300px"></div>
+    `),
+  );
+  await view.mouseMove(50, 50);
+  await view.mouseDown({ button: "right", modifiers: ["Shift", "Control"] });
+  await view.mouseUp({ button: "right", modifiers: ["Shift", "Control"] });
+
+  const events = JSON.parse(await view.evaluate("JSON.stringify(__ev)"));
+  // DOM event.button: 0=left, 1=middle, 2=right (W3C spec).
+  // DOM event.buttons bit 1 = right = 2.
+  expect(events).toEqual([{ btn: 2, btns: 2, shift: true, ctrl: true }]);
+});
+
+it("mouseMove validates — x/y must be finite", () => {
+  const view = new Bun.WebView({ width: 100, height: 100 });
+  expect(() => view.mouseMove(NaN, 0)).toThrow(/must be finite/);
+  expect(() => view.mouseMove(Infinity, 0)).toThrow(/must be finite/);
+  expect(() => view.mouseMove(0, -Infinity)).toThrow(/must be finite/);
+  view.close();
+});
+
 it("scrollTo(selector) centers element in viewport", async () => {
   await using view = new Bun.WebView({ width: 200, height: 200 });
   await view.navigate(

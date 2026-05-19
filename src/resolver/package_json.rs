@@ -1855,20 +1855,21 @@ impl<'a> Visitor<'a> {
                     }
 
                     let value = self.visit(prop.value.expect("infallible: prop has value"));
-                    map_data.push(MapEntry {
-                        key: key.clone(),
-                        key_range,
-                        value: value.clone(),
-                    });
 
                     // safe to use "/" on windows. exports in package.json does not use "\\"
                     if strings::ends_with(&key, b"/") || strings::contains_char(&key, b'*') {
                         expansion_keys.push(MapEntry {
-                            value,
-                            key,
+                            value: value.clone(),
+                            key: key.clone(),
                             key_range,
                         });
                     }
+
+                    map_data.push(MapEntry {
+                        key,
+                        key_range,
+                        value,
+                    });
                 }
 
                 // this leaks a lil, but it's fine.

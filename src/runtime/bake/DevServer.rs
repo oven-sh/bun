@@ -883,8 +883,6 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         let mut h = Wyhash::init(128);
 
         if cfg!(debug_assertions) {
-            // PORT NOTE: `sys::stat` returns `Maybe<Stat>` (no `unwrap_or_else`);
-            // go through `Result` for the panic-on-error path.
             let stat = match sys::stat(
                 bun_core::self_exe_path()
                     .unwrap_or_else(|e| Output::panic(format_args!("unhandled {}", e))),

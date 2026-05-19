@@ -169,7 +169,6 @@ JSC_DEFINE_HOST_FUNCTION(constructDirent, (JSC::JSGlobalObject * globalObject, J
     auto* originalStructure = structure;
     JSValue newTarget = callFrame->newTarget();
     if (zigGlobalObject->m_JSDirentClassStructure.constructor(zigGlobalObject) != newTarget) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(vm);
         if (!newTarget) {
             throwTypeError(globalObject, scope, "Class constructor Dirent cannot be invoked without 'new'"_s);
             return {};
@@ -197,27 +196,44 @@ JSC_DEFINE_HOST_FUNCTION(constructDirent, (JSC::JSGlobalObject * globalObject, J
     return JSValue::encode(object);
 }
 
-static inline int32_t getType(JSC::VM& vm, JSValue value, Zig::GlobalObject* globalObject)
+static inline int32_t getType(JSC::ThrowScope& scope, JSC::VM& vm, JSValue value, Zig::GlobalObject* globalObject)
 {
     JSObject* object = value.getObject();
-    if (!object) [[unlikely]] {
-        return std::numeric_limits<int32_t>::max();
-    }
-    auto* structure = getStructure(globalObject);
-    JSValue type;
-    if (structure->id() != object->structure()->id()) {
-        type = object->get(globalObject, Bun::builtinNames(vm).dataPrivateName());
-        if (!type) [[unlikely]] {
+    if (object) [[likely]] {
+        auto* structure = getStructure(globalObject);
+        JSValue type;
+        bool hasType;
+        if (structure->id() == object->structure()->id()) {
+            // Fast path: matching canonical Dirent structure — the @data slot always exists.
+            type = object->getDirect(2);
+            hasType = true;
+        } else {
+            // Slow path: look up @data via the full property machinery so subclass
+            // instances, prototype-delegating wrappers (Object.create(dirent)), etc.
+            // still find the inherited type slot. Non-Dirent receivers (e.g. the
+            // global object when the method is destructured) won't have @data
+            // anywhere on their chain, so getPropertySlot returns false.
+            auto propertyName = Bun::builtinNames(vm).dataPrivateName();
+            JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::Get);
+            hasType = object->getPropertySlot(globalObject, propertyName, slot);
+            RETURN_IF_EXCEPTION(scope, std::numeric_limits<int32_t>::max());
+            if (hasType) {
+                type = slot.getValue(globalObject, propertyName);
+                RETURN_IF_EXCEPTION(scope, std::numeric_limits<int32_t>::max());
+            }
+        }
+
+        if (hasType) {
+            if (type.isAnyInt()) {
+                return type.toInt32(globalObject);
+            }
+            // Real Dirent instance, but the stored type is not an integer (e.g.
+            // `new Dirent(name)` with no type arg). Match Node.js: is*() just returns false.
             return std::numeric_limits<int32_t>::max();
         }
-    } else {
-        type = object->getDirect(2);
     }
 
-    if (type.isAnyInt()) {
-        return type.toInt32(globalObject);
-    }
-
+    Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_THIS, "Value of \"this\" must be of type Dirent"_s);
     return std::numeric_limits<int32_t>::max();
 }
 
@@ -241,7 +257,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDirentProtoFuncIsBlockDevice, (JSC::JSGlobalObject * 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    int32_t type = getType(vm, callFrame->thisValue(), defaultGlobalObject(globalObject));
+    int32_t type = getType(scope, vm, callFrame->thisValue(), defaultGlobalObject(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(jsBoolean(type == static_cast<int32_t>(DirEntType::BlockDevice)));
@@ -252,7 +268,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDirentProtoFuncIsCharacterDevice, (JSC::JSGlobalObjec
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    int32_t type = getType(vm, callFrame->thisValue(), defaultGlobalObject(globalObject));
+    int32_t type = getType(scope, vm, callFrame->thisValue(), defaultGlobalObject(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(jsBoolean(type == static_cast<int32_t>(DirEntType::CharacterDevice)));
@@ -263,7 +279,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDirentProtoFuncIsDirectory, (JSC::JSGlobalObject * gl
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    int32_t type = getType(vm, callFrame->thisValue(), defaultGlobalObject(globalObject));
+    int32_t type = getType(scope, vm, callFrame->thisValue(), defaultGlobalObject(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(jsBoolean(type == static_cast<int32_t>(DirEntType::Directory)));
@@ -274,7 +290,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDirentProtoFuncIsFIFO, (JSC::JSGlobalObject * globalO
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    int32_t type = getType(vm, callFrame->thisValue(), defaultGlobalObject(globalObject));
+    int32_t type = getType(scope, vm, callFrame->thisValue(), defaultGlobalObject(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(jsBoolean(type == static_cast<int32_t>(DirEntType::NamedPipe)));
@@ -285,7 +301,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDirentProtoFuncIsFile, (JSC::JSGlobalObject * globalO
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    int32_t type = getType(vm, callFrame->thisValue(), defaultGlobalObject(globalObject));
+    int32_t type = getType(scope, vm, callFrame->thisValue(), defaultGlobalObject(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(jsBoolean(type == static_cast<int32_t>(DirEntType::File)));
@@ -296,7 +312,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDirentProtoFuncIsSocket, (JSC::JSGlobalObject * globa
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    int32_t type = getType(vm, callFrame->thisValue(), defaultGlobalObject(globalObject));
+    int32_t type = getType(scope, vm, callFrame->thisValue(), defaultGlobalObject(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(jsBoolean(type == static_cast<int32_t>(DirEntType::UnixDomainSocket)));
@@ -307,7 +323,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDirentProtoFuncIsSymbolicLink, (JSC::JSGlobalObject *
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    int32_t type = getType(vm, callFrame->thisValue(), defaultGlobalObject(globalObject));
+    int32_t type = getType(scope, vm, callFrame->thisValue(), defaultGlobalObject(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(jsBoolean(type == static_cast<int32_t>(DirEntType::SymLink)));

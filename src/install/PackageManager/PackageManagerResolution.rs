@@ -262,7 +262,7 @@ impl PackageManager {
                     Err(err) => {
                         Output::debug(format_args!(
                             "error getting path for cached npm path: {}",
-                            bun_core::Error::from(err).name()
+                            err.name()
                         ));
                         return None;
                     }

@@ -52,6 +52,10 @@ function source(name) {
       isClosed: {
         getter: "getIsClosedFromJS",
       },
+      getFd: {
+        fn: "getFdFromJS",
+        length: 0,
+      },
       ...(name !== "File"
         ? // Buffered versions
           // not implemented in File, yet.

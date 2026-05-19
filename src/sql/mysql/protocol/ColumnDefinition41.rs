@@ -99,7 +99,13 @@ impl ColumnDefinition41 {
             BStr::new(self.schema.slice())
         );
 
-        self.table = reader.encode_len_string()?;
+        // `name` and `table` are surfaced to JS via to_js() when the query's final
+        // OK/EOF packet arrives, which may be many on_data() calls after decode.
+        // The reader returns `Data::Temporary` slices into the socket read buffer
+        // which will have been overwritten or realloc'd by then, so own a copy
+        // now. The other string fields are never read post-decode.
+        let table = reader.encode_len_string()?;
+        self.table = Data::create(table.slice())?;
         bun_core::scoped_log!(
             ColumnDefinition41,
             "table: {}",
@@ -113,7 +119,8 @@ impl ColumnDefinition41 {
             BStr::new(self.org_table.slice())
         );
 
-        self.name = reader.encode_len_string()?;
+        let name = reader.encode_len_string()?;
+        self.name = Data::create(name.slice())?;
         bun_core::scoped_log!(ColumnDefinition41, "name: {}", BStr::new(self.name.slice()));
 
         self.org_name = reader.encode_len_string()?;

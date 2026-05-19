@@ -1,6 +1,20 @@
 import type { Server, ServerWebSocket, Socket } from "bun";
+import { dlopen, FFIType, ptr } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, isWindows, rejectUnauthorizedScope, tempDirWithFiles, tls } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  isLinux,
+  isMacOS,
+  isWindows,
+  libcPathForDlopen,
+  rejectUnauthorizedScope,
+  tempDirWithFiles,
+  tls,
+} from "harness";
+import http from "http";
+import { once } from "node:events";
 import path from "path";
 
 describe.concurrent("Server", () => {
@@ -1388,4 +1402,76 @@ test("should be able to redirect when using empty streams #15320", async () => {
 
   const response = await fetch(`http://localhost:${server.port}/redirect`);
   expect(await response.text()).toBe("Hello, World");
+});
+
+describe.concurrent("node:http socket.fd (Bun extension)", () => {
+  // Start `server` on an ephemeral port, hit it once with fetch, then close —
+  // used by all three tests below. `onConnection` runs before the request.
+  async function runFetchOnce(server: http.Server, onConnection?: (s: any) => void) {
+    if (onConnection) server.on("connection", onConnection);
+    server.listen(0);
+    await once(server, "listening");
+    try {
+      const { port } = server.address() as { port: number };
+      await (await fetch(`http://127.0.0.1:${port}/`)).text();
+    } finally {
+      server.close();
+    }
+  }
+
+  test("request.socket.fd is a non-negative integer", async () => {
+    let observedFromFetch: number | undefined;
+    let observedFromConnection: number | undefined;
+    await runFetchOnce(
+      http.createServer((req, res) => {
+        observedFromFetch = (req.socket as any).fd;
+        res.end("ok");
+      }),
+      socket => {
+        observedFromConnection = socket.fd;
+      },
+    );
+    expect(typeof observedFromFetch).toBe("number");
+    expect(observedFromFetch).toBeGreaterThanOrEqual(0);
+    expect(observedFromConnection).toBe(observedFromFetch);
+  });
+
+  // Gate on linux/macOS only: `isPosix` also includes FreeBSD, but
+  // `libcPathForDlopen()` only handles linux/darwin today.
+  test.if(isLinux || isMacOS)("socket.fd works with getsockname() via FFI", async () => {
+    const libc = dlopen(libcPathForDlopen(), {
+      getsockname: { args: [FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
+    });
+    let result: { rc: number; addrLen: number } | undefined;
+    await runFetchOnce(
+      http.createServer((req, res) => {
+        const fd = (req.socket as any).fd;
+        const addr = new ArrayBuffer(128);
+        const addrLen = new Uint32Array([128]);
+        const rc = libc.symbols.getsockname(fd, ptr(addr), ptr(addrLen));
+        result = { rc, addrLen: addrLen[0] };
+        res.end("ok");
+      }),
+    );
+    expect(result).toEqual({ rc: 0, addrLen: expect.any(Number) });
+    expect(result!.addrLen).toBeGreaterThan(0);
+  });
+
+  test("socket.fd becomes -1 after the socket is destroyed", async () => {
+    let savedSocket: any;
+    await runFetchOnce(
+      http.createServer((req, res) => {
+        savedSocket = req.socket;
+        res.end("ok");
+      }),
+    );
+    // Destroy the socket and wait for `close` so `kHandle` is cleared. Guard
+    // against the socket already being torn down, which can race under load.
+    if (!savedSocket.destroyed) {
+      const closed = once(savedSocket, "close");
+      savedSocket.destroy();
+      await closed;
+    }
+    expect(savedSocket.fd).toBe(-1);
+  });
 });

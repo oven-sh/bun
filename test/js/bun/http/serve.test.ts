@@ -1,7 +1,23 @@
 import { file, gc, Serve, serve, Server } from "bun";
+import { dlopen, FFIType, ptr } from "bun:ffi";
 import { afterAll, afterEach, describe, expect, it, mock } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, dumpStats, isBroken, isIntelMacOS, isIPv4, isIPv6, isPosix, tls, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  dumpStats,
+  isBroken,
+  isIntelMacOS,
+  isIPv4,
+  isIPv6,
+  isLinux,
+  isMacOS,
+  isPosix,
+  libcPathForDlopen,
+  tempDir,
+  tls,
+  tmpdirSync,
+} from "harness";
 import { join, resolve } from "path";
 // import { renderToReadableStream } from "react-dom/server";
 // import app_jsx from "./app.jsx";
@@ -1517,6 +1533,94 @@ describe("server.requestIP", () => {
     await promise;
     expect(Buffer.concat(received).toString()).toEndWith("\r\n\r\nnull");
     connection.end();
+  });
+});
+
+describe("server.requestFD", () => {
+  it("returns a non-negative integer fd for an active TCP request", async () => {
+    let observedFd: number | null = null;
+    using server = Bun.serve({
+      port: 0,
+      fetch(req, server) {
+        observedFd = server.requestFD(req);
+        return Response.json({ fd: observedFd });
+      },
+    });
+
+    const response = await fetch(server.url.origin).then(x => x.json());
+    expect(typeof response.fd).toBe("number");
+    expect(response.fd).toBeGreaterThanOrEqual(0);
+    expect(observedFd).toBe(response.fd);
+  });
+
+  it("returns null after the request context has been released", async () => {
+    let savedRequest: Request | undefined;
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        savedRequest = req;
+        return new Response("ok");
+      },
+    });
+
+    await fetch(server.url.origin).then(x => x.text());
+    expect(savedRequest).toBeDefined();
+    // Poll the observable condition instead of sleeping a fixed time:
+    // the request context detaches asynchronously once the response is fully sent.
+    for (let i = 0; i < 200 && server.requestFD(savedRequest!) !== null; i++) {
+      await Bun.sleep(0);
+    }
+    expect(server.requestFD(savedRequest!)).toBeNull();
+  });
+
+  // Handler shared by the two getsockname() FFI tests below; calls
+  // getsockname(fd) on whatever `requestFD` returns and echoes rc/addrLen.
+  const getsocknameHandler = (req: Request, server: Server) => {
+    const libc = dlopen(libcPathForDlopen(), {
+      getsockname: { args: [FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
+    });
+    const fd = server.requestFD(req) as number;
+    const addr = new ArrayBuffer(128);
+    const addrLen = new Uint32Array([128]);
+    const rc = libc.symbols.getsockname(fd, ptr(addr), ptr(addrLen));
+    return Response.json({ fd, rc, addrLen: addrLen[0] });
+  };
+
+  // Gate FFI tests on linux/macOS only: `isPosix` also includes FreeBSD, but
+  // `libcPathForDlopen()` only handles linux/darwin today and would throw on
+  // any other POSIX platform.
+  it.if(isLinux || isMacOS)("returns an fd usable with getsockname() via FFI", async () => {
+    using server = Bun.serve({ port: 0, fetch: getsocknameHandler });
+    const response = await fetch(server.url.origin).then(x => x.json());
+    expect(response.fd).toBeGreaterThanOrEqual(0);
+    expect(response.rc).toBe(0);
+    expect(response.addrLen).toBeGreaterThan(0);
+  });
+
+  it.if(isLinux || isMacOS)("returns an OS fd for an HTTPS (TLS) request, not the SSL pointer", async () => {
+    using server = Bun.serve({ port: 0, tls, fetch: getsocknameHandler });
+    const response = await fetch(server.url.origin, { tls: { rejectUnauthorized: false } }).then(x => x.json());
+    // If requestFD had returned the SSL* heap pointer (the regression this test
+    // guards against), getsockname would fail with EBADF / rc !== 0.
+    expect(response.rc).toBe(0);
+    expect(response.fd).toBeGreaterThanOrEqual(0);
+    expect(response.addrLen).toBeGreaterThan(0);
+    // A real fd is a small non-negative integer; an SSL* cast would be huge.
+    expect(response.fd).toBeLessThan(1 << 20);
+  });
+
+  it.if(isPosix)("returns an fd for a unix socket request", async () => {
+    using dir = tempDir("serve-request-fd-unix", {});
+    const unix = join(String(dir), "serve-fd.sock");
+    using _server = Bun.serve({
+      unix,
+      fetch(req, server) {
+        return Response.json({ fd: server.requestFD(req) });
+      },
+    });
+    const response = await fetch("http://localhost/", { unix }).then(r => r.json());
+    expect(typeof response.fd).toBe("number");
+    expect(response.fd).toBeGreaterThanOrEqual(0);
   });
 });
 

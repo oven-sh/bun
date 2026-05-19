@@ -2417,6 +2417,22 @@ pub mod bv2_impl {
                                     );
                                 }
                             }
+                        } else if err == bun_core::err!("InvalidDataURL") {
+                            if !handles_import_errors
+                                && !self.transpiler.options.ignore_module_resolution_errors
+                            {
+                                bun_ast::Log::add_resolve_error_with_text_dupe(
+                                    log,
+                                    source,
+                                    import_record.range,
+                                    format_args!(
+                                        "Could not resolve data URL: \"{}\"",
+                                        bstr::BStr::new(&import_record.specifier),
+                                    ),
+                                    &import_record.specifier,
+                                    import_record.kind.into(),
+                                );
+                            }
                         }
                         // assume other errors are already in the log
                         return;
@@ -6371,6 +6387,25 @@ pub mod bv2_impl {
                                             import_record.kind.into(),
                                         );
                                     }
+                                }
+                            } else if err == bun_core::err!("InvalidDataURL") {
+                                if !import_record
+                                    .flags
+                                    .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS)
+                                    && !self.transpiler.options.ignore_module_resolution_errors
+                                {
+                                    last_error = Some(err);
+                                    bun_ast::Log::add_resolve_error_with_text_dupe(
+                                        log,
+                                        Some(source),
+                                        import_record.range,
+                                        format_args!(
+                                            "Could not resolve data URL: \"{}\"",
+                                            bstr::BStr::new(&import_record.path.text),
+                                        ),
+                                        &import_record.path.text,
+                                        import_record.kind.into(),
+                                    );
                                 }
                             } else {
                                 // assume other errors are already in the log

@@ -1321,6 +1321,29 @@ impl<'a> Resolver<'a> {
 
         match DataURL::parse(import_path) {
             Err(_) => {
+                // Malformed data URL (e.g. "data:" with no comma). For CSS url()
+                // tokens we preserve the URL as-is (matching the behavior for
+                // http://, https://, and // URLs above) so the build doesn't
+                // silently lose the file. For other import kinds we surface a
+                // real error instead of the downstream panic that used to hit
+                // when the AST was discarded.
+                if kind.is_from_css() {
+                    if let Some(debug) = self.debug_logs.as_mut() {
+                        debug.add_note(b"Marking malformed \"dataurl\" as external".to_vec());
+                    }
+                    let _ = self.flush_debug_logs(FlushMode::Success);
+                    self.extension_order = original_order;
+                    return ResultUnion::Success(Result {
+                        import_kind: kind,
+                        path_pair: PathPair {
+                            primary: Path::init(import_path),
+                            secondary: None,
+                        },
+                        module_type: options::ModuleType::Unknown,
+                        flags: ResultFlags::IS_EXTERNAL,
+                        ..Default::default()
+                    });
+                }
                 self.extension_order = original_order;
                 return ResultUnion::Failure(bun_core::err!("InvalidDataURL"));
             }

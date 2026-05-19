@@ -511,11 +511,11 @@ extern "C" bool JSBundlerPlugin__anyMatches(Bun::JSBundlerPlugin* pluginObject, 
     return pluginObject->plugin.anyMatchesCrossThread(pluginObject->vm(), namespaceString, path, isOnLoad);
 }
 
-extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, const BunString* namespaceString, const BunString* path, void* context, uint8_t defaultLoaderId, bool isServerSide)
+extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, BunString* namespaceString, BunString* path, void* context, uint8_t defaultLoaderId, bool isServerSide)
 {
     JSC::JSGlobalObject* globalObject = plugin->globalObject();
-    WTF::String namespaceStringStr = namespaceString ? namespaceString->toWTFString(BunString::ZeroCopy) : WTF::String();
-    WTF::String pathStr = path ? path->toWTFString(BunString::ZeroCopy) : WTF::String();
+    WTF::String namespaceStringStr = namespaceString ? namespaceString->transferToWTFString() : WTF::String();
+    WTF::String pathStr = path ? path->transferToWTFString() : WTF::String();
 
     JSFunction* function = plugin->onLoadFunction.get(plugin);
     if (!function) [[unlikely]]
@@ -550,15 +550,15 @@ extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, const
     }
 }
 
-extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, const BunString* namespaceString, const BunString* path, const BunString* importer, void* context, uint8_t kindId)
+extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, BunString* namespaceString, BunString* path, BunString* importer, void* context, uint8_t kindId)
 {
     JSC::JSGlobalObject* globalObject = plugin->globalObject();
-    WTF::String namespaceStringStr = namespaceString ? namespaceString->toWTFString(BunString::ZeroCopy) : WTF::String("file"_s);
+    WTF::String namespaceStringStr = namespaceString ? namespaceString->transferToWTFString() : WTF::String("file"_s);
     if (namespaceStringStr.length() == 0) {
         namespaceStringStr = WTF::String("file"_s);
     }
-    WTF::String pathStr = path ? path->toWTFString(BunString::ZeroCopy) : WTF::String();
-    WTF::String importerStr = importer ? importer->toWTFString(BunString::ZeroCopy) : WTF::String();
+    WTF::String pathStr = path ? path->transferToWTFString() : WTF::String();
+    WTF::String importerStr = importer ? importer->transferToWTFString() : WTF::String();
     auto& vm = JSC::getVM(globalObject);
 
     JSFunction* function = plugin->onResolveFunction.get(plugin);

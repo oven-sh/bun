@@ -225,7 +225,7 @@ unsafe extern "C" {
     safe fn WebWorker__dispatchError(
         global: &JSGlobalObject,
         cpp_worker: *mut c_void,
-        message: BunString,
+        message: &mut BunString,
         err: JSValue,
     );
 }
@@ -1432,11 +1432,10 @@ impl WebWorker {
             Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
             Err(JsError::Thrown | JsError::Terminated) => panic!("unhandled exception"),
         };
-        // RAII: Zig's `defer str.deref()` — released on scope exit.
-        scopeguard::defer! { str.deref(); }
+        let mut str = bun_core::OwnedString::new(str);
         let dispatch = jsc::host_fn::from_js_host_call_generic(global, || {
             // `cpp_worker` is the opaque C++-owned handle; `str` reffed for the call.
-            WebWorker__dispatchError(global, self.cpp_worker, str, err)
+            WebWorker__dispatchError(global, self.cpp_worker, &mut str, err)
         });
         if let Err(e) = dispatch {
             // Spec web_worker.zig:810 — `.asException(..).?`: `take_exception`
@@ -1514,14 +1513,10 @@ fn on_unhandled_rejection(
     // (declares + checks a TopExceptionScope around the FFI call, same as
     // `flush_logs` above) and discard any actual exception: we are already the
     // last-resort error handler and about to arm termination.
+    let mut error_message = bun_core::OwnedString::new(BunString::clone_utf8(&array));
     if jsc::host_fn::from_js_host_call_generic(global_object, || {
         // `cpp_worker` is the opaque C++-owned handle round-tripped via `safe fn`.
-        WebWorker__dispatchError(
-            global_object,
-            worker.cpp_worker,
-            BunString::clone_utf8(&array),
-            error_instance,
-        );
+        WebWorker__dispatchError(global_object, worker.cpp_worker, &mut error_message, error_instance);
     })
     .is_err()
     {

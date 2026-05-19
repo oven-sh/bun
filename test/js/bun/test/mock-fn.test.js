@@ -808,6 +808,18 @@ describe("mock()", () => {
       expect(typeof Reflect.construct(fn, [])).toBe("object");
     });
 
+    test("records instances and results", () => {
+      const fn = jest.fn(function () {
+        this.x = 1;
+        return "primitive";
+      });
+      const instance = new fn();
+      expect(fn.mock.instances).toHaveLength(1);
+      expect(fn.mock.instances[0]).toBe(instance);
+      expect(fn.mock.contexts[0]).toBe(instance);
+      expect(fn.mock.results[0]).toEqual({ type: "return", value: "primitive" });
+    });
+
     test("returns the implementation's return value when it is an object", () => {
       const obj = { custom: true };
       const fn = jest.fn(() => obj);

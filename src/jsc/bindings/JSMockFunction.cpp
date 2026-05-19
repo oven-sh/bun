@@ -852,6 +852,19 @@ static EncodedJSValue jsMockFunctionCallOrConstruct(JSGlobalObject* lexicalGloba
         }
         thisValue = JSC::constructEmptyObject(globalObject, prototype);
         RETURN_IF_EXCEPTION(scope, {});
+
+        if (auto* instances = fn->instances.get()) {
+            instances->push(globalObject, thisValue);
+            RETURN_IF_EXCEPTION(scope, {});
+        } else {
+            JSC::ObjectInitializationScope object(vm);
+            instances = JSC::JSArray::tryCreateUninitializedRestricted(
+                object,
+                globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
+                1);
+            instances->initializeIndex(object, 0, thisValue);
+            fn->instances.set(vm, fn, instances);
+        }
     }
 
     auto encodeReturn = [&](JSValue value) -> EncodedJSValue {

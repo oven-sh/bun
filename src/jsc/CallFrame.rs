@@ -290,12 +290,12 @@ impl<'a> Iterator<'a> {
 ///
 /// Prefer `Iterator` for a simpler iterator.
 pub struct ArgumentsSlice<'a> {
-    /// Backing storage for the remaining-args view. Borrowed (`init`) or
-    /// heap-owned dupe (`init_async`) — Zig's `initAsync` does
-    /// `bun.default_allocator.dupe(jsc.JSValue, slice)` so the remaining slice
-    /// survives the original CallFrame stack slot being reused before async
-    /// work consumes the arguments. A borrowed `&'a [JSValue]` here would
-    /// dangle in that case.
+    /// Backing storage for the remaining-args view. Both [`Self::init`] and
+    /// [`Self::init_async`] borrow — `all: &'a [JSValue]` already ties this
+    /// struct's lifetime to the source slice, so the heap-owned dupe Zig's
+    /// `initAsync` does buys nothing here (it could not outlive `'a`). Kept as
+    /// `Cow` so a future caller that does own its args can pass `Owned`
+    /// without changing the type.
     remaining_buf: Cow<'a, [JSValue]>,
     /// Cursor into `remaining_buf`; advances on `eat()`. Replaces Zig's
     /// `remaining.ptr += 1` reslice (which a `Cow` can't express in-place).

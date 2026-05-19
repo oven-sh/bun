@@ -2574,6 +2574,20 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             try self.tokens.append(.Newline);
                             continue;
                         },
+                        // Handle CRLF line endings from Windows-edited scripts.
+                        // A `\r` immediately before `\n` in Normal state is
+                        // discarded so the `\n` fires its usual word-break +
+                        // Newline token. Inside quotes, `\r` stays literal
+                        // (matches bash/dash).
+                        '\r' => {
+                            comptime assertSpecialChar('\r');
+
+                            if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
+                            if (self.peek()) |next| {
+                                if (!next.escaped and next.char == '\n') continue;
+                            }
+                            break :escaped;
+                        },
 
                         // glob asterisks
                         '*' => {
@@ -2851,6 +2865,34 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                         try self.break_word_impl(true, true, false);
                     }
                     continue;
+                }
+                // Escaped CR from `\<CR><LF>` line-continuation in a
+                // CRLF-encoded script: `read_char()` swallowed the backslash
+                // and returned the `\r` as escaped, leaving the `\n` for the
+                // next read. Consume that `\n` so the whole `\<CR><LF>` acts
+                // as a single line continuation (matches the escaped-`\n`
+                // case above). Escaped CR *not* followed by `\n` preserves
+                // both bytes verbatim: in Normal state the swallowed
+                // backslash was already the escape prefix (so only `\r`
+                // remains), but in Double state bash/POSIX treats `\<CR>`
+                // as literal `\` + CR, so re-emit the backslash that
+                // read_char() consumed.
+                else if (char == '\r') {
+                    if (comptime bun.Environment.allow_assert) {
+                        assert(input.escaped);
+                    }
+                    if (self.peek()) |next| {
+                        if (!next.escaped and next.char == '\n') {
+                            _ = self.eat();
+                            if (self.chars.state != .Double) {
+                                try self.break_word_impl(true, true, false);
+                            }
+                            continue;
+                        }
+                    }
+                    if (self.chars.state == .Double) {
+                        try self.appendCharToStrPool('\\');
+                    }
                 }
 
                 try self.appendCharToStrPool(char);
@@ -3673,8 +3715,11 @@ pub fn ShellCharIter(comptime encoding: StringEncoding) type {
                 .Double => {
                     const peeked = self.src.indexNext() orelse return null;
                     switch (peeked.char) {
-                        // Backslash only applies to these characters
-                        '$', '`', '"', '\\', '\n', '#' => {
+                        // Backslash only applies to these characters.
+                        // `\r` is included so `\<CR><LF>` in a CRLF script
+                        // reaches the escaped-`\r` line-continuation handler
+                        // in the main lexer (parity with `\<LF>`).
+                        '$', '`', '"', '\\', '\n', '\r', '#' => {
                             char = peeked.char;
                         },
                         else => return .{ .char = char, .escaped = false },
@@ -4162,7 +4207,7 @@ pub const ShellSrcBuilder = struct {
 };
 
 /// Characters that need to escaped
-const SPECIAL_CHARS = [_]u8{ '~', '[', ']', '#', ';', '\n', '*', '{', ',', '}', '`', '$', '=', '(', ')', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '|', '>', '<', '&', '\'', '"', ' ', '\\', SPECIAL_JS_CHAR };
+const SPECIAL_CHARS = [_]u8{ '~', '[', ']', '#', ';', '\n', '\r', '*', '{', ',', '}', '`', '$', '=', '(', ')', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '|', '>', '<', '&', '\'', '"', ' ', '\\', SPECIAL_JS_CHAR };
 const SPECIAL_CHARS_TABLE: bun.bit_set.IntegerBitSet(256) = brk: {
     var table = bun.bit_set.IntegerBitSet(256).initEmpty();
     for (SPECIAL_CHARS) |c| {

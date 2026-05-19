@@ -2406,21 +2406,6 @@ pub fn reloadEntryPointForTestRunner(this: *VirtualMachine, entry_path: []const 
     return promise;
 }
 
-// worker dont has bun_watcher and also we dont wanna call autoTick before dispatchOnline
-pub fn loadEntryPointForWebWorker(this: *VirtualMachine, entry_path: string) anyerror!*JSInternalPromise {
-    const promise = try this.reloadEntryPoint(entry_path);
-    this.eventLoop().performGC();
-    this.eventLoop().waitForPromiseWithTermination(jsc.AnyPromise{
-        .internal = promise,
-    });
-    if (this.worker) |worker| {
-        if (worker.hasRequestedTerminate()) {
-            return error.WorkerTerminated;
-        }
-    }
-    return this.pending_internal_promise.?;
-}
-
 pub fn loadEntryPointForTestRunner(this: *VirtualMachine, entry_path: string) anyerror!*JSInternalPromise {
     var promise = try this.reloadEntryPointForTestRunner(entry_path);
 

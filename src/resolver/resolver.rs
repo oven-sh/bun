@@ -4340,7 +4340,6 @@ impl<'a> Resolver<'a> {
                                 iterate: true,
                             },
                         )
-                        .map_err(Into::into)
                     };
                     #[cfg(windows)]
                     let open_req: core::result::Result<FD, bun_core::Error> = {

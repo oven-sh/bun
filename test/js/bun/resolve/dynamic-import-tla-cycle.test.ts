@@ -162,6 +162,61 @@ test("static sibling import waits for a TLA dep that suspended earlier in the sa
   expect(exitCode).toBe(0);
 });
 
+// #30651: same TDZ hole as #30259 but reached through two *separate* dynamic
+// imports — the #30262 fix keys on `asyncEvaluationOrder < asyncOrderWatermark`,
+// which fires whenever the TLA dep first suspended in a prior Evaluate() pass.
+// For a parallel dynamic import that just walks into the suspended dep (not
+// the Nitro self-deadlock the skip was written for) we must still take the
+// spec wait. Discriminator: the dynamic-import initiator the DFS was launched
+// from — skip only when dep == initiator.
+//
+// Timing note: `setTimeout` is the race condition this PR fixes. The first
+// dynamic import must fully complete its DFS (tla.mjs transitions to
+// EvaluatingAsync) before the second dynamic import's Evaluate() runs. File
+// fetching in the module loader is async I/O, so purely promise-chained
+// coordination inside JS can't sequence it deterministically — we need a
+// timer to yield to the loop iteration that drains the I/O completions
+// between the two imports.
+test("parallel dynamic imports of the same TLA dep wait instead of running against TDZ bindings", async () => {
+  using dir = tempDir("parallel-dynamic-tla", {
+    "driver.mjs": `
+      const p1 = import("./entry1.mjs");
+      // 10ms is enough for p1's fetch+link+Evaluate() to complete and
+      // leave tla.mjs parked in EvaluatingAsync (its \`await\` is on a
+      // 100ms timer that outlives this delay).
+      await new Promise(r => setTimeout(r, 10));
+      const p2 = import("./entry2.mjs");
+      await Promise.all([p1, p2]);
+    `,
+    "entry1.mjs": `
+      import { foo } from "./tla.mjs";
+      console.log("entry1 foo:", foo);
+    `,
+    "entry2.mjs": `
+      import { foo } from "./tla.mjs";
+      console.log("entry2 foo:", foo);
+    `,
+    "tla.mjs": `
+      await new Promise(r => setTimeout(r, 100));
+      export const foo = 123;
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "driver.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim().split("\n").sort()).toEqual(["entry1 foo: 123", "entry2 foo: 123"]);
+  expect(exitCode).toBe(0);
+});
+
 // Same as above but the TLA dep is reached indirectly through different parents
 // (so neither parent is on the DFS stack when the second one visits it). Guards
 // against discriminating by "is an asyncParentModule on the stack".

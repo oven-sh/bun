@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isDebug } from "harness";
 
 // Bun.cron.parse() and the in-process Bun.cron(schedule, handler) interpret
 // schedules in UTC. The OS-level Bun.cron(path, schedule, title) overload
@@ -8,22 +8,28 @@ import { bunEnv, bunExe } from "harness";
 const parse = (expr: string, from: string) => Bun.cron.parse(expr, new Date(from))!.toISOString();
 
 describe("Bun.cron.parse — UTC", () => {
-  test("0 9 * * * is 9am UTC regardless of process TZ", async () => {
-    // Parse is UTC; spawning under a non-UTC TZ should produce the same result.
-    for (const tz of ["America/Los_Angeles", "Asia/Tokyo", "UTC"]) {
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `process.stdout.write(Bun.cron.parse("0 9 * * *", new Date("2026-06-15T00:00:00Z")).toISOString())`,
-        ],
-        env: { ...bunEnv, TZ: tz },
-      });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(stdout).toBe("2026-06-15T09:00:00.000Z");
-      expect(exitCode).toBe(0);
-    }
-  });
+  test(
+    "0 9 * * * is 9am UTC regardless of process TZ",
+    async () => {
+      // Parse is UTC; spawning under a non-UTC TZ should produce the same result.
+      for (const tz of ["America/Los_Angeles", "Asia/Tokyo", "UTC"]) {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `process.stdout.write(Bun.cron.parse("0 9 * * *", new Date("2026-06-15T00:00:00Z")).toISOString())`,
+          ],
+          env: { ...bunEnv, TZ: tz },
+        });
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        expect(stdout).toBe("2026-06-15T09:00:00.000Z");
+        expect(exitCode).toBe(0);
+      }
+      // Three sequential debug-build subprocesses (~1.7s startup each under
+      // ASAN) push this past the 5s default, so give it headroom there.
+    },
+    isDebug ? 30_000 : undefined,
+  );
 
   test("weekday matching uses UTC day-of-week", () => {
     // 2026-06-15 is a Monday in UTC.
@@ -47,6 +53,32 @@ describe("Bun.cron.parse — UTC", () => {
   test("DOM/DOW OR semantics when both restricted", () => {
     // 0 0 13 * 5 → every 13th OR every Friday. From 2026-01-01 (Thu), first is Fri Jan 2.
     expect(parse("0 0 13 * 5", "2026-01-01T00:00:00Z")).toBe("2026-01-02T00:00:00.000Z");
+  });
+});
+
+describe("Bun.cron.parse — invalid `from` argument", () => {
+  // Values outside the ECMAScript Date range (±8.64e15 ms) used to reach
+  // WTF's int64 cast and panic with "integer does not fit in destination type".
+  test.each([1e20, -1e20, 8.64e15 + 1, -8.64e15 - 1, Number.MAX_VALUE, Infinity, -Infinity, NaN])(
+    "throws for out-of-range/non-finite ms: %p",
+    from => {
+      expect(() => Bun.cron.parse("@hourly", from)).toThrow("Invalid date value");
+    },
+  );
+
+  test("accepts the Date range boundary", () => {
+    // from = +8.64e15 is +275760-09-13T00:00:00Z; the next @hourly occurrence
+    // falls past the representable range → null, not an Invalid Date.
+    expect(Bun.cron.parse("@hourly", 8.64e15)).toBeNull();
+    // from = -8.64e15 is -271821-04-20T00:00:00Z; the next @hourly is 01:00,
+    // comfortably in range.
+    expect(Bun.cron.parse("@hourly", -8.64e15)?.toISOString()).toBe("-271821-04-20T01:00:00.000Z");
+    // Just inside the upper boundary: next @hourly lands exactly on 8.64e15.
+    expect(Bun.cron.parse("@hourly", 8.64e15 - 60_000)?.getTime()).toBe(8.64e15);
+  });
+
+  test("rejects an Invalid Date (consistent with numeric NaN)", () => {
+    expect(() => Bun.cron.parse("@hourly", new Date(1e20))).toThrow("Invalid date value");
   });
 });
 

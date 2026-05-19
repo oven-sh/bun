@@ -17,7 +17,7 @@ use bun_ast::Ref;
 // `bun.ast.Index.Int` — the underlying integer repr of `Index`.
 pub(crate) use crate::IndexInt;
 
-pub struct Graph {
+pub struct Graph<'a> {
     // TODO(port): lifetime — no direct LIFETIMES.tsv row for Graph.pool, but row 170
     // (ThreadPool.v2, BACKREF) evidence states "BundleV2.graph.pool owns ThreadPool".
     // bundle_v2.zig:992 allocates it from `this.arena()` (the `self.heap` arena) and
@@ -26,7 +26,7 @@ pub struct Graph {
     // safe — the BACKREF invariant (pointee outlives holder) holds for the entire
     // bundle pass.
     pub pool: bun_ptr::BackRef<ThreadPool>,
-    pub heap: ThreadLocalArena,
+    pub heap: &'a ThreadLocalArena,
 
     /// Mapping user-specified entry points to their Source Index
     // PERF(port): Zig fed this ArrayList from `self.heap` (self-referential arena).
@@ -39,7 +39,7 @@ pub struct Graph {
     /// When a parse is in progress / queued, it is `Ast.empty`
     // PORT NOTE: BundledAst<'arena> borrows from self.heap (sibling-field self-ref);
     // 'static here is a placeholder. TODO(refactor): thread the lifetime via raw ptr or Ouroboros.
-    pub ast: MultiArrayList<JSAst<'static>>,
+    pub ast: MultiArrayList<JSAst<'a>>,
 
     /// During the scan + parse phase, this value keeps a count of the remaining
     /// tasks. Once it hits zero, the scan phase ends and linking begins. Note
@@ -140,13 +140,13 @@ bitflags::bitflags! {
     }
 }
 
-impl Default for Graph {
-    fn default() -> Self {
+impl<'a> Graph<'a> {
+    pub fn new(heap: &'a ThreadLocalArena) -> Self {
         Self {
             // Self-referential arena pointer; real value wired in
             // `BundleV2::init` before any use (Graph.zig has `= undefined`).
             pool: bun_ptr::BackRef::from(NonNull::<ThreadPool>::dangling()),
-            heap: ThreadLocalArena::new(),
+            heap,
             entry_points: Vec::new(),
             entry_point_original_names: IndexStringMap::default(),
             input_files: MultiArrayList::default(),
@@ -166,7 +166,7 @@ impl Default for Graph {
     }
 }
 
-impl Graph {
+impl<'a> Graph<'a> {
     /// Shared borrow of the bundler `ThreadPool`.
     ///
     /// `pool` is arena-allocated in `BundleV2::init` (bundle_v2.zig:992) and

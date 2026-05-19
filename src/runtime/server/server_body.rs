@@ -3171,11 +3171,9 @@ where
         };
         // SAFETY: ctx_slot was just initialized by create_in.
         let ctx = unsafe { &mut *ctx_slot };
-        // `VirtualMachine::jsc_vm()` is the safe accessor for the JSC VM
-        // owned by the per-thread VirtualMachine.
-        self.vm_ref()
-            .jsc_vm()
-            .deprecated_report_extra_memory(mem::size_of::<Ctx>());
+
+        // Don't report extra GC memory here: ctx is a recycled pool slot,
+        // not a fresh heap allocation (see NewServer::on_request).
 
         // `vm.initRequestBodyValue(.{ .Null = {} })` — pooled body slot,
         // ref_count = 1.

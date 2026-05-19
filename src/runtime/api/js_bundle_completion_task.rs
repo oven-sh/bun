@@ -1102,12 +1102,6 @@ impl CompletionStruct for JSBundleCompletionTask {
         let event_loop: bun_bundler::linker_context_mod::EventLoop =
             Some(NonNull::from(&mut any_loop).cast::<bun_event_loop::AnyEventLoop<'static>>());
 
-        // Zig passed the same `heap` by value (mimalloc handle struct copy);
-        // bumpalo arenas can't be aliased that way, so `BundleV2` owns its
-        // own arena (its only consumer is `linker.graph.bump`, repointed in
-        // `BundleV2::init`). Transpiler/AST allocations stay in `bump`.
-        let heap = Arena::new();
-
         // `thread_pool` is the `WorkPool` singleton (`OnceLock`-backed,
         // process-lifetime, concurrently read by worker threads). Do NOT
         // materialize `&mut` from it — its provenance is `&'static`, so even a
@@ -1115,7 +1109,9 @@ impl CompletionStruct for JSBundleCompletionTask {
         // (`NonNull`) end-to-end; `ThreadPool::init` stores it as `*mut`.
         let worker_pool = NonNull::new(thread_pool);
 
-        let mut bv2 = BundleV2::init(transpiler, None, bump, event_loop, false, worker_pool, heap)?;
+        // Zig passed the same `heap` by value (mimalloc handle struct copy);
+        // `Graph.heap` is now a borrow, so reuse the caller-owned `bump`.
+        let mut bv2 = BundleV2::init(transpiler, None, bump, event_loop, false, worker_pool, bump)?;
 
         bv2.plugins = self.plugins();
         bv2.completion = Some(self.as_js_bundle_completion_task());

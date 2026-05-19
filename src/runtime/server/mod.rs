@@ -720,14 +720,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let ctx: *mut ServerRequestContext<SSL, DEBUG> = ctx_slot;
         let ctx_mut = unsafe { &mut *ctx };
 
-        // `VirtualMachine::jsc_vm()` is the safe accessor for the JSC VM
-        // (set in VM init; valid for the JS thread's lifetime).
-        server
-            .vm()
-            .jsc_vm()
-            .deprecated_report_extra_memory(
-                core::mem::size_of::<ServerRequestContext<SSL, DEBUG>>(),
-            );
+        // Don't report extra GC memory here: ctx lives in a recycled pool
+        // slot, not a fresh heap allocation, and reporting it per request
+        // hits the slow GC heuristic path on every request.
 
         // Allocate the pooled body slot (ref_count = 1).
         let body_hive = crate::webcore::body::hive_alloc(crate::webcore::body::Value::Null);

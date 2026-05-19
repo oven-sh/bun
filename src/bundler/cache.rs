@@ -481,7 +481,7 @@ impl Css {
 
 pub struct JavaScript {}
 
-pub type JavaScriptResult = js_parser::Result;
+pub type JavaScriptResult<'a> = js_parser::Result<'a>;
 
 impl JavaScript {
     pub fn init() -> JavaScript {
@@ -499,7 +499,7 @@ impl JavaScript {
         defines: &'a Define,
         log: &mut bun_ast::Log,
         source: &'a bun_ast::Source,
-    ) -> Result<Option<js_parser::Result>, bun_core::Error> {
+    ) -> Result<Option<js_parser::Result<'a>>, bun_core::Error> {
         let mut temp_log = bun_ast::Log::init();
         temp_log.level = log.level;
         let mut parser = match js_parser::Parser::init(opts, &mut temp_log, source, defines, bump) {

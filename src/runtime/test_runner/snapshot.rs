@@ -278,7 +278,7 @@ impl<'a> Snapshots<'a> {
 
         // TODO: when common js transform changes, keep this updated or add flag to support this version
 
-        for part in ast.parts.slice_mut() {
+        for part in ast.parts.as_mut_slice() {
             // `part.stmts` is an arena-owned `StoreSlice<Stmt>`; arena outlives this
             // loop and `ast` is owned here, so unique access is upheld.
             for stmt in part.stmts.slice_mut() {

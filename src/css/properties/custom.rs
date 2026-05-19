@@ -347,8 +347,7 @@ impl TokenList {
                         && !url.is_absolute(dest.get_import_records()?)
                     {
                         let pretty = std::ptr::from_ref::<[u8]>(
-                            dest.get_import_records()?
-                                .at(url.import_record_idx as usize)
+                            dest.get_import_records()?[url.import_record_idx as usize]
                                 .path
                                 .pretty,
                         );

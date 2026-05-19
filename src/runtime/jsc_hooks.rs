@@ -2076,6 +2076,9 @@ fn transpile_source_code_inner(
             let mut arena: Box<bun_alloc::Arena> =
                 unsafe { (*jsc_vm).module_loader.transpile_source_code_arena.take() }
                     .unwrap_or_else(|| Box::new(bun_alloc::Arena::new()));
+            // Stable heap address (Box interior); survives the move into
+            // `arena_guard` and into the VM slot on give-back.
+            let arena_ptr: *const bun_alloc::Arena = &raw const *arena;
             // Route `AstAlloc` to `arena`'s `mi_heap_t*` (see the
             // `reset_store` note above). `_ast_scope.enter()` already nulled
             // `AST_HEAP`; this rebinds it to the heap that the parser scratch
@@ -2448,7 +2451,9 @@ fn transpile_source_code_inner(
                     }
                 };
                 let parse_options = ParseOptions {
-                    arena: &arena_guard.1,
+                    // SAFETY: `arena_ptr` points at the `Box<Arena>` interior
+                    // held by `arena_guard`; the guard outlives `parse_result`.
+                    arena: unsafe { &*arena_ptr },
                     path: parse_path,
                     loader,
                     dirname_fd: bun_sys::Fd::INVALID,
@@ -2642,7 +2647,7 @@ fn transpile_source_code_inner(
                         // — `Expr` lives in `bun_js_parser` (no JSC dep), so
                         // the JS materialization is the `bun_js_parser_jsc`
                         // extension fn.
-                        let part = parse_result.ast.parts.at(0);
+                        let part = &parse_result.ast.parts[0];
                         // SAFETY: `Part.stmts` is an arena-owned slice; the
                         // arena outlives this call (returned to the VM by the
                         // scopeguard above only after we return).

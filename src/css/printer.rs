@@ -94,7 +94,7 @@ pub use css::targets::Features;
 
 #[derive(Clone, Copy)]
 pub struct ImportInfo<'a> {
-    pub import_records: &'a Vec<ImportRecord>,
+    pub import_records: &'a [ImportRecord],
     /// bundle_v2.graph.ast.items(.url_for_css)
     pub ast_urls_for_css: &'a [&'a [u8]],
     /// bundle_v2.graph.input_files.items(.unique_key_for_additional_file)
@@ -104,7 +104,7 @@ pub struct ImportInfo<'a> {
 impl<'a> ImportInfo<'a> {
     /// Only safe to use when outside the bundler. As in, the import records
     /// were not resolved to source indices. This will out-of-bounds otherwise.
-    pub fn init_outside_of_bundler(records: &'a Vec<ImportRecord>) -> ImportInfo<'a> {
+    pub fn init_outside_of_bundler(records: &'a [ImportRecord]) -> ImportInfo<'a> {
         ImportInfo {
             import_records: records,
             ast_urls_for_css: &[],
@@ -337,7 +337,7 @@ impl<'a> Printer<'a> {
     }
 
     #[inline]
-    pub fn get_import_records(&mut self) -> PrintResult<&'a Vec<ImportRecord>> {
+    pub fn get_import_records(&mut self) -> PrintResult<&'a [ImportRecord]> {
         if let Some(info) = &self.import_info {
             return Ok(info.import_records);
         }
@@ -346,7 +346,7 @@ impl<'a> Printer<'a> {
 
     pub fn print_import_record(&mut self, import_record_idx: u32) -> PrintResult<()> {
         if let Some(info) = &self.import_info {
-            let import_record = info.import_records.at(import_record_idx as usize);
+            let import_record = &info.import_records[import_record_idx as usize];
             let [a, b] =
                 bun_core::cheap_prefix_normalizer(self.public_path, &import_record.path.text);
             // PORT NOTE: reshaped for borrowck — copied (a, b) out before re-borrowing &mut self
@@ -363,7 +363,7 @@ impl<'a> Printer<'a> {
     #[inline]
     pub fn import_record(&mut self, import_record_idx: u32) -> PrintResult<&ImportRecord> {
         if let Some(info) = &self.import_info {
-            return Ok(info.import_records.at(import_record_idx as usize));
+            return Ok(&info.import_records[import_record_idx as usize]);
         }
         Err(self.add_no_import_record_error())
     }
@@ -373,7 +373,7 @@ impl<'a> Printer<'a> {
         let Some(import_info) = &self.import_info else {
             return Err(self.add_no_import_record_error());
         };
-        let record = import_info.import_records.at(import_record_idx as usize);
+        let record = &import_info.import_records[import_record_idx as usize];
         if record.source_index.is_valid() {
             // It has an inlined url for CSS
             let urls_for_css = import_info.ast_urls_for_css[record.source_index.get() as usize];

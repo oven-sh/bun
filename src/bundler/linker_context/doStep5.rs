@@ -200,7 +200,7 @@ impl LinkerContext<'_> {
         // PORT NOTE: reshaped for borrowck — multiple `&mut` into graph SoA;
         // raw per-row pointers via `split_raw()` so concurrent tasks never
         // hold overlapping `&mut [T]`.
-        let parts_slice: *mut [Part] = row_mut!(ast.parts, bun_ast::PartList, id).slice_mut();
+        let parts_slice: *mut [Part] = row_mut!(ast.parts, bun_ast::PartList, id).as_mut_slice();
         let named_imports: *mut crate::bundled_ast::NamedImports =
             (ast.named_imports as *mut crate::bundled_ast::NamedImports).wrapping_add(id as usize);
         // SAFETY: `named_imports` is a stable column pointer (see above). We
@@ -681,7 +681,7 @@ impl LinkerContext<'_> {
 
             // Initialize the part that was allocated for us earlier. The information
             // here will be used after this during tree shaking.
-            ast_parts.slice_mut()[bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize] = Part {
+            ast_parts.as_mut_slice()[bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize] = Part {
                 stmts: if self.options.output_format != Format::InternalBakeDev {
                     let init = &mut stmts_slab[all_export_stmts_base..stmts_head];
                     debug_assert_eq!(init.len(), all_export_stmts_len);

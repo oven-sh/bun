@@ -209,6 +209,12 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_IPV4, "BUN_FEATURE_FLAG_DISABLE_IPV4", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_IPV6, "BUN_FEATURE_FLAG_DISABLE_IPV6", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_MEMFD, "BUN_FEATURE_FLAG_DISABLE_MEMFD", {});
+    /// React to OS low-memory signals (Windows LowMemoryResourceNotification,
+    /// macOS DISPATCH_SOURCE_TYPE_MEMORYPRESSURE, Linux PSI) by running a sync
+    /// GC, shrinking the JSC footprint, and forcing mi_collect. Default-off
+    /// while we gather data; flip to default-on (rename to ...DISABLE...) once
+    /// validated.
+    new_feature_flag!(pub BUN_FEATURE_FLAG_EXPERIMENTAL_MEMORY_PRESSURE_HANDLER, "BUN_FEATURE_FLAG_EXPERIMENTAL_MEMORY_PRESSURE_HANDLER", {});
     /// The RedisClient supports auto-pipelining by default. This flag disables that behavior.
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING, "BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK, "BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK", {});

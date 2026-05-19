@@ -6,7 +6,7 @@ use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSType, JSValue, JsResult}
 pub fn create(global: &JSGlobalObject) -> JSValue {
     // NB: helper sizes inline capacity from `fns.len()`, fixing the prior
     // `len = 3` vs 4-entry drift.
-    jsc::create_host_function_object(
+    let obj = jsc::create_host_function_object(
         global,
         &[
             ("gcAggressionLevel", __jsc_host_gc_aggression_level, 1),
@@ -14,7 +14,24 @@ pub fn create(global: &JSGlobalObject) -> JSValue {
             ("mimallocDump", __jsc_host_dump_mimalloc, 1),
             ("memoryFootprint", __jsc_host_memory_footprint, 1),
         ],
-    )
+    );
+    #[cfg(debug_assertions)]
+    obj.put_host_functions(
+        global,
+        &[
+            (
+                "simulateMemoryPressure",
+                __jsc_host_simulate_memory_pressure,
+                0,
+            ),
+            (
+                "testMemoryPressureUninstallBarrier",
+                __jsc_host_test_memory_pressure_uninstall_barrier,
+                0,
+            ),
+        ],
+    );
+    obj
 }
 
 #[bun_jsc::host_fn]
@@ -77,6 +94,30 @@ fn memory_footprint(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JS
         return Ok(JSValue::UNDEFINED);
     }
     Ok(JSValue::js_number(bytes as f64))
+}
+
+/// Debug-only test seam for `MemoryPressureWatcher`. Runs the same JS-thread
+/// `respond()` path the OS callback would, returns the post-increment
+/// `analytics.Features.memory_pressure` count.
+#[cfg(debug_assertions)]
+#[bun_jsc::host_fn]
+fn simulate_memory_pressure(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    let count = jsc::memory_pressure_watcher::simulate(global.bun_vm());
+    Ok(JSValue::js_number(count as f64))
+}
+
+/// Debug-only red/green seam for the Darwin `uninstall()` barrier. See
+/// `MemoryPressureWatcher::darwin::test_uninstall_barrier` — returns `true`
+/// iff `uninstall()` blocked until an in-flight libdispatch event handler
+/// finished. Trivially `true` off macOS.
+#[cfg(debug_assertions)]
+#[bun_jsc::host_fn]
+fn test_memory_pressure_uninstall_barrier(
+    global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let blocked = jsc::memory_pressure_watcher::test_uninstall_barrier(global.bun_vm_ptr());
+    Ok(JSValue::js_boolean(blocked))
 }
 
 #[bun_jsc::host_fn]

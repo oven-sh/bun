@@ -681,9 +681,7 @@ pub fn updatePackageJSONAndInstall(
     ctx: Command.Context,
     subcommand: Subcommand,
 ) !void {
-    var cli = switch (subcommand) {
-        inline else => |cmd| try PackageManager.CommandLineArguments.parse(ctx.allocator, cmd),
-    };
+    var cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, subcommand);
 
     // The way this works:
     // 1. Run the bundler on source files

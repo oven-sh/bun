@@ -353,6 +353,16 @@ pub const ParseOptions = struct {
     allocator: mem.Allocator = heap.page_allocator,
     diagnostic: ?*Diagnostic = null,
     stop_after_positional_at: usize = 0,
+
+    /// Optional override of the parameters the streaming parser will accept.
+    ///
+    /// When parsing many subcommands that share a result struct layout (see
+    /// `ComptimeClap.params_converted`), pass a per-subcommand subset here so that
+    /// only that subcommand's flags are recognized while results are still stored
+    /// into the shared superset struct. Each entry's `id` must index into the same
+    /// flags/options slots as the comptime `params` the `ComptimeClap` was built with.
+    /// When null, the comptime `params` are used.
+    stream_params: ?[]const Param(usize) = null,
 };
 
 /// Same as `parseEx` but uses the `args.OsIterator` by default.
@@ -374,6 +384,7 @@ pub fn parse(
         .allocator = res.arena.allocator(),
         .diagnostic = opt.diagnostic,
         .stop_after_positional_at = opt.stop_after_positional_at,
+        .stream_params = opt.stream_params,
     });
     return res;
 }

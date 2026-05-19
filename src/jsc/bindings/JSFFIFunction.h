@@ -89,6 +89,12 @@ public:
     void* dataPtr;
     void* symbolFromDynamicLibrary { nullptr };
 
+    // Keeps the owning FFI wrapper (the result of dlopen/linkSymbols/cc)
+    // alive for as long as this function is reachable. The wrapper owns the
+    // TCC-relocated trampoline memory that m_function points into, so if it
+    // were collected first the next call would jump into freed memory.
+    JSC::WriteBarrier<JSC::JSObject> m_owner;
+
 private:
     JSFFIFunction(VM&, NativeExecutable*, JSGlobalObject*, Structure*, CFFIFunction&&);
     void finishCreation(VM&, NativeExecutable*, unsigned length, const String& name);

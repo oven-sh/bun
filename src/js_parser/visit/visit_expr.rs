@@ -754,6 +754,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             return;
                         }
 
+                        // Visit substitution values before calling the macro so that
+                        // statically-known identifiers are resolved before `toJS`.
+                        // Force constant folding (as the `.e_call` path does) so
+                        // expressions like `"a" + "b"` collapse to a single literal
+                        // that `toJS` can convert.
+                        {
+                            let old_ce = p.options.ignore_dce_annotations;
+                            let old_fold = p.should_fold_typescript_constant_expressions;
+                            p.options.ignore_dce_annotations = true;
+                            p.should_fold_typescript_constant_expressions = true;
+
+                            for part in e_.parts_mut().iter_mut() {
+                                p.visit_expr(&mut part.value);
+                            }
+
+                            p.options.ignore_dce_annotations = old_ce;
+                            p.should_fold_typescript_constant_expressions = old_fold;
+                        }
+
                         p.macro_call_count += 1;
                         let name: &[u8] = macro_ref_data.name.unwrap_or_else(|| {
                             e_.tag
@@ -769,13 +788,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 &p.import_records.items()[macro_ref_data.import_record_id as usize];
                             (record.path.text, record.range)
                         };
+                        let start_error_count = p.log().msgs.len();
                         // We must visit it to convert inline_identifiers and record usage
                         // Reborrow via the field-disjoint `Lexer::log()` accessor
                         // so `&p.lexer` and `&mut p.options` split cleanly under
                         // borrowck — Zig held two raw `*Log`.
                         let log = p.lexer.log();
                         let source = p.source;
-                        let Ok(macro_result) = p
+                        let macro_result = match p
                             .options
                             .macro_context
                             .as_deref_mut()
@@ -788,9 +808,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 record_range,
                                 expr,
                                 name,
-                            )
-                        else {
-                            return;
+                            ) {
+                            Ok(r) => r,
+                            Err(err) => {
+                                if err == bun_core::err!("MacroFailed") {
+                                    if p.log().msgs.len() == start_error_count {
+                                        p.log().add_error(
+                                            Some(p.source),
+                                            expr.loc,
+                                            b"macro threw exception",
+                                        );
+                                    }
+                                } else {
+                                    p.log().add_error_fmt(
+                                        Some(p.source),
+                                        expr.loc,
+                                        format_args!("\"{}\" error in macro", err.name()),
+                                    );
+                                }
+                                return;
+                            }
                         };
 
                         if !matches!(macro_result.data, Data::ETemplate(..)) {
@@ -798,6 +835,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             p.visit_expr(e);
                             return;
                         }
+
+                        // The macro returned the original tagged template (e.g. because
+                        // it threw or returned undefined at top level). Parts were
+                        // already visited above, so skip the second visit below.
+                        // `E.Template.fold` is a no-op when `tag != null`, so no fold here.
+                        return;
                     }
                 }
             }

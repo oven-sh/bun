@@ -5,10 +5,12 @@ import defaultMacro, {
   addStringsUTF16,
   default as defaultMacroAlias,
   escape,
+  ico,
   identity,
   identity as identity1,
   identity as identity2,
   ireturnapromise,
+  templateTag,
 } from "./macro.ts" assert { type: "macro" };
 
 import * as macros from "./macro.ts" assert { type: "macro" };
@@ -125,6 +127,77 @@ test("namespace import", () => {
 // test("template string latin1", () => {
 //   expect(identity(`©${""}`)).toBe("©");
 // });
+
+// https://github.com/oven-sh/bun/issues/18047
+test("tagged template no substitutions", () => {
+  expect(ico`hello`).toBe("/svg/spritesheet.svg#hello");
+  expect(templateTag`hello`).toEqual({
+    cooked: ["hello"],
+    raw: ["hello"],
+    values: [],
+  });
+});
+
+test("tagged template with substitutions", () => {
+  expect(templateTag`a${1}b${"two"}c`).toEqual({
+    cooked: ["a", "b", "c"],
+    raw: ["a", "b", "c"],
+    values: [1, "two"],
+  });
+});
+
+test("tagged template substitution constant folding", () => {
+  // Substitutions should be folded to literals before toJS, matching .e_call.
+  expect(templateTag`x${1 + 2}y${`nested${0}template`}z`).toEqual({
+    cooked: ["x", "y", "z"],
+    raw: ["x", "y", "z"],
+    values: [3, "nested0template"],
+  });
+});
+
+test("tagged template escape sequences", () => {
+  expect(templateTag`line1\nline2`).toEqual({
+    cooked: ["line1\nline2"],
+    raw: ["line1\\nline2"],
+    values: [],
+  });
+  expect(templateTag`\t\r\n\\\``).toEqual({
+    cooked: ["\t\r\n\\`"],
+    raw: ["\\t\\r\\n\\\\\\`"],
+    values: [],
+  });
+});
+
+test("tagged template unicode escape", () => {
+  expect(templateTag`\u{1F600}`).toEqual({
+    cooked: ["😀"],
+    raw: ["\\u{1F600}"],
+    values: [],
+  });
+});
+
+test("tagged template line continuation cooks to empty string", () => {
+  // prettier-ignore
+  // A segment that is only `\<LF>` cooks to "".
+  expect(templateTag`\
+${1}rest`).toEqual({
+    cooked: ["", "rest"],
+    raw: ["\\\n", "rest"],
+    values: [1],
+  });
+});
+
+test("tagged template invalid escape has undefined cooked value", () => {
+  expect(templateTag`\unicode`).toEqual({
+    cooked: [undefined],
+    raw: ["\\unicode"],
+    values: [],
+  });
+});
+
+test("tagged template via namespace import", () => {
+  expect(macros.ico`world`).toBe("/svg/spritesheet.svg#world");
+});
 
 test("ireturnapromise", async () => {
   expect(await ireturnapromise()).toEqual("aaa");

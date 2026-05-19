@@ -408,11 +408,30 @@ pub fn VisitExpr(
                                     return p.newExpr(E.Undefined{}, expr.loc);
                                 }
 
+                                // Visit substitution values before calling the macro so that
+                                // statically-known identifiers are resolved before `toJS`.
+                                // Force constant folding (as the `.e_call` path does) so
+                                // expressions like `"a" + "b"` collapse to a single literal
+                                // that `toJS` can convert.
+                                {
+                                    const old_ce = p.options.ignore_dce_annotations;
+                                    defer p.options.ignore_dce_annotations = old_ce;
+                                    const old_fold = p.should_fold_typescript_constant_expressions;
+                                    defer p.should_fold_typescript_constant_expressions = old_fold;
+                                    p.options.ignore_dce_annotations = true;
+                                    p.should_fold_typescript_constant_expressions = true;
+
+                                    for (e_.parts) |*part| {
+                                        part.value = p.visitExpr(part.value);
+                                    }
+                                }
+
                                 p.macro_call_count += 1;
                                 const name = macro_ref_data.name orelse e_.tag.?.data.e_dot.name;
                                 const record = &p.import_records.items[macro_ref_data.import_record_id];
+                                const start_error_count = p.log.msgs.items.len;
                                 // We must visit it to convert inline_identifiers and record usage
-                                const macro_result = (p.options.macro_context.call(
+                                const macro_result = p.options.macro_context.call(
                                     record.path.text,
                                     p.source.path.sourceDir(),
                                     p.log,
@@ -420,11 +439,26 @@ pub fn VisitExpr(
                                     record.range,
                                     expr,
                                     name,
-                                ) catch return expr);
+                                ) catch |err| {
+                                    if (err == error.MacroFailed) {
+                                        if (p.log.msgs.items.len == start_error_count) {
+                                            p.log.addError(p.source, expr.loc, "macro threw exception") catch unreachable;
+                                        }
+                                    } else {
+                                        p.log.addErrorFmt(p.source, expr.loc, p.allocator, "\"{s}\" error in macro", .{@errorName(err)}) catch unreachable;
+                                    }
+                                    return expr;
+                                };
 
                                 if (macro_result.data != .e_template) {
                                     return p.visitExpr(macro_result);
                                 }
+
+                                // The macro returned the original tagged template (e.g. because
+                                // it threw or returned undefined at top level). Parts were
+                                // already visited above, so skip the second visit below.
+                                // `E.Template.fold` is a no-op when `tag != null`, so no fold here.
+                                return expr;
                             }
                         }
                     }

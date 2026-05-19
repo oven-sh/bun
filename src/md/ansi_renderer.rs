@@ -1664,7 +1664,7 @@ impl<'a> AnsiRenderer<'a> {
                         strings::wtf8_byte_sequence_length_with_invalid(rest[0]),
                     ));
                 }
-                state_at[i].push(state.clone());
+                state_at[i].push(state);
                 segments[i].push(&rest[0..cut]);
                 state.scan(&rest[0..cut]);
                 rest = &rest[cut..];
@@ -1700,7 +1700,7 @@ impl<'a> AnsiRenderer<'a> {
                     b""
                 };
                 let opens: CellAnsiState = if line < state_at[i].len() {
-                    state_at[i][line].clone()
+                    state_at[i][line]
                 } else {
                     CellAnsiState::default()
                 };

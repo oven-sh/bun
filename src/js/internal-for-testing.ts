@@ -144,6 +144,20 @@ export const setSyntheticAllocationLimitForTesting: (limit: number) => number = 
   1,
 );
 
+export const fetchTestingInternals = {
+  /**
+   * Returns `{ statusText: boolean, url: boolean }` — whether each native
+   * backing string on a fetch `Response` is an atom `StringImpl`. Atom
+   * strings live in a per-thread table, so `Response.destroy()` must run
+   * on the JS thread that created them. `FetchTasklet.callback()` holds
+   * the tasklet mutex through `derefFromThread()` so the HTTP thread is
+   * never the last ref; see `fetch-response-shutdown-atom.test.ts`.
+   */
+  responseAtomFlags: $newZigFunction("webcore/Response.zig", "jsResponseAtomFlagsForTesting", 1) as (
+    response: Response,
+  ) => { statusText: boolean; url: boolean },
+};
+
 export const npm_manifest_test_helpers = $zig("npm.zig", "PackageManifest.bindings.generate") as {
   /**
    * Returns the parsed manifest file. Currently only returns an array of available versions.

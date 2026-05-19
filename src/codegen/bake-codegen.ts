@@ -37,7 +37,7 @@ function css(file: string, is_development: boolean): string {
     stdio: ["ignore", "pipe", "pipe"],
   });
   if (!success) throw new Error(stderr.toString("utf-8"));
-  return stdout.toString("utf-8");
+  return JSON.stringify(stdout.toString("utf-8"));
 }
 
 async function run() {

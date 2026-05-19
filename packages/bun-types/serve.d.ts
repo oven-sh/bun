@@ -765,6 +765,17 @@ declare module "bun" {
       http3?: boolean;
 
       /**
+       * Also accept HTTP/2 on the same TLS listener. Requires {@link tls}
+       * and {@link http1} to be enabled (h2c is not supported; the HTTP/2
+       * context shares the HTTP/1.1 listener via ALPN). The server offers
+       * `h2,http/1.1` via ALPN; clients that negotiate `h2` are served
+       * over HTTP/2, everything else over HTTP/1.1.
+       * @default false
+       * @experimental
+       */
+      http2?: boolean;
+
+      /**
        * Listen for HTTP/1.1 over TCP. Set to `false` together with
        * `http3: true` to serve HTTP/3 only.
        * @default true

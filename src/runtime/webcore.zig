@@ -48,6 +48,7 @@ pub const NetworkSink = streams.NetworkSink;
 pub const HTTPResponseSink = streams.HTTPResponseSink;
 pub const HTTPSResponseSink = streams.HTTPSResponseSink;
 pub const H3ResponseSink = streams.H3ResponseSink;
+pub const H2ResponseSink = streams.H2ResponseSink;
 pub const HTTPServerWritable = streams.HTTPServerWritable;
 
 comptime {

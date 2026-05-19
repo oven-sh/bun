@@ -406,7 +406,10 @@ pub const HTMLRewriter = struct {
         context: *LOLHTMLContext,
         response: *Response,
         response_value: jsc.Strong.Optional = .empty,
-        bodyValueBufferer: ?jsc.WebCore.Body.ValueBufferer = null,
+        /// NativePromiseContext.DeferredDerefTask packs a 4-bit tag into
+        /// `&bodyValueBufferer`'s low bits, so the field offset must stay
+        /// 16-aligned regardless of what precedes it.
+        bodyValueBufferer: ?jsc.WebCore.Body.ValueBufferer align(16) = null,
         tmp_sync_error: ?*jsc.JSValue = null,
 
         // const log = bun.Output.scoped(.BufferOutputSink, .visible);

@@ -933,9 +933,11 @@ static struct sigaction previous_actions[NSIG];
     M(SIGIO);
 
 #if OS(LINUX)
+// SIGPWR is intentionally excluded: JSC uses it for GC thread suspend/resume
+// on Linux (see WTF ThreadingPOSIX.cpp), so replacing its handler here would
+// break the collector and can terminate the process with signal 30.
 #define FOR_EACH_LINUX_ONLY_SIGNAL(M) \
     M(SIGPOLL);                       \
-    M(SIGPWR);                        \
     M(SIGSTKFLT);
 
 #endif

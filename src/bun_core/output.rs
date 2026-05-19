@@ -2008,6 +2008,14 @@ impl_fmt_tuple!(0 A, 1 B, 2 C, 3 D, 4 E, 5 F, 6 G, 7 H);
 /// Substitute `{}` / `{s}` / `{d}` / `{any}` / `{f}` placeholders in `template`
 /// with successive entries from `args`. `{{` / `}}` are emitted as literal
 /// braces. Unrecognised specs are passed through verbatim.
+///
+/// The template is the output of `pretty_fmt_runtime`: ANSI escape bytes
+/// interleaved with verbatim runs of a `&str` input. Both halves are valid
+/// UTF-8 by construction (the runtime only splits on the ASCII markers
+/// `<`, `>`, `{`, `}`, `\\` — none of which ever appear inside a multi-byte
+/// UTF-8 sequence — and color codes are pure ASCII). Non-placeholder runs
+/// are flushed verbatim so multi-byte sequences like `↑` / `→` survive
+/// round-trip instead of being re-encoded byte-at-a-time as Latin-1.
 fn substitute_template(
     template: &[u8],
     args: &impl FmtTuple,
@@ -2015,13 +2023,30 @@ fn substitute_template(
 ) -> fmt::Result {
     let t = template;
     let mut i = 0usize;
+    let mut run_start = 0usize;
     let mut argi = 0usize;
+
+    // Flush `t[run_start..end]` as `&str`.
+    //
+    // SAFETY: see function comment — `t` originates from `pretty_fmt_runtime`
+    // which is UTF-8 by construction, and every slice end-point is either `0`,
+    // `t.len()`, or just past one of the ASCII markers `<` / `>` / `{` / `}` /
+    // `\\`, so each run begins and ends on a UTF-8 char boundary. Same pattern
+    // as `PrettyBuf::as_ref` at the top of this file.
+    fn flush(t: &[u8], run_start: usize, end: usize, f: &mut dyn fmt::Write) -> fmt::Result {
+        if end <= run_start {
+            return Ok(());
+        }
+        f.write_str(unsafe { core::str::from_utf8_unchecked(&t[run_start..end]) })
+    }
+
     while i < t.len() {
         let b = t[i];
         if b == b'{' {
             if i + 1 < t.len() && t[i + 1] == b'{' {
-                f.write_str("{")?;
+                flush(t, run_start, i + 1, f)?;
                 i += 2;
+                run_start = i;
                 continue;
             }
             // Find closing '}'.
@@ -2030,25 +2055,24 @@ fn substitute_template(
                 j += 1;
             }
             if j < t.len() {
+                flush(t, run_start, i, f)?;
                 // consume placeholder
                 if args.write_nth(argi, f)? {
                     argi += 1;
                 }
                 i = j + 1;
+                run_start = i;
                 continue;
             }
         } else if b == b'}' && i + 1 < t.len() && t[i + 1] == b'}' {
-            f.write_str("}")?;
+            flush(t, run_start, i + 1, f)?;
             i += 2;
+            run_start = i;
             continue;
         }
-        // SAFETY: template is ASCII/ANSI bytes; emit byte-at-a-time as Latin-1.
-        let mut buf = [0u8; 4];
-        let c = b as char;
-        f.write_str(c.encode_utf8(&mut buf))?;
         i += 1;
     }
-    Ok(())
+    flush(t, run_start, t.len(), f)
 }
 
 /// `Display` adapter pairing a runtime template with a [`FmtTuple`].
@@ -3169,6 +3193,39 @@ mod pretty_fmt_tests {
         check!(
             "  <b><blue>link<r>      <d>[\\<package\\>]<r>          Register or link a local npm package\n"
         );
+    }
+
+    /// Templates routinely contain non-ASCII UTF-8 (arrows, checkmarks,
+    /// smart quotes). `bun update --latest` prints `↑ pkg x → y`; an earlier
+    /// version of `substitute_template` walked the template byte-by-byte and
+    /// re-encoded each byte as Latin-1, double-encoding every multi-byte
+    /// sequence (#30789: `↑` → `â` mojibake). This asserts UTF-8 round-trips.
+    #[test]
+    fn utf8_in_template_survives_substitution() {
+        use super::pretty_fmt_args;
+
+        // Exact template used by `bun update --latest` — includes `↑` and `→`
+        // with substituted positional args.
+        let out = format!(
+            "{}",
+            pretty_fmt_args(
+                "<r><cyan>↑<r> <b>{s}<r><d> <b>{s} →<r> <b><cyan>{s}<r>\n",
+                false,
+                ("@sveltejs/kit", "2.59.1", "2.60.1"),
+            ),
+        );
+        assert_eq!(out, "↑ @sveltejs/kit 2.59.1 → 2.60.1\n");
+
+        // A few more multi-byte characters to catch any boundary regressions.
+        let out = format!(
+            "{}",
+            pretty_fmt_args("✓ {s} — «{s}»\n", false, ("ok", "done"))
+        );
+        assert_eq!(out, "✓ ok — «done»\n");
+
+        // Escaped braces should still collapse, even with UTF-8 adjacent.
+        let out = format!("{}", pretty_fmt_args("→ {{ {s} }}", false, ("x",)));
+        assert_eq!(out, "→ { x }");
     }
 }
 

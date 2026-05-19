@@ -204,10 +204,7 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
             let mut bin_linker = bin::Linker {
                 target_node_modules_path: &raw const target_node_modules_path,
                 target_package_name: strings::StringOrTinyString::init(name),
-                // `package.bin` is the inline stub `bin::Bin` (struct `Value`);
-                // project to the real union-`Value` shape via the
-                // `From<bin::Bin> for bin_real::Bin` bridge in `bun_install::lib`.
-                bin: bin::Bin::from(package.bin),
+                bin: package.bin,
                 node_modules_path: &mut node_modules_path,
                 global_bin_path: manager.options.bin_path,
                 package_name: strings::StringOrTinyString::init(name),

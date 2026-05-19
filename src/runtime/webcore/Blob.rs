@@ -686,7 +686,7 @@ impl BlobExt for Blob {
         writer: &mut W,
     ) -> Result<(), bun_core::Error> {
         writer.write_int_le::<u8>(SERIALIZATION_VERSION)?;
-        writer.write_int_le::<u64>(u64::try_from(self.offset.get()).expect("int cast"))?;
+        writer.write_int_le::<u64>(self.offset.get())?;
 
         let ct = self.content_type_slice();
         writer.write_int_le::<u32>(ct.len() as u32)?;

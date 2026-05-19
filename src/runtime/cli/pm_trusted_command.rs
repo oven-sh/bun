@@ -568,7 +568,7 @@ impl TrustCommand {
             unsafe { ctx.log_mut() },
             &bump,
         ) {
-            Ok(v) => v.into(),
+            Ok(v) => v,
             Err(err) => {
                 let _ = ctx
                     .log_ref()

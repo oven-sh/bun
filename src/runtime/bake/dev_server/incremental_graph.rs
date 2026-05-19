@@ -1013,7 +1013,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     EdgeAttachmentMode::Css,
                 )?;
                 if result == EdgeAttachmentResult::Continue && src.is_valid() {
-                    queue.push(src.into());
+                    queue.push(src);
                 }
             }
         }

@@ -883,12 +883,10 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         let mut h = Wyhash::init(128);
 
         if cfg!(debug_assertions) {
-            // PORT NOTE: `sys::stat` returns `Maybe<Stat>` (no `unwrap_or_else`);
-            // go through `Result` for the panic-on-error path.
-            let stat = match ::core::result::Result::from(sys::stat(
+            let stat = match sys::stat(
                 bun_core::self_exe_path()
                     .unwrap_or_else(|e| Output::panic(format_args!("unhandled {}", e))),
-            )) {
+            ) {
                 Ok(s) => s,
                 Err(e) => Output::panic(format_args!("unhandled {}", e)),
             };
@@ -4100,7 +4098,7 @@ pub fn finalize_bundle(
 
         chunk
             .entry_point
-            .set_entry_point_id(u32::try_from(route_bundle_index.get()).expect("int cast"));
+            .set_entry_point_id(route_bundle_index.get());
     }
 
     // Zig: `var gts = try dev.initGraphTraceState(...); ctx.gts = &gts;` — sized AFTER
@@ -5150,7 +5148,7 @@ impl DevServer {
             // Found a matching route, bundle it and handle the request
             match ensure_route_is_bundled(self, rbi, &mut ctx) {
                 Ok(()) => {}
-                Err(jsc::JsError::OutOfMemory) => return Err(bun_core::err!(OutOfMemory).into()),
+                Err(jsc::JsError::OutOfMemory) => return Err(bun_core::err!(OutOfMemory)),
                 Err(e @ (jsc::JsError::Thrown | jsc::JsError::Terminated)) => {
                     self.vm().global().report_active_exception_as_unhandled(e);
                 }
@@ -6233,7 +6231,7 @@ fn from_opaque_file_id<const SIDE: bake::Side>(
         debug_assert!(SIDE == safe.side());
         return incremental_graph::FileIndex::<SIDE>::init(safe.index());
     }
-    incremental_graph::FileIndex::<SIDE>::init(u32::try_from(id.get()).expect("int cast"))
+    incremental_graph::FileIndex::<SIDE>::init(id.get())
 }
 
 impl DevServer {

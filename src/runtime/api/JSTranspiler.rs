@@ -808,9 +808,7 @@ impl<'a> TransformTask<'a> {
         // self.log.msgs.allocator = bun.default_allocator → no-op
 
         let jsx = match self.tsconfig {
-            Some(ts) => ts
-                .merge_jsx(self.transpiler.options.jsx.clone().into())
-                .into(),
+            Some(ts) => ts.merge_jsx(self.transpiler.options.jsx.clone()),
             None => self.transpiler.options.jsx.clone(),
         };
 
@@ -1291,9 +1289,7 @@ impl JSTranspiler {
             arena.alloc(bun_ast::Source::init_path_string(name, processed_code));
 
         let jsx = match config.tsconfig.as_deref() {
-            Some(ts) => ts
-                .merge_jsx(self.transpiler.get().options.jsx.clone().into())
-                .into(),
+            Some(ts) => ts.merge_jsx(self.transpiler.get().options.jsx.clone()),
             None => self.transpiler.get().options.jsx.clone(),
         };
 
@@ -1771,13 +1767,11 @@ impl JSTranspiler {
 
         let source = bun_ast::Source::init_path_string(loader.stdin_name(), code);
         let jsx = match self.config.get().tsconfig.as_deref() {
-            Some(ts) => ts
-                .merge_jsx(self.transpiler.get().options.jsx.clone().into())
-                .into(),
+            Some(ts) => ts.merge_jsx(self.transpiler.get().options.jsx.clone()),
             None => self.transpiler.get().options.jsx.clone(),
         };
 
-        let mut opts = bun_js_parser::ParserOptions::init(jsx.into(), loader);
+        let mut opts = bun_js_parser::ParserOptions::init(jsx, loader);
         // SAFETY: see `transpiler_mut`. The `&mut Transpiler` is reborrowed
         // disjointly for `macro_context` (stored in `opts`) and `options.define`
         // (raw-addr read) below; both end when `opts` is consumed by `scan()`.

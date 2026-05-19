@@ -209,7 +209,7 @@ impl PmVersionCommand {
 
             if let Err(err) = JSPrinter::print_json(
                 &mut package_json_writer,
-                bun_ast::Expr::from(json),
+                json,
                 &package_json_source,
                 JSPrinter::PrintJsonOptions {
                     indent: printer_indent,

@@ -1207,9 +1207,9 @@ pub fn installIsolatedPackages(
                                     try scc_ext.put(manager.allocator, ext.final(), {});
                                 }
                             }
-                            std.mem.sort(u64, member_sub.items, {}, std.sort.asc(u64));
+                            std.sort.pdq(u64, member_sub.items, {}, std.sort.asc(u64));
                             const ext_keys = scc_ext.keys();
-                            std.mem.sort(u64, ext_keys, {}, std.sort.asc(u64));
+                            std.sort.pdq(u64, ext_keys, {}, std.sort.asc(u64));
                             var hasher: std.hash.Wyhash = .init(0x42A7C15F9E3779B9);
                             for (member_sub.items) |k| hasher.update(std.mem.asBytes(&k));
                             for (ext_keys) |k| hasher.update(std.mem.asBytes(&k));

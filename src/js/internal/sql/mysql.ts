@@ -303,6 +303,14 @@ class PooledMySQLConnection {
   queryCount: number = 0;
 
   #onConnected(err, connection) {
+    // #onClose can run synchronously between when MySQLConnection's on_connect
+    // callback is queued and when it actually fires — if the server's FIN lands
+    // in the same I/O tick as the handshake completing, or the pool issues a
+    // close mid-handshake. Refuse stale transitions that would resurrect a
+    // dead pooled connection into `connected` and re-add it to readyConnections.
+    if (this.state !== PooledConnectionState.pending) {
+      return;
+    }
     if (err) {
       err = wrapError(err);
     } else {

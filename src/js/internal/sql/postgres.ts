@@ -519,6 +519,19 @@ class PooledPostgresConnection {
   queryCount: number = 0;
 
   #onConnected(err, _) {
+    // The underlying PostgresSQLConnection queues this callback as a microtask
+    // when the server's ReadyForQuery arrives. If the socket is closed in the
+    // same I/O tick (e.g. the server's FIN is in the same read buffer, or a
+    // pool-initiated close lands between the ReadyForQuery and this microtask),
+    // #onClose runs synchronously first and transitions us to `closed`. When
+    // this microtask then fires, honoring it would resurrect a dead connection
+    // into readyConnections with `this.connection === null`, which dispatches
+    // null to Rust's PostgresSQLQuery.run and trips "connection must be a
+    // PostgresSQLConnection" — with no recovery path since the pool never
+    // retries a conn it thinks is already live. Refuse the stale transition.
+    if (this.state !== PooledConnectionState.pending) {
+      return;
+    }
     if (err) {
       err = wrapPostgresError(err);
     }

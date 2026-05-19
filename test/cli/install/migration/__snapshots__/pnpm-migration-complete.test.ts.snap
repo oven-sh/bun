@@ -171,7 +171,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
     },
   },
   "packages": {
-    "@company/private-pkg": ["@company/private-pkg@1.0.5", "", {}, ""],
+    "@company/private-pkg": ["@company/private-pkg@1.0.5", "https://npm.company.com/@company/private-pkg/-/private-pkg-1.0.5.tgz", {}, ""],
 
     "lodash": ["lodash@4.17.21", "", {}, ""],
   }

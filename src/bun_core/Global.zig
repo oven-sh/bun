@@ -220,6 +220,16 @@ pub export fn Bun__onExit() void {
     bun.jsc.Node.FSEvents.closeAndWait();
 
     runExitCallbacks();
+
+    // Bun builds mimalloc with MI_NO_PROCESS_DETACH=1, disabling its automatic
+    // stats output on exit. Print stats manually if MIMALLOC_SHOW_STATS=1 or
+    // MIMALLOC_VERBOSE=1 is set.
+    if (comptime use_mimalloc) {
+        if (Mimalloc.mi_option_is_enabled(.show_stats) or Mimalloc.mi_option_is_enabled(.verbose)) {
+            Mimalloc.mi_stats_print(null);
+        }
+    }
+
     Output.flush();
     std.mem.doNotOptimizeAway(&Bun__atexit);
 

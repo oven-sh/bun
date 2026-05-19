@@ -1043,21 +1043,28 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             Global.exit(1);
         }
 
-        // CLI overrides env var (NODE_USE_SYSTEM_CA)
+        // Precedence: CLI flag > NODE_USE_SYSTEM_CA env var > bunfig.toml `CA` > bundled (default).
+        // The CLI/env branches are authoritative and pin `ca_locked` so a later
+        // bunfig load (e.g. the deferred one in RunCommand.exec) can't override them.
         if (use_bundled_ca) {
             Bun__Node__CAStore = .bundled;
+            Bun__Node__CAStore_locked = true;
         } else if (use_openssl_ca) {
             Bun__Node__CAStore = .openssl;
+            Bun__Node__CAStore_locked = true;
         } else if (use_system_ca) {
             Bun__Node__CAStore = .system;
-        } else {
-            if (bun.env_var.NODE_USE_SYSTEM_CA.get()) {
-                Bun__Node__CAStore = .system;
-            }
+            Bun__Node__CAStore_locked = true;
+        } else if (bun.env_var.NODE_USE_SYSTEM_CA.get()) {
+            Bun__Node__CAStore = .system;
+            Bun__Node__CAStore_locked = true;
         }
 
-        // Back-compat boolean used by native code until fully migrated
-        Bun__Node__UseSystemCA = (Bun__Node__CAStore == .system);
+        // Apply any bunfig-sourced value that was already loaded during this
+        // parse (.AutoCommand, .TestCommand, etc.). For .RunCommand the local
+        // bunfig isn't loaded until RunCommand.exec — applyBunfigCAStore() is
+        // called again from there.
+        applyBunfigCAStore(ctx);
     }
 
     if (opts.port != null and opts.origin == null) {
@@ -1710,9 +1717,29 @@ export var Bun__Node__ZeroFillBuffers = false;
 export var Bun__Node__ProcessNoDeprecation = false;
 export var Bun__Node__ProcessThrowDeprecation = false;
 
-pub const BunCAStore = enum(u8) { bundled, openssl, system };
+pub const BunCAStore = Command.BunCAStore;
 pub export var Bun__Node__CAStore: BunCAStore = .bundled;
 pub export var Bun__Node__UseSystemCA = false;
+
+/// True once the CLI flag or `NODE_USE_SYSTEM_CA` env var has pinned
+/// `Bun__Node__CAStore`. A deferred bunfig load (e.g. `RunCommand.exec` reading
+/// the local bunfig.toml after `Arguments.parse` returned) must not override
+/// that.
+var Bun__Node__CAStore_locked: bool = false;
+
+/// Apply `ctx.runtime_options.ca_store` (populated by the bunfig parser) to
+/// `Bun__Node__CAStore`, unless a higher-precedence source already pinned it.
+/// Safe to call more than once — subsequent calls are no-ops once the CA
+/// store is locked or the bunfig value is already applied.
+pub fn applyBunfigCAStore(ctx: Command.Context) void {
+    if (!Bun__Node__CAStore_locked) {
+        if (ctx.runtime_options.ca_store) |ca_store| {
+            Bun__Node__CAStore = ca_store;
+        }
+    }
+    // Keep the back-compat boolean in sync with whatever CAStore ended up as.
+    Bun__Node__UseSystemCA = (Bun__Node__CAStore == .system);
+}
 
 const string = []const u8;
 

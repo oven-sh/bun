@@ -26,7 +26,6 @@ const server = tls.createServer(serverOptions, common.mustCall((c) => {
   if (++connections === 3) {
     server.close();
   }
-  console.log(c.servername,c.authorized);
   if (c.servername === 'unknowncontext') {
     assert.strictEqual(c.authorized, false);
     return;
@@ -74,5 +73,3 @@ server.listen(0, common.mustCall(() => {
     client3.end();
   }));
 }));
-
-setTimeout(()=>process.exit(0),1000).unref();

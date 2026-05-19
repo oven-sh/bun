@@ -168,6 +168,8 @@ pub enum SubtreeError {
     OutOfMemory,
     #[error("DependencyLoop")]
     DependencyLoop,
+    #[error("CorruptLockfile")]
+    CorruptLockfile,
 }
 
 bun_core::oom_from_alloc!(SubtreeError);
@@ -1011,20 +1013,26 @@ impl Tree {
                 .get(builder.list.items_dependencies()[self_id as usize].as_slice());
             (s.as_ptr(), s.len())
         };
-        // Keep the comparand in a register; `deps.get_unchecked` may alias `dependency`.
         let target_name_hash = dependency.name_hash;
         for i in 0..this_deps_len {
             // SAFETY: `i < this_deps_len` and `builder.list` is not mutated until after this loop
             // (see invariant above), so `this_deps_ptr[0..this_deps_len)` remains valid.
             let dep_id: DependencyID = unsafe { *this_deps_ptr.add(i) };
-            // SAFETY: `dep_id` was produced by the same lockfile that produced `deps`;
-            // Zig release builds have no bounds check here.
-            let dep = unsafe { deps.get_unchecked(dep_id as usize) };
+            // `dep_id` is deserialized from lockfile bytes (`Buffers::read_array<DependencyID>`)
+            // and so is attacker-controlled in the hostile-lockfile threat model. A `dep_id`
+            // outside `0..deps.len()` used to produce an out-of-bounds read through
+            // `get_unchecked` (Bucket 4/15 UB; audit witness EXP-007). Do not silently
+            // skip it: malformed lockfile graph data must fail closed.
+            let Some(dep) = deps.get(dep_id as usize) else {
+                return Err(SubtreeError::CorruptLockfile);
+            };
             if dep.name_hash != target_name_hash {
                 continue;
             }
 
-            let res_id = builder.resolutions[dep_id as usize];
+            let Some(&res_id) = builder.resolutions.get(dep_id as usize) else {
+                return Err(SubtreeError::CorruptLockfile);
+            };
 
             if res_id == invalid_package_id && package_id == invalid_package_id {
                 debug_assert!(dep.behavior.is_optional_peer());

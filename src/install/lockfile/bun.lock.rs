@@ -2772,6 +2772,7 @@ pub fn parse_into_binary_lockfile(
             return Err(match err {
                 tree::SubtreeError::OutOfMemory => ParseError::OutOfMemory,
                 tree::SubtreeError::DependencyLoop => ParseError::InvalidPackagesObject,
+                tree::SubtreeError::CorruptLockfile => ParseError::InvalidPackagesObject,
             });
         }
     }

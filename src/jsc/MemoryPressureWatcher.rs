@@ -254,6 +254,12 @@ mod linux {
                 break;
             }
             if n < 0 {
+                // EINTR: a stray signal (e.g. profiler SIGPROF) interrupted
+                // the poll — retry. Any other errno is unexpected for a PSI
+                // fd and permanently disables the watcher.
+                if std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
+                    continue;
+                }
                 break;
             }
             if n == 0 {

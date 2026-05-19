@@ -1326,6 +1326,13 @@ export default <>hi</>
     expect(exitCode).toBe(0);
   });
 
+  it("transformSync with minify.identifiers does not crash on empty source", () => {
+    const t = new Bun.Transpiler({ minify: { identifiers: true } });
+    expect(t.transformSync("")).toBe("");
+    expect(t.transformSync(" ")).toBe("");
+    expect(t.transformSync("\n\t")).toBe("");
+  });
+
   it("JSX keys", () => {
     var bun = new Bun.Transpiler({
       loader: "jsx",

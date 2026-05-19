@@ -426,9 +426,10 @@ class Database implements SqliteTypes.Database {
 
   #internalFlags = 0;
   #handle;
-  #cachedQueriesKeys: string[] = [];
-  #cachedQueriesLengths: number[] = [];
-  #cachedQueriesValues: Statement[] = [];
+  // Insertion-ordered Map → keys().next() is always the oldest, so FIFO
+  // eviction is O(1) per removal instead of O(n) via array shift().
+  #cachedQueries: Map<string, Statement> = new Map();
+  #cachedQueriesBytes = 0;
   filename;
   #hasClosed = false;
   get handle() {
@@ -520,12 +521,11 @@ class Database implements SqliteTypes.Database {
     return SQL.close(this.#handle, throwOnError);
   }
   clearQueryCache() {
-    for (let item of this.#cachedQueriesValues) {
-      item?.finalize?.();
+    for (const stmt of this.#cachedQueries.values()) {
+      stmt?.finalize?.();
     }
-    this.#cachedQueriesKeys.length = 0;
-    this.#cachedQueriesValues.length = 0;
-    this.#cachedQueriesLengths.length = 0;
+    this.#cachedQueries.clear();
+    this.#cachedQueriesBytes = 0;
   }
 
   run(query, ...params) {
@@ -549,9 +549,14 @@ class Database implements SqliteTypes.Database {
   }
 
   static MAX_QUERY_CACHE_SIZE = 20;
+  // Prevent a few large dynamic queries from pinning arbitrarily large
+  // amounts of memory (#28911). Detailed units are documented on the
+  // public declarations in packages/bun-types/sqlite.d.ts.
+  static MAX_QUERY_CACHE_BYTES = 2 * 1024 * 1024;
+  static MAX_QUERY_CACHE_ENTRY_BYTES = 64 * 1024;
 
   get [cachedCount]() {
-    return this.#cachedQueriesKeys.length;
+    return this.#cachedQueries.size;
   }
 
   query(query) {
@@ -563,33 +568,40 @@ class Database implements SqliteTypes.Database {
       throw new Error("SQL query cannot be empty.");
     }
 
-    const willCache = this.#cachedQueriesKeys.length < Database.MAX_QUERY_CACHE_SIZE;
+    // Re-read the live caps so runtime mutations are honored on every
+    // call, including when replacing a finalized cached entry.
+    const countLimit = Database.MAX_QUERY_CACHE_SIZE;
+    const byteLimit = Database.MAX_QUERY_CACHE_BYTES;
+    const entryLength = query.length;
+    const willCache = countLimit > 0 && entryLength <= Database.MAX_QUERY_CACHE_ENTRY_BYTES && entryLength <= byteLimit;
 
-    // this list should be pretty small
-    let index = this.#cachedQueriesLengths.indexOf(query.length);
-    while (index !== -1) {
-      if (this.#cachedQueriesKeys[index] !== query) {
-        index = this.#cachedQueriesLengths.indexOf(query.length, index + 1);
-        continue;
-      }
-
-      const stmt = this.#cachedQueriesValues[index];
-      if (stmt.isFinalized) {
-        return (this.#cachedQueriesValues[index] = this.prepare(
-          query,
-          undefined,
-          willCache ? constants.SQLITE_PREPARE_PERSISTENT : 0,
-        ));
-      }
-      return stmt;
+    const cache = this.#cachedQueries;
+    const cached = cache.get(query);
+    if (cached !== undefined && !cached.isFinalized) return cached;
+    if (cached !== undefined) {
+      // Drop the finalized entry; the path below re-inserts at the
+      // newest FIFO slot if caching is still allowed.
+      cache.delete(query);
+      this.#cachedQueriesBytes -= entryLength;
     }
 
-    var stmt = this.prepare(query, undefined, willCache ? constants.SQLITE_PREPARE_PERSISTENT : 0);
+    const stmt = this.prepare(query, undefined, willCache ? constants.SQLITE_PREPARE_PERSISTENT : 0);
 
     if (willCache) {
-      this.#cachedQueriesKeys.push(query);
-      this.#cachedQueriesLengths.push(query.length);
-      this.#cachedQueriesValues.push(stmt);
+      // FIFO-evict until the new entry fits. We drop the cache's
+      // reference but do NOT finalize — callers commonly hold references
+      // to previously returned Statements. The evicted native stmt is
+      // released when GC collects the wrapper (or when the caller
+      // explicitly finalizes), matching pre-PR semantics for queries
+      // that were never admitted to the 20-slot cache.
+      while (cache.size > 0 && (cache.size >= countLimit || this.#cachedQueriesBytes + entryLength > byteLimit)) {
+        const oldestKey = cache.keys().next().value!;
+        cache.delete(oldestKey);
+        this.#cachedQueriesBytes -= oldestKey.length;
+      }
+
+      cache.set(query, stmt);
+      this.#cachedQueriesBytes += entryLength;
     }
 
     return stmt;

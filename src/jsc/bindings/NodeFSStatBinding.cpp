@@ -40,6 +40,29 @@ using namespace WebCore;
 #define mode_t int32_t
 #endif
 
+// Windows MSVC lacks most POSIX file-type macros. The Stats bindings
+// below need them, but we must NOT leak the fallbacks to sibling TUs in a
+// unified-source bundle (since #29545 every `.cpp` under this directory
+// is concatenated into one TU). ProcessBindingConstants.cpp and
+// NodeConstantsModule.h check `#ifdef S_IFBLK` / `#ifdef S_IFSOCK` before
+// exporting those to `fs.constants` — without this guard the Windows
+// build spuriously exports them.
+#pragma push_macro("S_IFMT")
+#pragma push_macro("S_IFDIR")
+#pragma push_macro("S_IFCHR")
+#pragma push_macro("S_IFBLK")
+#pragma push_macro("S_IFREG")
+#pragma push_macro("S_IFIFO")
+#pragma push_macro("S_IFLNK")
+#pragma push_macro("S_IFSOCK")
+#pragma push_macro("S_ISBLK")
+#pragma push_macro("S_ISCHR")
+#pragma push_macro("S_ISDIR")
+#pragma push_macro("S_ISFIFO")
+#pragma push_macro("S_ISREG")
+#pragma push_macro("S_ISLNK")
+#pragma push_macro("S_ISSOCK")
+
 #ifndef S_IFMT
 #define S_IFMT 0170000
 #endif
@@ -950,4 +973,26 @@ void initJSBigIntStatsClassStructure(JSC::LazyClassStructure::Initializer& init)
 #ifdef BUN_PUSHED_MODE_T
 #pragma pop_macro("mode_t")
 #undef BUN_PUSHED_MODE_T
+#endif
+
+#if OS(WINDOWS)
+// Mirror the push_macro block at the top: restore whatever the POSIX
+// file-type macros were before this file (undefined on Windows). Without
+// this a unified-source bundle would leak S_IFBLK / S_IFSOCK into the
+// sibling cpps that gate `fs.constants` on `#ifdef`.
+#pragma pop_macro("S_ISSOCK")
+#pragma pop_macro("S_ISLNK")
+#pragma pop_macro("S_ISREG")
+#pragma pop_macro("S_ISFIFO")
+#pragma pop_macro("S_ISDIR")
+#pragma pop_macro("S_ISCHR")
+#pragma pop_macro("S_ISBLK")
+#pragma pop_macro("S_IFSOCK")
+#pragma pop_macro("S_IFLNK")
+#pragma pop_macro("S_IFIFO")
+#pragma pop_macro("S_IFREG")
+#pragma pop_macro("S_IFBLK")
+#pragma pop_macro("S_IFCHR")
+#pragma pop_macro("S_IFDIR")
+#pragma pop_macro("S_IFMT")
 #endif

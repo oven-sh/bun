@@ -21,6 +21,7 @@
 #include <JavaScriptCore/DateInstance.h>
 #include <JavaScriptCore/JSONObject.h>
 #include "wtf/SIMDUTF.h"
+#include <wtf/ASCIICType.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/JSObjectInlines.h>
 #include "headers.h"
@@ -928,6 +929,45 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
             return {};
         }
 #endif
+
+        // Node.js implements fileURLToPath via decodeURIComponent on the
+        // pathname, which throws URIError: URI malformed for any '%' not
+        // followed by two hex digits AND for percent sequences that decode
+        // to invalid UTF-8 (e.g. lone continuation bytes, truncated
+        // multibyte sequences, overlong encodings). WTF::URL::fileSystemPath
+        // is lenient on both counts, so validate strictly here.
+        const unsigned pathLen = p.length();
+
+        // Walk the pathname, decoding %XX into a byte buffer so we can
+        // hand it to simdutf::validate_utf8. Non-percent characters are
+        // always ASCII at this point because WHATWG URL percent-encodes
+        // every non-ASCII byte when building the pathname.
+        Vector<uint8_t, 256> decoded;
+        decoded.reserveInitialCapacity(pathLen);
+        for (unsigned i = 0; i < pathLen; ++i) {
+            char16_t c = p[i];
+            if (c != '%') {
+                decoded.append(static_cast<uint8_t>(c));
+                continue;
+            }
+            if (i + 2 >= pathLen) {
+                scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_URI, "URI malformed"_s));
+                return {};
+            }
+            char16_t hi = p[i + 1];
+            char16_t lo = p[i + 2];
+            if (!isASCIIHexDigit(hi) || !isASCIIHexDigit(lo)) {
+                scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_URI, "URI malformed"_s));
+                return {};
+            }
+            decoded.append(toASCIIHexValue(hi, lo));
+            i += 2;
+        }
+        auto decodedSpan = decoded.span();
+        if (!simdutf::validate_utf8(reinterpret_cast<const char*>(decodedSpan.data()), decodedSpan.size())) {
+            scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_URI, "URI malformed"_s));
+            return {};
+        }
     }
 
     auto fileSystemPath = url.fileSystemPath();

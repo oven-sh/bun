@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, hideFromStackTrace } from "harness";
+import { bunEnv, bunExe, hideFromStackTrace, tempDir } from "harness";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {
@@ -3802,5 +3802,213 @@ const Layout = () => {
     const result = transpiler.transformSync(code);
     expect(result).toContain("a: 1");
     expect(result).not.toContain("fn(");
+  });
+});
+
+describe("`declare` and `interface` as ordinary identifiers (not the TS ambient modifier)", () => {
+  const transpiler = new Bun.Transpiler({ loader: "ts" });
+
+  it("keeps `declare()` call statement — oven-sh/bun#30006", () => {
+    const code = `function declare() { console.log("ran"); }
+declare();`;
+
+    const result = transpiler.transformSync(code);
+    // The function body and the call must both survive; the bug erased both.
+    // Assert on the statement form (`declare()\s*;`) rather than `declare()`
+    // alone so the test can't be satisfied by the `function declare()` header.
+    expect(result).toContain("function declare");
+    expect(result).toContain('console.log("ran")');
+    expect(result).toMatch(/declare\s*\(\s*\)\s*;/);
+  });
+
+  it("keeps `declare.foo()` member-call statement", () => {
+    const code = `const declare = { foo: () => console.log("foo") };
+declare.foo();
+console.log("after");`;
+
+    const result = transpiler.transformSync(code);
+    expect(result).toContain("declare.foo()");
+    expect(result).toContain('"after"');
+  });
+
+  it("keeps `declare[0]()` index-call statement", () => {
+    const code = `const declare = [() => console.log("idx")];
+declare[0]();
+console.log("after");`;
+
+    const result = transpiler.transformSync(code);
+    expect(result).toContain("declare[0]()");
+    expect(result).toContain('"after"');
+  });
+
+  it("keeps `declare = value` assignment statement", () => {
+    const code = `let declare: number = 0;
+declare = 42;
+console.log(declare);`;
+
+    const result = transpiler.transformSync(code);
+    expect(result).toContain("declare = 42");
+    expect(result).toContain("console.log(declare)");
+  });
+
+  it("treats `declare\\nfoo()` as two statements via ASI", () => {
+    // The identifier `declare` on its own line, followed by a call on the next
+    // line, must not be folded into an ambient declaration that consumes the
+    // call. Before the fix, the `foo()` call was silently erased.
+    const code = `let declare: number = 0;
+declare
+foo();`;
+
+    const result = transpiler.transformSync(code);
+    expect(result).toContain("foo()");
+  });
+
+  it("still parses real ambient `declare` forms", () => {
+    const code = `declare const a: number;
+declare let b: string;
+declare var c: boolean;
+declare function fn(): void;
+declare class Cls { m(): void; }
+declare namespace Ns { const y: number; }
+declare module "m" { export const z: number; }
+declare global { interface Window { ext: string; } }
+declare interface Face { a: number; }
+declare enum En { A, B }
+declare abstract class Abst { x: number; }
+export declare const d: number;
+export declare function g(): void;
+export declare class Dcls { m(): void; }
+console.log("ok");`;
+
+    const result = transpiler.transformSync(code);
+    // All the ambient declarations above have no runtime emit.
+    expect(result.trim()).toBe('console.log("ok");');
+  });
+
+  it("runs the bug report snippet end-to-end through the runtime", async () => {
+    using dir = tempDir("declare-ident-", {
+      "repro.ts": `function go() {
+  let scope: Record<string, number> = {};
+  function declare(name: string, mask: number) { scope[name] = mask }
+  declare("foo", 1);
+  declare("bar", 2);
+  return scope;
+}
+console.log(JSON.stringify(go()));`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "repro.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe('{"foo":1,"bar":2}');
+    expect(exitCode).toBe(0);
+  });
+
+  it("bundler preserves `function declare() {...}; declare();`", async () => {
+    using dir = tempDir("declare-bundle-", {
+      "entry.ts": `function declare() { console.log("ran"); }
+declare();`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "entry.ts", "--target=bun"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // stderr/stdout first so a build failure surfaces the actual diagnostic
+    // instead of just "expected 1 to be 0".
+    expect(stderr).toBe("");
+    expect(stdout).toContain("function declare");
+    expect(stdout).toMatch(/declare\s*\(\s*\)\s*;/);
+    expect(exitCode).toBe(0);
+  });
+
+  it("preserves `interface()` instead of treating it as an ambient interface decl", () => {
+    // Before the fix, `interface()` was unconditionally fed into the TS
+    // interface parser, producing a misleading "Expected identifier but
+    // found ';'" at the transpile stage. After the fix the transpiler
+    // preserves it as a call expression (whether it's valid runtime JS is
+    // up to the engine — `interface` is a reserved word in strict mode).
+    const result = transpiler.transformSync(`interface();`);
+    expect(result).toContain("interface()");
+  });
+
+  it("still rejects `@dec declare()` — decorators require a class", () => {
+    // `t_at` admits `declare` after a decorator because it might be
+    // `@dec declare class`. When it turns out to be `@dec declare();` (a
+    // regular call) we must still throw, not silently emit an expression
+    // statement that drops the decorator.
+    expect(() => transpiler.transformSync(`@dec declare();`)).toThrow();
+    expect(() => transpiler.transformSync(`@dec declare.foo();`)).toThrow();
+  });
+
+  it("accepts `@dec declare class Foo {}` / `@dec declare abstract class Foo {}`", () => {
+    // Ambient class declarations with decorators remain valid.
+    expect(() => transpiler.transformSync(`@dec declare class Foo {}`)).not.toThrow();
+    expect(() => transpiler.transformSync(`@dec declare abstract class Foo {}`)).not.toThrow();
+  });
+
+  it("preserves `declare;` as an expression statement, not an ambient erase", () => {
+    // `declare` alone (no declaration introducer after it) is a plain identifier
+    // read. It must survive as an `SExpr` so the runtime sees the reference —
+    // dropping it into `S::TypeScript{}` hides TDZ / ReferenceError side effects
+    // and mis-reports the statement as type-only.
+    expect(transpiler.transformSync(`declare;`)).toContain("declare;");
+    // Same for `declare\n<something>` — ASI splits them into two statements.
+    const result = transpiler.transformSync(`declare\nfoo;`);
+    expect(result).toContain("declare;");
+    expect(result).toContain("foo;");
+  });
+
+  it("preserves ambient `export default interface\\nFoo {}` (newline after `interface`)", () => {
+    // The `export default` recursion sets `is_name_optional`. TypeScript
+    // explicitly accepts a newline between `interface` and the name in that
+    // one position because the parser has already committed to
+    // `export default`. Without the carve-out, my `!has_newline_before`
+    // guard would turn this into `export default interface;` (ReferenceError).
+    expect(transpiler.transformSync(`export default interface\nFoo {}\nconsole.log("x");`)).toContain(
+      'console.log("x")',
+    );
+  });
+
+  it("erases `declare\\nclass Foo {}` (no ASI between `declare` and a declaration keyword)", () => {
+    // TypeScript does NOT apply ASI between the `declare` modifier and its
+    // declaration when the next token is a declaration keyword (class /
+    // function / var / const / enum). Node's --experimental-strip-types and
+    // tsc both erase this to nothing. An earlier version of this fix used a
+    // blanket `has_newline_before` bailout that regressed it.
+    expect(transpiler.transformSync(`declare\nclass Foo {}\nconsole.log("ok");`).trim()).toBe('console.log("ok");');
+    expect(transpiler.transformSync(`declare\nfunction foo(): void;\nconsole.log("ok");`).trim()).toBe(
+      'console.log("ok");',
+    );
+    expect(transpiler.transformSync(`declare\nlet x: number;\nconsole.log("ok");`).trim()).toBe('console.log("ok");');
+  });
+
+  it("preserves decorator on `@dec declare\\nclass Foo {}` instead of silently dropping it", () => {
+    // The decorator carve-out fires on `@dec declare` expecting a class to
+    // follow. An earlier `has_newline_before` bailout sent this to the
+    // `SExpr` path, which silently discarded `opts.ts_decorators` — so
+    // the class was emitted *without* its decorator. With the
+    // declaration-keyword lookahead, this now correctly erases as ambient.
+    expect(transpiler.transformSync(`@dec declare\nclass Foo {}\nconsole.log("ok");`).trim()).toBe(
+      'console.log("ok");',
+    );
+    // And `@dec declare` followed by something that can't start an ambient
+    // declaration (like a call) must still error, not silently drop the
+    // decorator.
+    expect(() => transpiler.transformSync(`@dec declare\nfoo();`)).toThrow();
   });
 });

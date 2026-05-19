@@ -31,8 +31,8 @@ pub struct DirectoryWatchStore {
     // Zig stores keys as `[]const u8` sub-slices into a duped buffer (trailing
     // slash trimmed) and frees the slice via the allocator. Here the trimmed
     // path is duped once by `get_or_put` as the `Box<[u8]>` key; the watcher
-    // borrows that same allocation (see `insert`), and `free_entry` removes the
-    // watcher before the key Box is dropped.
+    // owns its own copy of the path (see `insert`), so the key Box can be freed
+    // in `free_entry` independently of when the watch entry is finally evicted.
     pub watches: ArrayHashMap<Box<[u8]>, Entry>,
     pub dependencies: Vec<Dep>,
     /// Dependencies cannot be re-ordered. This list tracks what indexes are free.
@@ -296,15 +296,20 @@ impl DirectoryWatchStore {
         }
 
         // `get_or_put` above already duped the (trimmed) directory path as the
-        // map key. Borrow that single allocation for the watcher instead of
-        // duping it again: `add_directory::<false>` keeps the slice as a
-        // `'static` borrow (Watcher.rs), and the key outlives the watch entry
-        // (`free_entry` removes the watcher before dropping the key), so the
-        // borrow stays valid for the watch's lifetime.
+        // map key, so pass that slice straight to the watcher without a second
+        // dupe here. The watcher must own its copy (`add_directory::<true>`):
+        // `free_entry` only *queues* the watch index onto the watcher's
+        // `evict_list` (via `remove_at_index`) and then immediately drops the
+        // key Box (`swap_remove_at`), but the borrowing `WatchItem` is not torn
+        // down until the next `flush_evictions`. A borrowed key would therefore
+        // dangle in that window — and `on_file_update` reads `items_file_path()`
+        // by event index for both file and directory items. Cloning into the
+        // `WatchItem` keeps the watcher's path independent of the map-key
+        // lifetime.
         let dir_key: &[u8] = &watches_guard.keys()[gop_index];
 
         // SAFETY: `dev` is a valid *mut DevServer for the duration of this call.
-        let watch_index = match unsafe { &mut (*dev).bun_watcher }.add_directory::<false>(
+        let watch_index = match unsafe { &mut (*dev).bun_watcher }.add_directory::<true>(
             fd,
             dir_key,
             Watcher::get_hash(dir_key),
@@ -317,7 +322,7 @@ impl DirectoryWatchStore {
         let fd = scopeguard::ScopeGuard::into_inner(fd_guard);
         let watches = scopeguard::ScopeGuard::into_inner(watches_guard);
 
-        // PORT NOTE: reshaped for borrowck — append dep before put_assume_capacity.
+        // PORT NOTE: reshaped for borrowck — append dep before writing the entry.
         let dep = {
             // TODO(port): borrowck — self.append_dep_assume_capacity needs
             // &mut self while `watches` guard held a borrow; reshaped above.

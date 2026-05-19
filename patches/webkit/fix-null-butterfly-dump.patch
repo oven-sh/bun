@@ -1,0 +1,13 @@
+--- a/Source/JavaScriptCore/runtime/JSCJSValue.cpp
++++ b/Source/JavaScriptCore/runtime/JSCJSValue.cpp
+@@ -311,7 +311,11 @@ void JSValue::dumpInContextAssumingStructure(PrintStream& out, DumpContext* cont
+         else if (structure->classInfoForCells()->isSubClassOf(JSObject::info())) {
+             out.print("Object: ", RawPointer(asCell()));
+-            out.print(" with butterfly ", RawPointer(asObject(asCell())->butterfly()), "(base=", RawPointer(asObject(asCell())->butterfly()->base(structure)), ")");
++            auto* butterfly = asObject(asCell())->butterfly();
++            if (butterfly)
++                out.print(" with butterfly ", RawPointer(butterfly), "(base=", RawPointer(butterfly->base(structure)), ")");
++            else
++                out.print(" with butterfly ", RawPointer(butterfly));
+             out.print(" (Structure ", inContext(*structure, context), ")");
+         } else {

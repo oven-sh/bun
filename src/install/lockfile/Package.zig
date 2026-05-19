@@ -212,7 +212,7 @@ pub fn Package(comptime SemverIntType: type) type {
             lockfile: *Lockfile,
             pm: *PackageManager,
             package_json: *PackageJSON,
-            comptime features: Features,
+            features: Features,
         ) !@This() {
             var package = @This(){};
 
@@ -958,7 +958,7 @@ pub fn Package(comptime SemverIntType: type) type {
             source: *const logger.Source,
             comptime ResolverContext: type,
             resolver: *ResolverContext,
-            comptime features: Features,
+            features: Features,
         ) !void {
             initializeStore();
             const json = JSON.parsePackageJSONUTF8(source, log, allocator) catch |err| {
@@ -986,9 +986,9 @@ pub fn Package(comptime SemverIntType: type) type {
             allocator: Allocator,
             log: *logger.Log,
             source: *const logger.Source,
-            comptime group: DependencyGroup,
+            group: DependencyGroup,
             string_builder: *StringBuilder,
-            comptime features: Features,
+            features: Features,
             package_dependencies: []Dependency,
             dependencies_count: u32,
             comptime tag: ?Dependency.Version.Tag,
@@ -1230,11 +1230,11 @@ pub fn Package(comptime SemverIntType: type) type {
 
             // `peerDependencies` may be specified on existing dependencies. Packages in `workspaces` are deduplicated when
             // the array is processed
-            if (comptime features.check_for_duplicate_dependencies and !group.behavior.isPeer() and !group.behavior.isWorkspace()) {
+            if (features.check_for_duplicate_dependencies and !group.behavior.isPeer() and !group.behavior.isWorkspace()) {
                 const entry = lockfile.scratch.duplicate_checker_map.getOrPutAssumeCapacity(external_alias.hash);
                 if (entry.found_existing) {
                     // duplicate dependencies are allowed in optionalDependencies
-                    if (comptime group.behavior.isOptional()) {
+                    if (group.behavior.isOptional()) {
                         for (package_dependencies[0..dependencies_count]) |*package_dep| {
                             if (package_dep.name_hash == this_dep.name_hash) {
                                 package_dep.* = this_dep;
@@ -1277,7 +1277,7 @@ pub fn Package(comptime SemverIntType: type) type {
             json: Expr,
             comptime ResolverContext: type,
             resolver: *ResolverContext,
-            comptime features: Features,
+            features: Features,
         ) !void {
             var string_builder = lockfile.stringBuilder();
             var total_dependencies_count: u32 = 0;
@@ -1329,7 +1329,7 @@ pub fn Package(comptime SemverIntType: type) type {
                 }
             }
 
-            if (comptime !features.is_main) {
+            if (!features.is_main) {
                 if (json.asProperty("version")) |version_q| {
                     if (version_q.expr.asString(allocator)) |version_str| {
                         string_builder.count(version_str);
@@ -1372,41 +1372,35 @@ pub fn Package(comptime SemverIntType: type) type {
                 resolver.count(*Lockfile.StringBuilder, &string_builder, json);
             }
 
-            const dependency_groups = comptime brk: {
-                var out_groups: [
-                    @as(usize, @intFromBool(features.workspaces)) +
-                        @as(usize, @intFromBool(features.dependencies)) +
-                        @as(usize, @intFromBool(features.dev_dependencies)) +
-                        @as(usize, @intFromBool(features.optional_dependencies)) +
-                        @as(usize, @intFromBool(features.peer_dependencies))
-                ]DependencyGroup = undefined;
+            var dependency_groups_buf: [5]DependencyGroup = undefined;
+            const dependency_groups: []const DependencyGroup = brk: {
                 var out_group_i: usize = 0;
 
                 if (features.workspaces) {
-                    out_groups[out_group_i] = DependencyGroup.workspaces;
+                    dependency_groups_buf[out_group_i] = DependencyGroup.workspaces;
                     out_group_i += 1;
                 }
 
                 if (features.dependencies) {
-                    out_groups[out_group_i] = DependencyGroup.dependencies;
+                    dependency_groups_buf[out_group_i] = DependencyGroup.dependencies;
                     out_group_i += 1;
                 }
 
                 if (features.dev_dependencies) {
-                    out_groups[out_group_i] = DependencyGroup.dev;
+                    dependency_groups_buf[out_group_i] = DependencyGroup.dev;
                     out_group_i += 1;
                 }
                 if (features.optional_dependencies) {
-                    out_groups[out_group_i] = DependencyGroup.optional;
+                    dependency_groups_buf[out_group_i] = DependencyGroup.optional;
                     out_group_i += 1;
                 }
 
                 if (features.peer_dependencies) {
-                    out_groups[out_group_i] = DependencyGroup.peer;
+                    dependency_groups_buf[out_group_i] = DependencyGroup.peer;
                     out_group_i += 1;
                 }
 
-                break :brk out_groups;
+                break :brk dependency_groups_buf[0..out_group_i];
             };
 
             var workspace_names = WorkspaceMap.init(allocator);
@@ -1446,7 +1440,7 @@ pub fn Package(comptime SemverIntType: type) type {
                 }
             };
 
-            inline for (dependency_groups) |group| {
+            for (dependency_groups) |group| {
                 if (json.asProperty(group.prop)) |dependencies_q| brk: {
                     switch (dependencies_q.expr.data) {
                         .e_array => |arr| {
@@ -1553,7 +1547,7 @@ pub fn Package(comptime SemverIntType: type) type {
                 }
             }
 
-            if (comptime features.trusted_dependencies) {
+            if (features.trusted_dependencies) {
                 if (json.asProperty("trustedDependencies")) |q| {
                     switch (q.expr.data) {
                         .e_array => |arr| {
@@ -1585,7 +1579,7 @@ pub fn Package(comptime SemverIntType: type) type {
                 }
             }
 
-            if (comptime features.is_main) {
+            if (features.is_main) {
                 lockfile.overrides.parseCount(lockfile, json, &string_builder);
 
                 if (json.get("workspaces")) |workspaces_expr| {
@@ -1633,19 +1627,17 @@ pub fn Package(comptime SemverIntType: type) type {
                 }
             }
 
-            if (comptime !features.is_main) {
-                if (comptime ResolverContext != void) {
-                    package.resolution = try resolver.resolve(
-                        *Lockfile.StringBuilder,
-                        &string_builder,
-                        json,
-                    );
-                }
-            } else {
+            if (features.is_main) {
                 package.resolution = .{
                     .tag = .root,
                     .value = .{ .root = {} },
                 };
+            } else if (comptime ResolverContext != void) {
+                package.resolution = try resolver.resolve(
+                    *Lockfile.StringBuilder,
+                    &string_builder,
+                    json,
+                );
             }
 
             if (json.asProperty("patchedDependencies")) |patched_deps| {
@@ -1753,7 +1745,7 @@ pub fn Package(comptime SemverIntType: type) type {
             package.scripts.filled = true;
 
             // It is allowed for duplicate dependencies to exist in optionalDependencies and regular dependencies
-            if (comptime features.check_for_duplicate_dependencies) {
+            if (features.check_for_duplicate_dependencies) {
                 lockfile.scratch.duplicate_checker_map.clearRetainingCapacity();
                 try lockfile.scratch.duplicate_checker_map.ensureTotalCapacity(total_dependencies_count);
             }
@@ -1779,7 +1771,7 @@ pub fn Package(comptime SemverIntType: type) type {
 
             total_dependencies_count = 0;
 
-            inline for (dependency_groups) |group| {
+            for (dependency_groups) |group| {
                 if (group.behavior.isWorkspace()) {
                     var seen_workspace_names = TrustedDependenciesSet{};
                     defer seen_workspace_names.deinit(allocator);
@@ -1993,7 +1985,7 @@ pub fn Package(comptime SemverIntType: type) type {
             lockfile.buffers.resolutions.items = lockfile.buffers.resolutions.items.ptr[0..new_len];
 
             // This function depends on package.dependencies being set, so it is done at the very end.
-            if (comptime features.is_main) {
+            if (features.is_main) {
                 try lockfile.overrides.parseAppend(pm, lockfile, package, log, source, json, &string_builder);
 
                 var found_any_catalog_or_catalog_object = false;

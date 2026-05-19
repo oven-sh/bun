@@ -6498,7 +6498,7 @@ pub mod bv2_impl {
                         )
                     {
                         import_record.path =
-                            path_as_static(resolve_result.path_pair.primary.clone());
+                            path_as_static(resolve_result.path_pair.primary);
                     }
                     import_record.flags.set(
                         bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS,
@@ -6570,7 +6570,7 @@ pub mod bv2_impl {
                                 import_record.path.text = path.text;
                                 import_record.path.pretty = rel.into();
                                 import_record.path = path_as_static(
-                                    self.path_with_pretty_initialized(path.clone(), target)
+                                    self.path_with_pretty_initialized(*path, target)
                                         .expect("oom"),
                                 );
                                 if loader == Loader::Html

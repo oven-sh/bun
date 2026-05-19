@@ -813,6 +813,12 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
             );
             Global::exit(1);
         }
+        // Keep `PWD` in sync with the new cwd so tools that read
+        // `process.env.PWD` (TypeScript / vue-tsc for module resolution,
+        // shell scripts, subprocess children, etc.) see the directory
+        // we just chdir'd into instead of the inherited parent. bash's
+        // builtin `cd` does the same — only on success.
+        set_pwd_env(&out_z);
         Box::<[u8]>::from(out_z.as_bytes())
     } else {
         let mut temp = PathBuffer::uninit();
@@ -1563,6 +1569,99 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
     }
 
     Ok(opts)
+}
+
+/// Publish `cwd` as the `PWD` environment variable. Used after `--cwd`
+/// successfully chdir's so that `process.env.PWD` and spawned children see
+/// the new directory. bash's builtin `cd` does the same — only on success.
+///
+/// Two writes are needed:
+///   1. OS env (`setenv` / `SetEnvironmentVariableW`) — so `Bun.spawn` children
+///      inherit the new `PWD` via the OS-level env block.
+///   2. Frozen WTF-8 snapshot on Windows — `DotEnv::load_process` iterates
+///      `bun_sys::environ()` which on Windows reads
+///      `bun_core::os::environ()`, a snapshot taken once at startup by
+///      `convert_env_to_wtf8` (`src/sys/windows/env.rs`); `SetEnvironmentVariableW`
+///      doesn't update it, so we replace the `PWD=` slot in place or grow
+///      the slice by one. POSIX is fine without this step — `bun_sys::environ`
+///      reads libc's live `environ` pointer each call, which `setenv` updates.
+fn set_pwd_env(cwd: &bun_core::ZBox) {
+    #[cfg(windows)]
+    {
+        patch_windows_environ_snapshot(cwd.as_bytes());
+        let mut wbuf = bun_paths::WPathBuffer::uninit();
+        let wcwd = bun_paths::strings::to_w_path(wbuf.as_mut_slice(), cwd.as_bytes());
+        const PWD_W: [u16; 4] = [b'P' as u16, b'W' as u16, b'D' as u16, 0];
+        // SAFETY: PWD_W is NUL-terminated; to_w_path writes a NUL-terminated WStr.
+        unsafe {
+            let _ = SetEnvironmentVariableW(PWD_W.as_ptr(), wcwd.as_ptr());
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        // SAFETY: literal is NUL-terminated; ZBox::as_ptr() points to NUL-terminated bytes.
+        unsafe {
+            let _ = setenv(c"PWD".as_ptr(), cwd.as_ptr(), 1);
+        }
+    }
+}
+
+#[cfg(windows)]
+fn patch_windows_environ_snapshot(cwd: &[u8]) {
+    // Mirror Zig's invariant in `convert_env_to_wtf8`: the allocation is
+    // leaked for the process lifetime, so no `Drop` worries here. Replace
+    // the existing `PWD=` entry in place when present, otherwise grow the
+    // slice by one — the `set_environ(ptr, len)` call publishes the new
+    // (ptr, len) pair atomically for subsequent readers.
+    let mut entry: Vec<u8> = Vec::with_capacity(4 + cwd.len() + 1);
+    entry.extend_from_slice(b"PWD=");
+    entry.extend_from_slice(cwd);
+    entry.push(0);
+    let entry_ptr: *mut core::ffi::c_char = Box::leak(entry.into_boxed_slice()).as_mut_ptr().cast();
+
+    // SAFETY: single-threaded argv parse; no other thread reads `environ` yet.
+    let env = unsafe { bun_core::os::environ() };
+    for (i, slot) in env.iter().enumerate() {
+        // SAFETY: entries are NUL-terminated by construction in convert_env_to_wtf8.
+        let bytes = unsafe { bun_core::ffi::cstr_bytes(*slot as *const _) };
+        if bytes.starts_with(b"PWD=") {
+            // SAFETY: `env.as_ptr()` is a `*const *mut c_char` into the Box::leak'd
+            // slice from convert_env_to_wtf8; we have exclusive access at argv-parse
+            // time (before any other thread exists).
+            unsafe {
+                let mut_base = env.as_ptr() as *mut *mut core::ffi::c_char;
+                *mut_base.add(i) = entry_ptr;
+            }
+            return;
+        }
+    }
+
+    // No existing PWD entry — grow the envp slice by one. We rebuild the
+    // full NUL-terminated array (Box::leak'd) and swap it in via
+    // `set_environ`.
+    let mut new: Vec<*mut core::ffi::c_char> = Vec::with_capacity(env.len() + 2);
+    new.extend_from_slice(env);
+    new.push(entry_ptr);
+    new.push(core::ptr::null_mut());
+    let new = Box::leak(new.into_boxed_slice());
+    // SAFETY: single-threaded startup; `new` is live for the process lifetime.
+    unsafe {
+        bun_core::os::set_environ(new.as_mut_ptr(), new.len() - 1);
+    }
+}
+
+#[cfg(not(windows))]
+unsafe extern "C" {
+    fn setenv(
+        name: *const core::ffi::c_char,
+        value: *const core::ffi::c_char,
+        overwrite: core::ffi::c_int,
+    ) -> core::ffi::c_int;
+}
+
+#[cfg(windows)]
+unsafe extern "C" {
+    fn SetEnvironmentVariableW(name: *const u16, value: *const u16) -> i32;
 }
 
 /// Cold path: `bun test` option-group parsing — timeout / coverage / reporter /

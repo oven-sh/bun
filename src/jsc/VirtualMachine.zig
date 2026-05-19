@@ -866,15 +866,33 @@ pub fn onBeforeExit(this: *VirtualMachine) void {
     this.exit_handler.dispatchOnBeforeExit();
     var dispatch = false;
     while (true) {
+        // Observe worker abrupt-terminate / cooperative-close here too.
+        // A `self.close()` or `process.exit()` inside the beforeExit
+        // handler — or one called from a timer / immediate that fires
+        // inside this loop — must break us out. `drainTimers` /
+        // `tickImmediateTasks` early-return on the close flag without
+        // popping due timers, so `isEventLoopAlive()` alone would keep
+        // looping forever.
         while (this.isEventLoopAlive()) : (dispatch = true) {
+            if (this.worker) |w| if (w.shouldExitLoop()) return;
             this.tick();
             this.eventLoop().autoTickActive();
         }
 
         if (dispatch) {
+            // The inner while may have exited via its condition (last
+            // loop ref dropped) *after* a task set `requested_close` —
+            // e.g. a `beforeExit` handler that schedules a
+            // `setImmediate(() => self.close())`. Check before firing
+            // the last-chance `beforeExit` so the handler doesn't run
+            // a second time on a worker that has already closed
+            // (WHATWG "close a worker" step 1 discards queued tasks
+            // once the closing flag is set).
+            if (this.worker) |w| if (w.shouldExitLoop()) return;
             this.exit_handler.dispatchOnBeforeExit();
             dispatch = false;
 
+            if (this.worker) |w| if (w.shouldExitLoop()) return;
             if (this.isEventLoopAlive()) continue;
         }
 
@@ -2260,6 +2278,18 @@ fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
                 },
                 else => {},
             }
+        } else if (this.worker) |worker| {
+            // Worker preloads: use the termination-aware wait so a preload
+            // that does `self.close()` — or `self.close(); await neverResolves`
+            // — doesn't hang the worker forever (`waitForPromise` only
+            // exits on promise settlement or `executionForbidden()`, and
+            // `self.close()` deliberately arms neither). Bail on close so
+            // the caller's `error.WorkerClosed` branch handles shutdown.
+            this.eventLoop().performGC();
+            this.eventLoop().waitForPromiseWithTermination(jsc.AnyPromise{
+                .internal = promise,
+            });
+            if (worker.shouldExitLoop()) return promise;
         } else {
             this.eventLoop().performGC();
             this.waitForPromise(jsc.AnyPromise{
@@ -2414,8 +2444,21 @@ pub fn loadEntryPointForWebWorker(this: *VirtualMachine, entry_path: string) any
         .internal = promise,
     });
     if (this.worker) |worker| {
+        // Abrupt: parent terminate() / process.exit() — caller will set
+        // exit_code = 1 (unless process.exit() set it first).
         if (worker.hasRequestedTerminate()) {
             return error.WorkerTerminated;
+        }
+        // Cooperative: self.close() during top-level eval/await. Only fire
+        // this early-return when the module promise is still pending —
+        // e.g. `self.close(); await neverResolves`. If the promise has
+        // settled (rejected from a throw after close, or fulfilled), fall
+        // through and let spin()'s promise-result path run so an uncaught
+        // top-level exception still reaches the parent's 'error' event per
+        // WHATWG "report an exception". spin()'s shouldExitLoop() guard
+        // after that block will still produce a clean close.
+        if (worker.hasRequestedClose() and promise.status() == .pending) {
+            return error.WorkerClosed;
         }
     }
     return this.pending_internal_promise.?;

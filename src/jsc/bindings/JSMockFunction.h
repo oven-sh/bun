@@ -46,10 +46,37 @@ public:
     // This list includes activeSpies
     JSC::Strong<JSC::Unknown> activeMocks;
 
+    // Side cache for `jest.requireMock(specifier)` when no explicit
+    // `jest.mock(specifier)` has been called. We keep it separate from the
+    // `onLoadPlugins.virtualModules` map so that `require()`/`import()` of
+    // the same specifier still see the real module — matching Jest's
+    // distinction between `jest.mock()` (global) and `jest.requireMock()`
+    // (local handle).
+    JSC::Strong<JSC::JSMap> requireMockCache;
+
     // Called by Zig::GlobalObject::visitChildren
     template<typename Visitor>
     void visit(Visitor& visitor);
 };
+
+// Create a mock function equivalent to `mock.fn()` / `jest.fn()` with no
+// implementation. Used by auto-mock. Returns null on failure (OOM, etc.) —
+// the caller is responsible for checking for exceptions.
+JSC::JSObject* createAutoMockedFunction(JSC::JSGlobalObject* globalObject, JSC::JSValue originalValue);
+
+// Generate an auto-mock value from a module's real exports. For each own
+// data property of `exports` (enumerable and non-enumerable alike;
+// accessor/custom-slot properties are skipped so their getters are never
+// invoked):
+//   - function: replaced with a mock function that returns undefined (plus
+//     any of its own properties mocked recursively so static methods work)
+//   - plain object: recursively auto-mocked
+//   - primitives, arrays, other non-plain objects: preserved
+// Returns an empty JSValue on failure with an exception pending.
+//
+// Note: primitive exports (e.g. CJS `module.exports = 42`) come through as
+// non-object JSValues — callers must decide whether to wrap them.
+JSC::JSValue createAutoMockFromExports(JSC::JSGlobalObject* globalObject, JSC::JSValue exports);
 
 class MockWithImplementationCleanupData : public JSC::JSInternalFieldObjectImpl<4> {
 public:

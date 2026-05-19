@@ -156,6 +156,17 @@ pub extern "kernel32" fn ClosePseudoConsole(hPC: HPCON) callconv(.winapi) void;
 
 pub extern "kernel32" fn CloseHandle(hObject: HANDLE) callconv(.winapi) BOOL;
 
+pub const MEMORY_RESOURCE_NOTIFICATION_TYPE = enum(c_int) {
+    LowMemoryResourceNotification = 0,
+    HighMemoryResourceNotification = 1,
+};
+pub extern "kernel32" fn CreateMemoryResourceNotification(NotificationType: MEMORY_RESOURCE_NOTIFICATION_TYPE) callconv(.winapi) ?HANDLE;
+pub const WAITORTIMERCALLBACK = *const fn (lpParameter: ?*anyopaque, TimerOrWaitFired: BOOLEAN) callconv(.winapi) void;
+pub extern "kernel32" fn RegisterWaitForSingleObject(phNewWaitObject: *HANDLE, hObject: HANDLE, Callback: WAITORTIMERCALLBACK, Context: ?*anyopaque, dwMilliseconds: windows.ULONG, dwFlags: windows.ULONG) callconv(.winapi) BOOL;
+pub extern "kernel32" fn UnregisterWaitEx(WaitHandle: HANDLE, CompletionEvent: ?HANDLE) callconv(.winapi) BOOL;
+pub const WT_EXECUTEONLYONCE: windows.ULONG = 0x00000008;
+pub const WT_EXECUTEINWAITTHREAD: windows.ULONG = 0x00000004;
+
 pub extern "kernel32" fn GetFinalPathNameByHandleW(hFile: HANDLE, lpszFilePath: [*]u16, cchFilePath: DWORD, dwFlags: DWORD) callconv(.winapi) DWORD;
 
 pub extern "kernel32" fn DeleteFileW(lpFileName: [*:0]const u16) callconv(.winapi) BOOL;

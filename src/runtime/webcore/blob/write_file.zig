@@ -702,6 +702,11 @@ pub const WriteFileWaitFromLockedValueTask = struct {
             .Blob,
             => {
                 var blob = value.use();
+                // writeFileWithSourceDestination refs the source store for the
+                // duration of the write; callers own the initial ref and must
+                // drop it. Without this, large fetch() response bodies buffered
+                // via Bun.write(path, response) leak one Store per write.
+                defer blob.detach();
                 // TODO: this should be one promise not two!
                 const new_promise = Blob.writeFileWithSourceDestination(globalThis, &blob, &file_blob, .{ .mkdirp_if_not_exists = this.mkdirp_if_not_exists }) catch |err| {
                     file_blob.detach();

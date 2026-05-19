@@ -37,7 +37,7 @@ function css(file: string, is_development: boolean): string {
     stdio: ["ignore", "pipe", "pipe"],
   });
   if (!success) throw new Error(stderr.toString("utf-8"));
-  return stdout.toString("utf-8");
+  return stdout.toString("utf-8").trimEnd();
 }
 
 async function run() {
@@ -53,7 +53,11 @@ async function run() {
           side: JSON.stringify(side),
           IS_ERROR_RUNTIME: String(file === "error"),
           IS_BUN_DEVELOPMENT: String(!!debug),
-          OVERLAY_CSS: css("../runtime/bake/client/overlay.css", !!debug),
+          // `define` values must be JS expressions. The Zig-era define
+          // parser auto-quoted raw non-identifier non-JSON values as
+          // strings; the Rust port doesn't (yet — see #30679), so be
+          // explicit. The consumer is `declare const OVERLAY_CSS: string`.
+          OVERLAY_CSS: JSON.stringify(css("../runtime/bake/client/overlay.css", !!debug)),
         },
         minify: {
           syntax: !debug,

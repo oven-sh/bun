@@ -359,12 +359,272 @@ function isEmptyFunction(f: Function) {
   return /^{\s*}$/.test(str);
 }
 
-const createHookNotImpl = createWarning(
-  "async_hooks.createHook is not implemented in Bun. Hooks can still be created but will never be called.",
+const createHookPartialWarning = createWarning(
+  "async_hooks.createHook is partially implemented in Bun. Lifecycle hooks only fire for timers (setTimeout/setInterval/setImmediate).",
   true,
 );
 
+// ─── createHook: partial implementation ──────────────────────────────────────
+// Bun's `createHook` has been historically stubbed because firing init/before/
+// after/destroy for every async resource (promises, I/O, etc.) would require
+// instrumenting every hot path in the runtime. This partial implementation
+// covers the common case of timers by monkey-patching `globalThis.{set,clear}`
+// `{Timeout,Interval,Immediate}` once any hook is enabled. When no user hook is
+// active, the globals are untouched and the overhead is zero.
+//
+// See https://github.com/oven-sh/bun/issues/30827.
+
+type AsyncHookCallbacks = {
+  init?: (asyncId: number, type: string, triggerAsyncId: number, resource: any) => void;
+  before?: (asyncId: number) => void;
+  after?: (asyncId: number) => void;
+  destroy?: (asyncId: number) => void;
+  promiseResolve?: (asyncId: number) => void;
+};
+
 let hasEnabledCreateHook = false;
+const activeHooks: AsyncHookCallbacks[] = [];
+let timerGlobalsPatched = false;
+let nextAsyncId = 2; // 1 is reserved for the root execution context (matches Node).
+const kAsyncId = Symbol("bun.asyncId");
+const kDestroyed = Symbol("bun.asyncHooksDestroyed");
+// Distinguishes Timeout handles from Immediate handles so mismatched
+// cancellation (clearTimeout on an Immediate, clearImmediate on a
+// Timeout/Interval) is a no-op — matches Node, which keeps the two APIs
+// strictly paired even though both return opaque objects.
+const kTimerKind = Symbol("bun.asyncHooksTimerKind");
+
+// Tracks the current `executionAsyncId()` while inside a before/after pair so
+// observers can correlate resources. Trigger IDs fall back to the outer scope
+// at `init()` time. Default is 0 (matching `AsyncResource.prototype.asyncId()`
+// which is currently a stub that also returns 0) — Node uses 1 for the root
+// context but `AsyncResource.asyncId() === executionAsyncId()` is a real
+// invariant (see `test-async-hooks-recursive-stack-runInAsyncScope.js`), so
+// we keep both sides at 0 at the root until `AsyncResource` is wired up.
+let currentExecutionAsyncId = 0;
+let currentTriggerAsyncId = 0;
+
+// A pending-destroy queue flushed on nextTick — matches Node's batching so
+// the destroy callback is observed after any synchronous init/before/after.
+let pendingDestroy: number[] | null = null;
+
+function scheduleDestroy(id: number) {
+  if (pendingDestroy === null) {
+    pendingDestroy = [id];
+    process.nextTick(flushDestroyQueue);
+  } else {
+    pendingDestroy.push(id);
+  }
+}
+
+function flushDestroyQueue() {
+  const queue = pendingDestroy;
+  pendingDestroy = null;
+  if (!queue) return;
+  for (let i = 0; i < queue.length; i++) {
+    emitDestroy(queue[i]);
+  }
+}
+
+function emitInit(asyncId: number, type: string, triggerAsyncId: number, resource: any) {
+  // Snapshot: a hook's init may call createHook/enable/disable; we want to
+  // iterate the set as it stood at emission time.
+  const hooks = activeHooks.slice();
+  for (let i = 0; i < hooks.length; i++) {
+    const fn = hooks[i].init;
+    if (fn) {
+      try {
+        fn(asyncId, type, triggerAsyncId, resource);
+      } catch (err) {
+        reportHookError(err);
+      }
+    }
+  }
+}
+
+function emitBefore(asyncId: number) {
+  const hooks = activeHooks.slice();
+  for (let i = 0; i < hooks.length; i++) {
+    const fn = hooks[i].before;
+    if (fn) {
+      try {
+        fn(asyncId);
+      } catch (err) {
+        reportHookError(err);
+      }
+    }
+  }
+}
+
+function emitAfter(asyncId: number) {
+  const hooks = activeHooks.slice();
+  for (let i = 0; i < hooks.length; i++) {
+    const fn = hooks[i].after;
+    if (fn) {
+      try {
+        fn(asyncId);
+      } catch (err) {
+        reportHookError(err);
+      }
+    }
+  }
+}
+
+function emitDestroy(asyncId: number) {
+  const hooks = activeHooks.slice();
+  for (let i = 0; i < hooks.length; i++) {
+    const fn = hooks[i].destroy;
+    if (fn) {
+      try {
+        fn(asyncId);
+      } catch (err) {
+        reportHookError(err);
+      }
+    }
+  }
+}
+
+function reportHookError(err: unknown) {
+  // Mirror Node's behavior of emitting uncaughtException for hook throws.
+  process.nextTick(() => {
+    throw err;
+  });
+}
+
+// Known limitation: wrapping is installed on `globalThis` lazily, on the
+// first `.enable()`. A caller that captures a reference *before* enabling
+// — e.g. `const st = setTimeout; hook.enable(); st(cb, 1);` — keeps a
+// pointer to the original native function and bypasses the hook layer.
+// Node has the same property because their hooks live in a JS prologue
+// around the native call; in practice it matters only for tooling that
+// cached references pre-boot. The regression test
+// `test/js/node/async_hooks/createHook-timers.test.ts` ("cached timer
+// reference captured before .enable()…") pins this behavior so a future
+// lower-level interception (e.g. intercepting inside `Bun__Timer__setTimeout`)
+// is a conscious opt-in.
+function installTimerHooks() {
+  if (timerGlobalsPatched) return;
+  timerGlobalsPatched = true;
+
+  const g = globalThis as any;
+  const origSetTimeout = g.setTimeout;
+  const origSetInterval = g.setInterval;
+  const origSetImmediate = g.setImmediate;
+  const origClearTimeout = g.clearTimeout;
+  const origClearInterval = g.clearInterval;
+  const origClearImmediate = g.clearImmediate;
+
+  function wrapTimer(type: string, orig: Function, isInterval: boolean) {
+    const wrapped = function wrappedTimerCreate(this: any, callback: any, ...rest: any[]) {
+      if (!$isCallable(callback) || activeHooks.length === 0) {
+        return orig.$apply(this, arguments);
+      }
+      const asyncId = nextAsyncId++;
+      const triggerAsyncId = currentExecutionAsyncId;
+      let timer: any;
+      const wrappedCallback = function wrappedTimerCallback(this: any, ...args: any[]) {
+        const prevExec = currentExecutionAsyncId;
+        const prevTrig = currentTriggerAsyncId;
+        currentExecutionAsyncId = asyncId;
+        currentTriggerAsyncId = triggerAsyncId;
+        emitBefore(asyncId);
+        try {
+          return callback.$apply(this, args);
+        } finally {
+          emitAfter(asyncId);
+          if (!isInterval) {
+            // Non-repeating: the resource is done after it fires. Mark
+            // destroyed immediately so any later clear is a no-op, then queue
+            // the destroy callback to run on nextTick (matches Node's order
+            // where `destroy` trails `after` asynchronously).
+            if (timer && !timer[kDestroyed]) {
+              timer[kDestroyed] = true;
+              scheduleDestroy(asyncId);
+            }
+          }
+          currentExecutionAsyncId = prevExec;
+          currentTriggerAsyncId = prevTrig;
+        }
+      };
+      timer = orig.$call(this, wrappedCallback, ...rest);
+      if (timer && typeof timer === "object") {
+        timer[kAsyncId] = asyncId;
+        timer[kDestroyed] = false;
+        timer[kTimerKind] = type;
+        emitInit(asyncId, type, triggerAsyncId, timer);
+      }
+      return timer;
+    };
+    // Forward `util.promisify.custom` from the native so
+    // `util.promisify(setTimeout)` keeps returning `timers/promises.setTimeout`
+    // after hooks are enabled. Without this, promisify's custom-symbol lookup
+    // misses and it falls back to the generic errback wrapper, which calls
+    // `setTimeout(delay, nodeCallback)` — argument order is wrong and the
+    // promise never resolves. See `src/js/internal/promisify.ts` for how the
+    // custom symbol is wired.
+    const kCustomPromisify = Symbol.for("nodejs.util.promisify.custom");
+    const customPromisify = (orig as any)[kCustomPromisify];
+    if (customPromisify !== undefined) {
+      Object.defineProperty(wrapped, kCustomPromisify, { value: customPromisify, configurable: true });
+    }
+    return wrapped;
+  }
+
+  // `expectedKind` mirrors Node's strict pairing: `clearTimeout`/
+  // `clearInterval` operate on `Timeout` handles, `clearImmediate` on
+  // `Immediate` handles. Passing a mismatched handle is a no-op in Node
+  // (the native clear can't find the handle in its heap), so we must also
+  // skip the async-hooks destroy to avoid a spurious event for a timer
+  // that's still going to fire.
+  function wrapClearTimer(orig: Function, expectedKind: "Timeout" | "Immediate") {
+    return function wrappedClear(this: any, timer: any) {
+      if (
+        timer &&
+        typeof timer === "object" &&
+        timer[kAsyncId] != null &&
+        timer[kTimerKind] === expectedKind &&
+        !timer[kDestroyed]
+      ) {
+        timer[kDestroyed] = true;
+        scheduleDestroy(timer[kAsyncId]);
+      }
+      return orig.$apply(this, arguments);
+    };
+  }
+
+  g.setTimeout = wrapTimer("Timeout", origSetTimeout, false);
+  g.setInterval = wrapTimer("Timeout", origSetInterval, true);
+  g.setImmediate = wrapTimer("Immediate", origSetImmediate, false);
+  g.clearTimeout = wrapClearTimer(origClearTimeout, "Timeout");
+  g.clearInterval = wrapClearTimer(origClearInterval, "Timeout");
+  g.clearImmediate = wrapClearTimer(origClearImmediate, "Immediate");
+
+  // `node:timers` snapshots the global timer functions into its default
+  // export at evaluation time. If a dependency `require()`d the module
+  // before `createHook(...).enable()` — common in the wild since plenty of
+  // packages import `timers` at top-level — its exports still point at the
+  // unwrapped natives and would bypass hook emission. Overwrite them in
+  // place so `require('node:timers').setTimeout(...)` fires hooks regardless
+  // of load order. `require()` here reuses the cached module if present
+  // and populates it with wrapped globals if it hasn't been loaded yet.
+  try {
+    const timersMod = require("node:timers");
+    timersMod.setTimeout = g.setTimeout;
+    timersMod.setInterval = g.setInterval;
+    timersMod.setImmediate = g.setImmediate;
+    timersMod.clearTimeout = g.clearTimeout;
+    timersMod.clearInterval = g.clearInterval;
+    timersMod.clearImmediate = g.clearImmediate;
+  } catch {
+    // Safety net: if requiring `node:timers` during `installTimerHooks()`
+    // fails (e.g. initialization ordering corner cases), we still have the
+    // globalThis patches — direct `setTimeout(…)` calls continue to work.
+    // `node:timers/promises` is not patched here; its module-level `const`
+    // captures of `globalThis.setImmediate`/etc. at load time are a known
+    // limitation (see warning text).
+  }
+}
+
 function createHook(hook) {
   validateObject(hook, "hook");
   const { init, before, after, destroy, promiseResolve } = hook;
@@ -375,29 +635,40 @@ function createHook(hook) {
   if (promiseResolve !== undefined && typeof promiseResolve !== "function")
     throw $ERR_ASYNC_CALLBACK("hook.promiseResolve");
 
+  // Keep a single normalized record so we don't pay re-destructure costs on
+  // every emission. The user-facing `enable()`/`disable()` just toggles this
+  // record's presence in the `activeHooks` array.
+  const record: AsyncHookCallbacks = { init, before, after, destroy, promiseResolve };
+  let enabled = false;
+
   return {
     enable() {
-      createHookNotImpl(hook);
-      hasEnabledCreateHook = true;
+      if (!enabled) {
+        enabled = true;
+        createHookPartialWarning(hook);
+        activeHooks.push(record);
+        hasEnabledCreateHook = true;
+        installTimerHooks();
+      }
       return this;
     },
     disable() {
-      createHookNotImpl();
+      if (enabled) {
+        enabled = false;
+        const idx = activeHooks.indexOf(record);
+        if (idx !== -1) activeHooks.splice(idx, 1);
+      }
       return this;
     },
   };
 }
 
-const executionAsyncIdNotImpl = createWarning(
-  "async_hooks.executionAsyncId/triggerAsyncId are not implemented in Bun. It will return 0 every time.",
-);
 function executionAsyncId() {
-  executionAsyncIdNotImpl();
-  return 0;
+  return currentExecutionAsyncId;
 }
 
 function triggerAsyncId() {
-  return 0;
+  return currentTriggerAsyncId;
 }
 
 const executionAsyncResourceWarning = createWarning(

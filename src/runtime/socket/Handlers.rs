@@ -392,7 +392,11 @@ impl Handlers {
 
         #[cfg(debug_assertions)]
         {
-            debug_assert!(self.protection_count > 0);
+            // `Drop` runs even on the early-error returns in `from_generated`
+            // (before `protect()`); nothing to unprotect in that case.
+            if self.protection_count == 0 {
+                return;
+            }
             self.protection_count -= 1;
         }
         self.on_open.unprotect();

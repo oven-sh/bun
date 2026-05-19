@@ -228,6 +228,10 @@ pub mod api {
         pub token: Box<[u8]>,
         /// email
         pub email: Box<[u8]>,
+        /// path to certificate file for client TLS authentication
+        pub certfile: Box<[u8]>,
+        /// path to key file for client TLS authentication
+        pub keyfile: Box<[u8]>,
     }
 
     impl NpmRegistry {

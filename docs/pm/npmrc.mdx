@@ -73,6 +73,8 @@ The following options are supported:
 - `_password` (base64 encoded password)
 - `_auth` (base64 encoded username:password, e.g. `btoa(username + ":" + password)`)
 - `email`
+- `certfile` (path to client certificate file for mutual TLS authentication)
+- `keyfile` (path to client private key file for mutual TLS authentication)
 
 The equivalent `bunfig.toml` option is to add a key in [`install.scopes`](/runtime/bunfig#install-registry):
 
@@ -174,6 +176,28 @@ ca[]="-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"
 # or specify a path to a CA file
 cafile=/path/to/ca-bundle.crt
 ```
+
+### `certfile` and `keyfile`: Client certificate authentication
+
+Configure client certificate and private key for mutual TLS authentication with a registry. This is useful for registries that require client certificates for authentication, such as private corporate registries.
+
+```ini .npmrc icon="npm"
+//my-registry.example.com/:certfile=/path/to/client-cert.pem
+//my-registry.example.com/:keyfile=/path/to/client-key.pem
+```
+
+These options can be combined with other authentication options like `_authToken`:
+
+```ini .npmrc icon="npm"
+@myorg:registry=https://my-registry.example.com/
+//my-registry.example.com/:certfile=/path/to/client-cert.pem
+//my-registry.example.com/:keyfile=/path/to/client-key.pem
+//my-registry.example.com/:_authToken=${NPM_TOKEN}
+```
+
+**Supported formats:** Certificate and key files must be in PEM format, the default and most common format. DER format is not supported.
+
+**Security note:** Protect your `keyfile` (and any private keys) with appropriate filesystem permissions. Restrict access to the owner only (e.g., `chmod 600`), validate file ownership, avoid storing keys in version control, and prefer secure stores or OS keyrings when possible.
 
 ### `omit` and `include`: Control dependency types
 

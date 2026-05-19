@@ -250,6 +250,19 @@ Configure a client certificate and private key for registries that require mutua
 //my-registry.example.com/:keyfile=/path/to/client-key.pem
 ```
 
+These options can be combined with other authentication options like `_authToken`:
+
+```ini .npmrc icon="npm"
+@myorg:registry=https://my-registry.example.com/
+//my-registry.example.com/:certfile=/path/to/client-cert.pem
+//my-registry.example.com/:keyfile=/path/to/client-key.pem
+//my-registry.example.com/:_authToken=${NPM_TOKEN}
+```
+
+**Supported formats:** Certificate and key files must be in PEM format, the default and most common format. DER format is not supported.
+
+**Security note:** Protect your `keyfile` (and any private keys) with appropriate filesystem permissions. Restrict access to the owner only (e.g., `chmod 600`), validate file ownership, avoid storing keys in version control, and prefer secure stores or OS keyrings when possible.
+
 ### `omit` and `include`: Control dependency types
 
 Control which dependency types Bun installs:

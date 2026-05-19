@@ -1587,6 +1587,13 @@ pub const Installer = struct {
 
         this.appendRealStoreNodeModulesPath(&node_modules_path, parent_entry_id, .staging);
 
+        // For `bun add -g <pkg>` with the isolated linker, the requested
+        // packages are direct dependencies of the root entry. They need to
+        // link into `options.bin_path` (~/.bun/bin) so the user's PATH
+        // picks them up. Transitive deps, and deps linked for non-root
+        // parents, stay in the parent's local `.bin/`.
+        const link_into_global_bin = this.manager.options.global and parent_entry_id == .root;
+
         for (entry_deps[parent_entry_id.get()].slice()) |dep| {
             const node_id = entry_node_ids[dep.entry_id.get()];
             const dep_id = node_dep_ids[node_id.get()];
@@ -1621,6 +1628,15 @@ pub const Installer = struct {
                 target_package_name = strings.StringOrTinyString.init(this.lockfile.str(&pkg_names[replacement_pkg_id]));
             }
 
+            const global = link_into_global_bin and global: {
+                for (this.manager.update_requests) |request| {
+                    if (request.package_id == pkg_id) {
+                        break :global true;
+                    }
+                }
+                break :global false;
+            };
+
             var bin_linker: Bin.Linker = .{
                 .bin = bin,
                 .global_bin_path = this.manager.options.bin_path,
@@ -1636,7 +1652,7 @@ pub const Installer = struct {
                 .rel_buf = link_rel_buf,
             };
 
-            bin_linker.link(false);
+            bin_linker.link(global);
 
             if (target_node_modules_path != null and (bin_linker.skipped_due_to_missing_bin or bin_linker.err != null)) {
                 target_node_modules_path.?.deinit();
@@ -1652,7 +1668,7 @@ pub const Installer = struct {
                     });
                 }
 
-                bin_linker.link(false);
+                bin_linker.link(global);
             }
 
             if (bin_linker.err) |err| {

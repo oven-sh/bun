@@ -2,7 +2,6 @@ use std::io::Write as _;
 
 use bstr::{BStr, ByteSlice};
 
-use crate::api::bun::process::Status as ProcStatus;
 use crate::api::bun::process::sync::{
     Options as SpawnSyncOptions, SyncStdio as Stdio, spawn as spawn_sync,
 };
@@ -14,6 +13,7 @@ use bun_core::strings;
 use bun_core::{Global, Output, env_var};
 use bun_install::LogLevel;
 use bun_install::PackageManager;
+use bun_install::lockfile::{LoadResult, Lockfile};
 use bun_js_printer as JSPrinter;
 use bun_parsers::json as JSON;
 use bun_paths::{PathBuffer, resolve_path as path, resolve_path::platform as path_platform};
@@ -177,6 +177,18 @@ impl PmVersionCommand {
             break 'brk_version None;
         };
 
+        // Read the package name before we start mutating `json.data`; the
+        // string slice borrows from the `json_bump` arena which outlives both
+        // the package.json write and the lockfile update below.
+        let pkg_name: Option<&[u8]> = 'brk_name: {
+            if let Some(n) = json.as_property(b"name") {
+                if let ExprData::EString(s) = &n.expr.data {
+                    break 'brk_name Some(s.data.slice());
+                }
+            }
+            break 'brk_name None;
+        };
+
         let new_version_str = Self::calculate_new_version(
             current_version.unwrap_or(b"0.0.0"),
             version_type,
@@ -232,6 +244,17 @@ impl PmVersionCommand {
             }
         }
 
+        // Propagate the new version into bun.lock so that workspace consumers
+        // (e.g. `bun pm pack` in sibling workspaces that depend on this one
+        // via `workspace:*`) see the updated version. Returns the absolute
+        // path of the saved lockfile so that the git commit below can stage
+        // it too.
+        let saved_lockfile_path: Option<Vec<u8>> = if let Some(name) = pkg_name {
+            Self::update_lockfile_workspace_version(pm, name, &new_version_str)
+        } else {
+            None
+        };
+
         if let Some(s) = &scripts_obj {
             if let Some(script) = s.get(b"version") {
                 if let Some(script_command) = script.as_string(&json_bump) {
@@ -250,7 +273,30 @@ impl PmVersionCommand {
         }
 
         if pm.options.git_tag_version {
-            Self::git_commit_and_tag(&new_version_str, pm.options.message, &package_json_dir)?;
+            // Only stage the lockfile when it lives inside the repository
+            // that git will actually discover from `package_json_dir`. If
+            // the package has its own nested `.git` (git submodule or a
+            // standalone repo vendored inside the workspace), git will
+            // resolve to that repo and reject the absolute workspace-root
+            // lockfile path with `fatal: ... is outside repository`, which
+            // would fail the entire version bump. Drop the arg in that case
+            // so the nested repo just gets `package.json` (same as before
+            // this PR).
+            let mut root_buf = PathBuffer::uninit();
+            let stage_lockfile_path: Option<&[u8]> =
+                saved_lockfile_path.as_deref().and_then(|lp| {
+                    let git_root = Self::find_git_root(&package_json_dir, &mut root_buf.0)?;
+                    match path::is_parent_or_equal(git_root, lp) {
+                        path::ParentEqual::Parent | path::ParentEqual::Equal => Some(lp),
+                        path::ParentEqual::Unrelated => None,
+                    }
+                });
+            Self::git_commit_and_tag(
+                &new_version_str,
+                pm.options.message,
+                &package_json_dir,
+                stage_lockfile_path,
+            )?;
         }
 
         if let Some(s) = &scripts_obj {
@@ -304,13 +350,14 @@ impl PmVersionCommand {
             return Ok(());
         }
 
-        let mut path_buf = PathBuffer::uninit();
-        let git_dir_path =
-            path::join_abs_string_buf_z::<path_platform::Auto>(cwd, &mut path_buf.0, &[b".git"]);
-        if !matches!(
-            bun_sys::directory_exists_at(Fd::cwd(), git_dir_path),
-            Ok(true)
-        ) {
+        // Walk up from `cwd` looking for a `.git` marker. Workspaces
+        // typically only have `.git` at the repo root, not in each package
+        // subdirectory — mirror git's own upward-search behavior so
+        // `bun pm version` called from `packages/foo` still picks up the
+        // surrounding repo. `.git` can be a file (git submodules / worktrees)
+        // as well as a directory, so check for both.
+        let mut root_buf = PathBuffer::uninit();
+        if Self::find_git_root(cwd, &mut root_buf.0).is_none() {
             pm.options.git_tag_version = false;
             return Ok(());
         }
@@ -320,6 +367,165 @@ impl PmVersionCommand {
             Global::exit(1);
         }
         Ok(())
+    }
+
+    /// Walk up from `start_dir` looking for a `.git` file or directory.
+    /// On success returns a slice of `out_buf` containing the absolute path
+    /// of the directory that holds `.git` (i.e. the git repository root).
+    /// Returns `None` when no `.git` is found up to the filesystem root.
+    fn find_git_root<'a>(start_dir: &[u8], out_buf: &'a mut [u8]) -> Option<&'a [u8]> {
+        let mut probe_buf = PathBuffer::uninit();
+        let mut current_dir = start_dir;
+
+        loop {
+            let git_path_z = path::join_abs_string_buf_z::<path_platform::Auto>(
+                current_dir,
+                &mut probe_buf.0,
+                &[b".git"],
+            );
+            // `.git` can be a directory (normal repo) or a file (submodule /
+            // worktree pointer). Check both. On Windows `exists_at` only
+            // matches files, so pair it with `directory_exists_at` rather
+            // than use `exists_at_type`, which has platform-specific quirks
+            // that caused `bun pm version` to exit non-zero for plain
+            // no-git directories on Windows CI.
+            let exists = bun_sys::exists_at(Fd::cwd(), git_path_z)
+                || matches!(
+                    bun_sys::directory_exists_at(Fd::cwd(), git_path_z),
+                    Ok(true)
+                );
+            if exists {
+                let len = current_dir.len();
+                out_buf[..len].copy_from_slice(current_dir);
+                return Some(&out_buf[..len]);
+            }
+
+            let parent = path::dirname::<path_platform::Auto>(current_dir);
+            if parent == current_dir {
+                return None;
+            }
+            current_dir = parent;
+        }
+    }
+
+    /// After writing the bumped `package.json` to disk, mirror the new version
+    /// into the lockfile so that `workspace:*` resolvers (pack, install, etc.)
+    /// pick up the bump. Silently no-ops when there's no lockfile yet or when
+    /// the package isn't tracked as a workspace (e.g. the root package, or a
+    /// non-workspace project). On success returns the absolute path of the
+    /// saved lockfile so the caller can include it in the version commit.
+    fn update_lockfile_workspace_version(
+        pm: &mut PackageManager,
+        pkg_name: &[u8],
+        new_version_str: &[u8],
+    ) -> Option<Vec<u8>> {
+        // Pass `false` for `ATTEMPT_OTHER`: if the project has no
+        // `bun.lock`/`bun.lockb` we want a clean no-op, not a silent
+        // migration from `package-lock.json` / `yarn.lock` / `pnpm-lock.yaml`.
+        // The `save_to_disk` call below would otherwise materialize a fresh
+        // `bun.lock` and effectively convert the project's lockfile format as
+        // a side effect of a version bump.
+        //
+        // PORT NOTE: reshaped for borrowck — the returned `LoadResult<'_>`
+        // holds `&mut Lockfile` into `pm.lockfile`, so every subsequent
+        // mutation (workspace_versions lookup, string_builder, save_to_disk)
+        // goes through `pm_raw`. Same singleton pattern as
+        // `pm_trusted_command.rs::untrusted_command`.
+        let pm_raw: *mut PackageManager = pm;
+        let load_result = pm.load_lockfile_from_cwd::<false>();
+        match &load_result {
+            LoadResult::NotFound => return None,
+            LoadResult::Err(err) => {
+                // Don't fail the version bump just because we couldn't update
+                // the lockfile — the `package.json` has already been written.
+                Output::warn(format_args!(
+                    "failed to update {} after version bump: {}",
+                    BStr::new(err.format.filename().as_bytes()),
+                    err.value.name(),
+                ));
+                return None;
+            }
+            LoadResult::Ok(_) => {}
+        }
+
+        let name_hash = Semver::string::Builder::string_hash(pkg_name);
+
+        // SAFETY: `load_result` is `Ok`; `workspace_versions` is a sub-field
+        // of `pm.lockfile` disjoint from the `&mut Lockfile` we're about to
+        // re-project through `pm_raw` for the string builder — and `get_ptr_mut`
+        // completes synchronously before any further `pm_raw` access below.
+        let entry_ptr: *mut Semver::Version = unsafe {
+            let lf: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
+            match (*lf).workspace_versions.get_ptr_mut(&name_hash) {
+                Some(e) => e as *mut Semver::Version,
+                None => {
+                    // Root workspace or a package not tracked in
+                    // `workspace_versions`. The root's version isn't currently
+                    // serialized in bun.lock, so bumping it needs no lockfile
+                    // update.
+                    return None;
+                }
+            }
+        };
+
+        let parsed =
+            Semver::Version::parse(Semver::SlicedString::init(new_version_str, new_version_str));
+        if !parsed.valid {
+            return None;
+        }
+        let parsed_version = parsed.version.min();
+
+        // Pre/build identifiers longer than 8 chars live in the lockfile's
+        // string pool; count+allocate into it before appending. The only
+        // error `allocate()` can return is OOM — escalate via
+        // `bun_core::handle_oom` instead of swallowing it, otherwise we'd
+        // leave the caller in an inconsistent state (package.json bumped,
+        // bun.lock silently skipped).
+        //
+        // SAFETY: `load_result` is `Ok`; `string_builder()` borrows
+        // disjoint sub-fields of `pm.lockfile` (string_bytes + string_pool).
+        // The write to `*entry_ptr` at the end touches `workspace_versions`,
+        // which is disjoint from what the string builder borrows.
+        unsafe {
+            let lf: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
+            let mut string_builder = (*lf).string_builder();
+            parsed_version.count(new_version_str, &mut string_builder);
+            bun_core::handle_oom(string_builder.allocate());
+            *entry_ptr = parsed_version.append(new_version_str, &mut string_builder);
+            string_builder.clamp();
+        }
+
+        // PORT NOTE: `save_to_disk` needs `&mut Lockfile` and `&LoadResult`
+        // simultaneously, but `LoadResultOk.lockfile` already holds the only
+        // `&mut`. Same projection pattern as `pm_trusted_command.rs:648-651`.
+        //
+        // SAFETY: `load_result` is `Ok`; `save_to_disk` reads `load_result`
+        // only for `save_format()` (scalar `format`/`migrated` fields) and
+        // never dereferences `ok.lockfile`.
+        unsafe {
+            let lf: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
+            (*lf).save_to_disk(&load_result, &(*pm_raw).options);
+        }
+
+        // Build the absolute path of the saved lockfile so callers (the
+        // git commit step below) can stage it regardless of which
+        // subdirectory we were invoked from. `save_to_disk` writes the file
+        // next to the root `package.json` via the process top-level dir, so
+        // mirror that exact location here rather than relying on whatever
+        // the process cwd happens to be.
+        let save_format = load_result.save_format(unsafe { &(*pm_raw).options });
+        let filename = save_format.filename().as_bytes();
+        let root_dir = bun_paths::fs::FileSystem::instance().top_level_dir();
+
+        drop(load_result);
+
+        let mut join_buf = PathBuffer::uninit();
+        let abs = path::join_abs_string_buf_z::<path_platform::Auto>(
+            root_dir,
+            &mut join_buf.0,
+            &[filename],
+        );
+        Some(abs.as_bytes().to_vec())
     }
 
     fn parse_version_argument(arg: &[u8]) -> (VersionType, Option<&[u8]>) {
@@ -785,6 +991,7 @@ impl PmVersionCommand {
         version: &[u8],
         custom_message: Option<&[u8]>,
         cwd: &[u8],
+        lockfile_path: Option<&[u8]>,
     ) -> Result<(), AllocError> {
         let mut path_buf = PathBuffer::uninit();
         let Some(git_path) = which(
@@ -800,8 +1007,18 @@ impl PmVersionCommand {
             Global::exit(1);
         };
 
+        // Stage package.json and, when we also updated the lockfile, the
+        // lockfile. Passing an absolute path lets git stage the lockfile even
+        // when the workspace package directory is a subdirectory of the repo
+        // root where the lockfile lives.
+        let stage_argv: Vec<Box<[u8]>> = if let Some(lp) = lockfile_path {
+            build_argv(&[git_path.as_bytes(), b"add", b"package.json", lp])
+        } else {
+            build_argv(&[git_path.as_bytes(), b"add", b"package.json"])
+        };
+
         let stage_proc = match spawn_sync(&SpawnSyncOptions {
-            argv: build_argv(&[git_path.as_bytes(), b"add", b"package.json"]),
+            argv: stage_argv,
             cwd: Box::<[u8]>::from(cwd),
             stdout: Stdio::Buffer,
             stderr: Stdio::Buffer,
@@ -825,11 +1042,12 @@ impl PmVersionCommand {
             }
             Ok(result) => {
                 if !result.is_ok() {
-                    let exit_code: i32 = match &result.status {
-                        ProcStatus::Exited(e) => i32::from(e.code),
-                        _ => -1,
-                    };
-                    Output::err_generic("Git add failed with exit code {}", (exit_code,));
+                    // Match the commit_proc / tag_proc handlers below:
+                    // `result.status` is a tagged union and `is_ok()` returns
+                    // false for signaled / errored cases as well as non-zero
+                    // exits, so formatting the exit code would be misleading
+                    // in those cases. Just report the failure.
+                    Output::err_generic("Git add failed", ());
                     Global::exit(1);
                 }
             }

@@ -452,7 +452,7 @@ pub mod zig_base64 {
     // PORT NOTE: dropped `standard_pad_char`/`standard_encoder`/`standard_decoder`
     // @compileError deprecation stubs — no Rust equivalent for use-site compile errors.
 
-    #[derive(Clone)]
+    #[derive(Copy, Clone)]
     pub struct Base64Encoder {
         pub alphabet_chars: [u8; 64],
         pub pad_char: Option<u8>,

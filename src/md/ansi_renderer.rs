@@ -1664,7 +1664,7 @@ impl<'a> AnsiRenderer<'a> {
                         strings::wtf8_byte_sequence_length_with_invalid(rest[0]),
                     ));
                 }
-                state_at[i].push(state.clone());
+                state_at[i].push(state);
                 segments[i].push(&rest[0..cut]);
                 state.scan(&rest[0..cut]);
                 rest = &rest[cut..];
@@ -1700,7 +1700,7 @@ impl<'a> AnsiRenderer<'a> {
                     b""
                 };
                 let opens: CellAnsiState = if line < state_at[i].len() {
-                    state_at[i][line].clone()
+                    state_at[i][line]
                 } else {
                     CellAnsiState::default()
                 };
@@ -1999,7 +1999,7 @@ impl<'a> AnsiRenderer<'a> {
 /// Tracked so a cell that wraps mid-span can re-emit the same opens
 /// on the continuation segment AND close any open OSC 8 link before
 /// the border character — `\x1b[0m` doesn't terminate OSC 8.
-#[derive(Clone, Default)]
+#[derive(Copy, Clone, Default)]
 struct CellAnsiState<'s> {
     flags: u8,
     fg: Option<&'s [u8]>,

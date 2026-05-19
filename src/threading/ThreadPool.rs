@@ -209,28 +209,6 @@ pub struct ThreadPool {
     stats: PoolStats,
 }
 
-static NTF_TOTAL: AtomicU32 = AtomicU32::new(0);
-static NTF_FAST_RET: AtomicU32 = AtomicU32::new(0);
-static NTF_WAKE: AtomicU32 = AtomicU32::new(0);
-static NTF_SPAWN: AtomicU32 = AtomicU32::new(0);
-static NTF_PENDING: AtomicU32 = AtomicU32::new(0);
-static NTF_NOWAKE: AtomicU32 = AtomicU32::new(0);
-static NTF_CANTWAKE: AtomicU32 = AtomicU32::new(0);
-static NTF_MAX_SPAWNED: AtomicU32 = AtomicU32::new(0);
-pub fn dump_notify_stats() {
-    eprintln!(
-        "[notify] total={} fast_ret={} wake_idle={} spawn={} pending={} nowake={} cantwake={} max_spawned_seen={}",
-        NTF_TOTAL.load(Ordering::Relaxed),
-        NTF_FAST_RET.load(Ordering::Relaxed),
-        NTF_WAKE.load(Ordering::Relaxed),
-        NTF_SPAWN.load(Ordering::Relaxed),
-        NTF_PENDING.load(Ordering::Relaxed),
-        NTF_NOWAKE.load(Ordering::Relaxed),
-        NTF_CANTWAKE.load(Ordering::Relaxed),
-        NTF_MAX_SPAWNED.load(Ordering::Relaxed),
-    );
-}
-
 /// Configuration options for the thread pool.
 /// TODO: add CPU core affinity?
 pub struct Config {
@@ -281,8 +259,6 @@ impl ThreadPool {
         if !stats_enabled() {
             return;
         }
-        dump_notify_stats();
-        eprintln!("[dump_stats] self.max_threads={}", self.max_threads);
         let now = now_ns();
         let idle = self.stats.idle_ns.swap(0, Ordering::Relaxed);
         let busy = self.stats.busy_ns.swap(0, Ordering::Relaxed);
@@ -704,7 +680,6 @@ impl ThreadPool {
 
     #[inline(always)]
     fn notify(&self, is_waking: bool) {
-        NTF_TOTAL.fetch_add(1, Ordering::Relaxed);
         // Fast path to check the Sync state to avoid calling into notify_slow().
         // If we're waking, then we need to update the state regardless
         if !is_waking {
@@ -715,7 +690,6 @@ impl ThreadPool {
             // worker sees run_queue empty" → task stranded
             let sync = self.sync.fetch_or(Sync::zero(), Ordering::Release);
             if sync.notified() {
-                NTF_FAST_RET.fetch_add(1, Ordering::Relaxed);
                 return;
             }
         }
@@ -810,7 +784,6 @@ impl ThreadPool {
     fn notify_slow(&self, is_waking: bool) {
         self.is_running.store(true, Ordering::Relaxed);
         let mut sync = self.sync.load(Ordering::Relaxed);
-        NTF_MAX_SPAWNED.fetch_max(sync.spawned() as u32, Ordering::Relaxed);
         while sync.state() != SyncState::Shutdown {
             let can_wake = is_waking || (sync.state() == SyncState::Pending);
             if is_waking {
@@ -821,23 +794,17 @@ impl ThreadPool {
             new_sync.set_notified(true);
             if can_wake && sync.idle() > 0 {
                 // wake up an idle thread
-                NTF_WAKE.fetch_add(1, Ordering::Relaxed);
                 new_sync.set_state(SyncState::Signaled);
             } else if can_wake && (sync.spawned() as u32) < self.max_threads {
                 // spawn a new thread
-                NTF_SPAWN.fetch_add(1, Ordering::Relaxed);
                 new_sync.set_state(SyncState::Signaled);
                 new_sync.set_spawned(new_sync.spawned() + 1);
             } else if is_waking {
-                NTF_PENDING.fetch_add(1, Ordering::Relaxed);
                 // no other thread to pass on "waking" status
                 new_sync.set_state(SyncState::Pending);
             } else if sync.notified() {
-                NTF_NOWAKE.fetch_add(1, Ordering::Relaxed);
                 // nothing to update
                 return;
-            } else {
-                NTF_CANTWAKE.fetch_add(1, Ordering::Relaxed);
             }
 
             // Release barrier synchronizes with Acquire in wait()

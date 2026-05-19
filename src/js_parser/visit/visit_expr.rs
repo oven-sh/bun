@@ -793,7 +793,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // `Template.parts` is arena-owned (Zig: `[]E.TemplatePart`).
-        for part in e_.parts_mut().iter_mut() {
+        for part in unsafe { e_.parts_mut() }.iter_mut() {
             p.visit_expr(&mut part.value);
         }
 

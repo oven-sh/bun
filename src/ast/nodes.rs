@@ -1337,7 +1337,7 @@ bun_core::named_error_set!(ToJSError);
 /// So a better idea is to batch up your allocations into one larger allocation
 /// and then just make all the arrays point to different parts of the larger allocation
 pub struct Batcher<T> {
-    pub head: StoreSlice<T>,
+    head: StoreSlice<T>,
 }
 
 impl<T> Batcher<T> {

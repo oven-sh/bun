@@ -483,7 +483,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.rewrite_expr(t, kind);
                 }
                 // SAFETY: arena-owned slice; unique access via `&mut e`.
-                for part in e.parts_mut().iter_mut() {
+                for part in unsafe { e.parts_mut() }.iter_mut() {
                     self.rewrite_expr(&mut part.value, kind);
                 }
             }
@@ -835,7 +835,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.rewrite_private_accesses_in_expr(t, map);
                 }
                 // SAFETY: see `rewrite_expr` ETemplate.
-                for part in e.parts_mut().iter_mut() {
+                for part in unsafe { e.parts_mut() }.iter_mut() {
                     self.rewrite_private_accesses_in_expr(&mut part.value, map);
                 }
             }

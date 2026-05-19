@@ -3017,7 +3017,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // provenance preserved end-to-end) so derive the unique view directly.
                     // SAFETY: arena-owned slice; single-threaded visit pass has exclusive
                     // access and no other borrow of this slice is live across the loop body.
-                    for part in e.parts_mut().iter_mut() {
+                    for part in unsafe { e.parts_mut() }.iter_mut() {
                         match self.substitute_single_use_symbol_in_expr(
                             part.value,
                             r#ref,

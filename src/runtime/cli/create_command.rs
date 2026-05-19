@@ -1520,7 +1520,7 @@ impl CreateCommand {
 
         if npm_client_.is_some() && !preinstall_tasks.is_empty() {
             for task in &preinstall_tasks {
-                exec_task(task, destination, path_env, npm_client_.clone());
+                exec_task(task, destination, path_env, npm_client_);
             }
         }
 
@@ -1580,7 +1580,7 @@ impl CreateCommand {
 
         if !postinstall_tasks.is_empty() {
             for task in &postinstall_tasks {
-                exec_task(task, destination, path_env, npm_client_.clone());
+                exec_task(task, destination, path_env, npm_client_);
             }
         }
 

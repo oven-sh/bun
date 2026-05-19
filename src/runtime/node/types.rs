@@ -839,12 +839,14 @@ impl Encoding {
         // const-generic arithmetic in array lengths, so we heap-allocate.
         match self {
             Self::Base64 => {
-                let mut base64_buf =
-                    vec![0u8; bun_core::base64::standard_encoder_calc_size(max_size * 4)];
-                let encoded_len = bun_core::base64::encode(&mut base64_buf, input);
+                let encoded_len = bun_core::base64::encode_len(input);
                 let (mut encoded, bytes) =
                     bun_core::String::create_uninitialized_latin1(encoded_len);
-                bytes.copy_from_slice(&base64_buf[..encoded_len]);
+                if encoded.is_dead() {
+                    return encoded.transfer_to_js(global_object);
+                }
+                let n = bun_core::base64::encode(bytes, input);
+                debug_assert_eq!(n, encoded_len);
                 encoded.transfer_to_js(global_object)
             }
             Self::Base64url => {

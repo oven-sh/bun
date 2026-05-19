@@ -1199,8 +1199,151 @@ pub fn loadNpmrc(
             }
         }
 
+        // Global nerf-dart map: key = "host[\x00][/path]" (normalized, no
+        // trailing slash). Used at request time so a token scoped to
+        // `/api/v4/projects/568/packages/npm/` authenticates tarball URLs
+        // under that path even when the scoped registry's URL lives at a
+        // different path. Each value accumulates the halves of the entry
+        // (token, auth, username, password) and is finalised at the end
+        // into `install.auth_configurations`.
+        var auth_by_dart = bun.StringHashMap(Registry.AuthConfigurationBuilder).init(allocator);
+        defer {
+            // The map stores heap-allocated dart-keys; its own deinit
+            // only frees table storage, so release each key explicitly.
+            var key_it = auth_by_dart.keyIterator();
+            while (key_it.next()) |k| allocator.free(k.*);
+            auth_by_dart.deinit();
+        }
+
         for (configs.items) |conf_item| {
             const conf_item_url = bun.URL.parse(conf_item.registry_url);
+
+            // Record credential-bearing entries on the global nerf-dart map
+            // so the manager can do request-time longest-prefix lookup.
+            // The per-scope loop below still does its pathname-equality
+            // attachment for backward compat with consumers that read
+            // scope.token / scope.auth directly. Email / cert / key options
+            // aren't credentials, so they don't contribute darts.
+            switch (conf_item.optname) {
+                ._authToken, ._auth, .username, ._password => {
+                    const dart_host_raw = bun.strings.withoutTrailingSlash(conf_item_url.host);
+                    const dart_path = bun.strings.withoutTrailingSlash(conf_item_url.pathname);
+                    // Normalize an empty/root path to "" so hash lookups are stable.
+                    const dart_path_norm = if (dart_path.len == 0 or std.mem.eql(u8, dart_path, "/"))
+                        ""
+                    else
+                        dart_path;
+                    // Hostnames are case-insensitive (DNS); `matches()` uses
+                    // a case-insensitive compare at request time. Lowercase
+                    // the host before building the hash key and storing it
+                    // on the entry, so `//Git.Example.com/` and
+                    // `//git.example.com/` collapse into a single dart and
+                    // later overrides can replace earlier entries reliably.
+                    const dart_host = try allocator.alloc(u8, dart_host_raw.len);
+                    _ = std.ascii.lowerString(dart_host, dart_host_raw);
+
+                    // Host+path concatenated is the nerf-dart key. Using
+                    // "\x00" as a separator keeps it unambiguous without
+                    // extra state.
+                    const key_buf = try allocator.alloc(u8, dart_host.len + 1 + dart_path_norm.len);
+                    @memcpy(key_buf[0..dart_host.len], dart_host);
+                    key_buf[dart_host.len] = 0;
+                    @memcpy(key_buf[dart_host.len + 1 ..], dart_path_norm);
+
+                    const gop = try auth_by_dart.getOrPut(key_buf);
+                    if (!gop.found_existing) {
+                        gop.value_ptr.* = .{
+                            .host = dart_host,
+                            .path = try allocator.dupe(u8, dart_path_norm),
+                        };
+                    } else {
+                        allocator.free(key_buf);
+                        allocator.free(dart_host);
+                    }
+
+                    // Repeated entries for the same nerf-dart (common when
+                    // `~/.npmrc` and the project `.npmrc` both set the
+                    // same key) replace the previous value. Auth modes
+                    // `_authToken` / `_auth` / `username`+`_password` are
+                    // mutually exclusive, and `finalize()` prefers
+                    // `auth_b64` whenever it's non-empty — so when a later
+                    // entry switches modes, clear the previous mode's
+                    // fields so they don't linger on the finalised entry.
+                    switch (conf_item.optname) {
+                        ._authToken => {
+                            if (try conf_item.dupeValueDecoded(allocator, log, source)) |x| {
+                                if (gop.value_ptr.token.len > 0) allocator.free(gop.value_ptr.token);
+                                gop.value_ptr.token = x;
+                                // `_authToken` wins over Basic / user+pass halves.
+                                if (gop.value_ptr.auth_b64.len > 0) {
+                                    allocator.free(gop.value_ptr.auth_b64);
+                                    gop.value_ptr.auth_b64 = "";
+                                }
+                                if (gop.value_ptr.username.len > 0) {
+                                    allocator.free(gop.value_ptr.username);
+                                    gop.value_ptr.username = "";
+                                }
+                                if (gop.value_ptr.password.len > 0) {
+                                    allocator.free(gop.value_ptr.password);
+                                    gop.value_ptr.password = "";
+                                }
+                            }
+                        },
+                        ._auth => {
+                            // Keep `_auth` base64-encoded — that's what the
+                            // HTTP client wants for Basic auth headers.
+                            const new_auth = try allocator.dupe(u8, conf_item.value);
+                            if (gop.value_ptr.auth_b64.len > 0) allocator.free(gop.value_ptr.auth_b64);
+                            gop.value_ptr.auth_b64 = new_auth;
+                            // `_auth` wins over Bearer / user+pass halves.
+                            if (gop.value_ptr.token.len > 0) {
+                                allocator.free(gop.value_ptr.token);
+                                gop.value_ptr.token = "";
+                            }
+                            if (gop.value_ptr.username.len > 0) {
+                                allocator.free(gop.value_ptr.username);
+                                gop.value_ptr.username = "";
+                            }
+                            if (gop.value_ptr.password.len > 0) {
+                                allocator.free(gop.value_ptr.password);
+                                gop.value_ptr.password = "";
+                            }
+                        },
+                        .username => {
+                            if (try conf_item.dupeValueDecoded(allocator, log, source)) |x| {
+                                if (gop.value_ptr.username.len > 0) allocator.free(gop.value_ptr.username);
+                                gop.value_ptr.username = x;
+                                // `username`+`_password` win over Bearer / pre-encoded `_auth`.
+                                if (gop.value_ptr.token.len > 0) {
+                                    allocator.free(gop.value_ptr.token);
+                                    gop.value_ptr.token = "";
+                                }
+                                if (gop.value_ptr.auth_b64.len > 0) {
+                                    allocator.free(gop.value_ptr.auth_b64);
+                                    gop.value_ptr.auth_b64 = "";
+                                }
+                            }
+                        },
+                        ._password => {
+                            if (try conf_item.dupeValueDecoded(allocator, log, source)) |x| {
+                                if (gop.value_ptr.password.len > 0) allocator.free(gop.value_ptr.password);
+                                gop.value_ptr.password = x;
+                                // `username`+`_password` win over Bearer / pre-encoded `_auth`.
+                                if (gop.value_ptr.token.len > 0) {
+                                    allocator.free(gop.value_ptr.token);
+                                    gop.value_ptr.token = "";
+                                }
+                                if (gop.value_ptr.auth_b64.len > 0) {
+                                    allocator.free(gop.value_ptr.auth_b64);
+                                    gop.value_ptr.auth_b64 = "";
+                                }
+                            }
+                        },
+                        else => unreachable,
+                    }
+                },
+                .email, .certfile, .keyfile => {},
+            }
 
             if (std.mem.eql(u8, bun.strings.withoutTrailingSlash(default_registry_url.host), bun.strings.withoutTrailingSlash(conf_item_url.host)) and
                 std.mem.eql(u8, bun.strings.withoutTrailingSlash(default_registry_url.pathname), bun.strings.withoutTrailingSlash(conf_item_url.pathname)))
@@ -1271,6 +1414,37 @@ pub fn loadNpmrc(
                     // We have to keep going as it could match multiple scopes
                     continue;
                 }
+            }
+        }
+
+        // Serialize the nerf-dart map into a flat slice for the manager.
+        // `loadNpmrcConfig` calls us once per `.npmrc` file with a shared
+        // `configs` accumulator, so on each call `auth_by_dart` is rebuilt
+        // from every entry seen so far. That means the fresh list already
+        // subsumes the previous one — replace (don't append) to avoid
+        // stale duplicates that would let an earlier file shadow a later
+        // override at an identical nerf-dart.
+        if (auth_by_dart.count() > 0) {
+            const previous = install.auth_configurations;
+            const list = try allocator.alloc(Registry.AuthConfiguration, auth_by_dart.count());
+            var it = auth_by_dart.valueIterator();
+            var i: usize = 0;
+            while (it.next()) |v| : (i += 1) {
+                list[i] = try v.finalize(allocator);
+            }
+            install.auth_configurations = list;
+            // Release the stale slice. The strings inside those stale
+            // entries came from this same allocator; the fresh list
+            // carries its own duplicates (builder.finalize duped them),
+            // so freeing here doesn't dangle any slice in `list`.
+            if (previous.len > 0) {
+                for (previous) |*p| {
+                    if (p.host.len > 0) allocator.free(p.host);
+                    if (p.path.len > 0) allocator.free(p.path);
+                    if (p.token.len > 0) allocator.free(p.token);
+                    if (p.auth.len > 0) allocator.free(p.auth);
+                }
+                allocator.free(previous);
             }
         }
     }

@@ -158,24 +158,68 @@ const accept_header_value_extended = "application/json, */*";
 const default_headers_buf: string = "Accept" ++ accept_header_value;
 const extended_headers_buf: string = "Accept" ++ accept_header_value_extended;
 
-fn appendAuth(header_builder: *HeaderBuilder, scope: *const Npm.Registry.Scope) void {
-    if (scope.token.len > 0) {
-        header_builder.appendFmt("Authorization", "Bearer {s}", .{scope.token});
-    } else if (scope.auth.len > 0) {
-        header_builder.appendFmt("Authorization", "Basic {s}", .{scope.auth});
+/// Credentials selected for a single outgoing request. `resolveAuth` picks
+/// them by matching the request URL against the `.npmrc` nerf darts first
+/// (longest-prefix wins), falling back to the scope's pre-resolved
+/// `token`/`auth` when no nerf dart matches the request URL more
+/// specifically.
+const AuthForRequest = struct {
+    token: string = "",
+    auth: string = "",
+};
+
+/// Length of the scope URL's pathname (without trailing slash). Used to
+/// decide whether a nerf-dart match on the request URL beats the scope's
+/// own path.
+fn scopePathLen(scope: *const Npm.Registry.Scope) usize {
+    return strings.withoutTrailingSlash(scope.url.pathname).len;
+}
+
+fn resolveAuth(pm: *const PackageManager, scope: *const Npm.Registry.Scope, url_str: string) AuthForRequest {
+    if (pm.matchAuthForUrl(url_str)) |match| {
+        // Prefer the nerf-dart match when:
+        //   - the request's host differs from the scope's host (the
+        //     scope's credentials belong to a different host and
+        //     must never leak cross-host — common when metadata and
+        //     tarballs are served from different domains, e.g. a
+        //     separate CDN for tarball downloads), or
+        //   - the nerf-dart path is strictly more specific than the
+        //     scope's own path (npm's longest-prefix rule), or
+        //   - the scope has no pre-resolved credentials (a parent-
+        //     path nerf-dart covering the scope URL never lands on
+        //     the scope itself via the legacy per-scope loop).
+        const req_url = URL.parse(url_str);
+        const req_host = strings.withoutTrailingSlash(req_url.host);
+        const scope_host = strings.withoutTrailingSlash(scope.url.host);
+        // Hostnames are case-insensitive per DNS.
+        const same_host = req_host.len == scope_host.len and
+            (req_host.len == 0 or strings.eqlCaseInsensitiveASCIIICheckLength(req_host, scope_host));
+        const has_scope_creds = scope.token.len > 0 or scope.auth.len > 0;
+        if (!same_host or match.path_len > scopePathLen(scope) or !has_scope_creds) {
+            return .{ .token = match.token, .auth = match.auth };
+        }
+    }
+    return .{ .token = scope.token, .auth = scope.auth };
+}
+
+fn appendAuth(header_builder: *HeaderBuilder, creds: AuthForRequest) void {
+    if (creds.token.len > 0) {
+        header_builder.appendFmt("Authorization", "Bearer {s}", .{creds.token});
+    } else if (creds.auth.len > 0) {
+        header_builder.appendFmt("Authorization", "Basic {s}", .{creds.auth});
     } else {
         return;
     }
     header_builder.append("npm-auth-type", "legacy");
 }
 
-fn countAuth(header_builder: *HeaderBuilder, scope: *const Npm.Registry.Scope) void {
-    if (scope.token.len > 0) {
+fn countAuth(header_builder: *HeaderBuilder, creds: AuthForRequest) void {
+    if (creds.token.len > 0) {
         header_builder.count("Authorization", "");
-        header_builder.content.cap += "Bearer ".len + scope.token.len;
-    } else if (scope.auth.len > 0) {
+        header_builder.content.cap += "Bearer ".len + creds.token.len;
+    } else if (creds.auth.len > 0) {
         header_builder.count("Authorization", "");
-        header_builder.content.cap += "Basic ".len + scope.auth.len;
+        header_builder.content.cap += "Basic ".len + creds.auth.len;
     } else {
         return;
     }
@@ -272,7 +316,8 @@ pub fn forManifest(
 
     var header_builder = HeaderBuilder{};
 
-    countAuth(&header_builder, scope);
+    const manifest_creds = resolveAuth(this.package_manager, scope, this.url_buf);
+    countAuth(&header_builder, manifest_creds);
 
     if (etag.len != 0) {
         header_builder.count("If-None-Match", etag);
@@ -290,7 +335,7 @@ pub fn forManifest(
         }
         try header_builder.allocate(allocator);
 
-        appendAuth(&header_builder, scope);
+        appendAuth(&header_builder, manifest_creds);
 
         if (etag.len != 0) {
             header_builder.append("If-None-Match", etag);
@@ -398,15 +443,16 @@ pub fn forTarball(
     var header_builder = HeaderBuilder{};
     var header_buf: string = "";
 
+    const tarball_creds = resolveAuth(this.package_manager, scope, this.url_buf);
     if (authorization == .allow_authorization) {
-        countAuth(&header_builder, scope);
+        countAuth(&header_builder, tarball_creds);
     }
 
     if (header_builder.header_count > 0) {
         try header_builder.allocate(allocator);
 
         if (authorization == .allow_authorization) {
-            appendAuth(&header_builder, scope);
+            appendAuth(&header_builder, tarball_creds);
         }
 
         header_buf = header_builder.content.ptr.?[0..header_builder.content.len];

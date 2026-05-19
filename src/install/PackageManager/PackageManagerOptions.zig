@@ -13,6 +13,13 @@ did_override_default_scope: bool = false,
 scope: Npm.Registry.Scope = undefined,
 
 registries: Npm.Registry.Map = .{},
+
+/// All `.npmrc` auth entries, preserved for request-time longest-prefix
+/// matching. A tarball URL returned in a metadata response may live at a
+/// different path than the scoped registry URL (common pattern on
+/// self-hosted GitLab); we match those URLs against these nerf darts and
+/// fall back to the scope's pre-resolved token when nothing matches.
+auth_configurations: []const Npm.Registry.AuthConfiguration = &.{},
 cache_directory: string = "",
 enable: Enable = .{},
 do: Do = .{},
@@ -256,6 +263,10 @@ pub fn load(
                 if (registry.url.len == 0) registry.url = base.url;
                 try this.registries.put(allocator, Npm.Registry.Scope.hash(name), try Npm.Registry.Scope.fromAPI(name, registry, allocator, env));
             }
+        }
+
+        if (config.auth_configurations.len > 0) {
+            this.auth_configurations = config.auth_configurations;
         }
 
         if (config.ca) |ca| {

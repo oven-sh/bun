@@ -25,7 +25,22 @@ pub struct WindowsWatcher {
     pub watcher: DirWatcher,
     pub buf: PathBuffer,
     pub base_idx: usize,
+    /// See `INotifyWatcher::coalesce_interval` for rationale. Honours the
+    /// same env var (despite its Linux-centric name) so tests can pin the
+    /// window uniformly across platforms. Milliseconds, because that's
+    /// what `GetQueuedCompletionStatus` takes; note Windows' default
+    /// timer resolution is ~15.6 ms, so small non-zero values round up
+    /// to roughly that in practice.
+    pub coalesce_interval_ms: w::DWORD,
 }
+
+const DEFAULT_COALESCE_INTERVAL_MS: w::DWORD = 10;
+/// See `INotifyWatcher::MAX_COALESCE_ITERATIONS` for rationale. Kept in
+/// step with the other backends so the same save burst collapses into
+/// one cycle everywhere; `ReadDirectoryChangesW` batches all buffered
+/// notifications per completion, so in practice far fewer iterations
+/// are consumed than on inotify/kqueue.
+const MAX_COALESCE_ITERATIONS: u32 = 32;
 
 impl Default for WindowsWatcher {
     fn default() -> Self {
@@ -39,6 +54,7 @@ impl Default for WindowsWatcher {
             },
             buf: PathBuffer::uninit(),
             base_idx: 0,
+            coalesce_interval_ms: DEFAULT_COALESCE_INTERVAL_MS,
         }
     }
 }
@@ -298,14 +314,33 @@ impl WindowsWatcher {
             root.len()
         };
 
+        // Env var is in nanoseconds; convert to the millisecond
+        // granularity `GetQueuedCompletionStatus` expects. Round up so
+        // a sub-millisecond override (e.g. the 0.1 ms a test might pin
+        // for the other backends) becomes 1 ms rather than truncating
+        // to 0 and disabling the wait; an explicit `0` still means
+        // "don't wait".
+        self.coalesce_interval_ms = match bun_core::env_var::BUN_INOTIFY_COALESCE_INTERVAL.get()
+        {
+            Some(0) => 0,
+            Some(ns) => ns
+                .div_ceil(1_000_000)
+                .try_into()
+                .unwrap_or(DEFAULT_COALESCE_INTERVAL_MS),
+            None => DEFAULT_COALESCE_INTERVAL_MS,
+        };
+
         // disarm errdefer guards on success
         scopeguard::ScopeGuard::into_inner(iocp_guard);
         scopeguard::ScopeGuard::into_inner(handle_guard);
         Ok(())
     }
 
-    /// wait until new events are available
-    pub fn next(&mut self, timeout: Timeout) -> bun_sys::Result<Option<EventIterator>> {
+    /// `timeout_ms` is passed straight to `GetQueuedCompletionStatus`:
+    /// `w::INFINITE` for the first blocking wait, then
+    /// `coalesce_interval_ms` to sweep up trailing events from the
+    /// same logical save.
+    pub fn next(&mut self, timeout_ms: w::DWORD) -> bun_sys::Result<Option<EventIterator>> {
         if let Err(err) = self.watcher.prepare() {
             bun_core::scoped_log!(watcher, "prepare() returned error");
             return Err(err);
@@ -322,7 +357,7 @@ impl WindowsWatcher {
                     &mut nbytes,
                     &mut key,
                     &mut overlapped,
-                    timeout as w::DWORD,
+                    timeout_ms,
                 )
             };
             if rc == 0 {
@@ -395,14 +430,6 @@ impl WindowsWatcher {
     }
 }
 
-#[repr(u32)]
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum Timeout {
-    Infinite = w::INFINITE,
-    Minimal = 1,
-    None = 0,
-}
-
 pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     // PORT NOTE: reshaped for borrowck — Zig held `&this.platform.buf` across the loop while
     // also calling `this.platform.next()`. We re-borrow buf inside the inner loop instead.
@@ -411,16 +438,20 @@ pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     let mut event_id: usize = 0;
 
     // first wait has infinite timeout - we're waiting for the next event and don't want to spin
-    let mut timeout = Timeout::Infinite;
-    loop {
-        let mut iter = match this.platform.next(timeout)? {
+    let mut timeout_ms: w::DWORD = w::INFINITE;
+    let mut iterations: u32 = 0;
+    while iterations <= MAX_COALESCE_ITERATIONS {
+        let mut iter = match this.platform.next(timeout_ms)? {
             Some(it) => it,
             None => break,
         };
-        // after the first wait, we want to coalesce further events but don't want to wait for them
-        // NOTE: using a 1ms timeout would be ideal, but that actually makes the thread wait for at least 10ms more than it should
-        // Instead we use a 0ms timeout, which may not do as much coalescing but is more responsive.
-        timeout = Timeout::None;
+        // After the first (infinite) wait, briefly wait for trailing
+        // events from a single editor save — Windows typically produces
+        // several `Modified` notifications a few ms apart — so they
+        // coalesce into a single `on_file_update` instead of `--hot`
+        // re-evaluating the entry point once per notification.
+        timeout_ms = this.platform.coalesce_interval_ms;
+        iterations += 1;
         bun_core::scoped_log!(
             watcher,
             "number of watched items: {}",

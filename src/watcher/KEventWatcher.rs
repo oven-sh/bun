@@ -1,6 +1,6 @@
 use core::ffi::c_int;
 
-use bun_core::output as Output;
+use bun_core::{env_var, output as Output};
 use bun_sys::Fd;
 
 use crate::watcher_impl::{Op, WatchEvent, Watcher};
@@ -13,6 +13,10 @@ pub struct KEventWatcher {
     pub eventlist_index: EventListIndex,
 
     pub fd: Option<Fd>,
+    /// See `INotifyWatcher::coalesce_interval` for rationale. Honours the
+    /// same env var (despite its Linux-centric name) so tests can pin the
+    /// window uniformly across platforms.
+    pub coalesce_interval_ns: isize,
 }
 
 impl Default for KEventWatcher {
@@ -20,11 +24,20 @@ impl Default for KEventWatcher {
         Self {
             eventlist_index: 0,
             fd: None,
+            coalesce_interval_ns: DEFAULT_COALESCE_INTERVAL_NS,
         }
     }
 }
 
 const CHANGELIST_COUNT: usize = 128;
+const DEFAULT_COALESCE_INTERVAL_NS: isize = 10_000_000; // 10ms
+/// `kevent()` returns as soon as one event is ready rather than waiting
+/// the full timeout, so a burst of N writes a few ms apart consumes ~N
+/// drain iterations. Keep this in step with
+/// `INotifyWatcher::MAX_COALESCE_ITERATIONS` so the same save burst
+/// collapses into one cycle on both backends; the quiet-timeout `break`
+/// still terminates the common case after one idle interval.
+const MAX_COALESCE_ITERATIONS: u32 = 32;
 
 impl KEventWatcher {
     // TODO(port): narrow error set
@@ -34,6 +47,10 @@ impl KEventWatcher {
             return Err(bun_core::err!("KQueueError"));
         }
         self.fd = Some(fd);
+        self.coalesce_interval_ns = env_var::BUN_INOTIFY_COALESCE_INTERVAL
+            .get()
+            .and_then(|v| isize::try_from(v).ok())
+            .unwrap_or(DEFAULT_COALESCE_INTERVAL_NS);
         Ok(())
     }
 
@@ -90,15 +107,33 @@ pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
         )
     };
 
-    // Give the events more time to coalesce
-    if count < 128 / 2 {
-        let remain: c_int = 128 - count;
-        let off = usize::try_from(count).expect("int cast");
+    // A single editor save typically produces several kevents a few ms
+    // apart (e.g. NOTE_WRITE on the file plus NOTE_WRITE on its parent
+    // directory, or the rename/create pair from an atomic save). Keep
+    // draining until the queue stays quiet for `coalesce_interval_ns`
+    // so one save becomes one `on_file_update` call instead of several,
+    // which in `--hot` mode would otherwise re-evaluate the entry point
+    // once per burst.
+    //
+    // `count > 0` guards against the initial `kevent` returning -1
+    // (error) — the `.max(0)` below already handles that for the final
+    // slice, but the `as usize` offset cast here would wrap on a
+    // negative.
+    const NS_PER_S: isize = 1_000_000_000;
+    let interval = this.platform.coalesce_interval_ns;
+    let mut iterations: u32 = 0;
+    while count > 0 && count < CHANGELIST_COUNT as c_int && iterations < MAX_COALESCE_ITERATIONS
+    {
+        let remain: c_int = CHANGELIST_COUNT as c_int - count;
+        let off = count as usize;
+        // POSIX requires tv_nsec < 10^9; split so a user-supplied
+        // interval ≥ 1 s doesn't make `kevent` fail with EINVAL.
         let ts = libc::timespec {
-            tv_sec: 0,
-            tv_nsec: 100_000,
-        }; // 0.0001 seconds
-        // SAFETY: off < CHANGELIST_COUNT (count < 64), remain entries fit in the buffer
+            tv_sec: (interval / NS_PER_S) as _,
+            tv_nsec: (interval % NS_PER_S) as _,
+        };
+        // SAFETY: off < CHANGELIST_COUNT (count > 0 and < 128),
+        // remain entries fit in the buffer
         let extra: c_int = unsafe {
             c::kevent(
                 fd.native(),
@@ -110,7 +145,11 @@ pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
             )
         };
 
+        if extra <= 0 {
+            break; // quiet (or error: fall through to existing processing)
+        }
         count += extra;
+        iterations += 1;
     }
 
     let changes_len = usize::try_from(count.max(0)).expect("int cast");

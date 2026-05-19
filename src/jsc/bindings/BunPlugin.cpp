@@ -555,6 +555,22 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         }
 
         if (url.isValid() && url.protocolIsFile()) {
+            // For bare specifiers only, skip module resolution if the string contains
+            // characters never valid in real npm package names. Running the resolver
+            // on arbitrary text would otherwise fall through to the auto-install code
+            // path and reentrantly tick the JS event loop from inside the running
+            // mock call. Relative ("./", "../") and absolute ("/") paths are left
+            // alone because file and directory names legitimately use brackets and
+            // spaces (e.g. Next.js "./[id]/page.ts", Windows "Program Files (x86)").
+            if (!specifier.startsWith("./"_s) && !specifier.startsWith("../"_s) && !specifier.startsWith("/"_s)) {
+                for (unsigned i = 0; i < specifier.length(); ++i) {
+                    auto c = specifier[i];
+                    if (c <= ' ' || c == '(' || c == ')' || c == '{' || c == '}' || c == '[' || c == ']') {
+                        return;
+                    }
+                }
+            }
+
             auto fromString = url.fileSystemPath();
             BunString from = Bun::toString(fromString);
             auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);

@@ -8374,7 +8374,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Windows separator via a cross-crate `const_format` const.
                 is_in_node_modules: self.source.path.is_node_module(),
                 imports_seen: Default::default(),
-                export_star_props: Vec::new(),
+                export_star_namespaces: Vec::new(),
                 export_props: Vec::new(),
                 stmts: Vec::new(),
             };

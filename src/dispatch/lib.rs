@@ -36,6 +36,21 @@
 //! `*mut T` matching `kind`") is established once at `unsafe fn
 //! <Iface>::new()` — that's the only `unsafe` the caller writes.
 //!
+//! Handle fields are intentionally not constructible by safe code:
+//!
+//! ```compile_fail
+//! bun_dispatch::link_interface! {
+//!     pub Shape[Circle] {
+//!         fn area() -> f64;
+//!     }
+//! }
+//!
+//! let _forged = Shape {
+//!     kind: ShapeKind::Circle,
+//!     owner: core::ptr::null_mut(),
+//! };
+//! ```
+//!
 //! Every interface method must appear exactly once in each `link_impl_*!`
 //! call (an unknown name is a compile error from the generated macro; a
 //! missing one surfaces as a link error naming
@@ -177,6 +192,7 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
     // Nested in a private module so that a `link_impl_*!` in the *same* module
     // as `link_interface!` (e.g. tests, or a variant whose type lives in the
     // declaring crate) doesn't collide with the decl in the value namespace.
+    let handle_mod = format_ident!("__{}_handle", name);
     let externs_mod = format_ident!("__{}_externs", name);
     let externs = variants.iter().flat_map(|v| {
         methods.iter().map(move |m| {
@@ -299,36 +315,47 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
         #[derive(Copy, Clone, PartialEq, Eq, Debug)]
         #vis enum #kind { #(#variants),* }
 
-        #[derive(Copy, Clone)]
-        #vis struct #name {
-            pub kind: #kind,
-            pub owner: *mut (),
-        }
-
-        impl #name {
-            /// SAFETY: `owner` must be a live `*mut T` where `T` is the
-            /// concrete type the `kind` variant's `link_impl_*!` was written
-            /// for, and must remain live for every dispatch through the
-            /// returned handle. This is the only place the caller writes
-            /// `unsafe` for this interface — the dispatch methods are safe
-            /// given this precondition.
-            #[inline]
-            pub unsafe fn new<T: ?Sized>(kind: #kind, owner: *mut T) -> Self {
-                Self { kind, owner: owner as *mut () }
-            }
-            #[inline]
-            pub fn is(&self, kind: #kind) -> bool { self.kind == kind }
-        }
-
         #(#sig_aliases)*
 
         #[allow(non_snake_case)]
-        mod #externs_mod {
+        mod #handle_mod {
             use super::*;
-            unsafe extern "Rust" { #(#externs)* }
+
+            #[derive(Copy, Clone)]
+            pub struct #name {
+                kind: #kind,
+                owner: *mut (),
+            }
+
+            impl #name {
+                /// SAFETY: `owner` must be a live `*mut T` where `T` is the
+                /// concrete type the `kind` variant's `link_impl_*!` was written
+                /// for, and must remain live for every dispatch through the
+                /// returned handle. This is the only place the caller writes
+                /// `unsafe` for this interface — the dispatch methods are safe
+                /// given this precondition.
+                #[inline]
+                pub const unsafe fn new<T: ?Sized>(kind: #kind, owner: *mut T) -> Self {
+                    Self { kind, owner: owner as *mut () }
+                }
+                #[inline]
+                pub fn is(&self, kind: #kind) -> bool { self.kind == kind }
+                #[inline]
+                pub(crate) fn owner_is_null(&self) -> bool { self.owner.is_null() }
+                #[inline]
+                pub(crate) fn owner_ptr(&self) -> *mut () { self.owner }
+            }
+
+            #[allow(non_snake_case)]
+            mod #externs_mod {
+                use super::*;
+                unsafe extern "Rust" { #(#externs)* }
+            }
+
+            impl #name { #(#dispatchers)* }
         }
 
-        impl #name { #(#dispatchers)* }
+        #vis use #handle_mod::#name;
 
         // `#[macro_export]` hoists this to the *crate root* of whichever crate
         // calls `link_interface!`, regardless of the call-site module — so

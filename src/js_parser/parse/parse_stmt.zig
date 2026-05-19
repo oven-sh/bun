@@ -302,11 +302,19 @@ pub fn ParseStmt(
                         alias = G.ExportStarAlias{ .loc = p.lexer.loc(), .original_name = name };
                         try p.lexer.next();
                         try p.lexer.expectContextualKeyword("from");
-                        path = try p.parsePath();
+                        // `declare module "x" { export * as n from "p" with { ... } }`
+                        // gets erased wholesale — suppress the unsupported-attribute error.
+                        path = if (opts.is_typescript_declare)
+                            try p.parseTypeOnlyPath()
+                        else
+                            try p.parsePath();
                     } else {
                         // "export * from 'path'"
                         try p.lexer.expectContextualKeyword("from");
-                        path = try p.parsePath();
+                        path = if (opts.is_typescript_declare)
+                            try p.parseTypeOnlyPath()
+                        else
+                            try p.parsePath();
                         const name = try fs.PathName.init(path.text).nonUniqueNameString(p.allocator);
                         namespace_ref = try p.storeNameInRef(name);
                     }
@@ -347,7 +355,14 @@ pub fn ParseStmt(
                     const export_clause = try p.parseExportClause();
                     if (p.lexer.isContextualKeyword("from")) {
                         try p.lexer.expectContextualKeyword("from");
-                        const parsedPath = try p.parsePath();
+                        // `export { type Foo } from "p" with { ... }` erases to nothing
+                        // (checked below at `clauses.len == 0 and had_type_only_exports`),
+                        // and so does any `export { ... } from` inside a `declare module`
+                        // body — suppress the unsupported-attribute error for both shapes.
+                        const parsedPath = if (((comptime is_typescript_enabled) and export_clause.clauses.len == 0 and export_clause.had_type_only_exports) or opts.is_typescript_declare)
+                            try p.parseTypeOnlyPath()
+                        else
+                            try p.parsePath();
 
                         try p.lexer.expectOrInsertSemicolon();
 
@@ -973,7 +988,7 @@ pub fn ParseStmt(
                     if (comptime is_typescript_enabled) {
                         if (importClause.had_type_only_imports and importClause.items.len == 0) {
                             try p.lexer.expectContextualKeyword("from");
-                            _ = try p.parsePath();
+                            _ = try p.parseTypeOnlyPath();
                             try p.lexer.expectOrInsertSemicolon();
                             return p.s(S.TypeScript{}, loc);
                         }
@@ -1020,7 +1035,7 @@ pub fn ParseStmt(
                                         } else {
                                             // "import type foo from 'bar';"
                                             try p.lexer.expectContextualKeyword("from");
-                                            _ = try p.parsePath();
+                                            _ = try p.parseTypeOnlyPath();
                                             try p.lexer.expectOrInsertSemicolon();
                                             return p.s(S.TypeScript{}, loc);
                                         }
@@ -1032,7 +1047,7 @@ pub fn ParseStmt(
                                     try p.lexer.expectContextualKeyword("as");
                                     try p.lexer.expect(.t_identifier);
                                     try p.lexer.expectContextualKeyword("from");
-                                    _ = try p.parsePath();
+                                    _ = try p.parseTypeOnlyPath();
                                     try p.lexer.expectOrInsertSemicolon();
                                     return p.s(S.TypeScript{}, loc);
                                 },
@@ -1041,7 +1056,7 @@ pub fn ParseStmt(
                                     // "import type {foo} from 'bar';"
                                     _ = try p.parseImportClause();
                                     try p.lexer.expectContextualKeyword("from");
-                                    _ = try p.parsePath();
+                                    _ = try p.parseTypeOnlyPath();
                                     try p.lexer.expectOrInsertSemicolon();
                                     return p.s(S.TypeScript{}, loc);
                                 },
@@ -1090,7 +1105,14 @@ pub fn ParseStmt(
                 },
             }
 
-            const path = try p.parsePath();
+            // `declare module "x" { import X from "p" with { ... } }` gets erased
+            // to `S.TypeScript{}` in `parseTypeScriptNamespaceStmt` — so suppress
+            // the unsupported-attribute error here (matches how erased
+            // `import type ...` is routed through `parseTypeOnlyPath`).
+            const path = if (opts.is_typescript_declare)
+                try p.parseTypeOnlyPath()
+            else
+                try p.parsePath();
             try p.lexer.expectOrInsertSemicolon();
 
             return try p.processImportStatement(stmt, path, loc, was_originally_bare_import);

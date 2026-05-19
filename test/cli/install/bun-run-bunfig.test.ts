@@ -172,7 +172,11 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
     }
   });
 
-  test("NOT autoload local bunfig.toml (sub cwd)", async () => {
+  test("autoload ancestor bunfig.toml (sub cwd)", async () => {
+    // Since #29310, a project-root bunfig.toml is picked up when `bun run`
+    // (or `bun`) is invoked from a workspace subdirectory, matching how
+    // package.json is resolved. `run.bun = true` in the ancestor config
+    // should therefore redirect `which node` to bun's node shim.
     const runCmd = cmd === "bun" ? ["run"] : [];
 
     const bunfig = toTOMLString({
@@ -205,7 +209,11 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
     });
     const nodeBin = result.stdout.toString().trim();
 
-    expect(realpathSync(nodeBin)).toBe(realpathSync(node));
+    if (isWindows) {
+      expect(realpathSync(nodeBin)).toContain("\\bun-node-");
+    } else {
+      expect(realpathSync(nodeBin)).toBe(realpathSync(execPath));
+    }
     expect(result.success).toBeTrue();
   });
 

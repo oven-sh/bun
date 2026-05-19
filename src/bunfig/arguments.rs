@@ -202,19 +202,83 @@ pub fn load_config(
             ctx.args.absolute_working_dir = Some(Box::<[u8]>::from(&secondbuf[..cwd_len]));
         }
 
-        // PORT NOTE: reshaped for borrowck — `join_abs_string_buf` ties the
-        // returned slice's lifetime to both `cwd` (borrowed from `ctx.args`)
-        // and `config_buf`. We only need the length to NUL-terminate and
-        // re-wrap, so capture `joined.len()` and drop the `ctx` borrow before
-        // the `&mut ctx` call below.
-        config_path_len = {
-            let awd: &[u8] = ctx.args.absolute_working_dir.as_deref().unwrap();
-            let parts: [&[u8]; 2] = [awd, config_path_];
-            let joined =
-                resolve_path::join_abs_string_buf::<platform::Auto>(awd, &mut *config_buf, &parts);
-            joined.len()
-        };
-        config_buf[config_path_len] = 0;
+        if auto_loaded {
+            // Walk up the directory tree looking for a bunfig.toml. Lets
+            // commands run from a subdirectory of the project (e.g. a
+            // workspace package) pick up the project-root bunfig.toml,
+            // matching how package.json is resolved.
+            let awd: Box<[u8]> = ctx
+                .args
+                .absolute_working_dir
+                .as_deref()
+                .unwrap()
+                .to_vec()
+                .into_boxed_slice();
+            let mut dir: &[u8] = &awd;
+            let mut found_len: Option<usize> = None;
+            loop {
+                let parts: [&[u8]; 2] = [dir, config_path_];
+                let joined = resolve_path::join_abs_string_buf::<platform::Auto>(
+                    dir,
+                    &mut *config_buf,
+                    &parts,
+                );
+                let joined_len = joined.len();
+                config_buf[joined_len] = 0;
+                let candidate = ZStr::from_buf(&config_buf[..], joined_len);
+                let is_regular = matches!(
+                    bun_sys::stat(candidate),
+                    Ok(ref st) if bun_sys::is_regular_file(st.st_mode as bun_sys::Mode)
+                );
+                if is_regular {
+                    found_len = Some(joined_len);
+                    break;
+                }
+                let parent = resolve_path::dirname::<platform::Auto>(dir);
+                // Stop at the filesystem root. On Windows, dirname("C:\\")
+                // returns "C:" (drive-relative, not absolute), so also break
+                // when the parent is no longer absolute.
+                if parent.is_empty()
+                    || parent == dir
+                    || !<platform::Auto as resolve_path::PlatformT>::P.is_absolute(parent)
+                {
+                    break;
+                }
+                // Extend the lifetime: parent is a subslice of awd (or of a
+                // prior parent that was itself a subslice of awd).
+                dir = unsafe { core::slice::from_raw_parts(parent.as_ptr(), parent.len()) };
+            }
+            match found_len {
+                Some(len) => {
+                    // config_buf is already populated and NUL-terminated.
+                    config_path_len = len;
+                }
+                None => {
+                    // Walk found nothing. Mark bunfig "loaded" (attempted)
+                    // so a secondary load_config call (e.g. the RunCommand
+                    // fallback in run_command) doesn't redo the same walk.
+                    ctx.debug.loaded_bunfig = true;
+                    return Ok(());
+                }
+            }
+        } else {
+            // PORT NOTE: reshaped for borrowck — `join_abs_string_buf` ties the
+            // returned slice's lifetime to both `cwd` (borrowed from `ctx.args`)
+            // and `config_buf`. We only need the length to NUL-terminate and
+            // re-wrap, so capture `joined.len()` and drop the `ctx` borrow before
+            // the `&mut ctx` call below.
+            config_path_len = {
+                let awd: &[u8] = ctx.args.absolute_working_dir.as_deref().unwrap();
+                let parts: [&[u8]; 2] = [awd, config_path_];
+                let joined = resolve_path::join_abs_string_buf::<platform::Auto>(
+                    awd,
+                    &mut *config_buf,
+                    &parts,
+                );
+                joined.len()
+            };
+            config_buf[config_path_len] = 0;
+        }
     }
     // SAFETY: `config_buf[config_path_len] == 0` (written above on both arms);
     // `config_buf` outlives the call.

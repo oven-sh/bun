@@ -140,6 +140,7 @@ pub const Tag = enum {
 
     pub const always_loads_config: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(false, .{
         .BuildCommand = true,
+        .RunCommand = true,
         .TestCommand = true,
         .InstallCommand = true,
         .AddCommand = true,

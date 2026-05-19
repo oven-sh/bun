@@ -2204,16 +2204,6 @@ describe("bundler", () => {
     run: true,
   });
 
-  // TODO(@paperclover): test every case of this. I had already tested it manually, but it may break later
-  const requireTranspilationListESM = [
-    // input, output:bun, output:node
-    ["require", "import.meta.require", "__require"],
-    ["typeof require", "import.meta.require", "typeof __require"],
-    ["typeof require", "import.meta.require", "typeof __require"],
-  ];
-
-  // // itBundled('edgecase/RequireTranspilation')
-
   itBundled("edgecase/TSConfigPathsConfigDir", {
     files: {
       "/src/entry.ts": /* ts */ `

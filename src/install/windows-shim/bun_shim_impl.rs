@@ -1,3 +1,5 @@
+//! TODO(port): correct this documentation comment post-rust port
+//!
 //! This program is a shim for node_modules/.bin scripts.
 //!
 //! This is needed because:
@@ -37,7 +39,7 @@
 //! The compiled binary is 13312 bytes and is `@embedFile`d into Bun itself.
 //! When this file is updated, the new binary should be compiled and BinLinkingShim.VersionFlag.current should be updated.
 //!
-//! Questions about this file should be directed at @paperclover.
+//! Theorized and written by @paperclover during one of the most entranced all-nighters of her life.
 
 #![cfg(windows)]
 

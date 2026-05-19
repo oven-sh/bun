@@ -513,7 +513,7 @@ fn parse_custom_at_rule_without_block<T: CustomAtRuleParser>(
     options: &ParserOptions,
     at_rule_parser: &mut T,
     is_nested: bool,
-) -> Maybe<CssRule<T::AtRule>, ()> {
+) -> Maybe<CssRule<'static, T::AtRule>, ()> {
     match T::rule_without_block(at_rule_parser, prelude, start, options, is_nested) {
         Ok(v) => Ok(CssRule::Custom(v)),
         Err(e) => Err(e),
@@ -842,7 +842,6 @@ pub struct BundlerAtRuleParser<'a> {
     /// soundly under Stacked Borrows.
     pub import_records: *mut Vec<ImportRecord>,
     pub layer_names: Vec<LayerName>,
-    pub options: &'a ParserOptions<'a>,
     /// Having _named_ layers nested inside of an _anonymous_ layer has no
     /// effect. See: https://drafts.csswg.org/css-cascade-5/#example-787042b6
     pub anon_layer_count: u32,
@@ -1076,7 +1075,7 @@ pub struct TopLevelRuleParser<'a, AtRuleParserT: CustomAtRuleParser> {
     pub state: TopLevelState,
     pub at_rule_parser: &'a mut AtRuleParserT,
     // TODO: think about memory management
-    pub rules: &'a mut CssRuleList<AtRuleParserT::AtRule>,
+    pub rules: &'a mut CssRuleList<'static, AtRuleParserT::AtRule>,
     pub composes: &'a mut ComposesMap,
     pub composes_refs: SmallList<ast::Ref, 2>,
     pub local_properties: &'a mut LocalPropertyUsage,
@@ -1087,7 +1086,7 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> TopLevelRuleParser<'a, AtRuleParserT
         arena: &'a Bump,
         options: &'a ParserOptions<'a>,
         at_rule_parser: &'a mut AtRuleParserT,
-        rules: &'a mut CssRuleList<AtRuleParserT::AtRule>,
+        rules: &'a mut CssRuleList<'static, AtRuleParserT::AtRule>,
         composes: &'a mut ComposesMap,
         local_properties: &'a mut LocalPropertyUsage,
     ) -> Self {
@@ -1163,7 +1162,7 @@ pub struct NestedRuleParser<'a, T: CustomAtRuleParser> {
     // todo_stuff.think_mem_mgmt
     pub important_declarations: DeclarationList<'static>,
     // todo_stuff.think_mem_mgmt
-    pub rules: &'a mut CssRuleList<T::AtRule>,
+    pub rules: &'a mut CssRuleList<'static, T::AtRule>,
     pub is_in_style_rule: bool,
     pub allow_declarations: bool,
 
@@ -1549,7 +1548,7 @@ mod rule_parsers {
             &mut self,
             input: &mut Parser,
             is_style_rule: bool,
-        ) -> CssResult<(DeclarationBlock<'static>, CssRuleList<T::AtRule>)> {
+        ) -> CssResult<(DeclarationBlock<'static>, CssRuleList<'static, T::AtRule>)> {
             // TODO: think about memory management in error cases
             let mut rules = CssRuleList::<T::AtRule>::default();
             let composes_state = if self.is_in_style_rule
@@ -1632,7 +1631,7 @@ mod rule_parsers {
         pub fn parse_style_block(
             &mut self,
             input: &mut Parser,
-        ) -> CssResult<CssRuleList<T::AtRule>> {
+        ) -> CssResult<CssRuleList<'static, T::AtRule>> {
             let srcloc = input.current_source_location();
             let loc = Location {
                 source_index: self.options.source_index,
@@ -2334,12 +2333,12 @@ impl Default for MinifyOptions {
     }
 }
 
-pub type BundlerStyleSheet = StyleSheet<BundlerAtRule>;
-pub type BundlerCssRuleList = CssRuleList<BundlerAtRule>;
-pub type BundlerCssRule = CssRule<BundlerAtRule>;
-pub type BundlerLayerBlockRule = css_rules::layer::LayerBlockRule<BundlerAtRule>;
-pub type BundlerSupportsRule = css_rules::supports::SupportsRule<BundlerAtRule>;
-pub type BundlerMediaRule = css_rules::media::MediaRule<BundlerAtRule>;
+pub type BundlerStyleSheet = StyleSheet<'static, BundlerAtRule>;
+pub type BundlerCssRuleList = CssRuleList<'static, BundlerAtRule>;
+pub type BundlerCssRule = CssRule<'static, BundlerAtRule>;
+pub type BundlerLayerBlockRule = css_rules::layer::LayerBlockRule<'static, BundlerAtRule>;
+pub type BundlerSupportsRule = css_rules::supports::SupportsRule<'static, BundlerAtRule>;
+pub type BundlerMediaRule = css_rules::media::MediaRule<'static, BundlerAtRule>;
 // blocked_on: printer.rs PrintResult<R> generic
 pub type BundlerPrintResult = PrintResult<BundlerAtRule>;
 
@@ -2513,19 +2512,48 @@ pub fn fill_property_bit_set(
 
 // ───────────────────────────── StyleSheet ─────────────────────────────
 //
-// `CssRuleList`/`LayerName`/`ParserOptions` carry the type surface; the
+// `CssRuleList`/`LayerName` carry the type surface; the
 // behavior surface (`parse`/`minify`/`to_css`/`pluck_imports`) lives in
 // `stylesheet_impl` below.
 
-pub struct StyleSheet<AtRule> {
+pub struct StyleSheetConfig {
+    /// Whether CSS modules parsing/emission was enabled for this stylesheet.
+    pub css_modules: Option<css_modules::Config>,
+    /// The source index assigned during parse.
+    pub source_index: u32,
+    /// Parser feature flags captured at parse time.
+    pub flags: ParserFlags,
+}
+
+impl StyleSheetConfig {
+    fn from_parser_options(options: ParserOptions<'_>) -> Self {
+        Self {
+            css_modules: options.css_modules,
+            source_index: options.source_index,
+            flags: options.flags,
+        }
+    }
+}
+
+impl Default for StyleSheetConfig {
+    fn default() -> Self {
+        Self {
+            css_modules: None,
+            source_index: 0,
+            flags: ParserFlags::empty(),
+        }
+    }
+}
+
+pub struct StyleSheet<'bump, AtRule> {
     /// A list of top-level rules within the style sheet.
-    pub rules: CssRuleList<AtRule>,
+    pub rules: CssRuleList<'bump, AtRule>,
     // PERF(port): was arena bulk-free (sources / source_map_urls /
     // license_comments were ArrayList fed input.arena()) — profile if hot.
     pub sources: Vec<Box<[u8]>>,
     pub source_map_urls: Vec<Option<Box<[u8]>>>,
-    pub license_comments: Vec<&'static [u8]>, // TODO(port): lifetime — arena
-    pub options: ParserOptions<'static>,      // TODO(port): lifetime
+    pub license_comments: Vec<&'bump [u8]>,
+    pub config: StyleSheetConfig,
     // Zig: `tailwind: if (AtRule == BundlerAtRule) ?*BundlerTailwindState else u0`
     // TODO(port): conditional field; for now Option<Box<_>> always.
     pub tailwind: Option<Box<BundlerTailwindState>>,
@@ -2540,14 +2568,14 @@ pub struct StyleSheet<AtRule> {
     pub composes: ComposesMap,
 }
 
-impl<AtRule> StyleSheet<AtRule> {
+impl<'bump, AtRule> StyleSheet<'bump, AtRule> {
     pub fn empty() -> Self {
         Self {
             rules: CssRuleList::default(),
             sources: Vec::new(),
             source_map_urls: Vec::new(),
             license_comments: Vec::new(),
-            options: ParserOptions::default(None),
+            config: StyleSheetConfig::default(),
             tailwind: None,
             layer_names: Vec::new(),
             local_scope: LocalScope::default(),
@@ -2563,7 +2591,7 @@ impl<AtRule> StyleSheet<AtRule> {
 mod stylesheet_impl {
     use super::*;
 
-    impl<AtRule> StyleSheet<AtRule> {
+    impl<'bump, AtRule> StyleSheet<'bump, AtRule> {
         /// Minify and transform the style sheet for the provided browser targets.
         ///
         /// PORT NOTE: `arena` is the arena that owns this stylesheet's AST
@@ -2571,7 +2599,7 @@ mod stylesheet_impl {
         /// downstream `deep_clone` calls allocate alongside the existing tree.
         pub fn minify(
             &mut self,
-            arena: &Bump,
+            arena: &'bump Bump,
             options: &MinifyOptions,
             extra: &StylesheetExtra,
         ) -> Maybe<(), Err<MinifyErrorKind>>
@@ -2587,7 +2615,7 @@ mod stylesheet_impl {
             // here and create a lookup table by name.
             let custom_media: Option<
                 ArrayHashMap<Box<[u8]>, css_rules::custom_media::CustomMediaRule>,
-            > = if self.options.flags.contains(ParserFlags::CUSTOM_MEDIA)
+            > = if self.config.flags.contains(ParserFlags::CUSTOM_MEDIA)
                 && options
                     .targets
                     .should_compile_same(compat::Feature::CustomMediaQueries)
@@ -2612,7 +2640,7 @@ mod stylesheet_impl {
                 handler_context: ctx,
                 unused_symbols: &options.unused_symbols,
                 custom_media,
-                css_modules: self.options.css_modules.is_some(),
+                css_modules: self.config.css_modules.is_some(),
                 extra,
                 err: None,
             };
@@ -2669,7 +2697,7 @@ mod stylesheet_impl {
                 printer.newline()?;
             }
 
-            if let Some(config) = &self.options.css_modules {
+            if let Some(config) = &self.config.css_modules {
                 let mut references = CssModuleReferences::default();
                 // SAFETY: `'bump`-erasure — `Printer<'a>` stores `CssModule<'a>` which
                 // holds `&'a mut CssModuleReferences<'a>`; tying the borrow to `'a`
@@ -2762,7 +2790,7 @@ mod stylesheet_impl {
             options: ParserOptions<'static>,
             import_records: Option<&mut Vec<ImportRecord>>,
             source_index: SrcIndex,
-        ) -> Maybe<(StyleSheet<DefaultAtRule>, StylesheetExtra), Err<ParserError>> {
+        ) -> Maybe<(StyleSheet<'static, DefaultAtRule>, StylesheetExtra), Err<ParserError>> {
             // PORT NOTE: Zig instantiated `StyleSheet(DefaultAtRule).parse`; Rust
             // cannot vary `Self`'s `AtRule` param against `DefaultAtRuleParser`, so
             // this returns the concrete `StyleSheet<DefaultAtRule>`. Callers that
@@ -2861,6 +2889,7 @@ mod stylesheet_impl {
             sources.push(Box::<[u8]>::from(options.filename));
             let mut source_map_urls: Vec<Option<Box<[u8]>>> = Vec::with_capacity(1);
             source_map_urls.push(parser.current_source_map_url().map(Box::<[u8]>::from));
+            let config = StyleSheetConfig::from_parser_options(options);
 
             // Spec: `.layer_names = if (comptime P == BundlerAtRuleParser)
             // at_rule_parser.layer_names else .{}` (css_parser.zig:3324). Rust
@@ -2875,7 +2904,7 @@ mod stylesheet_impl {
                     sources,
                     source_map_urls,
                     license_comments,
-                    options,
+                    config,
                     tailwind: None,
                     layer_names,
                     local_scope: parser_extra.local_scope,
@@ -2923,14 +2952,15 @@ mod stylesheet_impl {
 
         pub fn new_from_tailwind_imports(
             options: ParserOptions<'static>,
-            imports_from_tailwind: CssRuleList<AtRule>,
+            imports_from_tailwind: CssRuleList<'static, AtRule>,
         ) -> Self {
+            let config = StyleSheetConfig::from_parser_options(options);
             Self {
                 rules: imports_from_tailwind,
                 sources: Vec::new(),
                 source_map_urls: Vec::new(),
                 license_comments: Vec::new(),
-                options,
+                config,
                 tailwind: None,
                 layer_names: Vec::new(),
                 local_scope: LocalScope::default(),
@@ -2945,7 +2975,7 @@ mod stylesheet_impl {
         /// separate rule list, replacing them with `.ignored` rules.
         pub fn pluck_imports(
             &mut self,
-            out: &mut CssRuleList<AtRule>,
+            out: &mut CssRuleList<'bump, AtRule>,
             new_import_records: &mut Vec<ImportRecord>,
         ) {
             // PORT NOTE: the Zig fn takes `*const @This()` but writes
@@ -3110,7 +3140,7 @@ mod stylesheet_impl {
         }
     }
 
-    impl StyleSheet<BundlerAtRule> {
+    impl StyleSheet<'static, BundlerAtRule> {
         pub fn parse_bundler(
             arena: &'static Bump,
             code: &[u8],
@@ -3119,28 +3149,17 @@ mod stylesheet_impl {
             source_index: SrcIndex,
         ) -> Maybe<(Self, StylesheetExtra), Err<ParserError>> {
             // PORT NOTE: Zig aliased `import_records` into both `BundlerAtRuleParser`
-            // *and* the inner `Parser` (css_parser.zig:3245), and aliased `&options`
-            // into the at-rule parser while also passing `options` by value (struct
-            // copy) to `parseWith`. Rust forbids both overlaps directly:
+            // *and* the inner `Parser` (css_parser.zig:3245).
             // - `import_records`: derive a single raw `NonNull` from the unique
             //   borrow; both the at-rule parser and `Parser::new` store copies of
             //   that raw pointer (matching Zig's `?*Vec`). Neither holds a
             //   long-lived `&mut`, so interleaved writes from `on_import_rule` and
             //   `add_import_record`/`state`/`reset` each create a fresh short-lived
             //   `&mut` from the shared SharedRW provenance — sound under SB.
-            // - `options`: bitwise-duplicate via `ptr::read` (mirroring Zig's
-            //   by-value struct copy) and wrap the original in `ManuallyDrop` so
-            //   only the moved copy drops — `ParserOptions` transitively owns a
-            //   `SmallList` (via `css_modules::Config::pattern`) which has a real
-            //   `Drop`, so both copies must not run their destructors.
-            let options = core::mem::ManuallyDrop::new(options);
-            // SAFETY: original is `ManuallyDrop`; only `options_for_parse` drops.
-            let options_for_parse = unsafe { core::ptr::read(&raw const *options) };
             let import_records_ptr = core::ptr::NonNull::from(import_records);
             let mut at_rule_parser = BundlerAtRuleParser {
                 arena,
                 import_records: import_records_ptr.as_ptr(),
-                options: &options,
                 layer_names: Vec::new(),
                 anon_layer_count: 0,
                 enclosing_layer: LayerName::default(),
@@ -3148,7 +3167,7 @@ mod stylesheet_impl {
             Self::parse_with(
                 arena,
                 code,
-                options_for_parse,
+                options,
                 &mut at_rule_parser,
                 Some(import_records_ptr),
                 source_index,

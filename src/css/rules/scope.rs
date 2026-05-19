@@ -7,18 +7,18 @@ use crate::{PrintErr, Printer};
 /// @scope (<scope-start>) [to (<scope-end>)]? {
 ///  <stylesheet>
 /// }
-pub struct ScopeRule<R> {
+pub struct ScopeRule<'bump, R> {
     /// A selector list used to identify the scoping root(s).
     pub scope_start: Option<SelectorList>,
     /// A selector list used to identify any scoping limits.
     pub scope_end: Option<SelectorList>,
     /// Nested rules within the `@scope` rule.
-    pub rules: CssRuleList<R>,
+    pub rules: CssRuleList<'bump, R>,
     /// The location of the rule in the source file.
     pub loc: Location,
 }
 
-impl<R> ScopeRule<R> {
+impl<R> ScopeRule<'_, R> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         use crate::selectors::selector::serialize::serialize_selector_list;
         // #[cfg(feature = "sourcemap")]
@@ -76,15 +76,15 @@ impl<R> ScopeRule<R> {
     }
 }
 
-impl<R> ScopeRule<R> {
-    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+impl<R> ScopeRule<'_, R> {
+    pub fn deep_clone<'b>(&self, bump: &'b bun_alloc::Arena) -> ScopeRule<'b, R>
     where
-        R: crate::generics::DeepClone<'bump>,
+        R: crate::generics::DeepClone<'b>,
     {
         // PORT NOTE: `css.implementDeepClone` field-walk. `SelectorList::
         // deep_clone()` intentionally drops the `&Arena` (selectors/parser.rs
         // — every payload is arena-static); routed via `dc::selector_list`.
-        Self {
+        ScopeRule {
             scope_start: self
                 .scope_start
                 .as_ref()

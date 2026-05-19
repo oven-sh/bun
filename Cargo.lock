@@ -148,7 +148,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
  "typed-arena",
@@ -167,7 +167,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -187,7 +187,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -212,7 +212,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
  "typed-arena",
@@ -232,7 +232,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -253,7 +253,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
  "thiserror",
@@ -289,7 +289,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -306,7 +306,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -325,7 +325,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -341,7 +341,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
  "thiserror",
@@ -392,7 +392,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
  "thiserror",
@@ -423,7 +423,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -456,7 +456,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
  "thiserror",
@@ -476,7 +476,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
  "thiserror",
@@ -494,7 +494,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
  "thiserror",
@@ -521,7 +521,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -562,7 +562,7 @@ dependencies = [
  "const_format",
  "itoa",
  "libc",
- "phf 0.11.3",
+ "phf",
  "strum",
  "thiserror",
 ]
@@ -602,7 +602,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -621,7 +621,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -647,7 +647,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
  "typed-arena",
@@ -681,7 +681,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -711,7 +711,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -736,7 +736,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -754,7 +754,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
  "thiserror",
@@ -780,7 +780,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -800,7 +800,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
  "thiserror",
@@ -821,7 +821,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -843,7 +843,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -884,7 +884,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
  "thiserror",
@@ -919,7 +919,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
  "thiserror",
@@ -940,7 +940,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -967,7 +967,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
  "thiserror",
@@ -1025,7 +1025,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
  "thiserror",
@@ -1055,7 +1055,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -1076,7 +1076,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -1102,7 +1102,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -1117,7 +1117,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -1149,7 +1149,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "regex",
  "scopeguard",
  "smallvec",
@@ -1181,7 +1181,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
  "thiserror",
@@ -1211,7 +1211,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
  "typed-arena",
@@ -1267,7 +1267,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
  "thiserror",
@@ -1299,7 +1299,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -1317,7 +1317,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -1334,7 +1334,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -1352,7 +1352,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -1370,7 +1370,7 @@ dependencies = [
  "enumset",
  "libc",
  "lol_html_c_api",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
  "thiserror",
@@ -1392,7 +1392,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -1407,7 +1407,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -1423,7 +1423,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -1438,7 +1438,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -1469,7 +1469,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
  "thiserror",
@@ -1504,7 +1504,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
  "thiserror",
@@ -1528,7 +1528,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
  "thiserror",
@@ -1548,7 +1548,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -1566,7 +1566,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
  "thiserror",
@@ -1585,7 +1585,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -1601,7 +1601,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -1616,7 +1616,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -1634,7 +1634,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
  "thiserror",
@@ -1653,7 +1653,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
  "thiserror",
@@ -1672,7 +1672,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -1713,7 +1713,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
  "thiserror",
@@ -1740,7 +1740,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -1837,7 +1837,7 @@ dependencies = [
  "enumset",
  "getrandom",
  "libc",
- "phf 0.11.3",
+ "phf",
  "rust-argon2",
  "scopeguard",
  "sha3",
@@ -1864,7 +1864,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
  "thiserror",
@@ -1882,7 +1882,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
  "thiserror",
@@ -1902,7 +1902,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -1920,7 +1920,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -1939,7 +1939,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -1958,7 +1958,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "smallvec",
  "strum",
@@ -1985,7 +1985,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -2015,7 +2015,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "smallvec",
  "strum",
@@ -2043,7 +2043,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -2103,7 +2103,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -2133,7 +2133,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -2171,7 +2171,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -2197,7 +2197,7 @@ dependencies = [
  "enumset",
  "libc",
  "memchr",
- "phf 0.11.3",
+ "phf",
  "rustix",
  "scopeguard",
  "strum",
@@ -2227,7 +2227,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
  "thiserror",
@@ -2249,7 +2249,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
  "thiserror",
@@ -2266,7 +2266,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -2283,7 +2283,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
  "thiserror",
@@ -2304,7 +2304,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -2322,7 +2322,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -2343,7 +2343,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -2366,7 +2366,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
  "thiserror",
@@ -2404,7 +2404,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -2422,7 +2422,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -2441,7 +2441,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -2461,7 +2461,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -2477,7 +2477,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -2494,7 +2494,7 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "phf 0.11.3",
+ "phf",
  "scopeguard",
  "strum",
 ]
@@ -2699,29 +2699,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cssparser"
-version = "0.36.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dae61cf9c0abb83bd659dab65b7e4e38d8236824c85f0f804f173567bda257d2"
-dependencies = [
- "cssparser-macros",
- "dtoa-short",
- "itoa",
- "phf 0.13.1",
- "smallvec",
-]
-
-[[package]]
-name = "cssparser-macros"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13b588ba4ac1a99f7f2964d24b3d896ddc6bf847ee3855dbd4366f058cfcd331"
-dependencies = [
- "quote",
- "syn",
-]
-
-[[package]]
 name = "darling"
 version = "0.21.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2756,27 +2733,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "derive_more"
-version = "2.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d751e9e49156b02b44f9c1815bcb94b984cdcc4396ecc32521c739452808b134"
-dependencies = [
- "derive_more-impl",
-]
-
-[[package]]
-name = "derive_more-impl"
-version = "2.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "799a97264921d8623a957f6c3b9011f3b5492f557bbb7a5a19b7fa6d06ba8dcb"
-dependencies = [
- "proc-macro2",
- "quote",
- "rustc_version",
- "syn",
-]
-
-[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2788,34 +2744,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "dtoa"
-version = "1.0.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c3cf4824e2d5f025c7b531afcb2325364084a16806f6d47fbc1f5fbd9960590"
-
-[[package]]
-name = "dtoa-short"
-version = "0.3.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cd1511a7b6a56299bd043a9c167a6d2bfb37bf84a6dfceaba651168adfb43c87"
-dependencies = [
- "dtoa",
-]
-
-[[package]]
 name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
-
-[[package]]
-name = "encoding_rs"
-version = "0.8.35"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3"
-dependencies = [
- "cfg-if",
-]
 
 [[package]]
 name = "enum-map"
@@ -2875,12 +2807,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fastrand"
-version = "2.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
-
-[[package]]
 name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2891,12 +2817,6 @@ name = "foldhash"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
-
-[[package]]
-name = "foldhash"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
 name = "futures-core"
@@ -2963,18 +2883,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 dependencies = [
  "allocator-api2",
- "foldhash 0.1.5",
-]
-
-[[package]]
-name = "hashbrown"
-version = "0.16.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
-dependencies = [
- "allocator-api2",
- "equivalent",
- "foldhash 0.2.0",
+ "foldhash",
 ]
 
 [[package]]
@@ -3115,49 +3024,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
-name = "lol_html"
-version = "2.7.2"
-dependencies = [
- "bitflags",
- "cfg-if",
- "cssparser",
- "encoding_rs",
- "foldhash 0.2.0",
- "hashbrown 0.16.1",
- "memchr",
- "mime",
- "precomputed-hash",
- "selectors",
- "thiserror",
-]
-
-[[package]]
 name = "lol_html_c_api"
-version = "1.3.1"
-dependencies = [
- "encoding_rs",
- "libc",
- "lol_html",
- "thiserror",
-]
+version = "0.0.0"
 
 [[package]]
 name = "memchr"
 version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
-
-[[package]]
-name = "mime"
-version = "0.3.17"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a"
-
-[[package]]
-name = "new_debug_unreachable"
-version = "1.0.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
 name = "num-traits"
@@ -3192,29 +3066,8 @@ version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fd6780a80ae0c52cc120a26a1a42c1ae51b247a253e4e06113d23d2c2edd078"
 dependencies = [
- "phf_macros 0.11.3",
- "phf_shared 0.11.3",
-]
-
-[[package]]
-name = "phf"
-version = "0.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1562dc717473dbaa4c1f85a36410e03c047b2e7df7f45ee938fbef64ae7fadf"
-dependencies = [
- "phf_macros 0.13.1",
- "phf_shared 0.13.1",
- "serde",
-]
-
-[[package]]
-name = "phf_codegen"
-version = "0.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49aa7f9d80421bca176ca8dbfebe668cc7a2684708594ec9f3c0db0805d5d6e1"
-dependencies = [
- "phf_generator 0.13.1",
- "phf_shared 0.13.1",
+ "phf_macros",
+ "phf_shared",
 ]
 
 [[package]]
@@ -3223,18 +3076,8 @@ version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3c80231409c20246a13fddb31776fb942c38553c51e871f8cbd687a4cfb5843d"
 dependencies = [
- "phf_shared 0.11.3",
+ "phf_shared",
  "rand",
-]
-
-[[package]]
-name = "phf_generator"
-version = "0.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "135ace3a761e564ec88c03a77317a7c6b80bb7f7135ef2544dbe054243b89737"
-dependencies = [
- "fastrand",
- "phf_shared 0.13.1",
 ]
 
 [[package]]
@@ -3243,21 +3086,8 @@ version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f84ac04429c13a7ff43785d75ad27569f2951ce0ffd30a3321230db2fc727216"
 dependencies = [
- "phf_generator 0.11.3",
- "phf_shared 0.11.3",
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
-name = "phf_macros"
-version = "0.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "812f032b54b1e759ccd5f8b6677695d5268c588701effba24601f6932f8269ef"
-dependencies = [
- "phf_generator 0.13.1",
- "phf_shared 0.13.1",
+ "phf_generator",
+ "phf_shared",
  "proc-macro2",
  "quote",
  "syn",
@@ -3268,15 +3098,6 @@ name = "phf_shared"
 version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67eabc2ef2a60eb7faa00097bd1ffdb5bd28e62bf39990626a582201b7a754e5"
-dependencies = [
- "siphasher",
-]
-
-[[package]]
-name = "phf_shared"
-version = "0.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e57fef6bc5981e38c2ce2d63bfa546861309f875b8a75f092d1d54ae2d64f266"
 dependencies = [
  "siphasher",
 ]
@@ -3314,12 +3135,6 @@ checksum = "51bae2ac328883f7acdfea3d66a7c35751187f870bc81f94563733a154d7a670"
 dependencies = [
  "plotters-backend",
 ]
-
-[[package]]
-name = "precomputed-hash"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "925383efa346730478fb4838dbe9137d2a47675ad789c546d150a6e1dd4ab31c"
 
 [[package]]
 name = "prettyplease"
@@ -3432,21 +3247,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rustc-hash"
-version = "2.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94300abf3f1ae2e2b8ffb7b58043de3d399c73fa6f4b73826402a5c457614dbe"
-
-[[package]]
-name = "rustc_version"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cfcb3a22ef46e85b45de6ee7e79d063319ebb6594faafcf1c225ea92ab6e9b92"
-dependencies = [
- "semver",
-]
-
-[[package]]
 name = "rustix"
 version = "0.38.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3479,25 +3279,6 @@ name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
-
-[[package]]
-name = "selectors"
-version = "0.33.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "feef350c36147532e1b79ea5c1f3791373e61cbd9a6a2615413b3807bb164fb7"
-dependencies = [
- "bitflags",
- "cssparser",
- "derive_more",
- "log",
- "new_debug_unreachable",
- "phf 0.13.1",
- "phf_codegen",
- "precomputed-hash",
- "rustc-hash",
- "servo_arc",
- "smallvec",
-]
 
 [[package]]
 name = "semver"
@@ -3549,15 +3330,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "servo_arc"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "170fb83ab34de17dc69aa7c67482b22218ddb85da56546f9bd6b929e32a05930"
-dependencies = [
- "stable_deref_trait",
-]
-
-[[package]]
 name = "sha3"
 version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3584,12 +3356,6 @@ name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
-
-[[package]]
-name = "stable_deref_trait"
-version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "strum"

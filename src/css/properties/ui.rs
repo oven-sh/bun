@@ -239,7 +239,7 @@ impl ColorSchemeHandler {
     pub fn finalize(
         &mut self,
         _: &mut css::DeclarationList<'_>,
-        _: &mut PropertyHandlerContext<'_>,
+        _: &mut PropertyHandlerContext<'_, '_>,
     ) {
     }
 }

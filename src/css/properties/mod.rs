@@ -37,7 +37,7 @@ macro_rules! handler_stub {
                 &mut self,
                 _property: &crate::properties::Property,
                 _dest: &mut crate::DeclarationList<'_>,
-                _context: &mut crate::PropertyHandlerContext<'_>,
+                _context: &mut crate::PropertyHandlerContext<'_, '_>,
             ) -> bool {
                 false
             }
@@ -45,7 +45,7 @@ macro_rules! handler_stub {
             pub fn finalize(
                 &mut self,
                 _dest: &mut crate::DeclarationList<'_>,
-                _context: &mut crate::PropertyHandlerContext<'_>,
+                _context: &mut crate::PropertyHandlerContext<'_, '_>,
             ) {
             }
         }

@@ -211,27 +211,26 @@ impl KeyframeSelector {
 /// An individual keyframe within an `@keyframes` rule.
 ///
 /// See [KeyframesRule](KeyframesRule).
-pub struct Keyframe {
+pub struct Keyframe<'bump> {
     /// A list of keyframe selectors to associate with the declarations in this keyframe.
     pub selectors: ArrayList<KeyframeSelector>,
     /// The declarations for this keyframe.
-    // PORT NOTE: lifetime erased to `'static` per rules/mod.rs `CssRule<R>` note.
-    pub declarations: DeclarationBlock<'static>,
+    pub declarations: DeclarationBlock<'bump>,
 }
 
-impl Keyframe {
+impl Keyframe<'_> {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         dest.write_comma_separated(self.selectors.iter(), |d, sel| sel.to_css(d))?;
         super::decl_block_to_css(&self.declarations, dest)
     }
 }
 
-impl Keyframe {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+impl Keyframe<'_> {
+    pub fn deep_clone<'b>(&self, bump: &'b bun_alloc::Arena) -> Keyframe<'b> {
         // PORT NOTE: `css.implementDeepClone` field-walk.
-        Self {
+        Keyframe {
             selectors: self.selectors.iter().map(|s| s.deep_clone(bump)).collect(),
-            declarations: super::dc::decl_block_static(&self.declarations, bump),
+            declarations: super::dc::decl_block(&self.declarations, bump),
         }
     }
 }
@@ -240,19 +239,19 @@ impl Keyframe {
 // KeyframesRule
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct KeyframesRule {
+pub struct KeyframesRule<'bump> {
     /// The animation name.
     /// <keyframes-name> = <custom-ident> | <string>
     pub name: KeyframesName,
     /// A list of keyframes in the animation.
-    pub keyframes: ArrayList<Keyframe>,
+    pub keyframes: ArrayList<Keyframe<'bump>>,
     /// A vendor prefix for the rule, e.g. `@-webkit-keyframes`.
     pub vendor_prefix: VendorPrefix,
     /// The location of the rule in the source file.
     pub loc: Location,
 }
 
-impl KeyframesRule {
+impl KeyframesRule<'_> {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
@@ -312,11 +311,11 @@ impl KeyframesRule {
     }
 }
 
-impl KeyframesRule {
+impl KeyframesRule<'_> {
     pub fn get_fallbacks<T>(
         &mut self,
         _targets: &css::targets::Targets,
-    ) -> &[css::css_rules::CssRule<T>] {
+    ) -> &[css::css_rules::CssRule<'_, T>] {
         // PORT NOTE: Zig spec body is `@compileError(css.todo_stuff.depth)` — the fn is
         // declared but never instantiated; its sole call site in `rules.zig`
         // (`CssRuleList.minify` → `.keyframes` arm) is commented out and replaced with
@@ -332,10 +331,10 @@ impl KeyframesRule {
         &[]
     }
 
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone<'b>(&self, bump: &'b bun_alloc::Arena) -> KeyframesRule<'b> {
         // PORT NOTE: `css.implementDeepClone` field-walk. `VendorPrefix` is a
         // `Copy` bitflag (generics.zig "simple copy types" → identity).
-        Self {
+        KeyframesRule {
             name: self.name.deep_clone(bump),
             keyframes: self.keyframes.iter().map(|k| k.deep_clone(bump)).collect(),
             vendor_prefix: self.vendor_prefix,
@@ -366,7 +365,7 @@ const _: () = {
     use css::{BasicParseErrorKind, Maybe, Parser, ParserOptions, ParserState, Result};
 
     impl DeclarationParser for KeyframesListParser {
-        type Declaration = Keyframe;
+        type Declaration = Keyframe<'static>;
 
         fn parse_value(
             _this: &mut Self,
@@ -394,7 +393,7 @@ const _: () = {
 
     impl AtRuleParser for KeyframesListParser {
         type Prelude = ();
-        type AtRule = Keyframe;
+        type AtRule = Keyframe<'static>;
 
         fn parse_prelude(
             _this: &mut Self,
@@ -428,7 +427,7 @@ const _: () = {
 
     impl QualifiedRuleParser for KeyframesListParser {
         type Prelude = ArrayList<KeyframeSelector>;
-        type QualifiedRule = Keyframe;
+        type QualifiedRule = Keyframe<'static>;
 
         fn parse_prelude(_this: &mut Self, input: &mut Parser) -> Result<Self::Prelude> {
             input.parse_comma_separated(KeyframeSelector::parse)

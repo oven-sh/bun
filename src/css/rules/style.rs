@@ -6,25 +6,20 @@ use crate::selectors::selector;
 use crate::{PrintErr, Printer, VendorPrefix};
 
 // `fn StyleRule(comptime R: type) type { return struct {...} }` → generic struct.
-//
-// PORT NOTE: `DeclarationBlock<'bump>` borrows the parser arena (bumpalo Vecs).
-// Threading `'bump` here cascades into `CssRule<'bump, R>` / `CssRuleList<'bump, R>`
-// (rules/mod.rs PORT NOTE) which is deferred until the leaf rules un-gate
-// together; for now the lifetime is erased to `'static`.
-pub struct StyleRule<R> {
+pub struct StyleRule<'bump, R> {
     /// The selectors for the style rule.
     pub selectors: selector::parser::SelectorList,
     /// A vendor prefix override, used during selector printing.
     pub vendor_prefix: VendorPrefix,
     /// The declarations within the style rule.
-    pub declarations: DeclarationBlock<'static>,
+    pub declarations: DeclarationBlock<'bump>,
     /// Nested rules within the style rule.
-    pub rules: CssRuleList<R>,
+    pub rules: CssRuleList<'bump, R>,
     /// The location of the rule in the source file.
     pub loc: Location,
 }
 
-impl<R> StyleRule<R> {
+impl<R> StyleRule<'_, R> {
     /// Returns whether the rule is empty.
     pub fn is_empty(&self) -> bool {
         self.selectors.v.is_empty() || (self.declarations.is_empty() && self.rules.v.len() == 0)
@@ -32,7 +27,7 @@ impl<R> StyleRule<R> {
 }
 
 // ─── behavior bodies ──────────────────────────────────────────────────────
-impl<R> StyleRule<R> {
+impl<R> StyleRule<'_, R> {
     /// Returns a hash of this rule for use when deduplicating.
     /// Includes the selectors and properties.
     pub fn hash_key(&self) -> u64 {
@@ -73,7 +68,7 @@ impl<R> StyleRule<R> {
 }
 
 // ─── to_css ───────────────────────────────────────────────────────────────
-impl<R> StyleRule<R> {
+impl<R> StyleRule<'_, R> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         if self.vendor_prefix.is_empty() {
             self.to_css_base(dest)?;
@@ -193,7 +188,7 @@ impl<R> StyleRule<R> {
 
         // Zig: local `Helpers` struct with two fns. Rust: nested fn items (no capture needed).
         fn helpers_newline<R>(
-            self_: &StyleRule<R>,
+            self_: &StyleRule<'_, R>,
             d: &mut Printer,
             supports_nesting2: bool,
             len1: usize,
@@ -233,10 +228,10 @@ impl<R> StyleRule<R> {
     }
 }
 
-impl<R> StyleRule<R> {
+impl<'bump, R> StyleRule<'bump, R> {
     pub fn minify(
         &mut self,
-        context: &mut MinifyContext<'_, '_>,
+        context: &mut MinifyContext<'_, 'bump>,
         parent_is_unused: bool,
     ) -> Result<bool, MinifyErr>
     where
@@ -285,26 +280,21 @@ impl<R> StyleRule<R> {
         // }
 
         context.handler_context.context = DeclarationContext::StyleRule;
-        // PORT NOTE: `DeclarationBlock<'static>` (struct PORT NOTE above) forces
-        // `minify` to want `DeclarationHandler<'static>`; route through the
-        // single centralized `'bump`-erasure helper instead of open-coding the
-        // lifetime cast. Collapses when `CssRule<'bump, R>`
-        // re-threads the arena lifetime.
         self.declarations.minify(
-            super::dc::decl_handler_static(&mut *context.handler),
-            super::dc::decl_handler_static(&mut *context.important_handler),
+            &mut *context.handler,
+            &mut *context.important_handler,
             &mut context.handler_context,
         );
         context.handler_context.context = DeclarationContext::None;
 
         if self.rules.v.len() > 0 {
             let mut handler_context = context.handler_context.child(DeclarationContext::StyleRule);
-            core::mem::swap::<PropertyHandlerContext<'_>>(
+            core::mem::swap::<PropertyHandlerContext<'_, '_>>(
                 &mut context.handler_context,
                 &mut handler_context,
             );
             self.rules.minify(context, unused)?;
-            core::mem::swap::<PropertyHandlerContext<'_>>(
+            core::mem::swap::<PropertyHandlerContext<'_, '_>>(
                 &mut context.handler_context,
                 &mut handler_context,
             );
@@ -358,8 +348,8 @@ impl<R> StyleRule<R> {
 }
 
 // ─── deep_clone ───────────────────────────────────────────────────────────
-impl<R> StyleRule<R> {
-    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+impl<R> StyleRule<'_, R> {
+    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> StyleRule<'bump, R>
     where
         R: crate::generics::DeepClone<'bump>,
     {
@@ -367,10 +357,10 @@ impl<R> StyleRule<R> {
         // PORT NOTE: `css.implementDeepClone` field-walk. `declarations` routes
         // through `dc::decl_block` until `DeclarationBlock::deep_clone` un-gates
         // (declaration.rs — bottoms out on `Property: DeepClone`).
-        Self {
+        StyleRule {
             selectors: self.selectors.deep_clone(),
             vendor_prefix: self.vendor_prefix,
-            declarations: super::dc::decl_block_static(&self.declarations, bump),
+            declarations: super::dc::decl_block(&self.declarations, bump),
             rules: self.rules.deep_clone(bump),
             loc: self.loc,
         }

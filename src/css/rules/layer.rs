@@ -141,23 +141,23 @@ impl fmt::Display for LayerName {
 }
 
 /// A [@layer block](https://drafts.csswg.org/css-cascade-5/#layer-block) rule.
-pub struct LayerBlockRule<R> {
+pub struct LayerBlockRule<'bump, R> {
     /// PERF: null pointer optimizaiton, nullable
     /// The name of the layer to declare, or `None` to declare an anonymous layer.
     pub name: Option<LayerName>,
     /// The rules within the `@layer` rule.
-    pub rules: CssRuleList<R>,
+    pub rules: CssRuleList<'bump, R>,
     /// The location of the rule in the source file.
     pub loc: Location,
 }
 
-impl<R> LayerBlockRule<R> {
-    pub fn deep_clone<'bump>(&self, bump: &'bump Arena) -> Self
+impl<R> LayerBlockRule<'_, R> {
+    pub fn deep_clone<'b>(&self, bump: &'b Arena) -> LayerBlockRule<'b, R>
     where
-        R: css::generics::DeepClone<'bump>,
+        R: css::generics::DeepClone<'b>,
     {
         // PORT NOTE: `css.implementDeepClone` field-walk.
-        Self {
+        LayerBlockRule {
             name: self.name.as_ref().map(|n| n.deep_clone(bump)),
             rules: self.rules.deep_clone(bump),
             loc: self.loc,

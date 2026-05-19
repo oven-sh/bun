@@ -8,8 +8,8 @@ use crate::{BundleV2, Chunk, LinkerContext};
 
 use crate::bun_css::css_parser::{
     BundlerCssRule, BundlerCssRuleList, BundlerLayerBlockRule, BundlerMediaRule,
-    BundlerSupportsRule, ImportRule, LayerName, LayerStatementRule, Location, ParserOptions,
-    SmallList,
+    BundlerSupportsRule, ImportRule, LayerName, LayerStatementRule, Location,
+    SmallList, StyleSheetConfig,
 };
 use crate::bun_css::{BundlerStyleSheet, ImportConditions, ImportInfo, PrinterOptions, Targets};
 use crate::bun_fs::Path;
@@ -143,7 +143,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                         sources: Default::default(),
                         source_map_urls: Default::default(),
                         license_comments: Default::default(),
-                        options: ParserOptions::default(None),
+                        config: StyleSheetConfig::default(),
                         composes: Default::default(),
                         ..BundlerStyleSheet::empty()
                     };
@@ -198,7 +198,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                             // findImportedFilesInCSSOrder.rs for the `entry.conditions`
                             // ecosystem.
                             let ast_import = core::mem::ManuallyDrop::new(BundlerStyleSheet {
-                                options: ParserOptions::default(None),
+                                config: StyleSheetConfig::default(),
                                 license_comments: Default::default(),
                                 sources: Default::default(),
                                 source_map_urls: Default::default(),
@@ -327,7 +327,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                         sources: Default::default(),
                         source_map_urls: Default::default(),
                         license_comments: Default::default(),
-                        options: ParserOptions::default(None),
+                        config: StyleSheetConfig::default(),
                         composes: Default::default(),
                         ..BundlerStyleSheet::empty()
                     };

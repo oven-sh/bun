@@ -3,11 +3,11 @@ use crate::media_query::MediaList;
 use crate::{PrintErr, Printer};
 
 /// A `@media` rule.
-pub struct MediaRule<R> {
+pub struct MediaRule<'bump, R> {
     /// The media query list.
     pub query: MediaList,
     /// The rules within the `@media` rule.
-    pub rules: CssRuleList<R>,
+    pub rules: CssRuleList<'bump, R>,
     /// The location of the rule in the source file.
     pub loc: Location,
 }
@@ -17,7 +17,7 @@ pub struct MediaRule<R> {
 // minify` so the dispatch can call it without re-exporting `MinifyContext`
 // here). `to_css` un-gated this round — `MediaList::{always_matches,to_css}`
 // and `CssRuleList::to_css` are both real now.
-impl<R> MediaRule<R> {
+impl<R> MediaRule<'_, R> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         if dest.minify && self.query.always_matches() {
             self.rules.to_css(dest)?;
@@ -35,13 +35,13 @@ impl<R> MediaRule<R> {
     }
 }
 
-impl<R> MediaRule<R> {
-    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+impl<R> MediaRule<'_, R> {
+    pub fn deep_clone<'b>(&self, bump: &'b bun_alloc::Arena) -> MediaRule<'b, R>
     where
-        R: crate::generics::DeepClone<'bump>,
+        R: crate::generics::DeepClone<'b>,
     {
         // PORT NOTE: `css.implementDeepClone` field-walk.
-        Self {
+        MediaRule {
             query: super::dc::media_list(&self.query, bump),
             rules: self.rules.deep_clone(bump),
             loc: self.loc,

@@ -156,10 +156,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match kind {
             PropertyKind::Get => {
                 if args_len > 0 {
-                    let r = js_lexer::range_of_identifier(
-                        p.source,
-                        first_arg_loc.expect("args_len>0"),
-                    );
+                    let r =
+                        js_lexer::range_of_identifier(p.source, first_arg_loc.expect("args_len>0"));
                     // TODO(port): Zig used p.keyNameForError(key) inline; borrowck reshape — pre-compute name.
                     let key_name = p.key_name_for_error(key);
                     p.log().add_range_error_fmt(
@@ -174,10 +172,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             PropertyKind::Set => {
                 if args_len != 1 {
-                    let mut r = js_lexer::range_of_identifier(
-                        p.source,
-                        first_arg_loc.unwrap_or(loc),
-                    );
+                    let mut r =
+                        js_lexer::range_of_identifier(p.source, first_arg_loc.unwrap_or(loc));
                     if args_len > 1 {
                         r = js_lexer::range_of_identifier(
                             p.source,

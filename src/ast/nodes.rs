@@ -489,8 +489,8 @@ impl<T> StoreSlice<T> {
         // fresh arena storage; the source `src` retains a bitwise-equal copy
         // (we never re-drop either). `alloc_slice_fill_with` writes each slot
         // exactly once, so no uninitialised `T` escapes.
-        let dst: &mut [T] = bump
-            .alloc_slice_fill_with(src.len(), |i| unsafe { core::ptr::read(&src[i]) });
+        let dst: &mut [T] =
+            bump.alloc_slice_fill_with(src.len(), |i| unsafe { core::ptr::read(&src[i]) });
         StoreSlice::new_mut(dst)
     }
 

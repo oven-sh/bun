@@ -196,11 +196,7 @@ test.concurrent("import deduplication across multiple named imports preserves bi
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [runOut, runErr, runExit] = await Promise.all([
-    runProc.stdout.text(),
-    runProc.stderr.text(),
-    runProc.exited,
-  ]);
+  const [runOut, runErr, runExit] = await Promise.all([runProc.stdout.text(), runProc.stderr.text(), runProc.exited]);
   expect({ runErr, runExit, signalCode: runProc.signalCode }).toEqual({
     runErr: "",
     runExit: 0,

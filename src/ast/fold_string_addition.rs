@@ -289,7 +289,8 @@ pub fn fold_string_addition(
 
                                     if !right.parts().is_empty() {
                                         // std.mem.concat → bump-allocated concat
-                                        left.parts = concat_parts(bump, left.parts(), right.parts());
+                                        left.parts =
+                                            concat_parts(bump, left.parts(), right.parts());
                                     }
                                     // else: leave `left.parts` untouched —
                                     // nothing to append.

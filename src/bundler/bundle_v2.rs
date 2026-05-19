@@ -881,7 +881,12 @@ pub mod bv2_impl {
                         BunString::clone_utf8(path.namespace)
                     };
                     let mut path_string = BunString::clone_utf8(path.text);
-                    JSBundlerPlugin__anyMatches(self, &mut namespace_string, &mut path_string, is_on_load)
+                    JSBundlerPlugin__anyMatches(
+                        self,
+                        &mut namespace_string,
+                        &mut path_string,
+                        is_on_load,
+                    )
                 }
 
                 pub fn match_on_load(

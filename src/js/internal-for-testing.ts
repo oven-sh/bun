@@ -284,6 +284,14 @@ export const sigactionLayout: () =>
       sizeof: number;
     } = $newZigFunction("sys.zig", "TestingAPIs.sigactionLayout", 0);
 
+export const ucontextLayout: () =>
+  | undefined
+  | { sizeof: number; mcontext: number; sigmask: number; fpregs_mem: number; android: boolean } = $newZigFunction(
+  "sys.zig",
+  "TestingAPIs.ucontextLayout",
+  0,
+);
+
 export const stringsInternals = {
   /**
    * Calls `bun.strings.toUTF16AllocForReal(allocator, bytes, false, true)` and

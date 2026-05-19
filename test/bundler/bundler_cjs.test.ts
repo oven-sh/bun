@@ -491,4 +491,187 @@ describe("bundler", () => {
       stdout: '{"hasMap":true,"same":true}',
     },
   });
+
+  // Test 24: require(esm) honors "module.exports" named export
+  // https://github.com/oven-sh/bun/issues/29985
+  // Matches Node.js and Bun's runtime `require(esm)` behavior.
+  itBundled("cjs/__toCommonJS_module_exports_named_export", {
+    files: {
+      "/entry.js": /* js */ `
+        const m = require('./m.js');
+        console.log(m);
+      `,
+      "/m.js": /* js */ `
+        const a = 1;
+        const b = 2;
+        export const c = 3;
+        export default a;
+        export { b as "module.exports" }
+      `,
+    },
+    run: {
+      stdout: "2",
+    },
+  });
+
+  // Test 25: require(esm) without "module.exports" named export — the
+  // wrapper is still returned (ESM namespace with __esModule: true).
+  itBundled("cjs/__toCommonJS_no_module_exports_named_export", {
+    files: {
+      "/entry.js": /* js */ `
+        const m = require('./m.js');
+        console.log(JSON.stringify({ default: m.default, c: m.c, esm: m.__esModule }));
+      `,
+      "/m.js": /* js */ `
+        const a = 1;
+        export const c = 3;
+        export default a;
+      `,
+    },
+    run: {
+      stdout: '{"default":1,"c":3,"esm":true}',
+    },
+  });
+
+  // Test 26: "module.exports" named export of a function
+  itBundled("cjs/__toCommonJS_module_exports_named_export_function", {
+    files: {
+      "/entry.js": /* js */ `
+        const m = require('./m.js');
+        console.log(typeof m, m.name, m());
+      `,
+      "/m.js": /* js */ `
+        function myFunc() { return 'hello'; }
+        export { myFunc as "module.exports" }
+      `,
+    },
+    run: {
+      stdout: "function myFunc hello",
+    },
+  });
+
+  // Test 27: "module.exports" named export of an object —
+  // identity is preserved across multiple require() calls.
+  itBundled("cjs/__toCommonJS_module_exports_named_export_identity", {
+    files: {
+      "/entry.js": /* js */ `
+        const m1 = require('./m.js');
+        const m2 = require('./m.js');
+        console.log(m1 === m2, m1.value);
+      `,
+      "/m.js": /* js */ `
+        const obj = { value: 42 };
+        export { obj as "module.exports" }
+      `,
+    },
+    run: {
+      stdout: "true 42",
+    },
+  });
+
+  // Test 28: when "module.exports" named export is null/undefined, the
+  // wrapper falls through to the ESM namespace (matches runtime `??` semantics).
+  itBundled("cjs/__toCommonJS_module_exports_named_export_null", {
+    files: {
+      "/entry.js": /* js */ `
+        const m = require('./m.js');
+        console.log(m.a, m['module.exports'], m.__esModule);
+      `,
+      "/m.js": /* js */ `
+        const n = null;
+        export const a = 1;
+        export { n as "module.exports" }
+      `,
+    },
+    run: {
+      stdout: "1 null true",
+    },
+  });
+
+  // Test 29: `--format=cjs` on an ESM entry emits
+  // `module.exports = __toCommonJS(exports_entry)` BEFORE the module body.
+  // When "module.exports" is a class binding, eagerly calling the export
+  // getter would hit the class's temporal dead zone and throw. The
+  // try/catch in `__toCommonJS` must fall through to the lazy wrapper so
+  // the bundle loads without crashing (same as pre-feature behavior).
+  itBundled("cjs/__toCommonJS_module_exports_class_tdz_safe", {
+    files: {
+      "/entry.mjs": /* js */ `
+        class MyClass { static v = 42; }
+        export const c = 3;
+        export { MyClass as "module.exports" };
+        // Access the class after declaration so the getter, called lazily
+        // through the wrapper from outside, returns the real value.
+        globalThis.__got = typeof MyClass;
+        console.log(globalThis.__got);
+      `,
+    },
+    format: "cjs",
+    run: {
+      runtime: "node",
+      stdout: "function",
+    },
+  });
+
+  // Test 30: falsy "module.exports" named export (e.g. `false`) is still
+  // returned directly — verifies the fast-path accepts values that are
+  // falsy-but-not-nullish (`false`, `0`, `""`, `NaN`), unlike the null
+  // case in Test 28 which falls through to the wrapper.
+  //
+  // Note: this cannot by itself detect a regression from
+  // `if (entry !== undefined) return entry;` back to `if (entry) return
+  // entry;` — with a non-mutating `const value = false`, re-reading the
+  // getter on a cache miss yields the same `false`, so both checks
+  // produce the same output. Test 31 below pins that behavior by
+  // mutating the binding between calls.
+  itBundled("cjs/__toCommonJS_module_exports_named_export_falsy", {
+    files: {
+      "/entry.js": /* js */ `
+        const m1 = require('./m.js');
+        const m2 = require('./m.js');
+        console.log(m1, m2, m1 === m2);
+      `,
+      "/m.js": /* js */ `
+        const value = false;
+        export { value as "module.exports" }
+      `,
+    },
+    run: {
+      stdout: "false false true",
+    },
+  });
+
+  // Test 31: pins the `entry !== undefined` cache check. The first
+  // require() populates `__moduleCache` with a falsy primitive (0). The
+  // second require() must return the *cached* value — a regression to
+  // `if (entry) return entry;` would treat `0` as a cache miss and
+  // re-read the live binding, which by then has been mutated to `999`
+  // by the exported `bump()` helper. Correct behavior: both `m1` and
+  // `m2` see `0` from the cache.
+  itBundled("cjs/__toCommonJS_module_exports_named_export_falsy_cache_pin", {
+    files: {
+      "/entry.js": /* js */ `
+        const m1 = require('./m.js');
+        const { bump } = require('./ns.js');
+        bump();
+        const m2 = require('./m.js');
+        console.log(m1, m2);
+      `,
+      // Proxies the live binding so entry.js can mutate it via a CJS
+      // wrapper; the mutation changes what the getter would return on a
+      // fresh read, but must NOT change what the cache returns.
+      "/ns.js": /* js */ `
+        import * as m from './m.js';
+        export function bump() { m.bumpInternal(); }
+      `,
+      "/m.js": /* js */ `
+        let value = 0;
+        export function bumpInternal() { value = 999; }
+        export { value as "module.exports" }
+      `,
+    },
+    run: {
+      stdout: "0 0",
+    },
+  });
 });

@@ -1905,9 +1905,9 @@ impl PathOrBlob {
         if let Some(blob) = arg.as_class_ref::<Blob>() {
             // Zig: `blob.*` — a raw bitwise copy with no ref bumps that callers
             // never `deinit()`. `borrowed_view()` is the sound Rust spelling: it
-            // clones only the `StoreRef` (whose `Drop` balances the +1) and
-            // aliases `name`/`content_type`; `dupe()` would leak both since
-            // `Blob` has no `Drop`. `as_class_ref` is the safe shared-borrow
+            // clones the `StoreRef`/`name` (whose `Drop`s balance the +1) and
+            // aliases `content_type`; `dupe()` would leak the boxed
+            // `content_type` copy. `as_class_ref` is the safe shared-borrow
             // downcast — the JS wrapper roots the payload while `arg` is on the
             // stack.
             return Ok(PathOrBlob::Blob(blob.borrowed_view()));

@@ -761,7 +761,7 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
     let mut token = Token::default();
     let mut prev_token = Token::default();
 
-    let mut count: u8 = 0;
+    let mut count: u32 = 0;
     let mut skip_round;
     let mut is_or = false;
 

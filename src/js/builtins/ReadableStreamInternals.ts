@@ -1823,7 +1823,7 @@ export function readableStreamFromAsyncIterator(target, fn) {
 
         if ($isPromise(promise) && $isPromiseFulfilled(promise)) {
           clearImmediate(immediateTask);
-          ({ value, done } = $getPromiseInternalField(promise, $promiseFieldReactionsOrResult));
+          ({ value, done } = $peekPromiseSettledValue(promise));
           $assert(!$isPromise(value), "Expected a value, not a promise");
         } else {
           immediateTask = setImmediate(() => immediateTask && controller?.flush?.(true));

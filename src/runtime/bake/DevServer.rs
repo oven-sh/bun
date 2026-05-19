@@ -974,10 +974,11 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // Add react fast refresh if needed. This is the first file on the client side,
     // as it will be referred to by index.
     if let Some(rfr) = &dev.framework.react_fast_refresh {
-        debug_assert!(
-            dev.client_graph.insert_stale(&rfr.import_source, false)?
-                == incremental_graph::FileIndex::<{ bake::Side::Client }>::init(0) // Zig: react_refresh_index = .init(0)
-        );
+        // Spec (DevServer.zig:511): `bun.assert` always evaluates its argument;
+        // `debug_assert!` does not in release. Hoist the side-effecting `insert_stale`
+        // out so the refresh runtime is registered at index 0 in all builds.
+        let idx = dev.client_graph.insert_stale(&rfr.import_source, false)?;
+        debug_assert!(idx == incremental_graph::FileIndex::<{ bake::Side::Client }>::init(0)); // Zig: react_refresh_index = .init(0)
     }
 
     if !dev.frontend_only {

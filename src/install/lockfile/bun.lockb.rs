@@ -387,6 +387,20 @@ pub fn load(
 
     lockfile.packages = packages_load_result.list;
 
+    // `meta.id` is memcpy'd verbatim from disk with no range validation; a
+    // corrupt `bun.lockb` can make it garbage and trip `panic_bounds_check`
+    // in `Package::clone` / `preinstall_state` indexing later. Surface it
+    // here as a parse error so the installer can warn + re-resolve instead
+    // of aborting.
+    {
+        let len = lockfile.packages.len();
+        for meta in lockfile.packages.items_meta() {
+            if meta.id as usize >= len {
+                return Err(bun_core::err!("InvalidLockfile"));
+            }
+        }
+    }
+
     res.packages_need_update = packages_load_result.needs_update;
     res.migrated_from_lockb_v2 = migrate_from_v2;
 

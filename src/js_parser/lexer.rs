@@ -708,9 +708,10 @@ lexer_impl_header! {
                         // legacy octal literals
                         0x30..=0x37 => {
                             let octal_start =
-                                (iter.i as usize + width2 as usize) - 2;
+                                (iter.i as usize + width2 as usize).saturating_sub(2);
                             if IS_JSON {
-                                self.end = start + iter.i as usize - width2 as usize;
+                                self.end = (start + iter.i as usize)
+                                    .saturating_sub(width2 as usize);
                                 self.syntax_error()?;
                             }
 
@@ -799,8 +800,8 @@ lexer_impl_header! {
                             match hex_digit_value_u32(c3 as u32) {
                                 Some(d) => value = value * 16 | d as CodePoint,
                                 None => {
-                                    self.end =
-                                        start + iter.i as usize - width3 as usize;
+                                    self.end = (start + iter.i as usize)
+                                        .saturating_sub(width3 as usize);
                                     return self.syntax_error();
                                 }
                             }
@@ -813,8 +814,8 @@ lexer_impl_header! {
                             match hex_digit_value_u32(c3 as u32) {
                                 Some(d) => value = value * 16 | d as CodePoint,
                                 None => {
-                                    self.end =
-                                        start + iter.i as usize - width3 as usize;
+                                    self.end = (start + iter.i as usize)
+                                        .saturating_sub(width3 as usize);
                                     return self.syntax_error();
                                 }
                             }
@@ -835,8 +836,8 @@ lexer_impl_header! {
                             // variable-length
                             if c3 == 0x7B {
                                 if IS_JSON {
-                                    self.end =
-                                        start + iter.i as usize - width2 as usize;
+                                    self.end = (start + iter.i as usize)
+                                        .saturating_sub(width2 as usize);
                                     self.syntax_error()?;
                                 }
 
@@ -906,8 +907,8 @@ lexer_impl_header! {
                                     match hex_digit_value_u32(c3 as u32) {
                                         Some(d) => value = value * 16 | d as i64,
                                         None => {
-                                            self.end = start + iter.i as usize
-                                                - width3 as usize;
+                                            self.end = (start + iter.i as usize)
+                                                .saturating_sub(width3 as usize);
                                             return self.syntax_error();
                                         }
                                     }
@@ -928,8 +929,8 @@ lexer_impl_header! {
                         }
                         0x0D => {
                             if IS_JSON {
-                                self.end =
-                                    start + iter.i as usize - width2 as usize;
+                                self.end = (start + iter.i as usize)
+                                    .saturating_sub(width2 as usize);
                                 self.syntax_error()?;
                             }
 
@@ -943,8 +944,8 @@ lexer_impl_header! {
                         }
                         0x0A | 0x2028 | 0x2029 => {
                             if IS_JSON {
-                                self.end =
-                                    start + iter.i as usize - width2 as usize;
+                                self.end = (start + iter.i as usize)
+                                    .saturating_sub(width2 as usize);
                                 self.syntax_error()?;
                             }
 
@@ -956,8 +957,8 @@ lexer_impl_header! {
                                 match c2 {
                                     0x22 | 0x5C | 0x2F => {}
                                     _ => {
-                                        self.end = start + iter.i as usize
-                                            - width2 as usize;
+                                        self.end = (start + iter.i as usize)
+                                            .saturating_sub(width2 as usize);
                                         self.syntax_error()?;
                                     }
                                 }
@@ -2233,6 +2234,20 @@ lexer_impl_header! {
 
                     self.end = self.current;
                     self.token = T::TSyntaxError;
+                    // Mirror the `next_inside_jsx_element` fix (#30959): advance
+                    // `code_point`/`current` past the bad byte so a subsequent
+                    // recovery `next()` dispatches on the *following* byte rather
+                    // than re-dispatching on the still-in-`code_point` bad byte.
+                    // In the main lexer the byte that falls through to this arm
+                    // is invalid in main-lexer context too, so re-dispatch
+                    // currently stays in `TSyntaxError` and the duplicate-scope
+                    // panic isn't reachable — but keeping the `current > end`
+                    // invariant consistent across both dispatch tables means
+                    // future recovery code doesn't have to reason about one arm
+                    // that leaves the lexer with `current == end`. `end` was
+                    // already advanced above, so the error range `[start, end)`
+                    // is unchanged.
+                    self.step_with(contents);
                 }
             }
 
@@ -3048,6 +3063,20 @@ lexer_impl_header! {
 
                     self.end = self.current;
                     self.token = T::TSyntaxError;
+                    // Advance `code_point`/`current` past the bad byte so that a
+                    // subsequent recovery `next()` (e.g. via `expect(...)` inside
+                    // `parse_jsx_prop_value_identifier`) dispatches on the *following*
+                    // byte instead of re-dispatching on the still-in-`code_point` bad
+                    // byte. Without this step the recovery `next()` synthesises a
+                    // zero-length token at the offset of the next byte, and the byte
+                    // after that then gets tokenised a second time at the same
+                    // `start` — the parser pushes two `FunctionArgs` scopes at that
+                    // offset in `parse_paren_expr` and trips the strict-monotonicity
+                    // debug assertion in `push_scope_for_parse_pass` (see #30959).
+                    // `end` was already advanced above, so the step below only moves
+                    // `current`/`code_point` forward and leaves the error range
+                    // `[start, end)` intact.
+                    self.step();
                 }
             }
 
@@ -3336,8 +3365,21 @@ lexer_impl_header! {
 
                 // PORT NOTE: std.fmt.parseInt(i32, ..) — bytes-based parser; source bytes are
                 // not guaranteed UTF-8 so we never round-trip through &str (PORTING.md §Strings).
+                // Also reject values outside the Unicode range (0..=0x10FFFF); otherwise
+                // `push_codepoint_utf16` hits `debug_assert`s in `u16_lead`/`u16_trail`
+                // (release builds would silently encode garbage surrogate pairs).
                 cursor.c = match bun_core::parse_int::<i32>(number, base) {
-                    Ok(v) => v,
+                    Ok(v) if (0..=0x10FFFF).contains(&v) => v,
+                    Ok(_) => {
+                        self.add_error(
+                            self.start,
+                            format_args!(
+                                "JSX entity escape is too big: {}",
+                                bstr::BStr::new(entity)
+                            ),
+                        );
+                        strings::UNICODE_REPLACEMENT as CodePoint
+                    }
                     Err(err) => {
                         match err {
                             strings::ParseIntError::InvalidCharacter => {

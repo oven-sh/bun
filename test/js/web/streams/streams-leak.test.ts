@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { isWindows } from "harness";
+import { isASAN, isWindows } from "harness";
 
 const BYTES_TO_WRITE = 500_000;
 
@@ -56,7 +56,9 @@ test.skipIf(isWindows)(
     console.log(require("bun:jsc").heapStats());
     console.log("RSS delta", ((after - before) | 0) / 1024 / 1024);
     console.log("RSS total", (after / 1024 / 1024) | 0, "MB");
-    expect(after).toBeLessThan(250 * 1024 * 1024);
-    expect(after).toBeLessThan(before * 1.5);
+    // ASAN's quarantine + shadow memory raise the absolute RSS floor and slow
+    // recycling of freed allocations; widen both bounds under bun-asan.
+    expect(after).toBeLessThan((isASAN ? 700 : 250) * 1024 * 1024);
+    expect(after).toBeLessThan(before * (isASAN ? 3 : 1.5));
   },
 );

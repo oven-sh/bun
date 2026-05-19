@@ -71,6 +71,12 @@ impl<T, const BUFFER_CAPACITY: usize> Default for BoundedArrayAligned<T, BUFFER_
     }
 }
 
+impl<T, const BUFFER_CAPACITY: usize> Drop for BoundedArrayAligned<T, BUFFER_CAPACITY> {
+    fn drop(&mut self) {
+        self.clear();
+    }
+}
+
 /// `pub const Buffer = @FieldType(Self, "buffer");` — inherent assoc types are
 /// unstable; only used for introspection in Zig, so expose as a free alias.
 pub type BoundedBuffer<T, const N: usize> = [MaybeUninit<T>; N];
@@ -115,7 +121,12 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
 
     /// Remove all elements from the slice.
     pub fn clear(&mut self) {
+        let len = self.len;
         self.len = 0;
+        // SAFETY: `[0..len]` is initialized; `len` reset first so a panicking Drop can't double-drop.
+        unsafe {
+            core::ptr::drop_in_place(&raw mut self.buffer[0..len] as *mut [T]);
+        }
     }
 
     /// Copy the content of an existing slice.

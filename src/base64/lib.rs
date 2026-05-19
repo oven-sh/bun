@@ -420,6 +420,9 @@ pub mod zig_base64 {
     pub const URL_SAFE_ALPHABET_CHARS: [u8; 64] =
         *b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
+    /// Shared by both [`URL_SAFE`] and [`URL_SAFE_NO_PAD`] (mirrors the `.zig`
+    /// sibling). It always builds a *padded* decoder, so for `URL_SAFE_NO_PAD`
+    /// it does NOT match the codec's `pad_char` — feed it padded input.
     pub const fn url_safe_base64_decoder_with_ignore(ignore: &[u8]) -> Base64DecoderWithIgnore {
         Base64DecoderWithIgnore::init(URL_SAFE_ALPHABET_CHARS, Some(b'='), ignore)
     }
@@ -433,7 +436,11 @@ pub mod zig_base64 {
         decoder: Base64Decoder::init(URL_SAFE_ALPHABET_CHARS, Some(b'=')),
     };
 
-    /// URL-safe Base64 codecs, without padding
+    /// URL-safe Base64 codecs, without padding.
+    ///
+    /// Note: `decoder_with_ignore` here is the *padded* decoder (see comment on
+    /// [`url_safe_base64_decoder_with_ignore`]) — it does not match this codec's
+    /// `pad_char`. Use `decoder` for unpadded input.
     pub static URL_SAFE_NO_PAD: Codecs = Codecs {
         alphabet_chars: URL_SAFE_ALPHABET_CHARS,
         pad_char: None,
@@ -783,13 +790,15 @@ pub mod zig_base64 {
         fn test_base64() {
             let codecs = &STANDARD;
 
-            test_all_apis(codecs, b"", b"");
-            test_all_apis(codecs, b"f", b"Zg==");
-            test_all_apis(codecs, b"fo", b"Zm8=");
-            test_all_apis(codecs, b"foo", b"Zm9v");
-            test_all_apis(codecs, b"foob", b"Zm9vYg==");
-            test_all_apis(codecs, b"fooba", b"Zm9vYmE=");
-            test_all_apis(codecs, b"foobar", b"Zm9vYmFy");
+            // STANDARD's `decoder_with_ignore` matches its `pad_char`, so
+            // both decoders take the same encoded form.
+            test_all_apis(codecs, b"", b"", b"");
+            test_all_apis(codecs, b"f", b"Zg==", b"Zg==");
+            test_all_apis(codecs, b"fo", b"Zm8=", b"Zm8=");
+            test_all_apis(codecs, b"foo", b"Zm9v", b"Zm9v");
+            test_all_apis(codecs, b"foob", b"Zm9vYg==", b"Zm9vYg==");
+            test_all_apis(codecs, b"fooba", b"Zm9vYmE=", b"Zm9vYmE=");
+            test_all_apis(codecs, b"foobar", b"Zm9vYmFy", b"Zm9vYmFy");
 
             test_decode_ignore_space(codecs, b"", b" ");
             test_decode_ignore_space(codecs, b"f", b"Z g= =");
@@ -800,15 +809,60 @@ pub mod zig_base64 {
             test_decode_ignore_space(codecs, b"foobar", b" Z m 9 v Y m F y ");
 
             // test getting some api errors
-            test_error(codecs, b"A", Error::InvalidPadding);
-            test_error(codecs, b"AA", Error::InvalidPadding);
-            test_error(codecs, b"AAA", Error::InvalidPadding);
-            test_error(codecs, b"A..A", Error::InvalidCharacter);
-            test_error(codecs, b"AA=A", Error::InvalidPadding);
-            test_error(codecs, b"AA/=", Error::InvalidPadding);
-            test_error(codecs, b"A/==", Error::InvalidPadding);
-            test_error(codecs, b"A===", Error::InvalidPadding);
-            test_error(codecs, b"====", Error::InvalidPadding);
+            test_error(
+                codecs,
+                b"A",
+                Error::InvalidPadding,
+                Some(Error::InvalidPadding),
+            );
+            test_error(
+                codecs,
+                b"AA",
+                Error::InvalidPadding,
+                Some(Error::InvalidPadding),
+            );
+            test_error(
+                codecs,
+                b"AAA",
+                Error::InvalidPadding,
+                Some(Error::InvalidPadding),
+            );
+            test_error(
+                codecs,
+                b"A..A",
+                Error::InvalidCharacter,
+                Some(Error::InvalidCharacter),
+            );
+            test_error(
+                codecs,
+                b"AA=A",
+                Error::InvalidPadding,
+                Some(Error::InvalidPadding),
+            );
+            test_error(
+                codecs,
+                b"AA/=",
+                Error::InvalidPadding,
+                Some(Error::InvalidPadding),
+            );
+            test_error(
+                codecs,
+                b"A/==",
+                Error::InvalidPadding,
+                Some(Error::InvalidPadding),
+            );
+            test_error(
+                codecs,
+                b"A===",
+                Error::InvalidPadding,
+                Some(Error::InvalidPadding),
+            );
+            test_error(
+                codecs,
+                b"====",
+                Error::InvalidPadding,
+                Some(Error::InvalidPadding),
+            );
 
             test_no_space_left_error(codecs, b"AA==");
             test_no_space_left_error(codecs, b"AAA=");
@@ -820,31 +874,79 @@ pub mod zig_base64 {
         fn test_base64_url_safe_no_pad() {
             let codecs = &URL_SAFE_NO_PAD;
 
-            test_all_apis(codecs, b"", b"");
-            test_all_apis(codecs, b"f", b"Zg");
-            test_all_apis(codecs, b"fo", b"Zm8");
-            test_all_apis(codecs, b"foo", b"Zm9v");
-            test_all_apis(codecs, b"foob", b"Zm9vYg");
-            test_all_apis(codecs, b"fooba", b"Zm9vYmE");
-            test_all_apis(codecs, b"foobar", b"Zm9vYmFy");
+            // `URL_SAFE_NO_PAD.decoder_with_ignore` is the *padded* decoder
+            // (the field is shared with `URL_SAFE` — see the comment on
+            // `url_safe_base64_decoder_with_ignore`), so the third parameter
+            // is what *that* decoder accepts, not what `encoder` produces.
+            test_all_apis(codecs, b"", b"", b"");
+            test_all_apis(codecs, b"f", b"Zg", b"Zg==");
+            test_all_apis(codecs, b"fo", b"Zm8", b"Zm8=");
+            test_all_apis(codecs, b"foo", b"Zm9v", b"Zm9v");
+            test_all_apis(codecs, b"foob", b"Zm9vYg", b"Zm9vYg==");
+            test_all_apis(codecs, b"fooba", b"Zm9vYmE", b"Zm9vYmE=");
+            test_all_apis(codecs, b"foobar", b"Zm9vYmFy", b"Zm9vYmFy");
 
             test_decode_ignore_space(codecs, b"", b" ");
-            test_decode_ignore_space(codecs, b"f", b"Z g ");
-            test_decode_ignore_space(codecs, b"fo", b"    Zm8");
+            test_decode_ignore_space(codecs, b"f", b"Z g= =");
+            test_decode_ignore_space(codecs, b"fo", b"    Zm8=");
             test_decode_ignore_space(codecs, b"foo", b"Zm9v    ");
-            test_decode_ignore_space(codecs, b"foob", b"Zm9vYg   ");
-            test_decode_ignore_space(codecs, b"fooba", b"Zm9v YmE");
+            test_decode_ignore_space(codecs, b"foob", b"Zm9vYg = = ");
+            test_decode_ignore_space(codecs, b"fooba", b"Zm9v YmE=");
             test_decode_ignore_space(codecs, b"foobar", b" Z m 9 v Y m F y ");
 
-            // test getting some api errors
-            test_error(codecs, b"A", Error::InvalidPadding);
-            test_error(codecs, b"AAA=", Error::InvalidCharacter);
-            test_error(codecs, b"A..A", Error::InvalidCharacter);
-            test_error(codecs, b"AA=A", Error::InvalidCharacter);
-            test_error(codecs, b"AA/=", Error::InvalidCharacter);
-            test_error(codecs, b"A/==", Error::InvalidCharacter);
-            test_error(codecs, b"A===", Error::InvalidCharacter);
-            test_error(codecs, b"====", Error::InvalidCharacter);
+            // `codecs.decoder` (pad_char: None) and the padded
+            // `decoder_with_ignore` classify `=`-containing inputs differently:
+            //
+            //   - `decoder` treats `=` as `InvalidCharacter` (not in the
+            //     unpadded alphabet at all).
+            //   - `decoder_with_ignore` treats `=` as padding; mismatched
+            //     padding is `InvalidPadding`, and well-formed padding (e.g.
+            //     `b"AAA="`) decodes successfully.
+            //
+            // Inputs without `=` produce the same error for both.
+            test_error(
+                codecs,
+                b"A",
+                Error::InvalidPadding,
+                Some(Error::InvalidPadding),
+            );
+            test_error(codecs, b"AAA=", Error::InvalidCharacter, None);
+            test_error(
+                codecs,
+                b"A..A",
+                Error::InvalidCharacter,
+                Some(Error::InvalidCharacter),
+            );
+            test_error(
+                codecs,
+                b"AA=A",
+                Error::InvalidCharacter,
+                Some(Error::InvalidPadding),
+            );
+            test_error(
+                codecs,
+                b"AA/=",
+                Error::InvalidCharacter,
+                Some(Error::InvalidCharacter),
+            );
+            test_error(
+                codecs,
+                b"A/==",
+                Error::InvalidCharacter,
+                Some(Error::InvalidCharacter),
+            );
+            test_error(
+                codecs,
+                b"A===",
+                Error::InvalidCharacter,
+                Some(Error::InvalidPadding),
+            );
+            test_error(
+                codecs,
+                b"====",
+                Error::InvalidCharacter,
+                Some(Error::InvalidPadding),
+            );
 
             test_no_space_left_error(codecs, b"AA");
             test_no_space_left_error(codecs, b"AAA");
@@ -852,7 +954,15 @@ pub mod zig_base64 {
             test_no_space_left_error(codecs, b"AAAAAA");
         }
 
-        fn test_all_apis(codecs: &Codecs, expected_decoded: &[u8], expected_encoded: &[u8]) {
+        /// `expected_with_ignore` is the input for `Base64DecoderWithIgnore`,
+        /// which may differ from `expected_encoded` when the codec's
+        /// `decoder_with_ignore` doesn't share its `pad_char` (URL-safe family).
+        fn test_all_apis(
+            codecs: &Codecs,
+            expected_decoded: &[u8],
+            expected_encoded: &[u8],
+            expected_with_ignore: &[u8],
+        ) {
             // Base64Encoder
             {
                 let mut buffer = [0u8; 0x100];
@@ -876,11 +986,12 @@ pub mod zig_base64 {
             {
                 let decoder_ignore_nothing = (codecs.decoder_with_ignore)(b"");
                 let mut buffer = [0u8; 0x100];
-                let upper = decoder_ignore_nothing.calc_size_upper_bound(expected_encoded.len());
+                let upper =
+                    decoder_ignore_nothing.calc_size_upper_bound(expected_with_ignore.len());
                 let decoded = &mut buffer[0..upper];
                 let mut written: usize = 0;
                 decoder_ignore_nothing
-                    .decode(decoded, expected_encoded, &mut written)
+                    .decode(decoded, expected_with_ignore, &mut written)
                     .unwrap();
                 assert!(written <= decoded.len());
                 assert_eq!(expected_decoded, &decoded[0..written]);
@@ -899,7 +1010,16 @@ pub mod zig_base64 {
             assert_eq!(expected_decoded, &decoded[0..written]);
         }
 
-        fn test_error(codecs: &Codecs, encoded: &[u8], expected_err: Error) {
+        /// `expected_with_ignore` is the error `decoder_with_ignore` reports
+        /// for the same input, or `None` if it accepts the input. Differs from
+        /// `expected_err` when the codec's `decoder_with_ignore` doesn't share
+        /// its `pad_char` (URL-safe family).
+        fn test_error(
+            codecs: &Codecs,
+            encoded: &[u8],
+            expected_err: Error,
+            expected_with_ignore: Option<Error>,
+        ) {
             let decoder_ignore_space = (codecs.decoder_with_ignore)(b" ");
             let mut buffer = [0u8; 0x100];
             match codecs.decoder.calc_size_for_slice(encoded) {
@@ -914,9 +1034,10 @@ pub mod zig_base64 {
             }
 
             let mut written: usize = 0;
-            match decoder_ignore_space.decode(&mut buffer[..], encoded, &mut written) {
-                Ok(_) => panic!("ExpectedError"),
-                Err(err) => assert_eq!(err, expected_err),
+            let result = decoder_ignore_space.decode(&mut buffer[..], encoded, &mut written);
+            match expected_with_ignore {
+                Some(expected) => assert_eq!(result.unwrap_err(), expected),
+                None => assert!(result.is_ok()),
             }
         }
 

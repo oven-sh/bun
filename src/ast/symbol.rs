@@ -598,6 +598,8 @@ impl Map {
     // box it into a one-element NestedList instead.
     // PERF(port): one extra allocation vs Zig — profile (single
     // caller is the printer one-shot, cold).
+    // OWNERSHIP: returned `Map` is *owned*; the `Vec<List>` allocated here leaks if a
+    // consumer parks it in `ManuallyDrop` (e.g. renamer.rs `MinifyRenamer.symbols`).
     pub fn init_with_one_list(list: List) -> Map {
         Self::init_list(NestedList::move_from_list(vec![list]))
     }

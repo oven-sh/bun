@@ -1,6 +1,6 @@
 import { $, randomUUIDv7, sql, SQL } from "bun";
 import { afterAll, describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, isCI, isDockerEnabled, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDockerEnabled, tempDirWithFiles } from "harness";
 import * as net from "node:net";
 import path from "path";
 const postgres = (...args) => new SQL(...args);
@@ -862,7 +862,9 @@ if (isDockerEnabled()) {
       //   rss: 49152000,
       // }
       // ~440 MB.
-      expect((after - rss) / 1024 / 1024).toBeLessThan(200);
+      // ASAN's quarantine retains freed allocations (default 256 MB) so RSS
+      // deltas run far higher under bun-asan; widen the threshold there.
+      expect((after - rss) / 1024 / 1024).toBeLessThan(isASAN ? 500 : 200);
     });
 
     // Last one wins.

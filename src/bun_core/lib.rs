@@ -2614,8 +2614,9 @@ pub mod strings {
     pub use crate::strings_impl::{index_of_any, index_of_any_t};
 }
 
-// bun_alloc stubs Global.rs expects (real consts pending bun_alloc::basic)
-pub const USE_MIMALLOC: bool = true;
+// `true` when mimalloc is the `#[global_allocator]`; `false` under ASAN where
+// `std::alloc::System` is installed instead. Mirrors `bun_alloc::USE_MIMALLOC`.
+pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
 pub mod debug_allocator_data {
     #[inline]
     pub fn deinit_ok() -> bool {

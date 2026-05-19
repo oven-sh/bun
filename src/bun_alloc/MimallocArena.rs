@@ -778,14 +778,7 @@ unsafe fn global_vtable_alloc(
     a: crate::Alignment,
     _ra: usize,
 ) -> *mut u8 {
-    // `mi_malloc[_aligned]` are declared `safe fn` in the extern block (no input
-    // preconditions — any len/alignment is valid; returns null on OOM), so no
-    // `unsafe { }` is required here.
-    if mimalloc::must_use_aligned_alloc(a.to_byte_units()) {
-        mimalloc::mi_malloc_aligned(len, a.to_byte_units()).cast()
-    } else {
-        mimalloc::mi_malloc(len).cast()
-    }
+    crate::default_alloc::malloc_aligned(len, a.to_byte_units()).cast()
 }
 
 /// Zig: `global_mimalloc_vtable`.
@@ -793,7 +786,7 @@ pub static GLOBAL_MIMALLOC_VTABLE: crate::AllocatorVTable = crate::AllocatorVTab
     alloc: global_vtable_alloc,
     resize: crate::basic::MimallocAllocator::resize_with_default_allocator,
     remap: crate::basic::MimallocAllocator::remap_with_default_allocator,
-    free: crate::basic::mimalloc_free,
+    free: crate::basic::default_allocator_free,
 };
 
 /// Both vtable addresses this module hands out, for

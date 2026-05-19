@@ -46,6 +46,13 @@ impl Chunk {
     // `pub fn deinit` dropped — body only freed `self.buffer`, which `Drop` on
     // `MutableString` handles automatically.
 
+    /// # Safety
+    /// The returned `Chunk` aliases `self.buffer`'s allocation; at most one may be dropped.
+    #[inline]
+    pub unsafe fn alias(&self) -> Chunk {
+        unsafe { core::ptr::read(self) }
+    }
+
     pub fn print_source_map_contents<const ASCII_ONLY: bool>(
         &self,
         source: &Source,

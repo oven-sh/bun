@@ -19,11 +19,10 @@ use bun_ast::Index as AstIndex;
 // `CssImportOrder` values (the inner `Vec`s point into bump arenas and are
 // never individually freed). Rust's `Vec` has `Drop`, so a literal `*entry`
 // is not `Copy`. We replicate the Zig bitwise-copy semantics here.
-// CAUTION: `VecExt::init_capacity_in` ignores the arena and returns a
-// Global-backed `Vec`, so the aliased `conditions` buffers are *not*
-// arena-backed. Double-free is avoided by `mem::forget`ing every alias
-// (`CssImportOrder::drop` + the post-`visit()` forget below); the trade-off
-// is that those condition buffers leak for the lifetime of the process.
+// `conditions` slabs come from `deep_clone_conditions`, which allocates them
+// from the `LinkerGraph` arena (`graph.heap`). The `Vec` headers aliasing a
+// slab are `mem::forget`'d everywhere (`CssImportOrder::drop` + the
+// post-`visit()` forget below); the slab itself is bulk-freed with the arena.
 // `wip_order`/`order` shuffles use `len`-truncation rather than
 // `clear_retaining_capacity` so moved-from slots are never dropped.
 #[inline(always)]
@@ -191,11 +190,8 @@ pub fn find_imported_files_in_css_order<'a>(
                                 wrapping_import_records,
                             );
                             // `visit` stores a bitwise copy of `nested_conditions` into
-                            // `self.order` (one alias per pushed entry), so the buffer
-                            // must outlive this scope. It is Global-backed
-                            // (`init_capacity_in` ignores the arena), so this leaks the
-                            // condition list — accepted until the bitwise-copy aliasing
-                            // is replaced (PORTING.md §CSS-import-order).
+                            // `self.order`; the slab is arena-owned, so forget
+                            // the local header to avoid a double-free.
                             core::mem::forget(nested_conditions);
                             // `nested_import_records` is *not* passed to `visit` (the
                             // outer `wrapping_import_records` is), so it is uniquely
@@ -215,15 +211,16 @@ pub fn find_imported_files_in_css_order<'a>(
 
                     // Record external depednencies
                     if !record.flags.contains(ImportRecordFlags::IS_INTERNAL) {
-                        let mut all_conditions =
-                            deep_clone_conditions(wrapping_conditions, self.arena);
-                        let mut all_import_records = shallow_clone_records(wrapping_import_records);
                         // If this import has conditions, append it to the list of overall
                         // conditions for this external import. Note that an external import
                         // may actually have multiple sets of conditions that can't be
                         // merged. When this happens we need to generate a nested imported
                         // CSS file using a data URL.
                         if import_rule.has_conditions() {
+                            let mut all_conditions =
+                                deep_clone_conditions(wrapping_conditions, self.arena);
+                            let mut all_import_records =
+                                shallow_clone_records(wrapping_import_records);
                             all_conditions.append_assume_capacity(
                                 import_rule.conditions_with_import_records(
                                     self.arena,
@@ -709,17 +706,31 @@ pub fn find_imported_files_in_css_order<'a>(
 ///
 /// The returned list is later bitwise-copied into `CssImportOrder` entries via
 /// `bitwise_copy(wrapping_conditions)`, so callers `mem::forget` the local after
-/// the recursive `visit()` to keep the aliased buffer alive. NOTE:
-/// `init_capacity_in` ignores `arena` (Global-backed), so this is an
-/// intentional leak, not an arena hand-off. Reserves one extra slot for the
-/// single `append_assume_capacity` each call site performs.
+/// the recursive `visit()` to keep the aliased buffer alive. The slab is
+/// allocated from `arena` (`LinkerGraph::arena()` = `graph.heap`, which
+/// outlives every chunk) and is bulk-freed with the arena — every `Vec` header
+/// aliasing it must be `mem::forget`'d (see `CssImportOrder::drop`). Reserves
+/// one extra slot for the single `append_assume_capacity` each call site
+/// performs, so the header never reallocates.
 #[inline]
 fn deep_clone_conditions(list: &Vec<ImportConditions>, arena: &Arena) -> Vec<ImportConditions> {
-    let mut out = Vec::<ImportConditions>::init_capacity_in(arena, list.len() as usize + 1);
-    for c in list.slice_const() {
-        out.append_assume_capacity(c.deep_clone(arena));
+    let cap = list.len() as usize + 1;
+    let slab = arena.alloc_uninit_slice::<ImportConditions>(cap);
+    for (dst, src) in slab.iter_mut().zip(list.slice_const()) {
+        dst.write(src.deep_clone(arena));
     }
-    out
+    // SAFETY: `slab[..list.len()]` was just initialized; cap is the slab
+    // length. The resulting `Vec` is never dropped (always `mem::forget`'d)
+    // and never reallocates (callers only push one element via
+    // `append_assume_capacity` and otherwise truncate), so the
+    // global-allocator invariant of `Vec::from_raw_parts` is never exercised.
+    unsafe {
+        Vec::from_raw_parts(
+            slab.as_mut_ptr().cast::<ImportConditions>(),
+            list.len() as usize,
+            cap,
+        )
+    }
 }
 
 /// Zig: `bun.handleOom(wrapping_import_records.clone(arena))` — shallow

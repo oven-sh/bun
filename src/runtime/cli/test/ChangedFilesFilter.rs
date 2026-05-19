@@ -159,14 +159,14 @@ pub fn filter<'a>(
     scan_transpiler.resolver.opts.output_dir = Box::default();
     scan_transpiler.resolver.env_loader = core::ptr::NonNull::new(scan_transpiler.env);
 
-    // Zig: `jsc.AnyEventLoop.init(allocator)` — Mini loop that
-    // `wait_for_parse` ticks to drain parse tasks; `None` panics there.
-    let event_loop = arena.alloc(bun_event_loop::AnyEventLoop::init());
+    // Stack-owned Mini loop so its tasks/concurrent_tasks queues drop at
+    // scope exit; the arena bulk-free skips Drop.
+    let mut event_loop = bun_event_loop::AnyEventLoop::init();
 
-    let bundle = match BundleV2::scan_module_graph_from_cli(
+    let mut bundle = match BundleV2::scan_module_graph_from_cli(
         scan_transpiler,
         arena,
-        Some(core::ptr::NonNull::from(event_loop)),
+        Some(core::ptr::NonNull::from(&mut event_loop)),
         &entry_points,
     ) {
         Ok(b) => b,
@@ -186,13 +186,7 @@ pub fn filter<'a>(
             });
         }
     };
-    // The bundler's ThreadLocalArena and worker pool are intentionally
-    // left in place for the remainder of the process. `bun test --watch`
-    // exec()s a fresh process on each reload, so nothing accumulates
-    // across restarts; tearing the pool down here blocks on worker
-    // shutdown and competes with the runtime VM's own parse threads.
 
-    // TODO(port): MultiArrayList `.items(.field)` accessor — confirm bun_collections API
     let sources = bundle.graph.input_files.items_source();
     let import_records = bundle.graph.ast.items_import_records();
 
@@ -301,6 +295,18 @@ pub fn filter<'a>(
             write += 1;
         }
     }
+
+    // The Zig original left the BundleV2 alive for the rest of the process —
+    // its AST payload lived in `graph.heap`. In the Rust port `to_ast()`
+    // materializes `Vec<Symbol>` / `Vec<Part>` / `Vec<ImportRecord>` on the
+    // global heap and the slab-only `MultiArrayList` drop never frees them, so
+    // release the graph columns and the bundler-owned worker pool now that
+    // everything needed has been copied out above. The scan transpiler itself
+    // is in the CLI arena (the `&'a mut Transpiler<'a>` invariant forces a
+    // `'static` borrow), so its Drop never runs either; free its heap-backed
+    // options through the borrow `bundle` still holds.
+    bundle.deinit_without_freeing_arena();
+    bundle.transpiler.deinit();
 
     Ok(Result {
         test_files: &mut test_files[0..write],

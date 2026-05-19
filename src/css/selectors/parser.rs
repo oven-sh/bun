@@ -3,7 +3,7 @@
 
 use core::fmt;
 
-use bun_alloc::Arena as Bump;
+use bun_alloc::{Arena as Bump, ArenaPtr};
 use bun_core::strings;
 use bun_css as css;
 use bun_css::css_values::ident::{CustomIdent, Ident};
@@ -45,10 +45,8 @@ type Str = &'static [u8]; // arena-backed `[]const u8` source slice
 // generic types hand-write bodies (the derive's `where Impl: CssEql` bound is
 // useless — equality recurses on `Impl::Assoc`, not `Impl`).
 //
-// `deep_clone` on the grammar types intentionally drops the `&Arena` parameter:
-// the selector AST is global-alloc (`Vec`/`Box`/`SmallList`), and
-// the only arena-borrowed payloads are `Str` / `Ident.v` (`*const [u8]`)
-// which are identity-copied (matches generics.zig "const strings" fast-path).
+// `deep_clone` on the grammar types drops the `&Arena` parameter: `GenericSelector.components`
+// is `Vec<_, ArenaPtr>` and clones into the *source* allocator (intra-arena only).
 use css::generics::{CssEql, CssHash};
 
 /// Drain a `SmallList<T, N>` into a `Box<[T]>`. `SmallList` has no `into_vec`;
@@ -587,9 +585,7 @@ fn parse_selector<Impl: BunSelectorImpl>(
         input.reset(&parser_state);
     }
 
-    // PERF: allocations here
-    // PERF(port): was arena-backed SelectorBuilder — profile if it shows up on a hot path.
-    let mut builder = SelectorBuilder::<Impl>::default();
+    let mut builder = SelectorBuilder::<Impl>::init_in(ArenaPtr::new(input.arena()));
 
     'outer_loop: loop {
         // Parse a sequence of simple selectors.
@@ -1651,7 +1647,7 @@ impl<Impl: SelectorImpl> Default for GenericSelector<Impl> {
                 specificity: 0,
                 flags: SelectorFlags::empty(),
             },
-            components: Vec::new(),
+            components: Vec::new_in(ArenaPtr::global()),
         }
     }
 }
@@ -1945,8 +1941,7 @@ impl<Impl: BunSelectorImpl> CssHash for GenericSelectorList<Impl> {
 #[derive(Clone)]
 pub struct GenericSelector<Impl: SelectorImpl> {
     pub specificity_and_flags: SpecificityAndFlags,
-    pub components: Vec<GenericComponent<Impl>>,
-    // PERF(port): was arena ArrayList — profile if it shows up on a hot path.
+    pub components: Vec<GenericComponent<Impl>, ArenaPtr>,
 }
 
 pub struct SelectorDebugFmt<'a, Impl: SelectorImpl>(pub &'a GenericSelector<Impl>);
@@ -1998,9 +1993,12 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
     }
 
     pub fn deep_clone(&self) -> Self {
+        let alloc = *self.components.allocator();
+        let mut components = Vec::with_capacity_in(self.components.len(), alloc);
+        components.extend(self.components.iter().map(|c| c.deep_clone()));
         Self {
             specificity_and_flags: self.specificity_and_flags,
-            components: self.components.iter().map(|c| c.deep_clone()).collect(),
+            components,
         }
     }
 
@@ -2035,7 +2033,11 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
     }
 
     pub fn from_component(component: GenericComponent<Impl>) -> Self {
-        let mut builder = SelectorBuilder::<Impl>::default();
+        Self::from_component_in(component, ArenaPtr::global())
+    }
+
+    pub fn from_component_in(component: GenericComponent<Impl>, alloc: ArenaPtr) -> Self {
+        let mut builder = SelectorBuilder::<Impl>::init_in(alloc);
         if let Some(combinator) = component.as_combinator() {
             builder.push_combinator(combinator);
         } else {

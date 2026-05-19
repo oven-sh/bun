@@ -182,9 +182,9 @@ pub struct RequestContext<
     pub range: RangeRequest::Raw,
 
     pub request_body_readable_stream_ref: readable_stream::Strong,
-    // TODO(b2-blocked): `WebCore::body::value::HiveRef` — webcore gates the
-    // HiveArray pool. Raw ptr to the pooled `Body::Value` slot until that lands.
-    pub request_body: Option<NonNull<body::Value>>,
+    /// Owning `+1` handle into the per-VM `Body::Value` hive pool. Shared with
+    /// `Request.body` (each holds its own `+1`). `Drop` releases the count.
+    pub request_body: Option<body::BodyHiveHandle>,
     pub request_body_buf: Vec<u8>,
     pub request_body_content_len: usize,
 
@@ -583,21 +583,14 @@ where
     /// Returns an unbounded `&'r mut` because the slot is a separate
     /// `HiveArray` allocation, **not** a sub-field of `*self`, so callers may
     /// hold it across disjoint `&self`/`&mut self` reborrows of other
-    /// `RequestContext` fields (same pattern as [`server()`]). Replaces the
-    /// per-site raw `NonNull::as_mut` deref at each state-machine site.
-    ///
-    /// # Safety (encapsulated)
-    /// While `Some`, `request_body` points to a pooled `HiveRef<Body::Value>`
-    /// slot whose lifetime is governed by the intrusive ref this context holds
-    /// (released via [`request_body_take_unref`] in `deinit()` /
-    /// `on_buffered_body_chunk` last-chunk path). The slot is single-threaded
-    /// and never aliased from outside this `RequestContext`, so forming a
-    /// unique `&mut` for the duration of the caller's use is sound.
+    /// `RequestContext` fields (same pattern as [`server()`]).
     #[inline]
     fn request_body_mut<'r>(&mut self) -> Option<&'r mut Body::Value> {
-        // SAFETY: see fn doc — pooled HiveRef slot live while `Some`,
-        // unaliased, single-threaded.
-        self.request_body.map(|mut p| unsafe { p.as_mut() })
+        // SAFETY: R-2 invariant — the slot is shared with `Request.body` but
+        // never `&mut`-borrowed concurrently (single-threaded event loop).
+        self.request_body
+            .as_ref()
+            .map(|h| unsafe { &mut (*h.as_ptr()).value })
     }
 
     /// Exclusive borrow of the heap [`ResponseStreamJSSink`] this context owns.
@@ -619,19 +612,12 @@ where
         self.sink.map(|p| unsafe { &mut *p.as_ptr() })
     }
 
-    /// Take the pooled request-body slot out of `self` and release the
-    /// intrusive ref this context held on it (returns it to the hive when
-    /// last). Mirrors the Zig `body.unref()` on `deinit` / final body chunk.
+    /// Take the pooled request-body slot out of `self`; the handle's `Drop`
+    /// releases the `+1`. Mirrors the Zig `body.unref()` on `deinit` /
+    /// final body chunk.
     #[inline]
     fn request_body_take_unref(&mut self) {
-        if let Some(mut p) = self.request_body.take() {
-            // SAFETY: pointee is the pooled `HiveRef` slot allocated by
-            // `init_request_body_value`; live until this `unref()` drops the
-            // last count. `Body::Value` reachable from `request_body` is
-            // always the `.value` field of a hive slot, satisfying `unref`'s
-            // container-of precondition.
-            let _ = unsafe { p.as_mut().unref() };
-        }
+        self.request_body.take();
     }
 
     pub fn set_signal_aborted(&mut self, reason: jsc::CommonAbortReason) {
@@ -845,11 +831,8 @@ where
             return false;
         }
         // check if the body is Locked (streaming)
-        if let Some(body) = self.request_body {
-            // Pooled HiveRef slot is live while held (see deinit()) — satisfies
-            // the `BackRef` outlives-holder invariant for this read.
-            let body = bun_ptr::BackRef::from(body);
-            if matches!(&*body, Body::Value::Locked(_)) {
+        if let Some(body) = &self.request_body {
+            if matches!(&**body, Body::Value::Locked(_)) {
                 return false;
             }
         }

@@ -1323,8 +1323,13 @@ impl PathLikeExt for PathLike {
 
             sliced.report_extra_memory(global.vm());
 
-            // It is expensive to keep both around.
-            Ok(Self::EncodedSlice(core::mem::take(&mut sliced.utf8)))
+            // It is expensive to keep both around. `utf8` here is an Owned
+            // transcoded copy (UTF-16 or non-ASCII Latin-1 input), so the
+            // returned EncodedSlice is independent of `underlying` — release
+            // the WTFStringImpl ref `to_slice` moved into it.
+            let utf8 = core::mem::take(&mut sliced.utf8);
+            sliced.deinit();
+            Ok(Self::EncodedSlice(utf8))
         }
     }
 }
@@ -1900,9 +1905,9 @@ impl PathOrBlob {
         if let Some(blob) = arg.as_class_ref::<Blob>() {
             // Zig: `blob.*` — a raw bitwise copy with no ref bumps that callers
             // never `deinit()`. `borrowed_view()` is the sound Rust spelling: it
-            // clones only the `StoreRef` (whose `Drop` balances the +1) and
-            // aliases `name`/`content_type`; `dupe()` would leak both since
-            // `Blob` has no `Drop`. `as_class_ref` is the safe shared-borrow
+            // clones the `StoreRef`/`name` (whose `Drop`s balance the +1) and
+            // aliases `content_type`; `dupe()` would leak the boxed
+            // `content_type` copy. `as_class_ref` is the safe shared-borrow
             // downcast — the JS wrapper roots the payload while `arg` is on the
             // stack.
             return Ok(PathOrBlob::Blob(blob.borrowed_view()));

@@ -518,7 +518,7 @@ bool Worker::dispatchExit(int32_t exitCode)
 {
     // Runs on the worker thread after its JSC VM has been torn down. Post the
     // close event to the parent; that task additionally releases parent_poll_ref
-    // and drops the worker-thread-held ref (both parent-thread-only operations).
+    // (parent-thread-only).
     //
     // If posting fails — parent context no longer exists (nested worker whose
     // middle thread has already torn down) — the ref and poll are intentionally
@@ -527,25 +527,40 @@ bool Worker::dispatchExit(int32_t exitCode)
     // teardown implies process shutdown (or at least that nothing observes the
     // leak), so this is bounded. The proper fix is for a worker to stop+join
     // its sub-workers before tearing down its own context.
-    return postTaskToParent([exitCode, protectedThis = Ref { *this }](ScriptExecutionContext&) {
-        // Closing → dispatch 'close' → Closed. The split lets 'close'/'exit'
-        // handlers observe threadId == -1 and isOnline() == false while
-        // postMessage() (gated only on Closed) still accepts and drops the
-        // message, matching browser/Node and pre-refactor behaviour.
-        protectedThis->m_state.store(State::Closing);
+    //
+    // The create-time ref (taken in create() to keep `this` alive while the
+    // worker thread runs) is released via the `betweenLookupAndEnqueue` hook —
+    // i.e. after the parent context is found-live and the lambda's captured
+    // `Ref` exists, but BEFORE the task is enqueued. Once enqueued the parent
+    // can run-and-destroy the lambda (dropping `protectedThis`) and sweep the
+    // JSWorker before this frame resumes; deref()ing after that point can be
+    // the last ref and run ~Worker on the worker thread (the 71d7f78f5e74
+    // race). Releasing inside the lambda body instead would re-introduce the
+    // shutdown leak that commit closed: when global_exit() destroys queued
+    // close tasks without running them, the inner deref() never fires and the
+    // WebWorker box leaks.
+    return ScriptExecutionContext::postTaskTo(
+        m_parentContextId,
+        [this] { this->deref(); },
+        [exitCode, protectedThis = Ref { *this }](ScriptExecutionContext&) {
+            // Closing → dispatch 'close' → Closed. The split lets 'close'/'exit'
+            // handlers observe threadId == -1 and isOnline() == false while
+            // postMessage() (gated only on Closed) still accepts and drops the
+            // message, matching browser/Node and pre-refactor behaviour.
+            protectedThis->m_state.store(State::Closing);
 
-        if (protectedThis->hasEventListeners(eventNames().closeEvent)) {
-            auto event = CloseEvent::create(exitCode == 0, static_cast<unsigned short>(exitCode), exitCode == 0 ? "Worker terminated normally"_s : "Worker exited abnormally"_s);
-            protectedThis->EventTargetWithInlineData::dispatchEvent(event);
-        }
+            if (protectedThis->hasEventListeners(eventNames().closeEvent)) {
+                auto event = CloseEvent::create(exitCode == 0, static_cast<unsigned short>(exitCode), exitCode == 0 ? "Worker terminated normally"_s : "Worker exited abnormally"_s);
+                protectedThis->EventTargetWithInlineData::dispatchEvent(event);
+            }
 
-        protectedThis->m_state.store(State::Closed);
-        WebWorker__releaseParentPollRef(protectedThis->impl_);
-        // Drop the ref taken in create(). protectedThis keeps us alive across
-        // this line; its own deref happens at lambda destruction on the parent
-        // thread, so ~Worker never runs on the worker thread.
-        protectedThis->deref();
-    });
+            protectedThis->m_state.store(State::Closed);
+            WebWorker__releaseParentPollRef(protectedThis->impl_);
+            // protectedThis (and the JSWorker GC cell, if still rooted) keep us
+            // alive across the close-event dispatch; both deref on the parent
+            // thread (lambda destruction here / GC sweep), so ~Worker never runs
+            // on the worker thread.
+        });
 }
 
 // ---- extern "C" shims (called from Zig) -------------------------------------

@@ -824,7 +824,7 @@ impl CompletionStruct for JSBundleCompletionTask {
     fn configure_bundler<'a>(
         &mut self,
         transpiler: &mut Transpiler<'a>,
-        bump: &'a Arena,
+        _bump: &'a Arena,
     ) -> Result<(), bun_core::Error> {
         let config = &mut self.config;
 
@@ -962,12 +962,10 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.metafile_markdown_path =
             Box::from(config.metafile_markdown_path.list.as_slice());
         if config.optimize_imports.count() > 0 {
-            // PORT NOTE: Zig `&config.optimize_imports` is a borrow into
-            // `*JSBundleCompletionTask` (lives for the bundle). The Rust
-            // `BundleOptions.optimize_imports: Option<&'a StringSet>` borrows
-            // arena lifetime — bump-alloc a copy so `'a == 'bump`.
+            // SAFETY: `self.config` outlives `bump` and `optimize_imports` is not mutated
+            // during the bundle; a bump.alloc'd clone leaked (arena never runs Drop).
             transpiler.options.optimize_imports =
-                Some(&*bump.alloc(config.optimize_imports.clone()?));
+                Some(unsafe { &*core::ptr::from_ref(&config.optimize_imports) });
         }
 
         if transpiler.options.compile {
@@ -1096,13 +1094,13 @@ impl CompletionStruct for JSBundleCompletionTask {
         bump: &'a Arena,
         thread_pool: *mut bun_threading::ThreadPool,
     ) -> Result<(), bun_core::Error> {
-        // `jsc.AnyEventLoop.init(allocator)` — Mini loop owned by the bump.
-        // The linker stores `Option<NonNull<AnyEventLoop<'static>>>` (lifetime
-        // erased BACKREF — see LinkerContext.rs:50); cast through raw to erase
-        // `'a` since the loop lives exactly as long as `bump` and `BundleV2`.
-        let any_loop = bump.alloc(bun_event_loop::AnyEventLoop::default());
+        // `jsc.AnyEventLoop.init(allocator)` — Mini loop. Stack-owned (not
+        // bump-allocated) so its `MiniEventLoop::tasks` queue is dropped at
+        // scope exit; the bump bulk-free skips Drop. Declared before `bv2` so
+        // it outlives the BACKREF in `linker.loop`.
+        let mut any_loop = bun_event_loop::AnyEventLoop::default();
         let event_loop: bun_bundler::linker_context_mod::EventLoop =
-            Some(NonNull::from(&mut *any_loop).cast::<bun_event_loop::AnyEventLoop<'static>>());
+            Some(NonNull::from(&mut any_loop).cast::<bun_event_loop::AnyEventLoop<'static>>());
 
         // Zig passed the same `heap` by value (mimalloc handle struct copy);
         // bumpalo arenas can't be aliased that way, so `BundleV2` owns its

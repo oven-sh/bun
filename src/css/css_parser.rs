@@ -1649,8 +1649,10 @@ mod rule_parsers {
                 rules.v.insert(
                     0,
                     CssRule::Style(StyleRule {
-                        selectors: SelectorList::from_selector(Selector::from_component(
+                        // Arena-backed: this StyleRule lands in arena AST; bulk-free won't run Drop.
+                        selectors: SelectorList::from_selector(Selector::from_component_in(
                             Component::Nesting,
+                            bun_alloc::ArenaPtr::new(input.arena()),
                         )),
                         declarations,
                         vendor_prefix: VendorPrefix::default(),

@@ -870,7 +870,9 @@ mod tests {
 
     #[test]
     fn hash_map_put_get_delete_grow() {
-        for seed in 0..128u64 {
+        // Miri is ~100× slower; 2 seeds still exercises grow (`shift` assert below).
+        const SEEDS: u64 = if cfg!(miri) { 2 } else { 128 };
+        for seed in 0..SEEDS {
             // TODO(port): replace with xoshiro256++ to match Zig DefaultPrng.
             let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(1);
             let mut next = || {

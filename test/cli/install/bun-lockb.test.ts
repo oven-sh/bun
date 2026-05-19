@@ -1,7 +1,7 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, expect, it } from "bun:test";
-import { copyFile, exists, open, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, isWindows, runBunInstall, VerdaccioRegistry } from "harness";
+import { copyFile, exists, open, rm, writeFile } from "fs/promises";
+import { bunExe, bunEnv as env, isWindows, runBunInstall, stderrForInstall, VerdaccioRegistry } from "harness";
 import { join } from "path";
 
 const registry = new VerdaccioRegistry();
@@ -113,4 +113,65 @@ it("should continue using a binary lockfile if it exists", async () => {
   expect(await exists(join(packageDir, "bun.lock"))).toBe(false);
   const thirdLockfile = await file(join(packageDir, "bun.lockb")).text();
   expect(thirdLockfile).not.toBe(secondLockfile);
+});
+
+it("recovers from a corrupted binary lockfile instead of panicking", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "corrupt-lockb",
+      version: "1.0.0",
+      dependencies: {
+        "no-deps": "1.0.0",
+        "a-dep": "1.0.1",
+      },
+    }),
+  );
+
+  // Generate a valid bun.lockb against the local registry.
+  await runBunInstall(env, packageDir);
+  const lockbPath = join(packageDir, "bun.lockb");
+  expect(await exists(lockbPath)).toBe(true);
+
+  // Corrupt `meta[1].id` to an out-of-range value. Packages are stored
+  // SoA; the `meta` column sits after name (8), name_hash (8), resolution
+  // (72 for format v3, 64 for v2), dependencies (8) and resolutions (8)
+  // per package, and `id` is at +8 within each 88-byte Meta.
+  const lockb = Buffer.from(await file(lockbPath).arrayBuffer());
+  const fmt = lockb.readUInt32LE(42);
+  const N = Number(lockb.readBigUInt64LE(86));
+  const begin = Number(lockb.readBigUInt64LE(110));
+  const resolutionSize = fmt === 2 ? 64 : 72;
+  const metaStart = begin + N * (8 + 8 + resolutionSize + 8 + 8);
+  expect(N).toBeGreaterThan(1);
+  // Sanity: in a well-formed lockfile meta[i].id == i.
+  expect(lockb.readUInt32LE(metaStart + 0 * 88 + 8)).toBe(0);
+  expect(lockb.readUInt32LE(metaStart + 1 * 88 + 8)).toBe(1);
+  lockb.writeUInt32LE(0x7fffffff, metaStart + 1 * 88 + 8);
+  await write(lockbPath, lockb);
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--no-progress"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [out, rawErr, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+  const err = stderrForInstall(rawErr);
+
+  // The garbage `meta.id` deserialized from the corrupt lockfile used to
+  // panic_bounds_check in Package::clone. Released Bun tolerates it: it
+  // re-resolves and completes the install. The fix matches that.
+  expect(err).toContain("Ignoring lockfile");
+  expect(err).not.toContain("error:");
+  expect(out).toContain("no-deps@1.0.0");
+  expect(out).toContain("a-dep@1.0.1");
+  expect(code).toBe(0);
+  expect(await exists(join(packageDir, "node_modules", "no-deps"))).toBe(true);
+  expect(await exists(join(packageDir, "node_modules", "a-dep"))).toBe(true);
 });

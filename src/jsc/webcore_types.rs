@@ -335,14 +335,14 @@ impl Blob {
     ///
     /// In Zig that copy bumps **no** refcounts and is never `deinit()`ed — it
     /// just borrows `self`'s store/name/content_type for the caller's stack
-    /// frame. In Rust, `StoreRef` has drop glue, so the only sound translation
-    /// is: clone the `StoreRef` (its `Drop` balances the +1 at scope exit) and
-    /// **alias** `name`/`content_type` as borrowed bits (both are `Copy` raw
-    /// data with no `Drop`, so nothing runs on scope exit).
+    /// frame. In Rust, both `StoreRef` and `OwnedStringCell` have drop glue,
+    /// so the only sound translation is: clone them (their `Drop` balances the
+    /// +1 at scope exit) and **alias** `content_type` as borrowed bits (a
+    /// `Copy` raw pointer with no `Drop`, so nothing runs on scope exit).
     ///
-    /// Do **not** use [`Blob::dupe`] for this — it `dupe_ref()`s `name` and
-    /// boxes a fresh `content_type`, neither of which is freed by drop glue,
-    /// so both leak when the result is treated as a no-copy view.
+    /// Do **not** use [`Blob::dupe`] for this — it boxes a fresh
+    /// `content_type`, which is not freed by drop glue, so it leaks when the
+    /// result is treated as a no-copy view.
     #[inline]
     pub fn borrowed_view(&self) -> Blob {
         Blob {
@@ -358,7 +358,7 @@ impl Blob {
             ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
             global_this: Cell::new(self.global_this.get()),
             last_modified: Cell::new(self.last_modified.get()),
-            name: bun_core::OwnedStringCell::new(self.name.get()), // borrowed; no dupe_ref
+            name: self.name.clone(), // +1 ↔ OwnedStringCell::drop on scope exit
         }
     }
 

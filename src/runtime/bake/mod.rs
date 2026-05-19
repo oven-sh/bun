@@ -216,6 +216,7 @@ impl Framework {
     /// version operates on the keystone `BuildConfigSubset` (which omits
     /// `conditions`/`env`/`define`/`drop` until the schema types are
     /// const-constructible — those paths default).
+    /// Returns the arena slot for the `bake_types::Framework` projection; caller must `drop_in_place` it.
     pub fn init_transpiler<'a>(
         &mut self,
         arena: &'a bun_alloc::Arena,
@@ -224,7 +225,7 @@ impl Framework {
         renderer: Graph,
         out: &mut core::mem::MaybeUninit<bun_bundler::Transpiler<'a>>,
         bundler_options: &BuildConfigSubset,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<*mut bun_bundler::bake_types::Framework, bun_core::Error> {
         use bun_options_types::schema as bun_schema;
 
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::new_without_stack(arena);
@@ -292,10 +293,9 @@ impl Framework {
         // `*bake.Framework`. The bundler crate (lower tier) carries a TYPE_ONLY
         // projection (`bake_types::Framework`); construct it here and give it
         // arena lifetime so `BundleOptions<'a>` can borrow it for the bundle pass.
-        // PERF(port): interior `Box<[u8]>` in the projection are not dropped by
-        // bumpalo — bounded per-session, revisit when `bake_types::BuiltInModule`
-        // is reshaped to `&'a [u8]`.
-        out.options.framework = Some(&*arena.alloc(self.as_bundler_view()));
+        let framework_view: *mut bun_bundler::bake_types::Framework =
+            arena.alloc(self.as_bundler_view());
+        out.options.framework = Some(unsafe { &*framework_view });
         out.options.inline_entrypoint_import_meta_main = true;
         if let Some(ignore) = bundler_options.ignore_dce_annotations {
             out.options.ignore_dce_annotations = ignore;
@@ -369,7 +369,7 @@ impl Framework {
         // Spec bake.zig:821 — re-sync after define/naming mutations so the
         // resolver sees the final option set.
         out.sync_resolver_opts();
-        Ok(())
+        Ok(framework_view)
     }
 
     /// `bake.Framework.resolve` (bake.zig:401). Resolves built-in module

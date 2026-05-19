@@ -4316,23 +4316,37 @@ impl NapiFinalizerTask {
         // SAFETY: `bun_vm()` returns a valid `*mut VirtualMachine` for this global.
         let vm: &VirtualMachine = global_this.bun_vm();
         let is_main_thread = VirtualMachine::get_or_null().is_some();
-        let this = bun_core::heap::into_raw(self);
 
         if !is_main_thread {
             // TODO(@heimskr): do we need to handle the case where the vm is shutting down?
+            let this = bun_core::heap::into_raw(self);
             vm.event_loop_ref()
                 .enqueue_task_concurrent(ConcurrentTask::create(Task::init(this)));
             return;
         }
 
         if vm.is_shutting_down() {
+            if vm.has_run_cleanup_hooks() {
+                // `on_exit()` already drained cleanup hooks; we are inside the
+                // final `collectNow()` (Heap::sweepArrayBuffers) and the JSC
+                // VM is being torn down. The cleanup-hook list will never be
+                // walked again, and running the user finalizer here (mid-GC,
+                // with the global about to be freed) is unsafe. Drop the task
+                // so the `Box<NapiFinalizerTask>` and its `NapiEnvRef` are
+                // released; the addon's external data is reclaimed by the OS
+                // at process exit.
+                drop(self);
+                return;
+            }
             // Immediate tasks won't run, so we run this as a cleanup hook instead
+            let this = bun_core::heap::into_raw(self);
             global_this.bun_vm().as_mut().rare_data().push_cleanup_hook(
                 vm.global(),
                 this.cast::<c_void>(),
                 Self::run_as_cleanup_hook,
             );
         } else {
+            let this = bun_core::heap::into_raw(self);
             vm.event_loop_ref().enqueue_task(Task::init(this));
         }
     }

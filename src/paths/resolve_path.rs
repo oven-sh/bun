@@ -377,30 +377,38 @@ pub fn longest_common_path_posix<'a>(input: &[&'a [u8]]) -> &'a [u8] {
 // from/to buffers while `relative_to_common_path_buf()` is borrowed elsewhere
 // without aliasing a single parent payload. Only 3×8 bytes in static TLS instead
 // of 3×PathBuffer (see test/js/bun/binary/tls-segment-size).
+struct LazyPathBuf(core::cell::Cell<*mut PathBuffer>);
+
+impl Drop for LazyPathBuf {
+    fn drop(&mut self) {
+        let p = self.0.get();
+        if !p.is_null() {
+            // SAFETY: `p` came from `heap::into_raw` in `lazy_path_buf`; sole accessor.
+            unsafe { drop(bun_core::heap::take(p)) };
+        }
+    }
+}
+
 thread_local! {
-    static RELATIVE_TO_COMMON_PATH_BUF: core::cell::Cell<*mut PathBuffer> =
-        const { core::cell::Cell::new(core::ptr::null_mut()) };
-    static RELATIVE_FROM_BUF: core::cell::Cell<*mut PathBuffer> =
-        const { core::cell::Cell::new(core::ptr::null_mut()) };
-    static RELATIVE_TO_BUF: core::cell::Cell<*mut PathBuffer> =
-        const { core::cell::Cell::new(core::ptr::null_mut()) };
+    static RELATIVE_TO_COMMON_PATH_BUF: LazyPathBuf =
+        const { LazyPathBuf(core::cell::Cell::new(core::ptr::null_mut())) };
+    static RELATIVE_FROM_BUF: LazyPathBuf =
+        const { LazyPathBuf(core::cell::Cell::new(core::ptr::null_mut())) };
+    static RELATIVE_TO_BUF: LazyPathBuf =
+        const { LazyPathBuf(core::cell::Cell::new(core::ptr::null_mut())) };
 }
 
 /// Lazily allocate (on first use) and borrow a thread-local `PathBuffer`. One
 /// `unsafe` site for all `RELATIVE_*_BUF` accessors (nonnull-asref reduction:
 /// 5 sites → 1).
 #[inline]
-fn lazy_path_buf(c: &core::cell::Cell<*mut PathBuffer>) -> &'static mut PathBuffer {
-    let mut p = c.get();
+fn lazy_path_buf(c: &LazyPathBuf) -> &'static mut PathBuffer {
+    let mut p = c.0.get();
     if p.is_null() {
         p = bun_core::heap::into_raw(Box::new(PathBuffer::ZEROED));
-        c.set(p);
+        c.0.set(p);
     }
-    // SAFETY: `p` is non-null after the init branch above and points at a
-    // leaked `Box<PathBuffer>` (process-lifetime heap allocation). The `Cell`
-    // lives in a `thread_local!`, so this thread is the sole accessor; callers
-    // uphold the single-live-borrow-per-thread invariant documented at the
-    // thread-local declaration.
+    // SAFETY: `p` is non-null after the init branch; this thread is the sole accessor.
     unsafe { &mut *p }
 }
 
@@ -2351,12 +2359,16 @@ pub fn next_dirname(path_: &[u8]) -> Option<&[u8]> {
 ///
 /// To use this, stack allocate the following struct, and then call `resolve`.
 ///
-///     let mut normalizer = PosixToWinNormalizer::default();
-///     let result = normalizer.resolve(b"C:\\dev\\bun", b"/dev/bun/test/etc.js");
+/// ```ignore
+/// let mut normalizer = PosixToWinNormalizer::default();
+/// let result = normalizer.resolve(b"C:\\dev\\bun", b"/dev/bun/test/etc.js");
+/// ```
 ///
 /// When you are certain that using the current working directory is fine, you can use
 ///
-///     let result = normalizer.resolve_cwd(b"/dev/bun/test/etc.js");
+/// ```ignore
+/// let result = normalizer.resolve_cwd(b"/dev/bun/test/etc.js");
+/// ```
 ///
 /// This API does nothing on Linux (it has a size of zero)
 pub struct PosixToWinNormalizer {

@@ -151,24 +151,12 @@ pub mod argon2 {
         let mut salt = [0u8; DEFAULT_SALT_LEN];
         getrandom::fill(&mut salt).map_err(|_| bun_core::err!("Unexpected"))?;
 
-        // Zig (argon2.zig:499) deliberately disables the `m < 8*p` floor check
-        // ("BUN: this is a breaking change so lets reenable it later") and
-        // instead clamps the working memory at argon2.zig:502-505 to
-        // `@max(m_rounded_down, 2*sync_points*p)`. rust-argon2's
-        // `Context::new` hard-rejects `mem_cost < 8*lanes` with
-        // `MemoryTooLittle`, so clamp here so the call succeeds. Note: the
-        // encoded `m=` and the H0 prehash will reflect the clamped value,
-        // which diverges from Zig for the (in-practice never used) `m < 8*p`
-        // edge case — acceptable per the porting fix, and strictly better
-        // than throwing `WeakParameters`.
-        let mem_cost = options.params.m.max(8 * options.params.p);
-
         let config = vendor::Config {
             ad: &[],
             secret: &[],
             hash_length: DEFAULT_HASH_LEN,
             lanes: options.params.p,
-            mem_cost,
+            mem_cost: options.params.m,
             time_cost: options.params.t,
             // Hashing always runs single-threaded here regardless of `p` —
             // matches the Zig stdlib, which fans memory across `p` lanes but

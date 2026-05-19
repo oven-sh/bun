@@ -1127,6 +1127,7 @@ impl<'a> LinkerContext<'a> {
                 // worker arena; we keep the relative path in a local owned
                 // buffer instead (drops at scope exit — same lifetime as the
                 // arena slice).
+                //
                 let rel_path_storage;
                 let pretty: &[u8] = if path.is_file() {
                     rel_path_storage =

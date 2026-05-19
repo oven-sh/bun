@@ -547,6 +547,12 @@ impl Package<u64> {
 
         let new_package = new.append_package_with_id(pkg_value, id)?;
 
+        // `self.meta.id` is range-checked at load time (bun.lockb.rs), but
+        // defend here as well since an error returned from `clean_with_logger`
+        // is not recoverable — it aborts the install instead of re-resolving.
+        if self.meta.id as usize >= package_id_mapping.len() {
+            return Err(bun_core::err!("InvalidLockfile"));
+        }
         package_id_mapping[self.meta.id as usize] = new_package.meta.id;
 
         if cloner.manager.preinstall_state.len() > 0 {
@@ -1839,7 +1845,7 @@ impl Package<u64> {
                         // value so the borrow outlives the parse call.
                         let wp = workspace_path.unwrap();
                         let path = wp.sliced(buf);
-                        if let Some(dep) = dependency::parse_with_tag(
+                        if let Some(mut dep) = dependency::parse_with_tag(
                             external_alias.value,
                             Some(external_alias.hash),
                             path.slice,
@@ -1848,8 +1854,10 @@ impl Package<u64> {
                             Some(&mut *log),
                             Some(&mut *pm),
                         ) {
-                            dependency_version.tag = dep.tag;
-                            dependency_version.value = dep.value;
+                            // Whole-struct move so `Drop` frees the old npm
+                            // chain; keep the existing `literal` (Zig parity).
+                            dep.literal = dependency_version.literal;
+                            dependency_version = dep;
                         }
                     } else {
                         // It doesn't satisfy, but a workspace shares the same name. Override the workspace with the other dependency

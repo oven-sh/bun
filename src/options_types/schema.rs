@@ -127,6 +127,9 @@ pub mod api {
     ///
     /// `Default` ⇔ `std.mem.zeroes(TransformOptions)` — every Option `None`,
     /// every slice empty, every scalar `0`/`false`.
+    ///
+    /// LIFECYCLE: `BundleOptions::from_api` parks this in an `Arc` whose final ref
+    /// lives on the process-lifetime `Transpiler` (LSan-rooted in build_command.rs).
     #[derive(Clone, Debug, Default)]
     pub struct TransformOptions {
         /// jsx

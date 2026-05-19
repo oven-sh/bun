@@ -368,22 +368,20 @@ impl TargetExt for Target {
             b".js", b".cjs", b".mts", b".cts", b".ts", b".tsx", b".jsx", b".json",
         ];
 
-        // PERF(port): keys were `&'static` in Zig; `StringHashMap` owns keys via
-        // `Box<[u8]>` so `put` copies — tiny startup cost.
         if self == Target::Node {
             exts.ensure_total_capacity(OUT_EXTENSIONS_LIST.len() * 2)
                 .expect("OOM");
-            for ext in OUT_EXTENSIONS_LIST {
-                exts.put(ext, b".mjs").expect("OOM");
+            for &ext in OUT_EXTENSIONS_LIST {
+                exts.put_static_key(ext, b".mjs").expect("OOM");
             }
         } else {
             exts.ensure_total_capacity(OUT_EXTENSIONS_LIST.len() + 1)
                 .expect("OOM");
-            exts.put(b".mjs", b".js").expect("OOM");
+            exts.put_static_key(b".mjs", b".js").expect("OOM");
         }
 
-        for ext in OUT_EXTENSIONS_LIST {
-            exts.put(ext, b".js").expect("OOM");
+        for &ext in OUT_EXTENSIONS_LIST {
+            exts.put_static_key(ext, b".js").expect("OOM");
         }
 
         exts
@@ -1004,6 +1002,7 @@ pub fn defines_from_transform_options(
             &default_values,
             behavior,
             &framework.prefix,
+            bump,
         )?;
     }
 

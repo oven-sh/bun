@@ -769,8 +769,9 @@ mod tests {
         ];
         test_err(&params, &[b"q"], b"Invalid argument 'q'\n");
         test_err(&params, &[b"-q"], b"Invalid argument '-q'\n");
-        test_err(&params, &[b"--q"], b"Invalid argument '--q'\n");
-        test_err(&params, &[b"--q=1"], b"Invalid argument '--q'\n");
+        // Unrecognized long flags are skipped (opt-in warning), not errors.
+        test_no_err(&params, &[b"--q"], &[]);
+        test_no_err(&params, &[b"--q=1"], &[]);
         test_err(
             &params,
             &[b"-a=1"],

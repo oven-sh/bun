@@ -54,6 +54,13 @@ heap_profiler_config: ?HeapProfilerConfig = null,
 counters: Counters = .{},
 
 hot_reload: bun.cli.Command.HotReload = .none,
+/// Set when a JS `process.on('SIGINT'|'SIGTERM'|'SIGHUP')` listener fires
+/// while `--watch`/`--hot` is active. The watch-mode event loop in
+/// `bun.js.zig` is `while (true) { … tickPossiblyForever(); }` — it has no
+/// natural exit, so a trapped terminating signal would otherwise leave the
+/// process running forever. When non-zero the loop breaks and the process
+/// exits via the normal path (beforeExit/exit listeners, `128 + signal`).
+watch_mode_terminating_signal: u8 = 0,
 jsc_vm: *VM = undefined,
 
 /// hide bun:wrap from stack traces
@@ -301,10 +308,20 @@ pub fn getTLSRejectUnauthorized(this: *const VirtualMachine) bool {
 
 pub fn onSubprocessSpawn(this: *VirtualMachine, process: *bun.spawn.Process) void {
     this.auto_killer.onSubprocessSpawn(process);
+    if (comptime Environment.isPosix) {
+        if (this.hot_reload != .none) {
+            this.rareData().addSubprocessForWatchMode(process.pid);
+        }
+    }
 }
 
 pub fn onSubprocessExit(this: *VirtualMachine, process: *bun.spawn.Process) void {
     this.auto_killer.onSubprocessExit(process);
+    if (comptime Environment.isPosix) {
+        if (this.hot_reload != .none) {
+            if (this.rare_data) |rare| rare.removeSubprocessForWatchMode(process.pid);
+        }
+    }
 }
 
 pub fn getVerboseFetch(this: *VirtualMachine) bun.http.HTTPVerboseLevel {

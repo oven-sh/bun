@@ -309,8 +309,6 @@ pub trait ConsoleFormatter {
     fn indent_inc(&mut self);
     /// `formatter.indent -|= 1` — saturating decrement (Zig spelling).
     fn indent_dec(&mut self);
-    /// Zig: `formatter.indent += 1; defer formatter.indent -|= 1;`.
-    ///
     /// Shorthand for [`IndentScope::new`]. Shadow the binding for the indented
     /// block; the guard `Deref`s to `&mut Self` so method calls auto-deref, and
     /// `Drop` restores the indent on every exit path (including `?`).

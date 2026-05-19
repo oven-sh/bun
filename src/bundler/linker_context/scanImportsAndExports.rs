@@ -132,8 +132,7 @@ pub fn scan_imports_and_exports(
     let cjs_export_copies: *mut [Box<[Ref]>] = meta.cjs_export_copies;
     let entry_point_part_indices: *mut [Index] = meta.entry_point_part_index;
 
-    // PORT NOTE: Zig copies `symbols` to a local and `defer`-writes it back.
-    // In Rust `this.graph.symbols` is the same storage, so no copy-back needed.
+    // PORT NOTE: `this.graph.symbols` is the same storage, so no copy-back needed.
 
     {
         // Step 1: Figure out what modules must be CommonJS
@@ -318,7 +317,6 @@ pub fn scan_imports_and_exports(
                     output_format,
                 }
             };
-            // PORT NOTE: `defer dependency_wrapper.export_star_map.deinit()` → Drop handles it.
 
             for source_index_ in &reachable {
                 let source_index = source_index_.get();
@@ -364,8 +362,6 @@ pub fn scan_imports_and_exports(
         {
             let mut export_star_ctx: Option<ExportStarContext> = None;
             let _trace = perf::trace("Bundler.ResolveExportStarStatements");
-            // PORT NOTE: `defer { if (export_star_ctx) |*export_ctx| export_ctx.source_index_stack.deinit(); }`
-            // → Drop on `export_star_ctx` handles freeing `source_index_stack: Vec<u32>`.
 
             for source_index_ in &reachable {
                 let source_index = source_index_.get();
@@ -695,8 +691,6 @@ pub fn scan_imports_and_exports(
                 }
             }
 
-            // PORT NOTE: Zig `defer bun.assert(builder.len == builder.cap)` —
-            // moved to end-of-scope assert (no early returns inside this block).
             debug_assert!(builder.len == builder.cap);
 
             // Include the "__export" symbol from the runtime if it was used in the
@@ -1392,8 +1386,6 @@ impl<'a> ExportStarContext<'a> {
             self.add_exports(resolved_exports, target_id, other_source_index);
         }
 
-        // PORT NOTE: Zig `defer this.source_index_stack.shrinkRetainingCapacity(stack_end_pos - 1)`
-        // — inlined at scope end (no early returns after the push).
         self.source_index_stack.truncate(stack_end_pos - 1);
     }
 }

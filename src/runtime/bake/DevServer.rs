@@ -2266,9 +2266,8 @@ fn check_route_failures(
 ) -> Result<CheckResult, bun_core::Error> {
     // PERF(port): was stack-fallback (65536)
     let mut gts = dev.init_graph_trace_state(0)?;
-    // PORT NOTE: erase to a raw pointer so the deferred cleanup only fires on
-    // scope exit when no other borrow of `dev` is live (Zig `defer` had no
-    // aliasing check).
+    // PORT NOTE: erase to a raw pointer so the cleanup guard only fires on
+    // scope exit when no other borrow of `dev` is live.
     let dev_ptr = std::ptr::from_mut::<DevServer>(dev);
     scopeguard::defer! {
         // SAFETY: see PORT NOTE above.
@@ -3427,7 +3426,7 @@ impl DevServer {
 
         let _lock = self.graph_safety_lock.guard();
         // PORT NOTE: scopeguard closures capture `self` by ref, wedging borrowck for
-        // the rest of the fn. Erase to a raw pointer (Zig `defer` had no aliasing check).
+        // the rest of the fn. Erase to a raw pointer.
         let self_ptr: *mut Self = self;
 
         // Prepare bitsets
@@ -3740,8 +3739,7 @@ pub fn finalize_bundle(
     // TODO(port): the giant `defer` block at the start of finalizeBundle has been
     // moved into a scopeguard. Phase B must verify ordering relative to ?-returns.
     // PORT NOTE: erase `dev`/`bv2` to raw pointers inside the guard so the
-    // long-lived closure capture doesn't lock borrowck for the entire fn body
-    // (Zig `defer` had no aliasing analysis).
+    // long-lived closure capture doesn't lock borrowck for the entire fn body.
     let dev_ptr = std::ptr::from_mut::<DevServer>(dev);
     let bv2_ptr = std::ptr::from_mut::<BundleV2>(bv2);
     // PORT NOTE: copy the raw ptrs into closure-only locals so `defer!`'s by-ref
@@ -4188,7 +4186,7 @@ pub fn finalize_bundle(
                 // PERF(port): was ArenaAllocator
                 dev.server_graph.take_source_map(&mut source_map_entry)?;
                 // PORT NOTE: erase to raw ptr so `render_json` can borrow the entry
-                // while the cleanup guard is armed (Zig `defer` had no aliasing check).
+                // while the cleanup guard is armed.
                 let entry_ptr: *mut source_map_store::Entry = &raw mut source_map_entry;
                 // SAFETY: `source_map_entry` is a stack local that outlives this guard.
                 scopeguard::defer! {
@@ -4812,9 +4810,9 @@ pub fn finalize_bundle(
                 let response = saved.response;
                 let ctx = saved.ctx;
                 // PORT NOTE: Zig copied `saved` by value into the call and let
-                // `defer req.deref()` → `__deinit` → `saved.deinit()` release
-                // the original (`js_request.deinit()` + `ctx.deref()`). The
-                // Rust port moves `saved` out (so `__deinit` sees `Aborted`);
+                // the request teardown release the original
+                // (`js_request.deinit()` + `ctx.deref()`). The Rust port moves
+                // `saved` out (so `__deinit` sees `Aborted`);
                 // `js_request: StrongOptional` releases on Drop, but
                 // `ctx: AnyRequestContext` is `Copy` — explicitly balance the
                 // `ctx.ref_()` from `defer_request` here so the request
@@ -5583,7 +5581,7 @@ impl DevServer {
         #[cfg(not(feature = "bake_debugging_features"))]
         return;
         // PORT NOTE: erase `self` to a raw ptr so the `defer!` doesn't pin a
-        // unique borrow for the rest of the fn (Zig `defer` had no aliasing).
+        // unique borrow for the rest of the fn.
         let self_ptr: *mut Self = self;
         // SAFETY: `self_ptr` points to `*self`, live for the fn body.
         scopeguard::defer! { unsafe { (*self_ptr).emit_memory_visualizer_message_if_needed() } };
@@ -5998,9 +5996,8 @@ impl DevServer {
         // SAFETY: `watcher_acquire_event` returns a valid `*mut HotReloadEvent`
         // into `self.watcher_atomics.events`; exclusive on the watcher thread.
         let ev = unsafe { &mut *ev_ptr };
-        // PORT NOTE: erase `self` to a raw ptr in the deferred closures so the
-        // loop body can keep using `self.bun_watcher` (Zig `defer` had no
-        // aliasing check).
+        // PORT NOTE: erase `self` to a raw ptr in the cleanup closures so the
+        // loop body can keep using `self.bun_watcher`.
         let self_ptr: *mut Self = self;
         // SAFETY: `self_ptr` is live for the entire fn body; guards run at scope exit.
         scopeguard::defer! {

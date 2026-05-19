@@ -2364,8 +2364,8 @@ impl ThreadLock {
     pub fn init_locked_if_non_comptime() -> Self {
         Self::init_locked()
     }
-    /// RAII spelling of `lock()` + `defer unlock()`. Returns a guard that
-    /// `unlock()`s on `Drop`. The guard stores a raw pointer (not a borrow)
+    /// RAII spelling of `lock()`. Returns a guard that `unlock()`s on `Drop`.
+    /// The guard stores a raw pointer (not a borrow)
     /// so the caller's surrounding `&mut self` on the owning struct stays
     /// usable for the rest of the scope — `ThreadLock` is a debug-only
     /// ownership assertion, not a real mutex.

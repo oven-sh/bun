@@ -1433,8 +1433,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // blocked_on: is_binding_used; SideEffects::to_boolean; Part fields; named_exports key type
     pub fn tree_shake(&mut self, parts: &mut &'a mut [js_ast::Part], merge: bool) {
         let mut parts_ = core::mem::take(parts);
-        // PORT NOTE: Zig used `defer` to merge parts after the loop. We replicate by
-        // running the merge logic explicitly after the while-loop below.
+        // PORT NOTE: merge logic runs explicitly after the while-loop below.
 
         let default_export_ref = self
             .named_exports
@@ -3975,8 +3974,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // parent.children;` (a *value copy* of the Vec header) then
         // `_ = children.pop();` — the pop mutates only the local copy, so
         // `parent.children` is left unchanged (contrast `discardScopesUpTo`
-        // which writes back via `defer scope.children = children`). The
-        // discarded scope therefore remains in `parent.children` and is later
+        // which writes the local back). The discarded scope therefore remains
+        // in `parent.children` and is later
         // visited by `hoistSymbols`/`computeCharacterFrequency` recursion.
         // Match spec: only assert above, do not actually pop.
     }
@@ -4493,7 +4492,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut cur = self.current_scope_ref();
         let current_scope_ptr: *mut js_ast::Scope = cur.as_ptr();
         let children = &mut cur.children;
-        // PORT NOTE: Zig copied `var children = scope.children` + `defer scope.children = children`.
         // Vec isn't Copy in Rust; mutate the field in place via the handle instead.
 
         for _child in &self.scopes_in_order[scope_index..] {

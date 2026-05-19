@@ -1,32 +1,55 @@
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { afterEach, expect, it } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
-import { rmSync } from "node:fs";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
-let watchee: Subprocess;
+let watchee: Subprocess | undefined;
+
+async function waitForFile(filePath: string, timeout = 10_000): Promise<string> {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    try {
+      const content = await Bun.file(filePath).text();
+      if (content.length > 0) return content;
+    } catch {}
+    await Bun.sleep(50);
+  }
+  throw new Error(`Timed out waiting for file: ${filePath}`);
+}
+
+async function waitForFileChange(filePath: string, previous: string, timeout = 10_000): Promise<string> {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    try {
+      const content = await Bun.file(filePath).text();
+      if (content !== previous) return content;
+    } catch {}
+    await Bun.sleep(50);
+  }
+  throw new Error(`Timed out waiting for ${filePath} to change from: ${previous}`);
+}
 
 it("should exclude files matching --watch-excludes patterns", async () => {
-  const cwd = tmpdirSync();
+  using dir = tempDir("watch-excludes-cli", {});
+  const cwd = String(dir);
   const scriptPath = join(cwd, "script.js");
   const dataPath = join(cwd, "data.json");
   const logPath = join(cwd, "output.log");
 
-  // Create script that continuously modifies excluded files
   await Bun.write(scriptPath, `
-    require("fs").writeFileSync("${logPath}", "executed-" + Date.now());
-    
+    const fs = require("fs");
+    fs.writeFileSync("${logPath}", "executed-" + Date.now());
+    let count = 0;
     setInterval(() => {
-      require("fs").writeFileSync("${dataPath}", JSON.stringify({ timestamp: Date.now() }));
-    }, 500);
-    
+      count++;
+      fs.writeFileSync("${dataPath}", JSON.stringify({ count }));
+    }, 100);
     process.on('SIGTERM', () => process.exit(0));
   `);
 
   await Bun.write(dataPath, "{}");
 
-  // Start watching with *.json excluded
   watchee = spawn({
     cwd,
     cmd: [bunExe(), "--watch", "--watch-excludes", "*.json", "script.js"],
@@ -36,62 +59,54 @@ it("should exclude files matching --watch-excludes patterns", async () => {
     stdin: "ignore",
   });
 
-  await Bun.sleep(1000);
-  const initialLog = await Bun.file(logPath).text();
+  // Wait for initial execution
+  const initialLog = await waitForFile(logPath);
 
-  // Wait for script to modify excluded files multiple times
-  await Bun.sleep(2000);
-  
-  // Excluded file modifications should not trigger reload
+  // Wait until data.json has been modified at least 5 times (excluded file changes)
+  let prev = "{}";
+  for (let i = 0; i < 5; i++) {
+    prev = await waitForFileChange(dataPath, prev);
+  }
+
+  // Excluded file modifications should not have triggered a reload
   expect(await Bun.file(logPath).text()).toBe(initialLog);
 
-  // Modify watched file - should trigger reload
+  // Modify the watched file — should trigger reload
   await Bun.write(scriptPath, `
     require("fs").writeFileSync("${logPath}", "reloaded-" + Date.now());
     process.on('SIGTERM', () => process.exit(0));
   `);
 
-  await Bun.sleep(1000);
-
-  // Should have reloaded
-  const finalLog = await Bun.file(logPath).text();
+  const finalLog = await waitForFileChange(logPath, initialLog);
   expect(finalLog).toContain("reloaded-");
-  expect(finalLog).not.toBe(initialLog);
-
-  // Cleanup
-  rmSync(scriptPath, { force: true });
-  rmSync(dataPath, { force: true });
-  rmSync(logPath, { force: true });
-}, 6000);
+});
 
 it("should exclude files using bunfig.toml watch.excludes configuration", async () => {
-  const cwd = tmpdirSync();
+  using dir = tempDir("watch-excludes-bunfig", {});
+  const cwd = String(dir);
   const scriptPath = join(cwd, "script.js");
   const dataPath = join(cwd, "data.json");
   const logPath = join(cwd, "output.log");
   const bunfigPath = join(cwd, "bunfig.toml");
 
-  // Create bunfig.toml with watch excludes
   await Bun.write(bunfigPath, `
 [watch]
 excludes = ["*.json"]
   `);
 
-  // Create script that continuously modifies excluded files
   await Bun.write(scriptPath, `
-    require("fs").writeFileSync("${logPath}", "executed-" + Date.now());
-    
+    const fs = require("fs");
+    fs.writeFileSync("${logPath}", "executed-" + Date.now());
+    let count = 0;
     setInterval(() => {
-      require("fs").writeFileSync("${dataPath}", JSON.stringify({ timestamp: Date.now() }));
-    }, 500);
-    
+      count++;
+      fs.writeFileSync("${dataPath}", JSON.stringify({ count }));
+    }, 100);
     process.on('SIGTERM', () => process.exit(0));
   `);
 
-  // Create excluded data file
   await Bun.write(dataPath, "{}");
 
-  // Start watching without CLI excludes - should use bunfig.toml
   watchee = spawn({
     cwd,
     cmd: [bunExe(), "--watch", "script.js"],
@@ -101,35 +116,30 @@ excludes = ["*.json"]
     stdin: "ignore",
   });
 
-  await Bun.sleep(1000);
-  const initialLog = await Bun.file(logPath).text();
+  // Wait for initial execution
+  const initialLog = await waitForFile(logPath);
 
-  // Wait for script to modify excluded files multiple times
-  await Bun.sleep(2000);
-  
-  // Excluded file modifications should not trigger reload
+  // Wait until data.json has been modified at least 5 times (excluded file changes)
+  let prev = "{}";
+  for (let i = 0; i < 5; i++) {
+    prev = await waitForFileChange(dataPath, prev);
+  }
+
+  // Excluded file modifications should not have triggered a reload
   expect(await Bun.file(logPath).text()).toBe(initialLog);
 
-  // Modify watched file - should trigger reload
+  // Modify the watched file — should trigger reload
   await Bun.write(scriptPath, `
     require("fs").writeFileSync("${logPath}", "reloaded-" + Date.now());
     process.on('SIGTERM', () => process.exit(0));
   `);
 
-  await Bun.sleep(1000);
-
-  // Should have reloaded
-  const finalLog = await Bun.file(logPath).text();
+  const finalLog = await waitForFileChange(logPath, initialLog);
   expect(finalLog).toContain("reloaded-");
-  expect(finalLog).not.toBe(initialLog);
-
-  // Cleanup
-  rmSync(scriptPath, { force: true });
-  rmSync(dataPath, { force: true });
-  rmSync(logPath, { force: true });
-  rmSync(bunfigPath, { force: true });
-}, 6000);
+});
 
 afterEach(() => {
   watchee?.kill();
+  watchee = undefined;
 });
+

@@ -342,6 +342,40 @@ fn watchLoop(this: *Watcher) bun.sys.Maybe(void) {
     return .success;
 }
 
+fn shouldExcludeFile(this: *Watcher, file_path: string) bool {
+    if (this.exclude_patterns.len == 0) {
+        return false;
+    }
+
+    const relative_path = if (strings.startsWith(file_path, this.cwd))
+        file_path[this.cwd.len..]
+    else
+        file_path;
+
+    const clean_path = if (relative_path.len > 0 and relative_path[0] == '/')
+        relative_path[1..]
+    else
+        relative_path;
+
+    // On Windows, normalize backslashes to forward slashes so that glob
+    // patterns (which always use '/') match correctly.
+    var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    const match_path: string = if (comptime bun.Environment.isWindows) blk: {
+        const len = @min(clean_path.len, path_buf.len);
+        @memcpy(path_buf[0..len], clean_path[0..len]);
+        std.mem.replaceScalar(u8, path_buf[0..len], '\\', '/');
+        break :blk path_buf[0..len];
+    } else clean_path;
+
+    for (this.exclude_patterns) |pattern| {
+        if (glob.match(this.allocator, pattern, match_path).matches()) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 /// Register a file descriptor with kqueue on macOS without validation.
 ///
 /// Preconditions (caller must ensure):
@@ -385,30 +419,6 @@ pub fn addFileDescriptorToKQueueWithoutChecks(this: *Watcher, fd: bun.FD, watchl
         0,
         null,
     );
-}
-
-fn shouldExcludeFile(this: *Watcher, file_path: string) bool {
-    if (this.exclude_patterns.len == 0) {
-        return false;
-    }
-
-    const relative_path = if (strings.startsWith(file_path, this.cwd))
-        file_path[this.cwd.len..]
-    else
-        file_path;
-
-    const clean_path = if (relative_path.len > 0 and relative_path[0] == '/')
-        relative_path[1..]
-    else
-        relative_path;
-
-    for (this.exclude_patterns) |pattern| {
-        if (glob.match(this.allocator, pattern, clean_path).matches()) {
-            return true;
-        }
-    }
-
-    return false;
 }
 
 fn appendFileAssumeCapacity(

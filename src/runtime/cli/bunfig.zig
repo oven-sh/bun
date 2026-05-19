@@ -250,7 +250,9 @@ pub const Bunfig = struct {
                     try this.expect(expr, .e_boolean);
                     this.ctx.runtime_options.smol = expr.data.e_boolean.value;
                 }
+            }
 
+            if (comptime cmd == .RunCommand or cmd == .AutoCommand or cmd == .TestCommand) {
                 if (json.get("watch")) |watch| {
                     if (watch.get("excludes")) |expr| {
                         if (expr.asArray()) |array_| {

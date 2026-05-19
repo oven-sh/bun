@@ -58,7 +58,7 @@ fn visit_stmt_slice<'a, const TS: bool, const SO: bool>(
 // reclaims both at end-of-parse.
 // PERF(port): was fromOwnedSlice (no copy) — profile if hot.
 #[inline]
-fn stmts_to_list<'a>(arena: &'a bun_alloc::Arena, ptr: StmtNodeList) -> StmtList<'a> {
+fn stmts_to_list<'a>(arena: &'a bun_alloc::Arena, ptr: &StmtNodeList) -> StmtList<'a> {
     bun_alloc::vec_from_iter_in(ptr.iter().copied(), arena)
 }
 #[inline]
@@ -1655,7 +1655,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             } else {
                 StmtsKind::None
             };
-            let mut _stmts = stmts_to_list(p.arena, data.stmts);
+            let mut _stmts = stmts_to_list(p.arena, &data.stmts);
             p.visit_stmts(&mut _stmts, kind).expect("unreachable");
             data.stmts = list_to_stmts(_stmts);
             p.pop_scope();
@@ -2100,7 +2100,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc)
             .expect("unreachable");
         {
-            let mut _stmts = stmts_to_list(p.arena, data.body);
+            let mut _stmts = stmts_to_list(p.arena, &data.body);
             p.fn_or_arrow_data_visit.try_body_count += 1;
             p.visit_stmts(&mut _stmts, StmtsKind::None)
                 .expect("unreachable");
@@ -2116,7 +2116,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if let Some(catch_binding) = catch_.binding {
                     p.visit_binding(catch_binding, None);
                 }
-                let mut _stmts = stmts_to_list(p.arena, catch_.body);
+                let mut _stmts = stmts_to_list(p.arena, &catch_.body);
                 p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, catch_.body_loc)
                     .expect("unreachable");
                 p.visit_stmts(&mut _stmts, StmtsKind::None)
@@ -2131,7 +2131,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, finally.loc)
                 .expect("unreachable");
             {
-                let mut _stmts = stmts_to_list(p.arena, finally.stmts);
+                let mut _stmts = stmts_to_list(p.arena, &finally.stmts);
                 p.visit_stmts(&mut _stmts, StmtsKind::None)
                     .expect("unreachable");
                 finally.stmts = list_to_stmts(_stmts);
@@ -2163,7 +2163,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // Check("case", *c.Value, c.Value.Loc)
                     //                 p.warnAboutTypeofAndString(s.Test, *c.Value)
                 }
-                let mut _stmts = stmts_to_list(p.arena, cases[i].body);
+                let mut _stmts = stmts_to_list(p.arena, &cases[i].body);
                 p.visit_stmts(&mut _stmts, StmtsKind::None)
                     .expect("unreachable");
                 cases[i].body = list_to_stmts(_stmts);
@@ -2414,7 +2414,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             kind: StmtsKind::FnBody,
             ..Default::default()
         };
-        let mut prepend_list = stmts_to_list(p.arena, data.stmts);
+        let mut prepend_list = stmts_to_list(p.arena, &data.stmts);
 
         let old_enclosing_namespace_arg_ref = p.enclosing_namespace_arg_ref;
         p.enclosing_namespace_arg_ref = Some(data.arg);

@@ -360,7 +360,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     p,
                     st.import_record_index,
                     st.namespace_ref,
-                    st.items,
+                    &st.items,
                     Some(stmt.loc),
                     None,
                     stmt.loc,
@@ -404,7 +404,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     p,
                     st.import_record_index,
                     st.namespace_ref,
-                    bun_ast::StoreSlice::EMPTY,
+                    &bun_ast::StoreSlice::EMPTY,
                     Some(stmt.loc),
                     None,
                     stmt.loc,
@@ -439,7 +439,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     p,
                     st.import_record_index,
                     st.namespace_ref,
-                    st.items,
+                    &st.items,
                     st.star_name_loc,
                     st.default_name,
                     stmt.loc,
@@ -460,7 +460,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         p: &mut P<'p, TS, SCAN>,
         import_record_index: u32,
         namespace_ref: Ref,
-        items: js_ast::StoreSlice<js_ast::ClauseItem>,
+        items: &js_ast::StoreSlice<js_ast::ClauseItem>,
         star_name_loc: Option<bun_ast::Loc>,
         default_name: Option<js_ast::LocRef>,
         loc: bun_ast::Loc,
@@ -492,7 +492,10 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             let items_len = items.len();
             if items_len > 0 {
                 if stmt.items.is_empty() {
-                    stmt.items = items;
+                    // Aliases `items` with `stmt.items` — matches the
+                    // pre-existing behavior where `SExportFrom.items` was
+                    // shared with the surviving `SImport.items` via `Copy`.
+                    stmt.items = items.reborrow_shared();
                 } else {
                     // PORT NOTE: Zig `std.mem.concat` — allocate concatenated slice in arena.
                     // ClauseItem fields are all bitwise-copyable; copy raw to avoid Clone bound.
@@ -558,7 +561,9 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 import_record_index,
                 is_single_line: true,
                 default_name,
-                items,
+                // Aliases the caller's `items` StoreSlice. Matches the
+                // pre-existing behavior (silent `Copy` of the handle).
+                items: items.reborrow_shared(),
                 namespace_ref,
                 star_name_loc,
                 phase_defer: false,

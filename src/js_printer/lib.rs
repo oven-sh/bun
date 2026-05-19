@@ -1717,7 +1717,7 @@ pub mod __gated_printer {
     /// free fn (vs. calling `.slice()` inline) so the ~50 call sites stay
     /// `.zig`-diffable; the printer only ever reads these.
     #[inline(always)]
-    pub(crate) fn slice_of<'a, T>(p: js_ast::StoreSlice<T>) -> &'a [T] {
+    pub(crate) fn slice_of<'a, T>(p: &'a js_ast::StoreSlice<T>) -> &'a [T] {
         p.slice()
     }
     /// `EnumSet<T>` field-style mutation as used by the Zig (`flags.x = true`).
@@ -2172,7 +2172,7 @@ pub mod __gated_printer {
                 self.print_semicolon_after_statement();
             }
 
-            if slice_of(import.items).len() > 0 {
+            if slice_of(&import.items).len() > 0 {
                 self.print_semicolon_if_needed();
                 self.print_whitespacer(ws!(b"var {"));
 
@@ -2182,7 +2182,7 @@ pub mod __gated_printer {
                     self.print_indent();
                 }
 
-                for (i, item) in slice_of(import.items).iter().enumerate() {
+                for (i, item) in slice_of(&import.items).iter().enumerate() {
                     if i > 0 {
                         self.print(b",");
                         self.print_space();
@@ -2240,7 +2240,7 @@ pub mod __gated_printer {
                     let id = mi.str(name);
                     mi.add_var(id, analyze_transpiled_module::VarKind::Declared);
                 }
-                for item in slice_of(import.items).iter() {
+                for item in slice_of(&import.items).iter() {
                     let name = self.name_for_symbol(item.name.ref_.expect("infallible: ref bound"));
                     let mi = self.module_info().expect("infallible: module_info enabled");
                     let id = mi.str(name);
@@ -2296,7 +2296,7 @@ pub mod __gated_printer {
                     self.print_space();
                     self.print_block(
                         stmt.loc,
-                        slice_of(block.stmts),
+                        slice_of(&block.stmts),
                         Some(block.close_brace_loc),
                         tlmtlo,
                     );
@@ -2651,14 +2651,14 @@ pub mod __gated_printer {
         pub fn print_func(&mut self, func: &G::Fn) {
             self.print_fn_args(
                 Some(func.open_parens_loc),
-                slice_of(func.args),
+                slice_of(&func.args),
                 func.flags.contains(G::FnFlags::HasRestArg),
                 false,
             );
             self.print_space();
             self.print_block(
                 func.body.loc,
-                slice_of(func.body.stmts),
+                slice_of(&func.body.stmts),
                 None,
                 TopLevel::init(IsTopLevel::No),
             );
@@ -2678,7 +2678,7 @@ pub mod __gated_printer {
             self.print_newline();
             self.indent();
 
-            for item in slice_of(class.properties).iter() {
+            for item in slice_of(&class.properties).iter() {
                 self.print_semicolon_if_needed();
                 self.print_indent();
 
@@ -3895,7 +3895,7 @@ pub mod __gated_printer {
 
                     let mut was_printed = false;
                     if e.body.stmts.len() == 1 && e.prefer_expr {
-                        if let StmtData::SReturn(ret) = slice_of(e.body.stmts)[0].data {
+                        if let StmtData::SReturn(ret) = slice_of(&e.body.stmts)[0].data {
                             if let Some(val) = &ret.value {
                                 self.arrow_expr_start = self.writer.written();
                                 self.print_expr(*val, Level::Comma, ExprFlag::ForbidIn.into());
@@ -3907,7 +3907,7 @@ pub mod __gated_printer {
                     if !was_printed {
                         self.print_block(
                             e.body.loc,
-                            slice_of(e.body.stmts),
+                            slice_of(&e.body.stmts),
                             None,
                             TopLevel::init(IsTopLevel::No),
                         );
@@ -4995,7 +4995,7 @@ pub mod __gated_printer {
                 }
                 BindingData::BArray(b) => {
                     let b = b.get();
-                    let items = slice_of(b.items);
+                    let items = slice_of(&b.items);
                     self.print(b"[");
                     if !items.is_empty() {
                         if !b.is_single_line {
@@ -5039,7 +5039,7 @@ pub mod __gated_printer {
                 }
                 BindingData::BObject(b) => {
                     let b = b.get();
-                    let properties = slice_of(b.properties);
+                    let properties = slice_of(&b.properties);
                     self.print(b"{");
                     if !properties.is_empty() {
                         if !b.is_single_line {
@@ -5501,7 +5501,7 @@ pub mod __gated_printer {
                         self.print_space_before_identifier();
                         self.add_source_mapping(stmt.loc);
 
-                        match slice_of(s.items).len() {
+                        match slice_of(&s.items).len() {
                             0 => {}
                             // Object.assign(__export, {prop1, prop2, prop3});
                             _ => {
@@ -5512,8 +5512,8 @@ pub mod __gated_printer {
                                 self.print_space();
                                 self.print(b"{");
                                 self.print_space();
-                                let last = slice_of(s.items).len() - 1;
-                                for (i, item) in slice_of(s.items).iter().enumerate() {
+                                let last = slice_of(&s.items).len() - 1;
+                                for (i, item) in slice_of(&s.items).iter().enumerate() {
                                     // PORT NOTE: reshaped for borrowck — detach symbol from
                                     // `&self` via `BackRef` (arena-backed table outlives print).
                                     let symbol = BackRef::<Symbol>::new(
@@ -5569,7 +5569,7 @@ pub mod __gated_printer {
                     self.print(b"export");
                     self.print_space();
 
-                    if slice_of(s.items).is_empty() {
+                    if slice_of(&s.items).is_empty() {
                         self.print(b"{}");
                         self.print_semicolon_after_statement();
                         self.prev_stmt_tag = new_tag;
@@ -5580,7 +5580,7 @@ pub mod __gated_printer {
                     // in-place. `ClauseItem` isn't `Clone`, so build a Vec of arena borrows
                     // instead and swap-remove the borrows.
                     // TODO(port): lifetime — Zig mutates `s.items` in place; consider writing back.
-                    let mut array: Vec<&js_ast::ClauseItem> = slice_of(s.items).iter().collect();
+                    let mut array: Vec<&js_ast::ClauseItem> = slice_of(&s.items).iter().collect();
                     {
                         let mut i: usize = 0;
                         while i < array.len() {
@@ -5690,7 +5690,7 @@ pub mod __gated_printer {
                         self.print_space();
                     }
 
-                    for (i, item) in slice_of(s.items).iter().enumerate() {
+                    for (i, item) in slice_of(&s.items).iter().enumerate() {
                         if i != 0 {
                             self.print(b",");
                             if s.is_single_line {
@@ -5726,7 +5726,7 @@ pub mod __gated_printer {
                             mi.request_module(id, analyze_transpiled_module::FetchParameters::None);
                             id
                         };
-                        for item in slice_of(s.items).iter() {
+                        for item in slice_of(&s.items).iter() {
                             let name = self
                                 .name_for_symbol(item.name.ref_.expect("infallible: ref bound"));
                             let mi = self.module_info().expect("infallible: module_info enabled");
@@ -5776,7 +5776,7 @@ pub mod __gated_printer {
                             self.print_space();
                             self.print_block(
                                 s.body.loc,
-                                slice_of(block.stmts),
+                                slice_of(&block.stmts),
                                 Some(block.close_brace_loc),
                                 sub_var,
                             );
@@ -5878,7 +5878,7 @@ pub mod __gated_printer {
                     self.print(b"try");
                     self.print_space();
                     let sub_var_try = tlmtlo.sub_var();
-                    self.print_block(s.body_loc, slice_of(s.body), None, sub_var_try);
+                    self.print_block(s.body_loc, slice_of(&s.body), None, sub_var_try);
 
                     if let Some(catch_) = &s.catch_ {
                         self.print_space();
@@ -5891,14 +5891,14 @@ pub mod __gated_printer {
                             self.print(b")");
                         }
                         self.print_space();
-                        self.print_block(catch_.body_loc, slice_of(catch_.body), None, sub_var_try);
+                        self.print_block(catch_.body_loc, slice_of(&catch_.body), None, sub_var_try);
                     }
 
                     if let Some(finally) = &s.finally {
                         self.print_space();
                         self.print(b"finally");
                         self.print_space();
-                        self.print_block(finally.loc, slice_of(finally.stmts), None, sub_var_try);
+                        self.print_block(finally.loc, slice_of(&finally.stmts), None, sub_var_try);
                     }
 
                     self.print_newline();
@@ -5945,7 +5945,7 @@ pub mod __gated_printer {
                     self.print_newline();
                     self.indent();
 
-                    for c in slice_of(s.cases).iter() {
+                    for c in slice_of(&s.cases).iter() {
                         self.print_semicolon_if_needed();
                         self.print_indent();
 
@@ -5960,13 +5960,13 @@ pub mod __gated_printer {
                         self.print(b":");
 
                         let sub_var_case = tlmtlo.sub_var();
-                        let c_body = slice_of(c.body);
+                        let c_body = slice_of(&c.body);
                         if c_body.len() == 1 {
                             if let StmtData::SBlock(block) = &c_body[0].data {
                                 self.print_space();
                                 self.print_block(
                                     c_body[0].loc,
-                                    slice_of(block.stmts),
+                                    slice_of(&block.stmts),
                                     Some(block.close_brace_loc),
                                     sub_var_case,
                                 );
@@ -6019,7 +6019,7 @@ pub mod __gated_printer {
                             self.print_semicolon_after_statement();
                         }
 
-                        if !slice_of(s.items).is_empty() || s.default_name.is_some() {
+                        if !slice_of(&s.items).is_empty() || s.default_name.is_some() {
                             self.print_indent();
                             self.print_space_before_identifier();
                             self.print_whitespacer(ws!(b"var {"));
@@ -6032,22 +6032,22 @@ pub mod __gated_printer {
                                     default_name.ref_.expect("infallible: ref bound"),
                                 );
 
-                                if !slice_of(s.items).is_empty() {
+                                if !slice_of(&s.items).is_empty() {
                                     self.print_space();
                                     self.print(b",");
                                     self.print_space();
-                                    for (i, item) in slice_of(s.items).iter().enumerate() {
+                                    for (i, item) in slice_of(&s.items).iter().enumerate() {
                                         self.print_clause_item_as(item, ClauseItemAs::Var);
-                                        if i < slice_of(s.items).len() - 1 {
+                                        if i < slice_of(&s.items).len() - 1 {
                                             self.print(b",");
                                             self.print_space();
                                         }
                                     }
                                 }
                             } else {
-                                for (i, item) in slice_of(s.items).iter().enumerate() {
+                                for (i, item) in slice_of(&s.items).iter().enumerate() {
                                     self.print_clause_item_as(item, ClauseItemAs::Var);
-                                    if i < slice_of(s.items).len() - 1 {
+                                    if i < slice_of(&s.items).len() - 1 {
                                         self.print(b",");
                                         self.print_space();
                                     }
@@ -6107,7 +6107,7 @@ pub mod __gated_printer {
                         item_count += 1;
                     }
 
-                    if !slice_of(s.items).is_empty() {
+                    if !slice_of(&s.items).is_empty() {
                         if item_count > 0 {
                             self.print(b",");
                         }
@@ -6120,7 +6120,7 @@ pub mod __gated_printer {
                             self.print_space();
                         }
 
-                        for (i, item) in slice_of(s.items).iter().enumerate() {
+                        for (i, item) in slice_of(&s.items).iter().enumerate() {
                             if i != 0 {
                                 self.print(b",");
                                 if s.is_single_line {
@@ -6164,7 +6164,7 @@ pub mod __gated_printer {
                             || record
                                 .flags
                                 .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
-                            || slice_of(s.items).is_empty()
+                            || slice_of(&s.items).is_empty()
                         {
                             self.print(b" ");
                         }
@@ -6304,7 +6304,7 @@ pub mod __gated_printer {
                             mi.add_import_info_single(irp_id, default_id, local_name_id, false);
                         }
 
-                        for item in slice_of(s.items).iter() {
+                        for item in slice_of(&s.items).iter() {
                             let local_name = self
                                 .name_for_symbol(item.name.ref_.expect("infallible: ref bound"));
                             let mi = self.module_info().expect("infallible: module_info enabled");
@@ -6334,7 +6334,7 @@ pub mod __gated_printer {
                     self.print_indent();
                     self.print_block(
                         stmt.loc,
-                        slice_of(s.stmts),
+                        slice_of(&s.stmts),
                         Some(s.close_brace_loc),
                         tlmtlo.sub_var(),
                     );
@@ -6663,7 +6663,7 @@ pub mod __gated_printer {
                     self.print_space();
                     self.print_block(
                         s.yes.loc,
-                        slice_of(block.stmts),
+                        slice_of(&block.stmts),
                         Some(block.close_brace_loc),
                         tlmtlo,
                     );
@@ -6714,7 +6714,7 @@ pub mod __gated_printer {
                 match &no_block.data {
                     StmtData::SBlock(block) => {
                         self.print_space();
-                        self.print_block(no_block.loc, slice_of(block.stmts), None, tlmtlo);
+                        self.print_block(no_block.loc, slice_of(&block.stmts), None, tlmtlo);
                         self.print_newline();
                     }
                     StmtData::SIf(s_if) => {
@@ -6874,7 +6874,7 @@ pub mod __gated_printer {
                             let obj = obj.get();
                             self.print(b"{");
                             self.print_space();
-                            for prop in slice_of(obj.properties).iter() {
+                            for prop in slice_of(&obj.properties).iter() {
                                 if let BindingData::BIdentifier(ident) = &prop.value.data {
                                     let ident = ident.get();
                                     self.print_symbol(ident.r#ref);
@@ -7125,7 +7125,7 @@ pub mod __gated_printer {
 
             self.print_string_literal_utf8(source.path.pretty, false);
 
-            let stmts = slice_of(part.stmts);
+            let stmts = slice_of(&part.stmts);
             let func = &stmts[0]
                 .data
                 .s_expr()
@@ -7141,13 +7141,13 @@ pub mod __gated_printer {
                 // @branchHint(.unlikely)
                 self.print_fn_args(
                     Some(func.open_parens_loc),
-                    slice_of(func.args),
+                    slice_of(&func.args),
                     func.flags.contains(G::FnFlags::HasRestArg),
                     false,
                 );
                 self.print_space();
                 self.print(b"{\n");
-                let body_stmts = slice_of(func.body.stmts);
+                let body_stmts = slice_of(&func.body.stmts);
                 let lazy = body_stmts[0].data.s_lazy_export().unwrap();
                 if !matches!(*lazy, ExprData::EUndefined(_)) {
                     self.indent();
@@ -7183,7 +7183,7 @@ pub mod __gated_printer {
                         self.print_string_literal_utf8(&record.path.pretty, false);
 
                         let item_count = u32::from(import.default_name.is_some())
-                            + u32::try_from(slice_of(import.items).len()).expect("int cast");
+                            + u32::try_from(slice_of(&import.items).len()).expect("int cast");
                         let _ = self.fmt(format_args!(", {},", item_count));
                         if item_count == 0 {
                             // Add a comment explaining why the number could be zero
@@ -7196,7 +7196,7 @@ pub mod __gated_printer {
                             if import.default_name.is_some() {
                                 self.print(b" \"default\",");
                             }
-                            for item in slice_of(import.items).iter() {
+                            for item in slice_of(&import.items).iter() {
                                 self.print(b" ");
                                 self.print_string_literal_utf8(item.alias.slice(), false);
                                 self.print(b",");
@@ -7258,13 +7258,13 @@ pub mod __gated_printer {
                 }
                 self.print_fn_args(
                     Some(func.open_parens_loc),
-                    slice_of(func.args),
+                    slice_of(&func.args),
                     func.flags.contains(G::FnFlags::HasRestArg),
                     false,
                 );
                 self.print(b" => {\n");
                 self.indent();
-                self.print_block_body(slice_of(func.body.stmts), TopLevel::init(IsTopLevel::No));
+                self.print_block_body(slice_of(&func.body.stmts), TopLevel::init(IsTopLevel::No));
                 self.unindent();
                 self.print_indent();
                 self.print(b"}, ");
@@ -8184,7 +8184,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     }
 
     for part in tree.parts.iter() {
-        for stmt in slice_of(part.stmts).iter() {
+        for stmt in slice_of(&part.stmts).iter() {
             printer.print_stmt(*stmt, TopLevel::init(IsTopLevel::Yes))?;
             printer.writer.get_error()?;
             printer.print_semicolon_if_needed();
@@ -8423,7 +8423,7 @@ pub fn print_with_writer_and_platform<
         }
 
         for part in parts {
-            for stmt in slice_of(part.stmts).iter() {
+            for stmt in slice_of(&part.stmts).iter() {
                 if let Err(err) = printer.print_stmt(*stmt, TopLevel::init(IsTopLevel::Yes)) {
                     return PrintResult::Err(err);
                 }
@@ -8529,7 +8529,7 @@ pub fn print_common_js<
     printer.binary_expression_stack = Vec::new();
 
     for part in tree.parts.iter() {
-        for stmt in slice_of(part.stmts).iter() {
+        for stmt in slice_of(&part.stmts).iter() {
             printer.print_stmt(*stmt, TopLevel::init(IsTopLevel::Yes))?;
             printer.writer.get_error()?;
             printer.print_semicolon_if_needed();

@@ -287,8 +287,15 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         // SAFETY: see `parts` raw-pointer note above.
         && unsafe { (*parts)[namespace_export_part_index as usize].is_live }
     {
-        let ns_part_stmts: &[Stmt] =
-            unsafe { (*parts)[namespace_export_part_index as usize].stmts }.slice();
+        // SAFETY: arena-lifetime read borrow. `parts` is a raw pointer into
+        // an arena-owned `[Part]` slice (see `parts` note above); no other
+        // site holds a `slice_mut()` over the same `stmts` allocation in
+        // this function.
+        let ns_part_stmts: &[Stmt] = unsafe {
+            (*parts)[namespace_export_part_index as usize]
+                .stmts
+                .slice_unbound()
+        };
         if let Err(err) = convert_stmts_for_chunk(
             c,
             source_index as u32,

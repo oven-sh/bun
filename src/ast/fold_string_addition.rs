@@ -195,7 +195,10 @@ pub fn fold_string_addition(
                             return Some(Expr::init(
                                 E::Template {
                                     tag: None,
-                                    parts: right.parts,
+                                    // Aliases `right.parts` (not `Copy`) — the
+                                    // source template is dropped right after,
+                                    // so no two callers hold `slice_mut()`.
+                                    parts: right.parts.reborrow_shared(),
                                     head: e::TemplateContents::Cooked(join_strings(
                                         left.get(),
                                         right.head.cooked(),
@@ -283,7 +286,8 @@ pub fn fold_string_addition(
                                     left.parts_mut()[i].tail = new_tail;
 
                                     let new_parts = if right.parts().is_empty() {
-                                        left.parts
+                                        // Reuse the same arena-backed slice.
+                                        left.parts.reborrow_shared()
                                     } else {
                                         // std.mem.concat → bump-allocated concat
                                         concat_parts(bump, left.parts(), right.parts())
@@ -298,7 +302,10 @@ pub fn fold_string_addition(
                                     matches!(r.data, Data::EInlinedEnum(_)),
                                 );
                                 left.head = e::TemplateContents::Cooked(new_head);
-                                left.parts = right.parts;
+                                // `right` is a `StoreRef<Template>`; the source
+                                // template is abandoned here, so aliasing the
+                                // slice is safe.
+                                left.parts = right.parts.reborrow_shared();
                                 return Some(lhs);
                             }
                         }

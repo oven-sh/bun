@@ -589,8 +589,8 @@ impl SideEffects {
         }
     }
 
-    fn should_keep_stmts_in_dead_control_flow(stmts: bun_ast::StmtNodeList, bump: &Bump) -> bool {
-        for child in stmts.slice() {
+    fn should_keep_stmts_in_dead_control_flow(stmts: &[Stmt], bump: &Bump) -> bool {
+        for child in stmts {
             if Self::should_keep_stmt_in_dead_control_flow(*child, bump) {
                 return true;
             }
@@ -664,20 +664,23 @@ impl SideEffects {
             }
 
             StmtData::SBlock(block) => {
-                Self::should_keep_stmts_in_dead_control_flow(block.stmts, bump)
+                Self::should_keep_stmts_in_dead_control_flow(block.stmts.slice(), bump)
             }
 
             StmtData::STry(try_stmt) => {
-                if Self::should_keep_stmts_in_dead_control_flow(try_stmt.body, bump) {
+                if Self::should_keep_stmts_in_dead_control_flow(try_stmt.body.slice(), bump) {
                     return true;
                 }
                 if let Some(catch_stmt) = &try_stmt.catch_ {
-                    if Self::should_keep_stmts_in_dead_control_flow(catch_stmt.body, bump) {
+                    if Self::should_keep_stmts_in_dead_control_flow(catch_stmt.body.slice(), bump) {
                         return true;
                     }
                 }
                 if let Some(finally_stmt) = &try_stmt.finally {
-                    if Self::should_keep_stmts_in_dead_control_flow(finally_stmt.stmts, bump) {
+                    if Self::should_keep_stmts_in_dead_control_flow(
+                        finally_stmt.stmts.slice(),
+                        bump,
+                    ) {
                         return true;
                     }
                 }

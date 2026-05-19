@@ -123,7 +123,9 @@ fn class_copy(c: &G::Class) -> G::Class {
         extends: c.extends,
         body_loc: c.body_loc,
         close_brace_loc: c.close_brace_loc,
-        properties: c.properties,
+        // Shares `properties` with the source class (pre-existing behavior).
+        // Callers must not call `slice_mut()` on both handles concurrently.
+        properties: c.properties.reborrow_shared(),
         has_decorators: c.has_decorators,
         should_lower_standard_decorators: c.should_lower_standard_decorators,
     }

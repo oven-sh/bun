@@ -127,7 +127,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let body_loc = func.body.loc;
-        let body_stmts: &'a [Stmt] = func.body.stmts.slice();
+        // SAFETY: arena-lifetime read borrow. `func` is owned here; the old
+        // `body.stmts` allocation is not mutated elsewhere (visit passes on
+        // descendants operate on freshly-built vecs), and `func.body =` below
+        // abandons but does not free the old slice (arena-backed).
+        let body_stmts: &'a [Stmt] = unsafe { func.body.stmts.slice_unbound() };
 
         self.push_scope_for_visit_pass(ScopeKind::FunctionArgs, open_parens_loc)
             .expect("unreachable");
@@ -743,8 +747,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut new_stmt = stmt;
         self.push_scope_for_visit_pass(ScopeKind::Block, stmt.loc)
             .expect("unreachable");
+        // SAFETY: arena-lifetime read borrow. The block's stmts live in the
+        // parser arena (outlives `'a`); we only read them before building a
+        // fresh vec, and no `slice_mut()` alias is taken on the same slice.
         let block_stmts: &[Stmt] = match stmt.data {
-            StmtData::SBlock(b) => b.stmts.slice(),
+            StmtData::SBlock(b) => unsafe { b.stmts.slice_unbound() },
             _ => unreachable!(),
         };
         let mut stmts = BumpVec::with_capacity_in(block_stmts.len(), self.arena);
@@ -1042,7 +1049,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // per-property `&mut [Property]` borrow has been released. Moving the
                     // `Property` structs below does not invalidate this pointer (it points to
                     // a separate Store allocation, not into the Property slice itself).
-                    let func_args: bun_ast::StoreSlice<G::Arg> = constructor.func.args;
+                    // SAFETY: arena-lifetime read borrow. `func.args` is not
+                    // mutated between this borrow and its last use below.
+                    let func_args: &[G::Arg] =
+                        unsafe { constructor.func.args.slice_unbound() };
                     let mut to_add: usize = 0;
                     for arg in func_args.iter() {
                         if arg.is_typescript_ctor_field
@@ -1055,7 +1065,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // if this is an expression, we can move statements after super() because there will be 0 decorators
                     let mut super_index: Option<usize> = None;
                     if class.extends.is_some() {
-                        let body_stmts = constructor.func.body.stmts.slice();
+                        // SAFETY: arena-lifetime read borrow, used only within
+                        // this block before `func.body.stmts` is touched below.
+                        let body_stmts: &[Stmt] =
+                            unsafe { constructor.func.body.stmts.slice_unbound() };
                         for (index, stmt) in body_stmts.iter().enumerate() {
                             let is_super = match &stmt.data {
                                 StmtData::SExpr(se) => match &se.value.data {
@@ -1081,7 +1094,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             BumpVec::<Stmt>::with_capacity_in(old_body.len() + to_add, self.arena);
                         stmts.extend_from_slice(old_body);
 
-                        let old_props: bun_ast::StoreSlice<G::Property> = class.properties;
+                        // Take ownership of `class.properties` so the rewrite
+                        // below doesn't contend with the `&` borrow on `class`.
+                        let old_props: bun_ast::StoreSlice<G::Property> =
+                            core::mem::take(&mut class.properties);
                         let old_props_len = old_props.len();
                         let mut class_body = BumpVec::<G::Property>::with_capacity_in(
                             old_props_len + to_add,

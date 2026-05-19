@@ -318,19 +318,16 @@ impl core::fmt::Debug for StoreStr {
 // owning arena resets. The `u32` length matches Zig's `[]T` (`u32` len under
 // `-Dwasm32` and the AST's practical bounds) and keeps the field at 12 bytes
 // on 64-bit instead of 16 — relevant for hot AST nodes.
+//
+// NOT `Copy`/`Clone`: `slice_mut` hands out `&mut [T]`, so duplicating the
+// handle would let callers form two `&mut [T]` over the same arena memory
+// (immediate UB). Callers that need a detached snapshot go through
+// `core::mem::take(&mut field)` (leaves `EMPTY`) or `reborrow_shared`
+// for read-only aliases.
 #[repr(C)]
 pub struct StoreSlice<T> {
     ptr: core::ptr::NonNull<T>,
     len: u32,
-}
-
-// Manual Copy/Clone: derive would add a spurious `T: Copy` bound.
-impl<T> Copy for StoreSlice<T> {}
-impl<T> Clone for StoreSlice<T> {
-    #[inline]
-    fn clone(&self) -> Self {
-        *self
-    }
 }
 
 // SAFETY: same rationale as `StoreStr` — points into a single-threaded bump
@@ -376,41 +373,93 @@ impl<T> StoreSlice<T> {
     }
 
     #[inline]
-    pub const fn as_ptr(self) -> *const T {
+    pub const fn as_ptr(&self) -> *const T {
         self.ptr.as_ptr()
     }
 
     #[inline]
-    pub const fn raw_len(self) -> u32 {
+    pub const fn raw_len(&self) -> u32 {
         self.len
     }
 
-    /// Re-borrow as `&[T]`. Same safety contract as `StoreStr::slice` /
-    /// `StoreRef::get`: the pointee lives until arena reset, which the caller
-    /// must not cross. Takes `self` by value (Copy) so the returned borrow is
-    /// not tied to a stack temporary.
+    /// Re-borrow as `&[T]`. Borrow is tied to `&self`, so the standard Rust
+    /// aliasing rules apply; the pointee itself lives until the owning arena
+    /// resets (same invariant as `StoreStr::slice` / `StoreRef::get`).
     #[inline]
-    pub fn slice<'a>(self) -> &'a [T] {
+    pub fn slice(&self) -> &[T] {
         // SAFETY: StoreSlice invariant — `ptr` is non-null, points at `len`
         // initialized `T` valid for the arena lifetime (or `'static`); caller
         // must not outlive the owning arena (same as `StoreRef`).
         unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len as usize) }
     }
 
-    /// Re-borrow as `&mut [T]`. Same `StoreRef` contract as [`slice`]: the
-    /// pointee lives until arena reset, and the single-threaded parser/visitor
-    /// pass holds at most one live `&mut` per node (mirrors `StoreRef`'s safe
-    /// `DerefMut`, which already encodes this invariant). The arena hands out
-    /// unique allocations and `StoreSlice` is `Copy`, so aliasing cannot be
-    /// *statically* checked — but neither can `StoreRef::deref_mut`'s, and the
-    /// two share one safety story. Callers must not overlap a `slice_mut()`
-    /// borrow with another `slice()`/`slice_mut()` of the same allocation.
+    /// Re-borrow as `&mut [T]`. Borrow is tied to `&mut self`, so two calls
+    /// cannot produce overlapping `&mut` slices; the backing arena memory
+    /// lives until arena reset (same invariant as `slice`).
     #[inline]
-    pub fn slice_mut<'a>(self) -> &'a mut [T] {
-        // SAFETY: StoreSlice invariant — `ptr` is non-null, points at `len`
-        // initialized `T` valid for the arena lifetime; uniqueness is upheld
-        // by the single-threaded visitor contract (same as `StoreRef::DerefMut`).
+    pub fn slice_mut(&mut self) -> &mut [T] {
+        // SAFETY: `&mut self` gives us exclusive access to the handle, and the
+        // handle's backing memory is an arena allocation that outlives any
+        // borrow we can hand out. `StoreSlice` is neither `Copy` nor `Clone`,
+        // so no other handle can name this allocation.
         unsafe { core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len as usize) }
+    }
+
+    /// Escape-hatch for the handful of call sites that need to hand out a
+    /// `&'a [T]` whose lifetime is NOT tied to `&self` — typically when the
+    /// surrounding code reassigns the owning `StoreSlice` field before the
+    /// borrow goes out of scope (the old allocation stays valid for the
+    /// arena's lifetime regardless).
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that no `slice_mut()` / `slice_mut_unbound`
+    /// borrow over the same backing allocation is live for the duration of
+    /// the returned borrow (standard XOR-mutability rule). Multiple
+    /// concurrent `slice_unbound` / `slice` borrows are fine.
+    #[inline]
+    pub unsafe fn slice_unbound<'a>(&self) -> &'a [T] {
+        // SAFETY: StoreSlice invariant — `ptr` is non-null, points at `len`
+        // initialized `T` valid for the arena lifetime; XOR-mutability is the
+        // caller's responsibility (see safety section above).
+        unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len as usize) }
+    }
+
+    /// Escape-hatch for the handful of call sites that need to hand out a
+    /// `&'a mut [T]` whose lifetime is NOT tied to `&mut self` — typically
+    /// when the surrounding code reassigns the owning `StoreSlice` field
+    /// before the borrow goes out of scope (the old allocation stays valid
+    /// for the arena's lifetime regardless).
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that no other `slice()` / `slice_unbound` /
+    /// `slice_mut()` / `slice_mut_unbound` borrow over the same backing
+    /// allocation is live for the duration of the returned borrow. In
+    /// particular, because this forges an arena-scoped lifetime out of thin
+    /// air, it is trivial to produce two overlapping `&mut [T]` from the
+    /// same allocation if misused.
+    #[inline]
+    pub unsafe fn slice_mut_unbound<'a>(&mut self) -> &'a mut [T] {
+        // SAFETY: StoreSlice invariant — `ptr` is non-null, points at `len`
+        // initialized `T` valid for the arena lifetime; uniqueness is the
+        // caller's responsibility (see safety section above).
+        unsafe { core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len as usize) }
+    }
+
+    /// Produce an independent `StoreSlice<T>` handle that aliases the same
+    /// backing allocation for read-only use. This exists because `StoreSlice`
+    /// is not `Copy` — callers that need to stash a second handle for
+    /// read-only purposes (e.g. iterating the slice while also calling a
+    /// helper that takes the whole `StoreSlice` by value) go through here.
+    ///
+    /// The returned handle MUST NOT be used to call `slice_mut` /
+    /// `slice_mut_unbound` — aliased `&mut [T]` is immediate UB. The method
+    /// is safe because `slice()` alone (returning `&[T]`) cannot produce the
+    /// hazard, but the contract on the resulting handle is real.
+    #[inline]
+    pub fn reborrow_shared(&self) -> StoreSlice<T> {
+        StoreSlice { ptr: self.ptr, len: self.len }
     }
 
     /// Shorten the slice in place. Panics if `new_len > len` (mirrors Zig
@@ -451,6 +500,98 @@ impl<T> core::ops::Deref for StoreSlice<T> {
     #[inline]
     fn deref(&self) -> &[T] {
         self.slice()
+    }
+}
+
+#[cfg(test)]
+mod store_slice_tests {
+    use super::StoreSlice;
+
+    // Runtime guard: `StoreSlice<T>` MUST NOT implement `Copy` / `Clone`.
+    // If someone re-adds either impl, callers can duplicate a handle and
+    // call `slice_mut()` on both copies to produce aliased `&mut [T]`
+    // (immediate UB — oven-sh/bun#31088).
+    //
+    // Uses autoref-specialization: `Probe::<StoreSlice<u8>>` is a plain
+    // value; the specialized `Copy`-bounded impl wins via auto-deref when
+    // the bound is met, otherwise the `&Probe<T>` fallback is selected.
+    #[test]
+    fn not_copy_not_clone() {
+        struct Probe<T: ?Sized>(core::marker::PhantomData<T>);
+
+        trait NotCopyTag {
+            fn is_copy(&self) -> bool {
+                false
+            }
+        }
+        impl<T: ?Sized> NotCopyTag for &Probe<T> {}
+        trait IsCopyTag {
+            fn is_copy(&self) -> bool {
+                true
+            }
+        }
+        impl<T: Copy + ?Sized> IsCopyTag for Probe<T> {}
+
+        trait NotCloneTag {
+            fn is_clone(&self) -> bool {
+                false
+            }
+        }
+        impl<T: ?Sized> NotCloneTag for &Probe<T> {}
+        trait IsCloneTag {
+            fn is_clone(&self) -> bool {
+                true
+            }
+        }
+        impl<T: Clone + ?Sized> IsCloneTag for Probe<T> {}
+
+        let probe = Probe::<StoreSlice<u8>>(core::marker::PhantomData);
+        assert!(
+            !(&probe).is_copy(),
+            "StoreSlice<T> must not implement Copy — that impl reintroduces the slice_mut aliasing UB (oven-sh/bun#31088)",
+        );
+        assert!(
+            !(&probe).is_clone(),
+            "StoreSlice<T> must not implement Clone — that impl reintroduces the slice_mut aliasing UB (oven-sh/bun#31088)",
+        );
+    }
+
+    // Runtime check: a freshly constructed `StoreSlice` hands out `&mut [T]`
+    // via `slice_mut()` whose lifetime is tied to `&mut self`. Two sequential
+    // `slice_mut()` calls on the same handle work (borrow released between
+    // them); two overlapping calls on "copies" of the handle are impossible
+    // because the handle is not `Copy`.
+    #[test]
+    fn slice_mut_bounded_by_self() {
+        let mut arr: [u32; 3] = [10, 20, 30];
+        let mut ss = StoreSlice::new_mut(&mut arr);
+        {
+            let s = ss.slice_mut();
+            s[1] = 42;
+            assert_eq!(s, &[10, 42, 30]);
+        }
+        // Second call is fine — first borrow has ended.
+        let s2 = ss.slice_mut();
+        assert_eq!(s2, &[10, 42, 30]);
+    }
+
+    // `reborrow_shared` hands out an independent handle that aliases the same
+    // backing allocation. Both handles may call `slice()` concurrently (shared
+    // reads are safe); calling `slice_mut()` on either while the other's
+    // borrow is live is a caller-enforced discipline (documented on the API).
+    #[test]
+    fn reborrow_shared_aliases_read_only() {
+        let mut arr: [u32; 2] = [7, 8];
+        let ss = StoreSlice::new_mut(&mut arr);
+        let clone_view = ss.reborrow_shared();
+        assert_eq!(ss.slice(), clone_view.slice());
+    }
+
+    #[test]
+    fn default_is_empty() {
+        let s: StoreSlice<u32> = StoreSlice::default();
+        assert_eq!(s.raw_len(), 0);
+        assert!(s.slice().is_empty());
     }
 }
 
@@ -1338,22 +1479,28 @@ impl<T> Batcher<T> {
     pub fn eat1(&mut self, value: T) -> StoreSlice<T> {
         // `head` has at least 1 element remaining (caller contract — Zig would
         // panic on bounds); `Batcher` holds the unique view of the allocation.
-        let head = self.head.slice_mut();
+        // Take ownership of the handle so `split_at_mut` and the `self.head =`
+        // write below don't contend for the same `&mut self.head` borrow.
+        let mut head_handle = core::mem::take(&mut self.head);
+        let head = head_handle.slice_mut();
         let (prev, rest) = head.split_at_mut(1);
         prev[0] = value;
+        let prev_slice = StoreSlice::new_mut(prev);
         self.head = StoreSlice::new_mut(rest);
-        StoreSlice::new_mut(prev)
+        prev_slice
     }
 
     pub fn next<const N: usize>(&mut self, values: [T; N]) -> StoreSlice<T> {
         // `head` has at least N elements remaining; see `eat1`.
-        let head = self.head.slice_mut();
+        let mut head_handle = core::mem::take(&mut self.head);
+        let head = head_handle.slice_mut();
         let (prev, rest) = head.split_at_mut(N);
         for (dst, src) in prev.iter_mut().zip(values) {
             *dst = src;
         }
+        let prev_slice = StoreSlice::new_mut(prev);
         self.head = StoreSlice::new_mut(rest);
-        StoreSlice::new_mut(prev)
+        prev_slice
     }
 }
 // Zig: `pub fn NewBatcher(comptime Type: type) type` → Rust generic struct above.

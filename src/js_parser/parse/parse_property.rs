@@ -139,7 +139,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // E::Function payload after boxing rather than copying `func`.
         let mut func = func;
         func.flags.insert(flags::Function::IsUniqueFormalParameters);
-        let args = func.args.slice();
+        // SAFETY: arena-lifetime read borrow. `func` is moved into
+        // `E::Function` below, but the args backing allocation lives in the
+        // parser arena for `'a` (independent of `func`'s stack slot); the
+        // rest of this function only reads `args` and does not cause any
+        // `slice_mut()` alias.
+        let args: &[G::Arg] = unsafe { func.args.slice_unbound() };
         let value = p.new_expr(E::Function { func }, loc);
 
         // Enforce argument rules for accessors

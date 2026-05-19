@@ -1448,11 +1448,13 @@ impl<'a> Parser<'a> {
                     //    module.exports = require('./foo.js');
                     //
                     // An example is react-dom/index.js, which does a DCE check.
-                    // Snapshot the StoreSlice (Copy) so the `&mut` borrow over the
-                    // arena slice doesn't conflict with the `part.stmts = …` rewrite
-                    // below.
-                    let part_stmts_ss = part.stmts;
-                    let part_stmts: &mut [Stmt] = part_stmts_ss.slice_mut();
+                    // SAFETY: arena-lifetime `&mut [Stmt]` borrow. The `part.stmts =`
+                    // rewrite below abandons (but does not free) the allocation
+                    // the returned slice points at, so the borrow stays valid.
+                    // Nothing else holds a `StoreSlice` over this memory — `part`
+                    // is the unique owner and this loop iteration is single-threaded.
+                    let part_stmts: &mut [Stmt] =
+                        unsafe { part.stmts.slice_mut_unbound() };
                     if part_stmts.len() > 1 {
                         break;
                     }

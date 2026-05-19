@@ -2513,11 +2513,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // PERF(port): was arena dupe — profile if it shows up on a hot path
         let dupe: &'a mut [Stmt] = p.arena.alloc_slice_copy(e_.body.stmts.slice());
 
+        // Capture the scalar flag first so the `&mut [G::Arg]` borrow below
+        // doesn't block the `&e_.has_rest_arg` read at the `visit_args` call.
+        let has_rest_arg = e_.has_rest_arg;
         let args_mut: &mut [G::Arg] = e_.args.slice_mut();
         p.visit_args(
             args_mut,
             VisitArgsOpts {
-                has_rest_arg: e_.has_rest_arg,
+                has_rest_arg,
                 body: dupe,
                 is_unique_formal_parameters: true,
             },

@@ -2500,7 +2500,11 @@ impl Data {
                     args: crate::StoreSlice::new(args.into_bump_slice()),
                     body: G::FnBody {
                         loc: el.body.loc,
-                        stmts: el.body.stmts,
+                        // Shares `stmts` with the source arrow. Matches the
+                        // pre-existing behavior (Zig `deep_clone` left `stmts`
+                        // aliased). Neither clone may call `slice_mut()` on
+                        // `body.stmts` while the other is live.
+                        stmts: el.body.stmts.reborrow_shared(),
                     },
                     is_async: el.is_async,
                     has_rest_arg: el.has_rest_arg,
@@ -2547,7 +2551,11 @@ impl Data {
                         Some(tag) => Some(tag.deep_clone_no_detach(bump)?),
                         None => None,
                     },
-                    parts: el.parts,
+                    // Shares `parts` with the source template. Matches the
+                    // pre-existing behavior (Zig `deep_clone` left `parts`
+                    // aliased). Neither clone may call `slice_mut()` on
+                    // `parts` while the other is live.
+                    parts: el.parts.reborrow_shared(),
                     // `TemplateContents` is POD-shaped; Zig copied `el.head` by
                     // value. `shallow_clone` is the safe field-wise copy.
                     head: el.head.shallow_clone(),

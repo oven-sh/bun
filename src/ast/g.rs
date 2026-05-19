@@ -346,7 +346,10 @@ impl Fn {
             args: StoreSlice::new_mut(args),
             body: FnBody {
                 loc: self.body.loc,
-                stmts: self.body.stmts,
+                // Shares `stmts` with `self` (same as Zig's deep_clone). The
+                // two handles must not both call `slice_mut()` — documented
+                // via `reborrow_shared` rather than a silent `Copy`.
+                stmts: self.body.stmts.reborrow_shared(),
             },
             arguments_ref: self.arguments_ref,
             flags: self.flags,

@@ -6912,7 +6912,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let mut static_members = BumpVec::<Stmt>::new_in(self.arena);
                 let mut class_properties = BumpVec::<G::Property>::new_in(self.arena);
 
-                for prop in s_class.class.properties.slice_mut().iter_mut() {
+                // SAFETY: arena-lifetime `&mut [Property]` borrow. `s_class`
+                // is a `StoreRef` into the parser arena; this loop mutates
+                // per-property fields and separately reads/writes unrelated
+                // `s_class.class.*` fields (ts_decorators, class_name). The
+                // `Property` array and the `S::Class` struct live in disjoint
+                // arena allocations, so those accesses cannot alias this
+                // borrow. No other code reaches `class.properties` while the
+                // loop is running (single-threaded visitor).
+                for prop in
+                    unsafe { s_class.class.properties.slice_mut_unbound().iter_mut() }
+                {
                     // merge parameter decorators with method decorators
                     if prop.flags.contains(Flags::Property::IsMethod) {
                         if let Some(prop_value) = prop.value {
@@ -7124,7 +7134,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // PORT NOTE: Zig `Property.List.fromList(class.properties)` re-wraps the
                         // freshly-installed slice and inserts at index 0. We rebuild instead
                         // (Property is not Clone in Rust).
-                        let old_props: bun_ast::StoreSlice<G::Property> = s_class.class.properties;
+                        // Take ownership so the `s_class.class.properties =` rewrite
+                        // below doesn't contend with `old_props.slice_mut()`.
+                        let mut old_props: bun_ast::StoreSlice<G::Property> =
+                            core::mem::take(&mut s_class.class.properties);
                         let old_len = old_props.len();
                         let mut properties =
                             BumpVec::<G::Property>::with_capacity_in(old_len + 1, self.arena);
@@ -8429,7 +8442,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 count + 2
             });
 
-            for part in head_parts.iter() {
+            for part in head_parts.iter_mut() {
                 // Bake does not care about 'import =', as it handles it on it's own
                 let _ = ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, true>(
                     self,
@@ -8440,10 +8453,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             // Re-run for the last part (Zig iterated all `parts.items` including last).
             {
-                let last_stmts = hmr_transform_ctx.last_part.stmts;
+                // SAFETY: arena-lifetime `&mut [Stmt]` borrow. The scanner
+                // reads+mutates only `last_part.stmts` contents; the
+                // `&mut hmr_transform_ctx` passed alongside touches other
+                // `hmr_transform_ctx` fields, not the stmts slice backing.
+                let last_stmts = unsafe {
+                    hmr_transform_ctx.last_part.stmts.slice_mut_unbound()
+                };
                 let _ = ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, true>(
                     self,
-                    last_stmts.slice_mut(),
+                    last_stmts,
                     wrap_mode != WrapMode::None,
                     Some(&mut hmr_transform_ctx),
                 )?;

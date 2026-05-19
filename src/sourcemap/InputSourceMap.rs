@@ -206,9 +206,18 @@ fn find_source_mapping_url(source: &[u8]) -> Option<&[u8]> {
         return None;
     }
     let mut url = &last_line[NEEDLE.len()..];
-    // Trim trailing whitespace within the line (the final-line trim above
-    // already handled newlines, but intra-line `\r\n` style endings and
-    // stray spaces still need trimming).
+    // Trim whitespace on both sides within the line. Matches Zig's
+    // `bun.strings.trim(_, " \r\t")`; a leading space after `=` (e.g.
+    // `//# sourceMappingURL= data:...`) is spec-invalid but some
+    // toolchains emit it, and `parse_data_url` would fail on the
+    // leading space without this.
+    while let Some(&first) = url.first() {
+        if first == b' ' || first == b'\r' || first == b'\t' {
+            url = &url[1..];
+        } else {
+            break;
+        }
+    }
     while let Some(&last) = url.last() {
         if last == b' ' || last == b'\r' || last == b'\t' {
             url = &url[..url.len() - 1];

@@ -749,7 +749,7 @@ test("a version range with >=256 || comparators does not abort", async () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toBe("true");
   if (exitCode !== 0) expect(stderr).toBe("");
+  expect(stdout).toBe("true");
   expect(exitCode).toBe(0);
 }, 30_000);

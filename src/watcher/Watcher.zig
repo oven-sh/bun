@@ -21,7 +21,11 @@ fs: *bun.fs.FileSystem,
 allocator: std.mem.Allocator,
 watchloop_handle: ?std.Thread.Id = null,
 cwd: string,
-thread: std.Thread = undefined,
+/// Non-null once `start()` has been called. Set synchronously by the
+/// thread that calls `start()`, so `deinit()` can reliably tell whether a
+/// watcher thread was spawned without racing against the spawned thread
+/// writing `watchloop_handle`.
+thread: ?std.Thread = null,
 running: bool = true,
 close_descriptors: bool = false,
 
@@ -112,17 +116,40 @@ pub fn writeTraceEvents(this: *Watcher, events: []WatchEvent, changed_files: []?
 }
 
 pub fn start(this: *Watcher) !void {
-    bun.assert(this.watchloop_handle == null);
-    this.thread = try std.Thread.spawn(.{}, threadMain, .{this});
+    bun.assert(this.thread == null);
+    const thread = try std.Thread.spawn(.{}, threadMain, .{this});
+    // The thread self-destructs the Watcher and is never joined; detach
+    // now so its stack/handle are released when it exits. `this.thread`
+    // remains set purely as a "has start() been called" flag for deinit().
+    thread.detach();
+    this.thread = thread;
 }
 
 pub fn deinit(this: *Watcher, close_descriptors: bool) void {
-    if (this.watchloop_handle != null) {
+    if (this.thread != null) {
+        // A watcher thread has been spawned. It may not have begun running
+        // yet (on Windows especially, `watchloop_handle` can still be null
+        // here), so we must not free `this` synchronously — the thread owns
+        // cleanup once spawned. Previously this branch keyed off
+        // `watchloop_handle`, which is written by the spawned thread; that
+        // raced with `start()` and caused a use-after-free in `threadMain`
+        // when the dev server was torn down immediately after creation
+        // (e.g. listen failure). See #21017.
         this.mutex.lock();
-        defer this.mutex.unlock();
         this.close_descriptors = close_descriptors;
         this.running = false;
+        // Wake the thread out of its blocking wait so it can observe
+        // `running == false` and exit. Without this, the thread (and this
+        // Watcher) leak until the next filesystem event — which may never
+        // come if nothing is being watched yet.
+        this.platform.wake();
+        this.mutex.unlock();
+        // `this` may be freed by the watcher thread any time after this
+        // point — threadMain takes/releases the mutex as a barrier before
+        // `destroy(this)`, so it cannot proceed until the unlock above.
     } else {
+        // start() was never called; no thread can be using `this`.
+        this.platform.stop();
         if (close_descriptors and this.running) {
             const fds = this.watchlist.items(.fd);
             for (fds) |fd| {
@@ -130,6 +157,7 @@ pub fn deinit(this: *Watcher, close_descriptors: bool) void {
             }
         }
         this.watchlist.deinit(this.allocator);
+        this.allocator.free(this.watch_events);
         const allocator = this.allocator;
         allocator.destroy(this);
     }
@@ -237,13 +265,18 @@ fn threadMain(this: *Watcher) !void {
     switch (this.watchLoop()) {
         .err => |err| {
             this.watchloop_handle = null;
-            this.platform.stop();
             if (this.running) {
                 this.onError(this.ctx, err);
             }
         },
         .result => {},
     }
+
+    // Release platform resources (inotify fd, kqueue fd, IOCP handle).
+    // This must run on both the `.err` and `.result` arms: `deinit()`'s
+    // wake path exits via `.result` on Linux/macOS, and skipping stop()
+    // there would trade the former thread leak for an fd leak.
+    this.platform.stop();
 
     // deinit and close descriptors if needed
     if (this.close_descriptors) {
@@ -253,9 +286,17 @@ fn threadMain(this: *Watcher) !void {
         }
     }
     this.watchlist.deinit(this.allocator);
+    this.allocator.free(this.watch_events);
 
     // Close trace file if open
     WatcherTrace.deinit();
+
+    // Barrier: `deinit()` holds `this.mutex` across its wake() call.
+    // Without this lock/unlock pair the thread could free `this` while
+    // deinit() is still between wake() and its own mutex.unlock(),
+    // leaving that unlock to operate on freed memory.
+    this.mutex.lock();
+    this.mutex.unlock();
 
     const allocator = this.allocator;
     allocator.destroy(this);

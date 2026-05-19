@@ -781,6 +781,102 @@ pub const Loader = struct {
         Output.flush();
     }
 
+    /// Read the contents of an opened env file into an allocated buffer.
+    ///
+    /// The returned slice has one extra sentinel byte of capacity past
+    /// `amount_read` (set to zero) for easier debugging — callers should only
+    /// read up to `amount_read`. Returns `null` when the file is empty so the
+    /// caller can short-circuit without allocating.
+    ///
+    /// On POSIX, non-regular files (FIFOs, sockets, character devices) always
+    /// report `stat.size == 0`, so we fall back to a read-until-EOF loop
+    /// instead of trusting `stat.size`. See
+    /// https://github.com/oven-sh/bun/issues/30520.
+    fn readEnvFileContents(
+        this: *Loader,
+        fd: bun.FD,
+    ) !?struct { buf: []u8, amount_read: usize } {
+        if (comptime Environment.isWindows) {
+            // Windows has no mkfifo, so the `size == 0` short-circuit is fine
+            // here. Use `getFileSize` (which calls `GetFileSizeEx` directly)
+            // instead of fstat so we avoid the libuv-ownership transfer that
+            // `bun.sys.fstat` does on Windows — the caller still owns the
+            // handle and will close it.
+            const pos = switch (bun.sys.getFileSize(fd)) {
+                .result => |n| n,
+                .err => |err| return bun.errnoToZigErr(err.errno),
+            };
+            if (pos == 0) return null;
+
+            var buf = try this.allocator.alloc(u8, pos + 1);
+            errdefer this.allocator.free(buf);
+            const amount_read = switch (bun.sys.readAll(fd, buf[0..pos])) {
+                .result => |n| n,
+                .err => |err| return bun.errnoToZigErr(err.errno),
+            };
+            // Sentinel at `amount_read`, not `pos` — `pos` came from `getFileSize` so
+            // the file could have shrunk between stat and readAll.
+            buf[amount_read] = 0;
+            return .{ .buf = buf, .amount_read = amount_read };
+        }
+
+        const stat = switch (bun.sys.fstat(fd)) {
+            .result => |s| s,
+            .err => |err| return bun.errnoToZigErr(err.errno),
+        };
+
+        // open() on POSIX succeeds for directories in read-only mode, so a
+        // directory can reach us here. Short-circuit to an empty source to
+        // match the pre-PR silent-skip behavior (issue #3670) — otherwise
+        // the read loop below would hit `EISDIR` and print a noisy error
+        // under `--loglevel=info`.
+        if (bun.S.ISDIR(@intCast(stat.mode))) return null;
+
+        // Non-regular files (FIFOs, sockets, character devices) report
+        // `stat.size == 0` regardless of how much data they will actually
+        // produce. Read until EOF instead of preallocating from `stat.size`.
+        if (!bun.isRegularFile(stat.mode)) {
+            var list = std.array_list.Managed(u8).init(this.allocator);
+            errdefer list.deinit();
+
+            // Start with a modest buffer; the loop will grow it as needed.
+            try list.ensureTotalCapacity(4096);
+
+            while (true) {
+                // Reserve room for at least 4 KiB of additional read.
+                try list.ensureUnusedCapacity(4096);
+                const writable = list.unusedCapacitySlice();
+                const amt = switch (bun.sys.read(fd, writable)) {
+                    .result => |n| n,
+                    .err => |err| return bun.errnoToZigErr(err.errno),
+                };
+                if (amt == 0) break;
+                list.items.len += amt;
+            }
+
+            const amount_read = list.items.len;
+            // Append a null sentinel so callers can rely on `buf[amount_read] == 0`,
+            // matching the regular-file path below.
+            try list.append(0);
+            const owned = try list.toOwnedSlice();
+            return .{ .buf = owned, .amount_read = amount_read };
+        }
+
+        const size: usize = @intCast(@max(stat.size, 0));
+        if (size == 0) return null;
+
+        var buf = try this.allocator.alloc(u8, size + 1);
+        errdefer this.allocator.free(buf);
+        const amount_read = switch (bun.sys.readAll(fd, buf[0..size])) {
+            .result => |n| n,
+            .err => |err| return bun.errnoToZigErr(err.errno),
+        };
+        // Sentinel at `amount_read`, not `size` — `size` came from `stat.size` so
+        // the file could have shrunk between fstat and readAll.
+        buf[amount_read] = 0;
+        return .{ .buf = buf, .amount_read = amount_read };
+    }
+
     pub fn loadEnvFile(
         this: *Loader,
         dir: std.fs.Dir,
@@ -815,48 +911,29 @@ pub const Loader = struct {
         };
         defer file.close();
 
-        const end = brk: {
-            if (comptime Environment.isWindows) {
-                const pos = try file.getEndPos();
-                if (pos == 0) {
-                    @field(this, base) = logger.Source.initPathString(base, "");
-                    return;
-                }
+        const read_result = this.readEnvFileContents(bun.FD.fromStdFile(file)) catch |err| {
+            // OOM must propagate; any I/O error is best-effort — log and move on.
+            if (err == error.OutOfMemory) return err;
 
-                break :brk pos;
+            if (!this.quiet) {
+                Output.prettyErrorln("<r><red>{s}<r> error loading {s} file", .{ @errorName(err), base });
             }
 
-            const stat = try file.stat();
-
-            if (stat.size == 0 or stat.kind != .file) {
-                @field(this, base) = logger.Source.initPathString(base, "");
-                return;
-            }
-
-            break :brk stat.size;
+            // prevent retrying
+            @field(this, base) = logger.Source.initPathString(base, "");
+            return;
         };
 
-        var buf = try this.allocator.alloc(u8, end + 1);
-        errdefer this.allocator.free(buf);
-        const amount_read = file.readAll(buf[0..end]) catch |err| switch (err) {
-            error.Unexpected, error.SystemResources, error.OperationAborted, error.BrokenPipe, error.AccessDenied, error.IsDir => {
-                if (!this.quiet) {
-                    Output.prettyErrorln("<r><red>{s}<r> error loading {s} file", .{ @errorName(err), base });
-                }
-
-                // prevent retrying
-                @field(this, base) = logger.Source.initPathString(base, "");
-                return;
-            },
-            else => {
-                return err;
-            },
+        const read = read_result orelse {
+            @field(this, base) = logger.Source.initPathString(base, "");
+            return;
         };
+        // On the success path, `read.buf` is intentionally kept alive — it
+        // backs the `logger.Source` stored on the Loader. On OOM from the
+        // Parser below, free it.
+        errdefer this.allocator.free(read.buf);
 
-        // The null byte here is mostly for debugging purposes.
-        buf[end] = 0;
-
-        const source = &logger.Source.initPathString(base, buf[0..amount_read]);
+        const source = &logger.Source.initPathString(base, read.buf[0..read.amount_read]);
 
         try Parser.parse(
             source,
@@ -888,48 +965,29 @@ pub const Loader = struct {
         };
         defer file.close();
 
-        const end = brk: {
-            if (comptime Environment.isWindows) {
-                const pos = try file.getEndPos();
-                if (pos == 0) {
-                    try this.custom_files_loaded.put(file_path, logger.Source.initPathString(file_path, ""));
-                    return;
-                }
+        const read_result = this.readEnvFileContents(bun.FD.fromStdFile(file)) catch |err| {
+            // OOM must propagate; any I/O error is best-effort — log and move on.
+            if (err == error.OutOfMemory) return err;
 
-                break :brk pos;
+            if (!this.quiet) {
+                Output.prettyErrorln("<r><red>{s}<r> error loading {s} file", .{ @errorName(err), file_path });
             }
 
-            const stat = try file.stat();
-
-            if (stat.size == 0 or stat.kind != .file) {
-                try this.custom_files_loaded.put(file_path, logger.Source.initPathString(file_path, ""));
-                return;
-            }
-
-            break :brk stat.size;
+            // prevent retrying
+            try this.custom_files_loaded.put(file_path, logger.Source.initPathString(file_path, ""));
+            return;
         };
 
-        var buf = try this.allocator.alloc(u8, end + 1);
-        errdefer this.allocator.free(buf);
-        const amount_read = file.readAll(buf[0..end]) catch |err| switch (err) {
-            error.Unexpected, error.SystemResources, error.OperationAborted, error.BrokenPipe, error.AccessDenied, error.IsDir => {
-                if (!this.quiet) {
-                    Output.prettyErrorln("<r><red>{s}<r> error loading {s} file", .{ @errorName(err), file_path });
-                }
-
-                // prevent retrying
-                try this.custom_files_loaded.put(file_path, logger.Source.initPathString(file_path, ""));
-                return;
-            },
-            else => {
-                return err;
-            },
+        const read = read_result orelse {
+            try this.custom_files_loaded.put(file_path, logger.Source.initPathString(file_path, ""));
+            return;
         };
+        // On the success path, `read.buf` is intentionally kept alive — it
+        // backs the `logger.Source` stored in `custom_files_loaded`. On OOM
+        // from the Parser or the map insert below, free it.
+        errdefer this.allocator.free(read.buf);
 
-        // The null byte here is mostly for debugging purposes.
-        buf[end] = 0;
-
-        const source = &logger.Source.initPathString(file_path, buf[0..amount_read]);
+        const source = &logger.Source.initPathString(file_path, read.buf[0..read.amount_read]);
 
         try Parser.parse(
             source,

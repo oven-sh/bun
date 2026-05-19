@@ -70,6 +70,26 @@ describe("readline/promises.createInterface()", () => {
     assert.strictEqual(closed, true);
   });
 
+  // https://github.com/oven-sh/bun/issues/30939
+  // rl.question() with a pre-aborted signal used to throw "TypeError: |this|
+  // is not an object" because PromiseReject was captured as an unbound
+  // Promise.$reject reference. The rejection must carry the AbortError, not
+  // a TypeError masking it.
+  it("question() with pre-aborted signal rejects with AbortError", async () => {
+    const fi = new FakeInput();
+    // @ts-ignore
+    const rl = new readlinePromises.Interface({ input: fi, output: fi });
+    const ac = new AbortController();
+    ac.abort();
+    // @ts-ignore
+    const result = await rl.question("x", { signal: ac.signal }).then(
+      () => ({ ok: true }),
+      err => ({ name: err?.name, message: err?.message }),
+    );
+    rl.close();
+    expect(result).toEqual({ name: "AbortError", message: "The operation was aborted." });
+  });
+
   it("should support Symbol.dispose as alias for close()", () => {
     const fi = new FakeInput();
     let closed = false;

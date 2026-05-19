@@ -1562,7 +1562,16 @@ impl FetchTasklet {
         // atom strings live in a per-thread table — deref'ing them off-thread
         // trips the `wasRemoved` RELEASE_ASSERT in AtomStringImpl::remove().
         // Plain WTFStringImpl refcounts are atomic, so clone_utf8 is safe.
-        let status_text = BunString::clone_utf8(&http_response.status);
+        // Fast path: when the wire reason phrase matches the canonical text for
+        // this status code, store a StaticZigString (deref is a no-op, so still
+        // safe to drop off-thread) and skip the WTF allocation entirely.
+        let status_text = match crate::server::http_status_text::get(status_code)
+            .map(|t| &t[4..])
+            .filter(|canon| *canon == http_response.status)
+        {
+            Some(canon) => BunString::static_(canon),
+            None => BunString::clone_utf8(&http_response.status),
+        };
         let url = BunString::clone_utf8(metadata.url.slice());
         let redirected = self.result.redirected;
         Response::init(

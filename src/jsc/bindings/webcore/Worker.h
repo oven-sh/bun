@@ -88,10 +88,11 @@ struct WorkerOptions;
 /// The parent-thread placement of the Closing transition is load-bearing for
 /// the final-message window: a worker that does `parentPort.postMessage(x)`
 /// and then exits posts (1) drainToParent and (2) the close task to the parent
-/// in that order. Both are Closing-stores on the worker thread would let
-/// drainToParent's message event observe `wasTerminated()==true` (threadId→-1,
-/// silent ref/unref). Keeping Closing parent-thread-only preserves the
-/// pre-refactor FIFO guarantee. The inbox-close gate in enqueueToWorker is a
+/// in that order. Storing `Closing` on the worker thread between (1) and (2)
+/// would let drainToParent's message event observe `wasTerminated()==true`
+/// (threadId→-1, silent ref/unref). Keeping the store inside (2)'s lambda on
+/// the parent thread preserves the pre-refactor FIFO guarantee — (1) finishes
+/// first and sees Running. The inbox-close gate in enqueueToWorker is a
 /// separate `MessageInbox::closed` flag set under the inbox lock on the worker
 /// thread, so the ref-leak window on dispatchExit is still closed.
 ///

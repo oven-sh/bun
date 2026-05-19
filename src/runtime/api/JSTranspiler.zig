@@ -1032,19 +1032,20 @@ pub fn transformSync(
         break :brk writer;
     };
 
-    defer {
-        this.buffer_writer = buffer_writer;
-    }
-
     buffer_writer.reset();
     var printer = JSPrinter.BufferPrinter.init(buffer_writer);
+    // BufferPrinter.init copies buffer_writer by value into printer.ctx, and
+    // the underlying MutableString may reallocate while printing. Always
+    // persist printer.ctx (not the stale local snapshot) so that an error
+    // return from print() can't leave this.buffer_writer holding a freed
+    // pointer for the next transformSync call to reuse.
+    defer this.buffer_writer = printer.ctx;
+
     _ = this.transpiler.print(parse_result, @TypeOf(&printer), &printer, .esm_ascii) catch |err| {
         return globalThis.throwError(err, "Failed to print code");
     };
 
-    // TODO: benchmark if pooling this way is faster or moving is faster
-    buffer_writer = printer.ctx;
-    var out = jsc.ZigString.init(buffer_writer.written);
+    var out = jsc.ZigString.init(printer.ctx.written);
     out.setOutputEncoding();
 
     return out.toJS(globalThis);

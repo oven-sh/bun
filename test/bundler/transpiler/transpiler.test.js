@@ -3804,3 +3804,35 @@ const Layout = () => {
     expect(result).not.toContain("fn(");
   });
 });
+
+describe("malformed JSX followed by template literal (issue #30892)", () => {
+  // The JSX parser's `expected(>)` call logs a diagnostic but does not abort.
+  // When the recovery path then re-lexes the trailing backticks as a template
+  // literal, the span is too short and `raw_template_contents` used to
+  // underflow its slice and panic with
+  // "slice index starts at 5 but ends at 4".
+  it.each([
+    ["<y/``", "jsx"],
+    ["<y/`x`", "jsx"],
+    ["<y/```", "jsx"],
+    ["<y/`${1}`", "jsx"],
+    ["<y/``", "tsx"],
+  ])("surfaces the JSX parse diagnostic for %j (%s loader) instead of panicking", (code, loader) => {
+    const transpiler = new Bun.Transpiler({ loader });
+    let caught;
+    try {
+      transpiler.transformSync(code);
+    } catch (e) {
+      caught = e;
+    }
+    // Must throw (not panic, not return silently).
+    expect(caught).toBeDefined();
+    // The first diagnostic logged by JSX error recovery is the missing `>`
+    // after the self-closing `/`. Inputs that produce a single error throw
+    // that message directly; inputs that accumulate multiple errors throw
+    // a "Parse error" wrapper but still expose the JSX diagnostic in
+    // `err.errors[0].message`.
+    const firstMessage = caught.errors?.[0]?.message ?? caught.message;
+    expect(firstMessage).toBe('Expected ">" but found "`"');
+  });
+});

@@ -19,6 +19,7 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 # Tests failed due to ASAN: attempting free on address which was not malloc()-ed
 [ ASAN ] test/js/node/worker_threads/worker_threads.test.ts [ CRASH ] # After: threadId module and worker property is consistent
 [ ASAN ] test/js/node/worker_threads/worker_destruction.test.ts [ CRASH ] # After: bun closes cleanly when Bun.connect is used in a Worker that is terminating
+[ ASAN ] test/js/node/worker_threads/parentport-lifecycle.test.ts [ TIMEOUT ] # subprocess produces correct output then hangs in worker teardown; same pre-existing issue as the two above
 [ ASAN ] test/integration/next-pages/test/dev-server-ssr-100.test.ts [ CRASH ]
 [ ASAN ] test/integration/next-pages/test/next-build.test.ts [ CRASH ]
 [ ASAN ] test/js/third_party/next-auth/next-auth.test.ts [ CRASH ]

@@ -1661,7 +1661,13 @@ export class VerdaccioRegistry {
 
   async start(silent: boolean = true) {
     await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
-    this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", `${this.port}`], {
+    // Bind to 127.0.0.1 rather than the default. Without a host, verdaccio
+    // resolves the bare port through Node's default listen, which — on hosts
+    // whose `/etc/hosts` lists `localhost` as both IPv4 and IPv6 — ends up
+    // IPv6-only (`[::1]:<port>`). Bun's installer HTTP client then tries the
+    // IPv4 literal and gets ECONNREFUSED. Pin to the IPv4 loopback so the
+    // same `http://localhost:<port>/` URL is reachable from the client side.
+    this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", `127.0.0.1:${this.port}`], {
       silent,
       // Prefer using a release build of Bun since it's faster
       execPath: isCI ? bunExe() : Bun.which("bun") || bunExe(),

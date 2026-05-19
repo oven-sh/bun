@@ -647,9 +647,16 @@ pub const Poll = struct {
             inline else => |t| {
                 var this: *Pollable.Tag.Type(t) = @alignCast(@fieldParentPtr("io_poll", poll));
                 if (event.events & linux.EPOLL.ERR != 0) {
-                    const errno = bun.sys.getErrno(event.events);
-                    log("error() = {s}", .{@tagName(errno)});
-                    this.onIOError(bun.sys.Error.fromCode(errno, .epoll_ctl));
+                    var so_error: c_int = 0;
+                    var size: std.c.socklen_t = @sizeOf(c_int);
+                    const rc = std.c.getsockopt(this.opened_fd.cast(), std.posix.SOL.SOCKET, std.posix.SO.ERROR, @ptrCast(&so_error), &size);
+                    if (rc == 0 and so_error != 0) {
+                        log("error() = {d}", .{so_error});
+                        this.onIOError(bun.sys.Error.fromCodeInt(so_error, .epoll_ctl));
+                    } else {
+                        log("ready() (EPOLLERR)", .{});
+                        this.onReady();
+                    }
                 } else {
                     log("ready()", .{});
                     this.onReady();

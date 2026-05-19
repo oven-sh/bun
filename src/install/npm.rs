@@ -493,6 +493,9 @@ pub mod registry {
 
             registry.token = env.get_auto(&registry.token).into();
 
+            registry.certfile = env.get_auto(&registry.certfile).into();
+            registry.keyfile = env.get_auto(&registry.keyfile).into();
+
             // Copy `auth`/`user` into owned buffers now so the borrows of
             // `registry_url` / `output_buf_owned` are released before
             // `registry_url` is moved into `final_href` below.

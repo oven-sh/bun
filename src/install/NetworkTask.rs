@@ -833,7 +833,17 @@ impl NetworkTask {
         // the identical pattern in `for_manifest` above.
         let url = URL::parse(unsafe { bun_ptr::detach_lifetime(&self.url_buf) });
 
-        let tls_props = npm::registry::registry_tls_config(scope);
+        let tls_props = {
+            let registry = scope.url.url();
+            if url.protocol == registry.protocol
+                && url.hostname == registry.hostname
+                && url.get_port_auto() == registry.get_port_auto()
+            {
+                npm::registry::registry_tls_config(scope)
+            } else {
+                None
+            }
+        };
 
         let mut http_options = AsyncHTTPOptions {
             http_proxy: pm.http_proxy(&url),

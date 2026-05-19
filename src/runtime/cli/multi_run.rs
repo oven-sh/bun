@@ -775,7 +775,9 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
             script_names.push(pos.clone());
         }
     }
-    for pt in &ctx.passthrough {
+    // Strip leading `--` (npm-style separator) before collecting
+    // script names. See: https://github.com/oven-sh/bun/issues/13984
+    for pt in super::run_command::strip_leading_double_dash(&ctx.passthrough) {
         if !pt.is_empty() {
             script_names.push(pt.clone());
         }

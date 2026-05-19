@@ -816,8 +816,12 @@ pub fn run_scripts_with_filter(
                 continue;
             };
 
+            // Strip leading `--` (npm-style separator) before forwarding
+            // to the shell command. See: https://github.com/oven-sh/bun/issues/13984
+            let passthrough = super::run_command::strip_leading_double_dash(&ctx.passthrough);
+
             let mut copy_script_capacity: usize = original_content.len();
-            for part in &ctx.passthrough {
+            for part in passthrough {
                 copy_script_capacity += 1 + part.len();
             }
             // we leak this
@@ -826,7 +830,7 @@ pub fn run_scripts_with_filter(
             RunCommand::replace_package_manager_run(&mut copy_script, original_content)?;
             let len_command_only = copy_script.len();
 
-            for part in &ctx.passthrough {
+            for part in passthrough {
                 copy_script.push(b' ');
                 if crate::shell::needs_escape_utf8_ascii_latin1(part) {
                     crate::shell::escape_8bit::<true>(part, &mut copy_script)?;

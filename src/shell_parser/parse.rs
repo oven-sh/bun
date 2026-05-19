@@ -74,7 +74,7 @@ pub mod ast {
     // port uses `&'arena [T]` so the whole tree is `Clone`/`Copy`-able like
     // Zig — required by `Atom::merge` and `SmolList::init_with_slice`.
 
-    #[derive(Clone)]
+    #[derive(Copy, Clone)]
     pub struct Script<'arena> {
         pub stmts: &'arena [Stmt<'arena>],
     }
@@ -940,7 +940,7 @@ pub mod ast {
         }
     }
 
-    #[derive(Clone)]
+    #[derive(Copy, Clone)]
     pub struct CompoundAtom<'arena> {
         pub atoms: &'arena [SimpleAtom<'arena>],
         pub brace_expansion_hint: bool,

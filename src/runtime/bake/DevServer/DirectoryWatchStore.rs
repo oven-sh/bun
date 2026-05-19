@@ -304,7 +304,12 @@ impl DirectoryWatchStore {
         // dupe is needed. `dir_name` is kept separately for addDirectory/getHash.
 
         // SAFETY: `dev` is a valid *mut DevServer for the duration of this call.
-        let watch_index = match unsafe { &mut (*dev).bun_watcher }.add_directory::<false>(
+        // The watcher must own its copy of the path (`add_directory::<true>`):
+        // a `<false>` borrow of the local `dir_name` would dangle once this fn
+        // returns, and `free_entry`/`flush_evictions` only tear the `WatchItem`
+        // down after the map entry is gone — yet `on_file_update` reads
+        // `items_file_path()` by event index for directory items.
+        let watch_index = match unsafe { &mut (*dev).bun_watcher }.add_directory::<true>(
             fd,
             &dir_name,
             Watcher::get_hash(&dir_name),
@@ -317,7 +322,7 @@ impl DirectoryWatchStore {
         let fd = scopeguard::ScopeGuard::into_inner(fd_guard);
         let watches = scopeguard::ScopeGuard::into_inner(watches_guard);
 
-        // PORT NOTE: reshaped for borrowck — append dep before put_assume_capacity.
+        // PORT NOTE: reshaped for borrowck — append dep before writing the entry.
         let dep = {
             // TODO(port): borrowck — self.append_dep_assume_capacity needs
             // &mut self while `watches` guard held a borrow; reshaped above.

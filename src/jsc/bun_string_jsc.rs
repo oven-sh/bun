@@ -85,11 +85,21 @@ pub fn from_js(value: JSValue, global_object: &JSGlobalObject) -> JsResult<Strin
     let has_exception = scope.has_exception_or_false_when_assertions_are_disabled();
     if ok {
         debug_assert!(out.tag() != Tag::Dead);
-    } else {
-        debug_assert!(has_exception);
+        return Ok(out);
     }
 
-    if ok { Ok(out) } else { Err(JsError::Thrown) }
+    // BunString__fromJS returning false without an exception can happen when
+    // a Proxy trap's try/catch clears a pending exception during toString().
+    // Throw a TypeError so callers always see a proper JS error.
+    #[cfg(any(debug_assertions, bun_asan))]
+    if !has_exception {
+        return Err(
+            global_object.throw_type_error(format_args!("Failed to convert value to string"))
+        );
+    }
+    let _ = has_exception;
+
+    Err(JsError::Thrown)
 }
 
 #[track_caller]

@@ -246,7 +246,7 @@ impl Handlers {
             if mode == SocketMode::Server {
                 // SAFETY: server-mode caller contract — `this` addresses the
                 // `handlers` field of a `Listener` with whole-`Listener`
-                // provenance. R-2: `Listener.handlers` is `JsCell<Handlers>`
+                // provenance. `Listener.handlers` is `JsCell<Handlers>`
                 // (`#[repr(transparent)]`), so the field offset equals the
                 // inner `Handlers` address; `from_field_ptr!` arithmetic is
                 // unchanged. Deref as shared (`&*`) — celled fields below

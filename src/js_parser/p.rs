@@ -21,6 +21,7 @@ use bun_wyhash::Wyhash;
 use crate::defines::{Define, DefineData};
 use crate::lexer as js_lexer;
 use crate::parse::parse_entry::Options as ParserOptions;
+use crate::renamer;
 use crate::{
     ARGUMENTS_STR as arguments_str, DeferredArrowArgErrors, DeferredErrors,
     DeferredImportNamespace, EXPORTS_STRING_NAME as exports_string_name, ExprBindingTuple,
@@ -40,9 +41,6 @@ use bun_ast::{
     B, Binding, BindingNodeIndex, E, Expr, ExprNodeIndex, ExprNodeList, Flags, G, LocRef, S, Scope,
     Stmt, StmtNodeList, Symbol,
 };
-// Round-D/E modules: stub re-exports so type signatures referencing them compile.
-// Real bodies un-gate per-file later.
-use crate::renamer;
 
 // Type aliases matching the Zig `const List = std.ArrayListUnmanaged;` etc.
 // In this AST crate, lists are arena-backed.
@@ -151,11 +149,11 @@ impl<'a> ImportRecordList<'a> {
     /// (so the parser can be dropped without aliasing the records the linker /
     /// printer now own).
     ///
-    /// Round-G fix: previously `to_ast` reached through `items_mut()` and
-    /// wrapped the *live* BumpVec slice, leaving `self` non-empty; the BumpVec's
-    /// Drop then ran element destructors on records the returned `Ast` still
-    /// pointed at. This adapter restores Zig's move-and-zero semantics for both
-    /// the bump-backed and externally-borrowed variants.
+    /// Previously `to_ast` reached through `items_mut()` and wrapped the
+    /// *live* BumpVec slice, leaving `self` non-empty; the BumpVec's Drop
+    /// then ran element destructors on records the returned `Ast` still
+    /// pointed at. This adapter restores Zig's move-and-zero semantics for
+    /// both the bump-backed and externally-borrowed variants.
     pub fn move_to_baby_list(&mut self, arena: &'a Bump) -> Vec<ImportRecord> {
         match core::mem::replace(self, Self::Owned(BumpVec::new_in(arena))) {
             Self::Owned(v) => Vec::from_bump_vec(v),
@@ -195,8 +193,7 @@ pub type MacroCallCountType = u32;
 
 // ─── Re-exports of sibling-module impls (Zig: `pub const X = mod.X;`) ───
 // In Rust these are inherent methods on `P` defined in sibling files via separate
-// `impl<...> P<...>` blocks. Round-D/E: those files un-gate per-module; until
-// then their re-exports are gated so the *struct* + core helpers compile.
+// `impl<...> P<...>` blocks.
 pub use crate::parse::parse_skip_typescript::*;
 pub use crate::parse::*;
 pub use crate::visit::*;
@@ -888,9 +885,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Round-D: core helper methods on P. Un-gated in groups; heavy bodies that
-// touch unfinished E/S/ts surface or call into parse_*/visit_* sibling files
-// stay individually ` // blocked_on:` below.
+// Core helper methods on P. Heavy bodies that touch unfinished E/S/ts surface
+// or call into parse_*/visit_* sibling files stay individually
+// `// blocked_on:` below.
 // ═══════════════════════════════════════════════════════════════════════════
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub const ALLOW_MACROS: bool = true /* TODO(port): feature_flag::IS_MACRO_ENABLED */;
@@ -1668,7 +1665,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // IntoExprData::as_e_call() lands.
 
     /// Zig: `p.b(t, loc)` — bump-allocate a binding payload and wrap it in `Binding`.
-    /// `BindingAlloc` (Binding.rs round-G2) replaces the Zig `@TypeOf(t)` switch.
+    /// `BindingAlloc` (Binding.rs) replaces the Zig `@TypeOf(t)` switch.
     ///
     /// PORT NOTE: Zig's `p.b(t: anytype)` had a `@typeInfo == .pointer` arm that
     /// dispatched to `Binding.init(t, loc)` (wrap-existing-allocation) instead of
@@ -6833,9 +6830,9 @@ fn path_package_name<'a>(path: &fs::Path<'a>) -> Option<&'a [u8]> {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Round-D/E heavy method bodies (lower_class / to_ast / react_refresh / etc.).
-// lower_class + emit_decorator_metadata_for_prop + serialize_metadata are
-// un-gated and compile against the full bun_ast::ts::Metadata variant set.
+// Heavy method bodies (lower_class / to_ast / react_refresh / etc.).
+// lower_class + emit_decorator_metadata_for_prop + serialize_metadata
+// compile against the full bun_ast::ts::Metadata variant set.
 // Remaining individually-gated methods carry their own `blocked_on:` tags.
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub fn lower_class(&mut self, stmtorexpr: js_ast::StmtOrExpr) -> &'a mut [Stmt] {
@@ -7647,9 +7644,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Expr::init_identifier(r#ref, loc)
     }
 
-    // wrap_inlined_enum: moved to ungated impl (round-G).
-
-    // value_for_define / is_dot_define_match: moved to ungated impl (round-G).
+    // wrap_inlined_enum / value_for_define / is_dot_define_match: see the
+    // earlier impl block above.
 
     // One statement could potentially expand to several statements
     pub fn stmts_to_single_stmt(&mut self, loc: bun_ast::Loc, stmts: &'a mut [Stmt]) -> Stmt {
@@ -7739,7 +7735,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         unreachable!("not implemented")
     }
 
-    // runtime_identifier_ref / runtime_identifier / call_runtime: moved to ungated impl (round-G).
+    // runtime_identifier_ref / runtime_identifier / call_runtime: see the
+    // earlier impl block above.
 
     pub fn extract_decls_for_binding(
         binding: Binding,
@@ -7863,8 +7860,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         r#ref
     }
 
-    // compute_ts_enums_map() lives in the round-G `to_ast` impl block below
-    // (deduped — earlier draft body removed once both un-gated).
+    // compute_ts_enums_map() lives in the `to_ast` impl block below.
 
     pub fn should_lower_using_declarations(&self, stmts: &[Stmt]) -> bool {
         // TODO: We do not support lowering await, but when we do this needs to point to that var
@@ -8368,10 +8364,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut hmr_transform_ctx = ConvertESMExportsForHmr {
                 last_part,
                 // Spec P.zig:6390: `p.source.path.isNodeModule()`.
-                // Round-G fix: `bun_paths::fs::Path::is_node_module` is now real
-                // (checks `name.dir` for `<sep>node_modules<sep>` with the
-                // platform separator); the former inline copy mis-handled the
-                // Windows separator via a cross-crate `const_format` const.
+                // `bun_paths::fs::Path::is_node_module` checks `name.dir` for
+                // `<sep>node_modules<sep>` with the platform separator; a former
+                // inline copy mis-handled the Windows separator via a
+                // cross-crate `const_format` const.
                 is_in_node_modules: self.source.path.is_node_module(),
                 imports_seen: Default::default(),
                 export_star_props: Vec::new(),
@@ -8835,10 +8831,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let parts_list =
             Vec::<js_ast::Part>::from_bump_vec(core::mem::replace(parts, BumpVec::new_in(arena)));
         // Spec P.zig:6697: `ImportRecord.List.moveFromList(&p.import_records)`.
-        // Round-G fix: use the dedicated adapter so the parser-side list is
-        // left empty (Zig move-and-zero) and the BumpVec is leaked into the
-        // arena rather than dropped — downstream (printer, linker) resolves
-        // every `S.Import`/`E.RequireString`/`E.Import` by index against this.
+        // Use the dedicated adapter so the parser-side list is left empty (Zig
+        // move-and-zero) and the BumpVec is leaked into the arena rather than
+        // dropped — downstream (printer, linker) resolves every
+        // `S.Import`/`E.RequireString`/`E.Import` by index against this.
         let import_records: Vec<ImportRecord> = self.import_records.move_to_baby_list(arena);
 
         // PERF: box at the construction site so the ~1 KB `Ast` is written
@@ -8847,9 +8843,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // `js_parser::Result` PERF NOTE).
         Ok(Box::new(js_ast::Ast {
             // Spec P.zig:6644: `.runtime_imports = p.runtime_imports`.
-            // Round-G: `Ast.runtime_imports` is now the real
-            // `parser::Runtime::Imports`; moved out above (P is terminal after
-            // `to_ast`).
+            // `Ast.runtime_imports` is `parser::Runtime::Imports`; moved out
+            // above (P is terminal after `to_ast`).
             runtime_imports,
             module_scope,
             exports_ref: self.exports_ref,
@@ -9317,15 +9312,13 @@ pub struct LowerUsingDeclarationsContext {
     pub has_await_using: bool,
 }
 
-// Round-H un-gate: `generate_temp_ref` / `call_runtime` are now real (5516/6407),
-// so the only blockers were API-shape divergences. Reshaped:
+// Reshaped API surface relative to the Zig source:
 //   • `call_runtime` takes `ExprNodeList` → wrap bump slices via `from_bump_slice`
 //   • `DeclaredSymbol.ref_` / `LocRef.ref_` (not `r#ref`)
 //   • `DeclaredSymbolList`/`Vec` API has no arena param in this port
 //   • `G::Decl::List` → `G::DeclList` (free alias; inherent assoc type not used)
-// reconciler-6 re-gate removed: those API divergences are fixed inline below;
-// `generate_temp_ref` is real (round-G, see ~6407). DO NOT re-gate — `visit.rs`
-// calls these via `should_lower_using_declarations` path.
+// DO NOT gate this impl — `visit.rs` calls these via the
+// `should_lower_using_declarations` path.
 impl LowerUsingDeclarationsContext {
     pub fn init<'a, const T: bool, const S_: bool>(
         p: &mut P<'a, T, S_>,

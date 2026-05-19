@@ -190,10 +190,10 @@ pub fn adler32(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> 
     hash_wrap::<Adler32>(global, frame)
 }
 
-// phase-d: explicit export name — bare `#[host_fn]` defaults the C symbol to
-// the Rust ident (`crc32`), which collides with `node_zlib_binding::crc32`'s
-// shim. The shim ident (`__jsc_host_crc32`) is unchanged, so `create()` below
-// keeps resolving.
+// Explicit export name — bare `#[host_fn]` defaults the C symbol to the Rust
+// ident (`crc32`), which collides with `node_zlib_binding::crc32`'s shim. The
+// shim ident (`__jsc_host_crc32`) is unchanged, so `create()` below keeps
+// resolving.
 #[bun_jsc::host_fn(export = "Bun__HashObject__crc32")]
 pub fn crc32(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     hash_wrap::<Crc32>(global, frame)

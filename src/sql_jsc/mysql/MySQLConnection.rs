@@ -964,7 +964,7 @@ impl MySQLConnection {
                     // Send a default packet as a placeholder until ErrorPacket
                     // grows Clone or a borrowed-variant overload lands.
                     //
-                    // R-2: `on_error_packet` is `&self`; route through the
+                    // `on_error_packet` is `&self`; route through the
                     // audited `js_connection_ref()` container_of accessor (one
                     // centralised unsafe). `*self` sits inside the parent's
                     // `JsCell`, so re-entrant `connection_mut()` does not alias
@@ -1234,7 +1234,7 @@ impl MySQLConnection {
                 self.queue.mark_as_ready_for_query();
                 self.queue.mark_current_request_as_finished(request);
 
-                // R-2: `on_error_packet` is `&self`; `js_connection_ref()` is
+                // `on_error_packet` is `&self`; `js_connection_ref()` is
                 // the audited container_of accessor (one centralised unsafe).
                 // The `&JSMySQLConnection` it yields lives only for this call —
                 // identical footprint to the prior `(*ptr).on_error_packet()`
@@ -1259,7 +1259,7 @@ impl MySQLConnection {
 
     // PORT NOTE: reshaped for borrowck — `request` comes from `self.queue` so
     // passing `&mut self` alongside `&mut JSMySQLQuery` would alias. `request`
-    // is `&JSMySQLQuery` (R-2: fully interior-mutable, so a shared borrow is
+    // is `&JSMySQLQuery` (fully interior-mutable, so a shared borrow is
     // sound across the re-entrant `on_query_result` callback). The statement is
     // re-fetched via the single-unsafe `request.get_statement()` accessor at
     // each touch point so no `&mut MySQLStatement` spans the re-entrant
@@ -1289,7 +1289,7 @@ impl MySQLConnection {
         // Short-lived borrow via the audited accessor; dropped before the
         // re-entrant `on_query_result` call below.
         let result_count = request.get_statement().map_or(0, |s| s.result_count);
-        // R-2: `on_query_result` is `&self`; `js_connection_ref()` is the
+        // `on_query_result` is `&self`; `js_connection_ref()` is the
         // audited container_of accessor. The `&JSMySQLConnection` lives only for
         // this call (same footprint as the prior `(*ptr).on_query_result()`
         // temporary). `*self` sits inside the parent's `JsCell` (`UnsafeCell`),
@@ -1360,7 +1360,7 @@ impl MySQLConnection {
                 self.queue.mark_as_ready_for_query();
                 self.queue.mark_current_request_as_finished(request);
 
-                // R-2: `on_error_packet` is `&self`; route through the audited
+                // `on_error_packet` is `&self`; route through the audited
                 // `js_connection_ref()` container_of accessor. `*self` lives
                 // inside the parent's `JsCell`, so re-entrant `connection_mut()`
                 // does not alias this outer shared borrow.
@@ -1488,7 +1488,7 @@ impl MySQLConnection {
                         return Ok(());
                     }
 
-                    // R-2: `on_result_row` is `&self`; route through the audited
+                    // `on_result_row` is `&self`; route through the audited
                     // `js_connection_ref()` container_of accessor. The
                     // `&JSMySQLConnection` is held only for this call (identical
                     // footprint to the prior `(*ptr).on_result_row()` temporary);

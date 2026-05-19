@@ -40,7 +40,7 @@ pub struct TimerObjectInternals {
 }
 
 impl TimerObjectInternals {
-    /// Read-modify-write `self.flags` through the `Cell` (R-2: `flags` is
+    /// Read-modify-write `self.flags` through the `Cell` (`flags` is
     /// `Cell<Flags>` so the write is interior-mutable, callable from
     /// `&self` host-fns that re-enter JS).
     #[inline]

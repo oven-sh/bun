@@ -39,7 +39,7 @@ use core::ptr::NonNull;
 type ListManaged<'bump, T> = BumpVec<'bump, T>;
 
 // Zig: `pub fn Visit(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
+// — file-split mixin pattern. `const JSX: JSXTransformType` was lowered to `J: JsxT`, so this is
 // a direct `impl P` block.
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
@@ -706,8 +706,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    // PORT NOTE: P::stmts_to_single_stmt is ``-gated (P.rs:6267, blocked on
-    // S::Block Default). Inline a local copy until that un-gates.
+    // Local duplicate of `P::stmts_to_single_stmt` (p.rs).
     fn stmts_to_single_stmt_(&mut self, loc: bun_ast::Loc, stmts: &'a mut [Stmt]) -> Stmt {
         if stmts.is_empty() {
             return Stmt {

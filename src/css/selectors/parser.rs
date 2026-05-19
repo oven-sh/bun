@@ -4309,11 +4309,11 @@ pub enum ViewTransitionPartName {
 
 impl ViewTransitionPartName {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // PORT NOTE: `CustomIdentFns::to_css` is ``-gated on
-        // `Printer::{css_module,write_ident}`; inline the
-        // `write_ident(v, false)` body (CSS-modules custom-ident scoping is a
-        // serializer concern, not a grammar concern — the gated impl just
-        // toggles the second arg).
+        // PORT NOTE: Zig calls `CustomIdentFns.toCss` here, which routes
+        // through `Printer.writeIdent` and applies CSS-module custom-ident
+        // scoping when enabled. This inline writes the unscoped form
+        // (`Printer::write_ident(v, false)` ≡ `serialize_identifier`); switch
+        // to `CustomIdent::to_css` if view-transition part names need scoping.
         let write_ci = |name: &CustomIdent, dest: &mut Printer| -> Result<(), PrintErr> {
             dest.serialize_identifier(name.v())
         };

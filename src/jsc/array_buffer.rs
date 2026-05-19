@@ -1009,7 +1009,7 @@ impl MarkedArrayBuffer {
 // Deallocators
 // ──────────────────────────────────────────────────────────────────────────
 
-// `no_mangle` dropped: 0 C++ refs (phase_c_exports.rs mention is a comment).
+// `no_mangle` dropped: 0 C++ refs (link_exports.rs mention is a comment).
 #[allow(non_upper_case_globals)]
 pub use bun_alloc::c_thunks::mi_free_bytes as MarkedArrayBuffer_deallocator;
 

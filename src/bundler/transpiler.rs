@@ -1,6 +1,6 @@
 // ══════════════════════════════════════════════════════════════════════════
 // `Transpiler` — the legacy single-file transpile path (pre-`bundle_v2`).
-// resolver↔bundler cycle broken in O; `bun_resolver` is now a direct dep so
+// resolver↔bundler cycle is broken; `bun_resolver` is now a direct dep so
 // the struct and all method bodies are un-gated and live at this tier.
 // ══════════════════════════════════════════════════════════════════════════
 
@@ -862,7 +862,7 @@ pub struct ParseResult {
     // SoA `len()`/column accessors aren't reachable. Use AoS `Vec` for now;
     // `is_pending_import` only scans `import_record_id`, so the layout
     // difference is observable only as a SoA→AoS perf delta.
-    // TODO(b3): switch back to `MultiArrayList<PendingResolution>` once the
+    // TODO(port): switch back to `MultiArrayList<PendingResolution>` once the
     // derive lands upstream in `bun_resolver`.
     pub pending_imports: Vec<resolver::PendingResolution>,
 
@@ -1050,7 +1050,7 @@ fn init_file_system(
 /// `Box<[Box<[u8]>]>`/`StringSet`/`StringArrayHashMap` so this is a faithful
 /// value copy rather than a `Default` stub.
 ///
-/// TODO(b3): drop this once `bun_options_types::BundleOptions` exists and both
+/// TODO(port): drop this once `bun_options_types::BundleOptions` exists and both
 /// crates re-export it — `Resolver::init1` will then take the canonical type
 /// directly and Zig's `bundle_options` value can flow through unchanged
 /// (transpiler.zig:209 passes the same `options` to both struct fields).
@@ -2352,10 +2352,10 @@ impl<'a> Transpiler<'a> {
         // PERF(port): one extra alloc vs Zig's borrowed-slice — profile if hot.
         let symbols = bun_ast::symbol::Map::init_with_one_list(core::mem::take(&mut ast.symbols));
 
-        // `runtime_imports` is now forwarded — after Round-G `Ast.runtime_imports`
-        // is the real `parser::Runtime::Imports`, the same type
+        // `runtime_imports` is forwarded as-is: `Ast.runtime_imports` is the
+        // real `parser::Runtime::Imports`, the same type
         // `js_printer::Options.runtime_imports` takes (via `js_ast::runtime`),
-        // so the seam is gone. Spec: zig:593/619/645.
+        // so there is no conversion seam. Spec: zig:593/619/645.
         // `target` is now forwarded via `to_bundle_enums_target` below — it
         // *does* affect the EsmAscii/bun-runtime path (js_printer/lib.rs:6872
         // gates the `var {require}=import.meta;` hoist on `target == Bun`;

@@ -260,10 +260,10 @@ impl AbortReason {
         }
     }
 
-    // PORT NOTE (phase-d): `to_body_value_error` reaches into
-    // `bun_runtime::webcore::body::value::ValueError` (forward dep on
-    // `bun_runtime`). The conversion is trivial and is reconstructed at the
-    // call-site in `bun_runtime` once that tier un-gates.
+    // PORT NOTE: Zig `AbortReason.toBodyValueError` returned
+    // `webcore::Body::ValueError`, which lives in `bun_runtime` (a crate that
+    // depends on `bun_jsc`). The conversion is trivial and is reconstructed at
+    // the call sites in `bun_runtime` rather than inverting the crate DAG here.
 }
 
 // ──────────────────────────────────────────────────────────────────────────

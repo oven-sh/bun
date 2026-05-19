@@ -488,11 +488,6 @@ export var __callDispose = (stack, error, hasError) => {
 
 // ══════════════════════════════════════════════════════════════════════════
 // Per-file parse worker — `getAST`/`getCodeForParseTask`/`runFromThreadPool`.
-// The struct/FFI surface and `get_runtime_source` are real. Bodies
-// that touch the still-gated `crate::ThreadPool` Worker module or the opaque
-// `JSBundlerPlugin`/`FileMap` forward-decls remain ``-gated
-// per-function below with explicit `// blocked_on:` notes; they un-gate by
-// deletion once those modules land.
 // ══════════════════════════════════════════════════════════════════════════
 pub mod parse_worker {
     use super::*;

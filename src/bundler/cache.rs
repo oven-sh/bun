@@ -9,19 +9,19 @@ use bun_parsers::json_parser;
 use bun_resolver::fs as fs_mod;
 use bun_sys::{self, Fd};
 
-// B-3 UNIFIED: `Define` is now the single canonical `bun_js_parser::defines::Define`
-// (re-exported via `crate::defines`); `JavaScript::parse`/`scan` and the bundler's
+// `Define` is the single canonical `bun_js_parser::defines::Define` (re-exported
+// via `crate::defines`); `JavaScript::parse`/`scan` and the bundler's
 // `BundleOptions.define` share the same nominal type.
 use js_parser::defines::Define;
 
 // ══════════════════════════════════════════════════════════════════════════
-// B-3 UNIFIED: `RuntimeTranspilerCache` is canonical in `bun_js_parser`
-// (lower tier) so `Features.runtime_transpiler_cache: Option<*mut RTC>` and
+// `RuntimeTranspilerCache` is canonical in `bun_ast` (a lower-tier crate)
+// so `Features.runtime_transpiler_cache: Option<*mut RTC>` and
 // `ParseOptions.runtime_transpiler_cache: Option<&mut RTC>` are the same
 // nominal type. This crate adds the env-var-gated `disabled`/`set_disabled` via
-// the `RuntimeTranspilerCacheExt` trait below — those need `bun_core::env_var`
-// which sits a tier above js_parser. `Entry` / `Metadata` stay concrete here;
-// the canonical
+// the `RuntimeTranspilerCacheExt` trait below; the disk-I/O / `js_printer`
+// dispatch also lives here because it needs `bun_js_printer`, which sits a
+// tier above `bun_ast`. `Entry` / `Metadata` stay concrete here; the canonical
 // struct stores them type-erased as `*mut ()`.
 // ══════════════════════════════════════════════════════════════════════════
 use bun_ast::RuntimeTranspilerCache;
@@ -37,7 +37,7 @@ pub const RUNTIME_TRANSPILER_CACHE_VERSION: u32 = 20;
 pub static DISABLED: AtomicBool = AtomicBool::new(false);
 
 /// Extension surface for the canonical `RuntimeTranspilerCache` (defined in
-/// `bun_js_parser`). Separate trait so the env-var-dependent bodies stay in
+/// `bun_ast`). Separate trait so the env-var-dependent bodies stay in
 /// this crate without an orphan-rule violation.
 pub trait RuntimeTranspilerCacheExt {
     /// Mirrors the Zig `pub var is_disabled` namespaced const — kept as an

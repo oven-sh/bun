@@ -92,7 +92,7 @@ pub mod js {
 // constructor) and intrusive refcounting (finalize → deref, not heap::take),
 // neither of which the macro's default hooks support. The C-ABI shims live in
 // `mod js` above and `extern "C" fn finalize` below.
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+// Host-fn re-entrancy: every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
 // shim still emits `this: &mut Terminal` — `&mut T` auto-derefs to `&T`
 // so the impls below compile against either. The
@@ -353,7 +353,7 @@ impl Terminal {
         self.global_this.get()
     }
 
-    // ─── R-2 interior-mutability helpers ─────────────────────────────────────
+    // ─── Interior-mutability helpers ─────────────────────────────────────────
 
     /// Read-modify-write the packed `Cell<Flags>` through `&self`.
     #[inline]
@@ -390,7 +390,7 @@ impl Terminal {
         // `writer.parent = …` in `init_terminal`. The Terminal is heap-stable
         // (`heap::into_raw`) and outlives every reader/writer callback (the
         // intrusive +1 ref held by the I/O machinery is dropped only after the
-        // last callback fires). R-2: shared borrow only — bodies take `&self`;
+        // last callback fires). Shared borrow only — bodies take `&self`;
         // field writes go through `Cell`/`JsCell`, so re-entrant JS forming a
         // fresh `&Self` from `m_ctx` aliases soundly.
         unsafe { &*this }
@@ -470,7 +470,7 @@ impl Terminal {
             this_value: JsCell::new(JsRef::empty()),
             flags: Cell::new(Flags::empty()),
         }));
-        // SAFETY: just allocated, non-null, exclusively owned here. R-2: `&`
+        // SAFETY: just allocated, non-null, exclusively owned here. `&`
         // (not `&mut`) — every method below takes `&self`; field writes go
         // through `Cell`/`JsCell`.
         let terminal = unsafe { &*terminal };
@@ -1644,7 +1644,7 @@ impl Terminal {
         }
         self.update_flags(|f| f.insert(Flags::CLOSED));
 
-        // Close writer (closes write_fd). R-2: `with_mut` borrow is held across
+        // Close writer (closes write_fd). `with_mut` borrow is held across
         // the synchronous `on_writer_close` parent callback, but that callback
         // touches only `flags`/`ref_count` (separate `Cell`s), never `writer`.
         self.writer.with_mut(|w| w.close());
@@ -1733,7 +1733,7 @@ impl Terminal {
     // IOReader callbacks
     pub fn on_reader_done(&self) {
         bun_output::scoped_log!(Terminal, "onReaderDone");
-        // R-2: `&self` (no `noalias`) + `Cell<Flags>` makes the prior
+        // `&self` (no `noalias`) + `Cell<Flags>` makes the prior
         // `black_box`-launder unnecessary — the post-`call_exit_callback`
         // `flags` load is a fresh `Cell::get()` that LLVM cannot fold across
         // the re-entrant JS call (UnsafeCell suppresses the alias assumption).
@@ -1754,7 +1754,7 @@ impl Terminal {
 
     pub fn on_reader_error(&self, err: sys::Error) {
         bun_output::scoped_log!(Terminal, "onReaderError: {:?}", err);
-        // R-2: see `on_reader_done` — `&self` + `Cell<Flags>` replaces the
+        // See `on_reader_done` — `&self` + `Cell<Flags>` replaces the
         // prior `black_box` launder.
         // Error - downgrade to weak ref to allow GC
         // Skip JS interactions if already finalized
@@ -1895,7 +1895,7 @@ impl Terminal {
 fn deinit_and_destroy(this: *mut Terminal) {
     bun_output::scoped_log!(Terminal, "deinit");
     // SAFETY: caller is `deref_()` with ref_count == 0; `this` was heap-allocated.
-    // R-2: deref as shared — `close_internal` takes `&self` and all field
+    // Deref as shared — `close_internal` takes `&self` and all field
     // mutation routes through `Cell`/`JsCell`.
     let t = unsafe { &*this };
     // Set reader/writer done flags to prevent extra deref calls in closeInternal

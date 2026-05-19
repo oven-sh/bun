@@ -664,7 +664,7 @@ pub trait AbstractVM<'a> {
     fn abstract_vm(self) -> Self::Wrapped;
 }
 
-// PORT NOTE (b0): `impl AbstractVM for &VirtualMachine` cannot live here
+// PORT NOTE: `impl AbstractVM for &VirtualMachine` cannot live here
 // without naming the tier-6 `VirtualMachine` type. The impl moves to
 // `bun_runtime` (move-in pass), which constructs `JsVM { vm, vtable }`.
 

@@ -95,7 +95,7 @@ unsafe extern "Rust" {
 }
 
 /// Owned, type-erased JSC regex; drops through the vtable.
-// FORWARD_DECL(b0): bun_jsc::RegularExpression — stored as raw NonNull<()>
+// `bun_jsc::RegularExpression` forward-declared as a raw `NonNull<()>`
 // (NOT Box<ZST>: a zero-sized opaque Box is a dangling sentinel that would
 // leak the real JSC allocation and skip its destructor).
 pub struct RegularExpression(NonNull<()>);

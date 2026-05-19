@@ -61,7 +61,7 @@ fn vm_ssl_ctx_cache() -> *mut crate::api::SSLContextCache::SSLContextCache {
 // `to_js(self)` impl does would invalidate that link).
 use crate::generated_classes::js_Listener;
 
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+// Host-fn re-entrancy: every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
 // shim still emits `this: &mut Listener` — `&mut T` auto-derefs to `&T`
 // so the impls below compile against either.
@@ -1541,7 +1541,7 @@ pub fn js_add_server_name(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     let listener = arguments.ptr[0];
     if let Some(this) = Listener::from_js(listener) {
         // SAFETY: from_js returned a non-null *mut Listener; the JS wrapper holds it.
-        // R-2: deref as shared (`&*`) — `add_server_name` takes `&Self`.
+        // Deref as shared (`&*`) — `add_server_name` takes `&Self`.
         return Listener::add_server_name(
             unsafe { &*this },
             global,

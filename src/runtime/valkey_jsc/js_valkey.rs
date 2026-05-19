@@ -75,7 +75,7 @@ impl AnySocketIsClosed for uws::AnySocket {
 /// Scope-guarded `ref/deref` over a raw pointer — sidesteps the
 /// `scopeguard`-captures-`&self` borrowck conflict that pervades this file.
 /// Mirrors Zig's `defer this.deref()` which had no aliasing restriction.
-// R-2: takes `*const` now that every `JSValkeyClient` method is `&self`;
+// Takes `*const` now that every `JSValkeyClient` method is `&self`;
 // `deref()` (and `ref_()`) already only need a shared receiver.
 #[inline]
 fn deref_guard(
@@ -376,7 +376,7 @@ impl SubscriptionCtx {
 /// Valkey client wrapper for JavaScript
 // PORT NOTE: `#[bun_jsc::JsClass]` is hand-rolled in `mod.rs` (the codegen
 // macro's 2-arg `constructor` shim doesn't fit the `js_this` flow here).
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+// Host-fn re-entrancy: every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
 // shim still emits `this: &mut RedisClient` — `&mut T`
 // auto-derefs to `&T` so the impls below compile against either. `JsCell` is
@@ -461,7 +461,7 @@ impl JSValkeyClient {
         self.client.get().vm
     }
 
-    // ─── R-2 interior-mutability helpers ────────────────────────────────────
+    // ─── Interior-mutability helpers ────────────────────────────────────────
 
     /// Mutable projection of the inner protocol client through `&self`.
     ///
@@ -472,7 +472,7 @@ impl JSValkeyClient {
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub(super) fn client_mut(&self) -> &mut valkey::ValkeyClient {
-        // SAFETY: R-2 single-JS-thread invariant (see `JsCell` docs). The
+        // SAFETY: single-JS-thread invariant (see `JsCell` docs). The
         // `&mut` is fresh per call site; reentrancy through
         // `ValkeyClient::parent()` forms a shared `&JSValkeyClient` only.
         unsafe { self.client.get_mut() }

@@ -1,7 +1,7 @@
 //! MOVE-IN: ssl_config (MOVE_DOWN bun_runtime::socket::SSLConfig → bun_http)
 //! Ground truth: src/runtime/socket/SSLConfig.zig
 //! JSC-dependent constructors (from_js / from_generated / read_from_blob /
-//! handle_path / handle_file*) stay in bun_runtime (tier-6, Pass C).
+//! handle_path / handle_file*) stay in bun_runtime (tier-6).
 
 use core::ffi::{CStr, c_char};
 use std::sync::atomic::{AtomicU64, Ordering};

@@ -49,7 +49,7 @@ mod _impl {
     use bun_sys::windows::{self, libuv};
     use std::io::Write as _;
 
-    // ─── local shims for upstream API gaps (Phase D) ──────────────────────────
+    // ─── local shims for upstream API gaps ────────────────────────────────────
 
     /// Unified error for `cpus_impl_*` so `?` works on both `JsResult` and
     /// `bun_core::Error`/`bun_sys::Error`. The variant payload is discarded by

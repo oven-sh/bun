@@ -594,7 +594,7 @@ impl MultiPartUpload {
             self.state = State::Finished;
             (self.callback)(S3UploadResult::Failure(err), self.callback_context)?;
 
-            // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
+            // noalias re-entry (see bun_ptr::LaunderedSelf): `&mut self` carries LLVM `noalias`, but
             // `self.callback` (promise reject → JS) re-enters via the JS
             // wrapper's `*mut MultiPartUpload` and may write `*self`. Nothing
             // derived from `self` is passed to the callback, so LLVM is

@@ -30,10 +30,10 @@ bun_event_loop.workspace = true
 bun_jsc.workspace = true
 bun_ptr.workspace = true
 bun_sha_hmac.workspace = true
-# TODO(b2-blocked): bun_runtime fails to compile (concurrent B-2 work —
-# `strings::to_lower_ascii_stack` missing in EVP.rs). The only consumer here
-# is `postgres::sasl::SASL::compute_salted_password` (PBKDF2), whose body is
-# gated until bun_runtime is green again.
+# bun_runtime intentionally not depended on — bun_runtime already depends on
+# this crate, so adding it here would create a direct cycle. The only would-be
+# consumer, `postgres::sasl::SASL::compute_salted_password` (PBKDF2), inlines
+# the BoringSSL call instead; see the PORT NOTE in SASL.rs.
 # bun_runtime.workspace = true
 bun_sql.workspace = true
 bun_uws.workspace = true

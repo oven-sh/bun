@@ -191,7 +191,7 @@ impl ReadableStream {
             }
             Source::File(_) => {
                 // BACKREF: see `Source::file()` — payload valid while stream alive.
-                // R-2: `lazy`/`started` are `JsCell`/`Cell`; shared borrow suffices.
+                // `lazy`/`started` are `JsCell`/`Cell`; shared borrow suffices.
                 let blobby = self.ptr.file().expect("matched File");
                 if let webcore::file_reader::Lazy::Blob(store) = blobby.lazy.get() {
                     // `store.clone()` carries the +1 that Zig's explicit `blob.store.?.ref()`
@@ -551,7 +551,7 @@ impl Source {
     /// The pointer is the JS wrapper's `m_ctx` heap allocation returned by
     /// `ReadableStreamTag__tagged` and is non-null and live while the owning
     /// `ReadableStream` JSValue is rooted (caller's `Strong`/stack root) — the
-    /// BACKREF outlives-holder invariant. R-2: every `ByteStream` field touched
+    /// BACKREF outlives-holder invariant. Every `ByteStream` field touched
     /// through this borrow is `Cell`/`JsCell`-backed, so re-entrant JS that
     /// re-derives a fresh `&ByteStream` from `m_ctx` aliases shared-only.
     ///
@@ -571,7 +571,7 @@ impl Source {
     ///
     /// Same invariant as [`bytes`](Self::bytes): the pointer is the JS
     /// wrapper's `m_ctx` heap allocation, non-null and live while the owning
-    /// `ReadableStream` JSValue is rooted. R-2: every `FileReader` field
+    /// `ReadableStream` JSValue is rooted. Every `FileReader` field
     /// touched through this borrow is `Cell`/`JsCell`-backed, so re-entrant JS
     /// that re-derives a fresh `&FileReader` from `m_ctx` aliases shared-only.
     #[inline]
@@ -677,7 +677,7 @@ pub struct NewSource<C: SourceContext> {
     // TODO(port): lifetime — TSV class UNKNOWN
     pub close_ctx: Option<NonNull<c_void>>,
     pub close_jsvalue: bun_jsc::strong::Optional,
-    /// R-2: cleared via `&self` from `FetchTasklet::clear_stream_cancel_handler`
+    /// Cleared via `&self` from `FetchTasklet::clear_stream_cancel_handler`
     /// (through `ByteStream::parent_const`), so interior-mutable.
     pub cancel_handler: Cell<Option<fn(Option<*mut c_void>)>>,
     pub cancel_ctx: Cell<Option<*mut c_void>>,
@@ -688,7 +688,7 @@ pub struct NewSource<C: SourceContext> {
     // SAFETY: this is the self-wrapper JSValue (points at the JSCell that owns this m_ctx).
     // Kept alive by the wrapper itself; zeroed in finalize() before sweep.
     pub this_jsvalue: JSValue,
-    /// R-2: written by `&self` context methods (`ByteStream::to_any_blob`,
+    /// Written by `&self` context methods (`ByteStream::to_any_blob`,
     /// `ByteBlobLoader::to_any_blob`) via `parent_const()`, so interior-mutable.
     pub is_closed: Cell<bool>,
 }

@@ -76,7 +76,7 @@ const _: () = {
     }
 };
 
-/// R-2 (`sharedThis`): every JS-facing host-fn takes `&Request` (not
+/// `sharedThis`: every JS-facing host-fn takes `&Request` (not
 /// `&mut Request`) so re-entrant JS calls cannot stack two `&mut` to the same
 /// instance. Fields mutated by host-fns are wrapped in `Cell` (Copy scalars)
 /// or `JsCell` (Drop types). Both are `#[repr(transparent)]`, so `#[repr(C)]`
@@ -219,17 +219,17 @@ impl Request {
 
     /// Zig: `&this.#body.value`.
     ///
-    /// R-2: `&self` → `&mut` through the slot's raw pointer. The slot is shared
+    /// `&self` → `&mut` through the slot's raw pointer. The slot is shared
     /// with `RequestContext.request_body` but never `&mut`-borrowed concurrently
     /// (single-threaded event-loop sequencing). Keep the borrow short.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub(crate) fn body_value_mut(&self) -> &mut BodyValue {
-        // SAFETY: see R-2 invariant above.
+        // SAFETY: see noalias re-entry invariant above.
         unsafe { &mut (*self.body.as_ptr()).value }
     }
 
-    /// R-2: short-hand for `unsafe { self.headers.get_mut() }`. The
+    /// Short-hand for `unsafe { self.headers.get_mut() }`. The
     /// single-JS-thread invariant (see `JsCell` docs) means no other
     /// `&mut Option<HeadersRef>` is live for the duration of the borrow.
     #[inline]
@@ -523,7 +523,7 @@ impl Request {
 
     pub fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
         self.calculate_estimated_byte_size();
-        // R-2: `to_js_unchecked` stores `self` as the C++ `m_ctx` payload (an
+        // `to_js_unchecked` stores `self` as the C++ `m_ctx` payload (an
         // opaque `void*` never deref'd as `&mut Request` on the C++ side), so
         // forming `*mut` from `&self` here is provenance-safe.
         let js_value = js_gen::to_js_unchecked(

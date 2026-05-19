@@ -94,7 +94,7 @@ impl<'a, 'r> Router::ResolverLike for RouterResolver<'a, 'r> {
 // `codegen_cached_accessors!` proc-macro wires the extern.
 bun_jsc::codegen_cached_accessors!("FileSystemRouter"; routes);
 
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+// Host-fn re-entrancy: every JS-exposed method takes `&self`; per-field
 // interior mutability via `JsCell` for the two fields that `reload`/`match`
 // mutate. The codegen shim may still emit `this: &mut FileSystemRouter` —
 // `&mut T` reborrows to `&T` so the impls compile against either.
@@ -470,7 +470,7 @@ impl FileSystemRouter {
         // our `vm` borrow is fresh under Stacked Borrows.
         let vm = global_this.bun_vm().as_mut();
 
-        // R-2: snapshot the config fields up front so the `JsCell::get()` borrow is
+        // Snapshot the config fields up front so the `JsCell::get()` borrow is
         // released before `JsCell::set()` below installs the new router.
         let (cfg_dir, cfg_extensions, cfg_asset_prefix_path) = {
             let cfg = &this.router.get().config;
@@ -607,7 +607,7 @@ impl FileSystemRouter {
         };
         let mut params = route_param::List::default();
         // `defer params.deinit(allocator)` → Drop
-        // SAFETY (R-2): short-lived `&mut Router` for the route lookup;
+        // SAFETY (noalias re-entry): short-lived `&mut Router` for the route lookup;
         // `match_page_with_allocator` is pure (no JS re-entry), and the returned
         // `Match<'p>` borrows `params`/`path_bytes`, not `*router`, so the
         // exclusive borrow ends at the `;`.
@@ -714,7 +714,7 @@ pub struct MatchedRoute {
     // do) would assert unique access to these fields under Stacked Borrows and invalidate
     // the stored pointers — UB on next deref.
     pub route_holder: UnsafeCell<RouterMatch<'static>>,
-    // R-2: lazily populated by `get_query`/`get_params` (now `&self`).
+    // Lazily populated by `get_query`/`get_params` (now `&self`).
     pub query_string_map: JsCell<Option<QueryStringMap>>,
     pub param_map: JsCell<Option<QueryStringMap>>,
     pub params_list_holder: UnsafeCell<route_param::List<'static>>,
@@ -1007,7 +1007,7 @@ impl MatchedRoute {
                 .set(QueryStringMap::init_with_scanner(scanner)?);
         }
 
-        // R-2: `create_query_object` writes only into a fresh plain JSObject (no
+        // `create_query_object` writes only into a fresh plain JSObject (no
         // user setters), so this `with_mut` borrow cannot be re-entered.
         this.param_map
             .with_mut(|m| Self::create_query_object(global_this, m.as_mut().unwrap()))
@@ -1040,7 +1040,7 @@ impl MatchedRoute {
         }
 
         // If it's still null, the query string has no names.
-        // R-2: see `get_params` re `with_mut` re-entry.
+        // See `get_params` re `with_mut` re-entry.
         this.query_string_map.with_mut(|m| match m {
             Some(map) => Self::create_query_object(global_this, map),
             None => Ok(JSValue::create_empty_object(global_this, 0)),

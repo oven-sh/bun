@@ -344,16 +344,14 @@ pub(super) mod dc {
 // (The Zig `implementDeepClone` returns `this.*` for simple-copy types.)
 
 // ─── shared serialization helpers for leaf rules ──────────────────────────
-// Several leaf-rule `to_css` bodies bottom out on helpers whose canonical
-// homes are still ``-gated outside `rules/` (DeclarationBlock::
-// to_css_block, VendorPrefix::toCss, CustomIdent/DashedIdent ::toCss). The
-// bodies are tiny and have no further blockers, so they're inlined here so the
-// 12 leaf rules can serialize for real. Once the upstream gates drop, callers
-// switch back and these are deleted.
+// Local copies of `DeclarationBlock::to_css_block`, `VendorPrefix::to_css`, and
+// `CustomIdent::to_css` shared by the leaf-rule `to_css` bodies in `rules/`.
+// The canonical impls live outside `rules/` (`declaration.rs`, `css_parser.rs`,
+// `values/ident.rs`); these duplicates can be deleted once callers route
+// through them directly.
 
-/// Port of `DeclarationBlock.toCssBlock` (declaration.zig). The real impl is
-/// gated in `declaration.rs`; `Property::to_css` is un-gated so the body is
-/// trivially inlinable here.
+/// Port of `DeclarationBlock.toCssBlock` (declaration.zig); duplicates
+/// `DeclarationBlock::to_css_block`.
 pub(super) fn decl_block_to_css(
     decls: &css::DeclarationBlock<'_>,
     dest: &mut Printer,
@@ -387,9 +385,8 @@ pub(super) fn decl_block_to_css(
     dest.write_char(b'}')
 }
 
-/// Port of `VendorPrefix.toCss` (css_parser.zig:182). Lives here because the
-/// canonical `impl VendorPrefix` block in lib.rs hasn't grown a `to_css` yet
-/// and `rules/` is the only un-gated caller.
+/// Port of `VendorPrefix.toCss` (css_parser.zig); duplicates
+/// `VendorPrefix::to_css` (css_parser.rs).
 #[inline]
 pub(super) fn vendor_prefix_to_css(
     prefix: css::VendorPrefix,
@@ -534,11 +531,6 @@ impl<R> CssRuleList<R> {
     where
         R: for<'b> css::generics::DeepClone<'b>,
     {
-        // blocked_on (style arm only): StyleRule::{minify,is_compatible,
-        // update_prefix,hash_key,is_duplicate}, selector::{is_compatible,
-        // is_equivalent,Selector::from_component}, SelectorList::deep_clone,
-        // DeclarationBlock::deep_clone — all `` in their leaves.
-
         let mut style_rules = StyleRuleKeyMap::default();
         let mut rules: Vec<CssRule<R>> = Vec::new();
 

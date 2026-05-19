@@ -34,8 +34,6 @@ bun_alloc.workspace = true
 bun_bunfig.workspace = true
 bun_clap.workspace = true
 bun_core.workspace = true
-# TODO(b1): bun_bundler dep gated — crate not green yet
-# bun_bundler.workspace = true
 bun_collections.workspace = true
 bun_crash_handler.workspace = true
 bun_dns.workspace = true

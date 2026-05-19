@@ -1729,7 +1729,7 @@ impl<'a> Formatter<'a> {
                         return Ok(());
                     } else if let Some(build) = value.as_::<crate::api::BuildArtifact>() {
                         // SAFETY: see Response branch above. `write_format` is
-                        // `&self` post-R-2, so a shared borrow is sufficient.
+                        // `&self`, so a shared borrow is sufficient.
                         let build = unsafe { &*build };
                         let mut bridge = AsFmt::new(&mut *writer.ctx);
                         if build

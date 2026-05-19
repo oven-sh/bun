@@ -1990,7 +1990,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             // at scope exit (AFTER resolve, which may reenter JS and mutate `wrote`). Read it here,
             // not before the call.
             //
-            // R-2 noalias mitigation (PORT_NOTES_PLAN R-2; precedent
+            // noalias mitigation (see bun_ptr::LaunderedSelf; precedent
             // `b818e70e1c57` NodeHTTPResponse::cork): `&mut self` is `noalias`
             // and `resolve()` receives nothing derived from `self`, so LLVM is
             // licensed to forward the `self.wrote` read used in the

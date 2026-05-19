@@ -39,9 +39,8 @@ impl<R> StyleRule<R> {
         // std.hash.Wyhash.init(0) — same algorithm as bun.hash
         let mut hasher = bun_wyhash::Wyhash::init(0);
         self.selectors.hash(&mut hasher);
-        // PORT NOTE: `DeclarationBlock::hash_property_ids` is still
-        // ``-gated in declaration.rs; inline its body here. The
-        // Zig `PropertyId.hash` is `hasher.update(asBytes(&@intFromEnum(self)))`
+        // PORT NOTE: inlined `DeclarationBlock::hash_property_ids`. The Zig
+        // `PropertyId.hash` is `hasher.update(asBytes(&@intFromEnum(self)))`
         // — i.e. just the u16 tag bytes.
         for decl in self.declarations.declarations.iter() {
             let tag = decl.property_id().tag() as u16;

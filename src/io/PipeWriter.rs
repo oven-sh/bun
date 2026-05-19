@@ -377,7 +377,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     /// See [`parent_event_loop`](Self::parent_event_loop) for the encapsulated
     /// type invariant. `on_error` may re-enter via the parent's intrusive
     /// `writer` field; callers that read `self` afterwards must launder
-    /// (R-2 noalias) — this accessor does not.
+    /// (noalias re-entry) — this accessor does not.
     #[inline]
     fn parent_on_error(&self, err: sys::Error) {
         // SAFETY: type invariant — set-once parent backref outlives writer.
@@ -424,7 +424,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     }
 
     fn _on_write(&mut self, written: usize, status: WriteStatus) {
-        // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
+        // noalias re-entry (see bun_ptr::LaunderedSelf): `&mut self` carries LLVM `noalias`, but
         // `Parent::on_write` (e.g. `IOWriter::on_write`) re-enters via a fresh
         // `&mut Self` from the parent's intrusive `writer` field and may write
         // `self.handle` / `self.is_done`. ASM-verified PROVEN_CACHED in the
@@ -716,7 +716,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
     /// `unsafe { Parent::on_write(self.parent(), ..) }` blocks (one per
     /// `WriteResult` arm) into one. `on_write` may re-enter via the parent's
     /// intrusive `writer` field; callers that read `self` afterwards must
-    /// launder (R-2 noalias) — the existing laundered sites in `_on_write` /
+    /// launder (noalias re-entry) — the existing laundered sites in `_on_write` /
     /// `register_poll` keep their raw-pointer dispatch and do **not** route
     /// through this accessor.
     #[inline]
@@ -825,7 +825,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         let loop_ = unsafe { Parent::loop_(self.parent()) }.cast();
         match poll.register_with_fd(loop_, FilePollKind::Writable, poll.fd()) {
             sys::Result::Err(err) => {
-                // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
+                // noalias re-entry (see bun_ptr::LaunderedSelf): `&mut self` carries LLVM `noalias`, but
                 // `Parent::on_error` (e.g. `FileSink::on_error`) re-enters via
                 // a fresh `&mut Self` from the parent's intrusive `writer`
                 // field and may write `self.is_done` / `self.handle`.
@@ -1552,7 +1552,7 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
     /// Type invariant (encapsulated `unsafe`): `self.parent` is populated by
     /// [`set_parent`](BaseWindowsPipeWriter::set_parent) before any write path
     /// is reached, and the writer is an intrusive field of `*parent` so the
-    /// pointee strictly outlives `self`. Takes the R-2 `*mut Self` so the field
+    /// pointee strictly outlives `self`. Takes the `*mut Self` so the field
     /// read completes before dispatch and no Rust borrow of `*this` is live
     /// across the (re-entrant) `Parent::on_error` call. Collapses the two
     /// identical dispatch blocks in `on_write_complete` /
@@ -1570,7 +1570,7 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
     }
 
     fn on_write_complete(&mut self, status: uv::ReturnCode) {
-        // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
+        // noalias re-entry (see bun_ptr::LaunderedSelf): `&mut self` carries LLVM `noalias`, but
         // `Parent::on_write` (e.g. `FileSink::on_write`) re-enters JS via
         // promise resolution and may call back into this writer through a fresh
         // `&mut Self` derived from the parent's intrusive `writer` field
@@ -1646,10 +1646,10 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
             return;
         }
 
-        // PORT_NOTES_PLAN R-2: launder `*this` for the same reason as the
+        // Launder `*this` (see bun_ptr::LaunderedSelf) for the same reason as the
         // Streaming sibling above — `close()` → `Parent::on_close` → JS may
         // re-enter via `with_mut(|w| ..)`; the post-call `(*this).parent()`
-        // must reload. NOALIAS_HUNT cluster E.
+        // must reload.
         // SAFETY: data was set to `self as *mut Self` in write(); libuv invokes
         // this callback on the single-threaded event loop with no other Rust
         // borrow of `*this` live, so this is the sole access path.
@@ -2052,7 +2052,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
     /// pointee strictly outlives `self`. Unlike a `&self` accessor (which would
     /// place a `readonly`/SB-protector on `*self` for the duration of the
     /// re-entrant `Parent::on_error` call — see the `parent_on_error` note on
-    /// [`WindowsBufferedWriter`]), this takes the R-2 `*mut Self`: the field
+    /// [`WindowsBufferedWriter`]), this takes the `*mut Self`: the field
     /// read completes before dispatch, so no Rust borrow of `*this` is live
     /// across the (re-entrant) call. Collapses the five identical
     /// `Parent::on_error(Self::r(this).parent(), err)` dispatch blocks in
@@ -2103,7 +2103,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
     }
 
     fn on_write_complete(&mut self, status: uv::ReturnCode) {
-        // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
+        // noalias re-entry (see bun_ptr::LaunderedSelf): `&mut self` carries LLVM `noalias`, but
         // `Parent::on_write` (e.g. `FileSink::on_write`) re-enters JS via
         // promise resolution and may call back into this writer through a fresh
         // `&mut Self` derived from the parent's intrusive `writer` field
@@ -2212,7 +2212,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             return;
         }
 
-        // PORT_NOTES_PLAN R-2: launder `*this`. `this.on_write_complete()` /
+        // Launder `*this` (see bun_ptr::LaunderedSelf). `this.on_write_complete()` /
         // `this.close()` below both reach `Parent::on_write`/`on_close` →
         // FileSink → JS, which can `self.writer.with_mut(|w| w.end()/close())`
         // forming a fresh aliased `&mut WindowsStreamingWriter`. The
@@ -2223,7 +2223,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         // error path (`close()` → `on_error(this.parent())` → guard deref)
         // reads `this.parent` after re-entry; route those through a
         // black-boxed raw ptr so any inlined call chain cannot
-        // store-forward across the JS re-entry. NOALIAS_HUNT cluster E.
+        // store-forward across the JS re-entry.
         // SAFETY: data was set to `self as *mut Self` in process_send(); libuv
         // invokes this callback on the single-threaded event loop with no other
         // Rust borrow of `*this` live, so this is the sole access path.
@@ -2256,7 +2256,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
     /// this tries to send more data returning if we are writable or not after this
     fn process_send(&mut self) {
         log!("processSend");
-        // PORT_NOTES_PLAN R-2: same noalias re-entry hazard as
+        // Same noalias re-entry hazard (see bun_ptr::LaunderedSelf) as
         // `on_write_complete` above. The three synchronous-error arms call
         // `Parent::on_error` (re-enters JS via FileSink::on_error → promise
         // reject; user callback may `writer.with_mut(|w| w.end())`/`.close()`

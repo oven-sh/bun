@@ -154,7 +154,7 @@ impl HotReloaderCtx for VirtualMachine {
     fn bun_watcher_mut(&mut self) -> &mut Watcher {
         // PORT NOTE: Zig's three-way `@TypeOf(this.ctx.bun_watcher)` reflection
         // collapses here — `VirtualMachine.bun_watcher` is the type-erased
-        // `*mut ImportWatcher` (TODO(b2-cycle) field comment in
+        // `*mut ImportWatcher` (TODO(port) field comment in
         // VirtualMachine.rs), and `getContext` only runs after
         // `enable_hot_module_reloading` has populated it, so the `.None` arm
         // is unreachable.
@@ -226,7 +226,9 @@ impl HotReloaderCtx for VirtualMachine {
             ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => &raw mut **w,
             ImportWatcher::None => unreachable!(),
         };
-        // The VM holds `bun_watcher` type-erased as `*mut c_void` (b2-cycle).
+        // The VM holds `bun_watcher` type-erased as `*mut c_void`; see the
+        // `TODO(port)` on the field decl in VirtualMachine.rs to widen it to
+        // `*mut ImportWatcher` (same crate, no cycle).
         self.bun_watcher = bun_core::heap::into_raw(iw).cast::<core::ffi::c_void>();
 
         // Wire the resolver's directory-watch callback at the same time.

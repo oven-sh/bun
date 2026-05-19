@@ -148,7 +148,8 @@ pub struct VirtualMachine {
     // self-referential and cannot carry `<'a>`, so we erase to `'static` and the
     // owner guarantees the borrowed `log` outlives the VM (see `init`).
     pub transpiler: Transpiler<'static>,
-    // TODO(b2-cycle): `bun_watcher` is `ImportWatcher` from hot_reloader.rs (gated sibling).
+    // TODO(port): widen to `*mut crate::hot_reloader::ImportWatcher` (sibling
+    // module, no crate cycle); see `bun_watcher_ptr` for the cast.
     pub bun_watcher: *mut c_void,
     pub console: *mut crate::console_object::ConsoleObject,
     // TODO(port): lifetime — LIFETIMES.tsv says BORROW_PARAM (`&'a mut bun_ast::Log`);
@@ -168,7 +169,7 @@ pub struct VirtualMachine {
     pub overridden_main: crate::strong::Optional,
     pub entry_point: bun_bundler::entry_points::ServerEntryPoint,
     pub origin: bun_url::URL<'static>,
-    // TODO(b2-cycle): `node_fs` is `Option<Box<bun_runtime::node::fs::NodeFS>>`.
+    // TODO(port): `node_fs` is `Option<Box<bun_runtime::node::fs::NodeFS>>`.
     pub node_fs: Option<*mut c_void>,
     /// Opaque per-VM `bun_runtime` state (boxed `timer::All` +
     /// `Body::Value::HiveAllocator` + …). Set by
@@ -193,13 +194,13 @@ pub struct VirtualMachine {
     // `transpiler.resolver.standalone_module_graph` without a downcast.
     pub standalone_module_graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
     pub smol: bool,
-    // TODO(b2-cycle): `dns_result_order` is `bun_runtime::api::dns::Resolver::Order`.
+    // TODO(port): `dns_result_order` is `bun_runtime::api::dns::Resolver::Order`.
     pub dns_result_order: u8,
     pub cpu_profiler_config: Option<crate::bun_cpu_profiler::CPUProfilerConfig>,
     pub heap_profiler_config: Option<crate::bun_heap_profiler::HeapProfilerConfig>,
     pub counters: Counters,
 
-    // TODO(b2-cycle): `hot_reload` is `bun_runtime::cli::Command::HotReload`.
+    // TODO(port): `hot_reload` is `bun_runtime::cli::Command::HotReload`.
     pub hot_reload: u8,
     pub jsc_vm: *mut VM,
 
@@ -213,7 +214,13 @@ pub struct VirtualMachine {
     pub exit_handler: ExitHandler,
 
     pub default_tls_reject_unauthorized: Option<bool>,
-    // TODO(b2-cycle): `default_verbose_fetch` is `Option<http::HTTPVerboseLevel>`.
+    // Spec field is `Option<bun_http::HTTPVerboseLevel>`. Kept as `Option<u8>`
+    // (storing the enum's `repr(u8)` ordinal) so the zero-fill in `init` reads
+    // as `None`: `HTTPVerboseLevel` is a 3-variant `#[repr(u8)]` enum, so
+    // `Option<HTTPVerboseLevel>` uses a niche and all-zero bytes decode as
+    // `Some(HTTPVerboseLevel::None)`, silently skipping the env-var lookup.
+    // Converting to the enum type would need an explicit `write(None)` in the
+    // `addr_of_mut!` init block, like `default_tls_reject_unauthorized` above.
     pub default_verbose_fetch: Option<u8>,
 
     /// Do not access this field directly! It exists in the VirtualMachine struct so
@@ -231,7 +238,8 @@ pub struct VirtualMachine {
     pub had_errors: bool,
 
     pub macros: MacroMap,
-    // TODO(b2-cycle): `MacroEntryPoint` from `bun_bundler::entry_points` (gated).
+    // TODO(port): widen value type to `*mut bun_bundler::entry_points::MacroEntryPoint`
+    // (already a direct dep).
     pub macro_entry_points: bun_collections::ArrayHashMap<i32, *mut c_void>,
     pub macro_mode: bool,
     pub no_macros: bool,
@@ -285,7 +293,6 @@ pub struct VirtualMachine {
     pub is_handling_uncaught_exception: bool,
     pub exit_on_uncaught_exception: bool,
 
-    // TODO(b2): `modules` is `ModuleLoader::AsyncModule::Queue` (AsyncModule.rs gated).
     pub modules: crate::async_module::Queue,
     pub aggressive_garbage_collection: GCLevel,
 
@@ -361,7 +368,7 @@ unsafe extern "C" {
     safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
 }
 
-/// `hot_reload` is stored as `u8` (TODO(b2-cycle): widen to
+/// `hot_reload` is stored as `u8` (TODO(port): widen to
 /// `bun_options_types::context::HotReload`). Mirror the Zig enum ordinals so
 /// the un-gated accessors below can compare without naming the type.
 pub const HOT_RELOAD_NONE: u8 = 0;
@@ -1433,10 +1440,10 @@ impl VirtualMachine {
         if self.hot_reload != HOT_RELOAD_HOT {
             return None;
         }
-        // TODO(b2-cycle): spec lazy-inits via `RareData::hotMap(allocator)`;
-        // that accessor is gated in `rare_data.rs::_accessor_body`. Until it
-        // un-gates, return whatever the field already holds (callers that need
-        // the lazy-init path are themselves gated on `bun_runtime`).
+        // TODO(port): spec lazy-inits via `RareData::hotMap(allocator)`
+        // (now `crate::rare_data::RareData::hot_map`); wire that in. For now
+        // return whatever the field already holds — the callers that need the
+        // lazy-init path live in `bun_runtime`.
         self.rare_data.as_deref_mut()?.hot_map.as_mut()
     }
 
@@ -1629,7 +1636,7 @@ pub struct RuntimeHooks {
     pub print_exception:
         fn(vm: &mut VirtualMachine, value: JSValue, exception_list: Option<&mut ExceptionList>),
     /// `vm.timer.insert(&mut event_loop_timer)` — `Timer::All` lives in
-    /// `bun_runtime::RuntimeState` (b2-cycle); low-tier callers
+    /// `bun_runtime::RuntimeState` (forward-dep on `bun_jsc`); low-tier callers
     /// (`AbortSignal::Timeout`) reach it through this slot.
     pub timer_insert: unsafe fn(
         vm: *mut VirtualMachine,
@@ -1644,12 +1651,12 @@ pub struct RuntimeHooks {
     /// `SSL_CTX*`, shared by every `tls: true` outbound connection that didn't
     /// supply explicit options. The storage slot lives in `RareData`
     /// (low-tier) but population reaches `RuntimeState.ssl_ctx_cache`
-    /// (`bun_runtime`, b2-cycle); spec rare_data.zig:741.
+    /// (`bun_runtime`); spec rare_data.zig:741.
     pub default_client_ssl_ctx: unsafe fn(vm: *mut VirtualMachine) -> *mut uws::SslCtx,
     /// `RareData.sslCtxCache().getOrCreateOpts(opts, &err)` — per-VM
     /// digest-keyed weak `SSL_CTX*` cache. Returns a +1 ref or `None` on
     /// BoringSSL rejection (`err` populated). `SSLContextCache` lives in
-    /// `bun_runtime::RuntimeState` (b2-cycle).
+    /// `bun_runtime::RuntimeState` (forward-dep on `bun_jsc`).
     pub ssl_ctx_cache_get_or_create: unsafe fn(
         vm: *mut VirtualMachine,
         opts: uws::SocketContext::BunSocketContextOptions,
@@ -1842,7 +1849,7 @@ impl VirtualMachine {
 
 impl VirtualMachine {
     /// `vm.timer.insert(timer)` — dispatches through `RuntimeHooks` because
-    /// `Timer::All` lives in `bun_runtime` (b2-cycle).
+    /// `Timer::All` lives in `bun_runtime` (forward-dep on `bun_jsc`).
     ///
     /// # Safety
     /// `timer` must point at a live `EventLoopTimer` not currently linked into
@@ -2230,9 +2237,9 @@ impl VirtualMachine {
 
     /// `eventLoop().autoTickActive()` — like [`auto_tick`](Self::auto_tick)
     /// but only sleeps in the uSockets loop while it has active handles
-    /// (spec event_loop.zig:456). The real body lives in `event_loop.rs`
-    /// behind `` until the b2-cycle (`Timer::All`) breaks; until
-    /// then route through the same `auto_tick` hook so drain loops in
+    /// (spec event_loop.zig:456). The real body lives in `event_loop.rs`;
+    /// `Timer::All` lives in `bun_runtime` so route through the same
+    /// `auto_tick` hook so drain loops in
     /// `on_before_exit` / `bun_main` still make forward progress.
     #[inline]
     pub fn auto_tick_active(&mut self) {
@@ -2722,7 +2729,7 @@ pub struct Options {
     pub env_loader: Option<NonNull<bun_dotenv::Loader<'static>>>,
     pub store_fd: bool,
     pub smol: bool,
-    // TODO(b2-cycle): real type is `bun_runtime::api::dns::Resolver::Order`.
+    // TODO(port): real type is `bun_runtime::api::dns::Resolver::Order`.
     pub dns_result_order: u8,
     /// `--print` needs the result from evaluating the main module.
     pub eval: bool,
@@ -3059,8 +3066,8 @@ impl VirtualMachine {
     pub fn get_verbose_fetch(&mut self) -> bun_http::HTTPVerboseLevel {
         use bun_http::HTTPVerboseLevel as L;
         if let Some(v) = self.default_verbose_fetch {
-            // PORT NOTE: field is `Option<u8>` until the b2-cycle widens it;
-            // map ordinals back.
+            // Field stores the `repr(u8)` ordinal (see field decl for why);
+            // map it back to the enum.
             return match v {
                 1 => L::Headers,
                 2 => L::Curl,
@@ -3479,7 +3486,7 @@ impl VirtualMachine {
     /// attributes and forces a real reload on every `.get()` — no raw-pointer
     /// laundering needed for the condition.
     pub fn wait_for(&mut self, cond: &core::cell::Cell<bool>) {
-        // R-2 noalias mitigation (PORT_NOTES_PLAN R-2; precedent
+        // noalias mitigation (see bun_ptr::LaunderedSelf; precedent
         // `b818e70e1c57` NodeHTTPResponse::cork): `&mut self` is
         // LLVM-`noalias`, but `tick()/auto_tick()` re-enter JS which reaches
         // `self` again via `VirtualMachine::get()`. Launder `self` so each
@@ -4204,8 +4211,9 @@ impl VirtualMachine {
         let mut log = bun_ast::Log::default();
         jsc_vm.log = NonNull::new(&raw mut log);
         jsc_vm.transpiler.resolver.log = NonNull::from(&mut log);
-        // TODO(b2-cycle): `transpiler.linker.log` / `resolver.package_manager.log`
-        // — gated bundler fields.
+        // TODO(port): Zig also re-points `transpiler.linker.log` and
+        // `resolver.package_manager.log`; the latter sits behind the
+        // `AutoInstaller` trait object so it needs a vtable hook.
         // PORT NOTE: Zig `defer { restore old_log }` — fires on every exit
         // (including `?` from `ResolveMessage::create` below), so the VM's
         // `log` cannot be left pointing at the dropped stack `log`. Hand-roll
@@ -4771,7 +4779,7 @@ impl VirtualMachine {
 
         if value.js_type() == jsc::JSType::DOMWrapper {
             // `as_class_ref` is the audited `as_::<T>() → &T` backref-deref;
-            // R-2: shared borrow — `logged` is `Cell<bool>`.
+            // Shared borrow — `logged` is `Cell<bool>`.
             if let Some(build_error) = value.as_class_ref::<crate::BuildMessage>() {
                 if !build_error.logged.get() {
                     if self.had_errors {

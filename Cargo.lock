@@ -355,6 +355,7 @@ dependencies = [
  "bstr",
  "bumpalo",
  "bun_alloc",
+ "bun_analytics",
  "bun_ast",
  "bun_base64",
  "bun_collections",

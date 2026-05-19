@@ -455,7 +455,7 @@ pub mod js {
     );
 }
 
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+// Host-fn re-entrancy: every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
 // shim (`generated_classes.rs`) still passes `this: &mut UDPSocket` until the
 // `sharedThis: true` regen lands — `&mut T` auto-derefs to `&T` so the impls
@@ -491,7 +491,7 @@ impl UDPSocket {
     /// heap-allocated `UDPSocket` in [`udp_socket`] via
     /// `uws::udp::Socket::create(.., user_data = this_ptr)` and remains live
     /// until `on_close` (uws guarantees no callback after close). All mutated
-    /// fields are `Cell`/`JsCell`, so a shared borrow is sufficient (R-2).
+    /// fields are `Cell`/`JsCell`, so a shared borrow is sufficient.
     #[inline]
     fn from_uws<'a>(socket: *mut uws::udp::Socket) -> &'a UDPSocket {
         // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
@@ -517,7 +517,7 @@ impl UDPSocket {
             closed: Cell::new(false),
             connect_info: Cell::new(None),
         });
-        // SAFETY: just allocated above; we are the sole owner. R-2: shared
+        // SAFETY: just allocated above; we are the sole owner. Shared
         // borrow — every mutated field is `Cell`/`JsCell`.
         let this = unsafe { &*this_ptr };
 
@@ -534,7 +534,7 @@ impl UDPSocket {
             // SAFETY: `ptr` came from `heap::alloc` above and ownership has been
             // transferred to the JS wrapper; the guard only fires on the early-return
             // error paths below, on the same stack frame, so the allocation is live.
-            // R-2: shared borrow — mutation through `Cell`/`JsCell`.
+            // Shared borrow — mutation through `Cell`/`JsCell`.
             let this = unsafe { &*ptr };
             this.closed.set(true);
             // Hoist before `(*socket).close()`: that call SYNCHRONOUSLY re-enters
@@ -1586,7 +1586,7 @@ impl UDPSocket {
             };
             // `(*socket).close()` SYNCHRONOUSLY invokes `on_close` (udp.c:110
             // `s->on_close(s)`), which re-derives `&UDPSocket` from the uws
-            // user pointer. R-2: with `&self` + `Cell`/`JsCell` the sibling
+            // user pointer. With `&self` + `Cell`/`JsCell` the sibling
             // shared borrow is sound; the (idempotent) downgrade is hoisted
             // because `on_close` repeats it. Spec: udp_socket.zig:915-920.
             this.this_value.with_mut(|r| r.downgrade());
@@ -1730,7 +1730,7 @@ impl UDPSocket {
         let args = call_frame.arguments_old::<2>();
 
         // `as_class_ref` is the safe `&T` downcast (encapsulates `&*from_js`);
-        // mutation goes through `Cell`, so a shared borrow suffices (R-2).
+        // mutation goes through `Cell`, so a shared borrow suffices.
         let Some(this) = call_frame.this().as_class_ref::<UDPSocket>() else {
             return Err(
                 global_this.throw_invalid_arguments(format_args!("Expected UDPSocket as 'this'"))
@@ -1787,7 +1787,7 @@ impl UDPSocket {
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
         // `as_class_ref` is the safe `&T` downcast (encapsulates `&*from_js`);
-        // mutation goes through `Cell`, so a shared borrow suffices (R-2).
+        // mutation goes through `Cell`, so a shared borrow suffices.
         let Some(this) = call_frame.this().as_class_ref::<UDPSocket>() else {
             return Err(
                 global_object.throw_invalid_arguments(format_args!("Expected UDPSocket as 'this'"))

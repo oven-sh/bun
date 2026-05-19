@@ -51,7 +51,7 @@ pub enum ClosingState {
 /// `webcore.Blob` (src/runtime/webcore/Blob.zig:7-52). The `m_ctx` payload of
 /// the codegen'd `JSBlob` wrapper.
 ///
-/// R-2 (`sharedThis`): every JS-facing host-fn takes `&Blob` (not `&mut Blob`)
+/// `sharedThis`: every JS-facing host-fn takes `&Blob` (not `&mut Blob`)
 /// so re-entrant JS calls cannot stack two `&mut` to the same instance. Fields
 /// mutated by host-fns are therefore wrapped in `Cell` (Copy scalars) or
 /// `JsCell` (the non-Copy `store`). `Cell<T>` and `JsCell<T>` are both
@@ -202,7 +202,7 @@ impl Blob {
         unsafe { &*self.content_type.get() }
     }
 
-    /// Borrowed accessor for the `JsCell`-wrapped store. R-2: the field is
+    /// Borrowed accessor for the `JsCell`-wrapped store. The field is
     /// interior-mutable so host-fns can take `&self`; this projects back to the
     /// `Option<&StoreRef>` shape every caller used pre-migration.
     #[inline]

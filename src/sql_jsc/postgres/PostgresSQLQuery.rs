@@ -33,7 +33,7 @@ pub use crate::jsc::codegen::JSPostgresSQLQuery as js;
 pub use js::to_js;
 
 //
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+// Host-fn re-entrancy: every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
 // shim still emits `this: &mut PostgresSQLQuery` —
 // `&mut T` auto-derefs to `&T` so the impls below compile against either.
@@ -137,7 +137,7 @@ impl Status {
 impl PostgresSQLQuery {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
-    // ─── R-2 interior-mutability helpers ─────────────────────────────────────
+    // ─── Interior-mutability helpers ─────────────────────────────────────────
 
     /// Read-modify-write the `Cell<Flags>` through `&self`.
     #[inline]
@@ -216,7 +216,7 @@ impl PostgresSQLQuery {
         global_object: &JSGlobalObject,
         queries_array: JSValue,
     ) {
-        // R-2: every field touched below is `Cell`/`JsCell`-backed, so `&self`
+        // Every field touched below is `Cell`/`JsCell`-backed, so `&self`
         // is sufficient and `noalias` is suppressed. `ScopedRef` brackets the
         // JS-re-entrant `run_callback` so a re-entrant `deref()` cannot free
         // `*self` mid-body.
@@ -253,7 +253,7 @@ impl PostgresSQLQuery {
     }
 
     pub fn on_js_error(&self, err: JSValue, global_object: &JSGlobalObject) {
-        // R-2: see `on_write_fail` — `&self` + Cell/JsCell, ScopedRef brackets re-entry.
+        // See `on_write_fail` — `&self` + Cell/JsCell, ScopedRef brackets re-entry.
         let _deref = self.ref_guard();
         self.status.set(Status::Fail);
         let Some(this_value) = self.this_value.get().try_get() else {
@@ -310,7 +310,7 @@ impl PostgresSQLQuery {
         connection: JSValue,
         is_last: bool,
     ) {
-        // R-2: see `on_write_fail` — `&self` + Cell/JsCell, ScopedRef brackets re-entry.
+        // See `on_write_fail` — `&self` + Cell/JsCell, ScopedRef brackets re-entry.
         let _deref = self.ref_guard();
         self.status.set(if is_last {
             Status::Success
@@ -520,7 +520,7 @@ impl PostgresSQLQuery {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        // R-2: `this` is the live m_ctx payload for `callframe.this()`; the JS
+        // `this` is the live m_ctx payload for `callframe.this()`; the JS
         // wrapper is on-stack so GC cannot finalize it. Every mutated field is
         // `Cell`/`JsCell`-backed, so `&Self` suffices. The pointer pushed into
         // `connection.requests` is derived via `core::ptr::from_ref(this).cast_mut()`
@@ -531,7 +531,7 @@ impl PostgresSQLQuery {
         // `from_js_ref` wraps the m_ctx payload in a `ParentRef` — the JS wrapper
         // is on-stack (rooted by `arguments[0]`) so GC cannot finalize it for the
         // duration of this call, satisfying the `ParentRef` outlives-holder
-        // invariant. R-2: shared borrow — every connection field accessed below is
+        // invariant. Shared borrow — every connection field accessed below is
         // `Cell`/`JsCell`.
         let Some(connection) = postgres_sql_connection::js::from_js_ref(arguments[0]) else {
             return Err(

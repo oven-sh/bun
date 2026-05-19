@@ -86,7 +86,7 @@ bun_core::declare_scope!(BodyValueBufferer, visible);
 // TODO(port): `bun.JSTerminated!T` is a narrower error set than `bun.JSError`; using JsResult for now.
 type JsTerminated<T> = jsc::JsResult<T>;
 
-// R-2 (host-fn re-entrancy): `Body` is embedded inline in JS-exposed
+// Host-fn re-entrancy: `Body` is embedded inline in JS-exposed
 // `Response` (and aliased via `HiveRef` in `Request`). Every BodyMixin host
 // fn takes `&self` and projects `&mut Value` through this `JsCell`; the
 // `UnsafeCell` inside suppresses LLVM `noalias` on `&Body` so a re-entrant
@@ -112,7 +112,7 @@ impl Body {
         }
     }
 
-    /// R-2 interior-mutability projection: `&self` → `&mut Value`.
+    /// Interior-mutability projection: `&self` → `&mut Value`.
     /// Single-JS-thread invariant (see `JsCell`) makes this sound; keep the
     /// returned borrow short and do not hold it across a call that re-enters
     /// JS and may touch this same body.
@@ -1706,11 +1706,11 @@ pub fn extract(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Body> {
 /// Implementers supply `get_body_value`, `get_fetch_headers`, `get_form_data_encoding`,
 /// and optionally override `get_body_readable_stream` (Zig `@hasDecl` check).
 ///
-/// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. The
+/// Host-fn re-entrancy: every JS-exposed method takes `&self`. The
 /// codegen shim still emits `this: &mut T` — `&mut T`
 /// auto-derefs to `&T` so the impls below compile against either.
 pub trait BodyMixin: BodyOwnerJs + Sized {
-    /// R-2 interior-mutability boundary: implementors project `&mut Value`
+    /// Interior-mutability boundary: implementors project `&mut Value`
     /// from `&self` via `JsCell` (Response) or a raw `NonNull` deref (Request);
     /// see [`Body::value_mut`]. Single-JS-thread invariant — keep the borrow
     /// short and do not hold it across a call that re-enters JS.
@@ -2269,7 +2269,7 @@ impl<'a> Drop for ValueBufferer<'a> {
         // stream_buffer dropped automatically
         if let Some(byte_stream) = self.byte_stream {
             // Kept alive by `readable_stream_ref` while set — satisfies the
-            // `BackRef` outlives-holder invariant. R-2: `unpipe_without_deref`
+            // `BackRef` outlives-holder invariant. `unpipe_without_deref`
             // takes `&self` (interior-mutable).
             bun_ptr::BackRef::from(byte_stream).unpipe_without_deref();
         }
@@ -2623,7 +2623,7 @@ impl<'a> ValueBufferer<'a> {
                 webcore::readable_stream::Source::Bytes(byte_stream_ptr) => {
                     // BACKREF: see `Source::bytes()` — payload owned by the
                     // readable stream, kept alive via `self.readable_stream_ref`
-                    // above. R-2: all touched fields are interior-mutable.
+                    // above. All touched fields are interior-mutable.
                     let byte_stream = stream.ptr.bytes().expect("matched Bytes");
                     debug_assert!(byte_stream.pipe.get().ctx.is_none());
                     debug_assert!(self.byte_stream.is_none());

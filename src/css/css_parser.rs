@@ -1278,8 +1278,8 @@ where
 // at-rule arms now call the leaf-module parse fns directly (`LayerName`,
 // `SupportsCondition`, `KeyframesName`, `PageSelector`, `ContainerName`,
 // `ContainerCondition`, `FontPaletteValuesRule`, `PageRule`, `PropertyRule`
-// have un-gated). Only `@font-face`/`@keyframes` block bodies remain
-// inline-``-gated on their `RuleBodyItemParser` trait impls.
+// have un-gated). Only `@font-face`/`@keyframes` block bodies route through
+// dedicated `RuleBodyItemParser` impls in their leaf modules.
 mod rule_parsers {
     use super::*;
     use crate::selectors::parser as selector_parser;
@@ -3907,7 +3907,7 @@ impl<'a> Parser<'a> {
     }
 
     // ──────────────────────────────────────────────────────────────────────
-    // `*_cloned` helpers — C-7 in PORT_NOTES_PLAN.
+    // `*_cloned` helpers.
     //
     // These wrap `expect_*` / `slice_from` and return the slice with its
     // lifetime detached from `&mut self` (to `'static`, matching `Token`'s
@@ -3915,7 +3915,7 @@ impl<'a> Parser<'a> {
     // sites in the CSS parser route through here instead of laundering the
     // lifetime locally.
     //
-    // Once C-9 threads `'i` through `Token<'i>`, these become safe
+    // Once `'i` is threaded through `Token<'i>`, these become safe
     // `-> CssResult<&'i [u8]>` and the body drops the `unsafe` — no caller
     // changes needed.
     // ──────────────────────────────────────────────────────────────────────

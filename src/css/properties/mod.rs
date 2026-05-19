@@ -193,11 +193,11 @@ pub mod contain;
 pub mod display;
 pub mod effects;
 pub mod flex;
-// `font`: un-gated — real data types (FontWeight / FontSize / FontStretch /
-// FontFamily / FontStyle / FontVariantCaps / LineHeight / Font / FontHandler)
-// live in `font.rs`. parse/to_css/handle_property bodies remain internally
-// ``-gated there until DeriveParse/DeriveToCss proc-macros +
-// EnumProperty derive land.
+// `font`: real data types (FontWeight / FontSize / FontStretch / FontFamily /
+// FontStyle / FontVariantCaps / LineHeight / Font / FontHandler) and hand-rolled
+// parse/to_css/handle_property bodies live in `font.rs`. Some sites carry
+// `blocked_on:` notes pointing at the eventual DeriveParse/DeriveToCss
+// proc-macros and EnumProperty derive that would replace the hand-rolled bodies.
 pub mod font;
 pub mod grid;
 // `list`: un-gated — real ListStyleType / CounterStyle / Symbols / Symbol
@@ -220,18 +220,17 @@ pub mod transform;
 pub mod transition;
 pub mod ui;
 
-// `css_modules`: un-gated — real `Composes` payload (names/from/loc/
-// cssparser_loc) + `Specifier` enum (Global/ImportRecordIndex) live in
-// `css_modules.rs`. `Composes::to_css` stays internally ``-gated
-// on `CustomIdent::to_css` (Printer::write_ident).
+// `css_modules`: real `Composes` payload (names/from/loc/cssparser_loc) +
+// `Specifier` enum (Global/ImportRecordIndex) and parse/to_css/deep_clone/eql/
+// hash bodies live in `css_modules.rs`.
 pub mod css_modules;
 
-// `custom`: un-gated — real data types (TokenList / TokenOrValue /
-// CustomProperty / CustomPropertyName / UnparsedProperty / EnvironmentVariable
-// / Variable / Function / UnresolvedColor / UAEnvironmentVariable) live in
-// `custom.rs`. parse/to_css/deep_clone/eql/hash bodies remain internally
-// ``-gated there until their leaf deps (ident/url/color/
-// generics) un-gate.
+// `custom`: real data types (TokenList / TokenOrValue / CustomProperty /
+// CustomPropertyName / UnparsedProperty / EnvironmentVariable / Variable /
+// Function / UnresolvedColor / UAEnvironmentVariable) and parse/to_css/
+// deep_clone/eql/hash bodies live in `custom.rs`. A few leaf calls
+// (Url::parse/to_css, CustomIdent::to_css) are inlined under `mod ext` there
+// so the hub compiles without touching `values/{url,ident}.rs`.
 pub mod custom;
 
 pub mod properties_generated;

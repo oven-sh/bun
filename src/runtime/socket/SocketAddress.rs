@@ -16,7 +16,7 @@ use bun_cares_sys::c_ares as ares;
 
 // `pub const js = jsc.Codegen.JSSocketAddress;` + toJS/fromJS/fromJSDirect
 // → handled by the JsClass derive; codegen wires toJS/fromJS/fromJSDirect.
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; the one
+// Host-fn re-entrancy: every JS-exposed method takes `&self`; the one
 // field written from a host_fn-reachable path (`_presentation`, lazily filled
 // by `address()`) is `Cell`-wrapped (`BunString` is `Copy`). `_addr` is
 // read-only after construction and stays bare.

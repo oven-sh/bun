@@ -28,8 +28,9 @@ bun_jsc.workspace = true
 bun_ast.workspace = true
 bun_options_types.workspace = true
 bun_paths.workspace = true
-# bun_runtime — only used in BakeSourceProvider::get_external_data, which is
-# re-gated on bun_runtime::bake::production::PerThread. Dep dropped to keep
-# this crate's transitive surface minimal during B-2.
+# bun_runtime intentionally not depended on — bun_runtime already depends on
+# this crate, so adding it here would create a cycle. The one consumer of
+# `bun_runtime::bake::production::PerThread` (`BakeSourceProvider::get_external_data`)
+# reaches it through the `bun_jsc::RuntimeHooks` vtable instead.
 bun_sourcemap.workspace = true
 bun_wyhash.workspace = true

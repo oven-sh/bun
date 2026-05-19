@@ -12,16 +12,6 @@ use bun_core::Output;
 use bun_wyhash::Wyhash;
 
 // Re-exports (mirrors the Zig `pub const X = @import(...)` block at the bottom).
-// Round-C: stub the still-gated submodules so the helper *types* in this file
-// compile; the real bodies arrive in rounds D/E.
-#[allow(non_snake_case)]
-pub mod ConvertESMExportsForHmr {
-    pub type Ctx = ();
-}
-#[allow(non_snake_case)]
-pub mod ImportScanner {
-    pub type State = ();
-}
 pub use bun_paths::fs;
 
 /// `bun_options_types` is missing several items P.rs/Parser.rs reference
@@ -620,7 +610,7 @@ pub type RuntimeNames = Runtime::Names;
 pub use crate::p::{NewParser, P};
 
 pub use bun_collections::StringHashMap as StringHashMapRe; // TODO(port): name collision with `StringHashMap` re-export
-// NOTE(b0): `pub use bun_js_printer as js_printer;` removed — js_printer is same-tier mutual
+// NOTE: `pub use bun_js_printer as js_printer;` removed — js_printer is same-tier mutual
 // (js_printer depends on js_parser). Downstream callers import bun_js_printer directly.
 
 pub use bun_ast as js_ast;

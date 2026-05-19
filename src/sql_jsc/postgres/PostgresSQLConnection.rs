@@ -83,7 +83,7 @@ impl jsc::JsClass for PostgresSQLConnection {
 use crate::jsc::verify_error_to_js;
 
 //
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+// Host-fn re-entrancy: every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). `&mut self`
 // carried LLVM `noalias`, but JS callbacks (promise rejections, on_close,
 // query results) can re-enter via a fresh `&mut Self` from `m_ctx` and mutate
@@ -183,7 +183,7 @@ bun_event_loop::impl_timer_owner!(PostgresSQLConnection;
 );
 
 impl PostgresSQLConnection {
-    // ─── R-2 interior-mutability helpers ─────────────────────────────────────
+    // ─── Interior-mutability helpers ─────────────────────────────────────────
 
     /// Read-modify-write the packed `Cell<ConnectionFlags>` through `&self`.
     #[inline]
@@ -303,7 +303,7 @@ impl HasAutoFlush for PostgresSQLConnection {
         // `this` is the live `PostgresSQLConnection` registered with the
         // deferred-task queue (via `register_auto_flusher`, which passes
         // `self.as_ctx_ptr()` — never null); the queue runs on the JS thread.
-        // R-2: `ParentRef` yields `&T` only — body takes `&self`.
+        // `ParentRef` yields `&T` only — body takes `&self`.
         let this = ParentRef::from(NonNull::new(this).expect("auto-flush ctx non-null"));
         this.on_auto_flush_impl()
     }
@@ -1303,7 +1303,7 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         }));
 
     // `heap::into_raw` is `Box::into_raw` — never null. Sole owner until
-    // `to_js` below. R-2: every field is interior-mutable, so a shared
+    // `to_js` below. Every field is interior-mutable, so a shared
     // `ParentRef` deref is sufficient for the writes below.
     let this = ParentRef::from(core::ptr::NonNull::new(ptr).expect("heap::into_raw non-null"));
 
@@ -1526,17 +1526,17 @@ impl PostgresSQLConnection {
     }
 
     fn clean_up_requests(&self, js_reason: Option<JSValue>) {
-        // R-2: `&self` carries no `noalias`; every field accessed below is
+        // `&self` carries no `noalias`; every field accessed below is
         // `Cell`/`JsCell`-backed, so re-entrant JS callbacks (promise reject →
         // user `.catch()` → new query enqueue) that mutate `self.requests`
-        // through a fresh `&Self` from `m_ctx` are sound. The previous
-        // black_box launder (b818e70e1c57-style) is no longer needed.
-        // The connection is kept alive by the caller's `ref_and_close` ref
-        // bracket for the duration of this loop, so re-entry never frees `*self`.
+        // through a fresh `&Self` from `m_ctx` are sound — no `black_box`
+        // launder is needed. The connection is kept alive by the caller's
+        // `ref_and_close` ref bracket for the duration of this loop, so
+        // re-entry never frees `*self`.
         while self.requests.get().readable_length() > 0 {
             let request_ptr: *mut PostgresSQLQuery = self.requests.get().peek_item(0);
             // Queue invariant: every stored pointer is non-null and live
-            // (refcount ≥ 1 held by the queue). R-2: `ParentRef` yields `&T`
+            // (refcount ≥ 1 held by the queue). `ParentRef` yields `&T`
             // only — `PostgresSQLQuery` is Cell/JsCell-backed. Raw `*mut`
             // retained for `discard_request` below.
             let request = ParentRef::from(NonNull::new(request_ptr).expect("queue item non-null"));
@@ -1613,7 +1613,7 @@ impl PostgresSQLConnection {
     /// Shared borrow of the queue's head request, if any.
     ///
     /// The queue holds an intrusive ref on every `*mut PostgresSQLQuery` it
-    /// stores; `PostgresSQLQuery` is `Cell`/`JsCell`-backed (R-2), so a shared
+    /// stores; `PostgresSQLQuery` is `Cell`/`JsCell`-backed, so a shared
     /// `&` is sound even across re-entrant JS. Returned as a [`ParentRef`]
     /// (lifetime-erased `&T` via safe `Deref`) — same shape as
     /// `clean_up_requests`/`advance` already use for queue items, so the
@@ -1674,7 +1674,7 @@ impl PostgresSQLConnection {
 
 // PORT NOTE: Zig's `Writer.connection: *PostgresSQLConnection` is a
 // backref (LIFETIMES.tsv BACKREF). The connection strictly outlives any Writer
-// (Writers are only constructed via `self.writer()` and never stored). R-2:
+// (Writers are only constructed via `self.writer()` and never stored).
 // `BackRef` (shared) — `write_buffer` is a `JsCell`, so mutation routes through
 // `with_mut`/`get_mut`.
 #[derive(Clone, Copy)]
@@ -1735,7 +1735,7 @@ impl PostgresSQLConnection {
 
 // PORT NOTE: Zig's `Reader.connection: *PostgresSQLConnection` is a
 // backref (LIFETIMES.tsv BACKREF). `PostgresRequest::on_data` passes both
-// `&PostgresSQLConnection` and a `NewReader<Reader>` into `on()`. R-2: `BackRef`
+// `&PostgresSQLConnection` and a `NewReader<Reader>` into `on()`. `BackRef`
 // (shared) — `read_buffer`/`last_message_start` are `JsCell`/`Cell`.
 #[derive(Clone, Copy)]
 pub struct Reader {
@@ -1885,7 +1885,7 @@ impl PostgresSQLConnection {
                 while $self.requests.get().readable_length() > 0 {
                     let result_ptr = $self.requests.get().peek_item(0);
                     // Queue invariant: every stored pointer is non-null and
-                    // live (refcount ≥ 1 held by the queue). R-2: `ParentRef`
+                    // live (refcount ≥ 1 held by the queue). `ParentRef`
                     // yields `&T` only — `PostgresSQLQuery` is Cell/JsCell-backed.
                     let result = ParentRef::from(NonNull::new(result_ptr).expect("queue item non-null"));
                     // An item may be in the success or failed state and still be inside the queue (see deinit later comments)
@@ -1916,7 +1916,7 @@ impl PostgresSQLConnection {
 
             let req_ptr: *mut PostgresSQLQuery = self.requests.get().peek_item(offset);
             // Queue invariant: every stored pointer is non-null and live
-            // (refcount ≥ 1 held by the queue). R-2: `ParentRef` yields `&T`
+            // (refcount ≥ 1 held by the queue). `ParentRef` yields `&T`
             // only — `PostgresSQLQuery` is Cell/JsCell-backed.
             let req = ParentRef::from(NonNull::new(req_ptr).expect("queue item non-null"));
             match req.status.get() {

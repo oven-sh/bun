@@ -775,7 +775,7 @@ mod _async_tasks {
                     let path = if strings::eql_comptime(args.path.slice(), b"/dev/null") {
                         ZStr::from_static(b"\\\\.\\NUL\0")
                     } else {
-                        // SAFETY (R-2): single-JS-thread `JsCell` projection of the
+                        // SAFETY (noalias re-entry): single-JS-thread `JsCell` projection of the
                         // scratch path buffer; the borrow is held only across the
                         // libuv enqueue below (which copies `path` internally) and
                         // never across a JS re-entry point.
@@ -955,7 +955,7 @@ mod _async_tasks {
                 }
                 NodeFSFunctionEnum::Statfs => {
                     let args: &args::StatFS = args_as!(args::StatFS);
-                    // SAFETY (R-2): single-JS-thread `JsCell` projection; held only
+                    // SAFETY (noalias re-entry): single-JS-thread `JsCell` projection; held only
                     // across the libuv enqueue (copies `path` internally).
                     let path = args
                         .path
@@ -4980,11 +4980,11 @@ impl NodeFS {
         // buf_to_free dropped at scope exit
 
         let mut remain = stat_size.max(0) as u64;
-        // VERIFY-FIX(round1): Zig `while (cond) {} else {}` runs the else only when
-        // the loop exits because `cond` became false — never on `break`. The
-        // `if remain == 0` check below was wrong: `break 'toplevel` after
-        // `remain` had already saturated to 0 would still enter the else. Track
-        // an explicit `broke` flag instead.
+        // Zig `while (cond) {} else {}` runs the else only when the loop exits
+        // because `cond` became false — never on `break`. An `if remain == 0`
+        // check would be wrong: `break 'toplevel` after `remain` had already
+        // saturated to 0 would still enter the else. Track an explicit `broke`
+        // flag instead.
         let mut broke = false;
         'toplevel: while remain > 0 {
             let read_len = (buf.len() as u64).min(remain) as usize;
@@ -5170,12 +5170,14 @@ impl NodeFS {
                     let _close_src = scopeguard::guard(src_fd, |fd| fd.close());
 
                     let mut flags: i32 = sys::O::CREAT | sys::O::WRONLY;
-                    // VERIFY-FIX(round1): was `usize` then passed as `&mut (wrote as u64)` —
-                    // that wrote into a discarded temporary so the deferred ftruncate
-                    // always saw 0. The scopeguard variant also double-borrowed `wrote`.
-                    // The Zig `defer` runs after `copy_file_using_read_write_loop` returns
-                    // into this scope; there are no early returns between open(dest) and
-                    // that call, so inlining the cleanup after is equivalent.
+                    // `wrote` must be `u64` (not `usize` reborrowed via
+                    // `&mut (wrote as u64)`) — that would write into a discarded
+                    // temporary so the deferred ftruncate would always see 0. A
+                    // scopeguard variant also double-borrowed `wrote`. The Zig
+                    // `defer` runs after `copy_file_using_read_write_loop`
+                    // returns into this scope; there are no early returns
+                    // between open(dest) and that call, so inlining the cleanup
+                    // after is equivalent.
                     let mut wrote: u64 = 0;
                     if args.mode.shouldnt_overwrite() {
                         flags |= sys::O::EXCL;
@@ -5356,12 +5358,12 @@ impl NodeFS {
             }
 
             let mut flags: i32 = sys::O::CREAT | sys::O::WRONLY;
-            // VERIFY-FIX(round1): `wrote` is read by the deferred-close scopeguard
-            // *after* the copy loops below mutate it. As a `usize` captured by-copy
-            // the guard always saw 0, and the `&mut (wrote as u64)` call sites
-            // wrote into discarded temporaries. `Cell<u64>` lets the guard borrow
-            // by reference while the loops `get`/`set`, matching Zig's `var wrote: u64`
-            // observed by `defer` at scope-exit time.
+            // `wrote` is read by the deferred-close scopeguard *after* the copy
+            // loops below mutate it. As a `usize` captured by-copy the guard
+            // would always see 0, and `&mut (wrote as u64)` call sites would
+            // write into discarded temporaries. `Cell<u64>` lets the guard
+            // borrow by reference while the loops `get`/`set`, matching Zig's
+            // `var wrote: u64` observed by `defer` at scope-exit time.
             let wrote: core::cell::Cell<u64> = core::cell::Cell::new(0);
             if args.mode.shouldnt_overwrite() {
                 flags |= sys::O::EXCL;

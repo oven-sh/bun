@@ -639,8 +639,7 @@ impl Worker {
             // PORT NOTE: `MimallocArena::help_catch_memory_issues` collected
             // mimalloc's deferred frees + zero-filled freed pages. The Rust
             // arena is `bumpalo::Bump`, which has no equivalent — calls
-            // dropped, gated on the real `MimallocArena` un-gate
-            // (`bun_alloc/MimallocArena.rs` is ``).
+            // dropped, gated on the real `MimallocArena` un-gate.
         }
 
         worker

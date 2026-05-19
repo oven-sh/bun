@@ -64,7 +64,7 @@ pub struct BlockList {
     // TODO(port): lifetime — field is write-only (assigned in constructor,
     // never read; `deinit` ignores it).
     global_this: *const JSGlobalObject,
-    // R-2: interior mutability so every host_fn takes `&self`. All access is
+    // Interior mutability so every host_fn takes `&self`. All access is
     // serialized by `mutex` (held across every read and every `with_mut`), so
     // the `JsCell` single-thread invariant is upheld even though `BlockList`
     // can be touched from multiple JS realms via structured clone.

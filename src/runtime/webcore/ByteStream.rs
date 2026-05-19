@@ -12,7 +12,7 @@ use crate::webcore::{blob, readable_stream};
 
 bun_output::declare_scope!(ByteStream, visible);
 
-/// R-2 (`sharedThis`): every JS-reachable inherent method takes `&self` so a
+/// `sharedThis`: every JS-reachable inherent method takes `&self` so a
 /// re-entrant JS call (e.g. `pending.run()` → JS → `onPull`) cannot stack two
 /// `&mut ByteStream`. Fields mutated on those paths are wrapped in `Cell`
 /// (Copy scalars / raw ptrs) or [`JsCell`] (non-Copy). `high_water_mark` /
@@ -74,7 +74,7 @@ impl readable_stream::SourceContext for ByteStream {
     const SUPPORTS_REF: bool = false;
     crate::source_context_codegen!(js_BytesInternalReadableStreamSource);
 
-    // R-2: trait sigs are fixed at `&mut self` (shared with the other
+    // Trait sigs are fixed at `&mut self` (shared with the other
     // `SourceContext` impls); `&mut T` auto-derefs to `&T` so each body
     // forwards to the `&self` inherent method below.
     fn on_start(&mut self) -> streams::Start {
@@ -117,7 +117,7 @@ impl ByteStream {
     }
 
     /// Init-time reset (Zig: write into `undefined`). Runs before the JS
-    /// wrapper exists, so `&mut self` is sound here (R-2 exemption).
+    /// wrapper exists, so `&mut self` is sound here.
     pub fn setup(&mut self) {
         // Called immediately after `ByteStream::default()` construction (Zig
         // wrote into `undefined`); the old value owns nothing the new one
@@ -188,7 +188,7 @@ impl ByteStream {
         );
         self.has_received_last_chunk.set(stream.is_done());
 
-        // R-2: snapshot `pipe` (two `Option<Copy>` fields) — `on_pipe` re-enters
+        // Snapshot `pipe` (two `Option<Copy>` fields) — `on_pipe` re-enters
         // its handler, which may call back into `ByteStream` (e.g. `drain`); no
         // `JsCell` borrow may be live across that call.
         let (pipe_ctx, pipe_fn) = {
@@ -208,7 +208,7 @@ impl ByteStream {
                 bun_output::scoped_log!(ByteStream, "ByteStream.onData err  action.reject()");
 
                 let global = self.parent_const().global_this();
-                // R-2: move the action out of the cell *before* calling
+                // Move the action out of the cell *before* calling
                 // `reject` (which resolves a JS promise and may re-enter).
                 let mut action = self.buffer_action.replace(None).unwrap();
                 let res = action.reject(global, err.clone());
@@ -335,7 +335,7 @@ impl ByteStream {
 
             bun_output::scoped_log!(ByteStream, "ByteStream.onData pending.run()");
 
-            // R-2: `Pending::run` resolves a JS promise (re-enters JS); the
+            // `Pending::run` resolves a JS promise (re-enters JS); the
             // `with_mut` borrow is `UnsafeCell`-backed so `noalias` is
             // suppressed on `&self`, which is the load-bearing fix vs the old
             // `&mut self` form.
@@ -421,7 +421,7 @@ impl ByteStream {
 
         if !self.buffer.get().is_empty() {
             debug_assert!(self.value().is_empty()); // == .zero
-            // R-2: confine the `&mut Vec<u8>` to a `with_mut` so no `JsCell`
+            // Confine the `&mut Vec<u8>` to a `with_mut` so no `JsCell`
             // borrow escapes the copy. The result tuple drives the rest.
             let (to_write, remaining_in_buffer_len) = self.buffer.with_mut(|b| {
                 let to_write = (b.len() - self.offset.get()).min(buffer.len());
@@ -465,7 +465,7 @@ impl ByteStream {
         self.pending_buffer.set(std::ptr::from_mut::<[u8]>(buffer));
         self.set_value(view);
 
-        // R-2: `JsCell::as_ptr` yields the stable `*mut Pending` that the
+        // `JsCell::as_ptr` yields the stable `*mut Pending` that the
         // returned `streams::Result::Pending` raw-backref needs.
         streams::Result::Pending(self.pending.as_ptr())
         // TODO(port): `streams::Result::Pending` carries `*streams.Result.Pending` in Zig (raw
@@ -513,7 +513,7 @@ impl ByteStream {
     /// `ReadableStreamSource`; teardown is driven by the GC finalizer via `Source::finalize`,
     /// which calls this. Per §JSC, `.classes.ts` payloads use `finalize`, not `deinit`/`Drop`.
     ///
-    /// R-2: stays `&mut self` — this is the destructor path (called once from
+    /// Stays `&mut self` — this is the destructor path (called once from
     /// `SourceContext::deinit_fn(&mut self)` after the ref-count hits zero), so
     /// no JS re-entry can alias `self`; and `parent().deinit()` needs unique
     /// `Box` provenance.

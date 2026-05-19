@@ -60,10 +60,10 @@ bun_core::declare_scope!(LinkerCtx, visible);
 bun_core::declare_scope!(TreeShake, hidden);
 
 // ══════════════════════════════════════════════════════════════════════════
-// CYCLEBREAK(b0): vtable instance for `bun_crash_handler::BundleGenerateChunkVTable`
-// (cold-path §Dispatch — crash trace only). crash_handler (T1) holds erased
-// `(*const LinkerContext, *const Chunk, *const PartRange)`; bundler supplies
-// the formatter that knows their layout. Mirrors src/crash_handler/crash_handler.zig:135.
+// Vtable instance for `bun_crash_handler::BundleGenerateChunkVTable` (cold
+// path — crash trace only). `crash_handler` holds erased `(*const
+// LinkerContext, *const Chunk, *const PartRange)`; the bundler supplies the
+// formatter that knows their layout. Mirrors src/crash_handler/crash_handler.zig:135.
 // ══════════════════════════════════════════════════════════════════════════
 #[cfg(feature = "show_crash_trace")]
 bun_crash_handler::link_impl_BundleGenerateChunkCtx! {

@@ -17,40 +17,25 @@ use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
 #[allow(unused_imports)]
 use bun_url::URL;
 use std::borrow::Cow;
-// TODO(b2-blocked): bun_analytics — Cargo.toml does not yet list the dep
-// (adding it triggers upstream rebuilds with in-progress breakage). The
-// `analytics::features::*` counters are pure telemetry side effects; the
-// increment call-sites below are ``-gated until the dep is wired
-// so the no-op is explicit (PORTING.md §Forbidden patterns: silent no-ops).
-
-mod analytics {
-    #[allow(non_upper_case_globals)]
-    pub mod features {
-        use core::sync::atomic::AtomicUsize;
-        // Zig: `analytics.Features.{define,loaders,macros,external} += n`.
-        // Real statics live in `bun_analytics::features::*` (AtomicUsize).
-        pub static define: AtomicUsize = AtomicUsize::new(0);
-        pub static loaders: AtomicUsize = AtomicUsize::new(0);
-        pub static macros: AtomicUsize = AtomicUsize::new(0);
-        pub static external: AtomicUsize = AtomicUsize::new(0);
-    }
-}
+// Zig: `analytics.Features.{define,loaders,macros,external} += n` — the real
+// `bun_analytics::features::*` `AtomicUsize` counters.
+use bun_analytics as analytics;
 use enum_map::{Enum, EnumMap};
 
 pub use crate::defines;
 pub use defines::Define;
-// B-3: `Define::init` / `DefineData::{from_input,parse}` are extension-trait
+// `Define::init` / `DefineData::{from_input,parse}` are extension-trait
 // methods (the canonical types live in `bun_js_parser::defines`); bring the
 // traits into scope so the associated-fn call syntax below resolves.
 #[allow(unused_imports)]
 use crate::defines::{DefineDataExt as _, DefineExt as _};
 pub use bun_options_types::global_cache::GlobalCache;
 
-// ── B-2 type aliases for incomplete lower-tier surfaces ──
-// TODO(b2-blocked): bun_resolver::package_json::ESModule::ConditionsMap — module
+// ── Type aliases for incomplete lower-tier surfaces ──
+// TODO(port): bun_resolver::package_json::ESModule::ConditionsMap — module
 // path doesn't expose this yet; local alias matches Zig `StringArrayHashMap(void)`.
 pub type ConditionsMap = StringArrayHashMap<()>;
-// TODO(b2-blocked): bun_sys::Dir — directory handle. Mapped to Fd for now
+// TODO(port): bun_sys::Dir — directory handle. Mapped to Fd for now
 // (matches `bun.FD.fromStdDir` pattern).
 pub type Dir = bun_sys::Fd;
 /// `Loader.HashTable` (Zig nested type alias). Unified with the canonical
@@ -353,7 +338,7 @@ pub trait TargetExt: Copy {
 
 impl TargetExt for Target {
     fn bake_graph(self) -> crate::bake_types::Graph {
-        // TODO(b0): bake::Graph arrives from move-in (TYPE_ONLY → bundler)
+        // TODO(port): bake::Graph arrives from move-in (TYPE_ONLY → bundler)
         match self {
             Target::Browser => crate::bake_types::Graph::Client,
             Target::BakeServerComponentsSsr => crate::bake_types::Graph::Ssr,
@@ -572,7 +557,7 @@ pub struct LoaderResult<'a> {
     pub package_json: Option<&'a PackageJSON>,
 }
 
-// TODO(b2-blocked): bun_paths::path_literal! + Fs::Path::loader + strings::eql_long
+// TODO(port): bun_paths::path_literal! + Fs::Path::loader + strings::eql_long
 // arity — body touches VmLoaderCtx vtable which is real but the helper APIs are not.
 pub fn get_loader_and_virtual_source<'a>(
     specifier_str: &'a [u8],
@@ -1437,7 +1422,7 @@ pub struct BundleOptions<'a> {
     // directly — all access goes through crate::dispatch::DevServerVTable.
     pub dev_server: *const (),
     /// Set when Bake is bundling. Affects module resolution.
-    // TODO(b0): bake::Framework arrives from move-in (TYPE_ONLY → bundler)
+    // TODO(port): bake::Framework arrives from move-in (TYPE_ONLY → bundler)
     pub framework: Option<&'a crate::bake_types::Framework>,
 
     pub serve_plugins: Option<Box<[Box<[u8]>]>>,
@@ -1468,7 +1453,7 @@ pub struct BundleOptions<'a> {
     pub optimize_imports: Option<&'a StringSet>,
 }
 
-// B-3 UNIFIED: was a local dup of `bun_options_types::bundle_enums::ForceNodeEnv`
+// PORT NOTE: was a local dup of `bun_options_types::bundle_enums::ForceNodeEnv`
 // (resolver carried a second FORWARD_DECL copy). Canonical type now lives in
 // bun_options_types; re-exported here so `options::ForceNodeEnv` call sites in
 // bundle_v2.rs / transpiler.rs are unchanged.
@@ -1699,7 +1684,7 @@ impl<'a> BundleOptions<'a> {
         !self.defines_loaded
     }
 
-    // TODO(b2-blocked): defines_from_transform_options (see above) +
+    // TODO(port): defines_from_transform_options (see above) +
     // api::TransformOptions.define field (peechy `TransformOptions` body still
     // opaque).
     pub fn load_defines(
@@ -1900,13 +1885,10 @@ impl<'a> BundleOptions<'a> {
             optimize_imports: None,
         };
 
-        // TODO(b2-blocked): bun_analytics dep not yet wired in bundler/Cargo.toml
-        {
-            analytics::features::define
-                .fetch_add(usize::from(transform.define.is_some()), Ordering::Relaxed);
-            analytics::features::loaders
-                .fetch_add(usize::from(transform.loaders.is_some()), Ordering::Relaxed);
-        }
+        analytics::features::define
+            .fetch_add(usize::from(transform.define.is_some()), Ordering::Relaxed);
+        analytics::features::loaders
+            .fetch_add(usize::from(transform.loaders.is_some()), Ordering::Relaxed);
 
         opts.serve_plugins = transform
             .serve_plugins
@@ -2047,17 +2029,14 @@ impl<'a> BundleOptions<'a> {
             opts.tsconfig_override = Some(tsconfig.clone());
         }
 
-        // TODO(b2-blocked): bun_analytics dep not yet wired in bundler/Cargo.toml
-        {
-            analytics::features::macros.fetch_add(
-                usize::from(opts.target == Target::BunMacro),
-                Ordering::Relaxed,
-            );
-            analytics::features::external.fetch_add(
-                usize::from(!transform.external.is_empty()),
-                Ordering::Relaxed,
-            );
-        }
+        analytics::features::macros.fetch_add(
+            usize::from(opts.target == Target::BunMacro),
+            Ordering::Relaxed,
+        );
+        analytics::features::external.fetch_add(
+            usize::from(!transform.external.is_empty()),
+            Ordering::Relaxed,
+        );
         Ok(opts)
     }
 }
@@ -2148,7 +2127,7 @@ pub fn open_output_dir(output_dir: &[u8]) -> Result<Dir, bun_core::Error> {
 }
 
 /// Port of `fs.zig` `Fs.File` (path + contents pair). `bun_resolver::fs`
-/// does not surface this type yet (TODO(b2-blocked)); local mirror keeps
+/// does not surface this type yet (TODO(port)); local mirror keeps
 /// `TransformOptions.entry_point` self-contained.
 pub struct EntryPointFile {
     pub path: bun_paths::fs::Path<'static>,

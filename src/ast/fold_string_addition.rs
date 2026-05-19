@@ -3,9 +3,9 @@ use crate::{self as js_ast, E, Expr, StoreRef, e};
 use bun_alloc::Arena; // bumpalo::Bump re-export
 
 // ── local rope helpers ─────────────────────────────────────────────────────
-// `EString::push` / `EString::clone_rope_nodes` are still gated in E.rs
-// (round-C draft); inline the minimal surface here so this file can un-gate
-// without touching E.rs. These mirror the Zig bodies 1:1.
+// Mirrors the Zig `E.String.push` / `E.String.cloneRopeNodes` bodies 1:1.
+// `estring_push` takes the rope tail as a `StoreRef<EString>` (callers here
+// already hold one) instead of `&mut EString` like `EString::push` does.
 
 #[inline]
 fn store_append_string(s: E::EString) -> StoreRef<E::EString> {

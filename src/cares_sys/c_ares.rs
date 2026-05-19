@@ -742,7 +742,7 @@ const _: () = assert!(core::mem::size_of::<Channel>() == 0);
 /// Implemented by the type that owns a `*mut Channel` and receives socket-
 /// state callbacks. Zig: `Container.onDNSSocketState` + `this.channel = ch`.
 ///
-/// R-2: methods take `&self`. The c-ares `sock_state_cb` re-enters the
+/// Methods take `&self`. The c-ares `sock_state_cb` re-enters the
 /// container while a `&self` borrow may already be live in `on_dns_poll`;
 /// the implementor routes mutation through interior mutability.
 pub trait ChannelContainer: Sized {
@@ -795,7 +795,7 @@ impl Channel {
             writable: c_int,
         ) {
             // SAFETY: `ctx` is the `&C` registered below; `on_dns_socket_state`
-            // takes `&self` (R-2) so the shared borrow is sufficient.
+            // takes `&self` so the shared borrow is sufficient.
             let container = unsafe { &*ctx.cast_const().cast::<C>() };
             container.on_dns_socket_state(socket, readable != 0, writable != 0);
         }
@@ -810,7 +810,7 @@ impl Channel {
         // default stand means setServers() works as the documented workaround.
         opts.flags = ARES_FLAG_NOCHECKRESP;
         opts.sock_state_cb = Some(on_sock_state::<C>);
-        // R-2: `*mut` spelling is signature-only (c-ares stores a `void*`); the
+        // `*mut` spelling is signature-only (c-ares stores a `void*`); the
         // callback derefs as shared (`&*const`) and the implementor mutates via
         // interior mutability.
         opts.sock_state_cb_data = (this as *const C).cast_mut().cast::<c_void>();

@@ -194,7 +194,7 @@ mod _impl {
 
             let err = self.stream.with_mut(|s| s.set_params(level, strategy));
             if err.is_error() {
-                // R-2: `&self` over `Cell`/`JsCell` fields — `emit_error` →
+                // `&self` over `Cell`/`JsCell` fields — `emit_error` →
                 // `run_callback` may re-enter `close()`/`reset()` via a fresh
                 // `&Self` from `m_ctx`; interior mutability makes that sound.
                 CompressionStream::<Self>::emit_error(self, global, frame.this(), err);

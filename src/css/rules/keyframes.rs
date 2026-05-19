@@ -353,11 +353,6 @@ pub struct KeyframesListParser;
 // PORT NOTE: in Zig these are nested `pub const DeclarationParser = struct { ... }`
 // namespaces that the css parser duck-types via `@hasDecl`. In Rust they become
 // trait impls on `KeyframesListParser`.
-//
-// blocked_on: css::{DeclarationParser, AtRuleParser, QualifiedRuleParser,
-// RuleBodyItemParser} trait signatures (css_parser.rs round-5 surface),
-// Parser::parse_comma_separated, DeclarationBlock::parse, ParserOptions::default
-// arena threading.
 
 const _: () = {
     use css::css_parser::{

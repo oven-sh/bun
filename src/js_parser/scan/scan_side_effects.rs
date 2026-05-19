@@ -7,9 +7,9 @@ use bun_ast::symbol;
 use bun_ast::{self, Binding, E, Expr, ExprData, G, Op, Stmt, StmtData, StoreRef};
 use bun_collections::VecExt;
 
-// PORT NOTE: round-E un-gate. SideEffects in Zig is an enum with associated fns that
-// take `p: anytype`. Round-E converts the unbounded `<P>` generic to concrete
-// `P<'a, TS, SCAN>`. Method bodies gated; the `Result` type and enum surface are real.
+// PORT NOTE: SideEffects in Zig is an enum with associated fns that take
+// `p: anytype`. The Rust port replaces the unbounded `<P>` generic with the
+// concrete `P<'a, TS, SCAN>`.
 
 #[repr(u8)] // Zig: enum(u1) — Rust has no u1 repr; u8 is the smallest
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]

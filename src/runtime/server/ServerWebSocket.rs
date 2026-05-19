@@ -24,7 +24,7 @@ bun_output::declare_scope!(WebSocketServer, visible);
 // lives in `ServerConfig.websocket` for the server's lifetime. Raw `*const` +
 // SAFETY notes is the runtime shape.
 //
-// R-2 (PORT_NOTES_PLAN): every uws/JS callback into this socket can re-enter
+// noalias re-entry (see bun_ptr::LaunderedSelf): every uws/JS callback into this socket can re-enter
 // — `on_open` → `ws.cork(JS)` → `ws.close()` → `on_close` mutates `flags` /
 // `this_value` on the SAME `m_ctx`. A `&mut Self` receiver would alias under
 // Stacked Borrows. Receivers therefore take `&self`; per-field interior
@@ -205,7 +205,7 @@ impl ServerWebSocket {
         self.flags.get().websocket()
     }
 
-    /// R-2 helper: read-modify-write the packed `Cell<Flags>` through `&self`.
+    /// Helper: read-modify-write the packed `Cell<Flags>` through `&self`.
     /// `Flags` is a `Copy` `u64` so the load/store pair is the same codegen as
     /// the old `&mut self` field write.
     #[inline]
@@ -367,7 +367,7 @@ impl ServerWebSocket {
         // C++ JS wrapper (freed via `ServerWebSocketClass__finalize` → `finalize`).
         let this_value = unsafe { ServerWebSocket::to_js_ptr(this, global_object) };
         // SAFETY: just allocated; the JS wrapper holds the box but does not
-        // touch the Rust fields concurrently (single JS thread). R-2: shared
+        // touch the Rust fields concurrently (single JS thread). Shared
         // borrow + `JsCell::set` — no `&mut Self` formed.
         let this_ref = unsafe { &*this };
         this_ref
@@ -384,7 +384,7 @@ impl ServerWebSocket {
         self.websocket().memory_cost() + mem::size_of::<ServerWebSocket>()
     }
 
-    /// R-2 (noalias re-entrancy): `&self`, NOT `&mut self`. `ws.cork(...)`
+    /// Noalias re-entrancy: `&self`, NOT `&mut self`. `ws.cork(...)`
     /// re-enters JS which can `ws.close()` / `ws.send()` on this same socket
     /// via the JS wrapper's `m_ptr`, flipping `flags.closed`. All state lives
     /// behind `Cell`/`JsCell`, so the re-entrant frame's writes are visible
@@ -453,7 +453,7 @@ impl ServerWebSocket {
         }
     }
 
-    /// `&self` for the same noalias-reentry reason as `on_open` (R-2).
+    /// `&self` for the same noalias-reentry reason as `on_open`.
     pub fn on_message(&self, ws: AnyWebSocket, message: &[u8], opcode: Opcode) {
         bun_output::scoped_log!(
             WebSocketServer,
@@ -532,7 +532,7 @@ impl ServerWebSocket {
         self.flags.get().closed()
     }
 
-    /// `&self` for the same noalias-reentry reason as `on_open` (R-2).
+    /// `&self` for the same noalias-reentry reason as `on_open`.
     pub fn on_drain(&self, _ws: AnyWebSocket) {
         bun_output::scoped_log!(WebSocketServer, "onDrain");
         let handler = self.handler();
@@ -576,7 +576,7 @@ impl ServerWebSocket {
         }
     }
 
-    /// `&self` for the same noalias-reentry reason as `on_open` (R-2).
+    /// `&self` for the same noalias-reentry reason as `on_open`.
     pub fn on_ping(&self, _ws: AnyWebSocket, data: &[u8]) {
         bun_output::scoped_log!(WebSocketServer, "onPing: {}", bstr::BStr::new(data));
         let handler = self.handler();
@@ -605,7 +605,7 @@ impl ServerWebSocket {
         }
     }
 
-    /// `&self` for the same noalias-reentry reason as `on_open` (R-2).
+    /// `&self` for the same noalias-reentry reason as `on_open`.
     pub fn on_pong(&self, _ws: AnyWebSocket, data: &[u8]) {
         bun_output::scoped_log!(WebSocketServer, "onPong: {}", bstr::BStr::new(data));
         let handler = self.handler();
@@ -639,7 +639,7 @@ impl ServerWebSocket {
         }
     }
 
-    /// `&self` for the same noalias-reentry reason as `on_open` (R-2).
+    /// `&self` for the same noalias-reentry reason as `on_open`.
     /// Re-entrant `ws.close()` from the close handler routes through the same
     /// `Cell<Flags>` / `JsCell<JsRef>`, so no `noalias` view is invalidated.
     pub fn on_close(&self, _ws: AnyWebSocket, code: i32, message: &[u8]) {
@@ -675,7 +675,7 @@ impl ServerWebSocket {
                 sig.unref();
             }
             if was_not_empty {
-                // R-2: closure-scoped `&mut JsRef` via `JsCell::with_mut` —
+                // Closure-scoped `&mut JsRef` via `JsCell::with_mut` —
                 // no raw `*mut` projection needed.
                 this_value_cell.with_mut(|v| v.downgrade());
             }
@@ -1321,7 +1321,7 @@ impl ServerWebSocket {
     }
 
     // `passThis: true` — wrapper emitted by generated_classes.rs.
-    // R-2: `&self` — `websocket().end()` synchronously dispatches `on_close`
+    // `&self` — `websocket().end()` synchronously dispatches `on_close`
     // on this same `m_ctx`; a `&mut self` here would alias.
     pub fn close(
         &self,
@@ -1365,7 +1365,7 @@ impl ServerWebSocket {
     }
 
     // `passThis: true` — wrapper emitted by generated_classes.rs.
-    // R-2: `&self` — `websocket().close()` synchronously dispatches `on_close`.
+    // `&self` — `websocket().close()` synchronously dispatches `on_close`.
     pub fn terminate(
         &self,
         _global_this: &JSGlobalObject,
@@ -1528,7 +1528,7 @@ impl ServerWebSocket {
 // for `onOpen`/`onMessage`/etc. via `@hasDecl`. Rust needs an explicit trait
 // impl; delegate straight to the inherent methods above.
 impl WebSocketHandler for ServerWebSocket {
-    // R-2: trait keeps `*mut Self` (FFI userdata round-trip needs raw write
+    // Trait keeps `*mut Self` (FFI userdata round-trip needs raw write
     // provenance); the single `&*this` reborrow here is the ONE audited unsafe
     // boundary. Inherent `on_*` take `&self`, so the re-entrant JS dispatch
     // never stacks a `noalias` `&mut ServerWebSocket`.

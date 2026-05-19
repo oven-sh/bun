@@ -173,7 +173,7 @@ pub fn from_js_direct(value: JSValue) -> Option<*mut Response> {
 // tier (Response lives in a higher crate); the macro casts at the boundary.
 bun_jsc::impl_js_class_via_generated!(Response => bun_jsc::generated::JSResponse);
 
-/// R-2 (`sharedThis`): every JS-facing host-fn takes `&Response` (not
+/// `sharedThis`: every JS-facing host-fn takes `&Response` (not
 /// `&mut Response`) so re-entrant JS calls cannot stack two `&mut` to the same
 /// instance. Fields mutated by host-fns are therefore wrapped in `Cell` (Copy
 /// scalars) or `JsCell` (non-Copy `body`/`init`/`url`/`js_ref`). Both are
@@ -362,7 +362,7 @@ impl Response {
         self.init.get().headers.as_deref()
     }
 
-    /// R-2 `JsCell` escape hatch — single-JS-thread invariant. Centralises the
+    /// `JsCell` escape hatch — single-JS-thread invariant. Centralises the
     /// `unsafe { self.init.get_mut() }` deref so the four call sites
     /// ([`get_init_headers_mut`], [`header`], [`get_or_create_headers`],
     /// [`get_content_type`]) read it as a plain `&mut Init`.
@@ -399,14 +399,14 @@ impl Response {
         this.reported_estimated_size.get()
     }
 
-    /// R-2: returns `&mut BodyValue` from `&self` via the `JsCell` escape
+    /// Returns `&mut BodyValue` from `&self` via the `JsCell` escape
     /// hatch. Callers must keep the borrow short and not hold it across calls
     /// that may re-enter a `Response` host-fn (which could project a second
     /// `&mut` to the same `body`).
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn get_body_value(&self) -> &mut BodyValue {
-        // R-2: both `Response.body` and `Body.value` are `JsCell` —
+        // Both `Response.body` and `Body.value` are `JsCell` —
         // single-JS-thread interior-mutability boundary. See `Body::value_mut`.
         self.body.get().value_mut()
     }
@@ -453,7 +453,7 @@ impl Response {
         self.calculate_estimated_byte_size();
         // `bun_jsc::generated::JSResponse::to_js` ⇒ `Response__create` (C++
         // shim). Payload type is erased (`*mut ()`) at the bun_jsc tier.
-        // R-2: cast through `*const` then `.cast_mut()` so the payload pointer
+        // Cast through `*const` then `.cast_mut()` so the payload pointer
         // (which the C++ side stores into `m_ctx`) is derived from `&self`
         // without forging a `&mut`.
         let js_value = js::to_js(
@@ -540,7 +540,7 @@ mod _jsc_host_fns {
 
         let body: &mut BodyValue = 'brk: {
             if let Some(response) = this_value.as_class_ref::<Response>() {
-                // R-2: `get_body_value` projects `&mut` via `JsCell`.
+                // `get_body_value` projects `&mut` via `JsCell`.
                 break 'brk response.get_body_value();
             } else if let Some(request) = this_value.as_class_ref::<Request>() {
                 break 'brk request.get_body_value();
@@ -599,7 +599,7 @@ impl Response {
         // PORT NOTE: reshaped for borrowck — `FetchHeaders::fast_get` takes
         // `&mut self` (FFI writes through an out-param), so we return the
         // owned `ZigString` instead of a borrowed slice. Callers do
-        // `.slice()` themselves. R-2 escape hatch via `init_mut()`.
+        // `.slice()` themselves. Escape hatch via `init_mut()`.
         self.init_mut().headers.as_mut()?.fast_get(name)
     }
 
@@ -645,7 +645,7 @@ impl Response {
 
     #[allow(clippy::mut_from_ref)]
     fn get_or_create_headers(&self, global_this: &JSGlobalObject) -> JsResult<&mut HeadersRef> {
-        // R-2 escape hatch via `init_mut()` — the returned `&mut HeadersRef`
+        // Escape hatch via `init_mut()` — the returned `&mut HeadersRef`
         // borrows `self.init`; callers (`get_headers`, `construct_*`) do not
         // hold the borrow across calls that re-enter Response host-fns.
         let init = self.init_mut();
@@ -672,7 +672,7 @@ impl Response {
     }
 
     pub fn get_content_type(&self) -> JsResult<Option<ZigStringSlice>> {
-        // R-2 escape hatch via `init_mut()` — `fast_get` (FFI out-param write)
+        // Escape hatch via `init_mut()` — `fast_get` (FFI out-param write)
         // does not re-enter JS.
         if let Some(headers) = self.init_mut().headers.as_mut() {
             if let Some(value) = headers.fast_get(HTTPHeaderName::ContentType) {
@@ -823,7 +823,7 @@ impl Response {
             writer.write_str("\n")?;
 
             formatter.reset_line();
-            // SAFETY: R-2 `JsCell` escape hatch — `Body::write_format` takes
+            // SAFETY: `JsCell` escape hatch — `Body::write_format` takes
             // `&mut self`; single-JS-thread invariant.
             unsafe { self.body.get_mut() }
                 .write_format::<F, W, ENABLE_ANSI_COLORS>(&mut *formatter, writer)?;

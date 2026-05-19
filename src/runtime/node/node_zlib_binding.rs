@@ -213,7 +213,7 @@ pub trait CompressionContext {
     fn update_write_result(&mut self, avail_in: &mut u32, avail_out: &mut u32);
 }
 
-// R-2 (host-fn re-entrancy): every JS-exposed mixin method takes `&T`; per-field
+// Host-fn re-entrancy: every JS-exposed mixin method takes `&T`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). Accessors return the
 // cell wrapper so the mixin can `.get()`/`.set()`/`.with_mut()` as needed.
 pub trait CompressionStreamImpl: Sized + Taskable + 'static {
@@ -447,8 +447,8 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
     fn async_job_run(this: *mut T) {
         // BACKREF — `this` is the live heap m_ctx payload (kept alive by the
-        // `ref_()` in `write()`); bodies use the `&self` accessor surface
-        // (R-2). `ParentRef` Deref collapses the per-site raw deref.
+        // `ref_()` in `write()`); bodies use the `&self` accessor surface.
+        // `ParentRef` Deref collapses the per-site raw deref.
         let this_ref = ParentRef::from(NonNull::new(this).expect("async_job_run: this"));
         let global_this: &JSGlobalObject = this_ref.global_this();
         // Zig: `bunVMConcurrently()` — thread-safe accessor (skips the
@@ -475,7 +475,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
     /// Dispatched from `dispatch.rs` when the worker-thread `do_work()` posts
     /// the completion task back to the JS thread.
     ///
-    /// R-2: takes `*mut T` (full allocation provenance from `Task.ptr`) so the
+    /// Takes `*mut T` (full allocation provenance from `Task.ptr`) so the
     /// trailing `T::deref(this_ptr)` may free the box if it hits zero. All
     /// field access goes through `&*this_ptr` and the `&self` accessor surface;
     /// every accessed field is `Cell`/`JsCell`-backed so re-entry via the
@@ -486,7 +486,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
     /// `ref_()` in `write()` keeps it alive until the trailing `deref()`.
     pub unsafe fn run_from_js_thread(this_ptr: *mut T) {
         // BACKREF — see fn-level contract; `ParentRef` Deref gives safe `&T`
-        // for the `&self` accessor surface (R-2).
+        // for the `&self` accessor surface.
         let this = ParentRef::from(NonNull::new(this_ptr).expect("run_from_js_thread: this"));
         let global: &JSGlobalObject = this.global_this();
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
@@ -758,7 +758,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
     }
 
     pub fn emit_error(this: &T, global_this: &JSGlobalObject, this_value: JSValue, err_: Error) {
-        // R-2: `&T` over `Cell`/`JsCell`-backed fields — the onerror
+        // `&T` over `Cell`/`JsCell`-backed fields — the onerror
         // `run_callback` below runs user JS which can re-enter via a fresh
         // `&T` from the wrapper's `m_ctx` (e.g. `write()` flips
         // `write_in_progress` / `pending_*`). Interior mutability makes the
@@ -851,7 +851,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 macro_rules! __compression_stream_mixin_reexports {
     ($native:ty) => {
         impl $native {
-            // R-2: `this: &Self` — see CompressionStreamImpl note above.
+            // `this: &Self` — see CompressionStreamImpl note above.
             #[inline]
             pub fn write(
                 this: &Self,

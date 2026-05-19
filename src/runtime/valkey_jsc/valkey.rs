@@ -388,7 +388,7 @@ fn reader_pos(reader: &protocol::ValkeyReader<'_>) -> usize {
 
 // SAFETY: `ValkeyClient` lives at `JSValkeyClient.client` (intrusive embed via
 // `container_of`). `JsCell<ValkeyClient>` is `#[repr(transparent)]`, so the
-// field offset is unchanged. R-2: shared `&` only — every `JSValkeyClient`
+// field offset is unchanged. Shared `&` only — every `JSValkeyClient`
 // method this reaches is `&self`.
 bun_core::impl_field_parent! { ValkeyClient => JSValkeyClient.client; fn parent; }
 

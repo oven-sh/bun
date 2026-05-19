@@ -1,5 +1,3 @@
-#![allow(unexpected_cfgs)] // `feature = "tinycc"` is a Phase-C placeholder; `bun_codegen_embed` is set via RUSTFLAGS in scripts/build/rust.ts.
-
 use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_long, c_void};
 use core::fmt::{self, Write as _};
@@ -21,7 +19,7 @@ use bun_paths::{self as path, MAX_PATH_BYTES, PathBuffer};
 use bun_resolver::fs as Fs;
 use bun_sys::{self, Fd};
 
-// ─── Local shims for upstream surfaces not yet wired (Phase D) ───────────────
+// ─── Local shims for upstream surfaces not yet wired ─────────────────────────
 
 /// `bun.sys.directoryExistsAt(FD.cwd(), path).isTrue()` — local helper while
 /// `bun_core::Fd` lacks an inherent forwarder.
@@ -222,11 +220,11 @@ impl Offsets {
     }
 }
 
-// R-2 (host-fn re-entrancy): the JS-exposed `close()` method takes `&self`;
+// Host-fn re-entrancy: the JS-exposed `close()` method takes `&self`;
 // per-field interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
 // `close()` does not itself re-enter JS, but routing mutation through
 // `UnsafeCell`-backed fields suppresses `noalias` on the `&Self` the codegen
-// shim materialises from `m_ctx`, which is the systemic R-2 guarantee.
+// shim materialises from `m_ctx`, which is the systemic guarantee.
 #[bun_jsc::JsClass(no_constructor)]
 pub struct FFI {
     pub dylib: JsCell<Option<bun_sys::DynLib>>, // TODO(port): std.DynLib equivalent

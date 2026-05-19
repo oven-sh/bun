@@ -76,6 +76,20 @@ describe("Bun.Cookie expires validation", () => {
       }).toThrow();
     });
 
+    test("throws for objects whose inspect.custom throws", () => {
+      // The received value is rendered into the error message via
+      // Bun__inspect; a throwing custom inspect must surface as a JS error,
+      // not a process crash.
+      const obj = {
+        [Symbol.for("nodejs.util.inspect.custom")]() {
+          throw new Error("boom from inspect.custom");
+        },
+      };
+      expect(() => {
+        new Bun.Cookie("name", "value", { expires: obj });
+      }).toThrow();
+    });
+
     test("invalid strings throw", () => {
       expect(() => {
         new Bun.Cookie("name", "value", { expires: "tomorrow" });

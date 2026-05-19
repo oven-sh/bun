@@ -2043,6 +2043,9 @@ pub const JSValue = enum(i64) {
             formatter.deinit();
         }
         formatter.stack_check.update();
+        // toFmt is used for {f} formatting in error messages and similar contexts
+        // where exceptions from custom inspect must not leak.
+        formatter.suppress_custom_inspect_exceptions = true;
 
         return jsc.ConsoleObject.Formatter.ZigFormatter{
             .formatter = formatter,

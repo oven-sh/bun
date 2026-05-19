@@ -5,12 +5,6 @@ use std::io::Write as _;
 use bun_alloc::AllocError;
 use bun_collections::StringArrayHashMap;
 
-// LAYERING: every `Expr` flowing through this file (YAML parse, package.json
-// cache, `CatalogMap::from_pnpm_lockfile`) is the T2 value-shaped tree from
-// `bun_ast::js_ast`, NOT the T4 `bun_ast::Expr`. Importing the T4
-// type here forced a deep-convert at every boundary and broke type unification
-// with `WorkspacePackageJSONCache.root`. Use the lower crate directly; the
-// only T4 hop is the final `print_json` call, which lifts via `.into()`.
 use bun_ast::{self, self as js_ast, E, Expr, ExprData, G};
 use bun_core::strings;
 use bun_semver as semver;

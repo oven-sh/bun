@@ -487,8 +487,6 @@ fn update_package_json_and_install_with_manager_with_updates(
         let root_package_json: &mut MapEntry = unsafe { &mut *root_package_json_ptr };
 
         if let Some(stuff) = &not_in_workspace_root {
-            // PORT NOTE (layering): see `current_package_json_root` above — promote
-            // T2 → T4 for `PackageJSONEditor` / `print_json`.
             let mut root_package_json_root: bun_ast::Expr = root_package_json.root;
             PackageJSONEditor::edit_patched_dependencies(
                 manager,

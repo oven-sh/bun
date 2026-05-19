@@ -36,7 +36,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsCell, JsResult, StringJsc as
 use bun_threading::Mutex;
 
 use crate::node::util::validators;
-use crate::socket::socket_address::{sockaddr, SocketAddress};
+use crate::socket::socket_address::{SocketAddress, sockaddr};
 
 // TODO(port): move to <area>_sys — AF_* constants come from translated-c-headers
 use crate::socket::socket_address::inet::{self, AF_INET, AF_INET6};

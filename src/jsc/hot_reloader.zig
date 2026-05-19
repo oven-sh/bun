@@ -424,11 +424,12 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                             );
                         }
 
-                        if (this.verbose)
-                            debug("File changed: {s}", .{fs.relativeTo(file_path)});
-
                         if (event.op.write or event.op.delete or event.op.rename) {
                             recordChangedPath(file_path);
+
+                            if (this.verbose)
+                                debug("File changed: {s}", .{fs.relativeTo(file_path)});
+
                             if (comptime Environment.isKqueue) {
                                 if (event.op.rename) {
                                     // Special case for entrypoint: defer reload until we get
@@ -517,6 +518,16 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                             } else if (this.getTombstone(file_path)) |existing| {
                                 entries_option = existing;
                             }
+                        }
+
+                        // Skip cache bust + verbose log for metadata-only directory events
+                        // (chmod/utimes/chown/xattr on macOS now fire NOTE_ATTRIB here).
+                        // Directory contents do not change on a metadata event, so busting
+                        // the cache is pure waste.
+                        if (!event.op.write and !event.op.delete and !event.op.rename and
+                            !event.op.create and !event.op.move_to)
+                        {
+                            continue;
                         }
 
                         _ = this.ctx.bustDirCache(strings.withoutTrailingSlashWindowsPath(file_path));

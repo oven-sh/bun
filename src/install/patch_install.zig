@@ -541,6 +541,7 @@ pub const PatchTask = struct {
         const stuff = pkg_manager.computeCacheDirAndSubpath(
             pkg_name.slice(pkg_manager.lockfile.buffers.string_bytes.items),
             resolution,
+            pkg_manager.lockfile.buffers.string_bytes.items,
             &folder_path_buf,
             patch_hash,
         );

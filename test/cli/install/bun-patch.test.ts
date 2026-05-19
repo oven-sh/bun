@@ -499,6 +499,67 @@ module.exports = function isOdd(i) {
     expect(stdout.toString()).toContain("hi\nhello\n");
   });
 
+  // https://github.com/oven-sh/bun/issues/17945
+  // https://github.com/oven-sh/bun/issues/25782
+  // `bun patch --commit` loads a fresh lockfile from disk but then sliced the
+  // resolution's strings against `manager.lockfile`'s string buffer instead of
+  // the freshly-loaded one. For resolutions whose strings are long enough to be
+  // stored as an offset (tarballs, git, github — npm versions happen to dodge
+  // it) this read garbage memory and segfaulted.
+  describe.each([
+    ["name argument", (name: string) => name],
+    ["path argument", (name: string) => `node_modules/${name}`],
+  ])("patch --commit a tarball dependency (%s)", (_, makeArg) => {
+    test("does not crash and writes the patch", async () => {
+      // Name and tarball path must both be > 8 bytes so the lockfile stores
+      // them as pointers into the string buffer rather than inline.
+      const pkgName = "my-tarball-package-with-a-long-name-to-force-pointer-storage";
+      const tempdir = tempDirWithFiles("patch-tarball", {
+        "tarball-src": {
+          "package.json": JSON.stringify({ name: pkgName, version: "1.0.0" }),
+          "index.js": "module.exports = 1;\n",
+        },
+        "package.json": JSON.stringify({
+          name: "bun-patch-test",
+          dependencies: {
+            [pkgName]: `./${pkgName}-1.0.0.tgz`,
+          },
+        }),
+        "index.js": `console.log(require(${JSON.stringify(pkgName)}));`,
+      });
+
+      expectNoError(
+        await $`${bunExe()} pm pack --destination ${tempdir}`.env(bunEnv).cwd(join(tempdir, "tarball-src")),
+      );
+      expectNoError(await $`${bunExe()} i`.env(bunEnv).cwd(tempdir));
+
+      const patchArg = makeArg(pkgName);
+      expectNoError(await $`${bunExe()} patch ${patchArg}`.env(bunEnv).cwd(tempdir));
+
+      await $`echo ${"module.exports = 'patched';"} > ${join("node_modules", pkgName, "index.js")}`
+        .env(bunEnv)
+        .cwd(tempdir);
+
+      const commit = await $`${bunExe()} patch --commit ${patchArg}`.env(bunEnv).cwd(tempdir).throws(false);
+      expect(commit.stderr.toString()).not.toContain("error");
+      expect(commit.exitCode).toBe(0);
+
+      const pkgJson = await $`cat package.json`.env(bunEnv).cwd(tempdir).json();
+      const patchKey = `${pkgName}@./${pkgName}-1.0.0.tgz`;
+      expect(pkgJson.patchedDependencies).toEqual({
+        [patchKey]: `patches/${pkgName}@.%2F${pkgName}-1.0.0.tgz.patch`,
+      });
+
+      const patchContents = await $`cat ${pkgJson.patchedDependencies[patchKey]}`.env(bunEnv).cwd(tempdir).text();
+      expect(patchContents).toContain("+module.exports = 'patched';");
+
+      const run = await $`${bunExe()} run index.js`.env(bunEnv).cwd(tempdir).throws(false);
+      expect(run.stderr.toString()).toBe("");
+      expect(run.stdout.toString()).toBe("patched\n");
+      expect(run.exitCode).toBe(0);
+    });
+  });
+
   test("bad patch arg", async () => {
     const tempdir = tempDirWithFiles("lol", {
       "package.json": JSON.stringify({

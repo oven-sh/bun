@@ -148,6 +148,7 @@ pub fn doPatchCommit(
             const cache_result = manager.computeCacheDirAndSubpath(
                 name,
                 &actual_package.resolution,
+                lockfile.buffers.string_bytes.items,
                 &folder_path_buf,
                 null,
             );
@@ -171,6 +172,7 @@ pub fn doPatchCommit(
             const cache_result = manager.computeCacheDirAndSubpath(
                 pkg.name.slice(lockfile.buffers.string_bytes.items),
                 &pkg.resolution,
+                lockfile.buffers.string_bytes.items,
                 &folder_path_buf,
                 null,
             );
@@ -633,7 +635,10 @@ pub fn preparePatch(manager: *PackageManager) !void {
             const existing_patchfile_hash = existing_patchfile_hash: {
                 var __sfb = std.heap.stackFallback(1024, manager.allocator);
                 const allocator = __sfb.get();
-                const name_and_version = std.fmt.allocPrint(allocator, "{s}@{f}", .{ name, actual_package.resolution.fmt(strbuf, .posix) }) catch unreachable;
+                // `strbuf` was captured before `parseWithJSON` above, which may have
+                // reallocated `lockfile.buffers.string_bytes`. Re-read it here so
+                // non-npm resolutions (tarball/git/github) slice the live buffer.
+                const name_and_version = std.fmt.allocPrint(allocator, "{s}@{f}", .{ name, actual_package.resolution.fmt(lockfile.buffers.string_bytes.items, .posix) }) catch unreachable;
                 defer allocator.free(name_and_version);
                 const name_and_version_hash = String.Builder.stringHash(name_and_version);
                 if (lockfile.patched_dependencies.get(name_and_version_hash)) |patched_dep| {
@@ -645,6 +650,7 @@ pub fn preparePatch(manager: *PackageManager) !void {
             const cache_result = manager.computeCacheDirAndSubpath(
                 name,
                 &actual_package.resolution,
+                lockfile.buffers.string_bytes.items,
                 &folder_path_buf,
                 existing_patchfile_hash,
             );
@@ -683,6 +689,7 @@ pub fn preparePatch(manager: *PackageManager) !void {
             const cache_result = manager.computeCacheDirAndSubpath(
                 pkg_name,
                 &pkg.resolution,
+                strbuf,
                 &folder_path_buf,
                 existing_patchfile_hash,
             );

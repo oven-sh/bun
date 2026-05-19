@@ -597,14 +597,6 @@ pub use bun_js_printer::MangledProps;
 /// `bun.logger` — alias used by the original drafts as `crate::bun_ast::Source`.
 
 /// `js_ast.BundledAst` (the bundler-facing AST view).
-///
-/// PORT NOTE: lifetime-erased to `'static`. `BundledAst<'arena>` borrows the
-/// per-file parse arena (`hashbang`/`url_for_css`/`export_star_import_records`
-/// slices). The bundler owns those arenas for the entire link (see
-/// `LinkerGraph.bump: *const Arena` "stays `'static`-ish" note); `JSAst` is
-/// stored in a `MultiArrayList` SoA inside `LinkerGraph`/`Graph`, neither of
-/// which carries a lifetime parameter yet. Pin to `'static` until `'bump`
-/// is threaded through `Chunk`/`LinkerGraph`/`LinkerContext`.
 pub type JSAst<'a> = crate::BundledAst<'a>;
 pub(crate) use bun_ast::{Part, Ref, Symbol};
 

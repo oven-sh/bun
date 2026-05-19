@@ -203,14 +203,20 @@ pub const ResolveMessage = struct {
         this: *ResolveMessage,
         globalThis: *jsc.JSGlobalObject,
     ) jsc.JSValue {
-        return ZigString.init(this.msg.metadata.resolve.specifier.slice(this.msg.data.text)).toJS(globalThis);
+        switch (this.msg.metadata) {
+            .resolve => |resolve| return ZigString.init(resolve.specifier.slice(this.msg.data.text)).toJS(globalThis),
+            else => return ZigString.Empty.toJS(globalThis),
+        }
     }
 
     pub fn getImportKind(
         this: *ResolveMessage,
         globalThis: *jsc.JSGlobalObject,
     ) jsc.JSValue {
-        return ZigString.init(this.msg.metadata.resolve.import_kind.label()).toJS(globalThis);
+        switch (this.msg.metadata) {
+            .resolve => |resolve| return ZigString.init(resolve.import_kind.label()).toJS(globalThis),
+            else => return ZigString.Empty.toJS(globalThis),
+        }
     }
 
     pub fn getReferrer(

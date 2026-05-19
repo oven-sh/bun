@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 describe("ResolveMessage", () => {
   it("position object does not segfault", async () => {
@@ -108,6 +108,73 @@ describe("ResolveMessage", () => {
       Bun.gc(true);
     }
     expect().pass();
+  });
+
+  // The NameTooLong fast-path in the resolver previously constructed a
+  // ResolveMessage backed by a logger.Msg with `.build` metadata. Reading
+  // `.specifier` / `.importKind` (or JSON.stringify, which reads both via
+  // toJSON) then accessed the inactive `.resolve` union field — garbage in
+  // release, a hard panic in safe/debug builds. Run in a subprocess so the
+  // panic (if it regresses) doesn't take down the test runner.
+  it.concurrent("NameTooLong error has .resolve metadata (specifier/importKind/toJSON are safe)", async () => {
+    const src = `
+      // Exceeds MAX_PATH_BYTES * 1.5 on every platform (Windows' is largest at ~98302).
+      const long = Buffer.alloc(150000, "a").toString();
+      try {
+        await import("./" + long + ".js");
+        console.log("FAIL: import unexpectedly succeeded");
+      } catch (e) {
+        console.log(e.name);
+        console.log(typeof e.specifier);
+        console.log(e.importKind);
+        JSON.stringify(e);
+        console.log("ok");
+      }
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const stderrLines = stderr.split("\n").filter(l => l.length > 0 && !l.startsWith("WARNING: ASAN interferes"));
+    expect(stderrLines).toEqual([]);
+    expect(stdout.trim().split("\n")).toEqual(["ResolveMessage", "string", "import-statement", "ok"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // The previous test's 150k specifier exceeds BabyString's u16 range and so
+  // only exercises the empty-specifier fallback. On macOS/Linux the
+  // NameTooLong threshold (1536 / 6144) is well under u16, so a ~10k specifier
+  // both triggers the fast-path and fits — verify `.specifier` is populated
+  // via `BabyString.in` there. Skipped on Windows: the threshold (~147k)
+  // itself exceeds u16, so no length can hit both conditions.
+  it.concurrent.skipIf(isWindows)("NameTooLong error populates .specifier when it fits in u16", async () => {
+    const src = `
+      const long = Buffer.alloc(10000, "a").toString();
+      const spec = "./" + long + ".js";
+      try {
+        await import(spec);
+        console.log("FAIL: import unexpectedly succeeded");
+      } catch (e) {
+        console.log(e.name);
+        console.log(e.importKind);
+        console.log(e.specifier === spec);
+        console.log(e.code);
+      }
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const stderrLines = stderr.split("\n").filter(l => l.length > 0 && !l.startsWith("WARNING: ASAN interferes"));
+    expect(stderrLines).toEqual([]);
+    expect(stdout.trim().split("\n")).toEqual(["ResolveMessage", "import-statement", "true", "ERR_MODULE_NOT_FOUND"]);
+    expect(exitCode).toBe(0);
   });
 });
 

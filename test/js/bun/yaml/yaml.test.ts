@@ -588,6 +588,304 @@ folded: >
       });
     });
 
+    describe("block scalars", () => {
+      describe("header parsing", () => {
+        test.each([
+          ["|1-", " x"],
+          ["|-1", " x"],
+          ["|1+", " x\n"],
+          ["|+1", " x\n"],
+          [">1-", " x"],
+          [">-1", " x"],
+          [">1+", " x\n"],
+          [">+1", " x\n"],
+        ])("indicator and chomp in either order: %s", (hdr, expected) => {
+          expect(YAML.parse(`- ${hdr}\n  x\n`)).toEqual([expected]);
+        });
+
+        test.each(["|0", "|10", "|12", "|++", "|--", "|-+", "|+-", "|1-2", "|x", ">0", ">  text"])(
+          "rejects invalid header %j",
+          hdr => {
+            expect(() => YAML.parse(`- ${hdr}\n x\n`)).toThrow();
+          },
+        );
+
+        test.each([
+          ["| # comment", "x\n"],
+          ["|- # comment", "x"],
+          ["|+ # comment", "x\n"],
+          ["|2 # comment", "x\n"],
+          ["|2- # comment", "x"],
+          ["|  \t # c", "x\n"],
+        ])("trailing comment after header %j", (hdr, expected) => {
+          expect(YAML.parse(`- ${hdr}\n  x\n`)).toEqual([expected]);
+        });
+      });
+
+      describe("explicit indentation indicator", () => {
+        test.each([1, 2, 3, 4, 5, 6, 7, 8, 9])("|%d strips exactly N spaces", n => {
+          const indent = Buffer.alloc(n, " ").toString();
+          expect(YAML.parse(`- |${n}\n${indent}text\n`)).toEqual(["text\n"]);
+          expect(YAML.parse(`- |${n}\n${indent} extra\n`)).toEqual([" extra\n"]);
+        });
+
+        test("preserves leading spaces beyond indicator", () => {
+          expect(YAML.parse("- |1\n  explicit\n")).toEqual([" explicit\n"]);
+          expect(YAML.parse("- |1\n    explicit\n")).toEqual(["   explicit\n"]);
+          expect(YAML.parse("- |2\n  explicit\n")).toEqual(["explicit\n"]);
+        });
+
+        test("relative to parent indent in nested mapping", () => {
+          expect(YAML.parse("outer:\n  inner: |1\n    text\n")).toEqual({ outer: { inner: " text\n" } });
+          expect(YAML.parse("outer:\n  inner: |2\n    text\n")).toEqual({ outer: { inner: "text\n" } });
+        });
+
+        test("relative to parent indent in nested sequence", () => {
+          expect(YAML.parse("- - |1\n    text\n")).toEqual([[" text\n"]]);
+          expect(YAML.parse("- - |2\n    text\n")).toEqual([["text\n"]]);
+        });
+
+        test("with leading empty lines", () => {
+          expect(YAML.parse("- |2\n\n\n  text\n")).toEqual(["\n\ntext\n"]);
+          expect(YAML.parse("- |2\n  \n  text\n")).toEqual(["\ntext\n"]);
+          expect(YAML.parse("- |2\n \n  text\n")).toEqual(["\ntext\n"]);
+        });
+
+        test("folded with more-indented first line", () => {
+          expect(YAML.parse("a: >2\n   more\n  regular\n")).toEqual({ a: " more\nregular\n" });
+          expect(YAML.parse("a: >2\n\n\n   more\n  regular\n")).toEqual({ a: "\n\n more\nregular\n" });
+        });
+
+        test("empty body with explicit indicator", () => {
+          expect(YAML.parse("- |2\n")).toEqual([""]);
+          expect(YAML.parse("- |2-\n")).toEqual([""]);
+          expect(YAML.parse("- |2+\n\n")).toEqual(["\n"]);
+        });
+      });
+
+      describe("chomping", () => {
+        test.each([
+          ["strip |-", "|-", "text"],
+          ["clip |", "|", "text\n"],
+          ["keep |+", "|+", "text\n"],
+          ["strip >-", ">-", "text"],
+          ["clip >", ">", "text\n"],
+          ["keep >+", ">+", "text\n"],
+        ])("%s: single line, single trailing break", (_name, hdr, expected) => {
+          expect(YAML.parse(`a: ${hdr}\n  text\n`)).toEqual({ a: expected });
+        });
+
+        test.each([
+          ["strip |-", "|-", "text"],
+          ["clip |", "|", "text\n"],
+          ["keep |+", "|+", "text\n\n\n"],
+        ])("%s: multiple trailing breaks", (_name, hdr, expected) => {
+          expect(YAML.parse(`a: ${hdr}\n  text\n\n\n`)).toEqual({ a: expected });
+        });
+
+        test.each([
+          ["strip |-", "|-", ""],
+          ["clip |", "|", ""],
+          ["keep |+", "|+", "\n"],
+          ["strip >-", ">-", ""],
+          ["clip >", ">", ""],
+          ["keep >+", ">+", "\n"],
+        ])("%s: empty body", (_name, hdr, expected) => {
+          expect(YAML.parse(`a: ${hdr}\n\nb: 1\n`)).toEqual({ a: expected, b: 1 });
+        });
+
+        test.each([
+          ["strip |-", "|-", "text"],
+          ["clip |", "|", "text\n"],
+          ["keep |+", "|+", "text"],
+        ])("%s: no final break before EOF", (_name, hdr, expected) => {
+          expect(YAML.parse(`a: ${hdr}\n  text`)).toEqual({ a: expected });
+        });
+
+        test("keep counts trailing blank lines exactly", () => {
+          expect(YAML.parse("- |+\n  a\n")).toEqual(["a\n"]);
+          expect(YAML.parse("- |+\n  a\n\n")).toEqual(["a\n\n"]);
+          expect(YAML.parse("- |+\n  a\n\n\n")).toEqual(["a\n\n\n"]);
+          expect(YAML.parse("- |+\n  a\n\n\n\n")).toEqual(["a\n\n\n\n"]);
+        });
+
+        test("keep with whitespace-only trailing lines", () => {
+          expect(YAML.parse("- |+\n\n\n")).toEqual(["\n\n"]);
+          expect(YAML.parse("- |+\n   \n")).toEqual(["\n"]);
+          expect(YAML.parse("- |+\n   ")).toEqual([""]);
+          expect(YAML.parse("- |+\n\n   ")).toEqual(["\n"]);
+          expect(YAML.parse("- |+\n  a\n  ")).toEqual(["a\n"]);
+          expect(YAML.parse("- |+\n  a\n  \n")).toEqual(["a\n\n"]);
+        });
+
+        test("clip drops trailing empties but keeps one break", () => {
+          expect(YAML.parse("- |\n  a\n\n\n\n")).toEqual(["a\n"]);
+          expect(YAML.parse("- |\n  a\n  \n  \n")).toEqual(["a\n"]);
+        });
+      });
+
+      describe("literal style", () => {
+        test("preserves all interior breaks", () => {
+          expect(YAML.parse("|\n  a\n  b\n  c\n")).toEqual("a\nb\nc\n");
+        });
+
+        test("preserves interior blank lines", () => {
+          expect(YAML.parse("|\n  a\n\n  b\n")).toEqual("a\n\nb\n");
+          expect(YAML.parse("|\n  a\n\n\n  b\n")).toEqual("a\n\n\nb\n");
+        });
+
+        test("preserves more-indented content as spaces", () => {
+          expect(YAML.parse("|\n  a\n    b\n  c\n")).toEqual("a\n  b\nc\n");
+        });
+
+        test("preserves leading empties", () => {
+          expect(YAML.parse("|\n\n  a\n")).toEqual("\na\n");
+          expect(YAML.parse("|\n\n\n  a\n")).toEqual("\n\na\n");
+        });
+
+        test("preserves tabs in content", () => {
+          expect(YAML.parse("|\n  a\tb\n")).toEqual("a\tb\n");
+          expect(YAML.parse("|\n  \ta\n")).toEqual("\ta\n");
+        });
+
+        test("content with - and . chars", () => {
+          expect(YAML.parse("|\n  - item\n  . dot\n")).toEqual("- item\n. dot\n");
+          expect(YAML.parse("- |\n  ---\n")).toEqual(["---\n"]);
+        });
+      });
+
+      describe("folded style", () => {
+        test("folds single break to space", () => {
+          expect(YAML.parse(">\n  a\n  b\n  c\n")).toEqual("a b c\n");
+        });
+
+        test("blank line becomes single break", () => {
+          expect(YAML.parse(">\n  a\n\n  b\n")).toEqual("a\nb\n");
+          expect(YAML.parse(">\n  a\n\n\n  b\n")).toEqual("a\n\nb\n");
+          expect(YAML.parse(">\n  a\n\n\n\n  b\n")).toEqual("a\n\n\nb\n");
+        });
+
+        test("more-indented lines are not folded (before)", () => {
+          expect(YAML.parse(">\n  a\n    indented\n")).toEqual("a\n  indented\n");
+        });
+
+        test("more-indented lines are not folded (after)", () => {
+          expect(YAML.parse(">2\n    indented\n  a\n")).toEqual("  indented\na\n");
+          expect(YAML.parse("- >1\n   indented\n a\n")).toEqual(["  indented\na\n"]);
+        });
+
+        test("more-indented lines are not folded (both sides)", () => {
+          expect(YAML.parse(">\n  a\n    x\n  b\n")).toEqual("a\n  x\nb\n");
+          expect(YAML.parse(">\n  a\n    x\n    y\n  b\n")).toEqual("a\n  x\n  y\nb\n");
+        });
+
+        test("alternating normal/more-indented", () => {
+          expect(YAML.parse(">\n  a\n    x\n  b\n    y\n  c\n")).toEqual("a\n  x\nb\n  y\nc\n");
+        });
+
+        test("tab makes line more-indented", () => {
+          expect(YAML.parse(">\n  a\n  \tindented\n  b\n")).toEqual("a\n\tindented\nb\n");
+        });
+
+        test("leading empty lines emitted literally", () => {
+          expect(YAML.parse(">\n\n  text\n")).toEqual("\ntext\n");
+          expect(YAML.parse(">\n\n\n  text\n")).toEqual("\n\ntext\n");
+          expect(YAML.parse(">\n\n\n\n  text\n")).toEqual("\n\n\ntext\n");
+        });
+
+        test("blank between more-indented lines", () => {
+          expect(YAML.parse(">\n    a\n\n    b\n")).toEqual("a\nb\n");
+        });
+
+        test("trailing whitespace on content line preserved", () => {
+          expect(YAML.parse(">\n  a \n  b\n")).toEqual("a  b\n");
+        });
+      });
+
+      describe("termination", () => {
+        test("ends at less-indented sibling key", () => {
+          expect(YAML.parse("a: |\n  x\nb: 1\n")).toEqual({ a: "x\n", b: 1 });
+        });
+
+        test("ends at less-indented sequence item", () => {
+          expect(YAML.parse("- |\n  x\n- y\n")).toEqual(["x\n", "y"]);
+        });
+
+        test("ends at document end marker", () => {
+          expect(YAML.parse("|\n  x\n...\n")).toEqual("x\n");
+        });
+
+        test("--- inside indented content is literal", () => {
+          expect(YAML.parse("- |\n  ---\n  x\n")).toEqual(["---\nx\n"]);
+        });
+
+        test("trailing comment at less indent ends scalar", () => {
+          expect(YAML.parse("a: |\n    x\n  # comment\nb: 1\n")).toEqual({ a: "x\n", b: 1 });
+        });
+      });
+
+      describe("line endings", () => {
+        test.each([
+          ["LF", "\n"],
+          ["CRLF", "\r\n"],
+        ])("%s normalized to \\n in literal", (_name, eol) => {
+          expect(YAML.parse(`|-${eol}  a${eol}  b${eol}`)).toEqual("a\nb");
+          expect(YAML.parse(`|${eol}  a${eol}  b${eol}`)).toEqual("a\nb\n");
+          expect(YAML.parse(`|+${eol}  a${eol}${eol}`)).toEqual("a\n\n");
+        });
+
+        test.each([
+          ["LF", "\n"],
+          ["CRLF", "\r\n"],
+        ])("%s normalized in folded", (_name, eol) => {
+          expect(YAML.parse(`>${eol}  a${eol}  b${eol}`)).toEqual("a b\n");
+          expect(YAML.parse(`>${eol}  a${eol}${eol}  b${eol}`)).toEqual("a\nb\n");
+        });
+      });
+
+      describe("error cases", () => {
+        test("rejects tab as indentation", () => {
+          expect(() => YAML.parse("|\n\ttext\n")).toThrow();
+          expect(() => YAML.parse("|\n  text\n\tmore\n")).toThrow();
+        });
+
+        test("rejects leading empty more-indented than first content (auto)", () => {
+          expect(() => YAML.parse("|\n    \n  text\n")).toThrow();
+        });
+
+        test("explicit indicator does not error on more-indented leading empty", () => {
+          expect(YAML.parse("- |1\n    \n text\n")).toEqual(["   \ntext\n"]);
+        });
+      });
+
+      describe("context", () => {
+        test("root scalar", () => {
+          expect(YAML.parse("|\ntext\n")).toEqual("text\n");
+          expect(YAML.parse("|\n text\n")).toEqual("text\n");
+        });
+
+        test("sequence value", () => {
+          expect(YAML.parse("- |\n  a\n- |\n  b\n")).toEqual(["a\n", "b\n"]);
+        });
+
+        test("mapping value", () => {
+          expect(YAML.parse("a: |\n  x\nb: |\n  y\n")).toEqual({ a: "x\n", b: "y\n" });
+        });
+
+        test("nested mapping", () => {
+          expect(YAML.parse("outer:\n  inner: |\n    text\n")).toEqual({ outer: { inner: "text\n" } });
+        });
+
+        test("nested sequence", () => {
+          expect(YAML.parse("- - |\n    text\n")).toEqual([["text\n"]]);
+        });
+
+        test("deep nesting with explicit indicator", () => {
+          expect(YAML.parse("a:\n  b:\n    c: |2\n      text\n")).toEqual({ a: { b: { c: "text\n" } } });
+        });
+      });
+    });
+
     test("handles special keys", () => {
       const yaml = `
 "special-key": value1

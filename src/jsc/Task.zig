@@ -59,6 +59,7 @@ pub const Task = TaggedPointerUnion(.{
     ReadFile,
     ReadFileTask,
     Readlink,
+    ReaderThreadPoolReadTask,
     Readv,
     FlushPendingFileSinkTask,
     Realpath,
@@ -260,6 +261,11 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine, co
                 var transform_task: *ReadFileTask = task.get(ReadFileTask).?;
                 defer transform_task.deinit();
                 try transform_task.runFromJS();
+            },
+            @field(Task.Tag, @typeName(ReaderThreadPoolReadTask)) => {
+                bun.markPosixOnly();
+                var pool_task: *ReaderThreadPoolReadTask = task.get(ReaderThreadPoolReadTask).?;
+                pool_task.runFromJSThread();
             },
             @field(Task.Tag, @typeName(JSCDeferredWorkTask)) => {
                 var jsc_task: *JSCDeferredWorkTask = task.get(JSCDeferredWorkTask).?;
@@ -570,6 +576,7 @@ const Async = bun.Async;
 const Environment = bun.Environment;
 const TaggedPointerUnion = bun.TaggedPointerUnion;
 const shell = bun.shell;
+const ReaderThreadPoolReadTask = bun.io.ReaderThreadPoolReadTask;
 const FlushPendingFileSinkTask = bun.webcore.FileSink.FlushPendingTask;
 const ServerAllConnectionsClosedTask = bun.api.server.ServerAllConnectionsClosedTask;
 const CopyFilePromiseTask = bun.webcore.Blob.copy_file.CopyFilePromiseTask;

@@ -84,3 +84,45 @@ test("Bun.file(path).stat() returns stats", async () => {
   expect(stat).toBeDefined();
   expect(stat.size).toBe(13); // "Hello, world!" is 13 bytes
 });
+
+// Stress the threadpool `ReadFile` path that reaches into the backing
+// `Store` off the JS thread (`resolve_size_and_last_modified` on each
+// worker). `do_read_file` `StoreRef::clone`s the backing handle into each
+// spawned `ReadFile` task, so N concurrent `file.bytes()` calls on the
+// *same* `Blob` schedule N workers that all observe the same `Store`
+// allocation. The write-target (`file.last_modified`) is `AtomicU64` on
+// Rust's memory model and the only worker-thread write, so the race is
+// idempotent (every task stores the same `fstat`-derived mtime). Shared
+// (not exclusive) borrow through `StoreRef::Deref` is what keeps the
+// `&mut` aliasing hazard away under `bun bd` (ASAN + Rust's UB rules).
+// Regression guard for oven-sh/bun#30800 — `StoreRef` soundness (dropped
+// `Sync`, `data_mut` is now `unsafe fn`, `last_modified` converted to
+// atomic to match the threading reality flagged in PR review).
+test("Bun.file().bytes() is safe under high concurrency", async () => {
+  const dir = tempDirWithFiles(
+    "bun-blob-concurrent",
+    Object.fromEntries(
+      Array.from({ length: 16 }, (_, i) => [
+        `f${i}.txt`,
+        `content-${i}-${Buffer.alloc(1024, 65 + (i % 26)).toString()}`,
+      ]),
+    ),
+  );
+  // Many overlapping reads per file; each goes through a distinct `ReadFile`
+  // task on the threadpool, and all 8 per file share ONE `Store` (the
+  // `Blob` is constructed once and cloned via `StoreRef::clone`). The test
+  // asserts every task returns the full, uncorrupted file bytes — i.e.
+  // the shared `Store`'s content-reading paths don't trample each other.
+  const results = await Promise.all(
+    Array.from({ length: 16 }, (_, i) => {
+      const file = Bun.file(path.join(dir, `f${i}.txt`));
+      return Promise.all(Array.from({ length: 8 }, () => file.bytes()));
+    }),
+  );
+  for (let i = 0; i < results.length; i++) {
+    const expected = `content-${i}-${Buffer.alloc(1024, 65 + (i % 26)).toString()}`;
+    for (const bytes of results[i]) {
+      expect(new TextDecoder().decode(bytes)).toBe(expected);
+    }
+  }
+});

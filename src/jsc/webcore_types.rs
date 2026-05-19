@@ -778,7 +778,6 @@ pub mod store {
     // ────────────────────────────────────────────────────────────────────
 
     /// `Store.File` (Store.zig:250) — a blob store referencing a file on disk.
-    #[derive(Clone)]
     pub struct File {
         pub pathlike: PathOrFileDescriptor,
         pub mime_type: MimeType,
@@ -786,8 +785,15 @@ pub mod store {
         pub mode: bun_sys::Mode,
         pub seekable: Option<bool>,
         pub max_size: SizeType,
-        /// Milliseconds since ECMAScript epoch.
-        pub last_modified: crate::JSTimeType,
+        /// Milliseconds since ECMAScript epoch. Atomic because worker-thread
+        /// `ReadFile` tasks (`resolve_size_and_last_modified`) write this
+        /// field while the JS thread may concurrently read it in
+        /// `get_last_modified`, and N overlapping `file.bytes()` calls share
+        /// one `Store` (`do_read_file` clones the `StoreRef` into each task).
+        /// Every writer stores the same `fstat`-derived mtime so the race is
+        /// idempotent, but it still needs a `Relaxed` atomic under Rust's
+        /// memory model.
+        pub last_modified: core::sync::atomic::AtomicU64,
     }
 
     impl Default for File {
@@ -799,7 +805,26 @@ pub mod store {
                 mode: 0,
                 seekable: None,
                 max_size: MAX_SIZE,
-                last_modified: crate::INIT_TIMESTAMP,
+                last_modified: core::sync::atomic::AtomicU64::new(crate::INIT_TIMESTAMP),
+            }
+        }
+    }
+
+    impl Clone for File {
+        fn clone(&self) -> Self {
+            Self {
+                pathlike: self.pathlike.clone(),
+                mime_type: self.mime_type.clone(),
+                is_atty: self.is_atty,
+                mode: self.mode,
+                seekable: self.seekable,
+                max_size: self.max_size,
+                // Snapshot the atomic via `Relaxed`; `Clone` is a per-thread
+                // value copy, not a memory-ordering sync point.
+                last_modified: core::sync::atomic::AtomicU64::new(
+                    self.last_modified
+                        .load(core::sync::atomic::Ordering::Relaxed),
+                ),
             }
         }
     }
@@ -1137,13 +1162,30 @@ pub mod store {
         }
 
         /// Mutable access to `data` through the shared handle. Zig mutates
-        /// `store.data` freely through any holder; the caller must ensure no
-        /// other `&mut` to the same `Store` is live (single-threaded JS
-        /// event-loop discipline).
+        /// `store.data` freely through any holder; this is the Rust spelling
+        /// of that interior-mutation pattern.
+        ///
+        /// # Safety
+        /// The caller asserts that no other reference (`&Store`, `&mut Store`,
+        /// `&Data`, `&mut Data`) to the same pointee is live for the duration
+        /// of the returned borrow — on this thread **or any other**. Overlapping
+        /// `&mut`s, including one minted through this function and one through
+        /// [`core::ops::Deref`], are immediate UB.
+        ///
+        /// `StoreRef` is intentionally `!Sync` to block the most direct
+        /// cross-thread `&StoreRef` shape, but that is only a partial guard:
+        /// cloned `StoreRef`s (which are `Send`) and `Blob: Sync` projecting
+        /// `fn store(&self) -> Option<&StoreRef>` from a shared `&Blob` both
+        /// route around it. This fn's precondition is the primary
+        /// compile-time guard on the single-owner contract — together with
+        /// the sibling `unsafe fn blob_store_mut` in `webcore::body` (which
+        /// carries the same contract via `StoreRef::as_ptr()`). Discharge
+        /// both in writing at every call site.
         #[inline]
         #[allow(clippy::mut_from_ref)]
-        pub fn data_mut(&self) -> &mut Data {
-            // SAFETY: Zig-semantics shared-mutable interior; see doc comment.
+        pub unsafe fn data_mut(&self) -> &mut Data {
+            // SAFETY: precondition — no aliasing `&`/`&mut` to the pointee is
+            // live for the returned borrow's duration (see fn doc).
             unsafe { &mut (*self.as_ptr()).data }
         }
     }
@@ -1194,10 +1236,51 @@ pub mod store {
     }
     impl Eq for StoreRef {}
 
-    // SAFETY: `Store`'s refcount is atomic and its payload is either
-    // immutable-after-init or guarded by callers; matches Zig's cross-thread
-    // `*Store` usage.
+    // SAFETY: `Store`'s refcount is atomic, so moving the handle between
+    // threads (including `clone()` → send → drop on the other side) is sound;
+    // the `Data` payload is either immutable-after-init or mutated only by
+    // the thread that currently owns the handle. Matches Zig's cross-thread
+    // `*Store` usage: move, don't share.
     unsafe impl Send for StoreRef {}
-    unsafe impl Sync for StoreRef {}
+    // Intentionally NOT `Sync`: the only way to mutate `Store::data` through
+    // an existing `StoreRef` is `unsafe fn data_mut`, whose precondition is
+    // exclusivity. Dropping `Sync` closes the *direct* "two threads sharing
+    // `&StoreRef`" shape at the type level — `&StoreRef: !Send` is now
+    // auto-inferred.
+    //
+    // This is a partial guard. `StoreRef: Clone + Send` still lets callers
+    // route cross-thread access through cloned handles (every worker-pool
+    // `ReadFile`/`CopyFile`/`WriteFile` task is constructed this way), and
+    // container types with their own `unsafe impl Sync` — notably `Blob`
+    // (`webcore_types.rs:96`), which exposes `fn store(&self) ->
+    // Option<&StoreRef>` — can hand out `&StoreRef` from a `&Blob` shared
+    // across threads. Therefore the *load-bearing* guard for the
+    // single-owner contract is the `unsafe fn data_mut` precondition the
+    // caller must discharge in writing; `!Sync` is a compile-time hint
+    // that catches the most obvious misuse. If a future use case genuinely
+    // needs shared cross-thread `Store` mutation, add synchronization
+    // inside `Store`.
+
+    // Compile-time trip-wire: if `StoreRef` ever gains `Sync`, both blanket
+    // impls of `NotSyncCheck` apply and `_NOT_SYNC` fails to compile with
+    // "conflicting impls". Guards against a future `unsafe impl Sync for
+    // StoreRef` being added without revisiting `data_mut`'s contract (same
+    // pattern as `src/runtime/shell/subproc.rs` `__pipe_reader_thread_confined`).
+    // Note: this only catches direct `Sync` on `StoreRef`. It does NOT
+    // catch container types (like `Blob`) that embed a `StoreRef` and
+    // claim `Sync` for themselves — see the `Send`/`!Sync` comment above
+    // for why `Blob: Sync` plus `Blob::store(&self) -> Option<&StoreRef>`
+    // currently projects a sharable `&StoreRef`; a future follow-up may
+    // tighten `Blob: !Sync` once its call sites are audited.
+    mod __store_ref_not_sync {
+        use super::StoreRef;
+        trait NotSyncCheck<A> {
+            const OK: () = ();
+        }
+        impl<T: ?Sized> NotSyncCheck<()> for T {}
+        impl<T: ?Sized + Sync> NotSyncCheck<u8> for T {}
+        #[allow(dead_code)]
+        const _NOT_SYNC: () = <StoreRef as NotSyncCheck<_>>::OK;
+    }
 }
 pub use store::{Store, StoreRef};

@@ -1330,7 +1330,7 @@ impl<'a> CopyFileWindows<'a> {
     }
 
     fn prepare_pathlike(
-        pathlike: &mut PathOrFileDescriptor,
+        pathlike: &PathOrFileDescriptor,
         must_close: &mut bool,
         is_reading: bool,
     ) -> bun_sys::Result<Fd> {
@@ -1373,12 +1373,10 @@ impl<'a> CopyFileWindows<'a> {
         // Open the destination first, so that if we need to call
         // mkdirp(), we don't spend extra time opening the file handle for
         // the source.
+        // `prepare_pathlike` only reads `pathlike` — shared borrow through
+        // `StoreRef: Deref` is sufficient; no `data_mut()` needed.
         self.read_write_loop.destination_fd = match Self::prepare_pathlike(
-            &mut self
-                .destination_file_store
-                .data_mut()
-                .as_file_mut()
-                .pathlike,
+            &self.destination_file_store.data.as_file().pathlike,
             &mut self.read_write_loop.must_close_destination_fd,
             false,
         ) {
@@ -1395,7 +1393,7 @@ impl<'a> CopyFileWindows<'a> {
         };
 
         self.read_write_loop.source_fd = match Self::prepare_pathlike(
-            &mut self.source_file_store.data_mut().as_file_mut().pathlike,
+            &self.source_file_store.data.as_file().pathlike,
             &mut self.read_write_loop.must_close_source_fd,
             true,
         ) {

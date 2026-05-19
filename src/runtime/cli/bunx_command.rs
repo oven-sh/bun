@@ -602,11 +602,11 @@ impl BunxCommand {
         // BUT: Skip this transformation if --package was explicitly specified
         if opts.specified_package.is_none() {
             if update_request.name == b"tsc" {
-                update_request.name = b"typescript".as_slice().into();
+                update_request.name = b"typescript".as_slice();
             } else if update_request.name == b"claude" {
                 // The npm package "claude" is an unrelated squatter with no bin;
                 // `bunx claude` is much more likely to mean the actual CLI.
-                update_request.name = b"@anthropic-ai/claude-code".as_slice().into();
+                update_request.name = b"@anthropic-ai/claude-code".as_slice();
             }
         }
 
@@ -636,7 +636,7 @@ impl BunxCommand {
                 .slice(update_request.version_buf())
         } else if let Some(index) = strings::last_index_of_char(&update_request.name, b'/') {
             initial_bin_name_is_a_guess = true;
-            &update_request.name[usize::try_from(index + 1).expect("int cast")..]
+            &update_request.name[index + 1..]
         } else {
             &update_request.name
         };

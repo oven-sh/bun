@@ -217,7 +217,7 @@ impl<'a> Snapshots<'a> {
         // duration of the runner. Per `VirtualMachine::get` doc, callers form a short-lived borrow.
         let vm = VirtualMachine::get().as_mut();
         let opts = js_parser::ParserOptions::init(
-            vm.transpiler.options.jsx.clone().into(),
+            vm.transpiler.options.jsx.clone(),
             bun_ast::Loader::Js,
         );
         // PERF(port): Zig used `this.allocator` (default_allocator). Thread a per-call arena
@@ -494,10 +494,10 @@ impl<'a> Snapshots<'a> {
                 );
                 let Some(byte_offset_add) = bun_ast::Source::line_col_to_byte_offset(
                     &file_text[last_byte..],
-                    u64::from(last_line),
-                    u64::from(last_col),
-                    u64::from(ils.line),
-                    u64::from(ils.col),
+                    last_line,
+                    last_col,
+                    ils.line,
+                    ils.col,
                 ) else {
                     bun_core::scoped_log!(inline_snapshot, "-> Could not find byte");
                     log.add_error_fmt(
@@ -572,7 +572,7 @@ impl<'a> Snapshots<'a> {
                     // PORT NOTE: `ParserOptions` isn't `Clone`; rebuild per-iteration
                     // (Zig passed by value-copy).
                     let opts = js_parser::ParserOptions::init(
-                        vm.transpiler.options.jsx.clone().into(),
+                        vm.transpiler.options.jsx.clone(),
                         bun_ast::Loader::Js,
                     );
                     // PORT NOTE: `P::init` takes an out-param (Zig:

@@ -2965,7 +2965,7 @@ pub mod args {
                     ctx,
                     arguments.next().unwrap_or(JSValue::js_number(0.0)),
                     "len",
-                    Some(i64::from(i52::MIN)),
+                    Some(i52::MIN),
                     Some(BLOB_SIZE_MAX as i64),
                 )?
                 .max(0),

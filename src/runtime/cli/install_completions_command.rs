@@ -665,7 +665,7 @@ impl InstallCompletionsCommand {
                 // defer dot_zshrc.close() — handled by Drop
                 let mut buf: Vec<u8> = vec![
                     0u8;
-                    usize::try_from(input_size).expect("int cast")
+                    input_size
                         + completions_path.len() * 4
                         + 96
                 ];

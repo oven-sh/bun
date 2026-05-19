@@ -411,7 +411,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         // `WorkspacePackageJSONCache::get_with_path` applies before stashing
         // `MapEntry.root`. The thread-local `data::Store` has already been
         // initialised by `PackageManager::init`.
-        let mut json: Expr = Expr::from(json);
+        let mut json: Expr = json;
         let normalized_pkg_info = PublishCommand::normalized_package(
             manager,
             &package_name,
@@ -1855,7 +1855,7 @@ impl PublishCommand {
                             // Dupe into the process-lifetime CLI arena (bytes flow into long-lived `E::String` nodes).
                             let interned: &'static [u8] = crate::cli::cli_dupe(&join);
                             // SAFETY: NUL terminator at interned[join_len] (copied from `join`).
-                            let join_z = ZStr::from_buf(&interned[..], join_len);
+                            let join_z = ZStr::from_buf(interned, join_len);
                             let name_slice_start = join_len - name.len();
                             // SAFETY: name is the trailing segment of `interned`, NUL-terminated
                             let name_z = unsafe {

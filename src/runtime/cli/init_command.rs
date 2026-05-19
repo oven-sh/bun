@@ -489,7 +489,7 @@ impl InitCommand {
                 // get_or_put_object,...} which only exist at T4.
                 let package_json_expr: bun_ast::Expr =
                     match json::parse_package_json_utf8(&source, &mut log, &bump) {
-                        Ok(e) => bun_ast::Expr::from(e),
+                        Ok(e) => e,
                         Err(_) => {
                             package_json_file = None;
                             break 'process_package_json;

@@ -842,7 +842,7 @@ pub fn run_scripts_with_filter(
             let interned: &'static [u8] = crate::cli::cli_dupe(&copy_script);
             let combined_len = interned.len() - 1;
             // SAFETY: interned[combined_len] == 0 (copied from `copy_script`).
-            let combined = ZStr::from_buf(&interned[..], combined_len);
+            let combined = ZStr::from_buf(interned, combined_len);
 
             let dep_source_buf = pkgjson.dependencies.source_buf;
             let deps: Vec<Box<[u8]>> = pkgjson

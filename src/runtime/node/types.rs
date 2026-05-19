@@ -1084,7 +1084,7 @@ impl PathLikeExt for PathLike {
         if !FORCE {
             if sliced[sliced.len() - 1] == 0 {
                 // SAFETY: last byte is NUL.
-                return ZStr::from_slice_with_nul(&sliced[..]);
+                return ZStr::from_slice_with_nul(sliced);
             }
         }
 

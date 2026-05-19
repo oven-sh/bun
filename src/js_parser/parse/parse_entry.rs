@@ -1450,7 +1450,7 @@ impl<'a> Parser<'a> {
                     // Snapshot the StoreSlice (Copy) so the `&mut` borrow over the
                     // arena slice doesn't conflict with the `part.stmts = …` rewrite
                     // below.
-                    let part_stmts_ss = part.stmts;
+                    let mut part_stmts_ss = part.stmts;
                     let part_stmts: &mut [Stmt] = part_stmts_ss.slice_mut();
                     if part_stmts.len() > 1 {
                         break;

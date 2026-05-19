@@ -406,19 +406,20 @@ impl<T> StoreSlice<T> {
         unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len as usize) }
     }
 
-    /// Re-borrow as `&mut [T]`. Same `StoreRef` contract as [`slice`]: the
-    /// pointee lives until arena reset, and the single-threaded parser/visitor
-    /// pass holds at most one live `&mut` per node (mirrors `StoreRef`'s safe
-    /// `DerefMut`, which already encodes this invariant). The arena hands out
-    /// unique allocations and `StoreSlice` is `Copy`, so aliasing cannot be
-    /// *statically* checked — but neither can `StoreRef::deref_mut`'s, and the
-    /// two share one safety story. Callers must not overlap a `slice_mut()`
-    /// borrow with another `slice()`/`slice_mut()` of the same allocation.
+    /// Re-borrow as `&mut [T]`. Takes `&mut self` so the borrow checker enforces
+    /// `&mut`-exclusivity through the `StoreSlice` handle — `StoreSlice<T>` is
+    /// `Copy`, and a previous `self`-by-value signature let two copies hand out
+    /// independent `&mut [T]` to the same arena allocation (audit witness in
+    /// the CodeRabbit review of #30924). Structurally mirrors `StoreRef::deref_mut`,
+    /// which already uses `&mut self` for the same reason. Aliasing across distinct
+    /// `StoreSlice` handles that happen to point at overlapping memory is still a
+    /// caller obligation (the arena hands out unique allocations, so this only
+    /// arises if callers split a slice manually — same posture as `StoreRef`).
     #[inline]
-    pub fn slice_mut<'a>(self) -> &'a mut [T] {
+    pub fn slice_mut(&mut self) -> &mut [T] {
         // SAFETY: StoreSlice invariant — `ptr` is non-null, points at `len`
-        // initialized `T` valid for the arena lifetime; uniqueness is upheld
-        // by the single-threaded visitor contract (same as `StoreRef::DerefMut`).
+        // initialized `T` valid for the arena lifetime; `&mut self` upholds
+        // `&mut`-exclusivity through this handle.
         unsafe { core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len as usize) }
     }
 
@@ -1357,8 +1358,10 @@ impl<T> Batcher<T> {
     pub fn eat1(&mut self, value: T) -> StoreSlice<T> {
         // `head` has at least 1 element remaining (caller contract — Zig would
         // panic on bounds); `Batcher` holds the unique view of the allocation.
-        let head = self.head.slice_mut();
-        let (prev, rest) = head.split_at_mut(1);
+        // `mem::replace` detaches `self.head` so `slice_mut` borrows the owned
+        // local, freeing us to reassign `self.head` further down.
+        let mut head = core::mem::replace(&mut self.head, StoreSlice::EMPTY);
+        let (prev, rest) = head.slice_mut().split_at_mut(1);
         prev[0] = value;
         self.head = StoreSlice::new_mut(rest);
         StoreSlice::new_mut(prev)
@@ -1366,8 +1369,8 @@ impl<T> Batcher<T> {
 
     pub fn next<const N: usize>(&mut self, values: [T; N]) -> StoreSlice<T> {
         // `head` has at least N elements remaining; see `eat1`.
-        let head = self.head.slice_mut();
-        let (prev, rest) = head.split_at_mut(N);
+        let mut head = core::mem::replace(&mut self.head, StoreSlice::EMPTY);
+        let (prev, rest) = head.slice_mut().split_at_mut(N);
         for (dst, src) in prev.iter_mut().zip(values) {
             *dst = src;
         }

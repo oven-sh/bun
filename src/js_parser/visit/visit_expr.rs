@@ -2487,11 +2487,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // PERF(port): was arena dupe — profile if it shows up on a hot path
         let dupe: &'a mut [Stmt] = p.arena.alloc_slice_copy(e_.body.stmts.slice());
 
+        // Snapshot the disjoint scalar before borrowing `e_.args` mutably; the
+        // new `slice_mut(&mut self)` signature would otherwise conflict with
+        // the read of `e_.has_rest_arg` in the same call expression.
+        let has_rest_arg = e_.has_rest_arg;
         let args_mut: &mut [G::Arg] = e_.args.slice_mut();
         p.visit_args(
             args_mut,
             &VisitArgsOpts {
-                has_rest_arg: e_.has_rest_arg,
+                has_rest_arg,
                 body: dupe,
                 is_unique_formal_parameters: true,
             },

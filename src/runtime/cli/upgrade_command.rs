@@ -507,7 +507,12 @@ impl UpgradeCommand {
     );
 
     const MANUAL_UPGRADE_COMMAND: &'static str = {
-        #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "macos",
+            target_os = "freebsd",
+        ))]
         {
             "curl -fsSL https://bun.com/install | bash"
         }
@@ -519,7 +524,8 @@ impl UpgradeCommand {
             target_os = "linux",
             target_os = "android",
             target_os = "macos",
-            target_os = "windows"
+            target_os = "freebsd",
+            target_os = "windows",
         )))]
         {
             // TODO(port): Environment.os.displayString() at comptime

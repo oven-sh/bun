@@ -1,0 +1,4 @@
+TODO: implement validity walker
+See scripts/syn-walkers/README.md for guidance.
+This walker is scaffolded; fill in the visit logic for the
+specific UB shape you're hunting in this project.

@@ -1,0 +1,8 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.01s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp_111`
+[exp-111 worker 0 chunk 0] lookup(0)='$rename_a' lookup(1)='$rename_b'
+[exp-111 worker 3 chunk 0] lookup(0)='$rename_a' lookup(1)='$rename_b'
+[exp-111 worker 1 chunk 0] lookup(0)='$rename_a' lookup(1)='$rename_b'
+[exp-111 worker 2 chunk 0] lookup(0)='$rename_a' lookup(1)='$rename_b'
+[exp-111] total read_count = 8 (expected 8 = 4 workers × 2 lookups)
+[exp-111] If this line printed AND Miri was enabled, retag shape was reconsidered.

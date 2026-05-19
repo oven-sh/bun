@@ -1,0 +1,8 @@
+[package]
+name = "exp-073-copyfile-event-loop-shared-to-mut"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]

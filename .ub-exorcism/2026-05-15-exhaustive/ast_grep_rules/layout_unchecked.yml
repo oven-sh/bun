@@ -1,0 +1,6 @@
+id: layout-unchecked
+language: rust
+severity: warning
+message: Layout::from_size_align_unchecked — UB if align is not a power of two, or if size rounded up overflows isize::MAX.
+rule:
+  pattern: Layout::from_size_align_unchecked($$$)

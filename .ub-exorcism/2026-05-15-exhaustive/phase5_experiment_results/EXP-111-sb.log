@@ -1,0 +1,34 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.01s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp_111`
+error: Undefined Behavior: Data race detected between (1) retag write on thread `unnamed-1` and (2) retag write of type `Chunk<'_>` on thread `unnamed-2` at alloc515
+   --> src/main.rs:95:42
+    |
+ 95 |     let chunk: &mut Chunk<'_> = unsafe { &mut *chunk_ptr.0 };
+    |                                          ^^^^^^^^^^^^^^^^^ (2) just happened here
+    |
+help: and (1) occurred earlier here
+   --> src/main.rs:95:42
+    |
+ 95 |     let chunk: &mut Chunk<'_> = unsafe { &mut *chunk_ptr.0 };
+    |                                          ^^^^^^^^^^^^^^^^^
+    = help: retags occur on all (re)borrows and as well as when references are copied or moved
+    = help: retags permit optimizations that insert speculative reads or writes
+    = help: therefore from the perspective of data races, a retag has the same implications as a read or write
+    = help: this indicates a bug in the program: it performed an invalid operation, and caused Undefined Behavior
+    = help: see https://doc.rust-lang.org/nightly/reference/behavior-considered-undefined.html for further information
+    = note: this is on thread `unnamed-2`
+    = note: stack backtrace:
+            0: worker
+                at src/main.rs:95:42: 95:59
+            1: main::{closure#0}::{closure#0}::{closure#0}
+                at src/main.rs:138:37: 138:51
+note: the last function in that backtrace got called indirectly due to this code
+   --> src/main.rs:138:17
+    |
+138 |                 scope.spawn(move || worker(ptr, i))
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

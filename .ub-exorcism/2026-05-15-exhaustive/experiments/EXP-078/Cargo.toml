@@ -1,0 +1,7 @@
+[package]
+name = "exp-078-arraylike-set-len-and-slice"
+version = "0.0.0"
+edition = "2021"
+
+[workspace]
+

@@ -1,0 +1,28 @@
+   Compiling exp-087-threadpool-get-worker v0.1.0 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-087)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp-087-threadpool-get-worker`
+error: Undefined Behavior: write access through <245> at alloc110[0x0] is forbidden
+  --> src/main.rs:34:5
+   |
+34 |     second.touched = 2;
+   |     ^^^^^^^^^^^^^^^^^^ Undefined Behavior occurred here
+   |
+   = help: this indicates a potential bug in the program: it performed an invalid operation, but the Tree Borrows rules it violated are still experimental
+   = help: see https://github.com/rust-lang/unsafe-code-guidelines/blob/master/wip/tree-borrows.md for further information
+   = help: the accessed tag <245> has state Disabled which forbids this child write access
+help: the accessed tag <245> was created here, in the initial state Reserved
+  --> src/main.rs:31:18
+   |
+31 |     let second = pool.get_worker();
+   |                  ^^^^^^^^^^^^^^^^^
+help: the accessed tag <245> later transitioned to Disabled due to a foreign write access at offsets [0x0..0x8]
+  --> src/main.rs:33:5
+   |
+33 |     first.touched = 1;
+   |     ^^^^^^^^^^^^^^^^^
+   = help: this transition corresponds to a loss of read and write permissions
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

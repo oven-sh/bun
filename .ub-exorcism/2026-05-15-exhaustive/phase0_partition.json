@@ -1,0 +1,202 @@
+{
+  "run_id": "2026-05-15-exhaustive",
+  "total_unsafe_sites_from_prior_audit": 11044,
+  "section_count_note": "The per-section site_count_prior values are partition weights copied from the prior unsafe audit plus manual grouping adjustments. They are approximate and currently sum to 11046, two above total_unsafe_sites_from_prior_audit, because a small number of cross-cutting/misc sites are represented in section weights for mapper load balancing. Use total_unsafe_sites_from_prior_audit as the headline total; use section counts only as rough mapper workload estimates until Phase 2 normalization.",
+  "total_workspace_crates": 108,
+  "partition_strategy": "Group 108 crates into 21 logical sections; sub-partition bun_runtime (4,893 sites) by subdirectory; group small crates by domain. Each section is ~100-900 sites for a single unsafe-surface-mapper subagent. Concurrency hubs flagged explicitly. Known UB witnesses anchor specific sections.",
+  "sections": [
+    {
+      "id": "A",
+      "name": "runtime-webcore",
+      "source_paths": ["src/runtime/webcore"],
+      "site_count_prior": 604,
+      "ub_priors": ["aliasing-callback", "Pin", "validity-parsed-bytes", "uninit", "Vec-layout-mismatch"],
+      "concurrency": "yes-streams",
+      "anchored_witness": "miri-confirmed-encoding-vec-layout"
+    },
+    {
+      "id": "B",
+      "name": "runtime-api",
+      "source_paths": ["src/runtime/api"],
+      "site_count_prior": 531,
+      "ub_priors": ["aliasing", "ffi-callback", "send-sync", "refcount-lifecycle"],
+      "concurrency": "partial",
+      "anchored_witness": null
+    },
+    {
+      "id": "C",
+      "name": "runtime-cli",
+      "source_paths": ["src/runtime/cli"],
+      "site_count_prior": 479,
+      "ub_priors": ["mostly-safe", "argv-validity"],
+      "concurrency": "no",
+      "anchored_witness": "fmt-raw-utf8-from-argv"
+    },
+    {
+      "id": "D",
+      "name": "runtime-node-compat",
+      "source_paths": ["src/runtime/node"],
+      "site_count_prior": 475,
+      "ub_priors": ["ffi-libuv", "validity-fs", "Pin", "dirent-parser-bugs"],
+      "concurrency": "yes-fs-streams",
+      "anchored_witness": "dirent-parser-macos-linux-freebsd"
+    },
+    {
+      "id": "E",
+      "name": "runtime-socket-udp-tcp",
+      "source_paths": ["src/runtime/socket"],
+      "site_count_prior": 424,
+      "ub_priors": ["data-races", "ffi-uSockets", "send-sync"],
+      "concurrency": "yes",
+      "anchored_witness": null
+    },
+    {
+      "id": "F",
+      "name": "runtime-server-and-jsc-hooks",
+      "source_paths": ["src/runtime/server", "src/runtime/dispatch.rs", "src/runtime/jsc_hooks.rs", "src/runtime/ipc_host.rs", "src/runtime/hw_exports.rs"],
+      "site_count_prior": 762,
+      "ub_priors": ["aliasing-reentrant-ffi-callback", "send-sync", "data-races", "WebSocketClient-cancel"],
+      "concurrency": "yes-Bun.serve-hub",
+      "anchored_witness": "WebSocketClient-cancel-reentry"
+    },
+    {
+      "id": "G",
+      "name": "runtime-bake-dev-server",
+      "source_paths": ["src/runtime/bake"],
+      "site_count_prior": 295,
+      "ub_priors": ["Pin", "async-drop"],
+      "concurrency": "yes-HMR",
+      "anchored_witness": null
+    },
+    {
+      "id": "H",
+      "name": "runtime-shell",
+      "source_paths": ["src/runtime/shell"],
+      "site_count_prior": 277,
+      "ub_priors": ["aliasing", "ffi-spawn-pipe"],
+      "concurrency": "yes",
+      "anchored_witness": null
+    },
+    {
+      "id": "I",
+      "name": "runtime-dns-jsc",
+      "source_paths": ["src/runtime/dns_jsc"],
+      "site_count_prior": 257,
+      "ub_priors": ["ffi-cares", "send-sync"],
+      "concurrency": "yes",
+      "anchored_witness": null
+    },
+    {
+      "id": "J",
+      "name": "runtime-misc",
+      "source_paths": ["src/runtime/test_runner", "src/runtime/image", "src/runtime/timer", "src/runtime/ffi", "src/runtime/napi", "src/runtime/valkey_jsc", "src/runtime/crypto", "src/runtime/webview", "src/runtime/allocators", "src/runtime/webcore.rs"],
+      "site_count_prior": 789,
+      "ub_priors": ["mixed", "FFI", "Pin"],
+      "concurrency": "partial",
+      "anchored_witness": null
+    },
+    {
+      "id": "K",
+      "name": "jsc-core",
+      "source_paths": ["src/jsc", "src/jsc_macros"],
+      "site_count_prior": 745,
+      "ub_priors": ["aliasing-Strong-Weak-handle", "send-sync-thread-affinity", "refcount-lifecycle"],
+      "concurrency": "yes-handle-discipline",
+      "anchored_witness": "JSC-task-weak-reference-wrapper-findings"
+    },
+    {
+      "id": "L",
+      "name": "install-and-pkg-manager",
+      "source_paths": ["src/install", "src/install_jsc", "src/install_types"],
+      "site_count_prior": 531,
+      "ub_priors": ["validity-lockfile-bytes", "provenance", "get_unchecked-OOB"],
+      "concurrency": "no",
+      "anchored_witness": "PUB-INSTALL-1, PUB-INSTALL-2, PUB-INSTALL-3, PUB-INSTALL-4"
+    },
+    {
+      "id": "M",
+      "name": "bundler-and-transpiler",
+      "source_paths": ["src/bundler", "src/bundler_jsc", "src/standalone_graph", "src/transpiler"],
+      "site_count_prior": 576,
+      "ub_priors": ["aliasing-parallel-callback-5-site-cluster"],
+      "concurrency": "yes-parallel-build",
+      "anchored_witness": "bundler-parallel-callback-aliasing-cluster"
+    },
+    {
+      "id": "N",
+      "name": "bun_core-foundation",
+      "source_paths": ["src/bun_core", "src/bun_core_macros", "src/safety", "src/opaque", "src/ptr", "src/wyhash", "src/hash", "src/base64", "src/highway"],
+      "site_count_prior": 625,
+      "ub_priors": ["atomic-101-sites", "aliasing-heap-helpers", "Pin-raw-ptr-lifecycle"],
+      "concurrency": "yes-atomic-discipline",
+      "anchored_witness": null
+    },
+    {
+      "id": "O",
+      "name": "alloc-and-collections",
+      "source_paths": ["src/bun_alloc", "src/collections"],
+      "site_count_prior": 430,
+      "ub_priors": ["uninit-MaybeUninit", "validity-niche", "aliasing", "multi-array-list-soa"],
+      "concurrency": "yes-multi-array-list",
+      "anchored_witness": "miri-confirmed-linear-fifo-niche-ub"
+    },
+    {
+      "id": "P",
+      "name": "sys-io-event-loop-threading",
+      "source_paths": ["src/sys", "src/sys_jsc", "src/io", "src/spawn", "src/spawn_sys", "src/event_loop", "src/threading", "src/errno"],
+      "site_count_prior": 879,
+      "ub_priors": ["ffi-syscall", "data-races", "send-sync", "validity-errno-transmute"],
+      "concurrency": "yes-event-loop-hub",
+      "anchored_witness": "miri-confirmed-linux-errno-transmute"
+    },
+    {
+      "id": "Q",
+      "name": "http-network-stack",
+      "source_paths": ["src/http", "src/http_jsc", "src/http_types", "src/picohttp", "src/picohttp_sys", "src/uws", "src/uws_sys", "src/dispatch", "src/dns", "src/cares_sys", "src/url", "src/url_jsc"],
+      "site_count_prior": 867,
+      "ub_priors": ["ffi-uSockets-reentrancy", "aliasing", "data-races", "validity-picohttp-NUL-write"],
+      "concurrency": "yes",
+      "anchored_witness": "picohttp-NUL-write-SharedReadOnly + 8-dealloc-through-shared-provenance-cluster"
+    },
+    {
+      "id": "R",
+      "name": "parsers-and-lang",
+      "source_paths": ["src/js_parser", "src/js_parser_jsc", "src/js_printer", "src/ast", "src/ast_jsc", "src/css", "src/css_derive", "src/css_jsc", "src/shell_parser", "src/parsers", "src/ini", "src/dotenv", "src/bunfig", "src/md", "src/sourcemap", "src/sourcemap_jsc", "src/semver", "src/semver_jsc", "src/exe_format", "src/glob", "src/router", "src/resolver", "src/resolve_builtins", "src/unicode", "src/simdutf_sys"],
+      "site_count_prior": 726,
+      "ub_priors": ["validity-lexer-bytes", "get_unchecked-OOB", "F-NEW-1-2-bun_semver"],
+      "concurrency": "no-mostly",
+      "anchored_witness": "F-NEW-1 bun_semver::String::slice + F-NEW-2 bun_semver::String::eql"
+    },
+    {
+      "id": "S",
+      "name": "sql-redis-payments",
+      "source_paths": ["src/sql", "src/sql_jsc", "src/valkey", "src/patch", "src/patch_jsc", "src/codegen", "src/s3_signing", "src/csrf", "src/sha_hmac"],
+      "site_count_prior": 103,
+      "ub_priors": ["ffi", "validity", "send-sync"],
+      "concurrency": "yes-async-clients",
+      "anchored_witness": null
+    },
+    {
+      "id": "T",
+      "name": "ffi-c-libs",
+      "source_paths": ["src/libarchive", "src/libarchive_sys", "src/libdeflate_sys", "src/libuv_sys", "src/lolhtml_sys", "src/mimalloc_sys", "src/zlib", "src/zlib_sys", "src/zstd", "src/brotli", "src/brotli_sys", "src/tcc_sys", "src/boringssl", "src/boringssl_sys", "src/windows_sys"],
+      "site_count_prior": 468,
+      "ub_priors": ["ffi-contracts", "repr-C", "Box-from-raw-alloc-pairing"],
+      "concurrency": "no",
+      "anchored_witness": null
+    },
+    {
+      "id": "U",
+      "name": "crash-meta-utility",
+      "source_paths": ["src/crash_handler", "src/perf", "src/platform", "src/output", "src/output_tags", "src/paths", "src/meta", "src/clap", "src/clap_macros", "src/which", "src/watcher", "src/options_types", "src/bun_bin", "src/analytics", "src/api", "src/dispatch", "src/node-fallbacks"],
+      "site_count_prior": 203,
+      "ub_priors": ["signal-safe-crash-handler-T1", "inline-asm-if-any"],
+      "concurrency": "partial-signal-handlers",
+      "anchored_witness": "crash_handler-signal-handler-async-signal-safety-violations"
+    }
+  ],
+  "section_count": 21,
+  "section_size_min": 103,
+  "section_size_max": 879,
+  "concurrency_hubs_explicit": ["F (Bun.serve hub)", "P (event loop hub)", "K (JSC handle discipline)", "O (multi-array-list SoA)", "N (atomic discipline)", "M (parallel build callbacks)"]
+}

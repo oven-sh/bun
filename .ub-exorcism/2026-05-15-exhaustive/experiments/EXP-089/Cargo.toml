@@ -1,0 +1,6 @@
+[package]
+name = "exp-089-uninit-array-assume-init"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]

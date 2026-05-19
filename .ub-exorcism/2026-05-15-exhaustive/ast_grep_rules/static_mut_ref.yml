@@ -1,0 +1,8 @@
+id: static-mut-ref
+language: rust
+severity: error
+message: '`static mut` declaration. Per 2024 edition, &static mut access is a hard error; pre-2024 it is a classic data-race UB primitive.'
+rule:
+  pattern: |-
+    static mut $NAME: $T = $E;
+  kind: static_item

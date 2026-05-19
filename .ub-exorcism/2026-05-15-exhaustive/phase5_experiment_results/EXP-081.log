@@ -1,0 +1,31 @@
+   Compiling exp-081-posix-dir-iterator-name v0.0.0 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-081)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp-081-posix-dir-iterator-name`
+error: Undefined Behavior: pointer not dereferenceable: alloc209 has been freed, so this pointer is dangling
+  --> src/main.rs:25:18
+   |
+25 |         unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+   |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Undefined Behavior occurred here
+   |
+   = help: this indicates a bug in the program: it performed an invalid operation, and caused Undefined Behavior
+   = help: see https://doc.rust-lang.org/nightly/reference/behavior-considered-undefined.html for further information
+help: alloc209 was allocated here:
+  --> src/main.rs:36:18
+   |
+36 |             buf: b"entry-name\0".to_vec().into_boxed_slice(),
+   |                  ^^^^^^^^^^^^^^^^^^^^^^^^
+help: alloc209 was deallocated here:
+  --> src/main.rs:52:5
+   |
+52 |     };
+   |     ^
+   = note: stack backtrace:
+           0: Name::slice_u8
+               at src/main.rs:25:18: 25:73
+           1: main
+               at src/main.rs:54:17: 54:38
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

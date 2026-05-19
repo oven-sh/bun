@@ -1,0 +1,10 @@
+[package]
+name = "exp_034_migration_set_len_uninit_tag"
+version = "0.0.1"
+edition = "2021"
+
+[[bin]]
+name = "repro"
+path = "src/main.rs"
+
+[workspace]

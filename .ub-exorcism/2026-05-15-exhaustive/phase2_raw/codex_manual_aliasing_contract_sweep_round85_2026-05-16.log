@@ -1,0 +1,129 @@
+hits 128
+/data/projects/bun/src/ast/transpiler_cache.rs:104: Some(k) => Self::handle(k, core::ptr::from_ref(self).cast_mut()).is_disabled(),
+/data/projects/bun/src/ast/nodes.rs:82: StoreRef(unsafe { NonNull::new_unchecked(core::ptr::from_ref(r).cast_mut()) })
+/data/projects/bun/src/bun_alloc/MimallocArena.rs:433: pub fn alloc<T>(&self, val: T) -> &mut T {
+/data/projects/bun/src/bun_alloc/MimallocArena.rs:446: pub fn alloc_str(&self, s: &str) -> &mut str {
+/data/projects/bun/src/bun_alloc/MimallocArena.rs:455: pub fn alloc_slice_copy<T: Copy>(&self, src: &[T]) -> &mut [T] {
+/data/projects/bun/src/bun_alloc/MimallocArena.rs:469: pub fn alloc_slice_clone<T: Clone>(&self, src: &[T]) -> &mut [T] {
+/data/projects/bun/src/bun_alloc/MimallocArena.rs:476: pub fn alloc_slice_fill_default<T: Default>(&self, len: usize) -> &mut [T] {
+/data/projects/bun/src/bun_alloc/MimallocArena.rs:483: pub fn alloc_slice_fill_copy<T: Copy>(&self, len: usize, value: T) -> &mut [T] {
+/data/projects/bun/src/bun_alloc/MimallocArena.rs:490: pub fn alloc_slice_fill_with<T, F>(&self, len: usize, mut f: F) -> &mut [T]
+/data/projects/bun/src/bun_alloc/MimallocArena.rs:511: pub fn alloc_slice_fill_iter<T, I>(&self, iter: I) -> &mut [T]
+/data/projects/bun/src/bun_alloc/MimallocArena.rs:527: pub fn alloc_uninit_slice<T>(&self, len: usize) -> &mut [MaybeUninit<T>] {
+/data/projects/bun/src/bun_alloc/MimallocArena.rs:548: ptr: ptr::from_ref(self).cast_mut().cast(),
+/data/projects/bun/src/bun_alloc/stack_fallback.rs:165: pub fn alloc<T>(&self, val: T) -> &mut T {
+/data/projects/bun/src/bun_core/lib.rs:863: $crate::from_field_ptr!($Parent, $field, ::core::ptr::from_ref(self).cast_mut())
+/data/projects/bun/src/bundler/BundleThread.rs:316: std::ptr::from_ref(bun_threading::work_pool::WorkPool::get()).cast_mut(),
+/data/projects/bun/src/bundler/LinkerContext.rs:113: core::ptr::from_ref(ctx).cast_mut(),
+/data/projects/bun/src/bundler/LinkerContext.rs:397: pub(crate) fn log_disjoint(&self) -> &mut Log {
+/data/projects/bun/src/bundler/LinkerContext.rs:1657: pub fn c(&self) -> &mut LinkerContext<'a> {
+/data/projects/bun/src/bundler/LinkerGraph.rs:392: pub unsafe fn symbol_mut(&self, ref_: Ref) -> &mut Symbol {
+/data/projects/bun/src/bundler/ThreadPool.rs:414: pub fn get_worker(&self, id: ThreadId) -> &'static mut Worker {
+/data/projects/bun/src/bundler/bundle_v2.rs:2967: fn arena_create<'r, T>(&self, value: T) -> &'r mut T {
+/data/projects/bun/src/bundler/options.rs:1657: pub fn log_mut(&self) -> &mut bun_ast::Log {
+/data/projects/bun/src/bundler/transpiler.rs:205: pub fn fs_mut<'r>(&self) -> &'r mut Fs::FileSystem {
+/data/projects/bun/src/bundler/transpiler.rs:234: pub fn log_mut<'r>(&self) -> &'r mut bun_ast::Log {
+/data/projects/bun/src/bundler/transpiler.rs:262: pub fn env_mut(&self) -> &'a mut dot_env::Loader<'a> {
+/data/projects/bun/src/http/AsyncHTTP.rs:117: unsafe { bun_core::heap::destroy(core::ptr::from_ref(href).cast_mut()) };
+/data/projects/bun/src/http/HTTPThread.rs:45: fn ctx_mut<'a>(&self) -> &'a mut NewHttpContext<true> {
+/data/projects/bun/src/http/HTTPThread.rs:287: pub fn decompressor_mut<'a>(&self) -> &'a mut bun_libdeflate_sys::libdeflate::Decompressor {
+/data/projects/bun/src/http/HTTPThread.rs:387: fn uws_loop_mut<'a>(&self) -> &'a mut uws::Loop {
+/data/projects/bun/src/http/lib.rs:176: unsafe { bun_core::heap::destroy(core::ptr::from_ref(list).cast_mut()) };
+/data/projects/bun/src/http_jsc/headers_jsc.rs:24: // `link_interface!` impl which did `from_ref(h).cast_mut()`).
+/data/projects/bun/src/http_jsc/headers_jsc.rs:25: let h_ptr: Option<*mut FetchHeaders> = fetch_headers.map(|h| core::ptr::from_ref(h).cast_mut());
+/data/projects/bun/src/install/NetworkTask.rs:175: fn pm_mut<'a>(&self) -> &'a mut PackageManager {
+/data/projects/bun/src/install/PackageInstaller.rs:398: pub fn manager_mut(&self) -> &'a mut PackageManager {
+/data/projects/bun/src/install/PackageInstaller.rs:412: pub fn lockfile_mut(&self) -> &'a mut Lockfile {
+/data/projects/bun/src/install/PackageInstaller.rs:419: pub fn progress_mut(&self) -> &'a mut Progress {
+/data/projects/bun/src/install/lifecycle_script_runner.rs:313: fn installer_mut(&self) -> &mut Installer<'a> {
+/data/projects/bun/src/install/lifecycle_script_runner.rs:387: fn manager_mut(&self) -> &mut PackageManager {
+/data/projects/bun/src/install/PackageManager.rs:701: pub fn log_mut<'a>(&self) -> &'a mut bun_ast::Log {
+/data/projects/bun/src/install/PackageManager.rs:719: pub fn downloads_node_mut<'a>(&self) -> &'a mut ProgressNode {
+/data/projects/bun/src/install/PackageManager.rs:1100: pub fn env_mut<'a>(&self) -> &'a mut dot_env::Loader<'static> {
+/data/projects/bun/src/io/lib.rs:149: pub unsafe fn platform_event_loop(&self) -> &mut bun_uws_sys::Loop {
+/data/projects/bun/src/io/lib.rs:157: pub unsafe fn file_polls(&self) -> &mut Store {
+/data/projects/bun/src/io/lib.rs:179: pub(crate) fn loop_mut(&self) -> &mut bun_uws_sys::Loop {
+/data/projects/bun/src/io/lib.rs:194: pub(crate) fn file_polls_mut(&self) -> &mut Store {
+/data/projects/bun/src/io/lib.rs:211: pub(crate) fn pipe_read_buffer_mut(&self) -> &'static mut [u8] {
+/data/projects/bun/src/js_parser/lexer.rs:490: pub fn log(&self) -> &mut Log {
+/data/projects/bun/src/js_parser/p.rs:60: fn log(&self) -> &mut bun_ast::Log;
+/data/projects/bun/src/js_parser/p.rs:76: fn log(&self) -> &mut bun_ast::Log {
+/data/projects/bun/src/js_parser/p.rs:752: pub fn log(&self) -> &mut bun_ast::Log {
+/data/projects/bun/src/jsc/Debugger.rs:1050: fn handle_mut(&self) -> &mut TestReporterHandle {
+/data/projects/bun/src/jsc/JSCell.rs:163: pub unsafe fn get_mut(&self) -> &mut T {
+/data/projects/bun/src/jsc/JSPromise.rs:147: pub fn get(&self) -> &mut JSPromise {
+/data/projects/bun/src/jsc/JSPromise.rs:295: pub fn get(&self) -> &mut JSPromise {
+/data/projects/bun/src/jsc/VirtualMachine.rs:664: pub fn as_mut(&self) -> &mut VirtualMachine {
+/data/projects/bun/src/jsc/VirtualMachine.rs:745: pub fn event_loop_mut(&self) -> &mut EventLoop {
+/data/projects/bun/src/jsc/VirtualMachine.rs:765: pub fn event_loop_ref(&self) -> &mut EventLoop {
+/data/projects/bun/src/jsc/VirtualMachine.rs:874: pub fn uws_loop_mut(&self) -> &mut uws::Loop {
+/data/projects/bun/src/jsc/event_loop.rs:375: pub unsafe fn pipe_read_buffer(&self) -> &mut [u8] {
+/data/projects/bun/src/jsc/webcore_types.rs:997: bun_ptr::ThreadSafeRefCount::<Self>::ref_(core::ptr::from_ref(self).cast_mut())
+/data/projects/bun/src/jsc/webcore_types.rs:1145: pub fn data_mut(&self) -> &mut Data {
+/data/projects/bun/src/jsc/hot_reloader.rs:412: fn get_mut(&self) -> &mut StringSet {
+/data/projects/bun/src/options_types/context.rs:158: pub unsafe fn log_mut(&self) -> &mut bun_ast::Log {
+/data/projects/bun/src/parsers/json_lexer.rs:329: pub fn log_mut(&self) -> &mut bun_ast::Log {
+/data/projects/bun/src/resolver/fs.rs:1325: fn map_mut(&self) -> &mut EntriesOptionMap {
+/data/projects/bun/src/shell_parser/parse.rs:1941: fn allocate<T>(&self, val: T) -> &'bump mut T {
+/data/projects/bun/src/sql_jsc/mysql/JSMySQLConnection.rs:137: fn vm_mut(&self) -> &'static mut VirtualMachine {
+/data/projects/bun/src/sql_jsc/mysql/JSMySQLConnection.rs:146: fn event_loop(&self) -> &'static mut crate::jsc::EventLoop {
+/data/projects/bun/src/sql_jsc/mysql/JSMySQLConnection.rs:182: pub(crate) fn connection_mut(&self) -> &mut my_sql_connection::MySQLConnection {
+/data/projects/bun/src/sql_jsc/mysql/JSMySQLQuery.rs:612: fn vm_mut(&self) -> &'static mut VirtualMachine {
+/data/projects/bun/src/sql_jsc/mysql/JSMySQLQuery.rs:620: fn event_loop(&self) -> &mut crate::jsc::EventLoop {
+/data/projects/bun/src/sql_jsc/mysql/MySQLConnection.rs:1545: fn write_buffer(&self) -> &mut OffsetByteList {
+/data/projects/bun/src/sql_jsc/mysql/MySQLConnection.rs:1594: fn read_buffer(&self) -> &mut OffsetByteList {
+/data/projects/bun/src/sql_jsc/mysql/MySQLConnection.rs:1608: fn last_message_start(&self) -> &mut u32 {
+/data/projects/bun/src/sql_jsc/postgres/PostgresSQLQuery.rs:533: // `connection.requests` is derived via `core::ptr::from_ref(this).cast_mut()`
+/data/projects/bun/src/sql_jsc/postgres/PostgresSQLQuery.rs:536: let this_ptr: *mut Self = core::ptr::from_ref(this).cast_mut();
+/data/projects/bun/src/sql_jsc/postgres/PostgresSQLConnection.rs:219: fn vm_mut(&self) -> &'static mut VirtualMachine {
+/data/projects/bun/src/sql_jsc/postgres/PostgresSQLConnection.rs:229: fn event_loop(&self) -> &'static mut crate::jsc::EventLoop {
+/data/projects/bun/src/runtime/api/JSTranspiler.rs:1216: unsafe fn transpiler_mut(&self) -> &mut Transpiler::Transpiler<'static> {
+/data/projects/bun/src/runtime/bake/DevServer.rs:137: pub(crate) fn vm_mut(&self) -> &mut VirtualMachine {
+/data/projects/bun/src/runtime/bake/DevServer.rs:5562: fn timer_heap(&self) -> &mut crate::timer::All {
+/data/projects/bun/src/runtime/cli/pack_command.rs:3009: let command_ctx = unsafe { &mut *std::ptr::from_ref(ctx.command_ctx).cast_mut() };
+/data/projects/bun/src/runtime/cli/repl.rs:99: let ptr: *mut VirtualMachine = core::ptr::from_ref(vm).cast_mut();
+/data/projects/bun/src/runtime/dns_jsc/dns.rs:4166: fn pending_host_cache(&self, field: PendingCacheField) -> &mut PendingCache {
+/data/projects/bun/src/runtime/ffi/FFIObject.rs:150: unsafe { (DOM_CALL.put)(std::ptr::from_ref(global_object).cast_mut(), object) };
+/data/projects/bun/src/runtime/ffi/FFIObject.rs:267: unsafe { (dc.put)(std::ptr::from_ref(global_this).cast_mut(), obj) };
+/data/projects/bun/src/runtime/node/node_fs_watcher.rs:76: fn vm(&self) -> &'static mut VirtualMachine {
+/data/projects/bun/src/runtime/server/WebSocketServerContext.rs:83: let p = core::ptr::addr_of!(self.active_connections).cast_mut();
+/data/projects/bun/src/runtime/server/WebSocketServerContext.rs:94: let p = core::ptr::addr_of!(self.active_connections).cast_mut();
+/data/projects/bun/src/runtime/server/mod.rs:3190: // `fn(&self) -> &mut NewServer` accessor would invite overlapping `&mut`
+/data/projects/bun/src/runtime/server/server_body.rs:1476: fn app_mut(&self) -> &mut uws_sys::NewApp<SSL> {
+/data/projects/bun/src/runtime/shell/IOReader.rs:98: fn state(&self) -> &mut State {
+/data/projects/bun/src/runtime/shell/IOReader.rs:104: fn reader(&self) -> &mut ReaderImpl {
+/data/projects/bun/src/runtime/shell/IOWriter.rs:251: fn state(&self) -> &mut State {
+/data/projects/bun/src/runtime/shell/interpreter.rs:204: pub fn $get_mut(&self, id: NodeId) -> &mut $ty {
+/data/projects/bun/src/runtime/shell/interpreter.rs:915: unsafe fn nodes_mut(&self) -> &mut Vec<Node> {
+/data/projects/bun/src/runtime/shell/interpreter.rs:963: pub fn node_mut(&self, id: NodeId) -> &mut Node {
+/data/projects/bun/src/runtime/shell/subproc.rs:170: pub unsafe fn as_mut(&self) -> &mut FileSink {
+/data/projects/bun/src/runtime/shell/subproc.rs:346: pub fn proc(&self) -> &mut Process {
+/data/projects/bun/src/runtime/socket/WindowsNamedPipe.rs:1121: pub unsafe fn loop_(&self) -> &mut AsyncLoop {
+/data/projects/bun/src/runtime/test_runner/Execution.rs:132: pub fn sequences_mut<'a>(&self, execution: &'a mut Execution) -> &'a mut [ExecutionSequence] {
+/data/projects/bun/src/runtime/test_runner/bun_test.rs:396: pub fn get(&self) -> &mut BunTest {
+/data/projects/bun/src/runtime/valkey_jsc/valkey.rs:1516: let parent = std::ptr::from_ref(self.parent()).cast_mut();
+/data/projects/bun/src/runtime/valkey_jsc/js_valkey.rs:143: fn subscription_callback_map(&self) -> &mut JSMap {
+/data/projects/bun/src/runtime/valkey_jsc/js_valkey.rs:442: /// stays > 0 may pass `std::ptr::from_ref(self).cast_mut()`.
+/data/projects/bun/src/runtime/valkey_jsc/js_valkey.rs:474: pub(super) fn client_mut(&self) -> &mut valkey::ValkeyClient {
+/data/projects/bun/src/runtime/valkey_jsc/js_valkey.rs:1139: unsafe { JSValkeyClient::deref(std::ptr::from_ref(self).cast_mut()) };
+/data/projects/bun/src/runtime/webcore/Body.rs:121: pub fn value_mut(&self) -> &mut Value {
+/data/projects/bun/src/runtime/webcore/Body.rs:1763: fn get_body_value(&self) -> &mut Value;
+/data/projects/bun/src/runtime/webcore/FileReader.rs:315: pub fn reader(&self) -> &mut IOReader {
+/data/projects/bun/src/runtime/webcore/FileReader.rs:783: pub fn on_pull(&self, buffer: &'static mut [u8], array: JSValue) -> streams::Result {
+/data/projects/bun/src/runtime/webcore/Request.rs:182: fn get_body_value(&self) -> &mut BodyValue {
+/data/projects/bun/src/runtime/webcore/Request.rs:211: pub fn get_body_value(&self) -> &mut BodyValue {
+/data/projects/bun/src/runtime/webcore/Request.rs:227: pub(crate) fn body_hive(&self) -> &mut BodyHiveRef {
+/data/projects/bun/src/runtime/webcore/Request.rs:247: pub(crate) fn body_value_mut(&self) -> &mut BodyValue {
+/data/projects/bun/src/runtime/webcore/Request.rs:256: fn headers_mut(&self) -> &mut Option<HeadersRef> {
+/data/projects/bun/src/runtime/webcore/Response.rs:269: fn get_body_value(&self) -> &mut BodyValue {
+/data/projects/bun/src/runtime/webcore/Response.rs:377: fn init_mut(&self) -> &mut Init {
+/data/projects/bun/src/runtime/webcore/Response.rs:408: pub fn get_body_value(&self) -> &mut BodyValue {
+/data/projects/bun/src/runtime/webcore/fetch/FetchTasklet.rs:366: unsafe { bun_ptr::ThreadSafeRefCount::<Self>::ref_(core::ptr::from_ref(self).cast_mut()) };
+/data/projects/bun/src/runtime/webcore/s3/client.rs:622: fn task_mut<'r>(&self) -> &'r mut MultiPartUpload {
+/data/projects/bun/src/runtime/node/net/BlockList.rs:85: unsafe { bun_ptr::ThreadSafeRefCount::<Self>::ref_(core::ptr::from_ref(self).cast_mut()) };
+/data/projects/bun/src/runtime/cli/test/Scanner.rs:255: let real_fs = core::ptr::from_ref(&self.fs.fs).cast_mut();
+/data/projects/bun/src/runtime/bake/DevServer/HmrSocket.rs:56: unsafe fn dev<'a>(&self) -> &'a mut DevServer {
+/data/projects/bun/src/runtime/api/bun/subprocess.rs:244: pub(super) fn process_mut(&self) -> &mut Process {
+/data/projects/bun/src/install/isolated_install/Installer.rs:138: pub fn manager_mut(&self) -> &'a mut PackageManager {
+/data/projects/bun/src/http/h3_client/PendingConnect.rs:50: fn pc_mut<'a>(&self) -> &'a mut quic::PendingConnect {
+/data/projects/bun/src/http/h3_client/Stream.rs:87: pub fn session_mut<'s>(&self) -> &'s mut ClientSession {

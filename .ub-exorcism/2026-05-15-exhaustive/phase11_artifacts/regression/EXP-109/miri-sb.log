@@ -1,0 +1,41 @@
+BEGIN EXP-109 regression 2026-05-17T02:30:22Z 4d443e54022ceeadc79adf542b44c50c640e6985 miri:sb
+running: MIRIFLAGS="" cargo +nightly miri run (in /data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-109)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.01s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp_109`
+warning: integer-to-pointer cast
+  --> src/main.rs:86:20
+   |
+86 |     let cell_ptr = c.js_function.bits as *const FakeJsCell;
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ integer-to-pointer cast
+   |
+   = help: this program is using integer-to-pointer casts or (equivalently) `ptr::with_exposed_provenance`, which means that Miri might miss pointer bugs in this program
+   = help: see https://doc.rust-lang.org/nightly/std/ptr/fn.with_exposed_provenance.html for more details on that operation
+   = help: to ensure that Miri does not miss bugs in your program, use Strict Provenance APIs (https://doc.rust-lang.org/nightly/std/ptr/index.html#strict-provenance, https://crates.io/crates/sptr) instead
+   = help: you can then set `MIRIFLAGS=-Zmiri-strict-provenance` to ensure you are not relying on `with_exposed_provenance` semantics
+   = help: alternatively, `MIRIFLAGS=-Zmiri-permissive-provenance` disables this warning
+   = note: stack backtrace:
+           0: ffi_callback_call
+               at src/main.rs:86:20: 86:59
+           1: main
+               at src/main.rs:119:22: 122:18
+
+[exp-109] normal invocation: payload=0xCAFEBABE
+error: Undefined Behavior: pointer not dereferenceable: pointer must be dereferenceable for 8 bytes, but got 0x209a4[noalloc] which is a dangling pointer (it has no provenance)
+  --> src/main.rs:91:25
+   |
+91 |     let cell = unsafe { &*cell_ptr };
+   |                         ^^^^^^^^^^ Undefined Behavior occurred here
+   |
+   = help: this indicates a bug in the program: it performed an invalid operation, and caused Undefined Behavior
+   = help: see https://doc.rust-lang.org/nightly/reference/behavior-considered-undefined.html for further information
+   = note: stack backtrace:
+           0: ffi_callback_call
+               at src/main.rs:91:25: 91:35
+           1: main
+               at src/main.rs:139:23: 139:51
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error; 1 warning emitted
+
+END EXP-109 regression exit=1 ub_lines=1 wall_seconds=0

@@ -1,0 +1,17 @@
+[package]
+name = "exp_052_unbounded_queue_loom"
+version = "0.0.1"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# loom is conditionally compiled via `--cfg loom`. It must be a normal dep
+# (not dev-dep) so the lib can see it; the lib is gated on `cfg(loom)`.
+loom = "0.7"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
+
+[workspace]

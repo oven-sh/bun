@@ -1,0 +1,139 @@
+warning: unreachable `pub` item
+    --> /data/projects/bun/src/bun_core/output.rs:1647:9
+     |
+1647 |         pub static $name: $crate::output::ScopedLogger = $crate::output::ScopedLogger::new(
+     |         ---^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |         |
+     |         help: consider restricting its visibility: `pub(super)`
+     |
+    ::: /data/projects/bun/src/bun_core/string/immutable/unicode.rs:23:1
+     |
+  23 | crate::declare_scope!(strings, hidden);
+     | -------------------------------------- in this macro invocation
+     |
+     = help: or consider exporting it for use by other crates
+note: the lint level is defined here
+    --> /data/projects/bun/src/bun_core/lib.rs:11:26
+     |
+  11 | #![warn(unused_must_use, unreachable_pub)]
+     |                          ^^^^^^^^^^^^^^^
+     = note: this warning originates in the macro `crate::declare_scope` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+    --> /data/projects/bun/src/bun_core/string/immutable/unicode.rs:1507:5
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |     ^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> /data/projects/bun/src/bun_core/string/immutable/unicode.rs:1507:27
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |                           ^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> /data/projects/bun/src/bun_core/string/immutable/unicode.rs:1507:50
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |                                                  ^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> /data/projects/bun/src/bun_core/string/immutable/unicode.rs:1507:74
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |                                                                          ^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> /data/projects/bun/src/bun_core/string/immutable/unicode.rs:1508:5
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+1508 |     u16_get_supplementary, u16_is_lead, u16_is_surrogate, u16_is_trail,
+     |     ^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> /data/projects/bun/src/bun_core/string/immutable/unicode.rs:1508:41
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+1508 |     u16_get_supplementary, u16_is_lead, u16_is_surrogate, u16_is_trail,
+     |                                         ^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> /data/projects/bun/src/bun_core/lib.rs:2159:5
+     |
+2159 |     pub fn is_ip_address(input: &[u8]) -> bool {
+     |     ---^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |     |
+     |     help: consider restricting its visibility: `pub(crate)`
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: `bun_core` (lib) generated 8 warnings (run `cargo fix --lib -p bun_core` to apply 7 suggestions)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp-072-bun-collections-crate`
+error: Undefined Behavior: reading memory at alloc120[0x100..0x104], but memory is uninitialized at [0x100..0x104], and this operation requires initialized memory
+ --> src/main.rs:9:30
+  |
+9 |         std::hint::black_box(self.0.get());
+  |                              ^^^^^^ Undefined Behavior occurred here
+  |
+  = help: this indicates a bug in the program: it performed an invalid operation, and caused Undefined Behavior
+  = help: see https://doc.rust-lang.org/nightly/reference/behavior-considered-undefined.html for further information
+  = note: stack backtrace:
+          0: <NeedsDrop as std::ops::Drop>::drop
+              at src/main.rs:9:30: 9:36
+          1: std::ptr::drop_in_place::<NeedsDrop> - shim(Some(NeedsDrop))
+              at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:809:1: 811:25
+          2: bun_collections::HiveArray::<NeedsDrop, 1>::put
+              at /data/projects/bun/src/collections/hive_array.rs:347:18: 347:49
+          3: main
+              at src/main.rs:19:9: 19:22
+
+Uninitialized memory occurred at alloc120[0x100..0x104], in this allocation:
+alloc120 (stack variable, size: 264, align: 8) {
+    0x000 │ 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 │ ................
+    0x010 │ 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 │ ................
+    0x020 │ 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 │ ................
+    0x030 │ 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 │ ................
+    0x040 │ 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 │ ................
+    0x050 │ 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 │ ................
+    0x060 │ 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 │ ................
+    0x070 │ 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 │ ................
+    0x080 │ 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 │ ................
+    0x090 │ 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 │ ................
+    0x0a0 │ 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 │ ................
+    0x0b0 │ 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 │ ................
+    0x0c0 │ 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 │ ................
+    0x0d0 │ 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 │ ................
+    0x0e0 │ 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 │ ................
+    0x0f0 │ 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 │ ................
+    0x100 │ __ __ __ __ __ __ __ __                         │ ░░░░░░░░
+}
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

@@ -1,0 +1,35 @@
+   Compiling exp-043-scanner-resolve-dir-realfs-field-projection-castmut v0.0.0 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-043)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp-043-scanner-resolve-dir-realfs-field-projection-castmut`
+error: Undefined Behavior: write access through <238> at alloc108[0x0] is forbidden
+  --> src/main.rs:25:9
+   |
+25 |         self.counter = self.counter.wrapping_add(1);
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Undefined Behavior occurred here
+   |
+   = help: this indicates a potential bug in the program: it performed an invalid operation, but the Tree Borrows rules it violated are still experimental
+   = help: see https://github.com/rust-lang/unsafe-code-guidelines/blob/master/wip/tree-borrows.md for further information
+   = help: the accessed tag <238> is a child of the conflicting tag <234>
+   = help: the conflicting tag <234> has state Frozen which forbids this child write access
+help: the accessed tag <238> was created here
+  --> src/main.rs:24:37
+   |
+24 |     fn read_directory_with_iterator(&mut self) {
+   |                                     ^^^^^^^^^
+help: the conflicting tag <234> was created here, in the initial state Frozen
+  --> src/main.rs:41:23
+   |
+41 |         let real_fs = core::ptr::from_ref(&self.fs.fs).cast_mut();
+   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: stack backtrace:
+           0: RealFS::read_directory_with_iterator
+               at src/main.rs:25:9: 25:52
+           1: Scanner::<'_>::resolve_dir_for_test
+               at src/main.rs:44:9: 44:41
+           2: main
+               at src/main.rs:53:5: 53:35
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

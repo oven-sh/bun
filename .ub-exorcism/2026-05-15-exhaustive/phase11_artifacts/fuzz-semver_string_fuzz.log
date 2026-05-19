@@ -1,0 +1,95 @@
+   Compiling semver_string_fuzz v0.0.1 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/fuzz/semver_string_fuzz)
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.84s
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.02s
+     Running `/tmp/cargo-target/x86_64-unknown-linux-gnu/release/semver_string_fuzz -artifact_prefix=./artifacts/semver_string_fuzz/ -max_total_time=300 -timeout=5 ./corpus/semver_string_fuzz`
+INFO: Running with entropic power schedule (0xFF, 100).
+INFO: Seed: 2518247721
+INFO: Loaded 1 modules   (1631 inline 8-bit counters): 1631 [0x60bbd7009e20, 0x60bbd700a47f), 
+INFO: Loaded 1 PC tables (1631 PCs): 1631 [0x60bbd700a480,0x60bbd7010a70), 
+INFO:        0 files found in ./corpus/semver_string_fuzz
+INFO: -max_len is not provided; libFuzzer will not generate inputs larger than 4096 bytes
+INFO: A corpus is not provided, starting from an empty corpus
+#2	INITED exec/s: 0 rss: 26Mb
+WARNING: no interesting inputs were found so far. Is the code instrumented for coverage?
+This may also happen if the target rejected all inputs we tried so far
+	NEW_FUNC[1/11]: 0x60bbd6f133d0  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/semver_string_fuzz+0xe33d0) (BuildId: 946aae035ae0c2420acd94717602fc25faf8fdc4)
+	NEW_FUNC[2/11]: 0x60bbd6f13fa0  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/semver_string_fuzz+0xe3fa0) (BuildId: 946aae035ae0c2420acd94717602fc25faf8fdc4)
+#417	NEW    cov: 47 ft: 48 corp: 2/9b lim: 8 exec/s: 0 rss: 27Mb L: 8/8 MS: 5 CopyPart-InsertByte-ChangeByte-InsertByte-InsertRepeatedBytes-
+#418	NEW    cov: 48 ft: 50 corp: 3/17b lim: 8 exec/s: 0 rss: 27Mb L: 8/8 MS: 1 ChangeBit-
+
+thread '<unnamed>' (1830658) panicked at fuzz_targets/semver_string_fuzz.rs:146:13:
+EXP-008/009 witness: get_unchecked(1..2113929217) on buf of len 0
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+==1830658== ERROR: libFuzzer: deadly signal
+    #0 0x60bbd6eec0d1  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/semver_string_fuzz+0xbc0d1) (BuildId: 946aae035ae0c2420acd94717602fc25faf8fdc4)
+    #1 0x60bbd6f31fbb  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/semver_string_fuzz+0x101fbb) (BuildId: 946aae035ae0c2420acd94717602fc25faf8fdc4)
+    #2 0x60bbd6f1e1a9  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/semver_string_fuzz+0xee1a9) (BuildId: 946aae035ae0c2420acd94717602fc25faf8fdc4)
+    #3 0x76925f445f5f  (/lib/x86_64-linux-gnu/libc.so.6+0x45f5f) (BuildId: a5b27db7ef3036c1dacf2e4ddc2e052767129439)
+    #4 0x76925f4a5fec  (/lib/x86_64-linux-gnu/libc.so.6+0xa5fec) (BuildId: a5b27db7ef3036c1dacf2e4ddc2e052767129439)
+    #5 0x76925f445e2d  (/lib/x86_64-linux-gnu/libc.so.6+0x45e2d) (BuildId: a5b27db7ef3036c1dacf2e4ddc2e052767129439)
+    #6 0x76925f428887  (/lib/x86_64-linux-gnu/libc.so.6+0x28887) (BuildId: a5b27db7ef3036c1dacf2e4ddc2e052767129439)
+    #7 0x60bbd6e57209  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/semver_string_fuzz+0x27209) (BuildId: 946aae035ae0c2420acd94717602fc25faf8fdc4)
+    #8 0x60bbd6e571d8  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/semver_string_fuzz+0x271d8) (BuildId: 946aae035ae0c2420acd94717602fc25faf8fdc4)
+    #9 0x60bbd6e4cfe4  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/semver_string_fuzz+0x1cfe4) (BuildId: 946aae035ae0c2420acd94717602fc25faf8fdc4)
+    #10 0x60bbd6f9d6e1  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/semver_string_fuzz+0x16d6e1) (BuildId: 946aae035ae0c2420acd94717602fc25faf8fdc4)
+    #11 0x60bbd6f8ea91  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/semver_string_fuzz+0x15ea91) (BuildId: 946aae035ae0c2420acd94717602fc25faf8fdc4)
+    #12 0x60bbd6f84668  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/semver_string_fuzz+0x154668) (BuildId: 946aae035ae0c2420acd94717602fc25faf8fdc4)
+    #13 0x60bbd6f8f0cc  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/semver_string_fuzz+0x15f0cc) (BuildId: 946aae035ae0c2420acd94717602fc25faf8fdc4)
+    #14 0x60bbd6e577db  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/semver_string_fuzz+0x277db) (BuildId: 946aae035ae0c2420acd94717602fc25faf8fdc4)
+    #15 0x60bbd6f14515  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/semver_string_fuzz+0xe4515) (BuildId: 946aae035ae0c2420acd94717602fc25faf8fdc4)
+    #16 0x60bbd6f16119  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/semver_string_fuzz+0xe6119) (BuildId: 946aae035ae0c2420acd94717602fc25faf8fdc4)
+    #17 0x60bbd6f17044  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/semver_string_fuzz+0xe7044) (BuildId: 946aae035ae0c2420acd94717602fc25faf8fdc4)
+    #18 0x60bbd6f17b28  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/semver_string_fuzz+0xe7b28) (BuildId: 946aae035ae0c2420acd94717602fc25faf8fdc4)
+    #19 0x60bbd6f1696d  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/semver_string_fuzz+0xe696d) (BuildId: 946aae035ae0c2420acd94717602fc25faf8fdc4)
+    #20 0x60bbd6f1e66c  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/semver_string_fuzz+0xee66c) (BuildId: 946aae035ae0c2420acd94717602fc25faf8fdc4)
+    #21 0x60bbd6f22d85  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/semver_string_fuzz+0xf2d85) (BuildId: 946aae035ae0c2420acd94717602fc25faf8fdc4)
+    #22 0x60bbd6f25562  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/semver_string_fuzz+0xf5562) (BuildId: 946aae035ae0c2420acd94717602fc25faf8fdc4)
+    #23 0x60bbd6f26df7  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/semver_string_fuzz+0xf6df7) (BuildId: 946aae035ae0c2420acd94717602fc25faf8fdc4)
+    #24 0x60bbd6f4b7d1  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/semver_string_fuzz+0x11b7d1) (BuildId: 946aae035ae0c2420acd94717602fc25faf8fdc4)
+    #25 0x60bbd6e57a56  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/semver_string_fuzz+0x27a56) (BuildId: 946aae035ae0c2420acd94717602fc25faf8fdc4)
+    #26 0x76925f42a574  (/lib/x86_64-linux-gnu/libc.so.6+0x2a574) (BuildId: a5b27db7ef3036c1dacf2e4ddc2e052767129439)
+    #27 0x76925f42a627  (/lib/x86_64-linux-gnu/libc.so.6+0x2a627) (BuildId: a5b27db7ef3036c1dacf2e4ddc2e052767129439)
+    #28 0x60bbd6e57bf4  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/semver_string_fuzz+0x27bf4) (BuildId: 946aae035ae0c2420acd94717602fc25faf8fdc4)
+
+NOTE: libFuzzer has rudimentary signal handlers.
+      Combine libFuzzer with AddressSanitizer or similar for better crash reports.
+SUMMARY: libFuzzer: deadly signal
+MS: 2 CMP-CrossOver- DE: "\001\000\000\000\000\000\000\000"-; base unit: bc80ff526c4de445f34dbf1aa7ff8d417544ae29
+0x1,0x0,0x0,0x0,0x0,0x0,0x0,0xfe,
+\001\000\000\000\000\000\000\376
+artifact_prefix='./artifacts/semver_string_fuzz/'; Test unit written to ./artifacts/semver_string_fuzz/crash-3b428dc841fa211aa81ada3d95e0a4eea93a2903
+Base64: AQAAAAAAAP4=
+
+────────────────────────────────────────────────────────────────────────────────
+
+Failing input:
+
+	./artifacts/semver_string_fuzz/crash-3b428dc841fa211aa81ada3d95e0a4eea93a2903
+
+Output of `std::fmt::Debug`:
+
+	FuzzInput {
+	    sem_bytes: [
+	        1,
+	        0,
+	        0,
+	        0,
+	        0,
+	        0,
+	        0,
+	        254,
+	    ],
+	    buf: [],
+	}
+
+Reproduce with:
+
+	cargo fuzz run --fuzz-dir . semver_string_fuzz ./artifacts/semver_string_fuzz/crash-3b428dc841fa211aa81ada3d95e0a4eea93a2903
+
+Minimize test case with:
+
+	cargo fuzz tmin --fuzz-dir . semver_string_fuzz ./artifacts/semver_string_fuzz/crash-3b428dc841fa211aa81ada3d95e0a4eea93a2903
+
+────────────────────────────────────────────────────────────────────────────────
+
+Error: Fuzz target exited with exit status: 77

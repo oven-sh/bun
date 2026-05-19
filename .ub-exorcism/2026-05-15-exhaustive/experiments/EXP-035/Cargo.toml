@@ -1,0 +1,10 @@
+[package]
+name = "exp_035_standalone_graph_enum_validity"
+version = "0.0.1"
+edition = "2021"
+
+[[bin]]
+name = "repro"
+path = "src/main.rs"
+
+[workspace]

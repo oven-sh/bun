@@ -1,0 +1,9 @@
+[package]
+name = "exp_054_napi_layout"
+version = "0.1.0"
+edition = "2021"
+build = "build.rs"
+
+[dependencies]
+
+[workspace]

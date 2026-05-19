@@ -1,0 +1,10 @@
+[package]
+name = "exp-109-kani-strong-rooting"
+version = "0.0.0"
+edition = "2021"
+
+[[bin]]
+name = "exp_109_kani"
+path = "src/main.rs"
+
+[workspace]

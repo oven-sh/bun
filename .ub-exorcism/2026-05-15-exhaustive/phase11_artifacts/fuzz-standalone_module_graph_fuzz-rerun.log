@@ -1,0 +1,98 @@
+   Compiling standalone_module_graph_fuzz v0.0.1 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/fuzz/standalone_module_graph_fuzz)
+    Finished `release` profile [optimized + debuginfo] target(s) in 1.10s
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.03s
+     Running `/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz -artifact_prefix=./artifacts/standalone_module_graph_fuzz/ -max_total_time=300 -timeout=5 ./corpus/standalone_module_graph_fuzz`
+INFO: Running with entropic power schedule (0xFF, 100).
+INFO: Seed: 1575837528
+INFO: Loaded 1 modules   (314 inline 8-bit counters): 314 [0x5cc240d77150, 0x5cc240d7728a), 
+INFO: Loaded 1 PC tables (314 PCs): 314 [0x5cc240d77290,0x5cc240d78630), 
+INFO:        0 files found in ./corpus/standalone_module_graph_fuzz
+INFO: -max_len is not provided; libFuzzer will not generate inputs larger than 4096 bytes
+INFO: A corpus is not provided, starting from an empty corpus
+#2	INITED cov: 19 ft: 20 corp: 1/1b exec/s: 0 rss: 31Mb
+=================================================================
+==1853854==ERROR: AddressSanitizer: stack-buffer-overflow on address 0x6c335570b7f0 at pc 0x5cc240c6395e bp 0x7ffecb7d80d0 sp 0x7ffecb7d7890
+WRITE of size 20 at 0x6c335570b7f0 thread T0
+    #0 0x5cc240c6395d  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0xa895d) (BuildId: 3a280595c1b8277c9053add0b9b60e8dc9226535)
+    #1 0x5cc240c947b6  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0xd97b6) (BuildId: 3a280595c1b8277c9053add0b9b60e8dc9226535)
+    #2 0x5cc240c95dd0  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0xdadd0) (BuildId: 3a280595c1b8277c9053add0b9b60e8dc9226535)
+    #3 0x5cc240c96a74  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0xdba74) (BuildId: 3a280595c1b8277c9053add0b9b60e8dc9226535)
+    #4 0x5cc240c97558  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0xdc558) (BuildId: 3a280595c1b8277c9053add0b9b60e8dc9226535)
+    #5 0x5cc240c9639d  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0xdb39d) (BuildId: 3a280595c1b8277c9053add0b9b60e8dc9226535)
+    #6 0x5cc240c9e0ac  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0xe30ac) (BuildId: 3a280595c1b8277c9053add0b9b60e8dc9226535)
+    #7 0x5cc240ca27c5  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0xe77c5) (BuildId: 3a280595c1b8277c9053add0b9b60e8dc9226535)
+    #8 0x5cc240ca4fa2  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0xe9fa2) (BuildId: 3a280595c1b8277c9053add0b9b60e8dc9226535)
+    #9 0x5cc240ca6837  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0xeb837) (BuildId: 3a280595c1b8277c9053add0b9b60e8dc9226535)
+    #10 0x5cc240ccb111  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0x110111) (BuildId: 3a280595c1b8277c9053add0b9b60e8dc9226535)
+    #11 0x5cc240bd8f86  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0x1df86) (BuildId: 3a280595c1b8277c9053add0b9b60e8dc9226535)
+    #12 0x703357a2a574  (/lib/x86_64-linux-gnu/libc.so.6+0x2a574) (BuildId: a5b27db7ef3036c1dacf2e4ddc2e052767129439)
+    #13 0x703357a2a627  (/lib/x86_64-linux-gnu/libc.so.6+0x2a627) (BuildId: a5b27db7ef3036c1dacf2e4ddc2e052767129439)
+    #14 0x5cc240bd9134  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0x1e134) (BuildId: 3a280595c1b8277c9053add0b9b60e8dc9226535)
+
+Address 0x6c335570b7f0 is located in stack of thread T0 at offset 48 in frame
+    #0 0x5cc240c9460f  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0xd960f) (BuildId: 3a280595c1b8277c9053add0b9b60e8dc9226535)
+
+  This frame has 1 object(s):
+    [32, 48) 'buf' <== Memory access at offset 48 overflows this variable
+HINT: this may be a false positive if your program uses some custom stack unwind mechanism, swapcontext or vfork
+      (longjmp and C++ exceptions *are* supported)
+SUMMARY: AddressSanitizer: stack-buffer-overflow (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0xa895d) (BuildId: 3a280595c1b8277c9053add0b9b60e8dc9226535) 
+Shadow bytes around the buggy address:
+  0x6c335570b500: f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5
+  0x6c335570b580: f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5
+  0x6c335570b600: f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5
+  0x6c335570b680: f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5
+  0x6c335570b700: f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5 f5
+=>0x6c335570b780: f5 f5 f5 f5 f5 f5 f5 f5 f1 f1 f1 f1 00 00[f3]f3
+  0x6c335570b800: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x6c335570b880: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x6c335570b900: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x6c335570b980: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x6c335570ba00: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+Shadow byte legend (one shadow byte represents 8 application bytes):
+  Addressable:           00
+  Partially addressable: 01 02 03 04 05 06 07 
+  Heap left redzone:       fa
+  Freed heap region:       fd
+  Stack left redzone:      f1
+  Stack mid redzone:       f2
+  Stack right redzone:     f3
+  Stack after return:      f5
+  Stack use after scope:   f8
+  Global redzone:          f9
+  Global init order:       f6
+  Poisoned by user:        f7
+  Container overflow:      fc
+  Array cookie:            ac
+  Intra object redzone:    bb
+  ASan internal:           fe
+  Left alloca redzone:     ca
+  Right alloca redzone:    cb
+==1853854==ABORTING
+MS: 3 ShuffleBytes-CMP-InsertRepeatedBytes- DE: "\000\000\000\000\000\000\000\000"-; base unit: adc83b19e793491b1c6ea0fd8b46cd9f32e592fc
+0xa,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0,
+\012\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000
+artifact_prefix='./artifacts/standalone_module_graph_fuzz/'; Test unit written to ./artifacts/standalone_module_graph_fuzz/crash-51be1eb3b6b759f6c3c1a9ba6a06e53e1238e569
+Base64: CgAAAAAAAAAAAAAAAAAAAAAAAAA=
+
+────────────────────────────────────────────────────────────────────────────────
+
+Failing input:
+
+	./artifacts/standalone_module_graph_fuzz/crash-51be1eb3b6b759f6c3c1a9ba6a06e53e1238e569
+
+Output of `std::fmt::Debug`:
+
+	[10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+
+Reproduce with:
+
+	cargo fuzz run --fuzz-dir . standalone_module_graph_fuzz ./artifacts/standalone_module_graph_fuzz/crash-51be1eb3b6b759f6c3c1a9ba6a06e53e1238e569
+
+Minimize test case with:
+
+	cargo fuzz tmin --fuzz-dir . standalone_module_graph_fuzz ./artifacts/standalone_module_graph_fuzz/crash-51be1eb3b6b759f6c3c1a9ba6a06e53e1238e569
+
+────────────────────────────────────────────────────────────────────────────────
+
+Error: Fuzz target exited with exit status: 1

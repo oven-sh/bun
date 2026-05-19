@@ -1,0 +1,41 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.01s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp-026-timer-all-reentrant-mut-receiver`
+error: Undefined Behavior: reborrow through <224> (root of the allocation) at alloc109[0x0] is forbidden
+  --> src/main.rs:33:14
+   |
+33 |     unsafe { (*this).update_like() };
+   |              ^^^^^^^ Undefined Behavior occurred here
+   |
+   = help: this indicates a potential bug in the program: it performed an invalid operation, but the Tree Borrows rules it violated are still experimental
+   = help: see https://github.com/rust-lang/unsafe-code-guidelines/blob/master/wip/tree-borrows.md for further information
+   = help: the accessed tag <224> (root of the allocation) is foreign to the protected tag <232> (i.e., it is not a child)
+   = help: this reborrow (acting as a foreign read access) would cause the protected tag <232> (currently Unique) to become Disabled
+   = help: protected tags must never be Disabled
+help: the accessed tag <224> was created here
+  --> src/main.rs:37:19
+   |
+37 |     let mut all = All { ticks: 0 };
+   |                   ^^^^^^^^^^^^^^^^
+help: the protected tag <232> was created here, in the initial state Reserved
+  --> src/main.rs:12:26
+   |
+12 |     fn drain_timers_like(&mut self) {
+   |                          ^^^^^^^^^
+help: the protected tag <232> later transitioned to Unique due to a child write access at offsets [0x0..0x4]
+  --> src/main.rs:20:13
+   |
+20 |             all.ticks += 1;
+   |             ^^^^^^^^^^^^^^
+   = help: this transition corresponds to the first write to a 2-phase borrowed mutable reference
+   = note: stack backtrace:
+           0: fire_reentrant_callback
+               at src/main.rs:33:14: 33:21
+           1: All::drain_timers_like
+               at src/main.rs:23:9: 23:34
+           2: main
+               at src/main.rs:41:5: 41:28
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

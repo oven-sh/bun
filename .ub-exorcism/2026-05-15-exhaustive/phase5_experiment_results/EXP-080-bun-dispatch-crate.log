@@ -1,0 +1,27 @@
+    Updating crates.io index
+     Locking 5 packages to latest Rust 1.97.0-nightly compatible versions
+   Compiling syn v2.0.117
+   Compiling bun_dispatch v0.0.0 (/data/projects/bun/src/dispatch)
+   Compiling exp-080-bun-dispatch-crate v0.0.0 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-080-bun-dispatch-crate)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.09s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp-080-bun-dispatch-crate`
+error: Undefined Behavior: memory access failed: attempting to access 1 byte, but got null pointer
+  --> src/main.rs:13:24
+   |
+13 |         read_byte() => (*this).byte,
+   |                        ^^^^^^^^^^^^ Undefined Behavior occurred here
+   |
+   = help: this indicates a bug in the program: it performed an invalid operation, and caused Undefined Behavior
+   = help: see https://doc.rust-lang.org/nightly/reference/behavior-considered-undefined.html for further information
+   = note: stack backtrace:
+           0: _::__bun_dispatch__Handle__ImplVariant__read_byte
+               at src/main.rs:13:24: 13:36
+           1: Handle::read_byte
+               at src/main.rs:5:1: 9:2
+           2: main
+               at src/main.rs:23:26: 23:44
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

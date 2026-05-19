@@ -1,0 +1,32 @@
+   Compiling exp-072-hive-array-uninit-slot v0.1.0 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-072)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp-072-hive-array-uninit-slot`
+error: Undefined Behavior: reading memory at alloc119[0x0..0x4], but memory is uninitialized at [0x0..0x4], and this operation requires initialized memory
+ --> src/main.rs:8:17
+  |
+8 |         let _ = self.0.get();
+  |                 ^^^^^^ Undefined Behavior occurred here
+  |
+  = help: this indicates a bug in the program: it performed an invalid operation, and caused Undefined Behavior
+  = help: see https://doc.rust-lang.org/nightly/reference/behavior-considered-undefined.html for further information
+  = note: stack backtrace:
+          0: <NeedsDrop as std::ops::Drop>::drop
+              at src/main.rs:8:17: 8:23
+          1: std::ptr::drop_in_place::<NeedsDrop> - shim(Some(NeedsDrop))
+              at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:809:1: 811:25
+          2: std::ptr::mut_ptr::<impl *mut NeedsDrop>::drop_in_place
+              at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mut_ptr.rs:1400:18: 1400:37
+          3: MiniHive::<NeedsDrop, 1>::put
+              at src/main.rs:44:18: 44:39
+          4: main
+              at src/main.rs:63:9: 63:23
+
+Uninitialized memory occurred at alloc119[0x0..0x4], in this allocation:
+alloc119 (stack variable, size: 8, align: 4) {
+    __ __ __ __ 01 __ __ __                         │ ░░░░.░░░
+}
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

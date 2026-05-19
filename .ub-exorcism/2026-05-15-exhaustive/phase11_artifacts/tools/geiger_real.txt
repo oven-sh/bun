@@ -1,0 +1,108 @@
+===src/install===
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libbumpalo-12a86b59ba573c29.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/librustversion-88a5d32f40b12196.so","emit":"link"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/librand-e06d42cac9e64c5c.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/librand-e06d42cac9e64c5c.rlib","emit":"link"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libproc_macro2-9c9dfa4921e67209.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libproc_macro2-9c9dfa4921e67209.rlib","emit":"link"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/liblinux_raw_sys-853fae966e33d423.rmeta","emit":"metadata"}
+error: Cargo("1 job failed")
+===src/runtime===
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libbase64-8c771557a9082e91.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libmemchr-b30cc9dcba26223a.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libbumpalo-12a86b59ba573c29.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/librand-e06d42cac9e64c5c.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/librand-e06d42cac9e64c5c.rlib","emit":"link"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libtypenum-864e5165410c6221.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/liblinux_raw_sys-853fae966e33d423.rmeta","emit":"metadata"}
+error: Cargo("1 job failed")
+===src/jsc===
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libkonst-189248bac9ab6c64.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/liballocator_api2-a3516c5718b0e620.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libbumpalo-12a86b59ba573c29.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libmemchr-b30cc9dcba26223a.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/librand-e06d42cac9e64c5c.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/librand-e06d42cac9e64c5c.rlib","emit":"link"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/liblinux_raw_sys-853fae966e33d423.rmeta","emit":"metadata"}
+error: Cargo("1 job failed")
+===src/bun_core===
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libtwox_hash-8a7f150e161d0586.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/build/libc-95e8312556b40c21/build_script_build-95e8312556b40c21","emit":"link"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/liballocator_api2-a3516c5718b0e620.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libmemchr-6ee397a5d3d70a36.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libbumpalo-12a86b59ba573c29.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/librand-e06d42cac9e64c5c.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/librand-e06d42cac9e64c5c.rlib","emit":"link"}
+error: Cargo("1 job failed")
+===src/bundler===
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/liballocator_api2-a3516c5718b0e620.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/build/rustix-535f3a60b69c9886/build_script_build-535f3a60b69c9886","emit":"link"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libmemchr-b30cc9dcba26223a.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libbumpalo-12a86b59ba573c29.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/librand-e06d42cac9e64c5c.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/librand-e06d42cac9e64c5c.rlib","emit":"link"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/liblinux_raw_sys-853fae966e33d423.rmeta","emit":"metadata"}
+error: Cargo("1 job failed")
+===src/collections===
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libtwox_hash-8a7f150e161d0586.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libkonst-189248bac9ab6c64.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/liballocator_api2-a3516c5718b0e620.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libmemchr-6ee397a5d3d70a36.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libbumpalo-12a86b59ba573c29.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/librand-e06d42cac9e64c5c.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/librand-e06d42cac9e64c5c.rlib","emit":"link"}
+error: Cargo("1 job failed")
+===src/semver===
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/build/paste-9245072c691d01c9/build_script_build-9245072c691d01c9","emit":"link"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libkonst-189248bac9ab6c64.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/liballocator_api2-a3516c5718b0e620.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libmemchr-6ee397a5d3d70a36.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libbumpalo-12a86b59ba573c29.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/librand-e06d42cac9e64c5c.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/librand-e06d42cac9e64c5c.rlib","emit":"link"}
+error: Cargo("1 job failed")
+===src/threading===
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/liballocator_api2-a3516c5718b0e620.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libkonst-189248bac9ab6c64.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libbumpalo-12a86b59ba573c29.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libmemchr-b30cc9dcba26223a.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/librand-e06d42cac9e64c5c.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/librand-e06d42cac9e64c5c.rlib","emit":"link"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/liblinux_raw_sys-853fae966e33d423.rmeta","emit":"metadata"}
+error: Cargo("1 job failed")
+===src/io===
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/liballocator_api2-a3516c5718b0e620.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/build/rustix-535f3a60b69c9886/build_script_build-535f3a60b69c9886","emit":"link"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libmemchr-b30cc9dcba26223a.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libbumpalo-12a86b59ba573c29.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/librand-e06d42cac9e64c5c.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/librand-e06d42cac9e64c5c.rlib","emit":"link"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/liblinux_raw_sys-853fae966e33d423.rmeta","emit":"metadata"}
+error: Cargo("1 job failed")
+===src/uws_sys===
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libphf_shared-df70adb0bc69d68c.rlib","emit":"link"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libkonst-189248bac9ab6c64.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/liballocator_api2-a3516c5718b0e620.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libmemchr-6ee397a5d3d70a36.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libbumpalo-12a86b59ba573c29.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/librand-e06d42cac9e64c5c.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/librand-e06d42cac9e64c5c.rlib","emit":"link"}
+error: Cargo("1 job failed")
+===src/safety===
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libkonst-189248bac9ab6c64.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libtwox_hash-8a7f150e161d0586.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/liballocator_api2-a3516c5718b0e620.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libmemchr-6ee397a5d3d70a36.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libbumpalo-12a86b59ba573c29.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/librand-e06d42cac9e64c5c.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/librand-e06d42cac9e64c5c.rlib","emit":"link"}
+error: Cargo("1 job failed")
+===src/picohttp===
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libphf_shared-96ca5b193728af97.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libphf_shared-df70adb0bc69d68c.rlib","emit":"link"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/liballocator_api2-a3516c5718b0e620.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libmemchr-6ee397a5d3d70a36.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/libbumpalo-12a86b59ba573c29.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/librand-e06d42cac9e64c5c.rmeta","emit":"metadata"}
+{"$message_type":"artifact","artifact":"/tmp/cargo-target/debug/deps/librand-e06d42cac9e64c5c.rlib","emit":"link"}
+error: Cargo("1 job failed")

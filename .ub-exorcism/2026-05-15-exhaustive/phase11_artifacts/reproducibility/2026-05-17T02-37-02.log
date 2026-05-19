@@ -1,0 +1,29 @@
+[verify-runbook] step 1: prerequisite check
+  PASS
+[verify-runbook] step 2: bootstrap vendor sources
+[fail] boringssl: vendor/boringssl exists and is not an empty git clone; refusing to overwrite
+[fail] brotli: vendor/brotli exists and is not an empty git clone; refusing to overwrite
+[fail] cares: vendor/cares exists and is not an empty git clone; refusing to overwrite
+[fail] hdrhistogram: vendor/hdrhistogram exists and is not an empty git clone; refusing to overwrite
+[fail] highway: vendor/highway exists and is not an empty git clone; refusing to overwrite
+[skip] index: no COMMIT found in scripts/build/deps/index.ts
+[fail] libarchive: vendor/libarchive exists and is not an empty git clone; refusing to overwrite
+[fail] libdeflate: vendor/libdeflate exists and is not an empty git clone; refusing to overwrite
+[fail] libjpeg-turbo: vendor/libjpeg-turbo exists and is not an empty git clone; refusing to overwrite
+[fail] libspng: vendor/libspng exists and is not an empty git clone; refusing to overwrite
+[ok]   libuv @ 4dcfac4780d394e0dc2d3fb30335ca01b553eb46
+[fail] libwebp: vendor/libwebp exists and is not an empty git clone; refusing to overwrite
+[fail] lolhtml: vendor/lolhtml exists and is not an empty git clone; refusing to overwrite
+[fail] lshpack: vendor/lshpack exists and is not an empty git clone; refusing to overwrite
+[fail] lsqpack: vendor/lsqpack exists and is not an empty git clone; refusing to overwrite
+[fail] lsquic: vendor/lsquic exists and is not an empty git clone; refusing to overwrite
+[fail] mimalloc: vendor/mimalloc exists and is not an empty git clone; refusing to overwrite
+[skip] nodejs-headers: no COMMIT found in scripts/build/deps/nodejs-headers.ts
+[fail] picohttpparser: vendor/picohttpparser exists and is not an empty git clone; refusing to overwrite
+[skip] sqlite: no COMMIT found in scripts/build/deps/sqlite.ts
+[fail] tinycc: vendor/tinycc exists and is not an empty git clone; refusing to overwrite
+[skip] webkit: no COMMIT found in scripts/build/deps/webkit.ts
+[fail] zlib: vendor/zlib exists and is not an empty git clone; refusing to overwrite
+[fail] zstd: vendor/zstd exists and is not an empty git clone; refusing to overwrite
+
+Summary: bootstrap=1 skip=4 fail=19

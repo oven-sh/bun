@@ -1,0 +1,13 @@
+[package]
+name = "miri_triage"
+version = "0.0.1"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[lib]
+path = "lib.rs"
+
+[profile.release]
+overflow-checks = true

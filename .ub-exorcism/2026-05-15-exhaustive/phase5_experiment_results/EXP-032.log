@@ -1,0 +1,27 @@
+warning: unexpected `cfg` condition name: `loom`
+  --> src/lib.rs:28:8
+   |
+28 | #![cfg(loom)]
+   |        ^^^^
+   |
+   = help: expected names are: `docsrs`, `feature`, and `test` and 32 more
+   = help: consider using a Cargo feature instead
+   = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+            [lints.rust]
+            unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
+   = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(loom)");` to the top of the `build.rs`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+   = note: `#[warn(unexpected_cfgs)]` on by default
+
+warning: `exp-032-webworker-cell-loom` (lib test) generated 1 warning
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.03s
+     Running unittests src/lib.rs (/tmp/cargo-target/release/deps/exp_032_webworker_cell_loom-dc0aabe306466927)
+
+running 4 tests
+test loom_sanity_unsynchronized_sweep_should_race ... ignored
+test loom_vm_publish_under_vm_lock ... ok
+test loom_register_and_sweep_one_worker ... ok
+test loom_two_registers_one_sweep ... ok
+
+test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.06s
+

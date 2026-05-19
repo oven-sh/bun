@@ -5833,7 +5833,7 @@ pub mod bv2_impl {
                 self.transpiler.fs().top_level_dir,
                 bump,
             )?;
-            Ok(out.clone())
+            Ok(out)
         }
 
         #[cold]
@@ -6637,7 +6637,7 @@ pub mod bv2_impl {
                     .path_with_pretty_initialized(core::mem::take(path), target)
                     .expect("oom");
 
-                import_record.path = path_as_static(path.clone());
+                import_record.path = path_as_static(*path);
                 // key already interned by get_or_put — no key_ptr on StringHashMapGetOrPut
                 bun_core::scoped_log!(Bundle, "created ParseTask: {}", bstr::BStr::new(&path.text));
                 // Arena-owned (Zig: `arena.create(ParseTask)`).
@@ -6752,7 +6752,7 @@ pub mod bv2_impl {
 
                     new_input_file.source.index =
                         bun_ast::Index(self.graph.input_files.len() as u32);
-                    new_input_file.source.path = path_as_static(new_task.path.clone());
+                    new_input_file.source.path = path_as_static(new_task.path);
                     new_input_file.loader = loader;
                     let new_source_index: u32 = new_input_file.source.index.0;
                     new_task.source_index = bun_ast::Index(new_source_index);

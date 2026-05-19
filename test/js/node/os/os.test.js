@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { realpathSync } from "fs";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import * as os from "node:os";
 
 it("arch", () => {
@@ -258,4 +258,123 @@ it("getPriority system error object", () => {
     expect(err.errno).toBe(isWindows ? -4040 : -3);
     expect(err.syscall).toBe("uv_os_getpriority");
   }
+});
+
+// https://github.com/oven-sh/bun/issues/29244
+//
+// os.homedir() returned a stale value after process.env.HOME was mutated at
+// runtime because the Zig binding read HOME via Bun's snapshot-on-first-read
+// env-var cache. Node's posix uv_os_homedir checks HOME live on every call:
+// it returns getenv("HOME") verbatim whenever it's non-NULL (so HOME="" → ""),
+// and only falls back to the passwd entry when HOME is unset.
+// os.userInfo().homedir reads passwd directly and does NOT honor HOME — that
+// behavior must be preserved.
+//
+// Each test spawns its own subprocess so mutating process.env.HOME can't
+// bleed into the test runner — so they run concurrently.
+describe("homedir live $HOME mutations (#29244)", () => {
+  async function runBun(source, extraEnv = {}) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: { ...bunEnv, ...extraEnv },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    return { stdout, exitCode };
+  }
+
+  it.concurrent.skipIf(isWindows)("reflects HOME mutation after require", async () => {
+    const { stdout, exitCode } = await runBun(`
+      const os = require('node:os');
+      const before = os.homedir();
+      process.env.HOME = '/tmp/test-home-29244';
+      const after = os.homedir();
+      console.log(JSON.stringify({ before, after, env: process.env.HOME }));
+    `);
+    const result = JSON.parse(stdout);
+    expect(result.after).toBe("/tmp/test-home-29244");
+    expect(result.env).toBe("/tmp/test-home-29244");
+    // Baseline came from the inherited HOME — non-empty, not the mutated value.
+    expect(typeof result.before).toBe("string");
+    expect(result.before.length).toBeGreaterThan(0);
+    expect(result.before).not.toBe("/tmp/test-home-29244");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent.skipIf(isWindows)("reflects HOME mutation before require", async () => {
+    const { stdout, exitCode } = await runBun(`
+      process.env.HOME = '/tmp/before-require-29244';
+      const os = require('node:os');
+      console.log(JSON.stringify({ homedir: os.homedir(), env: process.env.HOME }));
+    `);
+    expect(JSON.parse(stdout)).toEqual({
+      homedir: "/tmp/before-require-29244",
+      env: "/tmp/before-require-29244",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent.skipIf(isWindows)("honors HOME from parent env", async () => {
+    const { stdout, exitCode } = await runBun(`console.log(require('node:os').homedir());`, {
+      HOME: "/tmp/inherited-29244",
+    });
+    expect(stdout.trim()).toBe("/tmp/inherited-29244");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent.skipIf(isWindows)("returns '' when HOME is set to empty string", async () => {
+    // Match Node / libuv: uv_os_homedir returns whatever getenv("HOME") gives
+    // when non-NULL, including "". Only an absent HOME falls through to the
+    // passwd entry. Previously Bun treated "" as unset — divergent and now
+    // fixed.
+    const { stdout, exitCode } = await runBun(`
+      process.env.HOME = '';
+      console.log(JSON.stringify(require('node:os').homedir()));
+    `);
+    expect(JSON.parse(stdout)).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent.skipIf(isWindows)("falls back to passwd when HOME is deleted", async () => {
+    // Deleted HOME (getenv returns NULL) is the one case that should fall
+    // through to the passwd entry, matching libuv's UV_ENOENT branch.
+    //
+    // Seed HOME with a sentinel value the passwd entry cannot possibly be,
+    // then delete it. If the delete were silently ignored (the regression
+    // class #29244 targets), homedir() would still return the sentinel. We
+    // also cross-check against os.userInfo().homedir — the passwd entry —
+    // to prove the passwd path was actually taken.
+    const sentinel = "/tmp/sentinel-deleted-29244";
+    const { stdout, exitCode } = await runBun(
+      `
+        delete process.env.HOME;
+        const os = require('node:os');
+        console.log(JSON.stringify({ h: os.homedir(), passwd: os.userInfo().homedir }));
+      `,
+      { HOME: sentinel },
+    );
+    const result = JSON.parse(stdout);
+    expect(result.h).not.toBe(sentinel); // delete was honored
+    expect(result.h).toBe(result.passwd); // same source as userInfo
+    expect(result.h.length).toBeGreaterThan(0);
+    expect(result.h.startsWith("/")).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent.skipIf(isWindows)("userInfo().homedir ignores HOME mutation", async () => {
+    // Node's os.userInfo().homedir reads the passwd entry, NOT $HOME.
+    // The fix for os.homedir() must NOT leak into userInfo.
+    const { stdout, exitCode } = await runBun(`
+      process.env.HOME = '/tmp/should-not-appear-29244';
+      const os = require('node:os');
+      const passwd = os.userInfo().homedir;
+      console.log(JSON.stringify({ passwd, leaked: passwd === '/tmp/should-not-appear-29244' }));
+    `);
+    const result = JSON.parse(stdout);
+    expect(result.leaked).toBe(false);
+    expect(typeof result.passwd).toBe("string");
+    expect(result.passwd.length).toBeGreaterThan(0);
+    expect(exitCode).toBe(0);
+  });
 });

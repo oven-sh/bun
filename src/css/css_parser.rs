@@ -3267,9 +3267,7 @@ where
                 let token = tok.clone();
                 self.input
                     .parse_until_after(Delimiters::SEMICOLON, move |_i| {
-                        Err(start
-                            .source_location()
-                            .new_unexpected_token_error(token))
+                        Err(start.source_location().new_unexpected_token_error(token))
                     })
             };
 

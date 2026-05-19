@@ -7,25 +7,25 @@ pub const CPUProfilerConfig = struct {
 };
 
 // C++ function declarations
-extern fn Bun__startCPUProfiler(vm: *jsc.VM) void;
-extern fn Bun__stopCPUProfiler(vm: *jsc.VM, outJSON: ?*bun.String, outText: ?*bun.String) void;
-extern fn Bun__setSamplingInterval(intervalMicroseconds: c_int) void;
+extern fn Bun__startCPUProfiler(globalObject: *jsc.JSGlobalObject) void;
+extern fn Bun__stopCPUProfiler(globalObject: *jsc.JSGlobalObject, outJSON: ?*bun.String, outText: ?*bun.String) void;
+extern fn Bun__setSamplingInterval(globalObject: *jsc.JSGlobalObject, intervalMicroseconds: c_int) void;
 
-pub fn setSamplingInterval(interval: u32) void {
-    Bun__setSamplingInterval(@intCast(interval));
+pub fn setSamplingInterval(globalObject: *jsc.JSGlobalObject, interval: u32) void {
+    Bun__setSamplingInterval(globalObject, @intCast(interval));
 }
 
-pub fn startCPUProfiler(vm: *jsc.VM) void {
-    Bun__startCPUProfiler(vm);
+pub fn startCPUProfiler(globalObject: *jsc.JSGlobalObject) void {
+    Bun__startCPUProfiler(globalObject);
 }
 
-pub fn stopAndWriteProfile(vm: *jsc.VM, config: CPUProfilerConfig) !void {
+pub fn stopAndWriteProfile(globalObject: *jsc.JSGlobalObject, config: CPUProfilerConfig) !void {
     var json_string: bun.String = .empty;
     var text_string: bun.String = .empty;
 
     // Call the unified C++ function with pointers for requested formats
     Bun__stopCPUProfiler(
-        vm,
+        globalObject,
         if (config.json_format) &json_string else null,
         if (config.md_format) &text_string else null,
     );

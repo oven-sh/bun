@@ -263,66 +263,9 @@ impl BlockList {
             }
         };
         let _guard = this.mutex.lock_guard();
-        for item in this.da_rules.get().iter() {
-            match item {
-                Rule::Addr(a) => {
-                    let Some(order) = _compare(address, a) else {
-                        continue;
-                    };
-                    if order.is_eq() {
-                        return Ok(JSValue::TRUE);
-                    }
-                }
-                Rule::Range { start, end } => {
-                    let Some(os) = _compare(address, start) else {
-                        continue;
-                    };
-                    let Some(oe) = _compare(address, end) else {
-                        continue;
-                    };
-                    if os.is_ge() && oe.is_le() {
-                        return Ok(JSValue::TRUE);
-                    }
-                }
-                Rule::Subnet { network, prefix } => {
-                    if let Some(ip_addr) = address.as_v4() {
-                        if let Some(subnet_addr) = network.as_v4() {
-                            if *prefix == 32 {
-                                if ip_addr == subnet_addr {
-                                    return Ok(JSValue::TRUE);
-                                } else {
-                                    continue;
-                                }
-                            }
-                            let one: u32 = 1;
-                            let mask_addr: u32 =
-                                ((one << (*prefix as u32)) - 1) << (32 - *prefix as u32);
-                            let ip_net: u32 = u32::swap_bytes(ip_addr) & mask_addr;
-                            let subnet_net: u32 = u32::swap_bytes(subnet_addr) & mask_addr;
-                            if ip_net == subnet_net {
-                                return Ok(JSValue::TRUE);
-                            }
-                        }
-                    }
-                    if let (Some(addr6), Some(net6)) = (address.as_sin6(), network.as_sin6()) {
-                        let ip_addr: u128 = u128::from_ne_bytes(addr6.addr);
-                        let subnet_addr: u128 = u128::from_ne_bytes(net6.addr);
-                        if *prefix == 128 {
-                            if ip_addr == subnet_addr {
-                                return Ok(JSValue::TRUE);
-                            } else {
-                                continue;
-                            }
-                        }
-                        let one: u128 = 1;
-                        let mask_addr = ((one << (*prefix as u32)) - 1) << (128 - *prefix as u32);
-                        let ip_net: u128 = ip_addr.swap_bytes() & mask_addr;
-                        let subnet_net: u128 = subnet_addr.swap_bytes() & mask_addr;
-                        if ip_net == subnet_net {
-                            return Ok(JSValue::TRUE);
-                        }
-                    }
-                }
+        for rule in this.da_rules.get().iter() {
+            if rule.matches(address) {
+                return Ok(JSValue::TRUE);
             }
         }
         Ok(JSValue::FALSE)
@@ -441,6 +384,104 @@ pub enum Rule {
     Subnet { network: sockaddr, prefix: u8 },
 }
 
+impl Rule {
+    /// Pure address-match predicate — no JSC, so it's exercisable from
+    /// `#[cfg(test)]` below for every prefix boundary without spinning up a VM.
+    /// IPv4 and IPv4-mapped IPv6 are compared interchangeably (Node does the
+    /// same); other cross-family pairs don't match.
+    pub fn matches(&self, address: &sockaddr) -> bool {
+        match self {
+            Rule::Addr(a) => _compare(address, a).is_some_and(Ordering::is_eq),
+            Rule::Range { start, end } => {
+                let (Some(os), Some(oe)) = (_compare(address, start), _compare(address, end))
+                else {
+                    return false;
+                };
+                os.is_ge() && oe.is_le()
+            }
+            Rule::Subnet { network, prefix } => subnet_contains(network, *prefix, address),
+        }
+    }
+}
+
+/// CIDR membership: is `address` inside `network/prefix`?
+///
+/// `prefix` is `[0,32]` for a native-IPv4 `network` and `[0,128]` for IPv6
+/// (callers validated that). `as_v4()` also extracts the low 32 bits of an
+/// IPv4-mapped IPv6 address (`::ffff:a.b.c.d`), so when the network is stored
+/// as IPv6 its 128-bit prefix is translated to the 32-bit payload at bits
+/// `96..128` before masking — Node does the same, and it keeps the shift
+/// amounts in range.
+fn subnet_contains(network: &sockaddr, prefix: u8, address: &sockaddr) -> bool {
+    if let (Some(ip_addr), Some(subnet_addr)) = (address.as_v4(), network.as_v4()) {
+        let v4_prefix: u32 = if network.as_sin6().is_some() {
+            (prefix as u32).saturating_sub(96)
+        } else {
+            prefix as u32
+        };
+        let mask = cidr_mask::<u32>(v4_prefix);
+        if ip_addr.swap_bytes() & mask == subnet_addr.swap_bytes() & mask {
+            return true;
+        }
+        // A /32-equivalent miss is definitive — the full-width IPv6 compare
+        // below can't flip it. Any shorter prefix still gets the IPv6 pass in
+        // case only one side was IPv4-mapped.
+        if v4_prefix == 32 {
+            return false;
+        }
+    }
+    if let (Some(addr6), Some(net6)) = (address.as_sin6(), network.as_sin6()) {
+        let ip_addr = u128::from_ne_bytes(addr6.addr);
+        let subnet_addr = u128::from_ne_bytes(net6.addr);
+        let mask = cidr_mask::<u128>(prefix as u32);
+        return ip_addr.swap_bytes() & mask == subnet_addr.swap_bytes() & mask;
+    }
+    false
+}
+
+/// Left-aligned CIDR bitmask: the top `prefix` bits set.
+///
+/// Defined for `prefix` in `[0, BITS]` inclusive. Both endpoints are special-
+/// cased so the shift amount in the general formula stays in `[1, BITS-1]`:
+/// at `prefix == 0` the general form is `0 << BITS` and at `prefix == BITS`
+/// it's `1 << BITS`, each a shift-by-width that debug `overflow-checks`
+/// aborts on.
+fn cidr_mask<T: CidrWord>(prefix: u32) -> T {
+    if prefix == 0 {
+        return T::ZERO;
+    }
+    if prefix >= T::BITS {
+        return T::MAX;
+    }
+    ((T::ONE << prefix) - T::ONE) << (T::BITS - prefix)
+}
+
+/// Just enough integer vocabulary for `cidr_mask` to be generic over the two
+/// widths we need (`u32` for IPv4, `u128` for IPv6).
+trait CidrWord:
+    Copy
+    + core::ops::Shl<u32, Output = Self>
+    + core::ops::Sub<Output = Self>
+    + core::ops::BitAnd<Output = Self>
+{
+    const BITS: u32;
+    const ZERO: Self;
+    const ONE: Self;
+    const MAX: Self;
+}
+impl CidrWord for u32 {
+    const BITS: u32 = u32::BITS;
+    const ZERO: Self = 0;
+    const ONE: Self = 1;
+    const MAX: Self = u32::MAX;
+}
+impl CidrWord for u128 {
+    const BITS: u32 = u128::BITS;
+    const ZERO: Self = 0;
+    const ONE: Self = 1;
+    const MAX: Self = u128::MAX;
+}
+
 fn _compare(l: &sockaddr, r: &sockaddr) -> Option<Ordering> {
     if let Some(l_4) = l.as_v4() {
         if let Some(r_4) = r.as_v4() {
@@ -457,6 +498,141 @@ fn _compare_ipv6(l: &inet::sockaddr_in6, r: &inet::sockaddr_in6) -> Ordering {
     let l128 = u128::from_ne_bytes(l.addr).swap_bytes();
     let r128 = u128::from_ne_bytes(r.addr).swap_bytes();
     l128.cmp(&r128)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn v4(a: u8, b: u8, c: u8, d: u8) -> sockaddr {
+        sockaddr::v4(0, u32::from_ne_bytes([a, b, c, d]))
+    }
+    fn v6(bytes: [u8; 16]) -> sockaddr {
+        sockaddr::v6(0, bytes, 0, 0)
+    }
+    /// `::ffff:a.b.c.d`
+    fn mapped(a: u8, b: u8, c: u8, d: u8) -> sockaddr {
+        v6([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, a, b, c, d])
+    }
+    fn subnet(network: sockaddr, prefix: u8) -> Rule {
+        Rule::Subnet { network, prefix }
+    }
+
+    #[test]
+    fn cidr_mask_endpoints() {
+        // Every prefix in range is defined and the general-formula shift
+        // amount never hits the bit width (debug overflow-checks would panic).
+        assert_eq!(cidr_mask::<u32>(0), 0);
+        assert_eq!(cidr_mask::<u32>(1), 0x8000_0000);
+        assert_eq!(cidr_mask::<u32>(8), 0xFF00_0000);
+        assert_eq!(cidr_mask::<u32>(24), 0xFFFF_FF00);
+        assert_eq!(cidr_mask::<u32>(31), 0xFFFF_FFFE);
+        assert_eq!(cidr_mask::<u32>(32), u32::MAX);
+        assert_eq!(cidr_mask::<u128>(0), 0);
+        assert_eq!(cidr_mask::<u128>(128), u128::MAX);
+        for p in 0..=32 {
+            let _ = cidr_mask::<u32>(p);
+        }
+        for p in 0..=128 {
+            let _ = cidr_mask::<u128>(p);
+        }
+    }
+
+    #[test]
+    fn subnet_v4_prefix_boundaries() {
+        // /0 matches everything.
+        let all = subnet(v4(0, 0, 0, 0), 0);
+        assert!(all.matches(&v4(1, 2, 3, 4)));
+        assert!(all.matches(&v4(255, 255, 255, 255)));
+        // /32 is exact.
+        let exact = subnet(v4(1, 2, 3, 4), 32);
+        assert!(exact.matches(&v4(1, 2, 3, 4)));
+        assert!(!exact.matches(&v4(1, 2, 3, 5)));
+        // /24.
+        let net = subnet(v4(192, 168, 1, 0), 24);
+        assert!(net.matches(&v4(192, 168, 1, 200)));
+        assert!(!net.matches(&v4(192, 168, 2, 1)));
+    }
+
+    #[test]
+    fn subnet_v6_prefix_boundaries() {
+        let zero = [0u8; 16];
+        let db8 = {
+            let mut b = [0u8; 16];
+            b[0] = 0x20;
+            b[1] = 0x01;
+            b[2] = 0x0d;
+            b[3] = 0xb8;
+            b
+        };
+        // /0 matches everything.
+        assert!(subnet(v6(zero), 0).matches(&v6(db8)));
+        // /128 is exact.
+        let exact = subnet(v6(db8), 128);
+        assert!(exact.matches(&v6(db8)));
+        let mut db8_1 = db8;
+        db8_1[15] = 1;
+        assert!(!exact.matches(&v6(db8_1)));
+    }
+
+    #[test]
+    fn subnet_v4_mapped_v6_prefix_translation() {
+        // `::ffff:a.b.c.d` stores an IPv6-family network whose prefix was
+        // validated against [0,128]; the IPv4 fast-path must translate it
+        // (saturating_sub(96)) instead of shifting a u32 by >32.
+        // /104 → IPv4 /8.
+        let s8 = subnet(mapped(10, 0, 0, 0), 104);
+        assert!(s8.matches(&v4(10, 1, 2, 3)));
+        assert!(!s8.matches(&v4(11, 1, 2, 3)));
+        assert!(s8.matches(&mapped(10, 1, 2, 3)));
+        assert!(!s8.matches(&mapped(11, 1, 2, 3)));
+        // /120 → IPv4 /24.
+        let s24 = subnet(mapped(192, 168, 1, 0), 120);
+        assert!(s24.matches(&v4(192, 168, 1, 5)));
+        assert!(!s24.matches(&v4(192, 168, 2, 5)));
+        // /128 → IPv4 /32 (exact).
+        let s32 = subnet(mapped(1, 2, 3, 4), 128);
+        assert!(s32.matches(&v4(1, 2, 3, 4)));
+        assert!(!s32.matches(&v4(1, 2, 3, 5)));
+        // /≤96 → IPv4 /0 (mapped range covers all IPv4).
+        let wide = subnet(mapped(10, 0, 0, 0), 32);
+        assert!(wide.matches(&v4(10, 0, 0, 0)));
+        assert!(wide.matches(&v4(200, 1, 2, 3)));
+        // Reverse direction: native-IPv4 network, IPv4-mapped check address.
+        let nv4 = subnet(v4(10, 0, 0, 0), 8);
+        assert!(nv4.matches(&mapped(10, 1, 2, 3)));
+        assert!(!nv4.matches(&mapped(11, 1, 2, 3)));
+    }
+
+    #[test]
+    fn cross_family_unrelated() {
+        // Non-mapped IPv6 ↔ native IPv4 never match.
+        let mut db8 = [0u8; 16];
+        db8[0] = 0x20;
+        db8[1] = 0x01;
+        db8[2] = 0x0d;
+        db8[3] = 0xb8;
+        assert!(!subnet(v6(db8), 32).matches(&v4(10, 1, 2, 3)));
+        assert!(!subnet(v4(10, 0, 0, 0), 8).matches(&v6(db8)));
+    }
+
+    #[test]
+    fn addr_and_range_rules() {
+        assert!(Rule::Addr(v4(1, 2, 3, 4)).matches(&v4(1, 2, 3, 4)));
+        assert!(!Rule::Addr(v4(1, 2, 3, 4)).matches(&v4(1, 2, 3, 5)));
+        // IPv4 ↔ IPv4-mapped IPv6 are equal.
+        assert!(Rule::Addr(v4(1, 2, 3, 4)).matches(&mapped(1, 2, 3, 4)));
+
+        let r = Rule::Range {
+            start: v4(10, 0, 0, 1),
+            end: v4(10, 0, 0, 10),
+        };
+        assert!(r.matches(&v4(10, 0, 0, 1)));
+        assert!(r.matches(&v4(10, 0, 0, 10)));
+        assert!(r.matches(&v4(10, 0, 0, 5)));
+        assert!(!r.matches(&v4(10, 0, 0, 0)));
+        assert!(!r.matches(&v4(10, 0, 0, 11)));
+    }
 }
 
 // ported from: src/runtime/node/net/BlockList.zig

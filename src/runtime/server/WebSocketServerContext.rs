@@ -1,3 +1,4 @@
+use core::cell::Cell;
 use core::ffi::c_void;
 
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
@@ -34,7 +35,7 @@ pub struct Handler {
     // LIFETIMES.tsv = STATIC (vm) / JSC_BORROW (global_object) — both outlive the handler.
     pub vm: bun_ptr::BackRef<VirtualMachine>,
     pub global_object: bun_ptr::BackRef<JSGlobalObject>,
-    pub active_connections: usize,
+    pub active_connections: Cell<usize>,
 
     /// used by publish()
     pub flags: HandlerFlags,
@@ -70,30 +71,16 @@ impl Handler {
         self.vm.get()
     }
 
-    /// Zig: `handler.active_connections +|= n` through a `*Handler`.
-    /// PORT NOTE: takes `&self` and casts away const — the field is owned by
-    /// `ServerConfig.websocket` and only ever touched on the JS thread, so the
-    /// data race the borrow-checker would flag here is a false positive.
-    /// TODO(port): convert `active_connections` to `Cell<usize>`.
     #[inline]
     pub fn active_connections_saturating_add(&self, n: usize) {
-        // SAFETY: single-threaded JS heap; see PORT NOTE above. `addr_of!` avoids
-        // materializing an intermediate `&usize` (invalid_reference_casting lint).
-        unsafe {
-            let p = core::ptr::addr_of!(self.active_connections).cast_mut();
-            *p = (*p).saturating_add(n);
-        }
+        self.active_connections
+            .set(self.active_connections.get().saturating_add(n));
     }
 
-    /// Zig: `handler.active_connections -|= n` — see `active_connections_saturating_add`.
     #[inline]
     pub fn active_connections_saturating_sub(&self, n: usize) {
-        // SAFETY: single-threaded JS heap; see PORT NOTE above. `addr_of!` avoids
-        // materializing an intermediate `&usize` (invalid_reference_casting lint).
-        unsafe {
-            let p = core::ptr::addr_of!(self.active_connections).cast_mut();
-            *p = (*p).saturating_sub(n);
-        }
+        self.active_connections
+            .set(self.active_connections.get().saturating_sub(n));
     }
 
     pub fn run_error_callback(
@@ -134,7 +121,7 @@ impl Handler {
             app: None,
             vm: bun_ptr::BackRef::new(VirtualMachine::get()),
             global_object: bun_ptr::BackRef::new(global_object),
-            active_connections: 0,
+            active_connections: Cell::new(0),
             flags: HandlerFlags::empty(),
         };
 

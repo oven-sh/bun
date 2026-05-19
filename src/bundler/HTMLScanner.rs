@@ -77,6 +77,7 @@ impl<'a> HTMLScanner<'a> {
             range: Range::NONE,
             tag: ImportRecordTag::default(),
             loader: None,
+            phase: Default::default(),
             source_index: AstIndex::default(),
             module_id: 0,
             original_path: b"",

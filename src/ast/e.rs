@@ -2216,6 +2216,9 @@ pub struct Import {
     pub expr: ExprNodeIndex,
     pub options: ExprNodeIndex,
     pub import_record_index: u32,
+    /// https://github.com/tc39/proposal-defer-import-eval
+    /// https://github.com/tc39/proposal-source-phase-imports
+    pub phase: crate::import_record::ImportPhase,
     // TODO:
     // Comments inside "import()" expressions have special meaning for Webpack.
     // Preserving comments inside these expressions makes it possible to use

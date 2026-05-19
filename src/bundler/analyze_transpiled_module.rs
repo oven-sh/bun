@@ -65,6 +65,10 @@ impl RecordKind {
     pub const EXPORT_INFO_NAMESPACE: Self = Self(7);
     /// module_name
     pub const EXPORT_INFO_STAR: Self = Self(8);
+    /// module_name, import_name = '*', local_name (import defer * as ns)
+    pub const IMPORT_INFO_NAMESPACE_DEFER: Self = Self(9);
+    /// module_name (defer-phase requested module)
+    pub const REQUESTED_MODULE_DEFER: Self = Self(10);
 
     // PascalCase aliases — `bundler_jsc::analyze_jsc` pattern-matches on these
     // (the SCREAMING_CASE consts above are kept for intra-crate use).
@@ -77,6 +81,8 @@ impl RecordKind {
     pub const ExportInfoLocal: Self = Self::EXPORT_INFO_LOCAL;
     pub const ExportInfoNamespace: Self = Self::EXPORT_INFO_NAMESPACE;
     pub const ExportInfoStar: Self = Self::EXPORT_INFO_STAR;
+    pub const ImportInfoNamespaceDefer: Self = Self::IMPORT_INFO_NAMESPACE_DEFER;
+    pub const RequestedModuleDefer: Self = Self::REQUESTED_MODULE_DEFER;
 
     pub fn len(self) -> Result<usize, bun_core::Error> {
         match self {
@@ -84,6 +90,8 @@ impl RecordKind {
             Self::IMPORT_INFO_SINGLE => Ok(3),
             Self::IMPORT_INFO_SINGLE_TYPE_SCRIPT => Ok(3),
             Self::IMPORT_INFO_NAMESPACE => Ok(3),
+            Self::IMPORT_INFO_NAMESPACE_DEFER => Ok(3),
+            Self::REQUESTED_MODULE_DEFER => Ok(1),
             Self::EXPORT_INFO_INDIRECT => Ok(3),
             Self::EXPORT_INFO_LOCAL => Ok(3),
             Self::EXPORT_INFO_NAMESPACE => Ok(2),

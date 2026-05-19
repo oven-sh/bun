@@ -1093,6 +1093,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.import_records.items_mut()[import_record_index as usize].loader = Some(loader);
             }
 
+            self.import_records.items_mut()[import_record_index as usize].phase = state.phase;
             self.import_records.items_mut()[import_record_index as usize]
                 .flags
                 .set(
@@ -1108,6 +1109,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     expr: arg,
                     import_record_index,
                     options: state.import_options,
+                    phase: state.phase,
                 },
                 state.loc,
             );
@@ -1131,6 +1133,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 expr: arg,
                 options: state.import_options,
                 import_record_index: u32::MAX,
+                phase: state.phase,
             },
             state.loc,
         )
@@ -3963,13 +3966,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Match spec: only assert above, do not actually pop.
     }
 
-    // blocked_on: S::Import field set; crate::parser::MacroRefData; ParsedPath fields; ImportItemForNamespaceMap API
     pub fn process_import_statement(
         &mut self,
         stmt_: S::Import,
         path: ParsedPath<'a>,
         loc: bun_ast::Loc,
         was_originally_bare_import: bool,
+    ) -> Result<Stmt, bun_core::Error> {
+        self.process_import_statement_with_phase(
+            stmt_,
+            path,
+            loc,
+            was_originally_bare_import,
+            bun_ast::ImportPhase::Evaluation,
+        )
+    }
+
+    pub fn process_import_statement_with_phase(
+        &mut self,
+        stmt_: S::Import,
+        path: ParsedPath<'a>,
+        loc: bun_ast::Loc,
+        was_originally_bare_import: bool,
+        phase: bun_ast::ImportPhase,
     ) -> Result<Stmt, bun_core::Error> {
         let is_macro = true /* TODO(port): feature_flag::IS_MACRO_ENABLED */ && (path.is_macro || crate::Macro::is_macro_path(path.text));
         let mut stmt = stmt_;
@@ -4081,6 +4100,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
 
         stmt.import_record_index = self.add_import_record(ImportKind::Stmt, path.loc, path.text);
+        self.import_records.items_mut()[stmt.import_record_index as usize].phase = phase;
         self.import_records.items_mut()[stmt.import_record_index as usize]
             .flags
             .set(
@@ -4322,9 +4342,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.validate_and_set_import_type(&path, &mut stmt)?;
         }
 
-        // Track the items for this namespace
-        self.import_items_for_namespace
-            .insert(stmt.namespace_ref, item_refs);
+        // Track the items for this namespace so maybe_rewrite_property_access
+        // can later rewrite `ns.foo` to a direct import identifier under
+        // bundling. Skip non-evaluation phases: a deferred namespace must
+        // keep its property accesses intact so evaluation is gated on
+        // first access; registering it here would let the visit phase
+        // strip the E::Dot before ImportScanner ever runs.
+        if phase == bun_ast::ImportPhase::Evaluation {
+            self.import_items_for_namespace
+                .insert(stmt.namespace_ref, item_refs);
+        }
         Ok(self.s(stmt, loc))
     }
 
@@ -5112,6 +5139,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             path,
             tag: bun_ast::ImportRecordTag::None,
             loader: None,
+            phase: bun_ast::ImportPhase::Evaluation,
             source_index: bun_ast::Index::INVALID,
             module_id: 0,
             original_path: b"",

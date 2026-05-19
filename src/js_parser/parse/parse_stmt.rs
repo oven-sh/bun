@@ -1468,6 +1468,64 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
                 p.lexer.next()?;
 
+                // "import defer * as ns from 'path'"
+                // "import source ns from 'path'"
+                // https://github.com/tc39/proposal-defer-import-eval
+                // https://github.com/tc39/proposal-source-phase-imports
+                //
+                // Note: "import defer from 'path'" is a default import with the
+                // binding "defer". Only "import defer *" triggers the phase syntax.
+                //
+                // Mirror the non-token terms of the TypeScript import-equals gate
+                // below so `namespace Foo { import defer * as ns ... }` and
+                // `export import defer * as ns ...` fall through to it and error
+                // like every other import form here, rather than slipping through
+                // as a real S::Import.
+                let can_be_esm_phase_import =
+                    !opts.is_export && (!opts.is_namespace_scope || opts.is_typescript_declare);
+                if can_be_esm_phase_import
+                    && p.lexer.token == T::TAsterisk
+                    && default_name == b"defer"
+                {
+                    stmt.default_name = None;
+                    p.lexer.next()?;
+                    p.lexer.expect_contextual_keyword(b"as")?;
+                    stmt.namespace_ref = p.store_name_in_ref(p.lexer.identifier)?;
+                    stmt.star_name_loc = Some(p.lexer.loc());
+                    p.lexer.expect(T::TIdentifier)?;
+                    p.lexer.expect_contextual_keyword(b"from")?;
+                    let path = p.parse_path()?;
+                    p.lexer.expect_or_insert_semicolon()?;
+                    return p.process_import_statement_with_phase(
+                        stmt,
+                        path,
+                        loc,
+                        false,
+                        bun_ast::ImportPhase::Defer,
+                    );
+                }
+                if can_be_esm_phase_import
+                    && p.lexer.token == T::TIdentifier
+                    && default_name == b"source"
+                    && !p.lexer.is_contextual_keyword(b"from")
+                {
+                    stmt.default_name = Some(LocRef {
+                        loc: p.lexer.loc(),
+                        ref_: Some(p.store_name_in_ref(p.lexer.identifier)?),
+                    });
+                    p.lexer.expect(T::TIdentifier)?;
+                    p.lexer.expect_contextual_keyword(b"from")?;
+                    let path = p.parse_path()?;
+                    p.lexer.expect_or_insert_semicolon()?;
+                    return p.process_import_statement_with_phase(
+                        stmt,
+                        path,
+                        loc,
+                        false,
+                        bun_ast::ImportPhase::Source,
+                    );
+                }
+
                 if Self::IS_TYPESCRIPT_ENABLED {
                     // Skip over type-only imports
                     if default_name == b"type" {

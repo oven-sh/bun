@@ -4305,6 +4305,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         impl<Enc: Encoding> LiteralScalarCtx<Enc> {
             fn done(mut self) -> Result<Token<Enc>, AllocError> {
+                // [165] b-chomped-last(CLIP|KEEP) ::= b-as-line-feed | <end-of-input>
+                // When the last content line ends at EOF without a break, treat
+                // the EOF as an implicit final break so Clip and Keep agree.
+                // This matches the official test suite (L24T/01) and the 1.2.2
+                // reference parsers eemeli/yaml + js-yaml.
+                if !self.text.is_empty() && self.leading_newlines == 0 {
+                    self.leading_newlines = 1;
+                }
                 match self.chomp {
                     Chomp::Keep => {
                         for _ in 0..self.leading_newlines {

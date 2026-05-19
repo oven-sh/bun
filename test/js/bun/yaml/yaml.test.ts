@@ -697,8 +697,11 @@ folded: >
         test.each([
           ["strip |-", "|-", "text"],
           ["clip |", "|", "text\n"],
-          ["keep |+", "|+", "text"],
+          ["keep |+", "|+", "text\n"],
         ])("%s: no final break before EOF", (_name, hdr, expected) => {
+          // [165] b-chomped-last(CLIP|KEEP) ::= b-as-line-feed | <end-of-input>
+          // Reference parsers split 2-2 on whether <end-of-input> implies a
+          // break; the official suite (L24T/01) requires that it does.
           expect(YAML.parse(`a: ${hdr}\n  text`)).toEqual({ a: expected });
         });
 
@@ -794,7 +797,7 @@ folded: >
         });
 
         test("blank between more-indented lines", () => {
-          expect(YAML.parse(">\n    a\n\n    b\n")).toEqual("a\nb\n");
+          expect(YAML.parse(">2\n    a\n\n    b\n")).toEqual("  a\n\n  b\n");
         });
 
         test("trailing whitespace on content line preserved", () => {

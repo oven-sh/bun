@@ -209,14 +209,21 @@ impl UserOptions {
         }
 
         if let Some(js_options) = get_optional_value(config, global, b"bundlerOptions")? {
+            if !js_options.is_object() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "Expected 'bundlerOptions' to be an object"
+                )));
+            }
             if let Some(server_options) = get_optional_value(js_options, global, b"server")? {
-                bundler_options.server = BuildConfigSubset::from_js(global, server_options)?;
+                bundler_options.server =
+                    BuildConfigSubset::from_js(global, server_options, "server")?;
             }
             if let Some(client_options) = get_optional_value(js_options, global, b"client")? {
-                bundler_options.client = BuildConfigSubset::from_js(global, client_options)?;
+                bundler_options.client =
+                    BuildConfigSubset::from_js(global, client_options, "client")?;
             }
             if let Some(ssr_options) = get_optional_value(js_options, global, b"ssr")? {
-                bundler_options.ssr = BuildConfigSubset::from_js(global, ssr_options)?;
+                bundler_options.ssr = BuildConfigSubset::from_js(global, ssr_options, "ssr")?;
             }
         }
 
@@ -407,8 +414,19 @@ pub struct BuildConfigSubset {
 }
 
 impl BuildConfigSubset {
-    pub fn from_js(global: &JSGlobalObject, js_options: JSValue) -> JsResult<BuildConfigSubset> {
+    pub fn from_js(
+        global: &JSGlobalObject,
+        js_options: JSValue,
+        property_name: &str,
+    ) -> JsResult<BuildConfigSubset> {
         let mut options = BuildConfigSubset::default();
+
+        if !js_options.is_object() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Expected 'bundlerOptions.{}' to be an object",
+                property_name
+            )));
+        }
 
         'brk: {
             let Some(val) = get_optional_value(js_options, global, b"sourcemap")? else {
@@ -427,25 +445,26 @@ impl BuildConfigSubset {
             ));
         }
 
-        'brk: {
-            let Some(minify_options) = get_optional_value(js_options, global, b"minify")? else {
-                break 'brk;
-            };
-            if minify_options.is_boolean() && minify_options.as_boolean() {
-                options.minify_syntax = Some(minify_options.as_boolean());
-                options.minify_identifiers = Some(minify_options.as_boolean());
-                options.minify_whitespace = Some(minify_options.as_boolean());
-                break 'brk;
-            }
-
-            if let Some(value) = get_boolean_loose(minify_options, global, b"whitespace")? {
-                options.minify_whitespace = Some(value);
-            }
-            if let Some(value) = get_boolean_loose(minify_options, global, b"syntax")? {
+        if let Some(minify_options) = get_optional_value(js_options, global, b"minify")? {
+            if minify_options.is_boolean() {
+                let value = minify_options.as_boolean();
                 options.minify_syntax = Some(value);
-            }
-            if let Some(value) = get_boolean_loose(minify_options, global, b"identifiers")? {
                 options.minify_identifiers = Some(value);
+                options.minify_whitespace = Some(value);
+            } else if minify_options.is_object() {
+                if let Some(value) = get_boolean_loose(minify_options, global, b"whitespace")? {
+                    options.minify_whitespace = Some(value);
+                }
+                if let Some(value) = get_boolean_loose(minify_options, global, b"syntax")? {
+                    options.minify_syntax = Some(value);
+                }
+                if let Some(value) = get_boolean_loose(minify_options, global, b"identifiers")? {
+                    options.minify_identifiers = Some(value);
+                }
+            } else {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "Expected minify to be a boolean or an object"
+                )));
             }
         }
 

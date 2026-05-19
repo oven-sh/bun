@@ -991,6 +991,7 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
 ) {
 
     if (bsd_set_reuse(listenFd, options) != 0) {
+        *error = LIBUS_ERR;
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -1007,12 +1008,24 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
     if (listenAddr->ai_family == AF_INET6) {
         int enabled = (options & LIBUS_SOCKET_IPV6_ONLY) != 0;
         if (setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, &enabled, sizeof(enabled)) != 0) {
+            *error = LIBUS_ERR;
             return LIBUS_SOCKET_ERROR;
         }
     }
 #endif
 
     if (us_internal_bind_and_listen(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen, 512, error)) {
+        #if defined(_WIN32)
+            // With SO_EXCLUSIVEADDRUSE set (which Bun does by default when
+            // LIBUS_LISTEN_EXCLUSIVE_PORT is passed), Windows returns
+            // WSAEACCES instead of WSAEADDRINUSE when the port is already
+            // bound. Libuv/Node normalize this to EADDRINUSE — do the same
+            // so callers get a consistent code cross-platform.
+            // https://learn.microsoft.com/en-us/windows/win32/winsock/so-exclusiveaddruse
+            if ((options & LIBUS_LISTEN_EXCLUSIVE_PORT) && *error == WSAEACCES) {
+                *error = WSAEADDRINUSE;
+            }
+        #endif
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -1051,6 +1064,9 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
     snprintf(port_string, 16, "%d", port);
 
     if (getaddrinfo(host, port_string, &hints, &result)) {
+        // getaddrinfo returns an EAI_* code, not a regular errno. Leave
+        // *error at its caller-initialized 0 so the caller falls back to the
+        // generic "port in use?" message.
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -1060,6 +1076,9 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
         if (a->ai_family == AF_INET6) {
             listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, NULL);
             if (listenFd == LIBUS_SOCKET_ERROR) {
+                // Preserve the real errno (EMFILE, ENFILE, EACCES, …) so the
+                // caller can surface it if all addrinfos exhaust.
+                *error = LIBUS_ERR;
                 continue;
             }
 
@@ -1077,6 +1096,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
         if (a->ai_family == AF_INET) {
             listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, NULL);
             if (listenFd == LIBUS_SOCKET_ERROR) {
+                *error = LIBUS_ERR;
                 continue;
             }
 
@@ -1237,6 +1257,7 @@ static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_listen_socket_unix(const char
     listenFd = bsd_create_socket(AF_UNIX, SOCK_STREAM, 0, NULL);
 
     if (listenFd == LIBUS_SOCKET_ERROR) {
+        *error = LIBUS_ERR;
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -1247,7 +1268,13 @@ static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_listen_socket_unix(const char
         bsd_close_socket(listenFd);
         #if defined(_WIN32)
             if (shouldSimulateENOENT) {
+                // Windows' AF_UNIX impl returns the misleading WSAENETDOWN when
+                // the socket path's parent directory doesn't exist. Translate
+                // to ERROR_PATH_NOT_FOUND so SystemErrno.init maps to ENOENT.
+                // Write *error as well — the caller now reads the plumbed value
+                // instead of thread-local last-error.
                 SetLastError(ERROR_PATH_NOT_FOUND);
+                *error = ERROR_PATH_NOT_FOUND;
             }
         #endif
         return LIBUS_SOCKET_ERROR;
@@ -1261,6 +1288,15 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t l
     struct sockaddr_un server_address;
     size_t addrlen = 0;
     if (bsd_create_unix_socket_address(path, len, &dirfd_workaround_for_unix_path_len, &server_address, &addrlen)) {
+        // bsd_create_unix_socket_address signals failure via `errno` on POSIX
+        // and via `SetLastError` (Win32 channel, NOT Winsock) on Windows.
+        // LIBUS_ERR on Windows maps to WSAGetLastError, which is the wrong
+        // channel for these paths, so read GetLastError directly there.
+        #if defined(_WIN32)
+            *error = (int)GetLastError();
+        #else
+            *error = LIBUS_ERR;
+        #endif
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -1269,6 +1305,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t l
         if (__pthread_fchdir(dirfd_workaround_for_unix_path_len) != 0) {
             close(dirfd_workaround_for_unix_path_len);
             errno = ENAMETOOLONG;
+            *error = ENAMETOOLONG;
             return LIBUS_SOCKET_ERROR;
         }
     }

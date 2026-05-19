@@ -1587,17 +1587,123 @@ it("should support promise returned from error", async () => {
   subprocess.kill();
 });
 
-if (process.platform === "linux")
-  it("should use correct error when using a root range port(#7187)", () => {
-    expect(() => {
+// #7187: EACCES must be reported correctly when binding to a privileged port
+// as a non-root user. On Linux, ports below ip_unprivileged_port_start
+// (default 1024) require CAP_NET_BIND_SERVICE. macOS is skipped: since
+// Mojave (10.14, 2018) non-root processes can bind any port, so this
+// assertion would hard-fail on a macOS CI runner — see nodejs/node#21679
+// and Bun's own vendored node test-cluster-bind-privileged-port.js:42-44.
+// Pick the highest still-privileged port (start - 1) rather than a
+// well-known one like 80/443 which may legitimately be in use and would
+// mask the bug with a real EADDRINUSE.
+const privilegedBindEACCES: { port: number } | null = (() => {
+  if (process.platform !== "linux") return null;
+  // @ts-ignore geteuid exists on posix at runtime
+  const isRoot = typeof process.geteuid === "function" && process.geteuid() === 0;
+  if (isRoot) return null;
+  // A non-root process with effective CAP_NET_BIND_SERVICE can still bind
+  // privileged ports — skip the test in that environment too. CAP_NET_BIND_SERVICE
+  // is capability bit 10 (see include/uapi/linux/capability.h).
+  try {
+    const capEff = readFileSync("/proc/self/status", "utf8").match(/^CapEff:\s*([0-9a-fA-F]+)$/m)?.[1];
+    if (capEff && (BigInt(`0x${capEff}`) & (1n << 10n)) !== 0n) return null;
+  } catch {}
+  let unprivilegedStart = 1024;
+  try {
+    const start = Number(readFileSync("/proc/sys/net/ipv4/ip_unprivileged_port_start", "utf8").trim());
+    if (Number.isFinite(start)) unprivilegedStart = start;
+  } catch {}
+  if (unprivilegedStart <= 1) return null;
+  return { port: unprivilegedStart - 1 };
+})();
+
+it.if(privilegedBindEACCES !== null)("reports EACCES (not EADDRINUSE) for privileged bind (#7187, #30363)", () => {
+  try {
+    using server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: privilegedBindEACCES!.port,
+      fetch() {
+        return new Response("ok");
+      },
+    });
+    throw new Error("should have thrown");
+  } catch (e: any) {
+    expect(e.code).toBe("EACCES");
+    expect(e.syscall).toBe("listen");
+    expect(e.errno).toBe(-13); // matches Node
+    expect(e.address).toBe("127.0.0.1");
+    expect(e.port).toBe(privilegedBindEACCES!.port);
+  }
+});
+
+// #27410, #30363, #10318: errno from the bind/listen syscall must be plumbed
+// through so Bun.serve reports the real code (EADDRNOTAVAIL, EACCES, etc.)
+// instead of always falling back to EADDRINUSE. Works on macOS and Linux with
+// no special privileges — 192.0.2.0/24 is TEST-NET-1 (RFC 5737) and bind()
+// returns EADDRNOTAVAIL there on both platforms. Skip on Linux when
+// ip_nonlocal_bind is enabled, since the kernel then allows the bind to
+// succeed (e.g. on hosts that run a load balancer with floating IPs).
+const canReproduceEADDRNOTAVAIL = (() => {
+  if (process.platform === "win32") return false;
+  if (process.platform === "linux") {
+    try {
+      if (readFileSync("/proc/sys/net/ipv4/ip_nonlocal_bind", "utf8").trim() === "1") return false;
+    } catch {}
+  }
+  return true;
+})();
+it.if(canReproduceEADDRNOTAVAIL)(
+  "reports EADDRNOTAVAIL (not EADDRINUSE) for bind to a non-local address (#30363, #10318)",
+  () => {
+    try {
       using server = Bun.serve({
-        port: 1003,
-        fetch(req) {
-          return new Response("request answered");
+        hostname: "192.0.2.1",
+        port: 0,
+        fetch() {
+          return new Response("ok");
         },
       });
-    }).toThrow("permission denied 0.0.0.0:1003");
+      throw new Error("should have thrown");
+    } catch (e: any) {
+      expect(e.code).toBe("EADDRNOTAVAIL");
+      expect(e.syscall).toBe("listen");
+      expect(typeof e.errno).toBe("number");
+      expect(e.errno).not.toBe(0);
+      // Matches Node: TCP listen errors expose address + port, not path.
+      expect(e.address).toBe("192.0.2.1");
+      expect(typeof e.port).toBe("number");
+    }
+  },
+);
+
+// #30363, #25765: when a listen actually fails with EADDRINUSE (the common
+// case) the returned error must still carry a non-zero errno — previously
+// `errno` was always 0 on this path because the SystemError literal omitted
+// the field. Node sets it to -48 on macOS, -98 on Linux, -4091 via libuv.
+it.skipIf(process.platform === "win32")("EADDRINUSE carries a non-zero errno + address/port (#25765)", async () => {
+  await using server = Bun.serve({
+    port: 0,
+    fetch() {
+      return new Response("ok");
+    },
   });
+  try {
+    using second = Bun.serve({
+      port: server.port,
+      fetch() {
+        return new Response("ok");
+      },
+    });
+    throw new Error("should have thrown");
+  } catch (e: any) {
+    expect(e.code).toBe("EADDRINUSE");
+    expect(e.syscall).toBe("listen");
+    expect(typeof e.errno).toBe("number");
+    expect(e.errno).not.toBe(0);
+    expect(e.port).toBe(server.port);
+    expect(typeof e.address).toBe("string");
+  }
+});
 
 describe.concurrent("should error with invalid options", async () => {
   it("requestCert", () => {

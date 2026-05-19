@@ -243,17 +243,17 @@ pub fn NewApp(comptime ssl: bool) type {
             port: i32,
             comptime UserData: type,
             user_data: UserData,
-            comptime handler: fn (UserData, ?*ThisApp.ListenSocket, c.uws_app_listen_config_t) void,
+            comptime handler: fn (UserData, ?*ThisApp.ListenSocket, c_int) void,
         ) void {
             const Wrapper = struct {
-                pub fn handle(socket: ?*uws.ListenSocket, conf: c.uws_app_listen_config_t, data: ?*anyopaque) callconv(.c) void {
+                pub fn handle(socket: ?*uws.ListenSocket, err: c_int, data: ?*anyopaque) callconv(.c) void {
                     if (comptime UserData == void) {
-                        @call(bun.callmod_inline, handler, .{ {}, @as(?*ThisApp.ListenSocket, @ptrCast(socket)), conf });
+                        @call(bun.callmod_inline, handler, .{ {}, @as(?*ThisApp.ListenSocket, @ptrCast(socket)), err });
                     } else {
                         @call(bun.callmod_inline, handler, .{
                             @as(UserData, @ptrCast(@alignCast(data.?))),
                             @as(?*ThisApp.ListenSocket, @ptrCast(socket)),
-                            conf,
+                            err,
                         });
                     }
                 }
@@ -284,17 +284,18 @@ pub fn NewApp(comptime ssl: bool) type {
             app: *ThisApp,
             comptime UserData: type,
             user_data: UserData,
-            comptime handler: fn (UserData, ?*ThisApp.ListenSocket) void,
+            comptime handler: fn (UserData, ?*ThisApp.ListenSocket, c_int) void,
             config: c.uws_app_listen_config_t,
         ) void {
             const Wrapper = struct {
-                pub fn handle(socket: ?*uws.ListenSocket, data: ?*anyopaque) callconv(.c) void {
+                pub fn handle(socket: ?*uws.ListenSocket, err: c_int, data: ?*anyopaque) callconv(.c) void {
                     if (comptime UserData == void) {
-                        @call(bun.callmod_inline, handler, .{ {}, @as(?*ThisApp.ListenSocket, @ptrCast(socket)) });
+                        @call(bun.callmod_inline, handler, .{ {}, @as(?*ThisApp.ListenSocket, @ptrCast(socket)), err });
                     } else {
                         @call(bun.callmod_inline, handler, .{
                             @as(UserData, @ptrCast(@alignCast(data.?))),
                             @as(?*ThisApp.ListenSocket, @ptrCast(socket)),
+                            err,
                         });
                     }
                 }
@@ -306,18 +307,19 @@ pub fn NewApp(comptime ssl: bool) type {
             app: *ThisApp,
             comptime UserData: type,
             user_data: UserData,
-            comptime handler: fn (UserData, ?*ThisApp.ListenSocket) void,
+            comptime handler: fn (UserData, ?*ThisApp.ListenSocket, c_int) void,
             domain_name: [:0]const u8,
             flags: i32,
         ) void {
             const Wrapper = struct {
-                pub fn handle(socket: ?*uws.ListenSocket, _: [*:0]const u8, _: i32, data: *anyopaque) callconv(.c) void {
+                pub fn handle(socket: ?*uws.ListenSocket, _: [*:0]const u8, _: i32, err: c_int, data: *anyopaque) callconv(.c) void {
                     if (comptime UserData == void) {
-                        @call(bun.callmod_inline, handler, .{ {}, @as(?*ThisApp.ListenSocket, @ptrCast(socket)) });
+                        @call(bun.callmod_inline, handler, .{ {}, @as(?*ThisApp.ListenSocket, @ptrCast(socket)), err });
                     } else {
                         @call(bun.callmod_inline, handler, .{
                             @as(UserData, @ptrCast(@alignCast(data))),
                             @as(?*ThisApp.ListenSocket, @ptrCast(socket)),
+                            err,
                         });
                     }
                 }
@@ -392,7 +394,7 @@ pub const uws_app_s = opaque {};
 pub const uws_app_t = uws_app_s;
 
 pub const c = struct {
-    pub const uws_listen_handler = ?*const fn (?*uws.ListenSocket, ?*anyopaque) callconv(.c) void;
+    pub const uws_listen_handler = ?*const fn (?*uws.ListenSocket, c_int, ?*anyopaque) callconv(.c) void;
     pub const uws_method_handler = ?*const fn (*uws.uws_res, *Request, ?*anyopaque) callconv(.c) void;
     pub const uws_filter_handler = ?*const fn (*uws.uws_res, i32, ?*anyopaque) callconv(.c) void;
     pub const uws_missing_server_handler = ?*const fn ([*c]const u8, ?*anyopaque) callconv(.c) void;
@@ -448,7 +450,7 @@ pub const c = struct {
         domain: [*:0]const u8,
         pathlen: usize,
         i32,
-        *const (fn (*ListenSocket, domain: [*:0]const u8, i32, *anyopaque) callconv(.c) void),
+        *const (fn (*ListenSocket, domain: [*:0]const u8, i32, err: c_int, *anyopaque) callconv(.c) void),
         ?*anyopaque,
     ) void;
 

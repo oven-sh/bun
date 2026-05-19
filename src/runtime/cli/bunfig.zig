@@ -659,6 +659,12 @@ pub const Bunfig = struct {
                         }
                     }
 
+                    if (install_obj.get("blockExoticSubdeps")) |block_exotic_subdeps_expr| {
+                        if (block_exotic_subdeps_expr.asBool()) |value| {
+                            install.block_exotic_subdeps = value;
+                        }
+                    }
+
                     if (install_obj.get("lockfile")) |lockfile_expr| {
                         if (lockfile_expr.get("print")) |lockfile| {
                             try this.expectString(lockfile);

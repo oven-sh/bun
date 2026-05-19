@@ -1387,6 +1387,13 @@ impl<'a> Parser<'a> {
             install.global_store = Some(v);
         }
 
+        if let Some(v) = install_obj
+            .get(b"blockExoticSubdeps")
+            .and_then(|e| e.as_bool())
+        {
+            install.block_exotic_subdeps = Some(v);
+        }
+
         if let Some(lockfile_expr) = install_obj.get(b"lockfile") {
             if let Some(lockfile) = lockfile_expr.get(b"print") {
                 self.expect_string(&lockfile)?;

@@ -756,6 +756,30 @@ minimumReleaseAge = 259200
 minimumReleaseAgeExcludes = ["@types/bun", "typescript"]
 ```
 
+### `install.blockExoticSubdeps`
+
+When set to `true`, `bun install` fails if any _transitive_ dependency is
+**specified** with a non-registry source — a git URL, GitHub reference,
+remote or local tarball, local folder (`file:`), symlink (`link:`), or a
+literal `workspace:` reference pulled in by a non-workspace parent. Direct
+dependencies of the root package (and any workspace package) are not
+restricted. Default `false`.
+
+The check inspects the specifier written in each nested `package.json`,
+not the final resolution, so enabling this does not interact with
+`install.linkWorkspacePackages` — a registry package asking for a plain
+semver range is still allowed even if Bun redirects it to a local
+workspace copy.
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+blockExoticSubdeps = true
+```
+
+This mirrors [pnpm's `blockExoticSubdeps`](https://pnpm.io/11.x/supply-chain-security#prevent-exotic-transitive-dependencies)
+and helps harden against supply-chain attacks where a registry package
+smuggles in code from an arbitrary URL through an indirect dependency.
+
 ## `bun run`
 
 The `bun run` command can be configured under the `[run]` section. These apply to the `bun run` command and the `bun` command when running a file or executable or script.

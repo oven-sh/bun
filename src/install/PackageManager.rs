@@ -104,6 +104,8 @@ pub mod Command {
 // Sub-module declarations — Zig basenames preserved per PORTING.md, hence
 // explicit #[path] attrs for PascalCase / camelCase file names.
 // ──────────────────────────────────────────────────────────────────────────
+#[path = "PackageManager/block_exotic_subdeps.rs"]
+pub mod block_exotic_subdeps;
 #[path = "PackageManager/CommandLineArguments.rs"]
 pub mod command_line_arguments;
 #[path = "PackageManager/install_with_manager.rs"]

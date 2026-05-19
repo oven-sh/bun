@@ -277,6 +277,10 @@ pub fn load(
             this.enable.global_virtual_store = global_store;
         }
 
+        if (config.block_exotic_subdeps) |block_exotic_subdeps| {
+            this.enable.block_exotic_subdeps = block_exotic_subdeps;
+        }
+
         if (config.security_scanner) |security_scanner| {
             this.security_scanner = security_scanner;
             this.do.prefetch_resolved_tarballs = false;
@@ -729,7 +733,18 @@ pub const Enable = packed struct(u16) {
     /// install. Off by default; set BUN_INSTALL_GLOBAL_STORE=1 or
     /// `install.globalStore = true` in bunfig to enable.
     global_virtual_store: bool = false,
-    _: u6 = 0,
+
+    /// Reject transitive dependencies specified with a non-registry source
+    /// (git, github, tarball URLs, local folders, symlinks, workspaces).
+    /// The check inspects each nested package.json's literal specifier, so
+    /// a registry package whose semver dep happens to get redirected to a
+    /// local workspace via `linkWorkspacePackages` is not affected. Root-
+    /// level dependencies are not affected either. Root-defined
+    /// `overrides`/`resolutions` take priority over the transitive literal.
+    /// https://pnpm.io/11.x/supply-chain-security#prevent-exotic-transitive-dependencies
+    block_exotic_subdeps: bool = false,
+
+    _: u5 = 0,
 };
 
 const string = []const u8;

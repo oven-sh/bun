@@ -44,6 +44,7 @@ use crate::package_manager_real::{
     setup_global_dir, update_lockfile_if_needed, write_yarn_lock,
 };
 
+use super::block_exotic_subdeps;
 use super::security_scanner;
 
 pub fn install_with_manager(
@@ -638,6 +639,13 @@ pub fn install_with_manager(
         }
 
         manager.verify_resolutions(log_level);
+
+        if manager.options.enable.block_exotic_subdeps() {
+            let violations = block_exotic_subdeps::enforce_block_exotic_subdeps(manager);
+            if violations > 0 {
+                Global::exit(1);
+            }
+        }
 
         if manager.options.security_scanner.is_some() {
             run_security_scanner(manager, ctx, original_cwd);

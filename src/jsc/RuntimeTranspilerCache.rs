@@ -1056,7 +1056,7 @@ impl RuntimeTranspilerCache {
         }
         #[cfg(debug_assertions)]
         {
-            bun_core::scoped_log!(cache, "put() = {} bytes", output_code.latin1().len());
+            bun_core::scoped_log!(cache, "put() = {} bytes", output_code.length());
         }
     }
 }
@@ -1107,16 +1107,17 @@ bun_ast::link_impl_TranspilerCacheImpl! {
             }
             debug_assert!(this.entry.is_none());
 
-            // Borrowed Latin-1 view for ASCII output (the common case): `to_file`
-            // only reads `byte_slice()` + the encoding tag (unmarked 8-bit
-            // ZigString -> Encoding::LATIN1), and `output_code_bytes` outlives
-            // the synchronous `to_file` call. For non-ASCII output (raw
-            // template/regex with unicode), clone as UTF-8 so `to_file` takes
-            // the UTF-8 branch and the bytes aren't misinterpreted as Latin-1.
+            // Borrowed view — `output_code_bytes` outlives the synchronous
+            // `to_file` call and `to_file` only reads `byte_slice()` + the
+            // encoding tag. ASCII: unmarked 8-bit ZigString -> Encoding::LATIN1.
+            // Non-ASCII: UTF-8 mark so `to_file` takes the UTF-8 branch and
+            // the bytes aren't misinterpreted as Latin-1. Both variants are
+            // refcount-free (no WTFStringImpl), so BunString's lack of Drop
+            // doesn't leak.
             let output_code = if bun_core::strings::is_all_ascii(output_code_bytes) {
                 BunString::ascii(output_code_bytes)
             } else {
-                BunString::clone_utf8(output_code_bytes)
+                BunString::borrow_utf8(output_code_bytes)
             };
             let result = RuntimeTranspilerCache::to_file(
                 this.input_byte_length.unwrap(),

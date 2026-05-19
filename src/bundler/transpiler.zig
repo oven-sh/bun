@@ -244,13 +244,17 @@ pub const Transpiler = struct {
         if (auto_jsx) {
             // Most of the time, this will already be cached
             if (transpiler.resolver.readDirInfo(transpiler.fs.top_level_dir) catch null) |root_dir| {
-                if (root_dir.tsconfig_json) |tsconfig| {
+                // Prefer the tsconfig that lives in this directory, but fall back
+                // to the enclosing one (e.g. `--tsconfig-override` attaches the
+                // override to the filesystem root; children inherit via
+                // `enclosing_tsconfig_json` only).
+                if (root_dir.tsconfig_json orelse root_dir.enclosing_tsconfig_json) |tsconfig| {
                     // If we don't explicitly pass JSX, try to get it from the root tsconfig
                     if (transpiler.options.transform_options.jsx == null) {
                         transpiler.options.jsx = tsconfig.jsx;
                     }
-                    transpiler.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
-                    transpiler.options.experimental_decorators = tsconfig.experimental_decorators;
+                    transpiler.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata orelse false;
+                    transpiler.options.experimental_decorators = tsconfig.experimental_decorators orelse false;
                 }
             }
         }
@@ -281,7 +285,10 @@ pub const Transpiler = struct {
                 // env vars were already loaded above.
                 const dir_info = this.resolver.readDirInfo(this.fs.top_level_dir) catch return orelse return;
 
-                if (dir_info.tsconfig_json) |tsconfig| {
+                // Same fallback as configureLinkerWithAutoJSX above: when
+                // top_level_dir has no tsconfig of its own (ancestor-only or
+                // --tsconfig-override), inherit from the enclosing chain.
+                if (dir_info.tsconfig_json orelse dir_info.enclosing_tsconfig_json) |tsconfig| {
                     this.options.jsx = tsconfig.mergeJSX(this.options.jsx);
                 }
 

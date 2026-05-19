@@ -664,7 +664,7 @@ pub fn migrate_pnpm_lockfile<'a>(
 
             let deps = lockfile.packages.items_dependencies()[pkg_id as usize];
             'next_dep: for _dep_id in deps.begin()..deps.end() {
-                let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
+                let dep_id: DependencyID = _dep_id;
 
                 let dep = lockfile.buffers.dependencies[dep_id as usize].clone();
 
@@ -975,7 +975,7 @@ pub fn migrate_pnpm_lockfile<'a>(
         // resolve root dependencies first
         let root_deps = lockfile.packages.items_dependencies()[0];
         for _dep_id in root_deps.begin()..root_deps.end() {
-            let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
+            let dep_id: DependencyID = _dep_id;
             let dep = lockfile.buffers.dependencies[dep_id as usize].clone();
             let string_buf = string_bytes!(lockfile);
 
@@ -1052,7 +1052,7 @@ pub fn migrate_pnpm_lockfile<'a>(
 
         let deps = lockfile.packages.items_dependencies()[pkg_id as usize];
         for _dep_id in deps.begin()..deps.end() {
-            let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
+            let dep_id: DependencyID = _dep_id;
             let dep = lockfile.buffers.dependencies[dep_id as usize].clone();
             let string_buf = string_bytes!(lockfile);
             let dep_name = dep.name.slice(string_buf);
@@ -1109,7 +1109,7 @@ pub fn migrate_pnpm_lockfile<'a>(
 
         let deps = lockfile.packages.items_dependencies()[pkg_id as usize];
         for _dep_id in deps.begin()..deps.end() {
-            let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
+            let dep_id: DependencyID = _dep_id;
             let dep = lockfile.buffers.dependencies[dep_id as usize].clone();
             let string_buf = string_bytes!(lockfile);
             let mut version_maybe_alias = dep.version.literal.slice(string_buf);
@@ -2076,7 +2076,7 @@ fn update_package_json_after_migration(
 
         if bun_js_printer::print_json(
             &mut package_json_writer,
-            json.into(),
+            json,
             &root_pkg_json.source,
             bun_js_printer::PrintJsonOptions {
                 indent: root_pkg_json.indentation,

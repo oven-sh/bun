@@ -172,7 +172,7 @@ fn update_package_json_and_install_with_manager_with_updates(
     // is taken across this borrow; `PackageJSONEditor` and `do_patch_commit` touch only
     // disjoint manager fields.
     let current_package_json: &mut MapEntry = unsafe { &mut *current_package_json_ptr };
-    let mut current_package_json_root: bun_ast::Expr = current_package_json.root.into();
+    let mut current_package_json_root: bun_ast::Expr = current_package_json.root;
     let current_package_json_indent = current_package_json.indentation;
 
     // If there originally was a newline at the end of their package.json, preserve it
@@ -489,7 +489,7 @@ fn update_package_json_and_install_with_manager_with_updates(
         if let Some(stuff) = &not_in_workspace_root {
             // PORT NOTE (layering): see `current_package_json_root` above — promote
             // T2 → T4 for `PackageJSONEditor` / `print_json`.
-            let mut root_package_json_root: bun_ast::Expr = root_package_json.root.into();
+            let mut root_package_json_root: bun_ast::Expr = root_package_json.root;
             PackageJSONEditor::edit_patched_dependencies(
                 manager,
                 &mut root_package_json_root,
@@ -563,7 +563,7 @@ fn update_package_json_and_install_with_manager_with_updates(
         let json_arena = bun_alloc::Arena::new();
         let mut new_package_json: bun_ast::Expr =
             match json::parse_package_json_utf8(&source, manager.log_mut(), &json_arena) {
-                Ok(v) => v.into(),
+                Ok(v) => v,
                 Err(err) => {
                     Output::pretty_errorln(format_args!(
                         "package.json failed to parse due to error {}",

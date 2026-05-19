@@ -1055,7 +1055,25 @@ impl<'a> Repl<'a> {
             self.stdin_buf_start += 1;
             return Some(b);
         }
-        // Refill buffer
+
+        // Refill buffer.
+        //
+        // If a VM is attached, pump the JS event loop while waiting for stdin
+        // so timers, IPC messages, setImmediate, and other async callbacks
+        // actually run between keystrokes — otherwise the REPL blocks forever
+        // in read() and child processes (including `bun repl` spawned with
+        // IPC from a parent) never receive `process.on("message", ...)`
+        // payloads. See #30559.
+        if self.vm.is_some() {
+            let n = self.wait_for_stdin_readable()?;
+            if n == 0 {
+                return None;
+            }
+            self.stdin_buf_start = 1;
+            self.stdin_buf_end = n;
+            return Some(self.stdin_buf[0]);
+        }
+
         let stdin = sys::File {
             handle: Fd::stdin(),
         };
@@ -1069,6 +1087,204 @@ impl<'a> Repl<'a> {
         self.stdin_buf_start = 1;
         self.stdin_buf_end = n;
         Some(self.stdin_buf[0])
+    }
+
+    /// Wait until stdin has data, pumping the JS event loop in the meantime
+    /// so timers, IPC messages, setImmediate, etc. fire while the user is
+    /// thinking. Returns the number of bytes read, or `None` on EOF / fatal
+    /// error.
+    fn wait_for_stdin_readable(&mut self) -> Option<usize> {
+        use crate::jsc_hooks::runtime_state;
+        use crate::timer;
+        let vm = self.vm?;
+        let vm_ptr = core::ptr::from_ref(vm).cast_mut();
+        // SAFETY: `vm` was set by `run_with_vm` and is stable for the lifetime
+        // of the REPL loop.
+        let event_loop = vm_mut(vm).event_loop_mut();
+        // SAFETY: `event_loop` is the live per-thread event loop.
+        let loop_ = unsafe { (*core::ptr::from_mut(event_loop)).usockets_loop() };
+
+        loop {
+            // Drain pending JS work (concurrent tasks, microtasks,
+            // setImmediate, fully-elapsed timers) and any ready uSockets I/O.
+            // `vm.tick()` loops internally until the task queue is empty.
+            // `tick_immediate_tasks` processes setImmediate callbacks, which
+            // live on a separate queue. `tick_without_idle` on the loop is a
+            // non-blocking uSockets tick that fires any ready IPC reads /
+            // socket callbacks without blocking on stdin.
+            vm_mut(vm).tick();
+            // SAFETY: `event_loop` is the live per-thread event loop.
+            unsafe { (*core::ptr::from_mut(event_loop)).tick_immediate_tasks(vm_ptr) };
+            // SAFETY: `loop_` is the live per-thread uws loop.
+            unsafe { (*loop_).tick_without_idle() };
+            #[cfg(unix)]
+            {
+                let state = runtime_state();
+                if !state.is_null() {
+                    // SAFETY: `state` is the live per-thread `RuntimeState`;
+                    // see the PORT NOTE on `auto_tick` in jsc_hooks.rs re:
+                    // aliased-&mut across `fire()`.
+                    unsafe {
+                        timer::All::drain_timers(&mut (*state).timer, vm_ptr.cast());
+                    }
+                }
+            }
+            // An I/O / timer callback can queue up more work that won't wake
+            // the loop and isn't seen by get_timeout: setImmediate goes on
+            // its own queue, enqueueTask just appends without signaling, and
+            // a worker thread landing an enqueueTaskConcurrent after our
+            // last tick_concurrent has its wakeup eventfd consumed by
+            // tick_without_idle. Drain all of them now so we don't sleep on
+            // stranded callbacks.
+            // SAFETY: `event_loop` is the live per-thread event loop.
+            unsafe { (*core::ptr::from_mut(event_loop)).tick_immediate_tasks(vm_ptr) };
+            if event_loop.tasks.readable_length() > 0 || !event_loop.concurrent_tasks.is_empty() {
+                vm_mut(vm).tick();
+            }
+            vm_mut(vm).on_after_event_loop();
+            // Report unhandled rejections created by timer / IPC /
+            // setImmediate callbacks *now* rather than stalling them until
+            // the next stdin wake. Mirrors the final step of `auto_tick`.
+            vm.global().handle_rejected_promises();
+
+            // Redraw the prompt + line_editor buffer so any async output
+            // (e.g. console.log from a parent IPC handler) doesn't visually
+            // clobber partially-typed input. Only meaningful in TTY mode.
+            if self.is_tty {
+                self.refresh_line();
+            } else {
+                Output::flush();
+            }
+
+            // Compute how long we're allowed to sleep: the time until the
+            // next timer fires, or forever if nothing is scheduled.
+            #[cfg(unix)]
+            {
+                let state = runtime_state();
+                let has_pending_immediate = !event_loop.immediate_tasks.is_empty();
+                let quic_next_tick_us = unsafe {
+                    let ild = &(*loop_).internal_loop_data;
+                    if ild.quic_head.is_null() {
+                        None
+                    } else {
+                        Some(ild.quic_next_tick_us)
+                    }
+                };
+                let mut timespec = bun_core::Timespec { sec: 0, nsec: 0 };
+                let has_deadline = if state.is_null() {
+                    has_pending_immediate || quic_next_tick_us.is_some()
+                } else {
+                    // SAFETY: `state` is the live per-thread `RuntimeState`;
+                    // see PORT NOTE on `auto_tick` re: aliased-&mut across
+                    // `fire()`.
+                    unsafe {
+                        timer::All::get_timeout(
+                            &mut (*state).timer,
+                            &mut timespec,
+                            has_pending_immediate,
+                            quic_next_tick_us,
+                            vm_ptr.cast(),
+                        )
+                    }
+                };
+                // Clamp to [0, INT32_MAX]. A negative ms (timer already
+                // overdue) would otherwise become poll()'s infinite-wait
+                // sentinel and strand the timer until the next stdin/IPC
+                // event.
+                let timeout_ms: c_int = if has_deadline {
+                    let ms = timespec.ms();
+                    ms.max(0).min(c_int::MAX as i64) as c_int
+                } else {
+                    -1
+                };
+
+                // Wait on BOTH stdin and the uSockets event-loop fd so an
+                // incoming IPC message / socket event wakes us as readily as
+                // a keystroke.
+                let stdin_fd: c_int = Fd::stdin().native();
+                // SAFETY: `loop_` is the live per-thread uws loop; `.fd` is
+                // the epoll/kqueue fd.
+                let loop_fd: c_int = unsafe { (*loop_).fd };
+                let mut fds = [
+                    sys::posix::PollFd {
+                        fd: stdin_fd,
+                        events: sys::posix::POLL_IN,
+                        revents: 0,
+                    },
+                    sys::posix::PollFd {
+                        fd: loop_fd,
+                        events: sys::posix::POLL_IN,
+                        revents: 0,
+                    },
+                ];
+                match sys::posix::poll(&mut fds, timeout_ms) {
+                    Ok(_) => {}
+                    Err(_) => return None,
+                }
+                // POLLNVAL is included so a user who closes fd 0 from inside
+                // the REPL (e.g. `require('fs').closeSync(0)`) falls through
+                // to the read() path, which returns EBADF → null → clean
+                // EOF.
+                let stdin_mask = libc::POLLIN | libc::POLLHUP | libc::POLLERR | libc::POLLNVAL;
+                if fds[0].revents & stdin_mask != 0 {
+                    let stdin = sys::File {
+                        handle: Fd::stdin(),
+                    };
+                    return match stdin.read(&mut self.stdin_buf) {
+                        sys::Result::Ok(got) => Some(got),
+                        sys::Result::Err(_) => None,
+                    };
+                }
+                // Otherwise the loop fd fired (pending IPC / socket) or a
+                // timer is due — loop back and re-pump.
+            }
+            #[cfg(windows)]
+            {
+                let _ = runtime_state;
+                // Windows: no single primitive covers console / pipe / loop
+                // fd; `windows_wait_for_stdin` slices the wait and branches
+                // on handle type.
+                let next_ts = {
+                    let state = runtime_state();
+                    if state.is_null() {
+                        None
+                    } else {
+                        let mut ts = bun_core::Timespec { sec: 0, nsec: 0 };
+                        let has_pending_immediate = !event_loop.immediate_tasks.is_empty();
+                        let have = unsafe {
+                            timer::All::get_timeout(
+                                &mut (*state).timer,
+                                &mut ts,
+                                has_pending_immediate,
+                                None,
+                                vm_ptr.cast(),
+                            )
+                        };
+                        if have { Some(ts) } else { None }
+                    }
+                };
+                if !windows_wait_for_stdin(next_ts.as_ref()) {
+                    let stdin = sys::File {
+                        handle: Fd::stdin(),
+                    };
+                    let got = match stdin.read(&mut self.stdin_buf) {
+                        sys::Result::Ok(n) => n,
+                        sys::Result::Err(_) => return None,
+                    };
+                    // On a real Windows console, WaitForSingleObject signals
+                    // for non-character input records (focus/resize/mouse)
+                    // and a subsequent ReadFile can return 0 bytes without
+                    // indicating EOF — treat that as a spurious wake so the
+                    // loop re-pumps instead of exiting the REPL. Gated on
+                    // a real console handle because `FILE_TYPE_CHAR` also
+                    // covers NUL / COM* / LPT* where 0 IS genuine EOF.
+                    if got == 0 && is_windows_console_input(Fd::stdin().native()) {
+                        continue;
+                    }
+                    return Some(got);
+                }
+            }
+        }
     }
 
     fn read_key(&mut self) -> Option<Key> {
@@ -2518,5 +2734,113 @@ pub fn exec(ctx: crate::cli::Command::Context) -> Result<(), bun_core::Error> {
 }
 
 const VERSION: &str = Environment::VERSION_STRING;
+
+// ============================================================================
+// Windows stdin wait helpers
+// ============================================================================
+
+/// Windows variant of the POSIX `poll` in `wait_for_stdin_readable`. Blocks
+/// for up to ~50ms (or less if a timer fires sooner) and returns:
+///   `true`  → sleep elapsed / spurious wake, caller should re-pump the loop.
+///   `false` → stdin has data, caller should read it.
+///
+/// Windows has no single wait primitive that covers console handles,
+/// anonymous pipes, and the uSockets/libuv loop fd at once, so we branch on
+/// handle kind:
+///   - Real console input (`GetConsoleMode` succeeds):
+///     `WaitForSingleObject` — consoles signal on input events.
+///   - Pipe: `WaitForSingleObject` isn't supported; pipe handles are
+///     perpetually signaled, so we use `PeekNamedPipe` + `Sleep` instead.
+///   - Disk file / NUL / COM* / anything else: treat as always ready.
+#[cfg(windows)]
+fn windows_wait_for_stdin(next_ts: Option<&bun_core::Timespec>) -> bool {
+    const WAIT_OBJECT_0: u32 = 0x0000_0000;
+    const FILE_TYPE_CHAR: u32 = 0x0002;
+    const FILE_TYPE_PIPE: u32 = 0x0003;
+
+    let slice_ms: u32 = match next_ts {
+        None => 50,
+        Some(ts) => ts.ms().max(0).min(50) as u32,
+    };
+    let stdin_handle = Fd::stdin().native();
+    let file_type = unsafe { GetFileType(stdin_handle) };
+    if is_windows_console_input(stdin_handle) {
+        // SAFETY: FFI call.
+        let wait = unsafe { WaitForSingleObject(stdin_handle, slice_ms) };
+        // WAIT_OBJECT_0: a console input event is ready — let the caller
+        // consume it. Consoles signal for *any* input record, not just key
+        // events; the caller treats a 0-byte return as a spurious wake and
+        // re-pumps.
+        if wait == WAIT_OBJECT_0 {
+            return false;
+        }
+        // WAIT_TIMEOUT / WAIT_FAILED / anything else: re-pump.
+        return true;
+    }
+    if file_type == FILE_TYPE_PIPE {
+        let mut bytes_avail: u32 = 0;
+        // SAFETY: FFI call.
+        let ok = unsafe {
+            PeekNamedPipe(
+                stdin_handle,
+                core::ptr::null_mut(),
+                0,
+                core::ptr::null_mut(),
+                &mut bytes_avail,
+                core::ptr::null_mut(),
+            )
+        };
+        if ok == 0 {
+            // Pipe closed / invalid / other error — let the subsequent
+            // `read()` surface the EOF consistently.
+            return false;
+        }
+        if bytes_avail > 0 {
+            return false;
+        }
+        // SAFETY: FFI call.
+        unsafe { Sleep(slice_ms) };
+        return true;
+    }
+    // Disk / NUL / COM* / unknown — stdin isn't interactive, so we don't
+    // expect to block. Let the read surface a real EOF.
+    false
+}
+
+/// True iff `handle` is a real Windows console-input handle. `GetFileType`
+/// returns `FILE_TYPE_CHAR` for every character device (console, NUL, COM*,
+/// LPT*), but only real consoles accept `GetConsoleMode` / wait-on-input
+/// semantics — the others behave like files that return EOF on read.
+#[cfg(windows)]
+fn is_windows_console_input(handle: *mut core::ffi::c_void) -> bool {
+    const FILE_TYPE_CHAR: u32 = 0x0002;
+    // SAFETY: FFI call; `handle` is the stdin handle, valid while the REPL runs.
+    if unsafe { GetFileType(handle) } != FILE_TYPE_CHAR {
+        return false;
+    }
+    let mut mode: u32 = 0;
+    // SAFETY: FFI call.
+    unsafe { GetConsoleMode(handle, &mut mode) != 0 }
+}
+
+// Win32 primitives declared here locally to avoid dragging extra dependency
+// surface into the REPL crate. `HANDLE` on Windows is `*mut c_void`
+// (`FdNative`); see `bun_core::util::FdNative` for the authoritative alias.
+#[cfg(windows)]
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn WaitForSingleObject(hHandle: *mut core::ffi::c_void, dwMilliseconds: u32) -> u32;
+    fn Sleep(dwMilliseconds: u32);
+    fn GetFileType(hFile: *mut core::ffi::c_void) -> u32;
+    fn GetConsoleMode(hConsoleHandle: *mut core::ffi::c_void, lpMode: *mut u32) -> i32;
+    fn PeekNamedPipe(
+        hNamedPipe: *mut core::ffi::c_void,
+        lpBuffer: *mut core::ffi::c_void,
+        nBufferSize: u32,
+        lpBytesRead: *mut u32,
+        lpTotalBytesAvail: *mut u32,
+        lpBytesLeftThisMessage: *mut u32,
+    ) -> i32;
+}
 
 // ported from: src/cli/repl.zig

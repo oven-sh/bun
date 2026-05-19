@@ -1323,6 +1323,28 @@ const now = await mysql`SELECT NOW() as current_time`;
 const uuid = await mysql`SELECT UUID() as id`;
 ```
 
+By default, `affectedRows` counts rows the `WHERE` clause **matched** — the
+same default as the `mysql2` and `mariadb` drivers. An `UPDATE` that matches
+a row but leaves every column untouched still reports `affectedRows: 1`. If
+you want the server's changed-rows semantics instead (where a no-op update
+returns `0`), pass `foundRows: false`:
+
+```ts
+const mysql = new SQL({
+  adapter: "mysql", // or "mariadb"
+  hostname: "localhost",
+  database: "myapp",
+  foundRows: false, // changed-rows semantics (returns 0 for no-op UPDATEs)
+});
+// Equivalently as a URL query param:
+new SQL("mysql://user:pass@localhost/db?foundRows=false");
+```
+
+This option toggles the
+[`CLIENT_FOUND_ROWS`](https://dev.mysql.com/doc/c-api/en/mysql-affected-rows.html)
+capability flag during the protocol handshake and is ignored by the Postgres
+and SQLite adapters.
+
 ### MySQL Error Handling
 
 ```ts

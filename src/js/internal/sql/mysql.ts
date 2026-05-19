@@ -102,6 +102,7 @@ export interface MySQLDotZig {
     connectionTimeout: number,
     maxLifetime: number,
     useUnnamedPreparedStatements: boolean,
+    foundRows: boolean,
   ) => $ZigGeneratedClasses.MySQLConnection;
   createQuery: (
     sql: string,
@@ -251,6 +252,7 @@ class PooledMySQLConnection {
       maxLifetime = 0,
       prepare = true,
       path,
+      foundRows = true,
     } = options;
 
     let password: Bun.MaybePromise<string> | string | undefined | (() => Bun.MaybePromise<string>) = options.password;
@@ -284,6 +286,7 @@ class PooledMySQLConnection {
         connectionTimeout,
         maxLifetime,
         !prepare,
+        !!foundRows,
       );
     } catch (e) {
       process.nextTick(closeNT, onClose, e);

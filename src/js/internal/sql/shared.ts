@@ -604,6 +604,10 @@ function parseOptions(
   let bigint: boolean | undefined;
   let path: string;
   let prepare: boolean = true;
+  // MySQL-only. Defaults to `true` to match the `mysql2` and `mariadb` drivers
+  // (both enable CLIENT_FOUND_ROWS by default). Read from the options object
+  // and the URL query string below; ignored for non-MySQL adapters.
+  let foundRows: boolean = true;
 
   if (url !== null) {
     url = url instanceof URL ? url : new URL(url);
@@ -621,10 +625,21 @@ function parseOptions(
 
     const queryObject = url.searchParams.toJSON();
     for (const key in queryObject) {
-      if (key.toLowerCase() === "sslmode") {
+      const lowered = key.toLowerCase();
+      if (lowered === "sslmode") {
         sslMode = normalizeSSLMode(queryObject[key]);
-      } else if (key.toLowerCase() === "path") {
+      } else if (lowered === "path") {
         path = queryObject[key];
+      } else if (lowered === "foundrows") {
+        // Accept "false"/"0" (case-insensitive) to disable; anything else
+        // (including "true"/"1" or empty) leaves the default enabled. Only
+        // consumed by the MySQL adapter. `toJSON()` returns an array when a
+        // key appears more than once (`?foundRows=a&foundRows=b`) — `String()`
+        // coerces that to `"a,b"` so we never call `.toLowerCase` on a non-
+        // string. Matches the `sslmode` branch's coercion via
+        // `normalizeSSLMode`.
+        const value = String(queryObject[key]).toLowerCase();
+        foundRows = !(value === "false" || value === "0");
       } else {
         // this is valid for postgres for other databases it might not be valid
         // check adapter then implement for other databases
@@ -780,6 +795,13 @@ function parseOptions(
     prepare = false;
   }
 
+  // The options-object form wins over the URL query string. `foundRows` is
+  // only meaningful for the MySQL wire protocol (maps to CLIENT_FOUND_ROWS);
+  // for Postgres/SQLite it's a no-op.
+  if (options.foundRows !== undefined) {
+    foundRows = !!options.foundRows;
+  }
+
   onconnect ??= options.onconnect;
   onclose ??= options.onclose;
 
@@ -869,6 +891,7 @@ function parseOptions(
     sslMode,
     query,
     max: max || 10,
+    foundRows,
   };
 
   if (idleTimeout != null) {

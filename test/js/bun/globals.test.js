@@ -257,3 +257,69 @@ describe("globalThis.gc", () => {
     });
   });
 });
+
+// https://github.com/oven-sh/bun/issues/30023
+// Paired with oven-sh/WebKit#207 — asserts the clearer TypeError wording
+// emitted by JavaScriptCore when matchAll/replaceAll get a non-global RegExp.
+//
+// The block is skipped only when JSC emits the exact KNOWN OLD wording, so
+// CI stays green during the WEBKIT_VERSION transition but any unexpected
+// third wording still runs the assertions and fails loudly — i.e. a future
+// regression doesn't silently re-hide behind the skip.
+const EXPECTED_MATCH_ALL = "String.prototype.matchAll argument must contain the global (g) flag";
+const EXPECTED_REPLACE_ALL = "String.prototype.replaceAll argument must contain the global (g) flag";
+const OLD_MATCH_ALL = "String.prototype.matchAll argument must not be a non-global regular expression";
+const hasOldWording = (() => {
+  try {
+    "abc".matchAll(/a/);
+  } catch (e) {
+    return e && e.message === OLD_MATCH_ALL;
+  }
+  return false;
+})();
+
+describe.skipIf(hasOldWording)("non-global regexp TypeError wording", () => {
+  it("String.prototype.matchAll rejects a non-global RegExp", () => {
+    expect(() => "abc".matchAll(/a/)).toThrow(
+      expect.objectContaining({ name: "TypeError", message: EXPECTED_MATCH_ALL }),
+    );
+  });
+
+  it("String.prototype.replaceAll rejects a non-global RegExp", () => {
+    expect(() => "abc".replaceAll(/a/, "x")).toThrow(
+      expect.objectContaining({ name: "TypeError", message: EXPECTED_REPLACE_ALL }),
+    );
+  });
+
+  it("String.prototype.replaceAll rejects a RegExp-like object whose flags lack 'g'", () => {
+    const fake = { [Symbol.match]: true, flags: "i", [Symbol.replace]: undefined };
+    expect(() => String.prototype.replaceAll.call("abc", fake, "x")).toThrow(
+      expect.objectContaining({ name: "TypeError", message: EXPECTED_REPLACE_ALL }),
+    );
+  });
+
+  // Exercises the DFG JIT paths in DFGOperations.cpp by forcing the operation to be
+  // called many times. Both the empty-replacement and string-replacement paths live there.
+  // Counts every iteration to catch the case where the DFG tier stops throwing or
+  // silently switches wording after the baseline tier got it right.
+  it("DFG-tier replaceAll reports the same wording", () => {
+    const re = /a/;
+    const iterations = 20_000;
+    for (const fn of [() => "aaa".replaceAll(re, "b"), () => "aaa".replaceAll(re, "")]) {
+      let throws = 0;
+      let mismatch;
+      for (let i = 0; i < iterations; i++) {
+        try {
+          fn();
+        } catch (e) {
+          throws++;
+          if (mismatch === undefined && (e.name !== "TypeError" || e.message !== EXPECTED_REPLACE_ALL)) {
+            mismatch = e;
+          }
+        }
+      }
+      expect(mismatch).toBeUndefined();
+      expect(throws).toBe(iterations);
+    }
+  });
+});

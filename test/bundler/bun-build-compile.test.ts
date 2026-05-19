@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isMusl, isPosix, isWindows, tempDir } from "harness";
-import { chmodSync } from "node:fs";
+import { chmodSync, cpSync, existsSync } from "node:fs";
 import { join } from "path";
 
 describe("Bun.build compile", () => {
@@ -462,6 +462,166 @@ if (isLinux) {
       expect(stdout).toContain("wsl1-regression-20000");
       expect(exitCode).toBe(0);
     }, 60_000);
+
+    // Regression guard for #31023. On NixOS, `autoPatchelfHook` runs
+    // `patchelf --set-interpreter` on the installed bun binary. Patchelf
+    // inserts a *new* writable PT_LOAD at the front of the program-header
+    // table (to hold the relocated PHDR + .interp), so the template bun
+    // has TWO writable PT_LOADs. `write_bun_section` used to pick the
+    // first writable PT_LOAD and extend it — that's patchelf's small
+    // segment, unrelated to .bun — producing an output whose grown
+    // segment overlaps the read-only and executable PT_LOADs at
+    // conflicting vaddrs. The kernel ELF loader mmap'd garbage over .bun
+    // at its runtime address and the compiled binary segfaulted on exec.
+    //
+    // We simulate the NixOS layout by running `patchelf
+    // --set-interpreter` on the bun binary (exactly what
+    // autoPatchelfHook does) and then using `--compile-executable-path`
+    // to drive `bun build --compile` off it. The resulting output must
+    // (a) have the .bun section inside a writable PT_LOAD whose extent
+    // doesn't cross another PT_LOAD, and (b) actually run.
+    const patchelf = Bun.which("patchelf");
+    const ldso =
+      process.arch === "arm64"
+        ? isMusl
+          ? "/lib/ld-musl-aarch64.so.1"
+          : "/lib/ld-linux-aarch64.so.1"
+        : isMusl
+          ? "/lib/ld-musl-x86_64.so.1"
+          : "/lib64/ld-linux-x86-64.so.2";
+    test.skipIf(!patchelf || !existsSync(ldso))(
+      "compiled binary works when template bun has patchelf-inserted RW PT_LOAD (#31023)",
+      async () => {
+        using dir = tempDir("build-compile-patchelf-rw-regression", {
+          "app.js": `console.log("patchelf-regression-ok");`,
+        });
+        const cwd = String(dir);
+
+        // Copy bun and patchelf it — autoPatchelfHook's signature move.
+        // Any real interpreter works; we just need patchelf to insert its
+        // new writable PT_LOAD at the front of the phdr table.
+        const patchedBun = join(cwd, "patched-bun");
+        cpSync(bunExe(), patchedBun);
+        chmodSync(patchedBun, 0o755);
+        {
+          const r = Bun.spawnSync({
+            cmd: [patchelf!, "--set-interpreter", ldso, patchedBun],
+            stderr: "pipe",
+          });
+          expect(r.stderr.toString()).toBe("");
+          expect(r.exitCode).toBe(0);
+        }
+
+        // Sanity: the patched bun really does have two writable PT_LOADs.
+        // Otherwise the test is vacuous (it would exercise the same path
+        // as the stock-bun tests above).
+        {
+          const bytes = new Uint8Array(await Bun.file(patchedBun).arrayBuffer());
+          const view = new DataView(bytes.buffer);
+          const phoff = Number(view.getBigUint64(32, true));
+          const phentsize = view.getUint16(54, true);
+          const phnum = view.getUint16(56, true);
+          let writableLoads = 0;
+          for (let i = 0; i < phnum; i++) {
+            const off = phoff + i * phentsize;
+            const pType = view.getUint32(off, true);
+            const pFlags = view.getUint32(off + 4, true);
+            if (pType === 1 /* PT_LOAD */ && (pFlags & 2) !== 0 /* PF_W */) writableLoads++;
+          }
+          expect(writableLoads).toBeGreaterThanOrEqual(2);
+        }
+
+        // Drive bun build --compile off the patched template.
+        const outfile = join(cwd, "app-out");
+        const build = Bun.spawnSync({
+          cmd: [
+            bunExe(),
+            "build",
+            "--compile",
+            "--compile-executable-path",
+            patchedBun,
+            join(cwd, "app.js"),
+            "--outfile",
+            outfile,
+          ],
+          env: bunEnv,
+          cwd,
+          stderr: "pipe",
+          stdout: "pipe",
+        });
+        expect(build.stderr.toString()).not.toContain("error:");
+        expect(build.exitCode).toBe(0);
+
+        // Structural check on the output: the writable PT_LOAD that
+        // contains .bun must not overlap any other PT_LOAD. Before the
+        // fix, the grown front PT_LOAD extended past the R and R-E
+        // PT_LOADs, which is exactly the corruption that segfaulted.
+        const bytes = new Uint8Array(await Bun.file(outfile).arrayBuffer());
+        const view = new DataView(bytes.buffer);
+        const phoff = Number(view.getBigUint64(32, true));
+        const phentsize = view.getUint16(54, true);
+        const phnum = view.getUint16(56, true);
+        const shoff = Number(view.getBigUint64(40, true));
+        const shentsize = view.getUint16(58, true);
+        const shnum = view.getUint16(60, true);
+        const shstrndx = view.getUint16(62, true);
+        const strtabHdr = shoff + shstrndx * shentsize;
+        const strtabOff = Number(view.getBigUint64(strtabHdr + 24, true));
+        const strtabSize = Number(view.getBigUint64(strtabHdr + 32, true));
+
+        // Find .bun's vaddr.
+        const decoder = new TextDecoder();
+        let bunAddr = 0n;
+        for (let i = 0; i < shnum; i++) {
+          const hdrOff = shoff + i * shentsize;
+          const nameIdx = view.getUint32(hdrOff, true);
+          if (nameIdx >= strtabSize) continue;
+          let end = strtabOff + nameIdx;
+          while (end < bytes.length && bytes[end] !== 0) end++;
+          const name = decoder.decode(bytes.slice(strtabOff + nameIdx, end));
+          if (name === ".bun") {
+            bunAddr = view.getBigUint64(hdrOff + 16, true);
+            break;
+          }
+        }
+        expect(bunAddr).not.toBe(0n);
+
+        // Collect all PT_LOAD ranges; find the one that covers .bun and
+        // assert it doesn't overlap any of the others.
+        type LoadSeg = { vaddr: bigint; end: bigint; writable: boolean };
+        const loads: LoadSeg[] = [];
+        for (let i = 0; i < phnum; i++) {
+          const off = phoff + i * phentsize;
+          if (view.getUint32(off, true) !== 1 /* PT_LOAD */) continue;
+          const pFlags = view.getUint32(off + 4, true);
+          const pVaddr = view.getBigUint64(off + 16, true);
+          const pMemsz = view.getBigUint64(off + 40, true);
+          loads.push({ vaddr: pVaddr, end: pVaddr + pMemsz, writable: (pFlags & 2) !== 0 });
+        }
+        const bunLoadIdx = loads.findIndex(s => s.writable && s.vaddr <= bunAddr && bunAddr < s.end);
+        expect(bunLoadIdx).toBeGreaterThanOrEqual(0);
+        const bunLoad = loads[bunLoadIdx];
+        for (let i = 0; i < loads.length; i++) {
+          if (i === bunLoadIdx) continue;
+          const other = loads[i];
+          // Disjoint: either bunLoad ends before other starts, or other
+          // ends before bunLoad starts.
+          const disjoint = bunLoad.end <= other.vaddr || other.end <= bunLoad.vaddr;
+          expect(disjoint).toBe(true);
+        }
+
+        // And the binary actually runs — the ultimate behavioral check.
+        await using proc = Bun.spawn({
+          cmd: [outfile],
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout.trim()).toBe("patchelf-regression-ok");
+        expect(exitCode).toBe(0);
+      },
+      180_000,
+    );
   });
 }
 

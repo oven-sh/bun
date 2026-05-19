@@ -300,17 +300,21 @@ impl<'a, T> BabyVec<'a, T> {
         unsafe { slice::from_raw_parts_mut(me.ptr.as_ptr(), me.len as usize) }
     }
 
-    /// Drain all elements (only the full range is supported; debug-asserted).
+    /// Drain all elements. Only the full range is supported — the `RangeBounds`
+    /// parameter exists for drop-in `ArenaVec` alias parity with `Vec::drain(..)`.
     /// Zig `BabyList` has no partial drain and no caller needs one.
     pub fn drain<R: RangeBounds<usize>>(&mut self, range: R) -> IntoIter<'a, T> {
         use core::ops::Bound::*;
-        debug_assert!(matches!(range.start_bound(), Unbounded | Included(0)));
-        debug_assert!(match range.end_bound() {
-            Unbounded => true,
-            Excluded(n) => *n == self.len as usize,
-            Included(n) => *n + 1 == self.len as usize,
-        });
-        let _ = range;
+        // Const-folded for `..`; guards release builds against partial ranges.
+        assert!(
+            matches!(range.start_bound(), Unbounded | Included(0))
+                && match range.end_bound() {
+                    Unbounded => true,
+                    Excluded(n) => *n == self.len as usize,
+                    Included(n) => *n + 1 == self.len as usize,
+                },
+            "BabyVec::drain only supports the full range",
+        );
         core::mem::replace(self, BabyVec::new_in(self.alloc)).into_iter()
     }
 

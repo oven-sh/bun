@@ -54,6 +54,10 @@ heap_profiler_config: ?HeapProfilerConfig = null,
 counters: Counters = .{},
 
 hot_reload: bun.cli.Command.HotReload = .none,
+/// Glob patterns for files to exclude from watch mode.
+/// Borrowed slices — owned by the CLI allocator (bunfig strings or argv), which
+/// is process-lifetime and therefore outlives this VirtualMachine and any Watcher
+/// it creates. No duplication or teardown needed.
 watch_excludes: []const []const u8 = &.{},
 jsc_vm: *VM = undefined,
 

@@ -28,7 +28,7 @@ use bun_ast::RuntimeTranspilerCache;
 
 /// Bump when the cache wire format or parser output changes. Mirrors
 /// `expected_version` in src/jsc/RuntimeTranspilerCache.zig.
-pub const RUNTIME_TRANSPILER_CACHE_VERSION: u32 = 20;
+pub const RUNTIME_TRANSPILER_CACHE_VERSION: u32 = 21;
 
 /// Mirrors the Zig `pub var is_disabled` mutable global — written by T6
 /// (src/runtime/cli/Arguments.zig:1603, src/jsc/VirtualMachine.zig:1383) and

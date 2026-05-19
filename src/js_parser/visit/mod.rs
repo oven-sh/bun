@@ -1606,8 +1606,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Ignore declarations if the scope is shadowed by a direct "eval" call.
             // The eval'd code may indirectly reference this symbol and the actual
             // use count may be greater than 1.
+            //
+            // Ignore declarations inside a switch case body: every case in a switch
+            // shares one lexical scope but we visit one case at a time, so
+            // `use_count_estimate` for a decl in case 0 has not yet seen references
+            // from later cases and may spuriously read as 1 — inlining then would
+            // delete the decl out from under those later references (issue #30932).
+            // `is_inside_switch` resets at function boundaries (it lives on
+            // `FnOrArrowDataVisit`), so nested functions inside a case body still
+            // get the optimization. Unlike `StmtsKind::SwitchStmt`, using this
+            // flag keeps the using-lowering path at L1488 independent from the
+            // case-body guard here.
             // SAFETY: current_scope is a valid arena ptr for the parse.
-            if p.current_scope != p.module_scope && !p.current_scope().contains_direct_eval {
+            if !p.fn_or_arrow_data_visit.is_inside_switch
+                && p.current_scope != p.module_scope
+                && !p.current_scope().contains_direct_eval
+            {
                 // Keep inlining variables until a failure or until there are none left.
                 // That handles cases like this:
                 //

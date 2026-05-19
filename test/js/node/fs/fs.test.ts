@@ -2221,6 +2221,42 @@ describe("createReadStream", () => {
     },
     { timeout: 100 },
   );
+
+  // https://github.com/oven-sh/bun/issues/30919
+  it("async iterator rejects with ERR_STREAM_PREMATURE_CLOSE when destroy() is called during iteration", async () => {
+    const stream = createReadStream(join(import.meta.dir, "readFileSync.txt"));
+
+    let chunks = 0;
+    let caught: any = undefined;
+    try {
+      for await (const _ of stream) {
+        chunks++;
+        stream.destroy();
+      }
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(chunks).toBe(1);
+    expect(caught).toBeDefined();
+    expect(caught?.code).toBe("ERR_STREAM_PREMATURE_CLOSE");
+  });
+
+  // Regression: _destroy used to register `once(kReadStreamFastPath, ...)` for an
+  // event that is never emitted when { start, autoClose } were both truthy, so
+  // 'close' never fired and the fd was leaked.
+  it("emits 'close' and releases fd with { start: 0, autoClose: true }", async () => {
+    const stream = createReadStream(join(import.meta.dir, "readFileSync.txt"), { start: 0, autoClose: true });
+    const { promise, resolve } = Promise.withResolvers<void>();
+
+    stream.on("data", () => {});
+    stream.on("close", () => resolve());
+
+    await promise;
+    expect(stream.destroyed).toBe(true);
+    expect(stream.closed).toBe(true);
+    expect(stream.fd).toBeNull();
+  });
 });
 
 describe("fs.WriteStream", () => {

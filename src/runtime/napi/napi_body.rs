@@ -2714,16 +2714,18 @@ impl ThreadSafeFunction {
                 js: cb_js,
                 napi_threadsafe_function_call_js,
             } => {
-                let js: JSValue = cb_js.get().unwrap_or(JSValue::UNDEFINED);
-
                 let env_ref = unsafe { &*env };
                 let _hs = NapiHandleScope::open_scoped(env_ref);
-                napi_threadsafe_function_call_js(
-                    env,
-                    napi_value::create(env_ref, js),
-                    self.ctx,
-                    task,
-                );
+                // Node.js passes a null pointer for js_callback when the threadsafe
+                // function was created without a JS function. Native modules (e.g.
+                // napi-rs, lightningcss) rely on `js_callback == NULL` to detect this,
+                // so passing `undefined` here causes them to treat it as a real value
+                // and fail type checks.
+                let js_callback = match cb_js.get() {
+                    Some(js) => napi_value::create(env_ref, js),
+                    None => napi_value(0),
+                };
+                napi_threadsafe_function_call_js(env, js_callback, self.ctx, task);
             }
         }
         Ok(())

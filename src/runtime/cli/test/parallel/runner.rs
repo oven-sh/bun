@@ -196,6 +196,8 @@ pub fn run_as_coordinator(
             captured: Vec::new(),
             alive: false,
             exit_status: None,
+            reached_ready: false,
+            startup_failures: 0,
             extra_fd_stdio: [Stdio::Ignore],
         });
         let w: *mut Worker = workers.last_mut().unwrap();
@@ -581,6 +583,23 @@ impl<'a> WorkerLoop<'a> {
         // SAFETY: single-threaded worker; WORKER_CMDS is only read on this thread
         unsafe {
             WORKER_CMDS.write(Some(&raw mut self.cmds));
+        }
+
+        // Test hook for the coordinator's pre-ready crash path. Real
+        // triggers (init segfault, failed fd-3 adopt) aren't reproducible
+        // from a test; this lets parallel-startup-failure.test.ts assert
+        // the respawn loop is bounded. Same pattern as
+        // BUN_TEST_PARALLEL_SCALE_MS.
+        if vm
+            .env_loader()
+            .get(b"BUN_TEST_WORKER_EXIT_BEFORE_READY")
+            .is_some()
+        {
+            Output::pretty_errorln(
+                "test worker exiting before .ready (BUN_TEST_WORKER_EXIT_BEFORE_READY)",
+            );
+            Output::flush();
+            Global::exit(1);
         }
 
         // SAFETY: single-threaded worker; WORKER_FRAME is a process-global scratch buffer

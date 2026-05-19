@@ -1,15 +1,19 @@
-//! Compile-only fixture for issue #31089.
+//! Compile-only fixture for the `AtomicCell` soundness test driven by
+//! `test/regression/atomic-cell-send-sync-soundness.test.ts`. Covers
+//! issue #31089 (the `T: Copy` bound alone was unsound) and the
+//! coderabbit follow-up on PR #31090 (the `unsafe_impl_atom!` macro
+//! must not silently grant `AtomCrossThread`).
 //!
-//! Two `Copy + !Send + !Sync` payloads (`PhantomData<*const ()>`) that a
-//! downstream crate might plausibly produce: `Evil` is plain `Copy`, and
-//! `EvilAtom` additionally gets `unsafe_impl_atom!`'d. Before the
+//! Two `Copy + !Send + !Sync` payloads (`PhantomData<*const ()>`) that
+//! a downstream crate might plausibly produce: `Evil` is plain `Copy`,
+//! and `EvilAtom` additionally gets `unsafe_impl_atom!`'d. Before the
 //! `AtomCrossThread` marker gated `AtomicCell<T>`'s `Send`/`Sync` impls
 //! the plain wrap laundered `Evil` across threads; before
 //! `AtomCrossThread` was decoupled from `unsafe_impl_atom!` the macro
 //! path laundered `EvilAtom`. Both must fail to compile with the fix in
-//! place. The companion `031089.test.ts` asserts `cargo check` fails
-//! citing the missing `AtomCrossThread` bound — so reverting either
-//! half of the production change flips the test red.
+//! place. The test driver asserts `cargo check` fails citing the
+//! missing `AtomCrossThread` bound — reverting either half of the
+//! production change flips the test red.
 #![allow(dead_code)]
 
 use core::marker::PhantomData;

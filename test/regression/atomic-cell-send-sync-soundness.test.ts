@@ -1,6 +1,10 @@
-// Regression test for https://github.com/oven-sh/bun/issues/31089.
+// Compile-time soundness test for `bun_core::AtomicCell<T>`'s Send/Sync
+// bounds. Not a true regression (the bug was latent since `AtomicCell`
+// was introduced, never "worked" in a prior release — see issue #31089,
+// filed after a UB audit; PR #31090), so it lives in test/regression/
+// rather than test/regression/issue/ per test/CLAUDE.md.
 //
-// Two soundness holes have to stay closed for `bun_core::AtomicCell<T>`:
+// Two soundness holes have to stay closed:
 //
 //  1. `AtomicCell<T>: Send/Sync` must not be granted for every `T: Copy`
 //     — a `Copy + !Send` payload (e.g. anything wrapping
@@ -9,10 +13,10 @@
 //  2. The `unsafe_impl_atom!` macro must not silently grant the
 //     `AtomCrossThread` marker to every caller. If it did, a downstream
 //     `unsafe_impl_atom!(Evil)` would re-open the same hole through a
-//     different door. (Coderabbit flagged this on #31090 and it's the
+//     different door. (CodeRabbit flagged this on #31090 and it's the
 //     reason `Atom` and `AtomCrossThread` are two separate opt-ins.)
 //
-// The companion `031089-fixture/` crate exercises both: a plain `Evil`
+// The companion `-fixture/` crate exercises both: a plain `Evil`
 // (no `Atom`) and an `EvilAtom` that DOES get `unsafe_impl_atom!`'d but
 // never gets `AtomCrossThread`. With both halves of the fix in place
 // `cargo check` emits four E0277s (two per fixture type, one for Send
@@ -24,7 +28,7 @@ import { expect, test } from "bun:test";
 import { join } from "node:path";
 
 const cargo = which("cargo");
-const fixtureDir = join(import.meta.dir, "031089-fixture");
+const fixtureDir = join(import.meta.dir, "atomic-cell-send-sync-soundness-fixture");
 
 test.skipIf(!cargo)(
   "AtomicCell<Copy + !Send> fails to compile (soundness bound via AtomCrossThread)",

@@ -1,0 +1,22 @@
+# Compile-only fixture for test/regression/atomic-cell-send-sync-soundness.test.ts
+# — verifies that `bun_core::AtomicCell<T>` refuses to grant `Send`/`Sync` to
+# a `Copy + !Send` payload (issue #31089) and that `unsafe_impl_atom!` does
+# not silently grant `AtomCrossThread` (coderabbit follow-up on PR #31090).
+# The test invokes `cargo check` on this crate and asserts the expected
+# trait-bound errors fire.
+#
+# Detached from the parent workspace so `cargo check` on the top-level
+# doesn't pull it in (it intentionally fails to compile).
+[workspace]
+
+[package]
+name = "atomic_cell_send_sync_soundness_fixture"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+bun_core = { path = "../../../src/bun_core" }
+
+[lib]
+path = "src/lib.rs"

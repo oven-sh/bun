@@ -4253,6 +4253,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
                 0x0A /* '\n' */ => {
                     // the first newline is always excluded from a literal
+                    self.newline();
                     self.inc(1);
                     if Enc::wide(self.next()) == 0x09 {
                         // tab for indentation

@@ -856,6 +856,14 @@ folded: >
         test("explicit indicator does not error on more-indented leading empty", () => {
           expect(YAML.parse("- |1\n    \n text\n")).toEqual(["   \ntext\n"]);
         });
+
+        test("rejects content at column 0 with explicit indicator", () => {
+          // 4/4 reference parsers error here; previously Bun's stale
+          // line_indent let column-0 content slip through as if indented.
+          expect(() => YAML.parse("- |1\nx\n")).toThrow();
+          expect(() => YAML.parse("- |2\nx\n")).toThrow();
+          expect(() => YAML.parse("- >1\nx\n")).toThrow();
+        });
       });
 
       describe("context", () => {

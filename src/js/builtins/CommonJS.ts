@@ -16,7 +16,11 @@ export function require(this: JSCommonJSModule, _: string) {
 $overriddenName = "require";
 $visibility = "Private";
 export function overridableRequire(this: JSCommonJSModule, originalId: string, options: { paths?: string[] } = {}) {
-  const id = $resolveSync(originalId, this.filename, false, false, options ? options.paths : undefined);
+  // Pass `this` as the 6th argument so a user-overridden `Module._resolveFilename`
+  // sees a proper `parent` module object even when `this` wasn't registered in
+  // $requireMap (e.g. a require created by `createRequire(import.meta.url)`
+  // from an ESM file).
+  const id = $resolveSync(originalId, this.filename, false, false, options ? options.paths : undefined, this);
   if (id.startsWith("node:")) {
     if (id !== originalId) {
       // A terrible special case where Node.js allows non-prefixed built-ins to
@@ -152,6 +156,10 @@ export function requireResolve(
     false,
     true,
     options ? options.paths : undefined,
+    // Pass `this` as the parent module when available, so a user-overridden
+    // `Module._resolveFilename` sees a proper `parent` even when `this`
+    // wasn't registered in $requireMap.
+    typeof this === "object" ? this : undefined,
   );
 }
 

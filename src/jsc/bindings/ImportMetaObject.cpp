@@ -299,6 +299,12 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     bool isESM = callFrame->argument(2).asBoolean();
     bool isRequireDotResolve = callFrame->argument(3).isTrue();
     JSValue userPathList = callFrame->argument(4);
+    // Optional 6th argument: the parent JSCommonJSModule object. Passed by
+    // `overridableRequire` / `requireResolve` so that a custom
+    // `Module._resolveFilename` override sees a real `parent` (matching
+    // Node.js) even when the calling module wasn't registered in
+    // `requireMap` — e.g. a `createRequire(import.meta.url)` from ESM.
+    JSValue parentModuleValue = callFrame->argument(5);
 
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -320,6 +326,18 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                 if (overrideHandler) [[likely]] {
                     ASSERT(overrideHandler->isCallable());
                     JSValue parentModuleObject = globalObject->requireMap()->get(globalObject, from);
+
+                    // Fall back to the caller-supplied parent module when the
+                    // requireMap lookup misses. This is the case for a
+                    // `createRequire(import.meta.url)` bound require: the
+                    // synthetic JSCommonJSModule that `createBoundRequireFunction`
+                    // built is never inserted into requireMap, but it carries
+                    // the correct filename/id/path for the override handler.
+                    if (parentModuleObject.isUndefinedOrNull() && parentModuleValue.isCell()) {
+                        if (dynamicDowncast<Bun::JSCommonJSModule>(parentModuleValue)) {
+                            parentModuleObject = parentModuleValue;
+                        }
+                    }
 
                     JSValue parentID = jsUndefined();
                     if (auto* parent = dynamicDowncast<Bun::JSCommonJSModule>(parentModuleObject)) {

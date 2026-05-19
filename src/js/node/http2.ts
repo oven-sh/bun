@@ -353,6 +353,7 @@ const {
   validateBuffer,
   validateNumber,
 } = require("internal/validators");
+const { kTimeout, getTimerDuration } = require("internal/timers");
 
 let utcCache;
 
@@ -1916,6 +1917,10 @@ function assertSession(session) {
 hideFromStack(assertSession);
 
 function pushToStream(stream, data) {
+  // Activity on this stream — refresh its per-stream idle timer so a
+  // completed/in-flight stream does not prematurely fire 'timeout' while
+  // data is still being delivered.
+  stream._unrefTimer();
   if (data && stream[bunHTTP2StreamStatus] & StreamState.Closed) {
     if (!stream._readableState.ended) {
       // closed, but not ended, so resume and push null to end the stream
@@ -2065,10 +2070,37 @@ class Http2Stream extends Duplex {
     this.#sentTrailers = headers;
   }
 
-  setTimeout(timeout, callback) {
-    const session = this[bunHTTP2Session];
-    if (!session) return;
-    session.setTimeout(timeout, callback);
+  setTimeout(msecs, callback) {
+    if (this.destroyed) return this;
+
+    msecs = getTimerDuration(msecs, "msecs");
+
+    clearTimeout(this[kTimeout]);
+
+    if (msecs === 0) {
+      if (callback !== undefined) {
+        validateFunction(callback, "callback");
+        this.removeListener("timeout", callback);
+      }
+    } else {
+      this[kTimeout] = setTimeout(this._onTimeout.bind(this), msecs).unref();
+
+      if (callback !== undefined) {
+        validateFunction(callback, "callback");
+        this.once("timeout", callback);
+      }
+    }
+    return this;
+  }
+
+  _onTimeout() {
+    if (this.destroyed) return;
+    this.emit("timeout");
+  }
+
+  _unrefTimer() {
+    const timer = this[kTimeout];
+    if (timer) timer.refresh();
   }
 
   get closed() {
@@ -2148,6 +2180,11 @@ class Http2Stream extends Duplex {
     }
   }
   _destroy(err, callback) {
+    // Clear the per-stream idle timer so the timeout callback does not
+    // fire after the stream is gone.
+    clearTimeout(this[kTimeout]);
+    this[kTimeout] = null;
+
     const { ending } = this._writableState;
     this.push(null);
     if (!ending) {
@@ -2277,6 +2314,7 @@ class Http2Stream extends Duplex {
   }
 
   _writev(data, callback) {
+    this._unrefTimer();
     const session = this[bunHTTP2Session];
     if (session) {
       const native = session[bunHTTP2Native];
@@ -2308,6 +2346,7 @@ class Http2Stream extends Duplex {
     }
   }
   _write(chunk, encoding, callback) {
+    this._unrefTimer();
     const session = this[bunHTTP2Session];
     if (session) {
       const native = session[bunHTTP2Native];
@@ -3046,10 +3085,11 @@ class ServerHttp2Session extends Http2Session {
     this.destroy(error);
   }
   #onTimeout() {
-    const parser = this.#parser;
-    if (parser) {
-      parser.forEachStream(emitTimeout);
-    }
+    // Per Node.js http2 semantics, a session-level (socket) idle timeout
+    // emits 'timeout' on the session ONLY. Individual Http2Streams each
+    // manage their own per-stream idle timers via Http2Stream.setTimeout.
+    // Do NOT broadcast to every stream here — that would surface spurious
+    // timeouts on completed/in-flight streams after a short socket idle.
     this.emit("timeout");
   }
   #onDrain() {
@@ -3346,9 +3386,6 @@ class ServerHttp2Session extends Http2Session {
     this.emit("close");
   }
 }
-function emitTimeout(session: ClientHttp2Session) {
-  session.emit("timeout");
-}
 function streamCancel(stream: Http2Stream) {
   stream.close(NGHTTP2_CANCEL);
 }
@@ -3617,10 +3654,11 @@ class ClientHttp2Session extends Http2Session {
     this.destroy(error);
   }
   #onTimeout() {
-    const parser = this.#parser;
-    if (parser) {
-      parser.forEachStream(emitTimeout);
-    }
+    // Per Node.js http2 semantics, a session-level (socket) idle timeout
+    // emits 'timeout' on the session ONLY. Individual Http2Streams each
+    // manage their own per-stream idle timers via Http2Stream.setTimeout.
+    // Do NOT broadcast to every stream here — that would surface spurious
+    // timeouts on completed/in-flight streams after a short socket idle.
     this.emit("timeout");
   }
   #onDrain() {

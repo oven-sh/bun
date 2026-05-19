@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
 import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, tmpdirSync, waitForFileToExist } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, tempDir, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -500,6 +500,103 @@ it(
       // @ts-ignore
       runner?.kill?.(9);
     }
+  },
+  timeout,
+);
+
+// https://github.com/oven-sh/bun/issues/30449
+//
+// Under `--hot`, userland that calls
+//   delete require.cache[entry]; await import(entry);
+// after an atomic rename (sed -i / vim default save / prettier) used to
+// re-run top-level with stale bytes: the watchlist cached a file descriptor
+// pointing at the now-unlinked old inode, so the re-transpile read pre-edit
+// source. Assert the re-import returns the post-edit VALUE.
+//
+// The entry lives in a separate directory from the process cwd, so bun's
+// watcher only holds a file watch — without a parent-dir watch it cannot
+// observe the rename through the dir, which is what made the stale fd
+// matter in the first place.
+//
+// Linux-only: kqueue-backed platforms already evict the watchlist entry on
+// NOTE_RENAME (see `hot_reloader.zig`), so whether this repro hits the
+// stale-fd window is timing-dependent there. The fd-staleness check we rely
+// on applies on both, but the deterministic repro needs inotify.
+it.skipIf(!isLinux)(
+  "should re-import fresh source after atomic rename of entry (#30449)",
+  async () => {
+    const sourceForValue = (value: string) => `
+import { watch } from "node:fs";
+import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
+
+const ENTRY = fileURLToPath(import.meta.url);
+const r = createRequire(import.meta.url);
+
+export const VALUE = ${JSON.stringify(value)};
+
+console.write("INITIAL " + VALUE + "\\n");
+
+if (!(globalThis as any).__started) {
+  (globalThis as any).__started = true;
+  let busy = false;
+  watch(ENTRY, async () => {
+    if (busy) return;
+    busy = true;
+    try {
+      delete r.cache[ENTRY];
+      const m = await import(ENTRY);
+      console.write("IMPORTED " + (m as any).VALUE + "\\n");
+    } catch (e) {
+      console.write("FAIL " + (e as Error).message + "\\n");
+    } finally {
+      busy = false;
+    }
+  });
+}
+`;
+    using outerCwd = tempDir("hot-30449-cwd-", {});
+    using entryDir = tempDir("hot-30449-entry-", { "entry.ts": sourceForValue("V1") });
+    const root = join(String(entryDir), "entry.ts");
+    const stage = root + ".stage";
+
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "run", root],
+      env: bunEnv,
+      cwd: String(outerCwd),
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+
+    let stdout = "";
+    let sawInitial = false;
+    let sawImported = false;
+    for await (const chunk of runner.stdout) {
+      stdout += new TextDecoder().decode(chunk);
+
+      // Once we see the initial eval, trigger an atomic rename (what
+      // sed -i / vim default save / prettier do by default). Writing
+      // to a sibling and renaming over the entry replaces the inode,
+      // which is exactly what leaves the watchlist's cached fd
+      // pointing at the unlinked old inode.
+      if (!sawInitial && stdout.includes("INITIAL V1")) {
+        sawInitial = true;
+        writeFileSync(stage, sourceForValue("V2"));
+        renameSync(stage, root);
+      }
+
+      if (stdout.includes("IMPORTED ")) {
+        sawImported = true;
+        break;
+      }
+    }
+
+    // The critical assertion: the userland re-import returned the
+    // post-edit value, not the pre-edit one from the stale fd.
+    expect(sawImported).toBe(true);
+    expect(stdout).toContain("IMPORTED V2");
+    expect(stdout).not.toContain("IMPORTED V1");
   },
   timeout,
 );

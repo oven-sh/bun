@@ -514,8 +514,6 @@ extern "C" bool JSBundlerPlugin__anyMatches(Bun::JSBundlerPlugin* pluginObject, 
 extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, BunString* namespaceString, BunString* path, void* context, uint8_t defaultLoaderId, bool isServerSide)
 {
     JSC::JSGlobalObject* globalObject = plugin->globalObject();
-    WTF::String namespaceStringStr = namespaceString ? namespaceString->transferToWTFString() : WTF::String();
-    WTF::String pathStr = path ? path->transferToWTFString() : WTF::String();
 
     JSFunction* function = plugin->onLoadFunction.get(plugin);
     if (!function) [[unlikely]]
@@ -529,8 +527,10 @@ extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, BunSt
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(plugin->vm());
     JSC::MarkedArgumentBuffer arguments;
     arguments.append(WRAP_BUNDLER_PLUGIN(context));
-    arguments.append(JSC::jsString(plugin->vm(), pathStr));
-    arguments.append(JSC::jsString(plugin->vm(), namespaceStringStr));
+    arguments.append(path->transferToJS(globalObject));
+    RETURN_IF_EXCEPTION(scope, void());
+    arguments.append(namespaceString->transferToJS(globalObject));
+    RETURN_IF_EXCEPTION(scope, void());
     arguments.append(JSC::jsNumber(defaultLoaderId));
     arguments.append(JSC::jsBoolean(isServerSide));
 
@@ -553,13 +553,6 @@ extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, BunSt
 extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, BunString* namespaceString, BunString* path, BunString* importer, void* context, uint8_t kindId)
 {
     JSC::JSGlobalObject* globalObject = plugin->globalObject();
-    WTF::String namespaceStringStr = namespaceString ? namespaceString->transferToWTFString() : WTF::String("file"_s);
-    if (namespaceStringStr.length() == 0) {
-        namespaceStringStr = WTF::String("file"_s);
-    }
-    WTF::String pathStr = path ? path->transferToWTFString() : WTF::String();
-    WTF::String importerStr = importer ? importer->transferToWTFString() : WTF::String();
-    auto& vm = JSC::getVM(globalObject);
 
     JSFunction* function = plugin->onResolveFunction.get(plugin);
     if (!function) [[unlikely]]
@@ -570,11 +563,14 @@ extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, Bu
     if (callData.type == JSC::CallData::Type::None) [[unlikely]]
         return;
 
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(plugin->vm());
     JSC::MarkedArgumentBuffer arguments;
-    arguments.append(JSC::jsString(vm, pathStr));
-    arguments.append(JSC::jsString(vm, namespaceStringStr));
-    arguments.append(JSC::jsString(vm, importerStr));
+    arguments.append(path->transferToJS(globalObject));
+    RETURN_IF_EXCEPTION(scope, void());
+    arguments.append(namespaceString->transferToJS(globalObject));
+    RETURN_IF_EXCEPTION(scope, void());
+    arguments.append(importer->transferToJS(globalObject));
+    RETURN_IF_EXCEPTION(scope, void());
     arguments.append(WRAP_BUNDLER_PLUGIN(context));
     arguments.append(JSC::jsNumber(kindId));
 

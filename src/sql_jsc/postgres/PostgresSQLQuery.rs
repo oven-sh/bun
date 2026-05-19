@@ -320,8 +320,16 @@ impl PostgresSQLQuery {
                 b"name",
                 bun_string_jsc::create_utf8_for_js(global_object, field.name.slice())?,
             );
-            col.put(global_object, b"type", JSValue::js_number(field.type_oid as f64));
-            col.put(global_object, b"table", JSValue::js_number(field.table_oid as f64));
+            col.put(
+                global_object,
+                b"type",
+                JSValue::js_number(field.type_oid as f64),
+            );
+            col.put(
+                global_object,
+                b"table",
+                JSValue::js_number(field.table_oid as f64),
+            );
             // Wire protocol defines the column attribute number as signed Int16
             // (system columns like ctid have negative attnums); `Short` is u16 so
             // bitcast to match postgres.js' readInt16BE behaviour.

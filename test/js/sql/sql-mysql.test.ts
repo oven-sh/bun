@@ -146,8 +146,7 @@ if (isDockerEnabled()) {
             // so the two don't alias the same heap buffer and double-free on deinit.
             await using db = new SQL({ ...getOptions(), max: 1 });
             for (let i = 0; i < 5; i++) {
-              const r =
-                await db`select CAST(1 AS SIGNED) as this_is_a_long_column_name_over_fifteen_bytes`.simple();
+              const r = await db`select CAST(1 AS SIGNED) as this_is_a_long_column_name_over_fifteen_bytes`.simple();
               expect(r.columns[0].name).toBe("this_is_a_long_column_name_over_fifteen_bytes");
               Bun.gc(true);
             }

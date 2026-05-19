@@ -20,7 +20,6 @@
 
 use core::ffi::c_int;
 
-#[allow(unused_imports)]
 use bun_core::env_var;
 use bun_uws as uws;
 
@@ -35,6 +34,7 @@ pub struct GarbageCollectionController {
     pub gc_last_heap_size: usize,
     pub gc_last_heap_size_on_repeating_timer: usize,
     pub heap_size_didnt_change_for_repeating_timer_ticks_count: u8,
+    pub idle_full_gcs_fired: u8,
     pub gc_timer_state: GCTimerState,
     // TODO(port): lifetime — FFI handle created by uws::Timer::create_fallthrough, freed in Drop
     pub gc_repeating_timer: Option<core::ptr::NonNull<uws::Timer>>,
@@ -50,6 +50,7 @@ impl Default for GarbageCollectionController {
             gc_last_heap_size: 0,
             gc_last_heap_size_on_repeating_timer: 0,
             heap_size_didnt_change_for_repeating_timer_ticks_count: 0,
+            idle_full_gcs_fired: 0,
             gc_timer_state: GCTimerState::Pending,
             gc_repeating_timer: None,
             gc_timer_interval: 0,
@@ -129,46 +130,32 @@ impl GarbageCollectionController {
             }
         }
 
-        // PORT NOTE: in the Zig spec `vm.transpiler` is fully constructed
-        // before `JSGlobalObject.create` → `ensureWaker` → this `init`. The
-        // Rust port defers `Transpiler::init` to the high-tier
-        // `init_runtime_state` hook (which runs *after* `ensure_waker`), so
-        // `vm.transpiler.env` is still the zeroed null ptr here on the main
-        // boot path. Fall back to defaults when null — these are debug/tuning
-        // knobs (BUN_GC_TIMER_INTERVAL / BUN_GC_TIMER_DISABLE /
-        // BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS) and the dot_env loader would
-        // just be reading process env anyway.
-        let env = vm.env_loader_opt();
-
-        let mut gc_timer_interval: i32 = 1000;
-        if let Some(timer) = env.and_then(|e| e.get(b"BUN_GC_TIMER_INTERVAL")) {
-            if let Some(parsed) = bun_core::fmt::parse_decimal::<i32>(timer) {
-                if parsed > 0 {
-                    gc_timer_interval = parsed;
-                }
-            }
+        // init() runs from ensure_waker() before Transpiler::init has copied
+        // the process environment into vm.transpiler.env, so these go
+        // through bun_core::env_var (process-environment backed), not
+        // vm.env_loader_opt().
+        self.gc_timer_interval = match env_var::BUN_GC_TIMER_INTERVAL.get() {
+            Some(interval) => i32::try_from(interval).unwrap_or(1000),
+            None => 1000,
+        };
+        if self.gc_timer_interval <= 0 {
+            self.gc_timer_interval = 1000;
         }
-        self.gc_timer_interval = gc_timer_interval;
 
-        if let Some(val) = env.and_then(|e| e.get(b"BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS")) {
-            if let Some(parsed) = bun_core::fmt::parse_decimal::<c_int>(val) {
-                if parsed >= 0 {
-                    crate::virtual_machine::Bun__defaultRemainingRunsUntilSkipReleaseAccess
-                        .store(parsed, core::sync::atomic::Ordering::Relaxed);
-                }
+        if let Some(runs) = env_var::BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS.get() {
+            if let Ok(val) = c_int::try_from(runs) {
+                crate::virtual_machine::Bun__defaultRemainingRunsUntilSkipReleaseAccess
+                    .store(val, core::sync::atomic::Ordering::Relaxed);
             }
         }
 
-        self.disabled = env.is_some_and(|e| e.has(b"BUN_GC_TIMER_DISABLE"));
+        self.disabled = env_var::BUN_GC_TIMER_DISABLE.get().unwrap_or(false);
 
         if !self.disabled {
             let ext = std::ptr::from_mut::<Self>(self);
-            self.gc_repeating_timer_mut().set(
-                ext,
-                Some(on_gc_repeating_timer),
-                gc_timer_interval,
-                gc_timer_interval,
-            );
+            let interval = self.gc_timer_interval;
+            self.gc_repeating_timer_mut()
+                .set(ext, Some(on_gc_repeating_timer), interval, interval);
         }
     }
 
@@ -223,6 +210,7 @@ impl GarbageCollectionController {
             self.gc_repeating_timer_mut()
                 .set(ext, Some(on_gc_repeating_timer), interval, interval);
             self.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
+            self.idle_full_gcs_fired = 0;
         } else if setting == GcRepeatSetting::Slow && self.gc_repeating_timer_fast {
             self.gc_repeating_timer_fast = false;
             let ext = std::ptr::from_mut::<Self>(self);
@@ -244,10 +232,23 @@ impl GarbageCollectionController {
     fn process_gc_timer_with_heap_size(&mut self, vm: &VM, this_heap_size: usize) {
         let prev = self.gc_last_heap_size;
 
+        // Growth here means allocation resumed. update_gc_repeat_timer(Fast)
+        // only clears idle_full_gcs_fired on a genuine slow→fast transition;
+        // while the 30-tick window is running we're still in fast mode, so
+        // clear it directly. The stable-tick counter is left alone —
+        // resetting it from this high-frequency path would starve the idle
+        // Full GC entirely.
+        if this_heap_size > prev {
+            self.idle_full_gcs_fired = 0;
+        }
+
         match self.gc_timer_state {
             GCTimerState::RunOnNextTick => {
-                // When memory usage is not stable, run the GC more.
-                if this_heap_size != prev {
+                // Only growth signals activity. A decrease is the async GC we
+                // just requested freeing memory; treating it as activity would
+                // cancel reduction mode and prevent the slow-interval
+                // transition from ever being reached.
+                if this_heap_size > prev {
                     self.schedule_gc_timer();
                     self.update_gc_repeat_timer(GcRepeatSetting::Fast);
                 } else {
@@ -257,7 +258,7 @@ impl GarbageCollectionController {
                 self.gc_last_heap_size = this_heap_size;
             }
             GCTimerState::Pending => {
-                if this_heap_size != prev {
+                if this_heap_size > prev {
                     self.update_gc_repeat_timer(GcRepeatSetting::Fast);
 
                     if this_heap_size > prev * 2 {
@@ -265,6 +266,14 @@ impl GarbageCollectionController {
                     } else {
                         self.schedule_gc_timer();
                     }
+                } else if this_heap_size < prev {
+                    // An async GC shrank the heap. The repeating timer no
+                    // longer writes gc_last_heap_size and the growth branch
+                    // above won't fire until re-growth exceeds the pre-shrink
+                    // value, so lower the baseline here. Don't reschedule or
+                    // touch the repeat timer — that would cancel idle
+                    // reduction.
+                    self.gc_last_heap_size = this_heap_size;
                 }
             }
             GCTimerState::Scheduled => {
@@ -302,21 +311,62 @@ pub extern "C" fn on_gc_timer(timer: *mut uws::Timer) {
 
 pub extern "C" fn on_gc_repeating_timer(timer: *mut uws::Timer) {
     let this = GarbageCollectionController::from_timer_ext(timer);
+    if this.disabled {
+        return;
+    }
     let prev_heap_size = this.gc_last_heap_size_on_repeating_timer;
-    this.perform_gc();
-    this.gc_last_heap_size_on_repeating_timer = this.gc_last_heap_size;
-    if prev_heap_size == this.gc_last_heap_size_on_repeating_timer {
+    let vm = VirtualMachine::get().jsc_vm();
+    let current = vm.block_bytes_allocated();
+    this.gc_last_heap_size_on_repeating_timer = current;
+
+    // Reduction mode: previous tick fired collect_async_full(); decide
+    // whether to fire one more or converge. V8 MemoryReducer caps at 2
+    // majors per idle.
+    if this.idle_full_gcs_fired > 0 {
+        if current > prev_heap_size {
+            this.idle_full_gcs_fired = 0;
+            this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
+            vm.collect_async();
+        } else if prev_heap_size - current > (1 << 20) && this.idle_full_gcs_fired < 2 {
+            this.idle_full_gcs_fired += 1;
+            vm.collect_async_full();
+        } else {
+            this.idle_full_gcs_fired = 0;
+            this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
+            this.update_gc_repeat_timer(GcRepeatSetting::Slow);
+        }
+        return;
+    }
+
+    if current <= prev_heap_size {
         this.heap_size_didnt_change_for_repeating_timer_ticks_count = this
             .heap_size_didnt_change_for_repeating_timer_ticks_count
             .saturating_add(1);
-        if this.heap_size_didnt_change_for_repeating_timer_ticks_count >= 30 {
-            // make the timer interval longer
-            this.update_gc_repeat_timer(GcRepeatSetting::Slow);
+        if this.gc_repeating_timer_fast
+            && this.heap_size_didnt_change_for_repeating_timer_ticks_count >= 30
+        {
+            // 30 stable fast ticks of Eden GCs. collect_async() never
+            // escalates to Full here because Heap::updateAllocationLimits
+            // ratchets m_maxHeapSize on every Eden, so the 1/3 promotion
+            // ratio decays instead of crossing. Fire an explicit Full so
+            // old-gen + age-based CodeBlock jettison run before we go to
+            // the 30s interval.
+            this.idle_full_gcs_fired = 1;
+            // The counter has done its job. If the allocation path observes
+            // growth between this tick and the next, it clears
+            // idle_full_gcs_fired (bypassing reduction mode); leaving the
+            // counter at 30 would immediately re-enter this branch and fire
+            // another Full GC, skipping the < 2 cap in the reduction branch.
+            this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
+            vm.collect_async_full();
+            return;
         }
     } else {
         this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
         this.update_gc_repeat_timer(GcRepeatSetting::Fast);
     }
+
+    vm.collect_async();
 }
 
 #[repr(u8)]

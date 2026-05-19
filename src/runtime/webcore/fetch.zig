@@ -1199,6 +1199,11 @@ fn fetchImpl(
                     if (bun.isRegularFile(stat.mode)) {
                         http_body.Sendfile.offset = @min(http_body.Sendfile.offset, stat_size);
                         http_body.Sendfile.remain = @min(@max(http_body.Sendfile.remain, http_body.Sendfile.offset), stat_size) -| http_body.Sendfile.offset;
+                        // content_size becomes the Content-Length header; it must match the
+                        // number of bytes we will actually send (remain), not the full file
+                        // size. Otherwise sliced blobs advertise the whole file and the peer
+                        // hangs waiting for bytes that never arrive.
+                        http_body.Sendfile.content_size = http_body.Sendfile.remain;
                     }
                     body.detach();
 

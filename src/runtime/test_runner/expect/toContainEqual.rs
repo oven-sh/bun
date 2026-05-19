@@ -37,8 +37,7 @@ pub fn to_contain_equal(
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     let this_value = frame.this();
-    let (this, value, not) =
-        this.matcher_prelude(global, this_value, "toContainEqual", "<green>expected<r>")?;
+    let (this, value, not) = crate::ready_matcher!(this.matcher_prelude(global, this_value, frame, "toContainEqual", "<green>expected<r>")?);
     let arguments_ = frame.arguments_old::<1>();
     let arguments = arguments_.slice();
 

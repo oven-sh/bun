@@ -11,7 +11,7 @@ pub fn to_be_empty(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let (this, value, not) = this.matcher_prelude(global, frame.this(), "toBeEmpty", "")?;
+    let (this, value, not) = crate::ready_matcher!(this.matcher_prelude(global, frame.this(), frame, "toBeEmpty", "")?);
     let mut pass = false;
     let mut formatter = super::make_formatter(global);
     // `defer formatter.deinit()` — handled by Drop.

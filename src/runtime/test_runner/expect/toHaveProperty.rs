@@ -34,12 +34,13 @@ pub fn to_have_property(
         ev.ensure_still_alive();
     }
 
-    let value: JSValue = this.get_value(
+    let value: JSValue = crate::ready_value!(this.get_value(
         global,
         this_value,
+        frame,
         "toHaveProperty",
         "<green>path<r><d>, <r><green>value<r>",
-    )?;
+    )?);
 
     if !expected_property_path.is_string() && !expected_property_path.is_iterable(global)? {
         return Err(global.throw(format_args!("Expected path must be a string or an array")));

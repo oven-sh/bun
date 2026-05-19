@@ -15,13 +15,9 @@ pub fn to_have_last_returned_with(
 ) -> JsResult<JSValue> {
     bun_jsc::mark_binding!();
     let expected = callframe.arguments_as_array::<1>()[0];
-    let (this, returns, _value) = this.mock_prologue(
-        global_this,
-        callframe.this(),
-        "toHaveBeenLastReturnedWith",
-        "<green>expected<r>",
-        super::mock::MockKind::Returns,
-    )?;
+    let (this, returns, _value) = crate::ready_mock!(this.mock_prologue(
+        global_this, callframe, "toHaveBeenLastReturnedWith", "<green>expected<r>", super::mock::MockKind::Returns,
+    )?);
 
     let calls_count = u32::try_from(returns.get_length(global_this)?).unwrap();
     let mut pass = false;

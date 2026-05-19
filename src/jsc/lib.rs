@@ -1569,7 +1569,7 @@ pub use self::js_object::{ExternColumnIdentifier, ExternColumnIdentifierValue, J
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "CallFrame.rs"]
 pub mod call_frame;
-pub use self::call_frame::{ArgumentsSlice, CallFrame};
+pub use self::call_frame::{ArgumentsSlice, CallFrame, CallerSrcLoc};
 
 /// `JSValue.toEnumFromMap(global, "signal", SignalCode, SignalCode.Map)`
 /// (JSValue.zig:1703). Lives here (not in `bun_sys_jsc`) because the orphan

@@ -10,8 +10,7 @@ pub fn to_have_been_called(
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     bun_jsc::mark_binding!();
-    let (this, calls, _value) =
-        this.mock_prologue(global, frame.this(), "toHaveBeenCalled", "", super::mock::MockKind::Calls)?;
+    let (this, calls, _value) = crate::ready_mock!(this.mock_prologue(global, frame, "toHaveBeenCalled", "", super::mock::MockKind::Calls)?);
     // arg-check after prologue: counter bump + post_match still fire on bad-arity (matches Zig defer order).
     if !frame.arguments_as_array::<1>()[0].is_undefined() {
         return Err(global.throw_invalid_arguments(format_args!(

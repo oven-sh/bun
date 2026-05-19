@@ -11,13 +11,9 @@ pub fn to_have_been_nth_called_with(
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     let arguments = frame.arguments();
-    let (this, calls, _value) = this.mock_prologue(
-        global,
-        frame.this(),
-        "toHaveBeenNthCalledWith",
-        "<green>n<r>, <green>...expected<r>",
-        super::mock::MockKind::CallsWithSig,
-    )?;
+    let (this, calls, _value) = crate::ready_mock!(this.mock_prologue(
+        global, frame, "toHaveBeenNthCalledWith", "<green>n<r>, <green>...expected<r>", super::mock::MockKind::CallsWithSig,
+    )?);
 
     if arguments.is_empty() || !arguments[0].is_any_int() {
         return Err(global.throw_invalid_arguments(format_args!(

@@ -13,8 +13,7 @@ impl Expect {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let (this, left, not) =
-            self.matcher_prelude(global_this, callframe.this(), "toBe", "<green>expected<r>")?;
+        let (this, left, not) = crate::ready_matcher!(self.matcher_prelude(global_this, callframe.this(), callframe, "toBe", "<green>expected<r>")?);
 
         let arguments_ = callframe.arguments_old::<2>();
         let arguments = arguments_.slice();

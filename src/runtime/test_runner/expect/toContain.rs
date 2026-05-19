@@ -15,8 +15,7 @@ impl Expect {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let (this, value, not) =
-            self.matcher_prelude(global, frame.this(), "toContain", "<green>expected<r>")?;
+        let (this, value, not) = crate::ready_matcher!(self.matcher_prelude(global, frame.this(), frame, "toContain", "<green>expected<r>")?);
 
         let arguments_ = frame.arguments_old::<1>();
         let arguments = arguments_.slice();

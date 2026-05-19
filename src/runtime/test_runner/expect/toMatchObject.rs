@@ -9,8 +9,7 @@ pub fn to_match_object(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let (this, received_object, not) =
-        this.matcher_prelude(global, frame.this(), "toMatchObject", "<green>expected<r>")?;
+    let (this, received_object, not) = crate::ready_matcher!(this.matcher_prelude(global, frame.this(), frame, "toMatchObject", "<green>expected<r>")?);
     let args_buf = frame.arguments_old::<1>();
     let args = args_buf.slice();
 

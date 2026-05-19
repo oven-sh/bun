@@ -9,7 +9,7 @@ describe.skipIf(!stripeCredentials)("stripe", () => {
   const stripe = new Stripe(accessToken);
 
   test("should be able to query a charge", async () => {
-    expect(stripe.charges.retrieve(chargeId, { stripeAccount: accountId })).rejects.toThrow(
+    await expect(stripe.charges.retrieve(chargeId, { stripeAccount: accountId })).rejects.toThrow(
       `No such charge: '${chargeId}'`,
     );
   });

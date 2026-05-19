@@ -83,12 +83,13 @@ pub fn to_match_inline_snapshot(
 
     let expected_slice: Option<&[u8]> = if has_expected { Some(expected.slice()) } else { None };
 
-    let value = this.get_value(
+    let value = crate::ready_value!(this.get_value(
         global,
         this_value,
+        frame,
         "toMatchInlineSnapshot",
         "<green>properties<r><d>, <r>hint",
-    )?;
+    )?);
     Expect::inline_snapshot(
         &**this,
         global,

@@ -3844,6 +3844,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugH3__onResolve;
     } else if (handler == Bun__HTTPRequestContextDebugH3__onResolveStream) {
         return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugH3__onResolveStream;
+    } else if (handler == Bun__Expect__PendingMatcher__onResolve) {
+        return GlobalObject::PromiseFunctions::Bun__Expect__PendingMatcher__onResolve;
+    } else if (handler == Bun__Expect__PendingMatcher__onReject) {
+        return GlobalObject::PromiseFunctions::Bun__Expect__PendingMatcher__onReject;
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }

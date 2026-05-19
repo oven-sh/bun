@@ -541,11 +541,30 @@ pub const Bytes = struct {
     pub fn deinit(this: *Bytes) void {
         bun.default_allocator.free(this.stored_name.slice());
         if (this.ptr) |ptr| {
-            this.allocator.free(ptr[0..this.cap]);
+            if (isMmapBacked(this.allocator)) {
+                // Skip std.mem.Allocator.free's `@memset(ptr, undefined)`:
+                // writing to a MAP_SHARED region that may have been
+                // truncated from under us (or simply dirtying hundreds
+                // of MB of tmpfs pages right before munmap) is both
+                // unsafe and pointless.
+                this.allocator.rawFree(ptr[0..this.cap], .@"1", @returnAddress());
+            } else {
+                this.allocator.free(ptr[0..this.cap]);
+            }
         }
         this.ptr = null;
         this.len = 0;
         this.cap = 0;
+    }
+
+    fn isMmapBacked(alloc: std.mem.Allocator) bool {
+        if (comptime bun.Environment.isLinux) {
+            if (bun.linux.MemFdAllocator.isInstance(alloc)) return true;
+        }
+        if (comptime bun.Environment.isPosix) {
+            if (alloc.vtable == Blob.MmapFreeInterface.vtable) return true;
+        }
+        return false;
     }
 
     pub fn asArrayList(this: Bytes) std.ArrayListUnmanaged(u8) {

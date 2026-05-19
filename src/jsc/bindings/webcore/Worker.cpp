@@ -420,10 +420,13 @@ void Worker::terminate()
 
 void Worker::setKeepAlive(bool keepAlive)
 {
-    // Once terminate() has been called or the close task has started, the
+    // Once terminate() has been called or the close event has dispatched, the
     // worker no longer participates in the parent's liveness — the close
-    // task is the last thing to touch parent_poll_ref.
-    if (m_terminateRequested.load() || m_state.load() >= State::Closing)
+    // task is the last thing to touch parent_poll_ref. The `== Closed` gate
+    // keeps ref/unref working inside the user's 'message' handler for a
+    // message posted just before the worker exited (State::Closing is set on
+    // the worker thread before the parent drains the final queue).
+    if (m_terminateRequested.load() || m_state.load() == State::Closed)
         return;
     WebWorker__setRef(impl_, keepAlive);
 }

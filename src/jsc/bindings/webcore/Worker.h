@@ -120,7 +120,12 @@ public:
     bool postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&&);
 
     // -- State queries (safe from any thread; all loads are atomic) ----------
-    bool wasTerminated() const { return m_state.load() >= State::Closing; }
+    // wasTerminated: the close event has been dispatched on the parent. Used
+    // for the user-visible `threadId === -1` and inspector `terminated` flags.
+    // Gated on `Closed` (not `Closing`) because Closing is set on the worker
+    // thread before the parent drains final messages — the user's 'message'
+    // handler for a message posted just before exit still sees a live worker.
+    bool wasTerminated() const { return m_state.load() == State::Closed; }
     bool hasPendingActivity() const { return m_state.load() != State::Closed; }
     bool isOnline() const { return m_state.load() == State::Running; }
 

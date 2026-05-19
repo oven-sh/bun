@@ -175,9 +175,7 @@ pub fn onData(
 
             if (to_copy.len == 0) {
                 if (stream == .err) {
-                    this.pending.result = .{
-                        .err = stream.err,
-                    };
+                    this.setPendingError(stream.err);
                 } else {
                     this.pending.result = .{
                         .done = {},
@@ -241,7 +239,7 @@ pub fn append(
                 this.buffer.appendSliceAssumeCapacity(chunk);
             },
             .err => {
-                this.pending.result = .{ .err = stream.err };
+                this.setPendingError(stream.err);
             },
             .done => {},
             else => unreachable,
@@ -262,7 +260,7 @@ pub fn append(
                 @panic("Expected buffer action to be null");
             }
 
-            this.pending.result = .{ .err = stream.err };
+            this.setPendingError(stream.err);
         },
         .done => {},
         // We don't support the rest of these yet
@@ -270,6 +268,22 @@ pub fn append(
     }
 
     return;
+}
+
+/// Stores an error into `pending.result`, taking care to protect any raw
+/// `JSValue` so it survives GC until it is consumed by `toBufferedValue`,
+/// `fulfillPromise`, or `Result.deinit` (all of which unprotect it).
+///
+/// Without this, the error value's only GC root may be a `Strong` held by
+/// the owning `Response` body; if the user holds onto the `ReadableStream`
+/// but drops the `Response`, that root disappears and we would hand a
+/// collected cell to JS on the next read.
+fn setPendingError(this: *@This(), err: streams.Result.StreamError) void {
+    if (err == .JSValue) {
+        err.JSValue.protect();
+    }
+    this.pending.result.deinit();
+    this.pending.result = .{ .err = err };
 }
 
 pub fn setValue(this: *@This(), view: jsc.JSValue) void {
@@ -344,10 +358,12 @@ pub fn onCancel(this: *@This()) void {
     this.done = true;
     this.pending_value.deinit();
 
+    // Always release any stored error; setPendingError may have protected a
+    // JSValue that nothing else will consume once we mark ourselves done.
+    this.pending_buffer = &.{};
+    this.pending.result.deinit();
+    this.pending.result = .{ .done = {} };
     if (view != .zero) {
-        this.pending_buffer = &.{};
-        this.pending.result.deinit();
-        this.pending.result = .{ .done = {} };
         this.pending.run();
     }
 
@@ -380,6 +396,12 @@ pub fn deinit(this: *@This()) void {
         } else {
             this.pending.run();
         }
+    } else {
+        // `done` may have been set by onPull/onCancel without consuming a
+        // stored error (e.g. an error arrived after some buffered data and
+        // onPull returned the data as `into_array_and_done`). Release it.
+        this.pending.result.deinit();
+        this.pending.result = .{ .done = {} };
     }
     if (this.buffer_action) |*action| {
         action.deinit();
@@ -423,6 +445,7 @@ pub fn toBufferedValue(this: *@This(), globalThis: *jsc.JSGlobalObject, action: 
     if (this.pending.result == .err) {
         const err, _ = this.pending.result.err.toJSWeak(globalThis);
         this.pending.result.deinit();
+        this.pending.result = .{ .done = {} };
         this.done = true;
         this.buffer.clearAndFree();
         return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);

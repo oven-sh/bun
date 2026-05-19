@@ -858,8 +858,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 p.create_default_name(stmt.loc).expect("unreachable");
                         }
 
-                        // We only inject a name into classes when there is a decorator
-                        if class.class.has_decorators {
+                        // Inject the default name into the class when a downstream
+                        // lowering will actually dereference `class.class_name`:
+                        //   - when it has decorators (existing behavior), or
+                        //   - when it has a static `accessor` field (whose synthesized
+                        //     getter dereferences through the class binding under the
+                        //     standard-decorator lowering that `lower_class` will route
+                        //     auto-accessor classes through; without a name, the statement
+                        //     path panics at `class_name.unwrap().ref_.unwrap()`).
+                        let mut needs_default_name = class.class.has_decorators;
+                        if !needs_default_name {
+                            for prop in class.class.properties.iter() {
+                                if prop.kind == js_ast::g::PropertyKind::AutoAccessor {
+                                    needs_default_name = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if needs_default_name {
                             if class.class.class_name.is_none()
                                 || class.class.class_name.unwrap().ref_.is_none()
                             {

@@ -51,7 +51,11 @@ pub const Class = struct {
                 return false;
             }
 
-            if (property.kind == .normal) {
+            // `.auto_accessor` lowers to a `.normal` static private field whose
+            // initializer has the same class-definition-time evaluation semantics,
+            // so the initializer check must include it to avoid moving a class
+            // with `static accessor x = sideEffect()` past preceding statements.
+            if (property.kind == .normal or property.kind == .auto_accessor) {
                 if (flags.contains(.is_static)) {
                     for ([2]?Expr{ property.value, property.initializer }) |val_| {
                         if (val_) |val| {

@@ -729,7 +729,7 @@ pub mod defines_full_draft {
                 flags |= DefineDataFlags::METHOD_CALL_MUST_BE_REPLACED_WITH_UNDEFINED;
             }
             DefineData {
-                value: b.value.clone(),
+                value: b.value,
                 flags,
                 original_name: b.original_name.clone(),
             }

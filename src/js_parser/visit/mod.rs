@@ -200,7 +200,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .add_range_error(
                     Some(self.source),
                     self.source.range_of_string(strict_loc.unwrap()),
-                    b"Cannot use a \"use strict\" directive in a function with a non-simple parameter list".as_slice().into(),
+                    b"Cannot use a \"use strict\" directive in a function with a non-simple parameter list".as_slice(),
                 );
         }
 

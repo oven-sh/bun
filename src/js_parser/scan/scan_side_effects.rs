@@ -652,6 +652,13 @@ impl SideEffects {
                     Self::find_identifiers(binding, &mut decls);
                 }
 
+                // Drop the statement entirely when the destructuring pattern binds no
+                // identifiers — e.g. `if (0) var []`. An empty `var;` is invalid syntax,
+                // and the printer asserts it never sees an empty decl list.
+                if decls.is_empty() {
+                    return false;
+                }
+
                 local.decls = G::DeclList::move_from_list(decls);
                 true
             }

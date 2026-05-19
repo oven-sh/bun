@@ -601,7 +601,13 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
 
         socket[kRequest] = http_req;
         const is_upgrade = http_req.headers.upgrade;
-        if (!is_upgrade) {
+        // An Upgrade header only steers us off the request/response path when
+        // someone is actually listening for 'upgrade'. Otherwise Node surfaces
+        // the message as a normal 'request' event, and we need the response to
+        // be bound to the real socket (for `res.socket`, `writeContinue`,
+        // `writeEarlyHints`, the 'socket' event, timeout wiring, …).
+        const handleAsUpgrade = is_upgrade && server.listenerCount("upgrade") > 0;
+        if (!handleAsUpgrade) {
           if (canUseInternalAssignSocket) {
             // ~10% performance improvement in JavaScriptCore due to avoiding .once("close", ...) and removing a listener
             assignSocketInternal(http_res, socket);
@@ -620,16 +626,24 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           http_res.writeHead(503);
           http_res.end();
           socket.destroy();
-        } else if (is_upgrade) {
-          server.emit("upgrade", http_req, socket, kEmptyBuffer);
-          if (!socket._httpMessage) {
-            if (canUseInternalAssignSocket) {
-              // ~10% performance improvement in JavaScriptCore due to avoiding .once("close", ...) and removing a listener
-              assignSocketInternal(http_res, socket);
-            } else {
-              http_res.assignSocket(socket);
-            }
-          }
+        } else if (handleAsUpgrade) {
+          // Hand the connection off to the 'upgrade' handler, matching the
+          // CONNECT path: enable bidirectional streaming on the socket, tell
+          // uWS to stop HTTP-parsing inbound bytes (so they surface through
+          // `ondata`), and stay alive until the socket closes.  Without this,
+          // `socket.write()` was a silent no-op because `handle.ondrain` was
+          // undefined and the response lifecycle tore the socket down before
+          // the peer could read the 101 handshake.  (ws/rsbuild/http-proxy.)
+          socket[kEnableStreaming](true);
+          socketHandle.markAsRawMode();
+          const { promise: upgradePromise, resolve: upgradeResolve } = $newPromiseCapability(Promise);
+          socket.once("close", upgradeResolve);
+          // Forward pipelined bytes that arrived in the same TCP segment as the
+          // Upgrade headers — Node passes them as the 3rd arg so `ws.handleUpgrade`
+          // can feed them into the new WebSocket stream as `head`.
+          const head = connectHead ? connectHead : kEmptyBuffer;
+          server.emit("upgrade", http_req, socket, head);
+          return upgradePromise;
         } else if (http_req.headers.expect !== undefined) {
           if (http_req.headers.expect === "100-continue") {
             if (server.listenerCount("checkContinue") > 0) {

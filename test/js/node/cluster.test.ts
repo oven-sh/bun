@@ -1,4 +1,5 @@
-import { bunEnv, bunRun, joinP, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, joinP, tempDirWithFiles } from "harness";
+import path from "node:path";
 
 test("cloneable and transferable equals", () => {
   const dir = tempDirWithFiles("bun-test", {
@@ -119,4 +120,29 @@ if (cluster.isPrimary) {
 `,
   });
   bunRun(joinP(dir, "index.ts"), bunEnv, true);
+});
+
+// https://github.com/oven-sh/bun/issues/20642
+test("worker.disconnect() with a net.Server exits instead of hanging", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, "cluster", "worker-disconnect-with-tcp-server-fixture.ts")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  // Two workers each: listening + disconnecting; primary logs two worker exits + final line.
+  const listening = [...stdout.matchAll(/\[worker \d+\] listening/g)].length;
+  const disconnecting = [...stdout.matchAll(/\[worker \d+\] disconnecting/g)].length;
+  const workerExited = [...stdout.matchAll(/\[master\] worker \d+ exited/g)].length;
+  expect({ listening, disconnecting, workerExited }).toEqual({
+    listening: 2,
+    disconnecting: 2,
+    workerExited: 2,
+  });
+  expect(stdout).toContain("[master] all workers exited");
+  expect(exitCode).toBe(0);
 });

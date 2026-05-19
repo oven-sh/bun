@@ -32,6 +32,8 @@ describe.skipIf(!(isLinux || isMacOS))("Bun.Transpiler.transformSync with trunca
         expect.stringContaining("ok: 4-byte lead + 1 continuation"),
         expect.stringContaining("ok: 4-byte lead + 2 continuations"),
         expect.stringContaining("ok: sourceMappingURL pragma + 4-byte lead"),
+        expect.stringContaining("ok: <! + 1 ASCII byte"),
+        expect.stringContaining("ok: <! + 2-byte codepoint"),
         "DONE",
       ],
       stderr: "",

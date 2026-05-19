@@ -1289,6 +1289,19 @@ export default <>hi</>
     expect(() => bun.transformSync("bad??!?!?!")).toThrow("Unexpected ?");
   });
 
+  it("'<!' near end of source does not read past the buffer", () => {
+    // The lexer peeks 2 codepoints after seeing `<!` to check for `<!--`. Previously the peek
+    // helper re-read the same codepoint N times instead of advancing, overshooting the end of
+    // the source when fewer than N bytes remained (or when the next codepoint was multi-byte).
+    const t = new Bun.Transpiler({ loader: "js" });
+    expect(() => t.transformSync("<!x")).toThrow();
+    expect(() => t.transformSync("<!ñ")).toThrow();
+    expect(() => t.transformSync("<!")).toThrow();
+    expect(() => t.transformSync(Buffer.from([0x3c, 0x21, 0xf0]))).toThrow();
+    expect(() => t.transformSync("<!--")).toThrow("Legacy HTML comments not implemented yet");
+    expect(() => t.transformSync("<!-a")).toThrow();
+  });
+
   it("invalid logLevel throws", () => {
     expect(
       () =>

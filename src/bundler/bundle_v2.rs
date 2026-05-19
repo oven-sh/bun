@@ -4961,13 +4961,22 @@ pub mod bv2_impl {
                     ($ast:expr) => {{
                         let ast = $ast;
                         for v in ast.items_parts_mut() {
-                            drop(core::mem::replace(v, bun_alloc::ArenaVec::new_in(*v.allocator())));
+                            drop(core::mem::replace(
+                                v,
+                                bun_alloc::ArenaVec::new_in(*v.allocator()),
+                            ));
                         }
                         for v in ast.items_symbols_mut() {
-                            drop(core::mem::replace(v, bun_alloc::ArenaVec::new_in(*v.allocator())));
+                            drop(core::mem::replace(
+                                v,
+                                bun_alloc::ArenaVec::new_in(*v.allocator()),
+                            ));
                         }
                         for v in ast.items_import_records_mut() {
-                            drop(core::mem::replace(v, bun_alloc::ArenaVec::new_in(*v.allocator())));
+                            drop(core::mem::replace(
+                                v,
+                                bun_alloc::ArenaVec::new_in(*v.allocator()),
+                            ));
                         }
                         for v in ast.items_named_imports_mut() {
                             drop(core::mem::take(v));

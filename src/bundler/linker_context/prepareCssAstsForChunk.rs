@@ -397,10 +397,11 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                             // so we don't mutate the shared backing array.
                             // Preserve the "@layer" statements from the
                             // prefix and append the remaining tail.
-                            let mut new_rules: ArenaVec<BundlerCssRule> = ArenaVec::with_capacity_in(
-                                layer_count + (original_rules.len() - prefix_end),
-                                bump,
-                            );
+                            let mut new_rules: ArenaVec<BundlerCssRule> =
+                                ArenaVec::with_capacity_in(
+                                    layer_count + (original_rules.len() - prefix_end),
+                                    bump,
+                                );
                             for rule in &original_rules[0..prefix_end] {
                                 if matches!(rule, BundlerCssRule::LayerStatement(_)) {
                                     // SAFETY: Zig by-value copy of arena-backed rule.

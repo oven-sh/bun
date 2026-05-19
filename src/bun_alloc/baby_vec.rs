@@ -192,7 +192,10 @@ impl<'a, T> BabyVec<'a, T> {
 
     pub fn swap_remove(&mut self, index: usize) -> T {
         let len = self.len as usize;
-        assert!(index < len, "BabyVec::swap_remove index {index} >= len {len}");
+        assert!(
+            index < len,
+            "BabyVec::swap_remove index {index} >= len {len}"
+        );
         // SAFETY: `index < len`; reading the hole then overwriting with the
         // last element (possibly itself) is the standard swap-remove. Len is
         // decremented before the read of `last` so the moved-from tail slot
@@ -320,11 +323,7 @@ impl<'a, T> BabyVec<'a, T> {
         // SAFETY: `reserve` guarantees `cap >= len + n`; the source/destination
         // ranges are disjoint (`other` borrows immutably, `self` exclusively).
         unsafe {
-            ptr::copy_nonoverlapping(
-                other.as_ptr(),
-                self.ptr.as_ptr().add(self.len as usize),
-                n,
-            );
+            ptr::copy_nonoverlapping(other.as_ptr(), self.ptr.as_ptr().add(self.len as usize), n);
             self.len += n as u32;
         }
     }
@@ -347,8 +346,7 @@ impl<'a, T> BabyVec<'a, T> {
         }
         debug_assert!(new_cap <= u32::MAX as usize, "BabyVec capacity overflow");
         let new_cap = new_cap.min(u32::MAX as usize);
-        let new_layout =
-            Layout::array::<T>(new_cap).unwrap_or_else(|_| crate::out_of_memory());
+        let new_layout = Layout::array::<T>(new_cap).unwrap_or_else(|_| crate::out_of_memory());
         let new_ptr = if self.cap == 0 {
             (&self.alloc)
                 .allocate(new_layout)

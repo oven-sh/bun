@@ -306,6 +306,7 @@ pub fn __bun_macro_context_deinit(data: *mut core::ffi::c_void) {
     // `MacroMap` and, if a macro was invoked, runs `MimallocArena::drop`
     // (→ `mi_heap_destroy`) on the lazily-created `bump`.
     drop(unsafe { Box::<MacroContext>::from_raw(data.cast::<MacroContext>()) });
+    bun_jsc::virtual_machine::drop_source_code_printer_if_macro_owned();
 }
 
 #[unsafe(no_mangle)]

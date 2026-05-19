@@ -840,8 +840,8 @@ impl PlaceContent {
                 }
                 AlignContent::ContentPosition(pos) => {
                     JustifyContent::ContentPosition(JustifyContentContentPosition {
-                        overflow: pos.overflow.clone(),
-                        value: pos.value.clone(),
+                        overflow: pos.overflow,
+                        value: pos.value,
                     })
                 }
             },

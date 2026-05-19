@@ -1138,7 +1138,7 @@ impl EnvironmentVariable {
 
     pub fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Self {
         EnvironmentVariable {
-            name: self.name.clone(),
+            name: self.name,
             indices: self.indices.clone(),
             fallback: self
                 .fallback
@@ -1367,7 +1367,7 @@ impl Clone for TokenOrValue {
             TokenOrValue::Time(v) => TokenOrValue::Time(*v),
             TokenOrValue::Resolution(v) => TokenOrValue::Resolution(*v),
             TokenOrValue::DashedIdent(v) => TokenOrValue::DashedIdent(*v),
-            TokenOrValue::AnimationName(v) => TokenOrValue::AnimationName(v.clone()),
+            TokenOrValue::AnimationName(v) => TokenOrValue::AnimationName(*v),
         }
     }
 }

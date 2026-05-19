@@ -2477,7 +2477,20 @@ pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInt
         }
 
         this.eventLoop().performGC();
-        this.waitForPromise(.{ .internal = promise });
+        // Can't use `waitForPromise` unconditionally: a never-settling
+        // top-level await (e.g. `await new Promise(() => {})`, or a
+        // promise that only settles via an 'exit'/'beforeExit' listener)
+        // would busy-spin on `tickWithoutIdle` forever at 100% CPU.
+        // Tick while there is work that could still settle it; if the
+        // loop goes idle with the promise still pending, return so the
+        // caller can fire beforeExit/exit and map it to exit code 13
+        // (Node parity — see #17636, #14951).
+        while (promise.status() == .pending) {
+            this.eventLoop().tick();
+            if (promise.status() != .pending) break;
+            if (!this.isEventLoopAlive()) break;
+            this.eventLoop().autoTick();
+        }
     }
 
     return this.pending_internal_promise.?;

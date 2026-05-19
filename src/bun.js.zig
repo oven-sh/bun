@@ -495,9 +495,27 @@ pub const Run = struct {
                     vm.eventLoop().tickPossiblyForever();
                 }
             } else {
-                while (vm.isEventLoopAlive()) {
-                    vm.tick();
-                    vm.eventLoop().autoTickActive();
+                while (true) {
+                    while (vm.isEventLoopAlive()) {
+                        vm.tick();
+                        vm.eventLoop().autoTickActive();
+                    }
+
+                    vm.onBeforeExit();
+
+                    // loadEntryPoint() may have returned with the module's
+                    // evaluation promise still pending (nothing left in the
+                    // event loop that could settle it). A beforeExit listener
+                    // may have just scheduled work that will settle it —
+                    // drain once and re-enter if so. Otherwise fall through
+                    // and the still-pending promise becomes exit code 13.
+                    if (vm.pending_internal_promise) |p| {
+                        if (p.status() == .pending) {
+                            vm.tick();
+                            if (vm.isEventLoopAlive()) continue;
+                        }
+                    }
+                    break;
                 }
 
                 if (this.ctx.runtime_options.eval.eval_and_print) {
@@ -528,7 +546,28 @@ pub const Run = struct {
                     to_print.print(vm.global, .Log, .Log);
                 }
 
-                vm.onBeforeExit();
+                // Node: if the entry module's top-level await never
+                // settled and no explicit exit code was set, warn and
+                // exit 13. If it rejected after the initial .rejected
+                // check (e.g. a beforeExit listener rejected it),
+                // surface the error so it isn't swallowed.
+                if (vm.pending_internal_promise) |p| switch (p.status()) {
+                    .pending => if (vm.exit_handler.exit_code == 0) {
+                        Output.prettyErrorln(
+                            "<r><yellow>warn<r><d>:<r> Detected unsettled top-level await in <b>{s}<r>",
+                            .{vm.main},
+                        );
+                        Output.flush();
+                        vm.exit_handler.exit_code = 13;
+                    },
+                    .rejected => if (vm.pending_internal_promise_reported_at != vm.hot_reload_counter) {
+                        _ = vm.uncaughtException(vm.global, p.result(vm.global.vm()), true);
+                        p.setHandled();
+                        vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
+                        if (vm.exit_handler.exit_code == 0) vm.exit_handler.exit_code = 1;
+                    },
+                    .fulfilled => {},
+                };
             }
 
             if (vm.log.msgs.items.len > 0) {

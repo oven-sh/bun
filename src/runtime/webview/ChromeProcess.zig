@@ -55,12 +55,13 @@ pub export fn Bun__Chrome__ensure(
     extraArgvLen: u32,
     stdoutInherit: bool,
     stderrInherit: bool,
+    detached: bool,
 ) i32 {
     if (comptime bun.Environment.isWindows) return -1;
     if (instance != null) return -1; // C++ already holds the fd
 
     const extra: []const [*:0]const u8 = if (extraArgv) |a| a[0..extraArgvLen] else &.{};
-    const fd = spawn(global.bunVM(), userDataDir, path, extra, stdoutInherit, stderrInherit) catch |err| {
+    const fd = spawn(global.bunVM(), userDataDir, path, extra, stdoutInherit, stderrInherit, detached) catch |err| {
         log("spawn failed: {s}", .{@errorName(err)});
         return -1;
     };
@@ -234,7 +235,7 @@ fn findPlaywrightShell(alloc: std.mem.Allocator) ?[:0]const u8 {
     return null;
 }
 
-fn spawn(vm: *jsc.VirtualMachine, userDataDir: ?[*:0]const u8, explicitPath: ?[*:0]const u8, extraArgv: []const [*:0]const u8, stdoutInherit: bool, stderrInherit: bool) !bun.FD {
+fn spawn(vm: *jsc.VirtualMachine, userDataDir: ?[*:0]const u8, explicitPath: ?[*:0]const u8, extraArgv: []const [*:0]const u8, stdoutInherit: bool, stderrInherit: bool, detached: bool) !bun.FD {
     if (comptime bun.Environment.isWindows) return error.Unsupported;
 
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
@@ -329,6 +330,11 @@ fn spawn(vm: *jsc.VirtualMachine, userDataDir: ?[*:0]const u8, explicitPath: ?[*
         // the same socket at both positions.
         .extra_fds = &.{ .{ .pipe = fds[1] }, .{ .pipe = fds[1] } },
         .argv0 = chrome.ptr,
+        // setsid() in the child — new session, no controlling TTY.
+        // Endpoint-protection hooks that intercept exec and write a
+        // rejection banner to /dev/tty (bypassing stdio redirection)
+        // can't reach the parent's terminal when Chrome has none.
+        .detached = detached,
     };
 
     var spawned = try (try bun.spawn.spawnProcess(

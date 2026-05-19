@@ -16,6 +16,7 @@
 #if !OS(WINDOWS)
 #include <stdatomic.h>
 
+#include <cassert>
 #include <signal.h>
 #include <termios.h>
 static int orig_termios_fd = -1;

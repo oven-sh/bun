@@ -2261,6 +2261,7 @@ unsafe impl bun_core::ffi::Zeroable for uv_write_t {}
 unsafe impl bun_core::ffi::Zeroable for uv_connect_t {}
 unsafe impl bun_core::ffi::Zeroable for Handle {}
 unsafe impl bun_core::ffi::Zeroable for Timer {}
+unsafe impl bun_core::ffi::Zeroable for uv_async_t {}
 unsafe impl bun_core::ffi::Zeroable for Pipe {}
 unsafe impl bun_core::ffi::Zeroable for uv_idle_t {}
 unsafe impl bun_core::ffi::Zeroable for uv_poll_t {}

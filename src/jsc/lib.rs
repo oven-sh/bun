@@ -1684,6 +1684,10 @@ pub mod virtual_machine;
 pub use self::virtual_machine as VirtualMachine;
 pub use self::virtual_machine::InitOptions as VirtualMachineInitOptions;
 
+#[path = "MemoryPressureWatcher.rs"]
+pub mod memory_pressure_watcher;
+pub use self::memory_pressure_watcher as MemoryPressureWatcher;
+
 #[path = "ModuleLoader.rs"]
 pub mod module_loader;
 pub use self::module_loader as ModuleLoader;

@@ -133,7 +133,7 @@ fn write_entry_item<W: Write + ?Sized>(
 // Extremely unfortunate, but necessary due to E.String not accepting pre-escaped input and this happening at the very end.
 pub fn write_escaped_json<W: Write + ?Sized>(
     index: u32,
-    graph: &Graph,
+    graph: &Graph<'_>,
     linker_graph: &LinkerGraph<'_>,
     chunks: &[Chunk],
     writer: &mut W,
@@ -177,7 +177,7 @@ impl<'a> HTMLImportManifest<'a> {
 
 pub fn write<W: Write + ?Sized>(
     index: u32,
-    graph: &Graph,
+    graph: &Graph<'_>,
     linker_graph: &LinkerGraph<'_>,
     chunks: &[Chunk],
     writer: &mut W,

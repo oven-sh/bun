@@ -56,14 +56,13 @@ pub struct AtomicCell<T: Copy> {
     inner: UnsafeCell<T>,
 }
 
-// SAFETY: every access goes through an atomic op; `T: Copy` so no drop glue
-// races. No `T: Send` bound — the only `Copy + !Send` types are raw pointers
-// / `NonNull`, and those are exactly what the `AtomicPtr` specializations
-// exist to carry across threads (matching `AtomicPtr<U>: Send + Sync`
-// unconditionally). What the receiving thread *does* with a loaded pointer is
-// on the caller, same as `AtomicPtr`.
-unsafe impl<T: Copy> Sync for AtomicCell<T> {}
-unsafe impl<T: Copy> Send for AtomicCell<T> {}
+// SAFETY: `T: Atom` means every access routes through a native atomic backing
+// (or the `AtomicPtr` specialization for pointers) and `T: Copy` means no drop
+// glue can race. Non-atomic `Copy` payloads may still use `new()`/`into_inner()`
+// locally, but they must not auto-conjure cross-thread Send/Sync through this
+// wrapper.
+unsafe impl<T: Atom> Sync for AtomicCell<T> {}
+unsafe impl<T: Atom> Send for AtomicCell<T> {}
 
 impl<T: Copy> AtomicCell<T> {
     /// `const` constructor — required because most call sites are `static`

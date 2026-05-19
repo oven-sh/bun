@@ -291,22 +291,35 @@ pub fn e_from_negated(errno: core::ffi::c_int) -> E {
 }
 
 impl SystemErrno {
-    /// Zig: `@enumFromInt(n)`. Unchecked discriminant cast.
+    /// Zig: `@enumFromInt(n)`, but as a safe Rust API: validate before
+    /// constructing the enum so invalid input panics instead of creating an
+    /// invalid `#[repr(u16)]` enum value.
     ///
-    /// On POSIX the enum is dense `0..MAX`, so we debug-assert `n < MAX`.
+    /// On POSIX the enum is dense `0..MAX`, so we assert `n < MAX`.
     /// On Windows the enum is **sparse** (dense `0..=137` plus isolated `UV_E*`
     /// discriminants in the ~3000-4095 range — see windows_errno.rs), so the
     /// `< MAX` bound does not hold for valid tags and the assert is skipped.
     #[inline]
     pub const fn from_raw(n: u16) -> SystemErrno {
-        // `as usize` on both sides papers over per-OS `MAX` typing (POSIX `u16`
-        // vs Windows `usize`) without normalizing the constant itself.
         #[cfg(not(windows))]
-        debug_assert!((n as usize) < (Self::MAX as usize));
-        // SAFETY: caller guarantees `n` is a declared `#[repr(u16)]` discriminant
-        // of `SystemErrno` (Zig `@enumFromInt` precondition). The enum is NOT
-        // contiguous on Windows; do not assume `n < MAX` implies validity there.
-        unsafe { core::mem::transmute::<u16, SystemErrno>(n) }
+        {
+            // `as usize` on both sides papers over per-OS `MAX` typing (POSIX
+            // `u16` vs Windows `usize`) without normalizing the constant.
+            assert!(
+                (n as usize) < (Self::MAX as usize),
+                "invalid SystemErrno discriminant"
+            );
+            // SAFETY: POSIX `SystemErrno` discriminants are dense in `0..MAX`,
+            // checked above.
+            unsafe { core::mem::transmute::<u16, SystemErrno>(n) }
+        }
+        #[cfg(windows)]
+        {
+            match Self::from_repr(n) {
+                Some(errno) => errno,
+                None => panic!("invalid SystemErrno discriminant"),
+            }
+        }
     }
 }
 
@@ -460,6 +473,30 @@ mod errno_name_tests {
         assert_eq!(system_errno_name(106), Some("EQFULL"));
         #[cfg(target_os = "freebsd")]
         assert_eq!(system_errno_name(97), Some("EINTEGRITY"));
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid SystemErrno discriminant")]
+    fn system_errno_from_raw_rejects_invalid_safe_input() {
+        let _ = SystemErrno::from_raw(SystemErrno::MAX as u16);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[should_panic(expected = "invalid Linux raw syscall errno")]
+    fn linux_raw_syscall_errno_rejects_invalid_tag() {
+        use crate::GetErrno;
+
+        let invalid_errno = SystemErrno::MAX as isize;
+        let raw_syscall_ret = (-invalid_errno) as usize;
+        let _ = raw_syscall_ret.get_errno();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[should_panic(expected = "invalid E discriminant")]
+    fn e_from_raw_rejects_sparse_hole() {
+        let _ = E::from_raw(138);
     }
 
     #[test]

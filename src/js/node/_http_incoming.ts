@@ -102,7 +102,12 @@ function onIncomingMessageResumeNodeHTTPResponse(this: IncomingMessage) {
       if ((bodyReadState & NodeHTTPBodyReadState.done) !== 0) {
         emitEOFIncomingMessage(this);
       }
-      this.push(resumed);
+      if (!this.push(resumed)) {
+        // Readable buffer is already full (e.g. the 'resume' event fired from
+        // a scheduled resume_() after pause() was called). Re-pause the
+        // socket so backpressure propagates; _read() will resume it again.
+        handle.pause();
+      }
     }
   }
 }
@@ -180,7 +185,18 @@ function onDataIncomingMessage(
     return;
   }
 
-  if (chunk && !this._dumped) this.push(chunk);
+  if (chunk && !this._dumped) {
+    // Mirror Node's parserOnBody: when push() returns false the Readable's
+    // internal buffer has exceeded its highWaterMark, so stop reading from
+    // the socket until _read() is called again (which will resume it).
+    // Without this, the socket keeps reading and the buffer grows unbounded.
+    if (!this.push(chunk) && !isLast) {
+      const handle = this[kHandle];
+      if (handle) {
+        handle.pause();
+      }
+    }
+  }
 
   if (isLast) {
     emitEOFIncomingMessage(this);

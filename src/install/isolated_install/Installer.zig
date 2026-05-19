@@ -618,6 +618,7 @@ pub const Installer = struct {
                                         .result => {},
                                         .err => |err| {
                                             if (err.getErrno() == .XDEV) {
+                                                PackageInstall.warnFallbackToFileCopy("hardlink");
                                                 continue :backend .copyfile;
                                             }
 
@@ -805,6 +806,7 @@ pub const Installer = struct {
                                 .err => |err| {
                                     switch (err.getErrno()) {
                                         .XDEV => {
+                                            PackageInstall.warnFallbackToFileCopy("clone");
                                             installer.supported_backend.store(.copyfile, .monotonic);
                                             continue :backend .copyfile;
                                         },
@@ -855,6 +857,7 @@ pub const Installer = struct {
                                 .result => {},
                                 .err => |err| {
                                     if (err.getErrno() == .XDEV) {
+                                        PackageInstall.warnFallbackToFileCopy("hardlink");
                                         installer.supported_backend.store(.copyfile, .monotonic);
                                         continue :backend .copyfile;
                                     }

@@ -39,21 +39,6 @@ pub mod bun_s3 {
 // re-export (e.g. `sink::SinkSignal::init`).
 type BlobSizeType = crate::webcore::BlobSizeType;
 
-/// Rust spelling of Zig's `@as(i51, @truncate(x))`: keep the low 51 bits and
-/// sign-extend bit 50. Mirrors the chunk-size truncation Zig applies before
-/// clamping, so an out-of-range `highWaterMark` (e.g. `2**52`) wraps to a sane
-/// value instead of reaching the allocator (which aborts the process).
-#[inline]
-fn truncate_i51(x: i64) -> i64 {
-    (x << 13) >> 13
-}
-
-/// Rust spelling of Zig's `@as(i52, @truncate(x))`.
-#[inline]
-fn truncate_i52(x: i64) -> i64 {
-    (x << 12) >> 12
-}
-
 // Compat: `webcore::Pipe` and Body refer to `streams::Result` / `streams::result::StreamError`.
 pub use StreamResult as Result;
 pub mod result {
@@ -133,8 +118,11 @@ impl Start {
         if let Some(chunk_size) = value.get(global_this, b"chunkSize")? {
             if chunk_size.is_number() {
                 // Zig: `@as(Blob.SizeType, @intCast(@truncate(@as(i52, chunkSize.toInt64()))))`
+                // — `(x << 12) >> 12` is `@as(i52, @truncate(x))`: keep low 52 bits,
+                // sign-extend bit 51, so out-of-range values wrap instead of reaching
+                // the allocator as a multi-PB reserve.
                 return Ok(Start::ChunkSize(
-                    truncate_i52(chunk_size.to_int64()) as BlobSizeType
+                    ((chunk_size.to_int64() << 12) >> 12) as BlobSizeType,
                 ));
             }
         }
@@ -213,8 +201,9 @@ impl Start {
                     if chunk_size_val.is_number() {
                         empty = false;
                         // Zig: `@intCast(@max(0, @as(i51, @truncate(toInt64()))))`
-                        chunk_size =
-                            0i64.max(truncate_i51(chunk_size_val.to_int64())) as BlobSizeType;
+                        // — `(x << 13) >> 13` is `@as(i51, @truncate(x))`.
+                        chunk_size = 0i64.max((chunk_size_val.to_int64() << 13) >> 13)
+                            as BlobSizeType;
                     }
                 }
 
@@ -234,8 +223,9 @@ impl Start {
                 {
                     if chunk_size_val.is_number() {
                         // Zig: `@intCast(@max(0, @as(i51, @truncate(toInt64()))))`
-                        chunk_size =
-                            0i64.max(truncate_i51(chunk_size_val.to_int64())) as BlobSizeType;
+                        // — `(x << 13) >> 13` is `@as(i51, @truncate(x))`.
+                        chunk_size = 0i64.max((chunk_size_val.to_int64() << 13) >> 13)
+                            as BlobSizeType;
                     }
                 }
 
@@ -301,8 +291,9 @@ impl Start {
                     if chunk_size_val.is_number() {
                         empty = false;
                         // Zig: `@intCast(@max(256, @as(i51, @truncate(toInt64()))))`
-                        chunk_size =
-                            256i64.max(truncate_i51(chunk_size_val.to_int64())) as BlobSizeType;
+                        // — `(x << 13) >> 13` is `@as(i51, @truncate(x))`.
+                        chunk_size = 256i64.max((chunk_size_val.to_int64() << 13) >> 13)
+                            as BlobSizeType;
                     }
                 }
 

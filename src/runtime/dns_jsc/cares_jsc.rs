@@ -730,9 +730,10 @@ impl ErrorDeferred {
                 BStr::new(&code[4..])
             ))
         };
-        // Node reports libuv's negative EAI errno for getaddrinfo; the c-ares
-        // query paths (resolve*/reverse) keep the raw c-ares value.
-        let errno = if self.syscall == b"getaddrinfo" {
+        // Node reports libuv's negative EAI errno for getaddrinfo/getnameinfo
+        // (both go through uv and DNSException); the c-ares query paths
+        // (resolve*/reverse) keep the raw c-ares value.
+        let errno = if self.syscall == b"getaddrinfo" || self.syscall == b"getnameinfo" {
             getaddrinfo_uv_errno(self.errno)
         } else {
             self.errno as i32

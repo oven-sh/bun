@@ -8,11 +8,17 @@ use core::cell::Cell;
 
 // TODO(port): move externs to <area>_sys crate
 
+// musl and bionic (Android) lack getcontext/setcontext (obsoleted in
+// POSIX.1-2008, never implemented in bionic); both provide setjmp/longjmp.
 #[cfg(windows)]
 type Context = bun_sys::windows::CONTEXT;
-#[cfg(all(target_os = "linux", target_env = "musl"))]
+#[cfg(any(all(target_os = "linux", target_env = "musl"), target_os = "android"))]
 type Context = musl::jmp_buf;
-#[cfg(not(any(windows, all(target_os = "linux", target_env = "musl"))))]
+#[cfg(not(any(
+    windows,
+    all(target_os = "linux", target_env = "musl"),
+    target_os = "android"
+)))]
 type Context = libc::ucontext_t; // TODO(port): std.c.ucontext_t — confirm libc crate vs bun_sys::c
 
 thread_local! {
@@ -75,9 +81,7 @@ pub fn call_for_test(
 // `@call(.auto, func, args)`. Rust cannot forward an arbitrary heterogeneous
 // argument tuple without variadics; callers should wrap the invocation in a
 // closure. Return type uses bun_core::Error (see ExtErrType note above).
-pub fn call<T>(
-    func: impl FnOnce() -> Result<T, bun_core::Error>,
-) -> Result<T, bun_core::Error> {
+pub fn call<T>(func: impl FnOnce() -> Result<T, bun_core::Error>) -> Result<T, bun_core::Error> {
     let prev_ctx: Option<*const Context> = TOP_CTX.with(|c| c.get());
     // SAFETY: all-zero is a valid Context (CONTEXT / jmp_buf / ucontext_t are
     // #[repr(C)] POD with no NonNull/NonZero/enum fields).
@@ -104,20 +108,25 @@ unsafe extern "system" {
 }
 
 // darwin, bsd, gnu linux
-#[cfg(not(any(windows, all(target_os = "linux", target_env = "musl"))))]
+#[cfg(not(any(
+    windows,
+    all(target_os = "linux", target_env = "musl"),
+    target_os = "android"
+)))]
 unsafe extern "C" {
     pub fn setcontext(ucp: *const libc::ucontext_t) -> !;
 }
 
-// linux musl
-#[cfg(all(target_os = "linux", target_env = "musl"))]
+// linux musl / android bionic
+#[cfg(any(all(target_os = "linux", target_env = "musl"), target_os = "android"))]
 mod musl {
     use core::ffi::c_int;
     // TODO(port): Zig used @cImport(@cInclude("setjmp.h")).jmp_buf — confirm
     // exact musl jmp_buf size/align per target arch. This is a
     // STACK VALUE (`var ctx = std.mem.zeroes(Context); setjmp(&ctx)`), not an
     // opaque handle, so it must reserve real storage — a ZST would let setjmp
-    // scribble past the allocation. 32×u64 over-reserves vs every musl arch.
+    // scribble past the allocation. 32×u64 over-reserves vs every musl arch
+    // and vs bionic aarch64/x86_64 (`long[_JBLEN]` with _JBLEN = 32 / 11).
     #[repr(C, align(16))]
     pub struct jmp_buf {
         _buf: [u64; 32],
@@ -136,17 +145,23 @@ unsafe fn get_context(ctx: *mut Context) {
         // SAFETY: ctx is a valid, writable, properly-aligned CONTEXT (caller contract).
         unsafe { bun_sys::windows::ntdll_context::RtlCaptureContext(ctx) };
     }
-    #[cfg(all(target_os = "linux", target_env = "musl"))]
+    #[cfg(any(all(target_os = "linux", target_env = "musl"), target_os = "android"))]
     {
         // SAFETY: ctx is a valid, writable, properly-aligned jmp_buf (caller contract).
         let _ = unsafe { musl::setjmp(ctx) };
     }
-    #[cfg(not(any(windows, all(target_os = "linux", target_env = "musl"))))]
+    #[cfg(not(any(
+        windows,
+        all(target_os = "linux", target_env = "musl"),
+        target_os = "android"
+    )))]
     {
         // Zig called std.debug.getContext(ctx) which wraps getcontext(3).
         // The `libc` crate omits the binding on Darwin and the BSDs; declare
         // locally (uniform across all unix targets).
-        unsafe extern "C" { fn getcontext(ucp: *mut libc::ucontext_t) -> core::ffi::c_int; }
+        unsafe extern "C" {
+            fn getcontext(ucp: *mut libc::ucontext_t) -> core::ffi::c_int;
+        }
         // SAFETY: ctx is a valid, writable, properly-aligned ucontext_t (caller contract).
         let _ = unsafe { getcontext(ctx) };
     }
@@ -160,13 +175,17 @@ unsafe fn set_context(ctx: *const Context) -> ! {
         // this thread; the captured frame is still live (caller contract).
         unsafe { RtlRestoreContext(ctx, core::ptr::null()) };
     }
-    #[cfg(all(target_os = "linux", target_env = "musl"))]
+    #[cfg(any(all(target_os = "linux", target_env = "musl"), target_os = "android"))]
     {
         // SAFETY: ctx points to a jmp_buf previously filled by setjmp on this
         // thread; the captured frame is still live (caller contract).
         unsafe { musl::longjmp(ctx, 1) };
     }
-    #[cfg(not(any(windows, all(target_os = "linux", target_env = "musl"))))]
+    #[cfg(not(any(
+        windows,
+        all(target_os = "linux", target_env = "musl"),
+        target_os = "android"
+    )))]
     {
         // SAFETY: ctx points to a ucontext_t previously filled by getcontext on
         // this thread; the captured frame is still live (caller contract).

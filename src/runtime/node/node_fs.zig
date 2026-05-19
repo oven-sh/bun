@@ -2599,6 +2599,15 @@ pub const Arguments = struct {
             else
                 0;
 
+            // Peek the position argument so we can validate it even when
+            // `length == 0` short-circuits below. See
+            // https://github.com/oven-sh/bun/issues/29016 — bun used to
+            // skip this type check whenever no bytes would be read.
+            const position_value: jsc.JSValue = arguments.nextEat() orelse .null;
+            if (!position_value.isUndefinedOrNull() and !position_value.isNumber() and jsc.JSBigInt.fromJS(position_value) == null) {
+                return ctx.throwInvalidArgumentTypeValue("position", "number or bigint", position_value);
+            }
+
             //   if (length === 0) {
             //     return process.nextTick(function tick() {
             //       callback(null, 0, buffer);
@@ -2639,7 +2648,6 @@ pub const Arguments = struct {
             // } else {
             //   validatePosition(position, 'position', length);
             // }
-            const position_value: jsc.JSValue = arguments.nextEat() orelse .null;
             const position_int: i64 = if (position_value.isUndefinedOrNull())
                 -1
             else if (position_value.isNumber())

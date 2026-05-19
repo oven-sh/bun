@@ -2952,6 +2952,7 @@ pub fn getWriter(
     }
 
     var sink = jsc.WebCore.FileSink.init(bun.invalid_fd, this.globalThis.bunVM().eventLoop());
+    errdefer sink.deref();
 
     const input_path: jsc.WebCore.PathOrFileDescriptor = brk: {
         if (store.data.file.pathlike == .fd) {
@@ -2975,12 +2976,16 @@ pub fn getWriter(
 
     if (arguments.len > 0 and arguments.ptr[0].isObject()) {
         stream_start = try jsc.WebCore.streams.Start.fromJSWithTag(globalThis, arguments[0], .FileSink);
-        stream_start.FileSink.input_path = input_path;
+        if (stream_start == .FileSink) {
+            stream_start.FileSink.input_path.deinit();
+            stream_start.FileSink.input_path = input_path;
+        } else {
+            stream_start = .{ .FileSink = .{ .input_path = input_path } };
+        }
     }
 
     switch (sink.start(stream_start)) {
         .err => |err| {
-            sink.deref();
             return globalThis.throwValue(try err.toJS(globalThis));
         },
         else => {},

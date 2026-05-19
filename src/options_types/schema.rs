@@ -269,6 +269,13 @@ pub mod api {
         pub default_registry: Option<NpmRegistry>,
         /// scoped
         pub scoped: Option<NpmRegistryMap>,
+        /// When set, every package (scoped and unscoped) resolves through
+        /// this registry. Overrides `default_registry`, `scoped`,
+        /// `--registry`, and `NPM_CONFIG_REGISTRY`. Intended for IT-managed
+        /// devices where a global bunfig (or `BUN_CONFIG_FORCE_REGISTRY`)
+        /// pins installs to a corporate registry regardless of per-project
+        /// configuration.
+        pub force_registry: Option<NpmRegistry>,
         /// lockfile_path
         pub lockfile_path: Option<Box<[u8]>>,
         /// save_lockfile_path

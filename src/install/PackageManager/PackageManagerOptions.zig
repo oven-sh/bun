@@ -683,6 +683,88 @@ pub fn load(
         PackageManager.verbose_install = false;
     }
 
+    // Forced registry: pins every package (scoped and unscoped) to a single
+    // registry regardless of per-project configuration. Applied last so it
+    // wins over bunfig/npmrc `registry`, `install.scopes`, `--registry`, and
+    // `NPM_CONFIG_REGISTRY`. Set via `install.forceRegistry` in the global
+    // bunfig or the `BUN_CONFIG_FORCE_REGISTRY` environment variable. Intended
+    // for IT-managed devices that must always use a corporate registry.
+    {
+        var forced: ?Api.NpmRegistry = null;
+
+        // Read from the real process environment, not the DotEnv loader — a
+        // project-checked-in `.env` file must not be able to inject
+        // `BUN_CONFIG_FORCE_REGISTRY` and override the admin's global bunfig.
+        if (bun.env_var.BUN_CONFIG_FORCE_REGISTRY.get()) |registry_| {
+            if (registry_.len > 0 and
+                (strings.startsWith(registry_, "https://") or
+                    strings.startsWith(registry_, "http://")))
+            {
+                var api_registry = std.mem.zeroes(Api.NpmRegistry);
+                api_registry.url = registry_;
+                forced = api_registry;
+            }
+        }
+
+        if (forced == null) {
+            if (bun_install_) |config| {
+                if (config.force_registry) |force_registry| {
+                    if (force_registry.url.len > 0) {
+                        forced = force_registry;
+                    }
+                }
+            }
+        }
+
+        if (forced) |*force_registry| {
+            // If the forced registry did not supply its own credentials (env
+            // var, or URL-only string in bunfig), inherit the token already
+            // resolved from `BUN_CONFIG_TOKEN` / `NPM_CONFIG_TOKEN` / `--token`
+            // — same behaviour as `BUN_CONFIG_REGISTRY`. Skip this when the
+            // forced registry carries basic-auth (username/password), since
+            // `Scope.fromAPI` gates basic-auth computation on token being
+            // empty and we'd otherwise clobber it.
+            if (force_registry.token.len == 0 and
+                force_registry.username.len == 0 and
+                force_registry.password.len == 0)
+            {
+                force_registry.token = this.scope.token;
+            }
+            const prev_scope = this.scope;
+            const had_scoped_registries = this.registries.count() > 0;
+            // `--registry` mutates `this.scope.url` without recomputing
+            // `url_hash`, so detect it separately.
+            const had_cli_registry = if (maybe_cli) |cli| cli.registry.len > 0 else false;
+            this.scope = try Npm.Registry.Scope.fromAPI("", force_registry.*, allocator, env);
+            // Discard scoped registries so `scopeForPackageName` always falls
+            // back to `this.scope` — every package resolves through the
+            // forced registry.
+            this.registries.clearRetainingCapacity();
+
+            // Surface that the device-level override is active whenever the
+            // project configured a custom registry of any kind, so the
+            // developer isn't confused why their `install.registry`/
+            // `.npmrc`/`--registry`/`install.scopes` isn't taking effect.
+            // No notice when the project was on the default registry with
+            // no scopes and no `--registry` (nothing to be confused about).
+            if (this.log_level != .silent and
+                (prev_scope.url_hash != Npm.Registry.default_url_hash or
+                    had_scoped_registries or
+                    had_cli_registry))
+            {
+                // Rebuild without userinfo so credentials embedded in the
+                // env-var URL (e.g. `https://user:pass@host/`) don't end up
+                // in terminal/CI logs.
+                Output.note("using forced registry <b>{s}://{f}{s}<r> <d>(install.forceRegistry is set on this machine, ignoring project registry configuration)<r>", .{
+                    this.scope.url.displayProtocol(),
+                    this.scope.url.displayHost(),
+                    this.scope.url.pathname,
+                });
+                Output.flush();
+            }
+        }
+    }
+
     // If the lockfile is frozen, don't save it to disk.
     if (this.enable.frozen_lockfile) {
         this.do.save_lockfile = false;

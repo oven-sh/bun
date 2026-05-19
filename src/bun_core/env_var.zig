@@ -37,6 +37,10 @@ pub const BUN_CONFIG_DISABLE_ioctl_ficlonerange = New(kind.boolean, "BUN_CONFIG_
 ///
 /// It's unclear why this was done.
 pub const BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS = New(kind.unsigned, "BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS", .{ .default = 30 });
+/// Device-wide registry override for `bun install`. Read from the real
+/// process environment only (not the DotEnv loader), so a project-checked-in
+/// `.env` cannot inject it — see `install.forceRegistry`.
+pub const BUN_CONFIG_FORCE_REGISTRY = New(kind.string, "BUN_CONFIG_FORCE_REGISTRY", .{});
 /// Idle timeout for HTTP client sockets (fetch / `bun install`), in seconds.
 /// The timer is armed when the socket opens and re-armed on every read/write;
 /// if it fires the request fails with `error.Timeout`. Covers the TLS

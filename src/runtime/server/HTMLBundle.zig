@@ -143,6 +143,14 @@ pub const Route = struct {
             return;
         };
 
+        // `bun ./index.html` matches `/*`, so any URL that didn't hit a more
+        // specific route ends up here. For paths referencing a file that lives
+        // next to the HTML on disk (e.g. pre-bundled SvelteKit
+        // `<link rel="modulepreload">` targets), serve that file directly
+        // with a correct Content-Type instead of falling through to the SPA
+        // HTML response. https://github.com/oven-sh/bun/issues/30193
+        if (this.trySendSiblingFile(req, resp, is_head)) return;
+
         if (server.config().isDevelopment()) {
             if (server.devServer()) |dev| {
                 // DevServer's HMR path is *uws.Request-typed; H3 isn't routed
@@ -213,6 +221,133 @@ pub const Route = struct {
                 }
             },
         }
+    }
+
+    /// Try to serve a file that lives next to the HTML on disk. Returns true
+    /// if the response has been (or will be) sent, false if the caller should
+    /// continue with its normal HTML fallback.
+    ///
+    /// Scope: GET/HEAD only, same-origin paths that resolve to a regular
+    /// file **strictly inside** the HTML's directory. The HTML itself is
+    /// never served this way — that path falls through to the bundler so the
+    /// transformed/injected HTML is returned. An empty path, "/", or a
+    /// query/fragment-only URL are likewise passed through.
+    fn trySendSiblingFile(this: *Route, req: uws.AnyRequest, resp: HTTPResponse, is_head: bool) bool {
+        // RangeRequest / FileRoute.on rely on GET/HEAD semantics; any other
+        // method should flow through to the usual path where a 405/fallback
+        // is emitted.
+        const method = bun.http.Method.find(req.method()) orelse return false;
+        if (method != .GET and method != .HEAD) return false;
+
+        const raw_url = req.url();
+        // Strip query string and hash. uWS usually hands us the path-only
+        // portion, but be defensive: the code below assumes only a path.
+        const path_end = std.mem.indexOfAny(u8, raw_url, "?#") orelse raw_url.len;
+        const url_path_raw = raw_url[0..path_end];
+
+        // `bun ./index.html` always mounts the HTML at "/*"; the request URL
+        // is therefore absolute. Reject anything else so we don't join
+        // relative segments against the HTML directory.
+        if (url_path_raw.len == 0 or url_path_raw[0] != '/') return false;
+        // "/" is the HTML route itself.
+        if (url_path_raw.len == 1) return false;
+        // A NUL byte makes the path unusable as a [:0] path. Bail.
+        if (std.mem.indexOfScalar(u8, url_path_raw, 0) != null) return false;
+
+        // Percent-decode into a stack buffer. The URL path can't grow during
+        // decoding, so the input length is an upper bound.
+        var decoded_buf: bun.PathBuffer = undefined;
+        if (url_path_raw.len > decoded_buf.len) return false;
+        var fbs = std.io.fixedBufferStream(decoded_buf[0..]);
+        const decoded_len = PercentEncoding.decode(
+            @TypeOf(fbs.writer()),
+            fbs.writer(),
+            url_path_raw,
+        ) catch return false;
+        const decoded_path = decoded_buf[0..decoded_len];
+
+        // Compute the HTML file's directory. The bundle path is stored as an
+        // absolute filesystem path on the HTMLBundle.
+        const html_path = this.bundle.data.path;
+        const html_dir = bun.path.dirname(html_path, .auto);
+        if (html_dir.len == 0) return false;
+
+        // `joinAbsStringBuf` follows Node's `path.resolve` semantics: if any
+        // part is absolute, earlier parts are discarded. Our decoded URL path
+        // always starts with `/`, so strip the leading separator(s) and treat
+        // it as relative to html_dir. Without this, `/_app/…` would resolve
+        // to the filesystem root instead of `<html_dir>/_app/…`.
+        var rel_start: usize = 0;
+        while (rel_start < decoded_path.len and (decoded_path[rel_start] == '/' or decoded_path[rel_start] == '\\')) {
+            rel_start += 1;
+        }
+        const rel_path = decoded_path[rel_start..];
+        if (rel_path.len == 0) return false;
+
+        // Join html_dir + rel_path and normalize. `joinAbsStringBuf` resolves
+        // `.` / `..` segments, so traversal attempts collapse to a path we
+        // can validate.
+        var joined_buf: bun.PathBuffer = undefined;
+        const joined = bun.path.joinAbsStringBuf(
+            html_dir,
+            &joined_buf,
+            &[_][]const u8{rel_path},
+            .auto,
+        );
+
+        // Require the normalized path to stay strictly inside html_dir (the
+        // separator guard prevents `/foo/barbaz` matching base `/foo/bar`).
+        if (!bun.strings.startsWith(joined, html_dir)) return false;
+        if (joined.len <= html_dir.len) return false;
+        const sep = joined[html_dir.len];
+        if (sep != '/' and sep != '\\') return false;
+
+        // Don't serve the HTML file itself as a raw static asset — the
+        // bundler needs to transform it first.
+        if (bun.strings.eql(joined, html_path)) return false;
+
+        // Null-terminate for stat + open.
+        var nt_buf: bun.PathBuffer = undefined;
+        if (joined.len >= nt_buf.len) return false;
+        @memcpy(nt_buf[0..joined.len], joined);
+        nt_buf[joined.len] = 0;
+        const joined_z: [:0]const u8 = nt_buf[0..joined.len :0];
+
+        // Must be a regular file, not a directory / missing. Absolute path
+        // means the dirfd is just a placeholder.
+        switch (bun.sys.existsAtType(bun.FD.cwd(), joined_z)) {
+            .err => return false,
+            .result => |kind| if (kind != .file) return false,
+        }
+        debug("serving sibling file: {s}", .{joined});
+
+        // Blob.Store keeps ownership of the path string and frees it in its
+        // deinit, so dupe off the stack buffer. Using `default_allocator`
+        // (mimalloc) matches what the Store expects — Store.deinit calls
+        // `this.allocator.free` on the path when it's a `.string`.
+        const owned_path = bun.handleOom(bun.default_allocator.dupe(u8, joined));
+        var path_or_fd: jsc.Node.PathOrFileDescriptor = .{
+            .path = .{ .string = bun.PathString.init(owned_path) },
+        };
+
+        const global = this.bundle.data.global;
+        var blob = jsc.WebCore.Blob.findOrCreateFileFromPath(
+            &path_or_fd,
+            global,
+            false,
+        );
+        blob.globalThis = global;
+        // Hand the FileRoute a reference to this server so
+        // onStaticRequestComplete balances the onPendingRequest call inside
+        // FileRoute.on.
+        const file_route = FileRoute.initFromBlob(blob, .{ .server = this.server });
+        defer file_route.deref();
+        if (is_head) {
+            file_route.onHEADRequest(req, resp);
+        } else {
+            file_route.onRequest(req, resp);
+        }
+        return true;
     }
 
     /// Schedule a bundle to be built.
@@ -521,8 +656,10 @@ pub const Route = struct {
 
 const debug = bun.Output.scoped(.HTMLBundle, .hidden);
 
+const FileRoute = @import("./FileRoute.zig");
 const StaticRoute = @import("./StaticRoute.zig");
 const std = @import("std");
+const PercentEncoding = @import("../../../url.zig").PercentEncoding;
 
 const bun = @import("bun");
 const strings = bun.strings;

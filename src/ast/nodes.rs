@@ -1129,9 +1129,9 @@ pub struct Part {
     /// tree shaking isn't enabled.
     pub force_tree_shaking: bool,
 
-    /// This is true if this file has been marked as live by the tree shaking
-    /// algorithm.
-    pub is_live: bool,
+    // Liveness moved out to a sidecar `LinkerGraph::parts_live` bitset so the
+    // tree-shaking recursion's hot "already visited?" check touches a few KB
+    // of bitset words instead of striding across every 272-byte `Part`.
 
     pub tag: PartTag,
 }
@@ -1171,7 +1171,6 @@ impl Default for Part {
             dependencies: Vec::new_in(bun_alloc::AstAlloc),
             can_be_removed_if_unused: false,
             force_tree_shaking: false,
-            is_live: false,
             tag: PartTag::None,
         }
     }

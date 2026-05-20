@@ -156,13 +156,14 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
 
             // Go over each part in this file that's marked for inclusion in this chunk
             let parts = deps.parts[source_index as usize].as_slice();
+            let parts_live = &ctx.graph.parts_live[source_index as usize];
             let import_records = deps.import_records[source_index as usize].as_mut_slice();
             let imports_to_bind = &deps.imports_to_bind[source_index as usize];
             let wrap = deps.flags[source_index as usize].wrap;
             let wrapper_ref = deps.wrapper_refs[source_index as usize];
 
-            for part in parts.iter() {
-                if !part.is_live {
+            for (part_index, part) in parts.iter().enumerate() {
+                if !parts_live.is_set(part_index) {
                     continue;
                 }
 

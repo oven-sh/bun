@@ -5285,10 +5285,8 @@ pub mod bv2_impl {
                             } else {
                                 js_files.push(Index::init(u32::try_from(index).expect("int cast"))); // PERF(port): was assume_capacity
 
-                                // Mark every part live.
-                                for p in part_list.as_mut_slice() {
-                                    p.is_live = true;
-                                }
+                                // Part liveness for HMR is seeded after `linker.load`
+                                // (every part of every JS file is marked live).
                             }
 
                             // Discover all CSS roots.
@@ -5388,6 +5386,21 @@ pub mod bv2_impl {
                     .linker
                     .load(bundle_ptr, ep, scbs, js_reachable_files)
                     .map_err(|_| AllocError)?;
+            }
+
+            // HMR skips tree-shaking, so size and seed the part-liveness bitsets
+            // here: every part of every JS file is considered live.
+            {
+                let parts_col = self.linker.graph.ast.items_parts();
+                let mut parts_live: Vec<DynamicBitSetUnmanaged> =
+                    Vec::with_capacity(parts_col.len());
+                for parts in parts_col {
+                    parts_live.push(DynamicBitSetUnmanaged::init_empty(parts.len())?);
+                }
+                for &idx in js_reachable_files {
+                    parts_live[idx.get() as usize].set_all(true);
+                }
+                self.linker.graph.parts_live = parts_live;
             }
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */

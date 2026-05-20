@@ -1170,9 +1170,11 @@ pub mod parse_worker {
                 // gave up on figuring out how to fix it so that
                 // this feature could ship.
                 ast.has_lazy_export = false;
+                // Liveness for this synthetic part is seeded in
+                // `tree_shaking_and_code_splitting` (the per-part bitset
+                // does not exist at parse time).
                 ast.parts.as_mut_slice()[1] = Part {
                     stmts: ast::StoreSlice::EMPTY,
-                    is_live: true,
                     import_record_indices: {
                         // Generate a single part that depends on all the import records.
                         // This is to ensure that we generate a JavaScript bundle containing all the user's code.

@@ -284,8 +284,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     // TODO: handle directive
     if namespace_export_part_index >= part_range.part_index_begin
         && namespace_export_part_index < part_range.part_index_end
-        // SAFETY: see `parts` raw-pointer note above.
-        && unsafe { (*parts)[namespace_export_part_index as usize].is_live }
+        && c.graph.parts_live[source_index].is_set(namespace_export_part_index as usize)
     {
         let ns_part_stmts: &[Stmt] =
             unsafe { (*parts)[namespace_export_part_index as usize].stmts }.slice();
@@ -328,13 +327,13 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     // SAFETY: see `parts` raw-pointer note above.
     let parts_len = unsafe { (&*parts).len() };
     for index_ in 0..parts_len {
-        // SAFETY: index in bounds.
-        let part: &Part = unsafe { &(*parts)[index_] };
         let index = part_range.part_index_begin + (index_ as u32);
-        if !part.is_live {
+        if !c.graph.parts_live[source_index].is_set(index as usize) {
             // Skip the part if it's not in this chunk
             continue;
         }
+        // SAFETY: index in bounds.
+        let part: &Part = unsafe { &(*parts)[index_] };
 
         if index == namespace_export_part_index {
             // Skip the namespace export part because we already handled it above
@@ -442,8 +441,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                             .graph
                             .top_level_symbol_to_parts(source_index as u32, export_ref)[0]
                             as usize;
-                        let export_part = &ast.parts.as_slice()[part_idx];
-                        if export_part.is_live {
+                        if c.graph.parts_live[source_index].is_set(part_idx) {
                             // PTR_AUDIT(#1): `*prop` is a bitwise copy of
                             // `e_object.properties[i]` (see `copy_nonoverlapping`
                             // above). A plain `*prop = …` would run `Drop` on the

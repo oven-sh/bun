@@ -916,11 +916,40 @@ impl<'a> LinkerContext<'a> {
     pub fn tree_shaking_and_code_splitting(&mut self) -> Result<(), AllocError> {
         let _trace = bun::perf::trace("Bundler.treeShakingAndCodeSplitting");
 
+        // Size the per-file part-liveness bitsets now that `scan_imports_and_exports`
+        // has finished pushing wrapper / entry-point parts.
+        {
+            let loaders = self.parse_graph().input_files.items_loader();
+            let parts_col = self.graph.ast.items_parts();
+            let mut parts_live: Vec<bun_collections::DynamicBitSetUnmanaged> =
+                Vec::with_capacity(parts_col.len());
+            for (i, parts) in parts_col.iter().enumerate() {
+                let mut bits =
+                    bun_collections::DynamicBitSetUnmanaged::init_empty(parts.len())?;
+                // The HTML loader's `ParseTask` builds its synthetic part 1 already
+                // live (so the JS-chunk visitor follows every embedded import record).
+                // `mark_file_live_for_tree_shaking` short-circuits for HTML and never
+                // walks its parts, so seed the bit here to preserve the old
+                // `Part::is_live = true` initializer.
+                if loaders
+                    .get(i)
+                    .is_some_and(|l| *l == Loader::Html)
+                    && parts.len() > 1
+                {
+                    bits.set(1);
+                }
+                parts_live.push(bits);
+            }
+            self.graph.parts_live = parts_live;
+        }
+
         // PORT NOTE: reshaped for borrowck — these slices alias into self.graph;
         // Zig held them simultaneously. The SoA columns are physically disjoint
         // and the underlying slabs don't reallocate during tree-shaking, so we
         // cache raw column base pointers and reborrow at each recursive call.
         let parts: *mut [bun_ast::PartList<'a>] = self.graph.ast.items_parts_mut();
+        let parts_live: *mut [bun_collections::DynamicBitSetUnmanaged] =
+            self.graph.parts_live.as_mut_slice();
         let import_records: *const [bun_ast::import_record::List<'a>] =
             self.graph.ast.items_import_records();
         let css_reprs: *const [crate::bundled_ast::CssCol] = self.graph.ast.items_css();
@@ -944,6 +973,7 @@ impl<'a> LinkerContext<'a> {
             entry_point_kinds,
             css_reprs,
             parts,
+            parts_live,
             distances,
             file_entry_bits,
         ) = unsafe {
@@ -954,6 +984,7 @@ impl<'a> LinkerContext<'a> {
                 &*entry_point_kinds,
                 &*css_reprs,
                 &mut *parts,
+                &mut *parts_live,
                 &mut *distances,
                 &mut *file_entry_bits,
             )
@@ -966,6 +997,7 @@ impl<'a> LinkerContext<'a> {
             let mut ctx = TreeShakeCtx {
                 side_effects,
                 parts,
+                parts_live,
                 import_records,
                 entry_point_kinds,
                 css_reprs,
@@ -2630,7 +2662,8 @@ impl<'a> js_printer::RequireOrImportMetaSource for LinkerContext<'a> {
 // register-sized arguments.
 pub struct TreeShakeCtx<'a, 'r> {
     pub side_effects: &'r [SideEffects],
-    pub parts: &'r mut [bun_ast::PartList<'a>],
+    pub parts: &'r [bun_ast::PartList<'a>],
+    pub parts_live: &'r mut [bun_collections::DynamicBitSetUnmanaged],
     pub import_records: &'r [bun_ast::import_record::List<'a>],
     pub entry_point_kinds: &'r [EntryPoint::Kind],
     pub css_reprs: &'r [crate::bundled_ast::CssCol],
@@ -2827,9 +2860,9 @@ impl<'a> LinkerContext<'a> {
 
             // Also include any statement-level imports. Iterate by index so we
             // don't hold a borrow of `part`/`parts` across the recursive call —
-            // the recursion never resizes this part's `import_record_indices`
-            // (only flips `is_live`), so re-slicing each iteration is sound and
-            // matches Zig's plain `for (part.import_record_indices.slice())`.
+            // the recursion never resizes this part's `import_record_indices`,
+            // so re-slicing each iteration is sound and matches Zig's plain
+            // `for (part.import_record_indices.slice())`.
             let import_indices_len = part.import_record_indices.len();
             for ii in 0..import_indices_len {
                 let import_index = ctx.parts[source_index as usize].as_slice()[part_index]
@@ -2891,17 +2924,20 @@ impl<'a> LinkerContext<'a> {
         part_index: crate::IndexInt,
         source_index: crate::IndexInt,
     ) {
-        let part: &mut Part =
-            &mut ctx.parts[source_index as usize].as_mut_slice()[part_index as usize];
-
-        // only once
-        if part.is_live {
-            return;
+        // only once — check the sidecar bitset first so the fast-path early
+        // return does not have to load the 272-byte `Part`.
+        {
+            let bits = &mut ctx.parts_live[source_index as usize];
+            if bits.is_set(part_index as usize) {
+                return;
+            }
+            bits.set(part_index as usize);
         }
-        part.is_live = true;
 
         #[cfg(debug_assertions)]
         {
+            let part: &Part =
+                &ctx.parts[source_index as usize].as_slice()[part_index as usize];
             let parse_graph = self.parse_graph();
             let stmts: &[Stmt] = part.stmts.slice();
             debug_tree_shake!(
@@ -2937,10 +2973,10 @@ impl<'a> LinkerContext<'a> {
         // Include the file containing this part
         self.mark_file_live_for_tree_shaking(ctx, source_index);
 
-        // The recursion above/below only flips `is_live` flags; it never resizes
-        // any part's `dependencies`, so the slice's len/ptr are stable. Iterate
-        // by index and re-borrow per iteration to satisfy borrowck without the
-        // per-call `Vec` clone the original port did.
+        // The recursion above/below only flips bits in `ctx.parts_live`; it never
+        // resizes any part's `dependencies`, so the slice's len/ptr are stable.
+        // Iterate by index and re-borrow per iteration to satisfy borrowck without
+        // the per-call `Vec` clone the original port did.
         let dependencies_len =
             ctx.parts[source_index as usize].as_slice()[part_index as usize].dependencies.len();
 

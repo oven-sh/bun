@@ -32,6 +32,14 @@ bun_core::declare_scope!(LinkerGraph, visible);
 pub struct LinkerGraph<'a> {
     pub files: FileList,
     pub files_live: BitSet,
+    /// Per-part liveness — `parts_live[source_index].is_set(part_index)`.
+    /// One bitset per source file, sized to that file's `parts.len()`.
+    /// Populated by `tree_shaking_and_code_splitting` (regular link) or by
+    /// the DevServer chunk path (which marks every JS-file part live);
+    /// read-only thereafter. Replaces the former `Part::is_live: bool` so the
+    /// tree-shaking visited-check doesn't pull a full 272-byte `Part` into
+    /// cache for a 1-bit answer.
+    pub parts_live: Vec<BitSet>,
     pub entry_points: entry_point::List,
     pub symbols: symbol::Map,
 
@@ -77,7 +85,7 @@ pub struct LinkerGraph<'a> {
 // - `bump: *const Arena` is a backref into `BundleV2`; the arena is frozen
 //   (no new allocations) for the duration of any worker-pool fan-out that
 //   holds `&LinkerGraph`.
-// - `files_live` / `is_scb_bitset` / `reachable_files` /
+// - `files_live` / `parts_live` / `is_scb_bitset` / `reachable_files` /
 //   `stable_source_indices` / `code_splitting` / `ts_enums` are populated
 //   before fan-out and only read by workers.
 // - `ast` / `meta` / `files` columns that workers mutate are split out via
@@ -112,6 +120,7 @@ impl<'a> LinkerGraph<'a> {
         Ok(LinkerGraph {
             files: FileList::default(),
             files_live: BitSet::init_empty(file_count)?,
+            parts_live: Vec::new(),
             entry_points: entry_point::List::default(),
             symbols: symbol::Map::default(),
             bump: bun_ptr::BackRef::new(bump),
@@ -131,6 +140,7 @@ impl Default for LinkerGraph<'_> {
         LinkerGraph {
             files: FileList::default(),
             files_live: BitSet::default(),
+            parts_live: Vec::new(),
             entry_points: entry_point::List::default(),
             symbols: symbol::Map::default(),
             // PORT NOTE: `bump` is a backref assigned in `init`/`LinkerContext::load`;

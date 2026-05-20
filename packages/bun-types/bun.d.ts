@@ -7010,7 +7010,7 @@ declare module "bun" {
        * the process — a child spawned from a `Worker` will receive this
        * signal when that `Worker` terminates.
        *
-       * Ignored on macOS and Windows.
+       * Ignored on platforms other than Linux.
        *
        * @default undefined (no signal; `"SIGKILL"` when `--no-orphans` is enabled)
        *

@@ -60,6 +60,10 @@ function Server(options, callback) {
 
   http.Server.$call(this, options, callback);
 
+  // SNI contexts are recorded here; wiring them into the live Bun.serve TLS
+  // handshake (so they actually select per-hostname certs) is a follow-up —
+  // http.Server terminates TLS via Bun.serve, not the raw socket handle that
+  // tls.Server.addContext drives.
   let contexts: Map<string, any> | null = null;
 
   this.addContext = function (hostname, context) {
@@ -67,7 +71,7 @@ function Server(options, callback) {
       throw new TypeError("hostname must be a string");
     }
     if (!contexts) contexts = new Map();
-    contexts.set(hostname, context);
+    contexts.$set(hostname, context);
   };
 
   this.setSecureContext = function (options) {

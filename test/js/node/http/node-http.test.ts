@@ -921,6 +921,35 @@ describe("node:http", () => {
     });
   });
 
+  // Issue #31125: https.Server must be a distinct class from http.Server so
+  // `instanceof` checks (e.g. @astrojs/node's startup log) are correct.
+  describe("https.Server class identity", () => {
+    it("https.Server is a distinct class from http.Server", () => {
+      expect(http.Server).not.toBe(https.Server);
+    });
+
+    it("http.createServer() is instanceof http.Server but not https.Server", () => {
+      const server = http.createServer(() => {});
+      expect(server instanceof http.Server).toBe(true);
+      expect(server instanceof https.Server).toBe(false);
+      server.close();
+    });
+
+    it("https.createServer() is instanceof https.Server and http.Server", () => {
+      const server = https.createServer(() => {});
+      expect(server instanceof https.Server).toBe(true);
+      expect(server instanceof http.Server).toBe(true);
+      server.close();
+    });
+
+    it("new https.Server() is instanceof https.Server and http.Server", () => {
+      const server = new https.Server(() => {});
+      expect(server instanceof https.Server).toBe(true);
+      expect(server instanceof http.Server).toBe(true);
+      server.close();
+    });
+  });
+
   describe("signal", () => {
     it("should abort and close the server", done => {
       const server = createServer((req, res) => {

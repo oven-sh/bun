@@ -306,6 +306,10 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
   // the same. Derived from output.objects so there's no hidden state —
   // the orchestrator already knows every .o path.
   mkdirAll(output.objects.map(dirname));
+  if (cfg.rustDirect) {
+    const { rustDirectOutputDirs } = await import("./rust-direct.ts");
+    mkdirAll(rustDirectOutputDirs(cfg));
+  }
   mark("mkdirAll");
   const ninjaFile = resolve(cfg.buildDir, "build.ninja");
 

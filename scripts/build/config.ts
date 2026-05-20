@@ -219,6 +219,13 @@ export interface Config {
   cmake: string;
   /** cargo executable. undefined when no rust toolchain is available. */
   cargo: string | undefined;
+  /** rustc executable (rustup proxy if rustup-managed). */
+  rustc: string | undefined;
+  /**
+   * Build the Rust crate graph as first-class ninja edges (one `rustc` per
+   * unit) instead of one opaque `cargo build` edge. See rust-direct.ts.
+   */
+  rustDirect: boolean;
   /** CARGO_HOME — passed to cargo invocations for reproducibility. */
   cargoHome: string | undefined;
   /** RUSTUP_HOME — passed to cargo invocations for reproducibility. */
@@ -297,6 +304,7 @@ export interface PartialConfig {
   staticLibatomic?: boolean;
   tinycc?: boolean;
   valgrind?: boolean;
+  rustDirect?: boolean;
   fuzzilli?: boolean;
   unifiedSources?: boolean;
   archiveDeps?: boolean;
@@ -351,6 +359,8 @@ export interface Toolchain {
   rustSysroot: string | undefined;
   /** `host:` line from `rustc -vV` — stamped onto `Host.rustTriple` at resolveConfig. */
   rustHostTriple: string | undefined;
+  /** rustc executable (rustup proxy if rustup-managed). */
+  rustc: string | undefined;
   strip: string;
   dsymutil: string | undefined;
   bun: string;
@@ -706,6 +716,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const tinycc = partial.tinycc ?? !((windows && arm64) || abi === "android" || freebsd);
 
   const valgrind = partial.valgrind ?? false;
+  const rustDirect = partial.rustDirect ?? false;
   const fuzzilli = partial.fuzzilli ?? false;
 
   // ─── Paths ───
@@ -896,6 +907,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     ccache: toolchain.ccache,
     cmake: toolchain.cmake,
     cargo: toolchain.cargo,
+    rustc: toolchain.rustc,
+    rustDirect,
     cargoHome: toolchain.cargoHome,
     rustupHome: toolchain.rustupHome,
     rustToolchain: readRustToolchainChannel(cwd),

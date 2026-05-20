@@ -29,6 +29,7 @@ import { dirname, join, resolve } from "node:path";
 import { bunExeName, type Config } from "./config.ts";
 import { assert } from "./error.ts";
 import type { Ninja } from "./ninja.ts";
+import { emitRustDirect } from "./rust-direct.ts";
 import { quote, quoteArgs } from "./shell.ts";
 import { streamPath } from "./stream.ts";
 
@@ -316,6 +317,7 @@ export interface RustBuildInputs {
  * object list.
  */
 export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string[] {
+  if (cfg.rustDirect) return emitRustDirect(n, cfg, inputs);
   assert(cfg.cargo !== undefined, "building bun's Rust crates requires cargo but no rust toolchain was found", {
     hint: "Install rust: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh",
   });

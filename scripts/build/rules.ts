@@ -23,6 +23,7 @@ import { registerCodegenRules } from "./codegen.ts";
 import { registerCompileRules, registerDirStamps } from "./compile.ts";
 import type { Config } from "./config.ts";
 import type { Ninja } from "./ninja.ts";
+import { registerRustDirectRules } from "./rust-direct.ts";
 import { registerRustRules } from "./rust.ts";
 import { registerShimRules } from "./shims.ts";
 import { registerDepRules } from "./source.ts";
@@ -49,8 +50,9 @@ export function registerAllRules(n: Ninja, cfg: Config): void {
   // codegen, esbuild, bun_install + codegen/stamps dir stamps
   registerCodegenRules(n, cfg);
 
-  // rust_build
+  // rust_build (cargo edge) / rustc + rustc_buildscript (direct edges)
   registerRustRules(n, cfg);
+  registerRustDirectRules(n, cfg);
 
   // shim_dylib (darwin+asan only)
   registerShimRules(n, cfg);

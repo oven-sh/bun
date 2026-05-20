@@ -188,6 +188,9 @@ Split CI modes: `rust-only` (lolhtml+codegen+cargo → libbun_rust.a), `cpp-only
 | `source.ts`                    | `Dependency` types, `resolveDep()`, fetch/configure/build emission                  |
 | `codegen.ts`                   | Code generation steps, `emitCodegen()`, `CodegenOutputs`                            |
 | `rust.ts`                      | `cargo build` step, `emitRust()`, `rustLibPath()`, cross-compile matrix             |
+| `rust-direct.ts`               | Per-crate `rustc` ninja edges from cargo's `--unit-graph` (opt-in `cfg.rustDirect`) |
+| `rustc-runner.ts`              | Build-time wrapper: applies build.rs `cargo:` directives + `CARGO_*` env, execs rustc |
+| `buildscript-runner.ts`        | Build-time wrapper: runs a compiled `build.rs`, captures stdout, writes `.d` depfile |
 | `cargo-config.ts`              | Generates the git-ignored `.cargo/config.toml` (per-target `linker` from `cfg.cxx`) |
 | `bun.ts`                       | `emitBun()` — assembles deps+codegen+rust+compile+link                              |
 | `shims.ts`                     | Platform/toolchain workaround dylibs, `emitShims()`                                 |

@@ -379,6 +379,7 @@ export function resolveLlvmToolchain(
   | "ar"
   | "ranlib"
   | "ld"
+  | "rustc"
   | "rustLld"
   | "rustLlvmVersion"
   | "rustSysroot"
@@ -486,7 +487,7 @@ export function resolveLlvmToolchain(
 
   // rust-lld: optional alternative linker for cross-language LTO when
   // rustc's bundled LLVM is newer than clang's. See findRustLld().
-  const { rustLld, rustLlvmVersion, rustSysroot, rustHostTriple } = findRustLld(os);
+  const { rustc, rustLld, rustLlvmVersion, rustSysroot, rustHostTriple } = findRustLld(os);
 
   // ccache: optional. If found, used as compiler launcher.
   const ccache = findTool({ names: ["ccache"], required: false })?.path;
@@ -507,6 +508,7 @@ export function resolveLlvmToolchain(
     ar,
     ranlib,
     ld,
+    rustc,
     rustLld,
     rustLlvmVersion,
     rustSysroot,
@@ -570,8 +572,16 @@ export function findRustLld(os: OS): {
   rustSysroot: string | undefined;
   /** `host:` line from `rustc -vV` — the rustlib subdirectory name. */
   rustHostTriple: string | undefined;
+  /** rustc executable (rustup proxy if rustup-managed). */
+  rustc: string | undefined;
 } {
-  const none = { rustLld: undefined, rustLlvmVersion: undefined, rustSysroot: undefined, rustHostTriple: undefined };
+  const none = {
+    rustc: undefined,
+    rustLld: undefined,
+    rustLlvmVersion: undefined,
+    rustSysroot: undefined,
+    rustHostTriple: undefined,
+  };
   // Look up rustc the same way findCargo does cargo: $CARGO_HOME/bin first.
   const cargoHome = process.env.CARGO_HOME ?? join(homedir(), ".cargo");
   const rustc = findTool({ names: ["rustc"], paths: [join(cargoHome, "bin")], required: false })?.path;
@@ -625,7 +635,7 @@ export function findRustLld(os: OS): {
         ? join(bin, "gcc-ld", "ld64.lld")
         : join(bin, "gcc-ld", "ld.lld");
   const rustLld = isExecutable(candidate) ? candidate : undefined;
-  return { rustLld, rustLlvmVersion, rustSysroot: sysroot, rustHostTriple };
+  return { rustc, rustLld, rustLlvmVersion, rustSysroot: sysroot, rustHostTriple };
 }
 
 /**

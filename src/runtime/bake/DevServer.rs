@@ -5837,31 +5837,6 @@ impl DevServer {
         emit_edges!(&self.server_graph);
         Ok(())
     }
-
-    pub fn on_web_socket_upgrade<R>(
-        &mut self,
-        res: &mut R,
-        req: &mut Request,
-        upgrade_ctx: &mut WebSocketUpgradeContext,
-        id: usize,
-    ) where
-        R: ResponseLike, // TODO(port): bun_uws::ResponseLike once upstream lands
-    {
-        debug_assert!(id == 0);
-
-        let dw: Box<HmrSocket> = HmrSocket::new(self, res);
-        let dw_ptr: *mut HmrSocket = bun_core::heap::into_raw(dw);
-        self.active_websocket_connections
-            .put_no_clobber(dw_ptr, ())
-            .expect("oom");
-        res.upgrade::<*mut HmrSocket>(
-            dw_ptr,
-            req.header(b"sec-websocket-key").unwrap_or(b""),
-            req.header(b"sec-websocket-protocol").unwrap_or(b""),
-            req.header(b"sec-websocket-extension").unwrap_or(b""),
-            upgrade_ctx,
-        );
-    }
 }
 
 // PORT NOTE: MessageId/IncomingMessageId/ConsoleLogKind/HmrTopic are defined

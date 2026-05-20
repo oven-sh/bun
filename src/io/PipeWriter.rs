@@ -99,6 +99,9 @@ pub trait PosixPipeWriter {
         write_fn: fn(Fd, &[u8]) -> sys::Result<usize>,
     ) -> WriteResult {
         let fd = self.get_fd();
+        if fd == Fd::INVALID {
+            return WriteResult::Done(0);
+        }
 
         let mut offset: usize = 0;
 

@@ -2,7 +2,7 @@
 // Reads grouped JSON (group-by-file output) on argv[2], writes one rendered-text
 // file per source file under argv[3], emits a slim manifest [{file,count,diagPath,codes}]
 // on stdout.
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const grouped = JSON.parse(readFileSync(process.argv[2], "utf8")) as Array<{

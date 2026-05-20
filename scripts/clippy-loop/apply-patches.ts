@@ -5,9 +5,9 @@
 // source lines when the agent's @@ header counts are off.
 
 import { spawnSync } from "node:child_process";
-import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
-import { join } from "node:path";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const input = readFileSync(0, "utf8");
 const results: Array<{ file: string; approved: boolean; patch: string; reviewNotes?: string }> = JSON.parse(input);

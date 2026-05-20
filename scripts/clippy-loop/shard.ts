@@ -2,7 +2,7 @@
 // Splits a manifest [{file,count,diagPath}] into N interleaved shards so each
 // shard gets a mix of high- and low-count files. Writes shard-<i>.json under
 // argv[3] and prints the paths.
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const manifest = JSON.parse(readFileSync(process.argv[2], "utf8")) as Array<{

@@ -333,11 +333,10 @@ impl<T> Clone for StoreSlice<T> {
     }
 }
 
-// SAFETY: same rationale as `StoreStr` — points into a single-threaded bump
-// arena. Asserted Send/Sync so payload types can sit in `static` Prefill
-// tables; callers must not actually share a Store across threads.
-unsafe impl<T> Send for StoreSlice<T> {}
-unsafe impl<T> Sync for StoreSlice<T> {}
+// SAFETY: StoreSlice stores `NonNull<T>` and carries auto-traits from T.
+// It mirrors StoreRef's Send/Sync bounds.
+unsafe impl<T: Send> Send for StoreSlice<T> {}
+unsafe impl<T: Sync> Sync for StoreSlice<T> {}
 
 impl<T> StoreSlice<T> {
     pub const EMPTY: StoreSlice<T> = StoreSlice {

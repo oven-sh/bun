@@ -2152,7 +2152,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             use core::fmt::Write as _;
             let base = self.import_records.items()[import_record_i as usize]
                 .path
-                .name
+                .name()
                 .non_unique_name_string_base();
             let mut buf = bun_alloc::ArenaString::new_in(arena);
             write!(&mut buf, "{}", bun_core::fmt::fmt_identifier(base)).expect("unreachable");
@@ -4419,7 +4419,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // exposes the same sanitizer as a Display formatter (`fmt_identifier()`), so format once
         // and copy into the bump arena.
         let identifier: &'a [u8] = {
-            let s = format!("{}_default", self.source.path.name.fmt_identifier());
+            let s = format!("{}_default", self.source.path.name().fmt_identifier());
             self.arena.alloc_slice_copy(s.as_bytes())
         };
 

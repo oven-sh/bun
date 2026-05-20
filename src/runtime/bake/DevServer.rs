@@ -6478,7 +6478,7 @@ impl DevServer {
         let _ = self.assets.replace_path(
             &path.text,
             contents,
-            &MimeType::by_extension(path.name.ext_without_leading_dot()),
+            &MimeType::by_extension(path.name().ext_without_leading_dot()),
             content_hash,
         )?;
         Ok(())

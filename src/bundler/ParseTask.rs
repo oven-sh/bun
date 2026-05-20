@@ -575,7 +575,6 @@ pub mod parse_worker {
             path: bun_paths::fs::Path {
                 text: b"runtime",
                 namespace: b"bun:runtime",
-                name: bun_paths::fs::PathName::init(b"runtime"),
                 pretty: b"",
                 is_disabled: false,
                 is_symlink: false,
@@ -2380,7 +2379,6 @@ pub mod parse_worker {
             path: bun_paths::fs::Path {
                 text: file_path.text,
                 namespace: file_path.namespace,
-                name: bun_paths::fs::PathName::init(file_path.text),
                 pretty: file_path.pretty,
                 is_disabled: file_path.is_disabled,
                 is_symlink: file_path.is_symlink,

@@ -677,12 +677,13 @@ impl Linker {
                 if use_hashed_name {
                     let basepath = PFs::Path::init(source_path);
                     let basename = self.get_hashed_filename(&basepath, None)?;
-                    let dir = basepath.name.dir_with_trailing_slash();
+                    let name = basepath.name();
+                    let dir = name.dir_with_trailing_slash();
                     let mut _pretty: Vec<u8> =
-                        Vec::with_capacity(dir.len() + basename.len() + basepath.name.ext.len());
+                        Vec::with_capacity(dir.len() + basename.len() + name.ext.len());
                     _pretty.extend_from_slice(dir);
                     _pretty.extend_from_slice(basename);
-                    _pretty.extend_from_slice(basepath.name.ext);
+                    _pretty.extend_from_slice(name.ext);
                     pretty = intern(_pretty);
                     relative_name_out = dupe(relative_name);
                 } else {

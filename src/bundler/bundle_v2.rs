@@ -611,7 +611,6 @@ pub mod bv2_impl {
                     pretty: b"bun:bake/server",
                     text: b"_bun/bake/server",
                     namespace: b"bun",
-                    name: bun_paths::fs::PathName::init(b"bake/server"),
                     is_disabled: false,
                     is_symlink: true,
                 };
@@ -625,7 +624,6 @@ pub mod bv2_impl {
                     pretty: b"bun:bake/client",
                     text: b"_bun/bake/client",
                     namespace: b"bun",
-                    name: bun_paths::fs::PathName::init(b"bake/client"),
                     is_disabled: false,
                     is_symlink: true,
                 };

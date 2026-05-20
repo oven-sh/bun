@@ -79,7 +79,7 @@ jq -r '.[] | @base64' "$OUT/all.grouped.json" | while read -r b64; do
   ' > "$OUT/diags/${safe}.txt"
 done
 
-jq -c '[.[] | {file, count, diagPath: ("/tmp/clippy-loop/diags/" + (.file | gsub("/";"_")) + ".txt")}]' \
+jq -c --arg out "$OUT" '[.[] | {file, count, diagPath: ($out + "/diags/" + (.file | gsub("/";"_")) + ".txt")}]' \
   "$OUT/all.grouped.json" > "$OUT/manifest-all.json"
 
 >&2 echo "manifest: $OUT/manifest-all.json"

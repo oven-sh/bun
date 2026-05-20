@@ -744,29 +744,30 @@ pub fn scan_imports_and_exports(
                     }
 
                     if let Some(named_import) = col_ref!(named_imports)[id].get(&r#ref) {
-                        // PERF(port): clone to avoid holding column borrow across `&mut this.graph`.
-                        let local_parts: Vec<u32> =
-                            named_import.local_parts_with_uses.slice().to_vec();
-                        for part_index in local_parts {
-                            let parts_declaring_symbol: Vec<u32> = this
-                                .graph
-                                .top_level_symbol_to_parts(import_source_index, import_ref)
-                                .to_vec();
-                            // PERF(port): was zero-copy slice borrow; profile.
-
+                        // `local_parts_with_uses` and the `top_level_symbol_to_parts`
+                        // result are both arena-backed AstVec slices that this loop
+                        // body never resizes; capture them as BackRefs (same
+                        // discipline as `re_exports_ptr` above) so we can take
+                        // `&mut col!(parts_list)[id]` without cloning.
+                        let local_parts: bun_ptr::BackRef<[u32]> =
+                            bun_ptr::BackRef::new(named_import.local_parts_with_uses.slice());
+                        let parts_declaring_symbol: bun_ptr::BackRef<[u32]> =
+                            bun_ptr::BackRef::new(
+                                this.graph
+                                    .top_level_symbol_to_parts(import_source_index, import_ref),
+                            );
+                        for &part_index in &*local_parts {
                             let part: &mut Part =
                                 &mut col!(parts_list)[id].as_mut_slice()[part_index as usize];
                             let re_exports: &[Dependency] = &re_exports_ptr;
                             let total_len = parts_declaring_symbol.len()
                                 + re_exports.len()
                                 + part.dependencies.len() as usize;
-                            // PORT NOTE: bun.handleOom dropped — Vec growth aborts on OOM.
                             part.dependencies.ensure_total_capacity(total_len);
 
                             // Depend on the file containing the imported symbol
-                            for resolved_part_index in parts_declaring_symbol {
-                                // PERF(port): was appendAssumeCapacity
-                                part.dependencies.push(Dependency {
+                            for &resolved_part_index in &*parts_declaring_symbol {
+                                part.dependencies.append_assume_capacity(Dependency {
                                     source_index: bun_ast::Index::source(
                                         import_source_index as usize,
                                     ),
@@ -776,10 +777,8 @@ pub fn scan_imports_and_exports(
 
                             // Also depend on any files that re-exported this symbol in between the
                             // file containing the import and the file containing the imported symbol
-                            // PERF(port): was appendSliceAssumeCapacity
-                            for dep in re_exports {
-                                part.dependencies.push(*dep);
-                            }
+                            part.dependencies
+                                .append_slice_assume_capacity(re_exports);
                         }
                     }
 

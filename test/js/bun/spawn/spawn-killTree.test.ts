@@ -34,9 +34,10 @@ function reap(...pids: number[]) {
   }
 }
 
-// A child (bun) that spawns a grandchild (bun) which itself spawns a
-// great-grandchild (sh). The root prints all four pids on one line once the
-// whole chain is up, then everything idles.
+// root.js (bun) spawns child.js (bun) which spawns an outer sh, which
+// itself spawns an inner sh in the background. root.js prints the four
+// pids on one line once the whole chain is up, then everything idles.
+// Four distinct levels so killTree() has to recurse past the direct child.
 const fixture = tempDir("spawn-killTree", {
   "root.js": `
     const child = Bun.spawn({
@@ -57,9 +58,14 @@ const fixture = tempDir("spawn-killTree", {
     console.log(process.pid + " " + line.trim());
     setInterval(() => {}, 1e6);
   `,
+  // Outer sh backgrounds an inner sh ($!), prints both pids, then waits —
+  // so both stay alive and are distinct from gc.pid (== outer sh's $$).
   "child.js": `
     const gc = Bun.spawn({
-      cmd: ["/bin/sh", "-c", "echo $$; while :; do sleep 30; done"],
+      cmd: [
+        "/bin/sh", "-c",
+        "/bin/sh -c 'while :; do sleep 30; done' & echo $$ $!; wait",
+      ],
       stdio: ["ignore", "pipe", "inherit"],
     });
     let line = "";
@@ -71,7 +77,8 @@ const fixture = tempDir("spawn-killTree", {
       line += dec.decode(value, { stream: true });
     }
     reader.releaseLock();
-    console.log(process.pid + " " + gc.pid + " " + line.trim());
+    // line is "<outer-sh-pid> <inner-sh-pid>"; outer == gc.pid.
+    console.log(process.pid + " " + line.trim());
     setInterval(() => {}, 1e6);
   `,
 });
@@ -98,16 +105,18 @@ async function spawnTree() {
   }
   reader.releaseLock();
 
-  const [rootPid, childPid, grandchildPid, shPid] = line.trim().split(/\s+/).map(Number);
+  const [rootPid, childPid, outerShPid, innerShPid] = line.trim().split(/\s+/).map(Number);
   expect(rootPid).toBe(proc.pid);
   expect(childPid).toBeGreaterThan(1);
-  expect(grandchildPid).toBeGreaterThan(1);
-  expect(shPid).toBeGreaterThan(1);
+  expect(outerShPid).toBeGreaterThan(1);
+  expect(innerShPid).toBeGreaterThan(1);
+  // Four distinct pids — no level of the tree is collapsed.
+  expect(new Set([rootPid, childPid, outerShPid, innerShPid]).size).toBe(4);
   expect(isAlive(childPid)).toBe(true);
-  expect(isAlive(grandchildPid)).toBe(true);
-  expect(isAlive(shPid)).toBe(true);
+  expect(isAlive(outerShPid)).toBe(true);
+  expect(isAlive(innerShPid)).toBe(true);
 
-  return { proc, rootPid, childPid, grandchildPid, shPid };
+  return { proc, rootPid, childPid, outerShPid, innerShPid };
 }
 
 describe.skipIf(!isPosix)("Subprocess.killTree()", () => {
@@ -118,29 +127,29 @@ describe.skipIf(!isPosix)("Subprocess.killTree()", () => {
   });
 
   test("default signal kills the root and every descendant", async () => {
-    const { proc, childPid, grandchildPid, shPid } = await spawnTree();
+    const { proc, childPid, outerShPid, innerShPid } = await spawnTree();
     await using _ = proc;
     try {
       proc.killTree();
       await proc.exited;
 
       const childDied = await waitUntilDead(childPid, 10000);
-      const grandchildDied = await waitUntilDead(grandchildPid, 10000);
-      const shDied = await waitUntilDead(shPid, 10000);
+      const outerShDied = await waitUntilDead(outerShPid, 10000);
+      const innerShDied = await waitUntilDead(innerShPid, 10000);
 
       expect(proc.exitCode === null ? proc.signalCode : proc.exitCode).not.toBe(0);
-      expect({ childDied, grandchildDied, shDied }).toEqual({
+      expect({ childDied, outerShDied, innerShDied }).toEqual({
         childDied: true,
-        grandchildDied: true,
-        shDied: true,
+        outerShDied: true,
+        innerShDied: true,
       });
     } finally {
-      reap(childPid, grandchildPid, shPid);
+      reap(childPid, outerShPid, innerShPid);
     }
   });
 
   test("plain kill() does NOT reach descendants (contrast case)", async () => {
-    const { proc, childPid, grandchildPid, shPid } = await spawnTree();
+    const { proc, childPid, outerShPid, innerShPid } = await spawnTree();
     await using _ = proc;
     try {
       proc.kill("SIGKILL");
@@ -151,29 +160,29 @@ describe.skipIf(!isPosix)("Subprocess.killTree()", () => {
       const childDied = await waitUntilDead(childPid, 1000);
       expect(childDied).toBe(false);
     } finally {
-      reap(childPid, grandchildPid, shPid);
+      reap(childPid, outerShPid, innerShPid);
     }
   });
 
   test("accepts a signal name", async () => {
-    const { proc, childPid, grandchildPid, shPid } = await spawnTree();
+    const { proc, childPid, outerShPid, innerShPid } = await spawnTree();
     await using _ = proc;
     try {
       proc.killTree("SIGKILL");
       await proc.exited;
 
       const childDied = await waitUntilDead(childPid, 10000);
-      const grandchildDied = await waitUntilDead(grandchildPid, 10000);
-      const shDied = await waitUntilDead(shPid, 10000);
+      const outerShDied = await waitUntilDead(outerShPid, 10000);
+      const innerShDied = await waitUntilDead(innerShPid, 10000);
 
       expect(proc.signalCode).toBe("SIGKILL");
-      expect({ childDied, grandchildDied, shDied }).toEqual({
+      expect({ childDied, outerShDied, innerShDied }).toEqual({
         childDied: true,
-        grandchildDied: true,
-        shDied: true,
+        outerShDied: true,
+        innerShDied: true,
       });
     } finally {
-      reap(childPid, grandchildPid, shPid);
+      reap(childPid, outerShPid, innerShPid);
     }
   });
 
@@ -247,5 +256,23 @@ describe.skipIf(!isPosix)("Subprocess.killTree()", () => {
     await using proc = Bun.spawn({ cmd: [bunExe(), "-e", "setTimeout(()=>{}, 1e6)"], env: bunEnv });
     expect(() => proc.killTree(-1)).toThrow();
     expect(() => proc.killTree("NOT_A_SIGNAL" as any)).toThrow();
+  });
+
+  test("killTree(0) is a liveness probe and does not pause descendants", async () => {
+    const { proc, childPid, outerShPid, innerShPid } = await spawnTree();
+    await using _ = proc;
+    try {
+      expect(() => proc.killTree(0)).not.toThrow();
+      // Descendants must still be alive and, crucially, still running —
+      // not stuck SIGSTOPped. We can't directly observe run state
+      // portably, so just confirm liveness and that the root wasn't
+      // signalled.
+      expect(isAlive(childPid)).toBe(true);
+      expect(isAlive(outerShPid)).toBe(true);
+      expect(isAlive(innerShPid)).toBe(true);
+      expect(proc.killed).toBe(false);
+    } finally {
+      reap(childPid, outerShPid, innerShPid);
+    }
   });
 });

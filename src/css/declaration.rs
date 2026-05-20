@@ -111,7 +111,7 @@ impl<'bump> DeclarationBlock<'bump> {
         &mut self,
         handler: &mut DeclarationHandler<'bump>,
         important_handler: &mut DeclarationHandler<'bump>,
-        context: &mut css::PropertyHandlerContext,
+        context: &mut css::PropertyHandlerContext<'_, 'bump>,
     ) {
         // PORT NOTE: Zig threaded `context.arena` through every append; the
         // Rust `PropertyHandlerContext` dropped that field, so we recover the
@@ -124,7 +124,7 @@ impl<'bump> DeclarationBlock<'bump> {
         #[inline]
         fn handle<'bump>(
             decls: &mut DeclarationList<'bump>,
-            ctx: &mut css::PropertyHandlerContext,
+            ctx: &mut css::PropertyHandlerContext<'_, 'bump>,
             hndlr: &mut DeclarationHandler<'bump>,
             important: bool,
         ) {
@@ -552,7 +552,7 @@ pub struct DeclarationHandler<'bump> {
 }
 
 impl<'bump> DeclarationHandler<'bump> {
-    pub fn finalize(&mut self, context: &mut css::PropertyHandlerContext) {
+    pub fn finalize(&mut self, context: &mut css::PropertyHandlerContext<'_, 'bump>) {
         if let Some(direction) = self.direction.take() {
             self.decls.push(css::Property::Direction(direction));
         }
@@ -581,7 +581,7 @@ impl<'bump> DeclarationHandler<'bump> {
     pub fn handle_property(
         &mut self,
         property: &css::Property,
-        context: &mut css::PropertyHandlerContext,
+        context: &mut css::PropertyHandlerContext<'_, 'bump>,
     ) -> bool {
         // return this.background.handleProperty(property, &this.decls, context);
         self.background

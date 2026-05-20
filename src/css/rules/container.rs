@@ -349,18 +349,18 @@ impl ContainerCondition {
 }
 
 /// A [@container](https://drafts.csswg.org/css-contain-3/#container-rule) rule.
-pub struct ContainerRule<R> {
+pub struct ContainerRule<'bump, R> {
     /// The name of the container.
     pub name: Option<ContainerName>,
     /// The container condition.
     pub condition: ContainerCondition,
     /// The rules within the `@container` rule.
-    pub rules: CssRuleList<R>,
+    pub rules: CssRuleList<'bump, R>,
     /// The location of the rule in the source file.
     pub loc: Location,
 }
 
-impl<R> ContainerRule<R> {
+impl<R> ContainerRule<'_, R> {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
@@ -385,13 +385,13 @@ impl<R> ContainerRule<R> {
     }
 }
 
-impl<R> ContainerRule<R> {
-    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+impl<R> ContainerRule<'_, R> {
+    pub fn deep_clone<'b>(&self, bump: &'b bun_alloc::Arena) -> ContainerRule<'b, R>
     where
-        R: css::generics::DeepClone<'bump>,
+        R: css::generics::DeepClone<'b>,
     {
         // PORT NOTE: `css.implementDeepClone` field-walk.
-        Self {
+        ContainerRule {
             name: self.name.as_ref().map(|n| n.deep_clone(bump)),
             condition: self.condition.deep_clone(bump),
             rules: self.rules.deep_clone(bump),

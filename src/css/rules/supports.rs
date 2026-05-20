@@ -446,19 +446,19 @@ impl PartialEq for SeenDeclKey {
 impl Eq for SeenDeclKey {}
 
 /// A [@supports](https://drafts.csswg.org/css-conditional-3/#at-supports) rule.
-pub struct SupportsRule<R> {
+pub struct SupportsRule<'bump, R> {
     /// The supports condition.
     pub condition: SupportsCondition,
     /// The rules within the `@supports` rule.
-    pub rules: CssRuleList<R>,
+    pub rules: CssRuleList<'bump, R>,
     /// The location of the rule in the source file.
     pub loc: Location,
 }
 
-impl<R> SupportsRule<R> {
+impl<'bump, R> SupportsRule<'bump, R> {
     pub fn minify(
         &mut self,
-        context: &mut MinifyContext,
+        context: &mut MinifyContext<'_, 'bump>,
         parent_is_unused: bool,
     ) -> core::result::Result<(), MinifyErr> {
         let _ = self;
@@ -469,7 +469,7 @@ impl<R> SupportsRule<R> {
     }
 }
 
-impl<R> SupportsRule<R> {
+impl<R> SupportsRule<'_, R> {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
@@ -483,13 +483,13 @@ impl<R> SupportsRule<R> {
     }
 }
 
-impl<R> SupportsRule<R> {
-    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+impl<R> SupportsRule<'_, R> {
+    pub fn deep_clone<'b>(&self, bump: &'b bun_alloc::Arena) -> SupportsRule<'b, R>
     where
-        R: css::generics::DeepClone<'bump>,
+        R: css::generics::DeepClone<'b>,
     {
         // PORT NOTE: `css.implementDeepClone` field-walk.
-        Self {
+        SupportsRule {
             condition: self.condition.deep_clone(bump),
             rules: self.rules.deep_clone(bump),
             loc: self.loc,

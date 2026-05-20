@@ -1216,7 +1216,7 @@ impl AlignHandler {
         &mut self,
         property: &Property,
         dest: &mut DeclarationList<'_>,
-        context: &mut PropertyHandlerContext<'_>,
+        context: &mut PropertyHandlerContext<'_, '_>,
     ) -> bool {
         match property {
             Property::AlignContent((val, vp)) => {
@@ -1358,12 +1358,16 @@ impl AlignHandler {
     pub fn finalize(
         &mut self,
         dest: &mut DeclarationList<'_>,
-        context: &mut PropertyHandlerContext<'_>,
+        context: &mut PropertyHandlerContext<'_, '_>,
     ) {
         self.flush(dest, context);
     }
 
-    fn flush(&mut self, dest: &mut DeclarationList<'_>, context: &mut PropertyHandlerContext<'_>) {
+    fn flush(
+        &mut self,
+        dest: &mut DeclarationList<'_>,
+        context: &mut PropertyHandlerContext<'_, '_>,
+    ) {
         if !self.has_any {
             return;
         }
@@ -1483,7 +1487,7 @@ impl AlignHandler {
     // PERF(port): was comptime monomorphization (`comptime feature: Feature`) — profile if hot.
     fn flush_prefixes_helper(
         &self,
-        context: &PropertyHandlerContext<'_>,
+        context: &PropertyHandlerContext<'_, '_>,
         feature: Feature,
     ) -> VendorPrefix {
         let mut prefix = context.targets.prefixes(VendorPrefix::NONE, feature);

@@ -715,8 +715,10 @@ folded: >
         test("keep with whitespace-only trailing lines", () => {
           expect(YAML.parse("- |+\n\n\n")).toEqual(["\n\n"]);
           expect(YAML.parse("- |+\n   \n")).toEqual(["\n"]);
-          expect(YAML.parse("- |+\n   ")).toEqual([""]);
-          expect(YAML.parse("- |+\n\n   ")).toEqual(["\n"]);
+          // yaml-test-suite JEF9/02: trailing indentation at EOF without a
+          // final break counts as one trailing empty line.
+          expect(YAML.parse("- |+\n   ")).toEqual(["\n"]);
+          expect(YAML.parse("- |+\n\n   ")).toEqual(["\n\n"]);
           expect(YAML.parse("- |+\n  a\n  ")).toEqual(["a\n"]);
           expect(YAML.parse("- |+\n  a\n  \n")).toEqual(["a\n\n"]);
         });

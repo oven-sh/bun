@@ -219,10 +219,12 @@ it("should not fail when install.security.scanner is set in global bunfig", asyn
     stdin: "ignore",
     stderr: "pipe",
     // `env -i`-style isolation so the host's real `~/.bunfig.toml` can't
-    // interfere. `HOME` is what bunfig loading looks at.
+    // interfere. Global bunfig loading reads `XDG_CONFIG_HOME` first, falling
+    // back to `HOME` (POSIX) or `USERPROFILE` (Windows) — set all three.
     env: {
       ...env,
       HOME: fakeHome,
+      USERPROFILE: fakeHome,
       XDG_CONFIG_HOME: fakeHome,
       BUN_CREATE_DIR: bunCreateDir,
     },

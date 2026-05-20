@@ -963,17 +963,18 @@ impl<'a> LinkerContext<'a> {
         {
             let _trace2 = bun::perf::trace("Bundler.markFileLiveForTreeShaking");
 
+            let mut ctx = TreeShakeCtx {
+                side_effects,
+                parts,
+                import_records,
+                entry_point_kinds,
+                css_reprs,
+            };
+
             // Tree shaking: Each entry point marks all files reachable from itself
             for i in 0..entry_points_len {
                 let entry_point = entry_points[i];
-                self.mark_file_live_for_tree_shaking(
-                    entry_point,
-                    side_effects,
-                    parts,
-                    import_records,
-                    entry_point_kinds,
-                    css_reprs,
-                );
+                self.mark_file_live_for_tree_shaking(&mut ctx, entry_point);
             }
         }
 
@@ -990,22 +991,21 @@ impl<'a> LinkerContext<'a> {
                 debug_assert!(matches!(&file_entry_bits[0], AutoBitSet::Static(_)));
             }
 
+            let mut ctx = CodeSplitCtx {
+                distances,
+                parts,
+                import_records,
+                file_entry_bits,
+                css_reprs,
+            };
+
             // Code splitting: Determine which entry points can reach which files. This
             // has to happen after tree shaking because there is an implicit dependency
             // between live parts within the same file. All liveness has to be computed
             // first before determining which entry points can reach which files.
             for i in 0..entry_points_len {
                 let entry_point = entry_points[i];
-                self.mark_file_reachable_for_code_splitting(
-                    entry_point,
-                    i,
-                    distances,
-                    0,
-                    parts,
-                    import_records,
-                    file_entry_bits,
-                    css_reprs,
-                );
+                self.mark_file_reachable_for_code_splitting(&mut ctx, entry_point, i, 0);
             }
         }
 
@@ -2621,33 +2621,51 @@ impl<'a> js_printer::RequireOrImportMetaSource for LinkerContext<'a> {
 // (`files_live`, `meta.items_flags()`) and the `Graph::InputFileColumns`
 // accessors.
 // ══════════════════════════════════════════════════════════════════════════
+
+// The three `mark_*` functions below are mutually recursive and hot. Passing
+// the five SoA-column slices as separate arguments costs 10 words of fat
+// pointers per call; with `&mut self` + indices that overflows the 6 SysV
+// integer-arg registers and spills to the stack on every recursive step.
+// Packing the slices into a borrowed context struct keeps each call at 3-4
+// register-sized arguments.
+pub struct TreeShakeCtx<'a, 'r> {
+    pub side_effects: &'r [SideEffects],
+    pub parts: &'r mut [bun_ast::PartList<'a>],
+    pub import_records: &'r [bun_ast::import_record::List<'a>],
+    pub entry_point_kinds: &'r [EntryPoint::Kind],
+    pub css_reprs: &'r [crate::bundled_ast::CssCol],
+}
+
+pub struct CodeSplitCtx<'a, 'r> {
+    pub distances: &'r mut [u32],
+    // Spec (LinkerContext.zig:1579) passes `parts: []Vec(Part)` and only
+    // reads it.
+    pub parts: &'r [bun_ast::PartList<'a>],
+    pub import_records: &'r [bun_ast::import_record::List<'a>],
+    pub file_entry_bits: &'r mut [AutoBitSet],
+    pub css_reprs: &'r [crate::bundled_ast::CssCol],
+}
+
 impl<'a> LinkerContext<'a> {
     pub fn mark_file_reachable_for_code_splitting(
         &mut self,
+        ctx: &mut CodeSplitCtx<'a, '_>,
         source_index: crate::IndexInt,
         entry_points_count: usize,
-        distances: &mut [u32],
         distance: u32,
-        // Spec (LinkerContext.zig:1579) passes `parts: []Vec(Part)` and only
-        // reads it. `&mut` here forced an aliased reborrow against the
-        // `parts_in_file` slice below — borrowck conflict in un-gated code.
-        parts: &[bun_ast::PartList<'a>],
-        import_records: &[bun_ast::import_record::List<'a>],
-        file_entry_bits: &mut [AutoBitSet],
-        css_reprs: &[crate::bundled_ast::CssCol],
     ) {
         if !self.graph.files_live.is_set(source_index as usize) {
             return;
         }
 
-        let cur_dist = distances[source_index as usize];
+        let cur_dist = ctx.distances[source_index as usize];
         let traverse_again = distance < cur_dist;
         if traverse_again {
-            distances[source_index as usize] = distance;
+            ctx.distances[source_index as usize] = distance;
         }
         let out_dist = distance + 1;
 
-        let bits = &mut file_entry_bits[source_index as usize];
+        let bits = &mut ctx.file_entry_bits[source_index as usize];
 
         // Don't mark this file more than once
         if bits.is_set(entry_points_count) && !traverse_again {
@@ -2674,56 +2692,51 @@ impl<'a> LinkerContext<'a> {
             );
         }
 
-        if css_reprs[source_index as usize].is_some() {
-            for record in import_records[source_index as usize].as_slice() {
+        if ctx.css_reprs[source_index as usize].is_some() {
+            for ri in 0..ctx.import_records[source_index as usize].len() {
+                let record = &ctx.import_records[source_index as usize][ri];
                 if record.source_index.is_valid()
                     && !self.is_external_dynamic_import(record, source_index)
                 {
+                    let other = record.source_index.get();
                     self.mark_file_reachable_for_code_splitting(
-                        record.source_index.get(),
+                        ctx,
+                        other,
                         entry_points_count,
-                        distances,
                         out_dist,
-                        parts,
-                        import_records,
-                        file_entry_bits,
-                        css_reprs,
                     );
                 }
             }
             return;
         }
 
-        for record in import_records[source_index as usize].as_slice() {
+        for ri in 0..ctx.import_records[source_index as usize].len() {
+            let record = &ctx.import_records[source_index as usize][ri];
             if record.source_index.is_valid()
                 && !self.is_external_dynamic_import(record, source_index)
             {
+                let other = record.source_index.get();
                 self.mark_file_reachable_for_code_splitting(
-                    record.source_index.get(),
+                    ctx,
+                    other,
                     entry_points_count,
-                    distances,
                     out_dist,
-                    parts,
-                    import_records,
-                    file_entry_bits,
-                    css_reprs,
                 );
             }
         }
 
-        let parts_in_file = parts[source_index as usize].as_slice();
-        for part in parts_in_file {
-            for dependency in part.dependencies.slice() {
+        let part_count = ctx.parts[source_index as usize].len();
+        for pi in 0..part_count {
+            let deps_len = ctx.parts[source_index as usize].as_slice()[pi].dependencies.len();
+            for di in 0..deps_len {
+                let dependency =
+                    ctx.parts[source_index as usize].as_slice()[pi].dependencies[di];
                 if dependency.source_index.get() != source_index {
                     self.mark_file_reachable_for_code_splitting(
+                        ctx,
                         dependency.source_index.get(),
                         entry_points_count,
-                        distances,
                         out_dist,
-                        parts,
-                        import_records,
-                        file_entry_bits,
-                        css_reprs,
                     );
                 }
             }
@@ -2732,12 +2745,8 @@ impl<'a> LinkerContext<'a> {
 
     pub fn mark_file_live_for_tree_shaking(
         &mut self,
+        ctx: &mut TreeShakeCtx<'a, '_>,
         source_index: crate::IndexInt,
-        side_effects: &[SideEffects],
-        parts: &mut [bun_ast::PartList<'a>],
-        import_records: &[bun_ast::import_record::List<'a>],
-        entry_point_kinds: &[EntryPoint::Kind],
-        css_reprs: &[crate::bundled_ast::CssCol],
     ) {
         #[cfg(debug_assertions)]
         {
@@ -2779,18 +2788,12 @@ impl<'a> LinkerContext<'a> {
             return;
         }
 
-        if css_reprs[source_index as usize].is_some() {
-            for record in import_records[source_index as usize].as_slice() {
-                let other_source_index = record.source_index.get();
+        if ctx.css_reprs[source_index as usize].is_some() {
+            for ri in 0..ctx.import_records[source_index as usize].len() {
+                let record = &ctx.import_records[source_index as usize][ri];
                 if record.source_index.is_valid() {
-                    self.mark_file_live_for_tree_shaking(
-                        other_source_index,
-                        side_effects,
-                        parts,
-                        import_records,
-                        entry_point_kinds,
-                        css_reprs,
-                    );
+                    let other_source_index = record.source_index.get();
+                    self.mark_file_live_for_tree_shaking(ctx, other_source_index);
                 }
             }
             return;
@@ -2800,25 +2803,20 @@ impl<'a> LinkerContext<'a> {
         // via .url kind import records. Follow all import records for HTML files
         // so these assets are marked live and included in the manifest.
         if self.parse_graph().input_files.items_loader()[source_index as usize] == Loader::Html {
-            for record in import_records[source_index as usize].as_slice() {
+            for ri in 0..ctx.import_records[source_index as usize].len() {
+                let record = &ctx.import_records[source_index as usize][ri];
                 if record.source_index.is_valid() {
-                    self.mark_file_live_for_tree_shaking(
-                        record.source_index.get(),
-                        side_effects,
-                        parts,
-                        import_records,
-                        entry_point_kinds,
-                        css_reprs,
-                    );
+                    let other_source_index = record.source_index.get();
+                    self.mark_file_live_for_tree_shaking(ctx, other_source_index);
                 }
             }
             return;
         }
 
-        let part_count = parts[source_index as usize].len();
+        let part_count = ctx.parts[source_index as usize].len();
         for part_index in 0..part_count {
             // PORT NOTE: reshaped for borrowck — re-borrow part each iteration since recursion mutates `parts`
-            let part = &parts[source_index as usize].as_slice()[part_index];
+            let part = &ctx.parts[source_index as usize].as_slice()[part_index];
             let mut can_be_removed_if_unused = part.can_be_removed_if_unused;
 
             if can_be_removed_if_unused && part.tag == bun_ast::PartTag::CommonjsNamedExport {
@@ -2834,37 +2832,31 @@ impl<'a> LinkerContext<'a> {
             // matches Zig's plain `for (part.import_record_indices.slice())`.
             let import_indices_len = part.import_record_indices.len();
             for ii in 0..import_indices_len {
-                let import_index =
-                    parts[source_index as usize].as_slice()[part_index].import_record_indices[ii];
-                let record = &import_records[source_index as usize][import_index as usize];
+                let import_index = ctx.parts[source_index as usize].as_slice()[part_index]
+                    .import_record_indices[ii];
+                let record = &ctx.import_records[source_index as usize][import_index as usize];
                 if record.kind != ImportKind::Stmt {
                     continue;
                 }
+                let record_source_index = record.source_index;
+                let is_external_without_side_effects = record
+                    .flags
+                    .contains(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
 
-                if record.source_index.is_valid() {
-                    let other_source_index = record.source_index.get();
+                if record_source_index.is_valid() {
+                    let other_source_index = record_source_index.get();
 
                     // Don't include this module for its side effects if it can be
                     // considered to have no side effects
-                    let se = side_effects[other_source_index as usize];
+                    let se = ctx.side_effects[other_source_index as usize];
 
                     if se != SideEffects::HasSideEffects && !self.options.ignore_dce_annotations {
                         continue;
                     }
 
                     // Otherwise, include this module for its side effects
-                    self.mark_file_live_for_tree_shaking(
-                        other_source_index,
-                        side_effects,
-                        parts,
-                        import_records,
-                        entry_point_kinds,
-                        css_reprs,
-                    );
-                } else if record
-                    .flags
-                    .contains(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS)
-                {
+                    self.mark_file_live_for_tree_shaking(ctx, other_source_index);
+                } else if is_external_without_side_effects {
                     // This can be removed if it's unused
                     continue;
                 }
@@ -2878,20 +2870,16 @@ impl<'a> LinkerContext<'a> {
             // everything if tree-shaking is disabled. Note that we still want to
             // perform tree-shaking on the runtime even if tree-shaking is disabled.
             let force_tree_shaking =
-                parts[source_index as usize].as_slice()[part_index].force_tree_shaking;
+                ctx.parts[source_index as usize].as_slice()[part_index].force_tree_shaking;
             if !can_be_removed_if_unused
                 || (!force_tree_shaking
                     && !self.options.tree_shaking
-                    && entry_point_kinds[source_index as usize].is_entry_point())
+                    && ctx.entry_point_kinds[source_index as usize].is_entry_point())
             {
                 self.mark_part_live_for_tree_shaking(
+                    ctx,
                     u32::try_from(part_index).expect("int cast"),
                     source_index,
-                    side_effects,
-                    parts,
-                    import_records,
-                    entry_point_kinds,
-                    css_reprs,
                 );
             }
         }
@@ -2899,15 +2887,12 @@ impl<'a> LinkerContext<'a> {
 
     pub fn mark_part_live_for_tree_shaking(
         &mut self,
+        ctx: &mut TreeShakeCtx<'a, '_>,
         part_index: crate::IndexInt,
         source_index: crate::IndexInt,
-        side_effects: &[SideEffects],
-        parts: &mut [bun_ast::PartList<'a>],
-        import_records: &[bun_ast::import_record::List<'a>],
-        entry_point_kinds: &[EntryPoint::Kind],
-        css_reprs: &[crate::bundled_ast::CssCol],
     ) {
-        let part: &mut Part = &mut parts[source_index as usize].as_mut_slice()[part_index as usize];
+        let part: &mut Part =
+            &mut ctx.parts[source_index as usize].as_mut_slice()[part_index as usize];
 
         // only once
         if part.is_live {
@@ -2950,21 +2935,14 @@ impl<'a> LinkerContext<'a> {
         scopeguard::defer! { debug_tree_shake!("end()"); }
 
         // Include the file containing this part
-        self.mark_file_live_for_tree_shaking(
-            source_index,
-            side_effects,
-            parts,
-            import_records,
-            entry_point_kinds,
-            css_reprs,
-        );
+        self.mark_file_live_for_tree_shaking(ctx, source_index);
 
         // The recursion above/below only flips `is_live` flags; it never resizes
         // any part's `dependencies`, so the slice's len/ptr are stable. Iterate
         // by index and re-borrow per iteration to satisfy borrowck without the
         // per-call `Vec` clone the original port did.
         let dependencies_len =
-            parts[source_index as usize].as_slice()[part_index as usize].dependencies.len();
+            ctx.parts[source_index as usize].as_slice()[part_index as usize].dependencies.len();
 
         #[cfg(feature = "debug_logs")]
         if dependencies_len == 0 {
@@ -2977,7 +2955,7 @@ impl<'a> LinkerContext<'a> {
 
         for di in 0..dependencies_len {
             let dependency =
-                parts[source_index as usize].as_slice()[part_index as usize].dependencies[di];
+                ctx.parts[source_index as usize].as_slice()[part_index as usize].dependencies[di];
             #[cfg(feature = "debug_logs")]
             if source_index != 0 && dependency.source_index.get() != 0 {
                 log_part_dependency_tree!(
@@ -2990,13 +2968,9 @@ impl<'a> LinkerContext<'a> {
             }
 
             self.mark_part_live_for_tree_shaking(
+                ctx,
                 dependency.part_index,
                 dependency.source_index.get(),
-                side_effects,
-                parts,
-                import_records,
-                entry_point_kinds,
-                css_reprs,
             );
         }
     }

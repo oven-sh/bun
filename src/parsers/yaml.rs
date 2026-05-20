@@ -3692,13 +3692,28 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         ..Default::default()
                     })?;
 
-                    let key = self.parse_node(ParseNodeOptions {
-                        explicit_mapping_key: true,
-                        current_mapping_indent: Some(
-                            opts.current_mapping_indent.unwrap_or(mapping_indent),
-                        ),
-                        ..Default::default()
-                    })?;
+                    let key = if parent_indent.is_some()
+                        && self.token.line != mapping_line
+                        && self.token.indent.is_less_than_or_equal(mapping_indent)
+                        && !(self.token.indent == mapping_indent
+                            && matches!(self.token.data, TokenData::SequenceEntry))
+                    {
+                        // [185] e-node — `?` followed by nothing more-indented
+                        // has an empty key; the current token is the explicit
+                        // `:`, the next entry, or the end of the mapping.
+                        // Exception: a zero-indented `- ` at the `?` indent is
+                        // the key (block sequences may sit at their parent's
+                        // indent).
+                        Expr::init(E::Null {}, self.token.start.loc())
+                    } else {
+                        self.parse_node(ParseNodeOptions {
+                            explicit_mapping_key: true,
+                            current_mapping_indent: Some(
+                                opts.current_mapping_indent.unwrap_or(mapping_indent),
+                            ),
+                            ..Default::default()
+                        })?
+                    };
 
                     self.block_indents.pop();
 

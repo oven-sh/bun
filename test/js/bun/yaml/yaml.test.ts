@@ -923,6 +923,22 @@ folded: >
           expect(YAML.parse("?\n: v\n")).toEqual({ null: "v" });
         });
 
+        test("bare ? followed by next entry at same indent", () => {
+          // [185] e-node — `?` with nothing more-indented has empty key
+          expect(YAML.parse("?\nb: 2\n")).toEqual({ null: null, b: 2 });
+          expect(YAML.parse("x: 1\n?\nb: 2\n")).toEqual({ x: 1, null: null, b: 2 });
+          expect(YAML.parse("?\n? b\n")).toEqual({ null: null, b: null });
+        });
+
+        test("bare ? followed by more-indented content (the key)", () => {
+          expect(YAML.parse("?\n b: 2\n")).toEqual({ "[object Object]": null });
+          expect(YAML.parse("?\n  b\n: 2\n")).toEqual({ b: 2 });
+        });
+
+        test("bare ? followed by zero-indented sequence (the key)", () => {
+          expect(YAML.parse("?\n- a\n- b\n:\n- c\n- d\n")).toEqual({ "a,b": ["c", "d"] });
+        });
+
         test("? then EOF (no newline)", () => {
           expect(YAML.parse("? a")).toEqual({ a: null });
         });

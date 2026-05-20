@@ -310,9 +310,39 @@ fn update_package_json_and_install_with_manager_with_updates(
 
         Subcommand::Link | Subcommand::Add | Subcommand::Update => {
             // `bun update <package>` is basically the same as `bun add <package>`, except
-            // update will not exceed the current dependency range if it exists
+            // update will not exceed the current dependency range if it exists.
+            //
+            // With `bun update --recursive`: do NOT edit package.json. Instead,
+            // populate the manifest refresh target set so resolution fetches
+            // fresh registry data, then let the lockfile cloner re-resolve
+            // transitives in place. This is the workflow for transitive CVE
+            // remediation (npm `update`, yarn `up --recursive`).
+            let is_recursive_update =
+                subcommand == Subcommand::Update && manager.options.do_.recursive();
 
-            if !updates.is_empty() {
+            if is_recursive_update {
+                // For --recursive, always refresh ALL manifests. Positional
+                // arguments still gate which root-level enqueues happen, but
+                // transitive re-resolution needs fresh data for every name in
+                // the dep graph — not just the named roots. (Without this,
+                // `bun update parent --recursive` would refresh `parent`'s
+                // manifest but keep `dep` stale, defeating the purpose.)
+                // We still record positional names in the target set so
+                // future, more targeted logic (e.g. only re-enqueue named
+                // names in `install_with_manager`) can use them.
+                manager.manifest_refresh_all = true;
+                if !updates.is_empty() {
+                    manager
+                        .manifest_refresh_targets
+                        .reserve(updates.len());
+                    for req in updates.iter() {
+                        manager
+                            .manifest_refresh_targets
+                            .insert(req.name_hash, ());
+                    }
+                }
+                // package.json is intentionally left untouched.
+            } else if !updates.is_empty() {
                 let mut updates_slice: &mut [UpdateRequest] = &mut updates[..];
                 PackageJSONEditor::edit(
                     manager,
@@ -571,7 +601,16 @@ fn update_package_json_and_install_with_manager_with_updates(
                 }
             };
 
-        if updates.is_empty() {
+        // `bun update --recursive` must not touch package.json — this is the
+        // post-install re-edit phase that normally commits resolved versions
+        // back to the manifest. Skip it so declared ranges stay intact while
+        // the lockfile records re-resolved transitive versions.
+        let is_recursive_update =
+            subcommand == Subcommand::Update && manager.options.do_.recursive();
+
+        if is_recursive_update {
+            // No-op: keep package.json byte-for-byte identical.
+        } else if updates.is_empty() {
             PackageJSONEditor::edit_update_no_args(
                 manager,
                 &mut new_package_json,

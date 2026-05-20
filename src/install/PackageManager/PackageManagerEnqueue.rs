@@ -25,6 +25,7 @@ use crate::package_manager_real::{
     generate_network_task_for_tarball, get_cache_directory, get_preinstall_state,
     get_temporary_directory, run_tasks, set_preinstall_state,
 };
+use crate::Subcommand;
 use crate::package_manager_task as Task;
 use crate::patch_install::{Callback as PatchCallback, EnqueueAfterState};
 use crate::repository_real::RepositoryExt as _;
@@ -1001,7 +1002,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         // still hold `&mut this` exclusively — taking it via
                         // `&mut *this_ptr` after `name_str`/`scope` exist
                         // would pop their borrow-stack tags under SB.
-                        let cache_ctx = this.manifest_disk_cache_ctx();
+                        let cache_ctx = this.manifest_disk_cache_ctx_for(Some(name_hash));
                         let this_ptr: *mut PackageManager = this;
                         // SAFETY: `string_bytes` is not resized in the
                         // manifest-lookup path; every call below either copies
@@ -1139,8 +1140,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                         }
 
                                         // Was it recent enough to just load it without the network call?
-                                        if this.options.enable.manifest_cache_control() && !expired
-                                        {
+                                        if this.should_use_manifest_cache(name_hash) && !expired {
                                             let _ = this.network_dedupe_map.remove(&task_id);
                                             continue 'retry_from_manifests_ptr;
                                         }
@@ -2069,9 +2069,22 @@ fn get_or_put_resolved_package_with_find_result(
     let suppress_peer_satisfies = behavior.is_peer()
         && !install_peer
         && !(version.tag == dependency::version::Tag::Npm && version.npm().version.is_star());
+
+    // `bun update --recursive`: refreshed manifests may offer a newer in-range
+    // version. Setting the version filter to `None` makes `get_package_id`
+    // require an exact-resolution match (its `satisfies` fallback is gated on
+    // a non-None npm version). When the lockfile holds an older entry, the
+    // exact-match lookup misses and we fall through to `append_package` with
+    // the fresh version — matching `yarn up --recursive` and `npm update <pkg>`
+    // semantics for transitive CVE remediation. The post-clone re-resolve pass
+    // in `Cloner` then repoints dep edges from the stale to the fresh entry.
+    let force_fresh_resolution = this.subcommand == Subcommand::Update
+        && this.options.do_.recursive()
+        && (this.manifest_refresh_all || this.manifest_refresh_targets.contains_key(&name_hash));
+
     if let Some(id) = this.lockfile.get_package_id(
         name_hash,
-        if should_update || suppress_peer_satisfies {
+        if should_update || suppress_peer_satisfies || force_fresh_resolution {
             None
         } else {
             Some(version.clone())
@@ -2411,7 +2424,7 @@ fn get_or_put_resolved_package(
             // `this_ptr`: `manifest_disk_cache_ctx` takes `&mut self`, and
             // materializing `&mut *this_ptr` after `name_str`/`scope` are
             // derived from it would pop their borrow-stack tags under SB.
-            let cache_ctx = this.manifest_disk_cache_ctx();
+            let cache_ctx = this.manifest_disk_cache_ctx_for(Some(name_hash));
             let needs_ext = this.options.minimum_release_age_ms.is_some();
             let this_ptr: *mut PackageManager = this;
             // SAFETY: `string_bytes` is not resized between here and the

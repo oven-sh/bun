@@ -164,7 +164,9 @@ pub static UPDATE_PARAMS: &[ParamType] = concat_params![
         clap::param!(
             "--filter <STR>...                     Update packages for the matching workspaces"
         ),
-        clap::param!("-r, --recursive                       Update packages in all workspaces"),
+        clap::param!(
+            "-r, --recursive                       Re-resolve transitive dependencies to the highest in-range versions (does not modify package.json)"
+        ),
         clap::param!("<POS> ...                             \"name\" of packages to update"),
     ]
 ];

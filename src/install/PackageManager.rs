@@ -490,6 +490,18 @@ pub struct PackageManager {
     pub active_lifecycle_scripts: crate::lifecycle_script_runner::List<'static>,
     pub last_reported_slow_lifecycle_script_at: u64,
     pub cached_tick_for_slow_lifecycle_script_logging: u64,
+
+    /// `bun update --recursive` support. Names whose manifests should be
+    /// refreshed during resolution so the lockfile can re-resolve transitives
+    /// to newer in-range versions. When empty AND `manifest_refresh_all` is
+    /// false, falls back to `options.enable.manifest_cache_control`.
+    /// Use as a set (value is `()`).
+    pub manifest_refresh_targets: ArrayHashMap<
+        PackageNameHash,
+        (),
+        bun_collections::ArrayIdentityContextU64,
+    >,
+    pub manifest_refresh_all: bool,
 }
 
 #[derive(Default)]
@@ -864,6 +876,22 @@ pub static ROOT_PACKAGE_JSON_PATH: bun_core::RacyCell<&ZStr> = bun_core::RacyCel
 impl PackageManager {
     pub fn clear_cached_items_depending_on_lockfile_buffer(&mut self) {
         self.root_package_id.id = None;
+    }
+
+    /// True when the (in-memory + on-disk) manifest cache should be honored
+    /// for this package name. Under `bun update --recursive`, targeted names
+    /// bypass the cache so the resolver sees fresh registry data. All other
+    /// callers see the normal `options.enable.manifest_cache_control` value.
+    pub fn should_use_manifest_cache(&self, name_hash: PackageNameHash) -> bool {
+        if self.manifest_refresh_all {
+            return false;
+        }
+        if !self.manifest_refresh_targets.is_empty()
+            && self.manifest_refresh_targets.contains_key(&name_hash)
+        {
+            return false;
+        }
+        self.options.enable.manifest_cache_control()
     }
 
     pub fn deinit_caches(&mut self) {
@@ -2104,6 +2132,8 @@ pub fn init(
         wr!(patched_dependencies_to_remove, ArrayHashMap::default());
         wr!(last_reported_slow_lifecycle_script_at, 0);
         wr!(cached_tick_for_slow_lifecycle_script_logging, 0);
+        wr!(manifest_refresh_targets, ArrayHashMap::default());
+        wr!(manifest_refresh_all, false);
     }
     holder::INITIALIZED.store(true, core::sync::atomic::Ordering::Release);
     // The per-field placement above fully initialized the singleton; the
@@ -2563,6 +2593,8 @@ pub fn init_with_runtime_once(
         wr!(patched_dependencies_to_remove, ArrayHashMap::default());
         wr!(last_reported_slow_lifecycle_script_at, 0);
         wr!(cached_tick_for_slow_lifecycle_script_logging, 0);
+        wr!(manifest_refresh_targets, ArrayHashMap::default());
+        wr!(manifest_refresh_all, false);
     }
     holder::INITIALIZED.store(true, core::sync::atomic::Ordering::Release);
     // SAFETY: per-field placement above fully initialized the PackageManager;

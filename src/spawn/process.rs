@@ -715,10 +715,7 @@ impl Process {
         {
             match &self.poller {
                 Poller::WaiterThread(_) | Poller::Fd(_) => {
-                    bun_io::parent_death_watchdog::kill_process_tree(
-                        self.pid,
-                        signal as c_int,
-                    );
+                    bun_io::parent_death_watchdog::kill_process_tree(self.pid, signal as c_int);
                 }
                 _ => {}
             }

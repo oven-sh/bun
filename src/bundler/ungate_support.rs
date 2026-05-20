@@ -546,7 +546,7 @@ pub mod html_import_manifest {
     /// slice in place so it can recover `pos = before_len - cursor.len()`.
     pub fn write_escaped_json(
         index: u32,
-        graph: &Graph,
+        graph: &Graph<'_>,
         linker_graph: &LinkerGraph<'_>,
         chunks: &[Chunk],
         w: &mut &mut [u8],

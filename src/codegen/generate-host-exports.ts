@@ -452,13 +452,13 @@ pub extern "Rust" fn ${e.symbol}(${sig}) -> ${e.ret} {
       // forward raw.
       const globalParam = e.params.find(p => /JSGlobalObject$/.test(p.ty));
       const cRet = retIsJsResult ? "JSValue" : e.ret;
-      let body =
-        retIsJsResult && globalParam
-          ? `host_fn::host_fn_result(${globalParam.name}, || ${impl}(${call}))`
-          : `${impl}(${call})`;
+      let inner = `${impl}(${call})`;
       if (e.isUnsafe) {
-        body = `// SAFETY: C++ caller upholds the impl fn's documented safety contract.\n    unsafe { ${body} }`;
+        // `unsafe { }` must wrap the *call*, not the closure expression — a
+        // closure body is its own safety context.
+        inner = `\n        // SAFETY: C++ caller upholds the impl fn's documented safety contract.\n        unsafe { ${inner} }`;
       }
+      const body = retIsJsResult && globalParam ? `host_fn::host_fn_result(${globalParam.name}, || ${inner})` : inner;
       return `
 // ${loc}
 ${emitNoMangle(e.abi, e.symbol, sig, cRet, `${binds}    ${body}`)}`;

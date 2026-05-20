@@ -11,9 +11,8 @@ use bun_lolhtml_sys::lol_html as lol;
 use bun_threading::thread_pool::Task as ThreadPoolLibTask;
 
 use crate::HTMLScanner::{HTMLProcessor, HTMLProcessorHandler};
-use crate::linker_context_mod::{GenerateChunkCtx, LinkerContext, PendingPartRange, debug};
+use crate::linker_context_mod::{GenerateChunkCtx, LinkerContext, debug};
 use crate::options::Loader;
-use crate::thread_pool::Worker;
 use crate::{Chunk, CompileResult};
 
 /// Rrewrite the HTML with the following transforms:
@@ -42,19 +41,21 @@ use crate::{Chunk, CompileResult};
 // `&mut LinkerContext` — `c_ptr` stays raw; the HTML rewriter takes
 // `&LinkerContext`. See `generate_compile_result_for_js_chunk` for the
 // `PendingPartRange: Send` justification.
-pub fn generate_compile_result_for_html_chunk(task: *mut ThreadPoolLibTask) {
-    // SAFETY: `task` is the `task` field of a `PendingPartRange` scheduled by
-    // `generate_chunks_in_parallel`; recover the parent via offset_of.
-    // `GenerateChunkCtx` fields are raw `*mut` (not `&mut`), so reading them
-    // through `&PendingPartRange` / `&GenerateChunkCtx` is a plain `Copy` of
-    // the pointer value and preserves the mutable provenance they were
-    // constructed with — no `addr_of!` provenance dance needed.
-    let part_range: &PendingPartRange =
-        unsafe { &*bun_core::from_field_ptr!(PendingPartRange, task, task) };
+//
+/// # Safety
+///
+/// `task` must be the intrusive `task` field of a live `PendingPartRange`
+/// scheduled by `generate_chunks_in_parallel`; see
+/// [`pending_part_range_prologue`](crate::linker_context_mod::pending_part_range_prologue)
+/// for the full contract. Matches the `Task::callback: unsafe fn(*mut Task)`
+/// contract.
+pub unsafe fn generate_compile_result_for_html_chunk(task: *mut ThreadPoolLibTask) {
+    // SAFETY: `task` is the intrusive `task` field of a `PendingPartRange`
+    // scheduled by `generate_chunks_in_parallel`; see the helper's contract.
+    let (part_range, _c_ptr, chunk_ptr, _worker) =
+        unsafe { crate::linker_context_mod::pending_part_range_prologue(task) };
     let i = part_range.i as usize;
     let ctx: &GenerateChunkCtx = part_range.ctx;
-    let worker = Worker::get(ctx.bundle());
-    let _unget = scopeguard::guard(&mut *worker, |w| w.unget());
 
     // `ctx.chunks` is a `BackRef<[Chunk]>` constructed via `new_mut` (write
     // provenance); recover the raw `*mut [Chunk]` for the HTML loader, which
@@ -68,7 +69,7 @@ pub fn generate_compile_result_for_html_chunk(task: *mut ThreadPoolLibTask) {
     let result = generate_compile_result_for_html_chunk_impl(c_ref, chunk_ref, chunks);
     // SAFETY: HTML chunks have exactly one part-range (i == 0); see
     // `Chunk::write_compile_result_slot` for the disjoint-slot contract.
-    unsafe { Chunk::write_compile_result_slot(ctx.chunk.as_ptr(), i, result) };
+    unsafe { Chunk::write_compile_result_slot(chunk_ptr, i, result) };
 }
 
 #[derive(Default)]
@@ -490,7 +491,7 @@ fn generate_compile_result_for_html_chunk_impl<'a>(
             }
             // value is ignored. fail loud if hit in debug
             // TODO(port): Zig returned `undefined` in debug to fail loud; Rust has no direct equivalent.
-            break 'brk if cfg!(debug_assertions) { 0 } else { 0 };
+            break 'brk 0;
         }
     };
 

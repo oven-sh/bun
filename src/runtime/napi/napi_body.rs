@@ -1792,14 +1792,13 @@ impl napi_async_work {
             Ordering::SeqCst,
         ) {
             if state == AsyncWorkStatus::Cancelled as u32 {
-                // SAFETY: `concurrent_task` is the live inline field of this
-                // heap work; the queue takes ownership of its `next` link.
-                unsafe {
-                    self.event_loop.enqueue_task_concurrent(
+                // `concurrent_task` is the live inline field of this heap work;
+                // the queue takes ownership of its `next` link.
+                self.event_loop
+                    .enqueue_task_concurrent(core::ptr::NonNull::from(
                         self.concurrent_task
                             .from(self_ptr, AutoDeinit::ManualDeinit),
-                    );
-                }
+                    ));
                 return;
             }
         }
@@ -1807,14 +1806,13 @@ impl napi_async_work {
         self.status
             .store(AsyncWorkStatus::Completed as u32, Ordering::SeqCst);
 
-        // SAFETY: `concurrent_task` is the live inline field of this heap work;
-        // the queue takes ownership of its `next` link.
-        unsafe {
-            self.event_loop.enqueue_task_concurrent(
+        // `concurrent_task` is the live inline field of this heap work; the
+        // queue takes ownership of its `next` link.
+        self.event_loop
+            .enqueue_task_concurrent(core::ptr::NonNull::from(
                 self.concurrent_task
                     .from(self_ptr, AutoDeinit::ManualDeinit),
-            );
-        }
+            ));
     }
 
     pub fn cancel(&mut self) -> bool {

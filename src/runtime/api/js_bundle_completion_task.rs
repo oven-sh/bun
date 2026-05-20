@@ -37,7 +37,9 @@ use bun_standalone_graph::StandaloneModuleGraph::{
     CompileErrorReason, CompileResult, Flags as StandaloneFlags, target_base_public_path,
     to_executable,
 };
-use bun_sys::{Dir, OpenDirOptions};
+use bun_sys::Dir;
+#[cfg(not(windows))]
+use bun_sys::OpenDirOptions;
 
 use crate::api::js_bundler::BuildArtifact;
 use crate::api::js_bundler::js_bundler::{Config as JSBundlerConfig, Plugin, PluginJscExt};
@@ -337,7 +339,10 @@ impl JSBundleCompletionTask {
         let dirname: &[u8] = paths::dirname(&full_outfile_path).unwrap_or(b".");
         let basename: &[u8] = paths::basename(&full_outfile_path);
 
+        #[cfg(not(windows))]
         let mut root_dir = Dir::cwd();
+        #[cfg(windows)]
+        let root_dir = Dir::cwd();
 
         // On Windows, don't change root_dir, just pass the full relative path
         // On POSIX, change root_dir to the target directory and pass basename
@@ -785,12 +790,12 @@ static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDis
     result_is_err: |c| matches!(from_completion_handle(c).result, BundleV2Result::Err(_)),
     enqueue_task_concurrent: |c, task| {
         // `jsc_event_loop` is a `BackRef<EventLoop>` — safe Deref.
-        // SAFETY: `task` is a fresh heap-allocated `ConcurrentTaskItem` passed
-        // through from the bundler vtable; the queue takes ownership.
+        // SAFETY: `task` is a fresh heap-allocated non-null `ConcurrentTaskItem`
+        // passed through from the bundler vtable; the queue takes ownership.
         unsafe {
             from_completion_handle(c)
                 .jsc_event_loop
-                .enqueue_task_concurrent(task)
+                .enqueue_task_concurrent(core::ptr::NonNull::new_unchecked(task))
         }
     },
 };

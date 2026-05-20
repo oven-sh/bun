@@ -282,6 +282,7 @@ impl PostgresSQLConnection {
     /// before any call that touches `authentication_state` again
     /// (`self.writer()` / `self.flush_data()` / `self.fail()` do not).
     #[inline]
+    #[allow(clippy::mut_from_ref)] // body projects through `JsCell` (UnsafeCell-backed); see SAFETY note
     fn sasl_state_mut(&self) -> Option<&mut crate::postgres::sasl::SASL> {
         // SAFETY: see doc comment — single-JS-thread, no re-entrant access to
         // `authentication_state` for the borrow's lifetime.
@@ -1355,7 +1356,6 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
     js::onconnect_set_cached(js_value, global_object, on_connect);
     js::onclose_set_cached(js_value, global_object, on_close);
     /* TODO(port): bun_core::analytics::Features::POSTGRES_CONNECTIONS counter */
-    ();
     Ok(js_value)
 }
 

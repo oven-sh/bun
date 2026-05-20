@@ -676,7 +676,7 @@ impl SourceMapStore {
     /// `timer` must point to the `weak_ref_sweep_timer` field of a live
     /// `SourceMapStore` that is itself the `source_maps` field of a live
     /// heap-allocated `DevServer`.
-    pub unsafe fn sweep_weak_refs(
+    pub fn sweep_weak_refs(
         timer: *mut EventLoopTimer,
         now_ts: &bun_event_loop::EventLoopTimer::Timespec,
     ) {

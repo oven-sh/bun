@@ -841,7 +841,7 @@ impl Response {
         let cloned = this.clone(global_this)?;
 
         // SAFETY: `cloned` is a freshly-boxed Response from `clone()`.
-        let js_wrapper = unsafe { Response::make_maybe_pooled(global_this, cloned) };
+        let js_wrapper = Response::make_maybe_pooled(global_this, cloned);
         this.sync_cloned_body_stream_caches(this_value, js_wrapper, global_this);
         Ok(js_wrapper)
     }
@@ -850,7 +850,7 @@ impl Response {
     /// `ptr` must point to a live `Response` allocation (e.g. freshly boxed via
     /// [`Response::clone`]); ownership of the +1 ref transfers to the returned
     /// JS wrapper.
-    pub unsafe fn make_maybe_pooled(global_object: &JSGlobalObject, ptr: *mut Response) -> JSValue {
+    pub fn make_maybe_pooled(global_object: &JSGlobalObject, ptr: *mut Response) -> JSValue {
         // SAFETY: caller contract — `ptr` is live and uniquely owned.
         unsafe { (*ptr).to_js(global_object) }
     }
@@ -919,7 +919,7 @@ impl Response {
     /// # Safety
     /// `this` must point to a live `Response` on which the caller already holds
     /// at least one intrusive ref.
-    pub unsafe fn ref_(this: *mut Response) -> *mut Response {
+    pub fn ref_(this: *mut Response) -> *mut Response {
         // SAFETY: caller contract — `this` is live.
         unsafe {
             (*this).ref_count.set((*this).ref_count.get() + 1);
@@ -931,7 +931,7 @@ impl Response {
     /// `this` must point to a live `Response` on which the caller holds one
     /// intrusive ref; that ref is released (and the allocation destroyed if it
     /// was the last).
-    pub unsafe fn unref(this: *mut Response) {
+    pub fn unref(this: *mut Response) {
         // SAFETY: caller contract — `this` is live.
         unsafe {
             let rc = (*this).ref_count.get();
@@ -951,7 +951,7 @@ impl Response {
         this.js_ref.with_mut(JsRef::finalize);
         // SAFETY: `heap::release` returned the live raw pointer for the +1 we
         // just reclaimed from the JS wrapper.
-        unsafe { Self::unref(this) };
+        Self::unref(this);
     }
 
     pub fn construct_json(

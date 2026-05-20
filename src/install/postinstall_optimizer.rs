@@ -260,9 +260,7 @@ impl List {
             return Some(*optimize);
         }
 
-        let Some(default) = Self::from_default(pkg_info) else {
-            return None;
-        };
+        let default = Self::from_default(pkg_info)?;
 
         match default {
             PostinstallOptimizer::NativeBinlink => {

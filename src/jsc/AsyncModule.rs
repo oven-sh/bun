@@ -394,9 +394,7 @@ impl Queue {
         // widening from a `&mut self`-derived pointer, but `ctx` is a raw
         // `*mut` carried from the original allocation.
         let vm = unsafe { &mut *bun_core::from_field_ptr!(VirtualMachine, modules, queue) };
-        // SAFETY: `task` is a freshly heap-allocated `ConcurrentTaskItem`
-        // (see `ConcurrentTask::create` above); the queue takes ownership.
-        unsafe { vm.enqueue_task_concurrent(task) };
+        vm.enqueue_task_concurrent(task);
     }
 
     pub fn on_poll(&mut self) {
@@ -720,7 +718,7 @@ impl AsyncModule {
                 callback: |p| {
                     // SAFETY: `p` is the `clone` heap allocation registered as
                     // `ctx` above; `on_done` reclaims it via `heap::take`.
-                    unsafe { Self::on_done(p.cast()) };
+                    Self::on_done(p.cast());
                     Ok(())
                 },
             };
@@ -1366,14 +1364,12 @@ impl AsyncModule {
         }
 
         #[cfg(feature = "dump_source")]
-        // SAFETY: `jsc_vm` is the live per-thread `VirtualMachine` (BACKREF).
-        unsafe {
-            crate::runtime_transpiler_store::dump_source_string(
-                jsc_vm as *mut VirtualMachine,
-                specifier,
-                printer.ctx.get_written(),
-            );
-        }
+        crate::runtime_transpiler_store::dump_source_string(
+            // SAFETY: `jsc_vm` is the live per-thread `VirtualMachine` (BACKREF, non-null).
+            unsafe { core::ptr::NonNull::new_unchecked(jsc_vm) },
+            specifier,
+            printer.ctx.get_written(),
+        );
         // TODO(port): Environment.dump_source mapped to cfg feature; confirm flag name.
 
         // SAFETY: per-thread VM.

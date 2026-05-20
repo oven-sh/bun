@@ -165,9 +165,7 @@ impl PackageManifestMap {
         needs_extended_manifest: bool,
     ) -> Option<&mut npm::PackageManifest> {
         if cache_behavior == CacheBehavior::LoadFromMemory {
-            let Some(entry) = self.hash_map.get_mut(&name_hash) else {
-                return None;
-            };
+            let entry = self.hash_map.get_mut(&name_hash)?;
             return match entry {
                 Value::Manifest(m) => Some(m),
                 Value::Expired(m) => {

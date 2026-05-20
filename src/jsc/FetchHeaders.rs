@@ -116,8 +116,12 @@ struct PicoHeaders {
     len: usize,
 }
 
+// The 4 forwarding wrappers below pass *mut StringPointer/*mut u8 straight to
+// C++ without dereferencing; clippy::not_unsafe_ptr_arg_deref is a false
+// positive on opaque-token forwarding through an unsafe extern call.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl FetchHeaders {
-    pub unsafe fn create_value(
+    pub fn create_value(
         global: &JSGlobalObject,
         names: *mut StringPointer,
         values: *mut StringPointer,
@@ -161,7 +165,7 @@ impl FetchHeaders {
         self.put(name_, value, global)
     }
 
-    pub unsafe fn create(
+    pub fn create(
         global: &JSGlobalObject,
         names: *mut StringPointer,
         values: *mut StringPointer,
@@ -175,7 +179,7 @@ impl FetchHeaders {
         NonNull::new(p)
     }
 
-    pub unsafe fn from(
+    pub fn from(
         global: &JSGlobalObject,
         names: *mut StringPointer,
         values: *mut StringPointer,
@@ -338,12 +342,7 @@ impl FetchHeaders {
         WebCore__FetchHeaders__deref(self)
     }
 
-    pub unsafe fn copy_to(
-        &mut self,
-        names: *mut StringPointer,
-        values: *mut StringPointer,
-        buf: *mut u8,
-    ) {
+    pub fn copy_to(&mut self, names: *mut StringPointer, values: *mut StringPointer, buf: *mut u8) {
         // SAFETY: caller guarantees names/values/buf are sized per a prior `count()` call
         unsafe { WebCore__FetchHeaders__copyTo(self, names, values, buf) }
     }

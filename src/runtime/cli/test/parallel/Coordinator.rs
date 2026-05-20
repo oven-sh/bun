@@ -5,6 +5,7 @@
 //! and its methods.
 
 use core::ffi::c_void;
+#[cfg(unix)]
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, Ordering};
 use std::io::Write as _;

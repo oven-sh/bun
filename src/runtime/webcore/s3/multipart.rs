@@ -189,7 +189,7 @@ impl MultiPartUpload {
     /// `this` must be a live heap-allocated `MultiPartUpload` created via
     /// `heap::alloc` with a non-zero intrusive refcount.
     #[inline]
-    pub unsafe fn deref_(this: *mut Self) {
+    pub fn deref_(this: *mut Self) {
         // SAFETY: per fn contract — forwarded to the derived intrusive-rc decrement.
         unsafe { <Self as bun_ptr::CellRefCounted>::deref(this) }
     }
@@ -268,7 +268,7 @@ impl UploadPart {
             );
             this.free_allocated_slice();
             // SAFETY: ctx is a live BACKREF; part still holds a ref on ctx
-            unsafe { MultiPartUpload::deref_(this.ctx.as_ptr()) };
+            MultiPartUpload::deref_(this.ctx.as_ptr());
             return Ok(());
         }
 
@@ -299,7 +299,7 @@ impl UploadPart {
                     // SAFETY: ctx_ptr is a live BACKREF; part still holds a ref on ctx until deref_ below
                     let r = unsafe { (*ctx_ptr).fail(err) };
                     // SAFETY: ctx_ptr is a live BACKREF; part still holds a ref on ctx
-                    unsafe { MultiPartUpload::deref_(ctx_ptr) };
+                    MultiPartUpload::deref_(ctx_ptr);
                     r
                 }
             }
@@ -325,7 +325,7 @@ impl UploadPart {
                 // SAFETY: ctx_ptr is a live BACKREF; part still holds a ref on ctx until deref_ below
                 let r = unsafe { (*ctx_ptr).drain_enqueued_parts(sent as u64) };
                 // SAFETY: ctx_ptr is a live BACKREF; part still holds a ref on ctx
-                unsafe { MultiPartUpload::deref_(ctx_ptr) };
+                MultiPartUpload::deref_(ctx_ptr);
                 r
             }
         }
@@ -614,7 +614,7 @@ impl MultiPartUpload {
             } else {
                 // single file upload no need to rollback
                 // SAFETY: `this` is the live heap `MultiPartUpload` (refcounted).
-                unsafe { MultiPartUpload::deref_(this) };
+                MultiPartUpload::deref_(this);
             }
         }
         Ok(())
@@ -652,7 +652,7 @@ impl MultiPartUpload {
             // PORT NOTE: `defer this.deref()` reordered after callback
             let r = (self.callback)(S3UploadResult::Success, self.callback_context);
             // SAFETY: `self` is a live heap-allocated `MultiPartUpload` (intrusive RC).
-            unsafe { MultiPartUpload::deref_(self) };
+            MultiPartUpload::deref_(self);
             r
         } else {
             Ok(())
@@ -752,7 +752,7 @@ impl MultiPartUpload {
                 let r =
                     (this_ref.callback)(S3UploadResult::Failure(err), this_ref.callback_context);
                 // SAFETY: `this` is live (final-step ref held until this deref).
-                unsafe { MultiPartUpload::deref_(this) };
+                MultiPartUpload::deref_(this);
                 r
             }
             S3CommitResult::Success => {
@@ -760,7 +760,7 @@ impl MultiPartUpload {
                 // PORT NOTE: `defer this.deref()` reordered after callback
                 let r = (this_ref.callback)(S3UploadResult::Success, this_ref.callback_context);
                 // SAFETY: `this` is live (final-step ref held until this deref).
-                unsafe { MultiPartUpload::deref_(this) };
+                MultiPartUpload::deref_(this);
                 r
             }
         }
@@ -788,12 +788,12 @@ impl MultiPartUpload {
                     return Ok(());
                 }
                 // SAFETY: `this` is live (final-step ref held until this deref).
-                unsafe { MultiPartUpload::deref_(this) };
+                MultiPartUpload::deref_(this);
                 Ok(())
             }
             S3UploadResult::Success => {
                 // SAFETY: `this` is live (final-step ref held until this deref).
-                unsafe { MultiPartUpload::deref_(this) };
+                MultiPartUpload::deref_(this);
                 Ok(())
             }
         }

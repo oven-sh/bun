@@ -16,9 +16,12 @@ use bun_boringssl_sys::SSL_CTX;
 use bun_collections::VecExt;
 use bun_core::{self, fmt as bun_fmt};
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsClass, JsRef, JsResult, SysErrorJsc,
-    SystemError,
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsClass, JsRef, JsResult, SystemError,
 };
+// `err.to_js(global)` on `sys::Error` (the `SysErrorJsc` trait method) is only
+// reached from `#[cfg(not(windows))]` / `#[cfg(unix)]` blocks below.
+#[cfg(not(windows))]
+use bun_jsc::SysErrorJsc;
 // `bun_jsc::VirtualMachine` is the *module* (alias of `virtual_machine`); name the
 // struct directly so `VirtualMachine::get()` resolves as an associated fn.
 use super::upgraded_duplex::{Handlers as UpgradedDuplexHandlers, UpgradedDuplex};

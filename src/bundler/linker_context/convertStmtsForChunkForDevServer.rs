@@ -70,7 +70,7 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
         }
         // Make sure the printer gets the resolved path
         if record.source_index.is_valid() {
-            record.path = sources[record.source_index.get() as usize].path.clone();
+            record.path = sources[record.source_index.get() as usize].path;
         }
     }
 

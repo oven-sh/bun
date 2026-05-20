@@ -1974,7 +1974,7 @@ impl Task {
                 }
                 this.result = Result::RunScripts(list);
                 // SAFETY: `this` is a live `&mut Task`; ownership moves to the queue.
-                unsafe { installer.task_queue.push(this) };
+                installer.task_queue.push(core::ptr::NonNull::from(this));
                 // SAFETY: `manager_ptr` is the non-null BACKREF; `PackageManager` outlives every `Task` (see fn-top SAFETY note).
                 unsafe { PackageManager::wake_raw(manager_ptr) };
             }
@@ -1989,7 +1989,7 @@ impl Task {
                 }
                 this.result = Result::Done;
                 // SAFETY: `this` is a live `&mut Task`; ownership moves to the queue.
-                unsafe { installer.task_queue.push(this) };
+                installer.task_queue.push(core::ptr::NonNull::from(this));
                 // SAFETY: `manager_ptr` is the non-null BACKREF; `PackageManager` outlives every `Task` (see fn-top SAFETY note).
                 unsafe { PackageManager::wake_raw(manager_ptr) };
             }
@@ -2004,7 +2004,7 @@ impl Task {
                 }
                 this.result = Result::Blocked;
                 // SAFETY: `this` is a live `&mut Task`; ownership moves to the queue.
-                unsafe { installer.task_queue.push(this) };
+                installer.task_queue.push(core::ptr::NonNull::from(this));
                 // SAFETY: `manager_ptr` is the non-null BACKREF; `PackageManager` outlives every `Task` (see fn-top SAFETY note).
                 unsafe { PackageManager::wake_raw(manager_ptr) };
             }
@@ -2021,7 +2021,7 @@ impl Task {
                     .store(Step::Done as u32, Ordering::Release);
                 this.result = Result::Err(err);
                 // SAFETY: `this` is a live `&mut Task`; ownership moves to the queue.
-                unsafe { installer.task_queue.push(this) };
+                installer.task_queue.push(core::ptr::NonNull::from(this));
                 // SAFETY: `manager_ptr` is the non-null BACKREF; `PackageManager` outlives every `Task` (see fn-top SAFETY note).
                 unsafe { PackageManager::wake_raw(manager_ptr) };
             }

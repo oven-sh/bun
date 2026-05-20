@@ -161,25 +161,15 @@ impl<T> Drop for SinglyLinkedList<T> {
 impl<T> SinglyLinkedList<T> {
     /// Insert a new node at the head.
     ///
-    /// Arguments:
-    ///     new_node: Pointer to the new node to insert.
-    ///
-    /// # Safety
-    /// `new_node` must point to a live, exclusively-owned `Node<T>`.
-    pub unsafe fn prepend(&mut self, new_node: *mut Node<T>) {
-        // SAFETY: caller guarantees new_node is a live, exclusively-owned Node
-        unsafe { (*new_node).next = self.first };
+    /// `new_node` must be live and exclusively owned by the caller until popped.
+    pub fn prepend(&mut self, new_node: &mut Node<T>) {
+        new_node.next = self.first;
         self.first = new_node;
     }
 
-    /// Remove a node from the list.
-    ///
-    /// Arguments:
-    ///     node: Pointer to the node to be removed.
-    ///
-    /// # Safety
-    /// `node` must point to a live `Node<T>` that is currently in this list.
-    pub unsafe fn remove(&mut self, node: *mut Node<T>) {
+    /// Remove a node from the list. `node` must currently be in this list.
+    pub fn remove(&mut self, node: &Node<T>) {
+        let node = std::ptr::from_ref(node).cast_mut();
         if self.first == node {
             self.first = Node::next_of(node);
         } else {
@@ -323,7 +313,7 @@ impl<T: ObjectPoolType, const TS: bool, const MAX: usize, S> ObjectPoolTrait
 /// pair.
 pub struct PoolGuard<'a, T: ObjectPoolType + 'static> {
     node: *mut Node<T>,
-    release: unsafe fn(*mut Node<T>),
+    release: fn(&mut Node<T>),
     _marker: PhantomData<&'a mut T>,
 }
 
@@ -351,7 +341,7 @@ impl<'a, T: ObjectPoolType> Drop for PoolGuard<'a, T> {
         // SAFETY: `self.node` was obtained from `ObjectPool::get_node` and is
         // exclusively owned by this guard for its lifetime; ownership returns
         // to the pool's free list.
-        unsafe { (self.release)(self.node) };
+        (self.release)(unsafe { &mut *self.node });
     }
 }
 
@@ -410,7 +400,7 @@ where
             data: MaybeUninit::new(pooled),
         }));
         // SAFETY: `new_node` is a freshly heap-allocated `Node<T>` we exclusively own.
-        unsafe { Self::release(new_node) };
+        Self::release(unsafe { &mut *new_node });
     }
 
     pub fn get_if_exists() -> Option<*mut Node<T>> {
@@ -489,21 +479,20 @@ where
         }
     }
 
-    /// # Safety
     /// `value` must point to the `data` field of a live `Node<T>` previously
     /// handed out by this pool (e.g. via `first()`).
-    pub unsafe fn release_value(value: *mut T) {
-        // SAFETY: `value` points to the `data` field of a live `Node<T>`
+    pub fn release_value(value: &mut T) {
+        // SAFETY: `value` points to the `data` field of a live `Node<T>`.
         let node = unsafe { bun_core::from_field_ptr!(Node<T>, data, value) };
-        // SAFETY: forwarded from this fn's contract.
-        unsafe { Self::release(node) };
+        // SAFETY: `node` is the parent of the `data` field, exclusively owned.
+        Self::release(unsafe { &mut *node });
     }
 
-    /// # Safety
     /// `node` must be a live, exclusively-owned `Node<T>` previously handed out
     /// by this pool (e.g. via `get` / `first`). Ownership transfers back to the
     /// pool's free list.
-    pub unsafe fn release(node: *mut Node<T>) {
+    pub fn release(node: &mut Node<T>) {
+        let node_ptr: *mut Node<T> = node;
         let overflowed = Self::data(|cell| {
             let mut d = cell.borrow_mut();
             if MAX_COUNT > 0 && d.count >= MAX_COUNT {
@@ -518,17 +507,15 @@ where
             }
 
             if d.loaded {
-                // SAFETY: `node` is a live, exclusively-owned `Node<T>` handed
-                // back by the caller; ownership transfers to the free list.
-                unsafe { d.list.prepend(node) };
+                d.list.prepend(node);
             } else {
-                d.list = SinglyLinkedList { first: node };
+                d.list = SinglyLinkedList { first: node_ptr };
                 d.loaded = true;
             }
             false
         });
         if overflowed {
-            Self::destroy_node(node);
+            Self::destroy_node(node_ptr);
         }
     }
 

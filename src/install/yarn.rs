@@ -1427,58 +1427,56 @@ pub fn migrate_yarn_lockfile<'a>(
             entry.dev_dependencies.as_ref(),
         ];
 
-        for maybe_deps in dep_maps.iter() {
-            if let Some(deps) = maybe_deps {
-                for (dep_name_key, dep_version_ref) in deps.iter() {
-                    let dep_name: &[u8] = dep_name_key.as_ref();
-                    let dep_version: &[u8] = *dep_version_ref;
-                    let mut dep_spec = Vec::new();
-                    write!(
-                        &mut dep_spec,
-                        "{}@{}",
-                        bstr::BStr::new(dep_name),
-                        bstr::BStr::new(dep_version)
-                    )
-                    .expect("unreachable");
+        for deps in dep_maps.iter().flatten() {
+            for (dep_name_key, dep_version_ref) in deps.iter() {
+                let dep_name: &[u8] = dep_name_key.as_ref();
+                let dep_version: &[u8] = *dep_version_ref;
+                let mut dep_spec = Vec::new();
+                write!(
+                    &mut dep_spec,
+                    "{}@{}",
+                    bstr::BStr::new(dep_name),
+                    bstr::BStr::new(dep_version)
+                )
+                .expect("unreachable");
 
-                    // PORT NOTE: reshaped for borrowck — find_entry_by_spec via index search
-                    // instead of returning &mut to avoid overlapping borrow with the loop below.
-                    let dep_entry_specs: Option<Vec<&[u8]>> = {
-                        let mut found: Option<Vec<&[u8]>> = None;
-                        for e in yarn_lock.entries.iter() {
-                            for entry_spec in e.specs.iter() {
-                                if *entry_spec == dep_spec.as_slice() {
-                                    found = Some(e.specs.clone());
-                                    break;
-                                }
-                            }
-                            if found.is_some() {
+                // PORT NOTE: reshaped for borrowck — find_entry_by_spec via index search
+                // instead of returning &mut to avoid overlapping borrow with the loop below.
+                let dep_entry_specs: Option<Vec<&[u8]>> = {
+                    let mut found: Option<Vec<&[u8]>> = None;
+                    for e in yarn_lock.entries.iter() {
+                        for entry_spec in e.specs.iter() {
+                            if *entry_spec == dep_spec.as_slice() {
+                                found = Some(e.specs.clone());
                                 break;
                             }
                         }
-                        found
-                    };
+                        if found.is_some() {
+                            break;
+                        }
+                    }
+                    found
+                };
 
-                    if let Some(dep_entry_specs) = dep_entry_specs {
-                        for (idx, e) in yarn_lock.entries.iter().enumerate() {
-                            let mut found = false;
-                            for spec in e.specs.iter() {
-                                for dep_spec_item in dep_entry_specs.iter() {
-                                    if *spec == *dep_spec_item {
-                                        found = true;
-                                        break;
-                                    }
-                                }
-                                if found {
+                if let Some(dep_entry_specs) = dep_entry_specs {
+                    for (idx, e) in yarn_lock.entries.iter().enumerate() {
+                        let mut found = false;
+                        for spec in e.specs.iter() {
+                            for dep_spec_item in dep_entry_specs.iter() {
+                                if *spec == *dep_spec_item {
+                                    found = true;
                                     break;
                                 }
                             }
-
                             if found {
-                                let dep_package_id = yarn_entry_to_package_id[idx];
-                                package_dependents[dep_package_id as usize].push(parent_package_id);
                                 break;
                             }
+                        }
+
+                        if found {
+                            let dep_package_id = yarn_entry_to_package_id[idx];
+                            package_dependents[dep_package_id as usize].push(parent_package_id);
+                            break;
                         }
                     }
                 }

@@ -599,9 +599,11 @@ impl Options {
                             let prev_scope = self.scope.clone();
                             // PORT NOTE: was `std.mem.zeroes(Api.NpmRegistry)`; zeroed slices are
                             // invalid in Rust — use Default (empty strings) which is semantically equivalent.
-                            let mut api_registry = Api::NpmRegistry::default();
-                            api_registry.url = registry_.into();
-                            api_registry.token = prev_scope.token;
+                            let api_registry = Api::NpmRegistry {
+                                url: registry_.into(),
+                                token: prev_scope.token,
+                                ..Default::default()
+                            };
                             self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
                             did_set = true;
                         }

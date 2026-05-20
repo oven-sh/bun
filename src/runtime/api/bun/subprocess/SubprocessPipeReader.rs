@@ -2,13 +2,17 @@ use core::ptr::NonNull;
 
 use crate::webcore::ReadableStream;
 use bun_io::BufferedReader;
+#[cfg(unix)]
 use bun_io::FilePollFlag;
 use bun_io::Loop as AsyncLoop;
 use bun_io::max_buf::MaxBuf;
+#[cfg(unix)]
 use bun_io::pipe_reader::PosixFlags;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, MarkedArrayBuffer};
-use bun_ptr::{IntrusiveRc, ParentRef, RefCount, ScopedRef};
+#[cfg(not(windows))]
+use bun_ptr::ScopedRef;
+use bun_ptr::{IntrusiveRc, ParentRef, RefCount};
 use bun_sys;
 
 use super::readable::Readable;

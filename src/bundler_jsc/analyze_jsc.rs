@@ -214,6 +214,8 @@ unsafe extern "C" {
     );
 }
 impl VariableEnvironment {
+    // Forwards `identifier_array` to C++ without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
     pub fn add(
         &mut self,
@@ -398,11 +400,15 @@ impl JSModuleRecord {
             )
         }
     }
+    // Forwards `this` to C++ without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
     pub fn declared_variables(this: *mut JSModuleRecord) -> *mut VariableEnvironment {
         // SAFETY: `this` is a valid JSModuleRecord*.
         unsafe { JSC_JSModuleRecord__declaredVariables(this) }
     }
+    // Forwards `this` to C++ without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
     pub fn lexical_variables(this: *mut JSModuleRecord) -> *mut VariableEnvironment {
         // SAFETY: `this` is a valid JSModuleRecord*.

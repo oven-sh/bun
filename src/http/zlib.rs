@@ -34,13 +34,13 @@ mod buffer_pool {
         BufferPool::first().cast::<MutableString>()
     }
 
-    pub unsafe fn put(mutable: *mut MutableString) {
-        // SAFETY: `mutable` was returned by `get()` above; #[repr(transparent)] cast is sound;
-        // `release_value` recovers the parent node via offset_of.
-        unsafe {
-            (*mutable).reset();
-            BufferPool::release_value(mutable.cast::<PooledMutableString>());
-        }
+    pub fn put(mutable: &mut MutableString) {
+        mutable.reset();
+        // SAFETY: `mutable` was returned by `get()`; `#[repr(transparent)]`
+        // makes the `MutableString → PooledMutableString` reinterpret sound.
+        // `release_value` recovers the parent node via `offset_of`.
+        let pooled = unsafe { &mut *std::ptr::from_mut(mutable).cast::<PooledMutableString>() };
+        BufferPool::release_value(pooled);
     }
 }
 pub use buffer_pool::{get, put};

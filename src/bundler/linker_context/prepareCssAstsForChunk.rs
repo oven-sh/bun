@@ -48,7 +48,12 @@ unsafe impl Send for PrepareCssAstTask {}
 // writes `chunk` exclusively; no `c.graph` write occurs. `PrepareCssAstTask`
 // is `Send` by virtue of `LinkerContext: Send` + `Chunk: Send` (both raw-ptr
 // fields point at types with `unsafe impl Send`).
-pub fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
+/// # Safety
+///
+/// `task` must be the intrusive `task` field of a live [`PrepareCssAstTask`]
+/// scheduled by `generate_chunks_in_parallel`. Matches the
+/// `Task::callback: unsafe fn(*mut Task)` contract.
+pub unsafe fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
     // SAFETY: `task` points to `PrepareCssAstTask.task` (intrusive thread-pool
     // node); the thread pool hands us exclusive access for the callback's
     // duration. We only read the two raw-pointer fields, matching Zig's
@@ -132,7 +137,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                                         // `seg` borrows arena-owned bytes that outlive this
                                         // stylesheet; route through `StoreStr` for the lifetime
                                         // erasure (see layer.rs TODO(port)).
-                                        bun_ast::StoreStr::new(seg.as_ref()).slice()
+                                        bun_ast::StoreStr::new(seg).slice()
                                     }),
                                 ),
                             }),
@@ -171,7 +176,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                     if had_conditions {
                         entry.condition_import_records.push(ImportRecord {
                             kind: ImportKind::At,
-                            path: p.clone(),
+                            path: *p,
                             range: Range::default(),
                             tag: ImportRecordTag::None,
                             loader: None,
@@ -305,7 +310,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
 
                     entry.condition_import_records.push(ImportRecord {
                         kind: ImportKind::At,
-                        path: p.clone(),
+                        path: *p,
                         range: Range::NONE,
                         tag: ImportRecordTag::None,
                         loader: None,

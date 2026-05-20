@@ -15,6 +15,7 @@
 //! self-pointer. `Drop` assumes no write is in flight — true for both call
 //! sites (start() errdefer and reap_worker after the peer has exited).
 
+#[cfg(not(windows))]
 use core::ffi::c_void;
 use core::marker::PhantomData;
 
@@ -22,7 +23,10 @@ use bun_collections::VecExt;
 #[cfg(windows)]
 use bun_core::Output;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_sys::{Fd, FdExt as _};
+use bun_sys::Fd;
+#[cfg(not(windows))]
+use bun_sys::FdExt as _;
+#[cfg(not(windows))]
 use bun_uws as uws;
 
 #[cfg(windows)]

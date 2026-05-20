@@ -374,7 +374,7 @@ impl FileSystemRouter {
         #[cfg(not(windows))]
         let path = input_path;
         #[cfg(windows)]
-        let mut path = input_path;
+        let path;
         #[cfg(windows)]
         let normalized: Vec<u8>;
         #[cfg(windows)]

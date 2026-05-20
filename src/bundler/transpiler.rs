@@ -831,18 +831,14 @@ use bun_resolver::package_json::MacroMap as MacroRemap;
 use bun_sys::Fd as FD;
 
 /// Port of `transpiler.zig:ParseResult.AlreadyBundled` (tagged union).
+#[derive(Default)]
 pub enum AlreadyBundled {
+    #[default]
     None,
     SourceCode,
     SourceCodeCjs,
     Bytecode(Box<[u8]>),
     BytecodeCjs(Box<[u8]>),
-}
-
-impl Default for AlreadyBundled {
-    fn default() -> Self {
-        AlreadyBundled::None
-    }
 }
 
 impl AlreadyBundled {
@@ -1221,6 +1217,11 @@ impl<'a> Transpiler<'a> {
         opts: api::TransformOptions,
         env_loader_: Option<*mut dot_env::Loader<'static>>,
     ) -> Result<(), bun_core::Error> {
+        // Caller contract: `log` is the freshly-boxed per-VM `Log` from
+        // `VirtualMachine::init` and is never null. Validate up front so the
+        // deref sites below go through `NonNull` rather than the raw argument.
+        let log_nn =
+            core::ptr::NonNull::new(log).expect("Transpiler::init_in_place: log is non-null");
         // TODO(port): narrow error set
         bun_ast::expr::data::Store::create();
         bun_ast::stmt::data::Store::create();
@@ -1293,7 +1294,7 @@ impl<'a> Transpiler<'a> {
         // (`VirtualMachine::init`), `env_loader` is either caller-owned or the
         // leak above; no other live `&mut` to either at this point.
         unsafe {
-            (*env_loader).quiet = !(*log).level.at_least(bun_ast::Level::Info);
+            (*env_loader).quiet = !log_nn.as_ref().level.at_least(bun_ast::Level::Info);
         }
 
         // var pool = try arena.create(ThreadPool);
@@ -1338,14 +1339,14 @@ impl<'a> Transpiler<'a> {
         // loader, as in the original struct literal).
         unsafe {
             core::ptr::addr_of_mut!((*p).options).write(bundle_options);
-            core::ptr::addr_of_mut!((*p).log).write(log);
+            core::ptr::addr_of_mut!((*p).log).write(log_nn.as_ptr());
             core::ptr::addr_of_mut!((*p).arena).write(arena);
             core::ptr::addr_of_mut!((*p).result).write(options::TransformResult {
                 outbase,
                 ..Default::default()
             });
             core::ptr::addr_of_mut!((*p).resolver).write(Resolver::init1(
-                core::ptr::NonNull::new(log).expect("Transpiler::init_in_place: log is non-null"),
+                log_nn,
                 fs,
                 resolver_opts,
             ));
@@ -1544,10 +1545,8 @@ impl<'a> Transpiler<'a> {
             // the erasure.
             let contents: &'static [u8] =
                 unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(source_backing.as_slice()) };
-            match bun_ast::Source::init_recycled_file(&bun_ast::PathContentsPair {
-                path: path.clone(),
-                contents,
-            }) {
+            match bun_ast::Source::init_recycled_file(&bun_ast::PathContentsPair { path, contents })
+            {
                 Ok(s) => break 'brk s,
                 Err(_) => return None,
             }
@@ -1732,7 +1731,9 @@ impl<'a> Transpiler<'a> {
                 // — neither field is dropped while a parse is in flight
                 // (Zig held `*const Define` / `*MacroContext`).
                 unsafe {
-                    define = &*(&raw const *self.options.define);
+                    let define_ptr: *const js_ast::defines::Define =
+                        &raw const *self.options.define;
+                    define = &*define_ptr;
                     opts.macro_context = self
                         .macro_context
                         .as_mut()
@@ -2818,7 +2819,7 @@ impl<'a> Transpiler<'a> {
 
         // PORT NOTE: snapshot entry points so the `&mut self` resolver call
         // does not conflict with the `&self.options` borrow.
-        let entries: Vec<Box<[u8]>> = self.options.entry_points.iter().cloned().collect();
+        let entries: Vec<Box<[u8]>> = self.options.entry_points.to_vec();
         let top_level_dir = self.fs().top_level_dir;
 
         for _entry in entries.iter() {
@@ -2932,9 +2933,9 @@ impl<'a> Transpiler<'a> {
         let outbase: Box<[u8]> = self.result.outbase.clone();
         let output_files: Box<[options::OutputFile]> =
             std::mem::take(&mut self.output_files).into_boxed_slice();
-        // SAFETY: see above.
+        // SAFETY: see above (`self.log` is the same pointer as `log`).
         let mut final_result =
-            options::TransformResult::init(outbase, output_files, unsafe { &mut *log })?;
+            options::TransformResult::init(outbase, output_files, unsafe { &mut *self.log })?;
         final_result.root_dir = self.options.output_dir_handle;
         Ok(final_result)
     }
@@ -3277,7 +3278,7 @@ impl<'a> Transpiler<'a> {
             .linker
             .get_hashed_filename(&bun_paths::fs::Path::init(file_path_text), None)?;
         let mut pathname = Vec::with_capacity(hashed_name.len() + file_path_ext.len());
-        pathname.extend_from_slice(&hashed_name);
+        pathname.extend_from_slice(hashed_name);
         pathname.extend_from_slice(file_path_ext);
         Ok(crate::output_file::Value::Copy(
             crate::output_file::FileOperation {
@@ -3304,20 +3305,11 @@ enum TransformOutstream {
 }
 
 /// Port of `transpiler.zig:374 BuildResolveResultPair`.
+#[derive(Default)]
 pub struct BuildResolveResultPair {
     pub written: usize,
     pub input_fd: Option<FD>,
     pub empty: bool,
-}
-
-impl Default for BuildResolveResultPair {
-    fn default() -> Self {
-        Self {
-            written: 0,
-            input_fd: None,
-            empty: false,
-        }
-    }
 }
 
 /// Port of `transpiler.zig:1405 ServeResult`.

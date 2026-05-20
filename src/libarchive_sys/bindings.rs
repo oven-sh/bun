@@ -632,17 +632,14 @@ impl Archive {
         archive_write_open_fd(self, fd.uv())
     }
 
-    /// # Safety
-    /// `buf` must be writable for `buf_size` bytes for the lifetime of the
-    /// archive write session; libarchive stores the pointer.
-    pub unsafe fn write_open_memory(
-        &self,
-        buf: *mut c_void,
-        buf_size: usize,
-        used: &mut usize,
-    ) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle; caller upholds `buf`.
-        unsafe { archive_write_open_memory(self.as_mut_ptr(), buf, buf_size, used) }
+    /// `buf` must outlive the archive write session — libarchive stores the
+    /// pointer and writes through it from `archive_write_*`.
+    pub fn write_open_memory(&self, buf: &mut [u8], used: &mut usize) -> ArchiveResult {
+        // SAFETY: FFI call on valid opaque libarchive handle; the caller's
+        // borrow of `buf` outlives the write session per the doc above.
+        unsafe {
+            archive_write_open_memory(self.as_mut_ptr(), buf.as_mut_ptr().cast(), buf.len(), used)
+        }
     }
 
     pub fn write_header(&self, entry: &ArchiveEntry) -> ArchiveResult {

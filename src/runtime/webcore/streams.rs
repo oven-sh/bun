@@ -690,7 +690,7 @@ impl Pending {
     /// # Safety
     /// `this` must be a valid, uniquely-owned pointer previously produced by
     /// `bun_core::heap::into_raw` (via `Task::from_boxed` in `run_on_next_tick`).
-    pub unsafe fn run_from_js_thread(this: *mut Pending) {
+    pub fn run_from_js_thread(this: *mut Pending) {
         // SAFETY: this was heap-allocated in run_on_next_tick
         let mut boxed = unsafe { bun_core::heap::take(this) };
         boxed.run();
@@ -1907,7 +1907,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     /// # Safety
     /// `this` must be a valid, uniquely-owned heap pointer to `Self` produced
     /// by `bun_core::heap::into_raw`; the caller transfers ownership.
-    pub unsafe fn destroy(this: *mut Self) {
+    pub fn destroy(this: *mut Self) {
         bun_core::scoped_log!(HTTPServerWritableLog, "destroy()");
         // SAFETY: this was heap-allocated; destroy takes sole ownership. Reclaim
         // the Box first so we never hold a `&mut *this` alongside the Box's
@@ -1951,7 +1951,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             debug_assert!(self.pooled_buffer.is_none());
         }
 
-        if let Some(pooled) = self.pooled_buffer {
+        if let Some(mut pooled) = self.pooled_buffer {
             self.buffer.clear();
             if self.buffer.capacity() > 64 * 1024 {
                 self.buffer.clear_and_free();
@@ -1968,7 +1968,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             // (the Node `Parent` back-ref was dropped in the port; see pool.rs).
             // SAFETY: `pooled` was obtained from `ByteListPool::get_node` and is
             // exclusively owned by this stream; ownership returns to the pool.
-            unsafe { ByteListPool::release(pooled.as_ptr()) };
+            unsafe { ByteListPool::release(pooled.as_mut()) };
         } else if self.buffer.capacity() == 0 {
             //
         } else if FeatureFlags::HTTP_BUFFER_POOLING && !ByteListPool::full() {
@@ -2256,7 +2256,7 @@ impl NetworkSink {
     /// # Safety
     /// `this` must be a valid, uniquely-owned heap pointer to `Self` produced
     /// by `bun_core::heap::into_raw`; the caller transfers ownership.
-    pub unsafe fn finalize_and_destroy(this: *mut Self) {
+    pub fn finalize_and_destroy(this: *mut Self) {
         // SAFETY: this was heap-allocated; reclaim sole ownership before
         // touching fields so no `&mut *this` is live alongside the Box.
         let mut this = unsafe { bun_core::heap::take(this) };

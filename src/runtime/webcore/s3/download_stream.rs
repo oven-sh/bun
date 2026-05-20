@@ -185,7 +185,7 @@ impl S3HttpDownloadStreamingTask {
     /// `this` must be a live heap pointer produced by `Self::new`; the event loop guarantees
     /// exclusive main-thread access for the duration of this call. When the loaded state's
     /// `has_more` is false this call reclaims and drops the allocation exactly once.
-    pub unsafe fn on_response(this: *mut Self) {
+    pub fn on_response(this: *mut Self) {
         // SAFETY: `this` is a live heap allocation created via `Self::new`; the event loop
         // guarantees exclusive access on the main thread for the duration of this callback.
         let self_ = unsafe { &mut *this };
@@ -336,7 +336,7 @@ impl S3HttpDownloadStreamingTask {
     /// `this` must be a live heap pointer produced by `Self::new`, valid for the duration of the
     /// HTTP request; `mutex` serializes against `on_response`. `async_http` must be a valid
     /// pointer to an initialised `AsyncHTTP` for the duration of this call.
-    pub unsafe fn http_callback(
+    pub fn http_callback(
         this: *mut Self,
         async_http: *mut AsyncHTTP<'static>,
         result: HTTPClientResult,
@@ -348,20 +348,18 @@ impl S3HttpDownloadStreamingTask {
         let async_http = unsafe { &mut *async_http };
         if self_.process_http_callback(async_http, result) {
             // we are always unlocked here and its safe to enqueue
-            let task = std::ptr::from_mut::<ConcurrentTask>(
+            let task = core::ptr::NonNull::from(
                 self_.concurrent_task.from(this, AutoDeinit::ManualDeinit),
             );
             // `vm` is the live per-thread VM BackRef captured at task creation; event_loop
             // is initialized for the request's lifetime and enqueue is thread-safe (`&self`).
-            // SAFETY: `task` is the inline `concurrent_task` field of this heap
-            // request; the queue takes ownership of its `next` link.
-            unsafe {
-                self_
-                    .vm
-                    .expect("vm set at task creation")
-                    .event_loop_shared()
-                    .enqueue_task_concurrent(task);
-            }
+            // `task` is the inline `concurrent_task` field of this heap request;
+            // the queue takes ownership of its `next` link.
+            self_
+                .vm
+                .expect("vm set at task creation")
+                .event_loop_shared()
+                .enqueue_task_concurrent(task);
         }
     }
 }

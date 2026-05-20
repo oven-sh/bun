@@ -146,7 +146,7 @@ impl FilePoll {
         // covers the inline hive buffer) is the only live unique reference into
         // that allocation when `Store::put` runs. `self` is never touched after
         // this line — `Store::put` itself accesses `this` only via raw-pointer ops.
-        let this: *mut FilePoll = ptr::from_mut(self);
+        let this: ptr::NonNull<FilePoll> = ptr::NonNull::from(&mut *self);
         // `file_polls_mut()` is the per-thread set-once `Store` back-pointer
         // (`BackRef`-shaped); `&mut self` has been retired to `this` above so
         // the `&mut Store` it produces is the sole unique borrow into the hive.
@@ -314,9 +314,11 @@ impl Store {
         self.pending_free_tail = ptr::null_mut();
     }
 
-    /// # Safety
-    /// `poll` must be a live, fully-initialized slot in `self.hive`.
-    pub unsafe fn put(&mut self, poll: *mut FilePoll, vm: EventLoopCtx, ever_registered: bool) {
+    /// `poll` is a live, fully-initialized slot in `self.hive`. Touched only
+    /// through raw pointer ops to avoid forming a `&mut FilePoll` that would
+    /// alias `&mut self` (the hive buffer is inline storage).
+    pub fn put(&mut self, poll: ptr::NonNull<FilePoll>, vm: EventLoopCtx, ever_registered: bool) {
+        let poll = poll.as_ptr();
         if !ever_registered {
             // SAFETY: `poll` is a fully-initialized hive slot; FilePoll has no
             // drop glue, so `put` is a no-op drop + recycle.

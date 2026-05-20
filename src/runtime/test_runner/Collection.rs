@@ -50,7 +50,7 @@ impl Collection {
     /// `bun_test_root` must be a valid, exclusive pointer to a live `BunTestRoot` for the
     /// duration of this call. The caller (`BunTest::init`) passes a pointer to its own
     /// `bun_test_root` field.
-    pub unsafe fn init(bun_test_root: *mut BunTestRoot) -> Collection {
+    pub fn init(bun_test_root: *mut BunTestRoot) -> Collection {
         let _g = group::begin();
         // SAFETY: see fn-level Safety doc.
         let bun_test_root = unsafe { &mut *bun_test_root };

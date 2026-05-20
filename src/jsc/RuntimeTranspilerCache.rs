@@ -385,7 +385,7 @@ impl Entry {
                 for v in vecs {
                     debug_assert!(v.len > 0);
                     // `uv_buf_t::len` is `ULONG` (u32) on Windows, `usize` on POSIX.
-                    total += v.len;
+                    total += v.len as usize;
                 }
                 debug_assert!(end_position == total);
             }

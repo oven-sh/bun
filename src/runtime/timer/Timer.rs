@@ -41,7 +41,7 @@ impl All {
 
     /// # Safety
     /// `vm` must point to the live per-thread `VirtualMachine`.
-    pub unsafe fn update_date_header_timer_if_necessary(
+    pub fn update_date_header_timer_if_necessary(
         &mut self,
         loop_: &UwsLoop,
         vm: *mut VirtualMachine,
@@ -460,7 +460,7 @@ impl DateHeaderTimer {
     /// # Safety
     /// `vm` must point to the live per-thread `VirtualMachine`; its `uws_loop()`
     /// must outlive this call.
-    pub unsafe fn enable(&mut self, vm: *mut VirtualMachine, now: &Timespec) {
+    pub fn enable(&mut self, vm: *mut VirtualMachine, now: &Timespec) {
         debug_assert!(self.event_loop_timer.state != EventLoopTimerState::ACTIVE);
 
         // PORT NOTE: `EventLoopTimer.next` is the lower-tier `ElTimespec` stub

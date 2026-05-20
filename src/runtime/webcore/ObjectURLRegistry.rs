@@ -65,7 +65,7 @@ impl ObjectURLRegistry {
     /// `vm` must be a live, non-null `*mut VirtualMachine` for the duration of
     /// the call (as returned by `JSGlobalObject::bun_vm()`; Zig spec passes
     /// `*jsc.VirtualMachine`).
-    pub unsafe fn register(&self, vm: *mut VirtualMachine, blob: &Blob) -> UUID {
+    pub fn register(&self, vm: *mut VirtualMachine, blob: &Blob) -> UUID {
         let uuid = unsafe { &mut *vm }.rare_data().next_uuid();
         let entry = Entry::init(blob);
 

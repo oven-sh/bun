@@ -18,7 +18,15 @@ use crate::{Chunk, CompileResult, Index};
 // `&mut LinkerContext` — `c_ptr` stays raw; the CSS printer takes
 // `&LinkerContext`. See `generate_compile_result_for_js_chunk` for the
 // `PendingPartRange: Send` justification.
-pub fn generate_compile_result_for_css_chunk(task: *mut ThreadPoolLib::Task) {
+//
+/// # Safety
+///
+/// `task` must be the intrusive `task` field of a live `PendingPartRange`
+/// scheduled by `generate_chunks_in_parallel`; see
+/// [`pending_part_range_prologue`](crate::linker_context_mod::pending_part_range_prologue)
+/// for the full contract. The signature matches `ThreadPoolLib::Task::callback`
+/// (`unsafe fn(*mut Task)`).
+pub unsafe fn generate_compile_result_for_css_chunk(task: *mut ThreadPoolLib::Task) {
     // SAFETY: `task` is the intrusive `task` field of a `PendingPartRange`
     // scheduled by `generate_chunks_in_parallel`; see the helper's contract.
     let (part_range, c_ptr, chunk_ptr, mut worker) =

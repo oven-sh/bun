@@ -95,9 +95,11 @@ use bun_jsc::{
 use crate::cli::open::Editor;
 use bun_core::{String as BunString, ZigString, strings};
 use bun_jsc::virtual_machine::VirtualMachine;
+use bun_paths::MAX_PATH_BYTES;
+#[cfg(not(windows))]
+use bun_paths::PathBuffer;
 #[cfg(windows)]
 use bun_paths::WPathBuffer;
-use bun_paths::{MAX_PATH_BYTES, PathBuffer};
 use bun_shell_parser::braces as Braces;
 use bun_sys::{self as sys, Fd, FdExt as _};
 use bun_zlib as zlib;
@@ -1361,7 +1363,7 @@ pub fn bun_resolve_sync(
 /// # Safety
 /// `paths_ptr` must be null or point to `paths_len` initialized `BunString`s
 /// that remain valid for the duration of this call.
-pub unsafe fn bun_resolve_sync_with_paths(
+pub fn bun_resolve_sync_with_paths(
     global: &JSGlobalObject,
     specifier: JSValue,
     source: JSValue,
@@ -1610,7 +1612,7 @@ pub fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
             // SAFETY: `init` returned a live heap-allocated server pointer.
             let server_ref: &mut $ServerType = unsafe { &mut *server };
             // SAFETY: `server` is the live heap-allocated server returned by `init`.
-            let route_list_object = unsafe { <$ServerType>::listen(server) };
+            let route_list_object = <$ServerType>::listen(server);
             if global_object.has_exception() {
                 return Ok(JSValue::ZERO);
             }
@@ -1775,6 +1777,7 @@ pub fn alloc_unsafe(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
 pub fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     #[cfg(windows)]
     {
+        let _ = callframe;
         return Err(global_this.throw_todo(b"mmapFile is not supported on Windows"));
     }
 

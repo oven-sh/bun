@@ -148,12 +148,10 @@ pub mod TestingAPIs {
                 let mut mask = core::mem::MaybeUninit::<sigset_t>::zeroed();
                 sigemptyset(mask.as_mut_ptr());
                 sigaddset(mask.as_mut_ptr(), SIGUSR2);
-                let act = Sigaction {
-                    sa_sigaction: sentry as *const () as usize,
-                    sa_mask: mask.assume_init(),
-                    sa_flags: SA_RESTART,
-                    ..core::mem::zeroed()
-                };
+                let mut act = core::mem::MaybeUninit::<Sigaction>::zeroed().assume_init();
+                act.sa_sigaction = sentry as *const () as usize;
+                act.sa_mask = mask.assume_init();
+                act.sa_flags = SA_RESTART;
                 let mut prev = core::mem::MaybeUninit::<Sigaction>::zeroed();
                 let mut readback = core::mem::MaybeUninit::<Sigaction>::zeroed();
                 sigaction(SIGUSR2, &raw const act, prev.as_mut_ptr());

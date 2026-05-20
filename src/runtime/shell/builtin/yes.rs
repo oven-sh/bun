@@ -5,7 +5,7 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::states::cmd::Exec;
 use crate::shell::yield_::Yield;
 
-use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
+use bun_event_loop::ConcurrentTask::AutoDeinit;
 use bun_event_loop::{EventLoopTask, TaskTag, Taskable, task_tag};
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -229,18 +229,21 @@ impl YesTask {
             match (*this).evtloop {
                 EventLoopHandle::Js { owner } => {
                     owner.tick();
-                    let ct: *mut ConcurrentTask = match &mut (*this).concurrent_task {
+                    let ct = core::ptr::NonNull::from(match &mut (*this).concurrent_task {
                         EventLoopTask::Js(ct) => ct.from(this, AutoDeinit::ManualDeinit),
                         EventLoopTask::Mini(_) => unreachable!(),
-                    };
+                    });
                     owner.enqueue_task_concurrent(ct);
                 }
                 EventLoopHandle::Mini(mut mini) => {
                     (*mini.loop_).tick();
-                    let at = match &mut (*this).concurrent_task {
-                        EventLoopTask::Mini(at) => at.from(this, Self::run_from_main_thread_mini),
-                        EventLoopTask::Js(_) => unreachable!(),
-                    };
+                    let at =
+                        core::ptr::NonNull::new_unchecked(match &mut (*this).concurrent_task {
+                            EventLoopTask::Mini(at) => {
+                                at.from(this, Self::run_from_main_thread_mini)
+                            }
+                            EventLoopTask::Js(_) => unreachable!(),
+                        });
                     mini.get_mut().enqueue_task_concurrent(at);
                 }
             }
@@ -254,7 +257,7 @@ impl YesTask {
     /// `Box<Yes>` in the interpreter arena, with `interp` initialised by
     /// [`Yes::start`]. Reached only via the concurrent-task dispatch installed
     /// in [`enqueue`](Self::enqueue).
-    pub unsafe fn run_from_main_thread(this: *mut Self) {
+    pub fn run_from_main_thread(this: *mut Self) {
         // SAFETY: caller contract above.
         let (interp, cmd) = unsafe { (&*(*this).interp, (*this).cmd) };
         Yes::write_no_io_loop(interp, cmd).run(interp);
@@ -266,7 +269,7 @@ impl YesTask {
     fn run_from_main_thread_mini(this: *mut Self, _: *mut ()) {
         // SAFETY: dispatch contract — `this` is the live task previously passed
         // to `enqueue`; see `run_from_main_thread`.
-        unsafe { Self::run_from_main_thread(this) }
+        Self::run_from_main_thread(this)
     }
 }
 

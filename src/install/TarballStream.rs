@@ -527,8 +527,7 @@ impl TarballStream {
                             lib::Result::Failed | lib::Result::Fatal => {
                                 // SAFETY: `(*this).archive` is the live `read_new()` handle
                                 // opened in `init` and held until `finish` frees it.
-                                let msg =
-                                    unsafe { lib::Archive::error_string((*this).archive.unwrap()) };
+                                let msg = unsafe { (*(*this).archive.unwrap()).error_string() };
                                 bun_output::scoped_log!(
                                     TarballStream,
                                     "readNextHeader: {}",
@@ -556,8 +555,7 @@ impl TarballStream {
                             _ => {
                                 // SAFETY: `(*this).archive` is the live `read_new()` handle
                                 // opened in `init` and held until `finish` frees it.
-                                let msg =
-                                    unsafe { lib::Archive::error_string((*this).archive.unwrap()) };
+                                let msg = unsafe { (*(*this).archive.unwrap()).error_string() };
                                 bun_output::scoped_log!(
                                     TarballStream,
                                     "read_data_block: {}",
@@ -640,7 +638,7 @@ impl TarballStream {
                     TarballStream,
                     "archive_read_open: {}",
                     // SAFETY: archive is a valid handle (guard not yet dropped).
-                    bstr::BStr::new(unsafe { lib::Archive::error_string(archive) })
+                    bstr::BStr::new(unsafe { (*archive).error_string() })
                 );
                 return Err(bun_core::err!("Fail"));
             }
@@ -997,7 +995,9 @@ impl TarballStream {
             // is `*mut` (Zig spec: mutable `*PackageManager`) and shared across
             // threads, so we mutate via raw-ptr deref without forming a
             // long-lived `&mut PackageManager`.
-            (*manager).resolve_tasks.push(task);
+            (*manager)
+                .resolve_tasks
+                .push(core::ptr::NonNull::new_unchecked(task));
             PackageManager::wake_raw(manager);
         } // unsafe
     }

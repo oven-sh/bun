@@ -529,12 +529,11 @@ pub mod api {
                 &self,
             ) -> bun_uws::us_bun_socket_context_options_t {
                 match self.0 {
-                    None => {
-                        let mut opts = bun_uws::us_bun_socket_context_options_t::default();
-                        opts.request_cert = 1;
-                        opts.reject_unauthorized = 0;
-                        opts
-                    }
+                    None => bun_uws::us_bun_socket_context_options_t {
+                        request_cert: 1,
+                        reject_unauthorized: 0,
+                        ..Default::default()
+                    },
                     // SAFETY: live boxed SSLConfig.
                     Some(p) => unsafe { (hooks().ssl_config_as_usockets_client)(p.as_ptr()) },
                 }
@@ -650,7 +649,6 @@ pub mod codegen {
 
     ::bun_jsc::js_class_module!(js_mysql_connection = "MySQLConnection"
         as crate::mysql::js_my_sql_connection::JSMySQLConnection { queries, onconnect, onclose });
-    #[allow(non_snake_case)]
     pub use js_mysql_connection as JSMySQLConnection;
 
     ::bun_jsc::js_class_module!(
@@ -662,7 +660,6 @@ pub mod codegen {
             target
         }
     );
-    #[allow(non_snake_case)]
     pub use js_mysql_query as JSMySQLQuery;
 }
 

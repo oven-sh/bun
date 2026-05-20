@@ -817,19 +817,17 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     // `configureHTTPClient` ext-method hasn't landed on
                     // boringssl::SSL; use bun_http's helper.
                     // SAFETY: `handle` is the live `*mut SSL` for this just-opened
-                    // socket; `me.hostname` is a NUL-terminated CString that
-                    // outlives this call.
-                    unsafe {
-                        bun_http::configure_http_client_with_alpn(
-                            handle,
-                            if strings::is_ip_address(me.hostname.as_bytes()) {
-                                core::ptr::null()
-                            } else {
-                                me.hostname.as_ptr()
-                            },
-                            bun_http::AlpnOffer::H1,
-                        )
-                    };
+                    // socket (uSockets never passes null); `me.hostname` is a
+                    // NUL-terminated CString that outlives this call.
+                    bun_http::configure_http_client_with_alpn(
+                        unsafe { &mut *handle },
+                        if strings::is_ip_address(me.hostname.as_bytes()) {
+                            core::ptr::null()
+                        } else {
+                            me.hostname.as_ptr()
+                        },
+                        bun_http::AlpnOffer::H1,
+                    );
                 }
             }
         }

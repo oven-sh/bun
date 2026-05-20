@@ -627,7 +627,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 // PORT NOTE: reshaped for borrowck — split the nested `&mut
                 // manager` borrows (`task_batch.push` vs. `enqueue_*`).
                 // SAFETY: `task_ptr` is non-null (checked by the iterator loop guard)
-                // and exclusively owned by this batch.
+                // and exclusively owned by this batch; `manager` is the live PackageManager.
                 let queued = unsafe {
                     enqueue::enqueue_parse_npm_package(manager, task.task_id, name_tiny, task_ptr)
                 };
@@ -996,13 +996,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let err = task.err.unwrap_or_else(|| bun_core::err!("Failed"));
 
                     if C::HAS_ON_PACKAGE_MANIFEST_ERROR {
-                        C::on_package_manifest_error(
-                            extract_ctx,
-                            name,
-                            err,
-                            // SAFETY: same active-arm read as `req` above.
-                            unsafe { &(*req.network).url_buf },
-                        );
+                        C::on_package_manifest_error(extract_ctx, name, err, &req.network.url_buf);
                     } else {
                         bun_ast::add_error_pretty!(
                             manager.log_mut(),
@@ -1726,7 +1720,11 @@ pub fn drain_dependency_list(this: &mut PackageManager) {
 }
 
 pub fn get_network_task(this: &mut PackageManager) -> *mut NetworkTask {
-    this.preallocated_network_tasks.get()
+    // Forget the slot token so its `Drop` does not release the slot — the
+    // caller owns the slot until a later `put()`.
+    core::mem::ManuallyDrop::new(this.preallocated_network_tasks.claim())
+        .addr()
+        .as_ptr()
 }
 
 pub fn alloc_github_url(this: &PackageManager, repository: &Repository) -> Vec<u8> {

@@ -45,7 +45,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     // don't conflict. Matches Zig which slices once at the top.
     // SAFETY: the underlying MultiArrayList storage is not resized for the duration of this
     // function (linking has already sized everything).
-    let parts: *mut [Part] = unsafe {
+    let parts: *mut [Part] = {
         let list = &mut c.graph.ast.items_parts_mut()[source_index];
         core::ptr::addr_of_mut!(
             list.as_mut_slice()

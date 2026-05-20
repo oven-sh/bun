@@ -2,6 +2,7 @@ use core::cell::{Cell, UnsafeCell};
 use core::mem;
 
 use bun_collections::VecExt;
+#[cfg(unix)]
 use bun_io as aio;
 use bun_io::{BufferedReader, FileType, ReadState};
 use bun_jsc::JsCell;
@@ -152,6 +153,7 @@ impl Lazy {
             ..Default::default()
         };
         let mut file_buf = bun_paths::PathBuffer::uninit();
+        #[cfg(unix)]
         let mut is_nonblocking = false;
 
         let fd: Fd = match &file.pathlike {
@@ -359,6 +361,7 @@ impl FileReader {
         self.reader().set_parent(self.as_ctx_ptr().cast());
         let was_lazy = !matches!(self.lazy.get(), Lazy::None);
         let mut pollable = false;
+        #[cfg(unix)]
         let mut file_type = FileType::File;
         // R-2: move the `Lazy` out of the cell up-front (it's reset to `None`
         // on every path through the original `if let` body) so the `StoreRef`
@@ -387,7 +390,10 @@ impl FileReader {
                             debug_assert!(opened.fd.is_valid());
                             self.fd.set(opened.fd);
                             pollable = opened.pollable;
-                            file_type = opened.file_type;
+                            #[cfg(unix)]
+                            {
+                                file_type = opened.file_type;
+                            }
                             #[cfg(unix)]
                             {
                                 use bun_io::pipe_reader::PosixFlags;

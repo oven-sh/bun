@@ -2987,7 +2987,6 @@ fn normalize_specifier_for_resolution<'a>(
     query_string: &mut &'a [u8],
 ) -> &'a [u8] {
     if let Some(i) = bun_core::index_of_char(specifier_, b'?') {
-        let i = i;
         *query_string = &specifier_[i..];
         &specifier_[..i]
     } else {
@@ -3634,16 +3633,12 @@ impl VirtualMachine {
     }
 
     /// Spec VirtualMachine.zig:1020 `enqueueTaskConcurrent`.
-    ///
-    /// # Safety
-    /// See [`crate::event_loop::EventLoop::enqueue_task_concurrent`].
     #[inline]
-    pub unsafe fn enqueue_task_concurrent(
+    pub fn enqueue_task_concurrent(
         &mut self,
-        task: *mut crate::event_loop::ConcurrentTaskItem,
+        task: core::ptr::NonNull<crate::event_loop::ConcurrentTaskItem>,
     ) {
-        // SAFETY: forwarded — see fn-level Safety contract.
-        unsafe { self.event_loop_mut().enqueue_task_concurrent(task) };
+        self.event_loop_mut().enqueue_task_concurrent(task);
     }
 
     /// Spec VirtualMachine.zig:1028 `waitFor`.
@@ -3956,12 +3951,10 @@ impl VirtualMachine {
     ) -> Result<ResolvedSource, bun_core::Error> {
         debug_assert!(VirtualMachine::is_loaded());
 
-        let global_ptr = std::ptr::from_ref::<JSGlobalObject>(global_object).cast_mut();
+        let global_ptr = core::ptr::NonNull::from(global_object);
         let mut ret = ErrorableResolvedSource::ok(ResolvedSource::default());
-        // SAFETY: `global_ptr` is derived from the live `&JSGlobalObject` above.
-        let builtin = unsafe {
-            ModuleLoader::fetch_builtin_module(jsc_vm, global_ptr, &specifier, &referrer, &mut ret)
-        };
+        let builtin =
+            ModuleLoader::fetch_builtin_module(jsc_vm, global_ptr, &specifier, &referrer, &mut ret);
         match builtin {
             ModuleLoader::FetchBuiltinResult::Found | ModuleLoader::FetchBuiltinResult::Errored => {
                 return ret.unwrap();

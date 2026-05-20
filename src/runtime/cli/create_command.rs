@@ -16,6 +16,7 @@ use bun_parsers::json as JSON;
 use bun_paths::{OSPathSlice, PathBuffer};
 use bun_resolver::fs;
 use bun_sys::FdDirExt as _;
+#[cfg(not(windows))]
 use bun_sys::copy_file as CopyFile;
 use bun_threading::Futex;
 use bun_url::URL;

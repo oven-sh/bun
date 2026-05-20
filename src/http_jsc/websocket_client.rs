@@ -216,6 +216,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
+    // `extern "C"` entrypoint; `this_ptr` is non-null by C++ contract (see SAFETY comments below).
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub extern "C" fn cancel(this_ptr: *mut Self) {
         log!("cancel");
         // clear_data() may drop the tunnel's I/O-layer ref; keep `*this_ptr`
@@ -1421,6 +1423,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         false
     }
 
+    // `extern "C"` entrypoint; pointers are valid by C++ contract (see SAFETY comments below).
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub extern "C" fn write_binary_data(this_ptr: *mut Self, ptr: *const u8, len: usize, op: u8) {
         // In tunnel mode, SSLWrapper.writeData() can synchronously fire
         // onClose → ws.fail() → cancel() → clear_data() and free `this`
@@ -1467,6 +1471,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         !self.tcp.is_closed() && !self.tcp.is_shutdown()
     }
 
+    // `extern "C"` entrypoint; `this_ptr` is non-null by C++ contract (see SAFETY comments below).
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub extern "C" fn write_blob(this_ptr: *mut Self, blob_value: JSValue, op: u8) {
         // See write_binary_data() — tunnel.write() can re-enter fail().
         // SAFETY: called from C++ with a valid `heap::alloc` pointer; ScopedRef
@@ -1524,6 +1530,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
+    // `extern "C"` entrypoint; pointers are valid by C++ contract (see SAFETY comments below).
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub extern "C" fn write_string(this_ptr: *mut Self, str_: *const ZigString, op: u8) {
         // See write_binary_data() — tunnel.write() can re-enter fail().
         // SAFETY: called from C++ with a valid `heap::alloc` pointer; ScopedRef
@@ -1613,6 +1621,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         unsafe { Self::deref(self) };
     }
 
+    // `extern "C"` entrypoint; pointers are valid (or null where checked) by C++ contract.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub extern "C" fn close(this_ptr: *mut Self, code: u16, reason: *const ZigString) {
         // In tunnel mode, SSLWrapper.writeData() (via send_close_with_body →
         // enqueue_encoded_bytes → tunnel.write) can synchronously fire
@@ -1981,6 +1991,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         let _ = unsafe { (*this.as_ptr()).send_buffer_out() };
     }
 
+    // `extern "C"` entrypoint; `this_ptr` is non-null by C++ contract (see SAFETY comments below).
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub extern "C" fn finalize(this_ptr: *mut Self) {
         log!("finalize");
         // clear_data() may drop the tunnel's I/O-layer ref and the block
@@ -2039,6 +2051,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
+    // `extern "C"` entrypoint; `this` is non-null by C++ contract (see SAFETY comment below).
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub extern "C" fn memory_cost(this: *const Self) -> usize {
         // SAFETY: called from C++ with a valid pointer
         let this = unsafe { &*this };

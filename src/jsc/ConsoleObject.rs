@@ -837,7 +837,7 @@ impl<'a> TablePrinter<'a> {
     fn print_row<const ENABLE_ANSI_COLORS: bool>(
         &mut self,
         writer: &mut dyn bun_io::Write,
-        columns: &mut Vec<Column>,
+        columns: &mut [Column],
         row_key: &RowKey,
         row_value: JSValue,
     ) -> JsResult<()> {
@@ -925,7 +925,7 @@ impl<'a> TablePrinter<'a> {
                         }
                         // SAFETY: `node` was obtained from `Pool::get_node()` and is
                         // exclusively owned by this formatter; ownership returns to the pool.
-                        unsafe { formatter::visited::Pool::release(node.as_ptr()) };
+                        formatter::visited::Pool::release(unsafe { node.as_mut() });
                     }
                     result?;
                 }
@@ -1876,7 +1876,7 @@ pub mod formatter {
                 }
                 // SAFETY: `node` was obtained from `Pool::get_node()` and is
                 // exclusively owned by this formatter; ownership returns to the pool.
-                unsafe { visited::Pool::release(node.as_ptr()) };
+                visited::Pool::release(unsafe { node.as_mut() });
             }
         }
     }

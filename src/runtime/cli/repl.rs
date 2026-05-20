@@ -11,6 +11,7 @@
 //!
 //! This replaces the TypeScript-based REPL for faster startup and better integration.
 
+#[cfg(unix)]
 use core::ffi::c_int;
 use core::fmt::Arguments;
 use std::io::Write as _;
@@ -19,7 +20,9 @@ use bstr::BStr;
 
 use bun_collections::VecExt;
 use bun_core::strings;
-use bun_core::{Environment, Output, env_var, fmt, tty};
+#[cfg(unix)]
+use bun_core::tty;
+use bun_core::{Environment, Output, env_var, fmt};
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, ProtectedJSValue};
@@ -2413,6 +2416,7 @@ impl<'a> Drop for Repl<'a> {
 static SIGINT_VM: core::sync::atomic::AtomicPtr<jsc::VM> =
     core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
+#[cfg(unix)]
 extern "C" fn sigint_handler(_: c_int) {
     let vm = SIGINT_VM.load(core::sync::atomic::Ordering::Acquire);
     if !vm.is_null() {

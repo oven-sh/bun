@@ -3,7 +3,9 @@ use core::ffi::{CStr, c_char};
 use core::ptr::NonNull;
 use std::io::Write as _;
 
-use bun_core::{Output, StackCheck, Timespec, TimespecMockMode, ZBox, fmt as bun_fmt};
+#[cfg(not(windows))]
+use bun_core::StackCheck;
+use bun_core::{Output, Timespec, TimespecMockMode, ZBox, fmt as bun_fmt};
 use bun_core::{String as BunString, ZStr, strings};
 use bun_event_loop::SpawnSyncEventLoop::TickState;
 use bun_io::max_buf::MaxBuf;
@@ -13,13 +15,17 @@ use bun_jsc::{
     JsResult, SystemError,
 };
 use bun_jsc::{JsCell, SysErrorJsc as _};
+#[cfg(unix)]
+use bun_sys::Fd;
 use bun_sys::UV_E;
-use bun_sys::{self as sys, Fd, FdExt as _, SignalCode};
+use bun_sys::{self as sys, FdExt as _, SignalCode};
 
 // Process / spawn machinery is local to this crate (api/bun/process.rs).
-use crate::api::bun_process::{
-    self as spawn, CStrPtr, ExtraPipe, Process, Rusage, SpawnOptions, SpawnResultExt as _,
-};
+#[cfg(unix)]
+use crate::api::bun_process::ExtraPipe;
+#[cfg(not(windows))]
+use crate::api::bun_process::SpawnResultExt as _;
+use crate::api::bun_process::{self as spawn, CStrPtr, Process, Rusage, SpawnOptions};
 // User-facing JS `Stdio` enum (extract/as_spawn_option/is_piped).
 use crate::api::bun_spawn::stdio::{self, Stdio};
 use crate::api::bun_subprocess::{

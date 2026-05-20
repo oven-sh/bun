@@ -871,7 +871,7 @@ impl Cmd {
         me.redirection_file.clear();
         if let Some(fd) = me.redirection_fd.take() {
             // SAFETY: `fd` is the +1 ref held in `me.redirection_fd`.
-            unsafe { CowFd::deref(fd) };
+            CowFd::deref(fd);
         }
         // Spec (Cmd.zig deinit lines 715-730): tear down the running exec.
         match core::mem::take(&mut me.exec) {

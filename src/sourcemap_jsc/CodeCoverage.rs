@@ -868,9 +868,8 @@ pub extern "C" fn ByteRangeMapping__generate(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ByteRangeMapping__getSourceID(this: *mut ByteRangeMapping) -> i32 {
-    // SAFETY: `this` is a valid pointer obtained from ByteRangeMapping__find.
-    unsafe { (*this).source_id }
+pub extern "C" fn ByteRangeMapping__getSourceID(this: &ByteRangeMapping) -> i32 {
+    this.source_id
 }
 
 #[unsafe(no_mangle)]
@@ -891,7 +890,7 @@ pub extern "C" fn ByteRangeMapping__find(
 pub extern "C" fn ByteRangeMapping__findExecutedLines(
     global_this: &JSGlobalObject,
     source_url: bun_core::String,
-    blocks_ptr: *const BasicBlockRange,
+    blocks_ptr: NonNull<BasicBlockRange>,
     blocks_len: usize,
     function_start_offset: usize,
     ignore_sourcemap: bool,
@@ -903,7 +902,7 @@ pub extern "C" fn ByteRangeMapping__findExecutedLines(
     let this = unsafe { &*this_ptr.as_ptr() };
 
     // SAFETY: blocks_ptr[0..blocks_len] is a valid contiguous C array from JSC.
-    let all = unsafe { core::slice::from_raw_parts(blocks_ptr, blocks_len) };
+    let all = unsafe { core::slice::from_raw_parts(blocks_ptr.as_ptr(), blocks_len) };
     let blocks: &[BasicBlockRange] = &all[0..function_start_offset];
     let mut function_blocks: &[BasicBlockRange] = &all[function_start_offset..blocks_len];
     if function_blocks.len() > 1 {

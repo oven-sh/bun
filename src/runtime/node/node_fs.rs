@@ -145,41 +145,26 @@ fn to_sys_time_like(t: super::time_like::TimeLike) -> sys::TimeLike {
         nsec: t.tv_nsec as i64,
     }
 }
-#[cfg(windows)]
-#[inline]
-fn to_sys_time_like(t: super::time_like::TimeLike) -> sys::TimeLike {
-    // Windows `time_like::TimeLike` is `f64` seconds (libuv's `uv_fs_futime`
-    // takes doubles directly). The few callers that round-trip through
-    // `sys::TimeLike` (e.g. `lutimes` ENOENT fallback to `utimens`) need the
-    // `{sec, nsec}` split. Use `floor` so `nsec` stays in `[0, 1e9)` for
-    // negative non-integer `t` (e.g. `-1.5` → `{-2, 500_000_000}`, not
-    // `{-1, -500_000_000}` which `trunc` would yield).
-    let sec = t.floor();
-    sys::TimeLike {
-        sec: sec as i64,
-        nsec: ((t - sec) * 1e9).round() as i64,
-    }
-}
-
 // Local namespace shim: dependents in this file spell `ConcurrentTask::create*`
 // (the Zig spelling). The Rust crate exports the *struct* as `ConcurrentTask`
 // inside a same-named module, so re-export the free constructors here under the
 // module name the call sites expect.
 mod ConcurrentTask {
     pub use bun_event_loop::ConcurrentTask::ConcurrentTask;
+    use core::ptr::NonNull;
     #[inline]
-    pub fn create(task: bun_jsc::Task) -> *mut ConcurrentTask {
+    pub fn create(task: bun_jsc::Task) -> NonNull<ConcurrentTask> {
         ConcurrentTask::create(task)
     }
     #[inline]
-    pub fn create_from<T: bun_event_loop::Taskable>(task: *mut T) -> *mut ConcurrentTask {
+    pub fn create_from<T: bun_event_loop::Taskable>(task: *mut T) -> NonNull<ConcurrentTask> {
         ConcurrentTask::create_from(task)
     }
     #[inline]
     pub fn from_callback<T>(
         ptr: *mut T,
         cb: fn(*mut T) -> bun_event_loop::JsResult<()>,
-    ) -> *mut ConcurrentTask {
+    ) -> NonNull<ConcurrentTask> {
         ConcurrentTask::from_callback(ptr, cb)
     }
 }
@@ -279,6 +264,7 @@ pub use super::node_fs_binding::Binding;
 use bun_jsc::JSPromiseStrong;
 
 use super::dir_iterator as DirIterator;
+#[cfg(not(windows))]
 use bun_resolver::fs::FileSystem;
 
 // On POSIX the libuv-backed code paths (`UVFSRequest`, `uv_fs_*`) are absent:
@@ -619,7 +605,7 @@ mod _async_tasks {
 
             /// # Safety
             /// `task` must point to the `task` field of a live `AsyncMkdirp`.
-            pub unsafe fn work_pool_callback(task: *mut WorkPoolTask) {
+            pub fn work_pool_callback(task: *mut WorkPoolTask) {
                 // SAFETY: task points to AsyncMkdirp.task
                 let this = unsafe { &mut *AsyncMkdirp::from_task_ptr(task) };
 
@@ -1766,7 +1752,8 @@ mod _async_tasks {
                         // SAFETY: `p` is the `Box::leak`'d task; subtask count hit zero so this
                         // JS-thread callback holds the only live reference (exclusive `&mut`).
                         unsafe { (&mut *p).run_from_js_thread().map_err(Into::into) }
-                    }),
+                    })
+                    .as_ptr(),
                 });
             } else {
                 this_ref.evtloop.enqueue_task_concurrent(EventLoopTaskPtr {
@@ -2557,8 +2544,11 @@ mod _async_tasks {
                     next: bun_threading::Link::new(),
                     value: ResultListEntryValue::from_vec(clone),
                 });
-                // SAFETY: freshly boxed node; `into_raw` yields a valid owned pointer.
-                unsafe { self.result_list_queue.push(bun_core::heap::into_raw(list)) };
+                // SAFETY: freshly boxed node; `into_raw` yields a valid owned non-null pointer.
+                unsafe {
+                    self.result_list_queue
+                        .push(NonNull::new_unchecked(bun_core::heap::into_raw(list)))
+                };
             }
 
             if self.subtask_count.fetch_sub(1, Ordering::Relaxed) == 1 {
@@ -5558,8 +5548,11 @@ impl NodeFS {
                 Ok(res) => Ok(res),
             };
         }
-        let path = args.path.slice_z(&mut self.sync_error_buf);
-        Syscall::chown(path, args.uid, args.gid)
+        #[cfg(not(windows))]
+        {
+            let path = args.path.slice_z(&mut self.sync_error_buf);
+            Syscall::chown(path, args.uid, args.gid)
+        }
     }
 
     pub fn chmod(&mut self, args: &args::Chmod, _: Flavor) -> Maybe<ret::Chmod> {
@@ -5571,6 +5564,7 @@ impl NodeFS {
                 Ok(res) => Ok(res),
             };
         }
+        #[cfg(not(windows))]
         match Syscall::chmod(path, args.mode) {
             Err(err) => Err(err.with_path(args.path.slice())),
             Ok(_) => Ok(()),
@@ -5683,6 +5677,7 @@ impl NodeFS {
     pub fn lchmod(&mut self, args: &args::LCHmod, _: Flavor) -> Maybe<ret::Lchmod> {
         #[cfg(windows)]
         {
+            let _ = args;
             return Maybe::<ret::Lchmod>::todo();
         }
         #[cfg(target_os = "android")]
@@ -5709,6 +5704,7 @@ impl NodeFS {
     pub fn lchown(&mut self, args: &args::LChown, _: Flavor) -> Maybe<ret::Lchown> {
         #[cfg(windows)]
         {
+            let _ = args;
             return Maybe::<ret::Lchown>::todo();
         }
         #[cfg(not(windows))]
@@ -6607,6 +6603,7 @@ impl NodeFS {
         // outlives every `enqueue` call below.
         let root_basename: &[u8] =
             unsafe { bun_ptr::detach_lifetime(async_task.root_path.slice()) };
+        #[cfg(not(windows))]
         let flags = sys::O::DIRECTORY | sys::O::RDONLY;
         let atfd = if is_root {
             FD::cwd()
@@ -7007,6 +7004,7 @@ impl NodeFS {
             );
         }
 
+        #[cfg(not(windows))]
         let flags = sys::O::DIRECTORY | sys::O::RDONLY;
         #[cfg(not(windows))]
         let open_res = Syscall::open(path, flags, 0);
@@ -7484,6 +7482,7 @@ impl NodeFS {
         }
 
         let mut buf = args.data.slice();
+        #[cfg(not(windows))]
         let mut written: usize = 0;
 
         // Attempt to pre-allocate large files
@@ -7513,7 +7512,10 @@ impl NodeFS {
                 Err(err) => return Err(err),
                 Ok(amt) => {
                     buf = &buf[amt..];
-                    written += amt;
+                    #[cfg(not(windows))]
+                    {
+                        written += amt;
+                    }
                     if amt == 0 {
                         break;
                     }
@@ -7794,6 +7796,7 @@ impl NodeFS {
             };
         }
         // SAFETY: path is NUL-terminated by slice_z; rmdir(2) is the libc FFI
+        #[cfg(not(windows))]
         Maybe::<ret::Rmdir>::errno_sys_p(
             unsafe { libc::rmdir(args.path.slice_z(&mut self.sync_error_buf).as_ptr().cast()) },
             sys::Tag::rmdir,
@@ -8092,6 +8095,7 @@ impl NodeFS {
             };
         }
         // SAFETY: path is NUL-terminated by slice_z; unlink(2) is the libc FFI
+        #[cfg(not(windows))]
         Maybe::<ret::Unlink>::errno_sys_p(
             unsafe { libc::unlink(args.path.slice_z(&mut self.sync_error_buf).as_ptr().cast()) },
             sys::Tag::unlink,

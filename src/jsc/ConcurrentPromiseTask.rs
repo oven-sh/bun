@@ -114,14 +114,14 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
         // the pointer (does not dereference it).
         let this_ref = unsafe { &mut *this };
         let event_loop = this_ref.event_loop;
-        let task = std::ptr::from_mut(
+        let task = core::ptr::NonNull::from(
             this_ref
                 .concurrent_task
                 .from(this, AutoDeinit::ManualDeinit),
         );
-        // SAFETY: `task` is the live `concurrent_task` field of the heap-allocated
+        // `task` is the live `concurrent_task` field of the heap-allocated
         // job; the queue takes ownership of its intrusive `next` link.
-        unsafe { event_loop.enqueue_task_concurrent(task) };
+        event_loop.enqueue_task_concurrent(task);
     }
 
     /// Frees the heap allocation backing this task.

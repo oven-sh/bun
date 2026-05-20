@@ -293,7 +293,7 @@ impl PackageManager {
             bun_event_loop::AnyEventLoop::tick_raw(event_loop, ctx, |ctx| {
                 // SAFETY: `ctx` is the `*mut PackageManager` erased above; live
                 // for the duration of `sleep`.
-                let this = unsafe { bun_ptr::callback_ctx::<PackageManager>(ctx) };
+                let this = bun_ptr::callback_ctx::<PackageManager>(ctx);
                 this.has_no_more_pending_lifecycle_scripts()
             });
         }

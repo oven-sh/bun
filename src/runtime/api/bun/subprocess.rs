@@ -14,7 +14,9 @@ use bun_jsc::{
     VirtualMachine,
 };
 use bun_jsc::{JsClass, SysErrorJsc};
-use bun_sys::{self, FdExt, SignalCode};
+#[cfg(not(windows))]
+use bun_sys::FdExt as _;
+use bun_sys::{self, SignalCode};
 use enumset::{EnumSet, EnumSetType};
 
 // Process / spawn machinery lives in this crate (api/bun/process.rs), not in an
@@ -899,7 +901,7 @@ impl Subprocess<'_> {
     /// `process` must be the live `*mut Process` threaded from the
     /// `link_impl_ProcessExit!` vtable thunk (mutable provenance, valid for the
     /// duration of the call).
-    pub unsafe fn on_process_exit(&self, process: *mut Process, status: &Status, rusage: &Rusage) {
+    pub fn on_process_exit(&self, process: *mut Process, status: &Status, rusage: &Rusage) {
         bun_output::scoped_log!(Subprocess, "onProcessExit()");
         let this_jsvalue = self.this_value.get().try_get().unwrap_or(JSValue::ZERO);
         // Copy the BackRef out so the `&JSGlobalObject` borrow is detached from `&self`

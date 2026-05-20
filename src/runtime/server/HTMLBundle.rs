@@ -245,7 +245,7 @@ impl Route {
     /// # Safety
     /// `html_bundle` must point to a live `IntrusiveRc`-managed `HTMLBundle`
     /// allocation; this takes one ref on it.
-    pub unsafe fn init(html_bundle: *mut HTMLBundle) -> IntrusiveRc<Route> {
+    pub fn init(html_bundle: *mut HTMLBundle) -> IntrusiveRc<Route> {
         IntrusiveRc::new(Route {
             // SAFETY: caller contract.
             bundle: unsafe { IntrusiveRc::<HTMLBundle>::init_ref(html_bundle) },
@@ -359,7 +359,7 @@ impl Route {
                     unsafe { RefCount::<Route>::ref_(this) };
                     resp.on_aborted(
                         // SAFETY: `p` was registered from a live `heap::into_raw` allocation above.
-                        |p, r| unsafe { PendingResponse::on_aborted(p, r) },
+                        |p, r| PendingResponse::on_aborted(p, r),
                         pending,
                     );
                     req.set_yield(false);
@@ -822,7 +822,7 @@ impl PendingResponse {
     /// `this` must point to a live `PendingResponse` previously boxed via
     /// `heap::into_raw` and registered with `resp.on_aborted`; it may be freed
     /// (via `heap::take`) by this call.
-    pub unsafe fn on_aborted(this: *mut PendingResponse, _resp: AnyResponse) {
+    pub fn on_aborted(this: *mut PendingResponse, _resp: AnyResponse) {
         // SAFETY: caller contract.
         let this_ref = unsafe { &mut *this };
         debug_assert!(this_ref.is_response_pending);

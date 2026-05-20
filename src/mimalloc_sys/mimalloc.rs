@@ -141,13 +141,13 @@ impl Heap {
         unsafe { mi_heap_realloc(self, p, newsize) }
     }
 
-    /// # Safety
-    /// `p` is only address-range-tested (never dereferenced), so any pointer
-    /// value is sound; `unsafe` is required because the body forwards `p`
-    /// into the `mi_heap_contains` extern.
+    // `p` is only address-range-tested (never dereferenced) — there is no
+    // caller precondition, so this stays safe.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
-    pub unsafe fn is_owned(&self, p: *const c_void) -> bool {
-        // SAFETY: `self` is a live `*const Heap` obtained from mimalloc.
+    pub fn is_owned(&self, p: *const c_void) -> bool {
+        // SAFETY: `self` is a live `*const Heap` obtained from mimalloc;
+        // `mi_heap_contains` never dereferences `p`.
         unsafe { mi_heap_contains(self, p) }
     }
 }

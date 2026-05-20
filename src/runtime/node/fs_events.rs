@@ -519,10 +519,10 @@ impl FSEventsLoop {
             next: bun_threading::Link::new(),
             auto_delete: false,
         }));
-        // SAFETY: concurrent is a valid freshly-boxed pointer
+        // SAFETY: concurrent is a valid freshly-boxed non-null pointer
         unsafe {
             ConcurrentTask::from(&mut *concurrent, task, true);
-            self.tasks.push(concurrent);
+            self.tasks.push(NonNull::new_unchecked(concurrent));
             (cf.run_loop_source_signal)(self.signal_source);
             (cf.run_loop_wake_up)(self.loop_);
         }
@@ -903,7 +903,7 @@ impl FSEventsWatcher {
     /// global default loop from `FSEventsLoop::init`) for the lifetime of the
     /// returned watcher; mutable access to its watcher list is serialized by
     /// `loop_.mutex` inside `register_watcher`.
-    pub unsafe fn init(
+    pub fn init(
         loop_: *mut FSEventsLoop,
         path: &[u8],
         recursive: bool,
@@ -961,9 +961,9 @@ pub fn watch(
     if !loop_.is_null() {
         // SAFETY: `loop_` is the heap-allocated global default loop published
         // under `FSEVENTS_DEFAULT_LOOP_MUTEX`; valid for the program lifetime.
-        return Ok(unsafe {
-            FSEventsWatcher::init(loop_, path, recursive, callback, update_end, ctx)
-        });
+        return Ok(FSEventsWatcher::init(
+            loop_, path, recursive, callback, update_end, ctx,
+        ));
     }
     let _guard = FSEVENTS_DEFAULT_LOOP_MUTEX.lock_guard();
     let mut loop_ = FSEVENTS_DEFAULT_LOOP.load(Ordering::Acquire);
@@ -978,7 +978,9 @@ pub fn watch(
     }
     // SAFETY: `loop_` is the heap-allocated global default loop (just created or
     // re-read under the mutex); valid for the program lifetime.
-    Ok(unsafe { FSEventsWatcher::init(loop_, path, recursive, callback, update_end, ctx) })
+    Ok(FSEventsWatcher::init(
+        loop_, path, recursive, callback, update_end, ctx,
+    ))
 }
 
 /// `extern "C"` thunk so this fits `bun_core::Global::ExitFn`.

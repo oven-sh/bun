@@ -984,10 +984,9 @@ impl EventLoop {
         // typed `set_parent_event_loop` extension trait in `bun_uws` expects
         // a `ParentEventLoopHandle` impl, but `EventLoopHandle` already
         // exposes `into_tag_ptr()` — go straight to the sys-level setter.
-        // SAFETY: `self` is the live per-thread `jsc::EventLoop` (mut ref).
-        let (tag, ptr) =
-            unsafe { EventLoopHandle::init(std::ptr::from_mut::<EventLoop>(self).cast::<()>()) }
-                .into_tag_ptr();
+        // `self` is the live per-thread `jsc::EventLoop` (mut ref) — non-null.
+        let self_ptr = core::ptr::from_mut(self).cast::<()>();
+        let (tag, ptr) = EventLoopHandle::init(self_ptr).into_tag_ptr();
         // SAFETY: `uws::Loop::get()` returns the live process-global uws loop.
         unsafe {
             (*uws::Loop::get())
@@ -1058,17 +1057,16 @@ impl EventLoop {
         }
     }
 
-    /// # Safety
-    /// `task` must be a valid live `ConcurrentTaskItem` that the queue may
-    /// take ownership of via its intrusive `next` link.
-    pub unsafe fn enqueue_task_concurrent(&self, task: *mut ConcurrentTaskItem) {
+    /// `task` must be a live `ConcurrentTaskItem` that the queue may take
+    /// ownership of via its intrusive `next` link. All callers pass a
+    /// freshly-allocated or struct-embedded task — never null.
+    pub fn enqueue_task_concurrent(&self, task: core::ptr::NonNull<ConcurrentTaskItem>) {
         if cfg!(debug_assertions) {
             if self.vm_ref().has_terminated {
                 panic!("EventLoop.enqueueTaskConcurrent: VM has terminated");
             }
         }
-        // SAFETY: caller contract — `task` is a valid live `ConcurrentTaskItem`.
-        unsafe { self.concurrent_tasks.push(task) };
+        self.concurrent_tasks.push(task);
         self.wakeup();
     }
 
@@ -1240,7 +1238,12 @@ impl EventLoop {
         );
         // SAFETY: asserted non-null above; `batch` was produced by `pop_batch`,
         // so `last` is reachable from `front` and every node is live.
-        unsafe { self.concurrent_tasks.push_batch(batch.front, batch.last) };
+        unsafe {
+            self.concurrent_tasks.push_batch(
+                core::ptr::NonNull::new_unchecked(batch.front),
+                core::ptr::NonNull::new_unchecked(batch.last),
+            )
+        };
         self.wakeup();
     }
 }
@@ -1389,7 +1392,8 @@ bun_event_loop::link_impl_JsEventLoop! {
                     .as_mut(),
             );
             let ctx = Async::posix_event_loop::get_vm_ctx(Async::AllocatorType::Js);
-            (*store).put(poll, ctx, was_ever_registered);
+            // `poll` is a live hive-slot pointer (vtable contract) — non-null.
+            (*store).put(core::ptr::NonNull::new_unchecked(poll), ctx, was_ever_registered);
         },
         uws_loop() => (*this).usockets_loop(),
         pipe_read_buffer() => core::ptr::from_mut::<[u8]>((*this).pipe_read_buffer()),

@@ -3070,7 +3070,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
                 // `GetEnvironmentVariableW`, which reads an LPCWSTR until NUL. The
                 // Zig spec uses `&[3:0]u16{...}` (sentinel-terminated) for the same
                 // reason.
-                let mut fast_key: [u16; 4];
+                let fast_key: [u16; 4];
                 // Windows has the concept of drive-specific current working
                 // directories. If we've resolved a drive letter but not yet an
                 // absolute path, get cwd for that drive, or the process cwd if
@@ -3418,6 +3418,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
 }
 
 // path.zig:2749 — `extern "c" fn Process__getCachedCwd(*jsc.JSGlobalObject) jsc.JSValue;`
+#[cfg(unix)]
 unsafe extern "C" {
     safe fn Process__getCachedCwd(global: &JSGlobalObject) -> JSValue;
 }

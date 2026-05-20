@@ -749,11 +749,10 @@ impl WindowsNamedPipe {
                 }
             };
             // ref because we are accepting will unref when wrapper deinit.
-            // ffi-safe-fn: opaque-ZST `&SSL_CTX` redecl; `tls_nn` proven
-            // non-null above (`NonNull::new(tls).expect(..)`).
-            let _ = super::tls_socket_functions::ffi::SSL_CTX_up_ref(
-                boringssl::SSL_CTX::opaque_ref(tls_nn.as_ptr()),
-            );
+            // SAFETY: `tls_nn` proven non-null above
+            // (`NonNull::new(tls).expect(..)`); `SSL_CTX_up_ref` only bumps the
+            // atomic refcount on a live `SSL_CTX*`.
+            let _ = unsafe { boringssl::SSL_CTX_up_ref(tls_nn.as_ptr()) };
         }
         #[cfg(windows)]
         {

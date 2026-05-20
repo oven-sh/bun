@@ -318,10 +318,11 @@ impl NetworkTask {
         if this.response.metadata.is_none() {
             this.response.metadata = saved_metadata;
         }
+        let this_ptr = ptr::NonNull::from(this);
         // SAFETY: `pm` is a live BACKREF; `async_network_task_queue` is
         // internally synchronized (`UnboundedQueue::push` takes `&self`).
         unsafe {
-            (*ptr::addr_of!((*pm).async_network_task_queue)).push(this);
+            (*ptr::addr_of!((*pm).async_network_task_queue)).push(this_ptr);
             PackageManager::wake_raw(pm);
         }
     }

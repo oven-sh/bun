@@ -34,11 +34,13 @@ use core::sync::atomic::{AtomicBool, Ordering};
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_collections::HashMap;
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
+#[cfg(not(windows))]
+use bun_core::ZBox;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_core::strings;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 use bun_core::{Output, zstr};
-use bun_core::{ZBox, ZStr, handle_oom};
+use bun_core::{ZStr, handle_oom};
 use bun_paths as path;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_paths::PathBuffer;
@@ -50,6 +52,7 @@ use bun_paths::resolve_path::{join_string_buf, join_z_buf};
 use bun_sys::FdExt;
 use bun_sys::{self as sys, E, Fd, Tag};
 use bun_threading::Mutex;
+#[cfg(not(windows))]
 use bun_wyhash::hash;
 
 use bun_jsc::VirtualMachineRef as VirtualMachine;
@@ -204,7 +207,9 @@ pub struct PathWatcher {
     manager: Option<&'static PathWatcherManager>,
 
     /// Canonical absolute path (realpath of the user-supplied path). Owned.
+    #[cfg(not(windows))]
     path: ZBox,
+    #[cfg(not(windows))]
     recursive: bool,
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     is_file: bool,
@@ -217,6 +222,7 @@ pub struct PathWatcher {
     handlers: ArrayHashMap<*mut c_void, ChangeEvent>,
 
     /// Per-platform per-watch state (inotify wds, kqueue fds, or the FSEventsWatcher).
+    #[cfg(not(windows))]
     platform: PlatformWatch,
 }
 
@@ -248,11 +254,15 @@ impl EventType {
 /// a separate change.
 #[derive(Default)]
 pub struct ChangeEvent {
+    #[cfg(not(windows))]
     hash: u64,
+    #[cfg(not(windows))]
     event_type_: EventType,
+    #[cfg(not(windows))]
     timestamp: i64,
 }
 
+#[cfg(not(windows))]
 impl ChangeEvent {
     fn should_emit(&mut self, hash: u64, timestamp: i64, event_type: EventType) -> bool {
         let time_diff = timestamp - self.timestamp;
@@ -279,6 +289,7 @@ impl PathWatcher {
 
     /// Called from the platform reader thread with `manager.mutex` held.
     /// `rel_path` is borrowed — `onPathUpdatePosix` dupes it before enqueuing.
+    #[cfg(not(windows))]
     fn emit(&mut self, event_type: EventType, rel_path: &[u8], is_file: bool) {
         let timestamp = bun_core::time::milli_timestamp();
         let h = hash(rel_path);
@@ -293,7 +304,7 @@ impl PathWatcher {
         }
     }
 
-    #[cfg(not(target_os = "freebsd"))]
+    #[cfg(not(any(windows, target_os = "freebsd")))]
     fn emit_error(&mut self, err: &sys::Error) {
         for &ctx in self.handlers.keys() {
             (FSWatcher::ON_PATH_UPDATE)(Some(ctx), Event::Error(err.clone()), false);
@@ -302,6 +313,7 @@ impl PathWatcher {
 
     /// Signals end-of-batch so `FSWatcher` can flush its queued events to the JS thread.
     /// Caller holds `manager.mutex`.
+    #[cfg(not(windows))]
     fn flush(&mut self) {
         for &ctx in self.handlers.keys() {
             FSWatcher::on_update_end(Some(ctx));
@@ -325,7 +337,7 @@ impl PathWatcher {
     /// # Safety
     /// `this` must be a live `PathWatcher` produced by [`PathWatcher::new`] whose
     /// `handlers` still contains `ctx`. Called from the JS thread only.
-    pub unsafe fn detach(this: *mut PathWatcher, ctx: *mut c_void) {
+    pub fn detach(this: *mut PathWatcher, ctx: *mut c_void) {
         // SAFETY: `this` is a live PathWatcher created via `PathWatcher::new`. Read
         // `manager` via the raw pointer so no `&mut PathWatcher` is asserted before
         // we hold `manager.mutex` — on macOS the CF thread may concurrently raw-read
@@ -467,11 +479,14 @@ pub fn watch(
     // New watcher: own the key and path.
     let watcher = PathWatcher::new(PathWatcher {
         manager: Some(manager),
+        #[cfg(not(windows))]
         path: ZBox::from_bytes(resolved.as_bytes()),
+        #[cfg(not(windows))]
         recursive,
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         is_file,
         handlers: ArrayHashMap::default(),
+        #[cfg(not(windows))]
         platform: PlatformWatch::default(),
     });
     // SAFETY: watcher just allocated; we hold the only reference.
@@ -619,13 +634,12 @@ type Platform = Kqueue;
 #[cfg(target_os = "freebsd")]
 type PlatformWatch = KqueueWatch;
 
-// win_watcher.zig imports PathWatcher.EventType from this file, so this type must
-// resolve on Windows even though none of the code paths run. The stub keeps the
-// struct fields typed while the actual Windows backend lives in win_watcher.zig.
+// win_watcher.rs imports `EventType` from this file, so this module must
+// compile on Windows even though none of the code paths run. The stub keeps
+// `Platform::*` resolvable while the actual Windows backend lives in
+// win_watcher.rs.
 #[cfg(windows)]
 type Platform = WindowsStub;
-#[cfg(windows)]
-type PlatformWatch = WindowsStubWatch;
 
 #[cfg(target_arch = "wasm32")]
 compile_error!("path_watcher: unsupported target");
@@ -1496,10 +1510,6 @@ impl Kqueue {
 #[cfg(windows)]
 #[derive(Default)]
 pub struct WindowsStub {}
-
-#[cfg(windows)]
-#[derive(Default)]
-pub struct WindowsStubWatch {}
 
 #[cfg(windows)]
 impl WindowsStub {

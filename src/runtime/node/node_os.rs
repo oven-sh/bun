@@ -1,4 +1,6 @@
-use core::ffi::{c_char, c_int, c_uint, c_void};
+use core::ffi::c_int;
+#[cfg(not(windows))]
+use core::ffi::{c_char, c_uint, c_void};
 
 // TODO(port): bun_jsc — using crate-local opaque shim until `bun_jsc` is a dep.
 use crate::jsc::{JSGlobalObject, JSValue, JsResult};
@@ -40,13 +42,16 @@ mod _impl {
     use crate::node::ErrorCode;
     #[cfg(any(target_os = "linux", target_os = "android"))]
     use bun_core::ZStr;
-    use bun_core::{ZigString, strings};
+    use bun_core::ZigString;
+    #[cfg(not(windows))]
+    use bun_core::strings;
     use bun_core::{env_var, fmt as bun_fmt};
     use bun_jsc::{CallFrame, JSArray, StringJsc as _, SysErrorJsc as _, SystemError};
     #[cfg(windows)]
     use bun_paths::PathBuffer;
     #[cfg(windows)]
     use bun_sys::ReturnCodeExt as _;
+    #[cfg(not(windows))]
     use bun_sys::c;
     #[cfg(windows)]
     use bun_sys::windows::{self, libuv};

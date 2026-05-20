@@ -96,7 +96,7 @@ pub fn field_type_from_js(
                 *unsigned = true;
                 return Ok(FieldType::MYSQL_TYPE_LONG);
             }
-            if int >= i64::MAX {
+            if int == i64::MAX {
                 *unsigned = true;
                 return Ok(FieldType::MYSQL_TYPE_LONGLONG);
             }

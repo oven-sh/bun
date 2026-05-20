@@ -10,7 +10,9 @@
 //! - Callbacks are stored via `values` in classes.ts, accessed via js.gc
 
 use core::cell::Cell;
-use core::ffi::{c_int, c_ulong, c_void};
+#[cfg(unix)]
+use core::ffi::c_ulong;
+use core::ffi::{c_int, c_void};
 #[cfg(windows)]
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -19,7 +21,9 @@ use crate::webcore::blob::ZigStringBlobExt;
 use bun_core::SignalCode;
 use bun_core::ZigString;
 use bun_io::Loop as AsyncLoop;
-use bun_io::pipe_reader::{BufferedReaderParent, PosixFlags};
+use bun_io::pipe_reader::BufferedReaderParent;
+#[cfg(unix)]
+use bun_io::pipe_reader::PosixFlags;
 use bun_io::{BufferedReader, ReadState, StreamingWriter, WriteStatus};
 use bun_jsc::{
     self as jsc, CallFrame, EventLoopHandle, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
@@ -824,6 +828,7 @@ mod lib_util {
     }
 }
 
+#[cfg(unix)]
 fn get_open_pty_fn() -> Option<OpenPtyFn> {
     // On macOS, openpty is in libc, so we can use it directly
     #[cfg(target_os = "macos")]
@@ -1203,10 +1208,7 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
     let read_fd_guard = scopeguard::guard(read_fd, |fd| fd.close());
 
     let write_fd = match Fd::from_system(in_server.unwrap()).make_libuv_owned() {
-        Ok(fd) => {
-            in_server = None;
-            fd
-        }
+        Ok(fd) => fd,
         Err(_) => {
             cleanup!();
             return Err(CreatePtyError::DupFailed);
@@ -1543,31 +1545,17 @@ impl Terminal {
 /// POSIX termios struct for terminal flags manipulation
 #[cfg(unix)]
 type Termios = sys::posix::Termios;
-#[cfg(not(unix))]
-type Termios = ();
 
 /// Get terminal attributes using tcgetattr
+#[cfg(unix)]
 fn get_termios(fd: Fd) -> Option<Termios> {
-    #[cfg(not(unix))]
-    {
-        let _ = fd;
-        return None;
-    }
-    #[cfg(unix)]
     sys::posix::tcgetattr(fd.native()).ok()
 }
 
 /// Set terminal attributes using tcsetattr (TCSANOW = immediate)
+#[cfg(unix)]
 fn set_termios(fd: Fd, termios_p: &Termios) -> bool {
-    #[cfg(not(unix))]
-    {
-        let _ = (fd, termios_p);
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        sys::posix::tcsetattr(fd.native(), sys::posix::TCSA::Now, termios_p).is_ok()
-    }
+    sys::posix::tcsetattr(fd.native(), sys::posix::TCSA::Now, termios_p).is_ok()
 }
 
 impl Terminal {

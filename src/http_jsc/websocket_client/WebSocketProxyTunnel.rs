@@ -253,15 +253,13 @@ impl WebSocketProxyTunnel {
                     // tier-neutral helper which does SNI + ALPN(h1) (no
                     // verify-hostname — that is checked manually in
                     // `on_handshake`, matching the Zig path).
-                    // SAFETY: `ssl_ptr` is the live SSL handle from the wrapper;
                     // `hostname_z` is a NUL-terminated owned buffer in scope.
-                    unsafe {
-                        bun_http::configure_http_client_with_alpn(
-                            ssl_ptr.as_ptr(),
-                            hostname_z.as_ptr(),
-                            bun_http::AlpnOffer::H1,
-                        )
-                    };
+                    bun_http::configure_http_client_with_alpn(
+                        // SAFETY: `ssl_ptr` is the live SSL handle from the wrapper.
+                        unsafe { &mut *ssl_ptr.as_ptr() },
+                        hostname_z.as_ptr(),
+                        bun_http::AlpnOffer::H1,
+                    );
                     // hostname_z dropped here (owned NUL-terminated copy)
                 }
             }
@@ -613,13 +611,18 @@ impl Drop for WebSocketProxyTunnel {
 }
 
 /// C export for setting the connected WebSocket client from C++
+// `tunnel` must stay `*mut` for the C ABI; C++ guarantees it is live and
+// non-null, so the deref is sound — not_unsafe_ptr_arg_deref is a false
+// positive at this FFI boundary.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[unsafe(no_mangle)]
 pub extern "C" fn WebSocketProxyTunnel__setConnectedWebSocket(
     tunnel: *mut WebSocketProxyTunnel,
     ws: *mut WebSocketClient,
 ) {
-    // SAFETY: called from C++ with a live tunnel pointer
-    unsafe { (*tunnel).set_connected_web_socket(ws) };
+    // SAFETY: C++ guarantees a live, non-null tunnel pointer.
+    let tunnel = unsafe { &mut *tunnel };
+    tunnel.set_connected_web_socket(ws);
 }
 
 // ported from: src/http_jsc/websocket_client/WebSocketProxyTunnel.zig

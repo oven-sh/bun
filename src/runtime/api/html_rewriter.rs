@@ -354,7 +354,7 @@ impl HTMLRewriter {
         // SAFETY: `response` is a live `*mut Response` whose JS wrapper is on
         // the caller's stack (see `transform_`); `self.builder` was created by
         // `HTMLRewriterBuilder::init` and is live until `finalize`.
-        unsafe { BufferOutputSink::init(new_context, global, response, self.builder) }
+        BufferOutputSink::init(new_context, global, response, self.builder)
     }
 
     pub fn transform_(
@@ -599,7 +599,7 @@ impl HTMLRewriterLoader {
     /// # Safety
     /// `builder` must be a live `HTMLRewriterBuilder` (from
     /// `HTMLRewriterBuilder::init`) not yet destroyed.
-    pub unsafe fn setup(
+    pub fn setup(
         &mut self,
         builder: *mut lolhtml_sys::HTMLRewriterBuilder,
         context: Rc<RefCell<LOLHTMLContext>>,
@@ -751,7 +751,7 @@ impl BufferOutputSink {
     /// `original` must point to a live `Response` whose JS wrapper is kept
     /// alive for the duration of this call. `builder` must be a live
     /// `HTMLRewriterBuilder` not yet destroyed.
-    pub unsafe fn init(
+    pub fn init(
         context: Rc<RefCell<LOLHTMLContext>>,
         global: &JSGlobalObject,
         original: *mut Response,
@@ -971,7 +971,7 @@ impl BufferOutputSink {
     /// # Safety
     /// `sink` must be a live `BufferOutputSink` heap allocation with
     /// refcount > 0 (the +1 taken in `init()` is consumed here).
-    pub unsafe fn on_finished_buffering(
+    pub fn on_finished_buffering(
         sink: *mut BufferOutputSink,
         bytes: &[u8],
         js_err: Option<webcore::body::ValueError>,
@@ -1032,7 +1032,7 @@ impl BufferOutputSink {
         }
 
         // SAFETY: `sink` is live (refcount > 0, see fn safety contract).
-        if let Some(ret_err) = unsafe { Self::run_output_sink(sink, bytes, is_async) } {
+        if let Some(ret_err) = Self::run_output_sink(sink, bytes, is_async) {
             ret_err.ensure_still_alive();
             ret_err.protect();
             Self::write_tmp_sync_error(sink, ret_err);
@@ -1048,11 +1048,7 @@ impl BufferOutputSink {
     /// # Safety
     /// `sink` must be a live `BufferOutputSink` heap allocation with
     /// refcount > 0; `(*sink).rewriter` and `(*sink).response` must be set.
-    pub unsafe fn run_output_sink(
-        sink: *mut Self,
-        bytes: &[u8],
-        is_async: bool,
-    ) -> Option<JSValue> {
+    pub fn run_output_sink(sink: *mut Self, bytes: &[u8], is_async: bool) -> Option<JSValue> {
         // SAFETY: sink is a live heap allocation (refcount > 0, caller
         // invariant). Read fields into locals before the FFI calls so no
         // borrow of `*sink` is live across the re-entrant callback.
@@ -1339,7 +1335,7 @@ macro_rules! impl_wrapper_like {
             unsafe fn deref(this: *mut Self) {
                 // SAFETY: `WrapperLike::deref` contract — `this` is a live
                 // `heap::alloc` allocation with refcount >= 1.
-                unsafe { Self::deref(this) }
+                Self::deref(this)
             }
             unsafe fn to_js(this: *mut Self, g: &JSGlobalObject) -> JSValue {
                 // SAFETY: `this` is a live `heap::alloc` allocation

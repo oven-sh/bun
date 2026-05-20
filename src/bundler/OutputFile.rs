@@ -85,7 +85,7 @@ impl Clone for OutputFile {
                 ..fs::Path::init(text)
             }
         } else {
-            self.src_path.clone()
+            self.src_path
         };
         OutputFile {
             loader: self.loader,
@@ -407,7 +407,7 @@ pub struct Options {
 
 impl OutputFile {
     pub fn init(options: Options) -> OutputFile {
-        let size = options.size.unwrap_or_else(|| match &options.data {
+        let size = options.size.unwrap_or(match &options.data {
             OptionsData::Buffer { data } => data.len(),
             OptionsData::File { size, .. } => *size,
             OptionsData::Saved(_) => 0,

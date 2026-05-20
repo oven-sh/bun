@@ -14,11 +14,11 @@ use bun_sys;
 // `crate::api::bun_process`, re-exported as `crate::api::bun::process`.
 #[cfg(unix)]
 use crate::api::bun::process::PosixStdio as Stdio;
+#[cfg(unix)]
+use crate::api::bun::process::SpawnResultExt as _;
 #[cfg(not(unix))]
 use crate::api::bun::process::WindowsStdio as Stdio;
-use crate::api::bun::process::{
-    self as spawn, Process, Rusage, SpawnOptions, SpawnResultExt as _, Status,
-};
+use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
 
 use super::channel::{Channel, ChannelOwner};
 use super::coordinator::Coordinator;

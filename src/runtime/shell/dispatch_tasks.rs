@@ -46,7 +46,7 @@ impl ShellAsyncSubprocessDone {
     /// `this` must be the live `heap::alloc` payload enqueued by
     /// `ShellSubprocess::on_process_exit`, and `(*this).interp` must outlive
     /// the call. Ownership of `*this` is consumed.
-    pub unsafe fn run_from_main_thread(this: *mut Self) {
+    pub fn run_from_main_thread(this: *mut Self) {
         // SAFETY: dispatch contract — `this` is the live `heap::alloc` payload
         // enqueued by `ShellSubprocess::on_process_exit`; `interp` outlives
         // every spawned subprocess.
@@ -76,7 +76,7 @@ impl AsyncDeinitWriter {
     /// # Safety
     /// `this` must be the live `heap::alloc` payload enqueued by
     /// `IOWriter::async_deinit`. Ownership of `*this` is consumed.
-    pub unsafe fn run_from_main_thread(this: *mut Self) {
+    pub fn run_from_main_thread(this: *mut Self) {
         // SAFETY: dispatch contract — `this` is the live `heap::alloc` payload
         // enqueued by `IOWriter::async_deinit`.
         let owned = unsafe { bun_core::heap::take(this) };
@@ -99,7 +99,7 @@ impl AsyncDeinitReader {
     /// # Safety
     /// `this` must be the live `heap::alloc` payload enqueued by
     /// `IOReader::async_deinit`. Ownership of `*this` is consumed.
-    pub unsafe fn run_from_main_thread(this: *mut Self) {
+    pub fn run_from_main_thread(this: *mut Self) {
         // SAFETY: dispatch contract — `this` is the live `heap::alloc` payload
         // enqueued by `IOReader::async_deinit`.
         let owned = unsafe { bun_core::heap::take(this) };
@@ -126,7 +126,7 @@ impl ShellCondExprStatTask {
     /// # Safety
     /// `this` must be a live `heap::alloc` payload paired with the schedule
     /// site. Ownership of `*this` is consumed.
-    pub unsafe fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
+    pub fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         // SAFETY: live Box'd task; paired with `heap::alloc` at schedule time.
         let owned = unsafe { bun_core::heap::take(this) };
         crate::shell::states::cond_expr::CondExpr::on_stat_task_done(

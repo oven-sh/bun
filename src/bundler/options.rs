@@ -651,7 +651,7 @@ pub fn get_loader_and_virtual_source<'a>(
 
     let is_main = strings::eql_long(specifier, jsc_vm.main(), true);
 
-    let dir = path.name().dir.as_ref();
+    let dir = path.name().dir;
     // NOTE: we cannot trust `path.isFile()` since it's not always correct
     // NOTE: assume we may need a package.json when no loader is specified
     let is_js_like = loader.map(|l| l.is_js_like()).unwrap_or(true);

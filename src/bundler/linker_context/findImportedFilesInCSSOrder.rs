@@ -230,13 +230,13 @@ pub fn find_imported_files_in_css_order<'a>(
                                 ),
                             );
                             self.order.push(CssImportOrder {
-                                kind: CssImportOrderKind::ExternalPath(record.path.clone()),
+                                kind: CssImportOrderKind::ExternalPath(record.path),
                                 conditions: all_conditions,
                                 condition_import_records: all_import_records,
                             });
                         } else {
                             self.order.push(CssImportOrder {
-                                kind: CssImportOrderKind::ExternalPath(record.path.clone()),
+                                kind: CssImportOrderKind::ExternalPath(record.path),
                                 // PORT NOTE: Zig `wrapping_conditions.*` is a bitwise struct copy.
                                 // SAFETY: arena-backed `Vec` header; the pushed
                                 // `CssImportOrder` never drops it (see PORT NOTE at
@@ -926,13 +926,14 @@ fn debug_css_order(this: &LinkerContext, order: &Vec<CssImportOrder>, step: CssO
         // PORT NOTE: comptime `"BUN_DEBUG_CSS_ORDER_" ++ @tagName(step)` —
         // runtime concat is fine here (debug-only).
         let tag = step.tag_name();
-        let env_var = format!("BUN_DEBUG_CSS_ORDER_{}", tag);
+        let env_var = format!("BUN_DEBUG_CSS_ORDER_{}\0", tag);
         let enable_all = bun_core::env_var::BUN_DEBUG_CSS_ORDER
             .get()
             .unwrap_or(false);
-        let enable_step = std::env::var_os(&env_var)
-            .map(|v| !v.is_empty() && v != "0" && v != "false")
-            .unwrap_or(false);
+        let enable_step =
+            bun_core::getenv_z(bun_core::ZStr::from_slice_with_nul(env_var.as_bytes()))
+                .map(|v| !v.is_empty() && v != b"0" && v != b"false")
+                .unwrap_or(false);
         if enable_all || enable_step {
             debug_css_order_impl(this, order, step);
         }

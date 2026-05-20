@@ -687,7 +687,7 @@ pub struct NewSource<C: SourceContext> {
     pub close_jsvalue: bun_jsc::strong::Optional,
     /// R-2: cleared via `&self` from `FetchTasklet::clear_stream_cancel_handler`
     /// (through `ByteStream::parent_const`), so interior-mutable.
-    pub cancel_handler: Cell<Option<unsafe fn(Option<*mut c_void>)>>,
+    pub cancel_handler: Cell<Option<fn(Option<*mut c_void>)>>,
     pub cancel_ctx: Cell<Option<*mut c_void>>,
     // JSC_BORROW: process-lifetime VM global. Heap m_ctx field reassigned in
     // `start()` from a fresh `&JSGlobalObject`; `BackRef` gives a safe `Deref`
@@ -886,9 +886,7 @@ impl<C: SourceContext> NewSource<C> {
         self.cancelled = true;
         self.context.on_cancel();
         if let Some(handler) = self.cancel_handler.take() {
-            // SAFETY: `cancel_ctx` is the live ctx pointer registered alongside
-            // this handler (or `None`).
-            unsafe { handler(self.cancel_ctx.get()) };
+            handler(self.cancel_ctx.get());
         }
     }
 

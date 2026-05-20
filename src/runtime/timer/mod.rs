@@ -833,7 +833,7 @@ impl All {
     /// # Safety
     /// `timer` must point to a live `EventLoopTimer` with whole-container
     /// provenance for its tag (see [`js_timer_flags_ptr`]).
-    pub unsafe fn update(&mut self, timer: *mut EventLoopTimer, time: &Timespec) {
+    pub fn update(&mut self, timer: *mut EventLoopTimer, time: &Timespec) {
         self.lock.lock();
         // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer.
         // Read `state` via raw deref so we don't hold a `&mut *timer` across
@@ -881,7 +881,7 @@ impl All {
     /// # Safety
     /// `vm` is the erased `*mut VirtualMachine` for the calling JS thread and
     /// must remain live across any `EventLoopTimer::fire` re-entry.
-    pub unsafe fn get_timeout(
+    pub fn get_timeout(
         &mut self,
         spec: &mut Timespec,
         has_pending_immediate: bool,
@@ -1018,7 +1018,7 @@ impl All {
     /// # Safety
     /// `vm` is the erased `*mut VirtualMachine` for the calling JS thread and
     /// must remain live across any `EventLoopTimer::fire` re-entry.
-    pub unsafe fn drain_timers(&mut self, vm: *mut () /* erased *mut VirtualMachine */) {
+    pub fn drain_timers(&mut self, vm: *mut () /* erased *mut VirtualMachine */) {
         // PORT NOTE (§Forbidden aliased-&mut): spec Timer.zig:346-354 takes
         // `*All` (raw pointer) because fired handlers re-enter `vm.timer`
         // (e.g. setInterval reschedule → `vm.timer.update(...)`, `cancel()` →
@@ -1060,7 +1060,7 @@ impl All {
 
     /// # Safety
     /// `uws_loop` must point to the calling VM's live uws loop.
-    pub unsafe fn increment_immediate_ref(&mut self, delta: i32, uws_loop: *mut bun_uws_sys::Loop) {
+    pub fn increment_immediate_ref(&mut self, delta: i32, uws_loop: *mut bun_uws_sys::Loop) {
         let old = self.immediate_ref_count;
         let new = old + delta;
         self.immediate_ref_count = new;
@@ -1106,7 +1106,7 @@ impl All {
 
     /// # Safety
     /// `uws_loop` must point to the calling VM's live uws loop.
-    pub unsafe fn increment_timer_ref(&mut self, delta: i32, uws_loop: *mut bun_uws_sys::Loop) {
+    pub fn increment_timer_ref(&mut self, delta: i32, uws_loop: *mut bun_uws_sys::Loop) {
         let old = self.active_timer_count;
         let new = old + delta;
         debug_assert!(new >= 0);

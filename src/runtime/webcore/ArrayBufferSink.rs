@@ -88,7 +88,7 @@ impl ArrayBufferSink {
     /// # Safety
     /// `this` must be the m_ctx payload allocated via `heap::alloc` in
     /// init/JSSink, called from JSC lazy sweep on the mutator thread.
-    pub unsafe fn finalize(this: *mut Self) {
+    pub fn finalize(this: *mut Self) {
         unsafe { Self::destroy(this) };
     }
 
@@ -270,7 +270,7 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
         // Zig: ArrayBufferSink.finalize destroys the heap allocation; the
         // `JSSink::finalize` C export owns that path. The trait impl here is
         // the *inner* finalize.
-        unsafe { Self::finalize(std::ptr::from_mut::<Self>(self)) };
+        Self::finalize(std::ptr::from_mut::<Self>(self));
     }
     fn construct(this: &mut core::mem::MaybeUninit<Self>) {
         Self::construct(this);

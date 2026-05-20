@@ -1,5 +1,7 @@
 use core::ffi::c_void;
-use core::sync::atomic::{AtomicU8, Ordering};
+use core::sync::atomic::AtomicU8;
+#[cfg(not(windows))]
+use core::sync::atomic::Ordering;
 
 use bun_core::Error;
 use bun_core::ZigString;
@@ -38,7 +40,7 @@ impl bun_jsc::work_task::WorkTaskContext for WriteFile {
     }
     fn then(this: *mut Self, global: &jsc::JSGlobalObject) -> Result<(), JsTerminated> {
         // SAFETY: WorkTask drives `then` on the JS thread with the live Box-allocated context.
-        unsafe { WriteFile::then(this, global) }
+        WriteFile::then(this, global)
     }
 }
 
@@ -370,7 +372,7 @@ impl WriteFile {
     /// # Safety
     /// `this` must point to a live Box-allocated `WriteFile` (created via
     /// [`Self::create_with_ctx`]). The allocation is consumed here.
-    pub unsafe fn then(this: *mut WriteFile, _global: &JSGlobalObject) -> Result<(), JsTerminated> {
+    pub fn then(this: *mut WriteFile, _global: &JSGlobalObject) -> Result<(), JsTerminated> {
         let cb;
         let cb_ctx;
         let system_error;
@@ -408,12 +410,17 @@ impl WriteFile {
     pub fn run(&mut self, task: *mut WriteFileTask) {
         #[cfg(windows)]
         {
+            let _ = task;
             panic!("todo");
         }
-        self.io_task = Some(task);
-        self.run_async();
+        #[cfg(not(windows))]
+        {
+            self.io_task = Some(task);
+            self.run_async();
+        }
     }
 
+    #[cfg(not(windows))]
     fn run_async(&mut self) {
         self.get_fd(Self::run_with_fd);
     }
@@ -430,6 +437,7 @@ impl WriteFile {
             .is_path()
     }
 
+    #[cfg(not(windows))]
     fn on_finish(&mut self) {
         bun_output::scoped_log!(WriteFile, "WriteFile.onFinish()");
 
@@ -440,11 +448,12 @@ impl WriteFile {
         if !close_after_io {
             if let Some(io_task) = self.io_task.take() {
                 // SAFETY: io_task is a backref set in run(); WorkTask owns lifetime.
-                unsafe { bun_jsc::work_task::WorkTask::on_finish(io_task) };
+                bun_jsc::work_task::WorkTask::on_finish(unsafe { &mut *io_task });
             }
         }
     }
 
+    #[cfg(not(windows))]
     fn run_with_fd(&mut self, fd_: Fd) {
         if fd_ == Fd::INVALID || self.errno.is_some() {
             self.on_finish();
@@ -538,6 +547,12 @@ impl WriteFile {
         {
             return; // why
         }
+        #[cfg(not(windows))]
+        self.do_write_loop_posix();
+    }
+
+    #[cfg(not(windows))]
+    fn do_write_loop_posix(&mut self) {
         while self.state.load(Ordering::Relaxed) == ClosingState::Running as u8 {
             let remain_full = self.bytes_blob.shared_view();
             // PORT NOTE: reshaped for borrowck — capture len/offset before mut borrow
@@ -1328,14 +1343,14 @@ pub struct WriteFileWaitFromLockedValueTask {
 impl WriteFileWaitFromLockedValueTask {
     pub fn then_wrap(this: *mut c_void, value: &mut body::Value) {
         // SAFETY: `this` is the Box-allocated task registered as `locked.task` below.
-        let _ = unsafe { Self::then(this.cast::<WriteFileWaitFromLockedValueTask>(), value) };
+        let _ = Self::then(this.cast::<WriteFileWaitFromLockedValueTask>(), value);
         // TODO: properly propagate exception upwards
     }
 
     /// # Safety
     /// `this` must point to a live Box-allocated `WriteFileWaitFromLockedValueTask`.
     /// On every arm except `body::Value::Locked`, the allocation is consumed.
-    pub unsafe fn then(
+    pub fn then(
         this: *mut WriteFileWaitFromLockedValueTask,
         value: &mut body::Value,
     ) -> Result<(), JsTerminated> {

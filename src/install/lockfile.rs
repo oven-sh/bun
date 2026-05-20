@@ -1816,11 +1816,10 @@ impl<'a> Printer<'a> {
         writer: W,
     ) -> Result<(), BunError> {
         // TODO(port): narrow error set
-        // SAFETY: `FileSystem::init` ran in the caller (`Printer::print`); this
-        // is the process-static singleton (Zig `&FileSystem.instance`). Form a
-        // short-lived `&mut` for the `read_directory` call only — single-threaded
+        // `FileSystem::init` ran in the caller (`Printer::print`); this is the
+        // process-static singleton (Zig `&FileSystem.instance`). Single-threaded
         // CLI path, no concurrent access.
-        let fs = unsafe { &mut *FileSystem::instance() };
+        let fs = FileSystem::instance();
         let mut options = PackageManagerOptions {
             max_concurrent_lifecycle_scripts: 1,
             ..Default::default()
@@ -1830,9 +1829,7 @@ impl<'a> Printer<'a> {
         // before borrowing `fs.fs` mutably.
         let top_level_dir = fs.top_level_dir;
         let entries_option = fs.fs.read_directory(top_level_dir, None, 0, true)?;
-        // SAFETY: `read_directory` returns a `*mut EntriesOption` into the
-        // resolver's process-lifetime BSSMap; sole `&mut` on this CLI path.
-        let entries: &mut Fs::DirEntry = match unsafe { &mut *entries_option } {
+        let entries: &mut Fs::DirEntry = match entries_option {
             Fs::EntriesOption::Entries(e) => &mut **e,
             Fs::EntriesOption::Err(e) => return Err(e.canonical_error),
         };
@@ -3389,9 +3386,10 @@ impl PatchedDep {
     /// the explicit-padding / private-hash fields make the `..Default::default()`
     /// struct-update form unusable from sibling modules.
     pub fn with_path(path: SemverString) -> Self {
-        let mut this = Self::default();
-        this.path = path;
-        this
+        Self {
+            path,
+            ..Default::default()
+        }
     }
 
     pub fn set_patchfile_hash(&mut self, val: Option<u64>) {

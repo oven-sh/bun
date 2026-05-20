@@ -145,7 +145,7 @@ pub struct Result {
 }
 
 pub enum ResultValue {
-    Success(Success),
+    Success(Box<Success>),
     Err(ResultError),
     Empty { source_index: Index },
 }
@@ -244,13 +244,13 @@ impl ParseTask {
             },
             None => (ast::StoreStr::EMPTY, ast::StoreStr::EMPTY),
         };
-        // SAFETY: caller passes a live `&mut BundleV2` coerced to `*mut`; we
-        // only read `transpiler().options.target` here.
-        let known_target = unsafe { (*ctx).transpiler().options.target };
+        // SAFETY: lifetime erased — `ctx` outlives the ParseTask (BACKREF);
+        // write provenance from the `*mut BundleV2` parameter; caller passes a
+        // live `&mut BundleV2` coerced to `*mut`.
+        let ctx_ref = unsafe { bun_ptr::ParentRef::from_raw_mut(ctx.cast::<BundleV2<'static>>()) };
+        let known_target = ctx_ref.get().transpiler().options.target;
         ParseTask {
-            // SAFETY: lifetime erased — `ctx` outlives the ParseTask (BACKREF);
-            // write provenance from the `*mut BundleV2` parameter.
-            ctx: Some(unsafe { bun_ptr::ParentRef::from_raw_mut(ctx.cast::<BundleV2<'static>>()) }),
+            ctx: Some(ctx_ref),
             path: resolve_result.path_pair.primary,
             contents_or_fd: ContentsOrFd::Fd {
                 dir: resolve_result.dirname_fd,
@@ -346,7 +346,10 @@ impl Default for ParseTask {
 // shared (`Worker::get`, `ctx.graph.pool`, `ctx.transpiler.options`).
 // `ParseTask` is `Send` because its non-auto-`Send` fields are bundle-
 // lifetime arena slices / backref pointers (`ctx`, `path`, `contents`).
-pub fn io_task_callback(task: *mut ThreadPoolLib::Task) {
+/// # Safety
+/// `task` must point at the `io_task` intrusive field of a live `ParseTask`
+/// scheduled by the thread pool, with provenance over the full `ParseTask`.
+pub unsafe fn io_task_callback(task: *mut ThreadPoolLib::Task) {
     // SAFETY: `task` points to `ParseTask.io_task` (intrusive field) — only
     // ever invoked by the thread pool against a `ParseTask` it scheduled, so
     // provenance covers the full `ParseTask` and the `&mut` is unique per the
@@ -356,7 +359,10 @@ pub fn io_task_callback(task: *mut ThreadPoolLib::Task) {
 }
 
 // CONCURRENCY: see `io_task_callback` — same task, different intrusive field.
-pub fn task_callback(task: *mut ThreadPoolLib::Task) {
+/// # Safety
+/// `task` must point at the `task` intrusive field of a live `ParseTask`
+/// scheduled by the thread pool, with provenance over the full `ParseTask`.
+pub unsafe fn task_callback(task: *mut ThreadPoolLib::Task) {
     // SAFETY: `task` points to `ParseTask.task` (intrusive field) — see
     // `io_task_callback` for the dispatch invariant.
     let parse_task = unsafe { &mut *bun_core::from_field_ptr!(ParseTask, task, task) };
@@ -1810,7 +1816,11 @@ pub mod parse_worker {
             let _ = log.add_msg(msg);
         }
 
-        pub extern "C" fn log_fn(
+        /// # Safety
+        /// `args_` and `log_options_`, when non-null, must point at live
+        /// `OnBeforeParseArguments` / `BunLogOptions` for the duration of the
+        /// call (the native-plugin FFI contract).
+        pub unsafe extern "C" fn log_fn(
             args_: *mut OnBeforeParseArguments,
             log_options_: *mut BunLogOptions,
         ) {
@@ -1851,16 +1861,22 @@ pub mod parse_worker {
         pub loader: Loader,
 
         pub fetch_source_code_fn:
-            extern "C" fn(*mut OnBeforeParseArguments, *mut OnBeforeParseResult) -> i32,
+            unsafe extern "C" fn(*mut OnBeforeParseArguments, *mut OnBeforeParseResult) -> i32,
 
         pub user_context: *mut c_void,
         pub free_user_context: Option<extern "C" fn(*mut c_void)>,
 
-        pub log: extern "C" fn(*mut OnBeforeParseArguments, *mut BunLogOptions),
+        pub log: unsafe extern "C" fn(*mut OnBeforeParseArguments, *mut BunLogOptions),
     }
 
     impl OnBeforeParseResult {
-        pub fn get_wrapper(result: *mut OnBeforeParseResult) -> *mut OnBeforeParseResultWrapper {
+        /// # Safety
+        /// `result` must be the `.result` field of a live
+        /// `OnBeforeParseResultWrapper`, with provenance covering the wrapper
+        /// (derived via `addr_of_mut!(wrapper.result)`).
+        pub unsafe fn get_wrapper(
+            result: *mut OnBeforeParseResult,
+        ) -> *mut OnBeforeParseResultWrapper {
             // SAFETY: result points to OnBeforeParseResultWrapper.result (always
             // constructed that way in `OnBeforeParsePlugin::run`).
             let wrapper =
@@ -1874,7 +1890,11 @@ pub mod parse_worker {
 
     // blocked_on: calls `get_code_for_parse_task_without_plugins` (gated above).
 
-    pub extern "C" fn fetch_source_code(
+    /// # Safety
+    /// `args` and `result_ptr` must point at the live `OnBeforeParseArguments`
+    /// / `OnBeforeParseResultWrapper.result` set up by `OnBeforeParsePlugin::run`
+    /// (the native-plugin FFI contract).
+    pub unsafe extern "C" fn fetch_source_code(
         args: *mut OnBeforeParseArguments,
         result_ptr: *mut OnBeforeParseResult,
     ) -> i32 {
@@ -1942,7 +1962,8 @@ pub mod parse_worker {
             result.source_len = source_len;
             result.free_user_context = None;
             result.user_context = core::ptr::null_mut();
-            let wrapper = OnBeforeParseResult::get_wrapper(result_ptr);
+            // SAFETY: `result_ptr` is `OnBeforeParseResultWrapper.result` (see above).
+            let wrapper = unsafe { OnBeforeParseResult::get_wrapper(result_ptr) };
             // SAFETY: result is always embedded in a wrapper. Write wrapper fields
             // via raw pointer — `wrapper.result`
             // *is* `*result_ptr`, so materializing `&mut *wrapper` here would
@@ -1956,9 +1977,14 @@ pub mod parse_worker {
         0
     }
 
+    /// # Safety
+    /// `this` must be the `.result` field of a live `OnBeforeParseResultWrapper`
+    /// constructed by `OnBeforeParsePlugin::run` (called from C++ with that
+    /// pointer).
     #[unsafe(no_mangle)]
-    pub extern "C" fn OnBeforeParseResult__reset(this: *mut OnBeforeParseResult) {
-        let wrapper = OnBeforeParseResult::get_wrapper(this);
+    pub unsafe extern "C" fn OnBeforeParseResult__reset(this: *mut OnBeforeParseResult) {
+        // SAFETY: `this` is the wrapper's `.result` field (caller contract).
+        let wrapper = unsafe { OnBeforeParseResult::get_wrapper(this) };
         // SAFETY: called from C++ with valid ptr embedded in wrapper. Operate on
         // raw pointers throughout: `wrapper.result`
         // *is* `*this`, so materializing `&mut *this` alongside `&mut *wrapper`
@@ -1976,8 +2002,13 @@ pub mod parse_worker {
         }
     }
 
+    /// # Safety
+    /// `this` must point at the live `OnBeforeParsePlugin` set up by
+    /// `OnBeforeParsePlugin::run` (called from C++ with that pointer).
     #[unsafe(no_mangle)]
-    pub extern "C" fn OnBeforeParsePlugin__isDone(this: *mut OnBeforeParsePlugin<'_, '_>) -> i32 {
+    pub unsafe extern "C" fn OnBeforeParsePlugin__isDone(
+        this: *mut OnBeforeParsePlugin<'_, '_>,
+    ) -> i32 {
         // SAFETY: called from C++ with valid ptr. Read via raw pointers (mirrors
         // Zig `@fieldParentPtr`) — `wrapper.result` aliases `*result`, so forming
         // overlapping references would be UB, and a `&mut`-derived `*mut` would
@@ -2773,7 +2804,7 @@ pub mod parse_worker {
                         });
                     }
 
-                    break 'value ResultValue::Success(ast);
+                    break 'value ResultValue::Success(Box::new(ast));
                 }
                 Err(e) => {
                     if e == err!("EmptyAST") {
@@ -2886,6 +2917,10 @@ pub mod parse_worker {
     }
 
     pub fn on_complete(result: *mut Result) {
+        on_complete_impl(result);
+    }
+
+    fn on_complete_impl(result: *mut Result) {
         // SAFETY: result allocated via heap::alloc above; uniquely owned here.
         let r = unsafe { &mut *result };
         let ctx = r.ctx;

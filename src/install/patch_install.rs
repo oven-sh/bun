@@ -212,7 +212,7 @@ impl PatchTask {
         unsafe {
             (*mgr)
                 .patch_task_queue
-                .push(std::ptr::from_mut::<Self>(self));
+                .push(core::ptr::NonNull::from(&mut *self));
             PackageManager::wake_raw(mgr);
         }
     }
@@ -762,7 +762,7 @@ impl PatchTask {
         unsafe {
             (*mgr)
                 .patch_task_queue
-                .push(std::ptr::from_mut::<Self>(self));
+                .push(core::ptr::NonNull::from(&mut *self));
             PackageManager::wake_raw(mgr);
         }
     }

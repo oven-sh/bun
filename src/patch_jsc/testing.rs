@@ -36,8 +36,8 @@ impl TestingAPIs {
         // PORT NOTE: Zig `gitDiffInternal` used `std.process.Child` (no uv loop).
         // Rust routes through `bun_spawn::sync`, which on Windows derefs
         // `WindowsOptions.loop_` — supply the JS event loop.
-        // SAFETY: `global.bun_vm().event_loop()` is the live per-thread `jsc::EventLoop`.
-        let mut loop_ = unsafe { bun_jsc::AnyEventLoop::js(global.bun_vm().event_loop().cast()) };
+        // `global.bun_vm().event_loop()` is the live per-thread `jsc::EventLoop`.
+        let mut loop_ = bun_jsc::AnyEventLoop::js(global.bun_vm().event_loop().cast());
         let diff = match git_diff_internal(old_folder.slice(), new_folder.slice(), &mut loop_) {
             Ok(d) => d,
             Err(e) => return Err(global.throw_error(e, "failed to make diff")),

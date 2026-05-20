@@ -914,15 +914,16 @@ pub enum AlpnOffer {
 /// from `on_open` for every TLS socket — must run even when the hostname is an
 /// IP literal (with empty SNI) so ALPN is still advertised.
 ///
-/// # Safety
-/// `ssl` must be a live `*mut SSL` for an open socket; `hostname` must be null
-/// or a NUL-terminated buffer that outlives this call.
-pub unsafe fn configure_http_client_with_alpn(
-    ssl: *mut boringssl::c::SSL,
+// `ssl` is the live SSL handle for a just-opened socket (BoringSSL never
+// returns null); `hostname` is null (no SNI for IP literals) or a
+// NUL-terminated buffer that outlives this call. The deref is null-guarded.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub fn configure_http_client_with_alpn(
+    ssl: &mut boringssl::c::SSL,
     hostname: *const core::ffi::c_char,
     offer: AlpnOffer,
 ) {
-    // SAFETY: see fn-level Safety contract.
+    // SAFETY: `ssl` is a live `&mut SSL`; `hostname` is null-guarded before deref.
     unsafe {
         if !hostname.is_null() && *hostname != 0 {
             boringssl::c::SSL_set_tlsext_host_name(ssl, hostname);
@@ -1447,20 +1448,17 @@ pub(crate) mod body_out {
 // ───────────────────────────── impl HTTPClient ─────────────────────────────
 
 impl<'a> HTTPClient<'a> {
-    /// # Safety
-    /// `ssl_ptr` must be a live `*mut SSL` for the open TLS socket whose peer
-    /// certificate is being verified; it is passed through to BoringSSL's
-    /// `SSL_get_peer_cert_chain`.
-    pub unsafe fn check_server_identity<const IS_SSL: bool>(
+    pub fn check_server_identity<const IS_SSL: bool>(
         &mut self,
         socket: HttpSocket<IS_SSL>,
         cert_error: HTTPCertError,
-        ssl_ptr: *mut boringssl::c::SSL,
+        ssl: &mut boringssl::c::SSL,
         allow_proxy_url: bool,
     ) -> bool {
         if self.flags.reject_unauthorized {
-            // SAFETY: caller contract — `ssl_ptr` is live while the TLS socket is open.
-            let cert_chain = unsafe { boringssl::c::SSL_get_peer_cert_chain(ssl_ptr) };
+            // SAFETY: `ssl` is a live `&mut SSL` for the open TLS socket whose
+            // peer certificate is being verified.
+            let cert_chain = unsafe { boringssl::c::SSL_get_peer_cert_chain(ssl) };
             if !cert_chain.is_null() {
                 // SAFETY: cert_chain is a live STACK_OF(X509) owned by the SSL session; index 0 is in bounds when non-null is returned
                 let x509 = unsafe { boringssl::c::sk_X509_value(cert_chain, 0) };
@@ -1617,9 +1615,12 @@ impl<'a> HTTPClient<'a> {
                 };
 
                 // SAFETY: `ssl_ptr` was null-checked above and is the live SSL
-                // handle for this just-opened socket; `host_z` is null or a
-                // NUL-terminated buffer borrowed from `temp`/`owned` in scope.
-                unsafe { configure_http_client_with_alpn(ssl_ptr, host_z, self.alpn_offer()) };
+                // handle for this just-opened socket.
+                configure_http_client_with_alpn(
+                    unsafe { &mut *ssl_ptr },
+                    host_z,
+                    self.alpn_offer(),
+                );
             }
         } else {
             self.first_call::<IS_SSL>(socket);
@@ -2421,8 +2422,9 @@ impl<'a> HTTPClient<'a> {
                 {
                     // SAFETY: runs on the HTTP thread after `HTTPThread::init`
                     // set `uws_loop` to its live `us_loop_t`.
-                    let h3_ctx =
-                        unsafe { h3::ClientContext::get_or_create(http_thread().uws_loop) };
+                    let h3_ctx = h3::ClientContext::get_or_create(unsafe {
+                        NonNull::new_unchecked(http_thread().uws_loop)
+                    });
                     if let Some(ctx) = h3_ctx {
                         if !h3::ClientContext::as_mut(ctx).connect(
                             self,
@@ -2452,8 +2454,9 @@ impl<'a> HTTPClient<'a> {
             }
             // SAFETY: runs on the HTTP thread after `HTTPThread::init` set
             // `uws_loop` to its live `us_loop_t`.
-            let Some(ctx) = (unsafe { h3::ClientContext::get_or_create(http_thread().uws_loop) })
-            else {
+            let Some(ctx) = h3::ClientContext::get_or_create(unsafe {
+                NonNull::new_unchecked(http_thread().uws_loop)
+            }) else {
                 self.fail(err!(HTTP3Unsupported));
                 self.complete_connecting_process();
                 return;

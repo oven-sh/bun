@@ -151,6 +151,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         Output::flush();
     }
 
+    #[cfg(not(windows))]
     const SHELLS_TO_SEARCH: &'static [&'static [u8]] = &[b"bash", b"sh", b"zsh"];
 
     /// `findShell` — locate a POSIX shell on `$PATH`, falling back to a
@@ -2147,7 +2148,7 @@ impl RunCommand {
     /// `executable_z` must point to a valid NUL-terminated string that lives
     /// for the duration of the call (it is the NUL-terminated form of
     /// `executable`).
-    pub unsafe fn run_binary_without_bunx_path(
+    pub fn run_binary_without_bunx_path(
         ctx: &mut ContextData,
         executable: &[u8],
         executable_z: *const c_char,

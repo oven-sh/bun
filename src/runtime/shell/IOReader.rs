@@ -5,6 +5,7 @@
 //! see the `Drop` impl note for the Rust equivalent.
 
 use core::cell::UnsafeCell;
+#[cfg(not(windows))]
 use core::ffi::c_void;
 
 use bun_sys::{self as sys, Fd};
@@ -88,7 +89,7 @@ impl IOReader {
     /// # Safety
     /// `this` must be the `Arc::as_ptr` of a live `Arc<IOReader>` whose
     /// strong count was held by the async-deinit task.
-    pub unsafe fn deinit_on_main_thread(this: *mut IOReader) {
+    pub fn deinit_on_main_thread(this: *mut IOReader) {
         // SAFETY: precondition above.
         unsafe { std::sync::Arc::decrement_strong_count(this) };
     }
@@ -177,7 +178,7 @@ impl IOReader {
     /// owns the IO struct that holds this `Arc`) for the lifetime of this
     /// reader; single-threaded.
     #[inline]
-    pub unsafe fn set_interp(&self, interp: *mut Interpreter) {
+    pub fn set_interp(&self, interp: *mut Interpreter) {
         // SAFETY: precondition above.
         self.state().interp = unsafe { bun_ptr::ParentRef::from_nullable_mut(interp) };
     }

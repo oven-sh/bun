@@ -246,43 +246,28 @@ fn on_open(ctx: *mut HTTPClient) {
 
         // PORT NOTE: Zig `configureHTTPClient` is `configureHTTPClientWithALPN(ssl, host, .h1)`;
         // the Rust port already exposes the ALPN form in `crate::configure_http_client_with_alpn`.
+        // SAFETY: `ssl_ptr` is the live SSL handle from the tunnel's SSLWrapper.
+        let ssl = unsafe { &mut *ssl_ptr.as_ptr() };
         if bun_core::is_ip_address(_hostname) {
-            // SAFETY: `ssl_ptr` is the live SSL handle from the tunnel's
-            // SSLWrapper; SNI is null (IP literal — no SNI).
-            unsafe {
-                crate::configure_http_client_with_alpn(
-                    ssl_ptr.as_ptr(),
-                    core::ptr::null(),
-                    AlpnOffer::H1,
-                )
-            };
+            // SNI is null (IP literal — no SNI).
+            crate::configure_http_client_with_alpn(ssl, core::ptr::null(), AlpnOffer::H1);
         } else {
             // SAFETY: TEMP_HOSTNAME is only accessed from the single HTTP thread.
             let temp_hostname = crate::temp_hostname();
             if _hostname.len() < temp_hostname.len() {
                 temp_hostname[.._hostname.len()].copy_from_slice(_hostname);
                 temp_hostname[_hostname.len()] = 0;
-                // SAFETY: `ssl_ptr` is live; `temp_hostname` is NUL-terminated
-                // and outlives this call.
-                unsafe {
-                    crate::configure_http_client_with_alpn(
-                        ssl_ptr.as_ptr(),
-                        temp_hostname.as_ptr().cast(),
-                        AlpnOffer::H1,
-                    )
-                };
+                // `temp_hostname` is NUL-terminated and outlives this call.
+                crate::configure_http_client_with_alpn(
+                    ssl,
+                    temp_hostname.as_ptr().cast(),
+                    AlpnOffer::H1,
+                );
             } else {
                 let mut owned = _hostname.to_vec();
                 owned.push(0);
-                // SAFETY: `ssl_ptr` is live; `owned` is NUL-terminated and
-                // outlives this call.
-                unsafe {
-                    crate::configure_http_client_with_alpn(
-                        ssl_ptr.as_ptr(),
-                        owned.as_ptr().cast(),
-                        AlpnOffer::H1,
-                    )
-                };
+                // `owned` is NUL-terminated and outlives this call.
+                crate::configure_http_client_with_alpn(ssl, owned.as_ptr().cast(), AlpnOffer::H1);
                 // owned drops here (was: defer if hostname_needs_free free(hostname))
             }
         }
@@ -420,18 +405,12 @@ fn on_handshake(
                 return;
             };
 
+            // SAFETY: `ssl_ptr` is the live SSL handle from the tunnel's
+            // SSLWrapper for the open inner TLS connection (NonNull invariant).
+            let ssl = unsafe { &mut *ssl_ptr.as_ptr() };
             match ProxyTunnel::socket_of(proxy_nn) {
                 &Socket::Ssl(socket) => {
-                    // SAFETY: `ssl_ptr` is the live SSL handle from the tunnel's
-                    // SSLWrapper for the open inner TLS connection.
-                    if !unsafe {
-                        this.check_server_identity::<true>(
-                            socket,
-                            handshake_error,
-                            ssl_ptr.as_ptr(),
-                            false,
-                        )
-                    } {
+                    if !this.check_server_identity::<true>(socket, handshake_error, ssl, false) {
                         scoped_log!(
                             http_proxy_tunnel,
                             "ProxyTunnel onHandshake checkServerIdentity failed"
@@ -444,16 +423,7 @@ fn on_handshake(
                     }
                 }
                 &Socket::Tcp(socket) => {
-                    // SAFETY: `ssl_ptr` is the live SSL handle from the tunnel's
-                    // SSLWrapper for the open inner TLS connection.
-                    if !unsafe {
-                        this.check_server_identity::<false>(
-                            socket,
-                            handshake_error,
-                            ssl_ptr.as_ptr(),
-                            false,
-                        )
-                    } {
+                    if !this.check_server_identity::<false>(socket, handshake_error, ssl, false) {
                         scoped_log!(
                             http_proxy_tunnel,
                             "ProxyTunnel onHandshake checkServerIdentity failed"

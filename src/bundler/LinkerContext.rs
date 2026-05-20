@@ -728,24 +728,21 @@ impl<'a> LinkerContext<'a> {
                         .push(source_index)
                 };
 
-                // S.LazyExport is a call to __jsonParse.
-                // SAFETY: `Part.stmts` is a raw `*mut [Stmt]` arena pointer;
-                // valid for the link step. Each accessor returns `Option`;
-                // `.unwrap()` mirrors Zig's untagged-union field reads (panic
-                // on shape mismatch).
-                let original_ref = unsafe {
-                    (*self.graph.ast.items_parts()[html_import as usize][1].stmts)[0]
-                        .data
-                        .s_lazy_export()
-                        .unwrap()
-                        .e_call()
-                        .unwrap()
-                        .target
-                        .data
-                        .e_import_identifier()
-                        .unwrap()
-                        .ref_
-                };
+                // S.LazyExport is a call to __jsonParse. Each accessor returns
+                // `Option`; `.unwrap()` mirrors Zig's untagged-union field
+                // reads (panic on shape mismatch).
+                let original_ref = (*self.graph.ast.items_parts()[html_import as usize][1].stmts)
+                    [0]
+                .data
+                .s_lazy_export()
+                .unwrap()
+                .e_call()
+                .unwrap()
+                .target
+                .data
+                .e_import_identifier()
+                .unwrap()
+                .ref_;
 
                 // Make the __jsonParse in that file point to the __jsonParse in the runtime chunk.
                 // SAFETY: `original_ref`'s symbol slot is disjoint from any live borrow here
@@ -1036,7 +1033,7 @@ impl<'a> LinkerContext<'a> {
     // `post_process_*` callees take `GenerateChunkCtx` by value and deref
     // `ctx.c` to `&LinkerContext` for read-only graph access plus per-chunk
     // raw-ptr writes (see `postProcessJSChunk.rs`).
-    pub fn generate_chunk(ctx: &GenerateChunkCtx, chunk: *mut Chunk, chunk_index: usize) {
+    pub(crate) fn generate_chunk(ctx: &GenerateChunkCtx, chunk: *mut Chunk, chunk_index: usize) {
         // SAFETY: `each_ptr` hands us a unique `*mut Chunk` per task; deref for
         // the duration of this body. ctx.c points into BundleV2.linker;
         // container_of pattern. `Worker::get` only reads `bundle.graph.pool`
@@ -1065,7 +1062,11 @@ impl<'a> LinkerContext<'a> {
     // `ctx.c.options` shared. `rename_symbols_in_chunk` takes `*mut
     // LinkerContext` raw and never materializes `&mut LinkerContext` while
     // peer renamer tasks are live (see its CONCURRENCY note).
-    pub fn generate_js_renamer(ctx: &GenerateChunkCtx, chunk: *mut Chunk, chunk_index: usize) {
+    pub(crate) fn generate_js_renamer(
+        ctx: &GenerateChunkCtx,
+        chunk: *mut Chunk,
+        chunk_index: usize,
+    ) {
         // SAFETY: `each_ptr` hands us a unique `*mut Chunk` per task; deref for
         // the body. container_of pattern — see `generate_chunk` above.
         let chunk: &mut Chunk = unsafe { &mut *chunk };
@@ -1422,7 +1423,7 @@ impl SourceMapDataTask {
     // `&mut LinkerContext` — `compute_line_offsets` takes a `ParentRef` (yields
     // `&LinkerContext` only) and writes the single SoA cell via raw per-row
     // pointer.
-    pub fn run_line_offset(thread_task: *mut ThreadPoolLib::Task) {
+    pub(crate) fn run_line_offset(thread_task: *mut ThreadPoolLib::Task) {
         // SAFETY: thread_task points to SourceMapDataTask.thread_task
         let task: &mut SourceMapDataTask = unsafe {
             &mut *(bun_core::from_field_ptr!(SourceMapDataTask, thread_task, thread_task))
@@ -1458,7 +1459,7 @@ impl SourceMapDataTask {
     // `&mut LinkerContext` — `compute_quoted_source_contents` takes a
     // `ParentRef` (yields `&LinkerContext` only) and writes the single SoA cell
     // via raw per-row pointer.
-    pub fn run_quoted_source_contents(thread_task: *mut ThreadPoolLib::Task) {
+    pub(crate) fn run_quoted_source_contents(thread_task: *mut ThreadPoolLib::Task) {
         // SAFETY: thread_task points to SourceMapDataTask.thread_task
         let task: &mut SourceMapDataTask = unsafe {
             &mut *(bun_core::from_field_ptr!(SourceMapDataTask, thread_task, thread_task))
@@ -1817,18 +1818,18 @@ impl<'a> LinkerContext<'a> {
                         // such debug hook yet.
                         debug_assert!(source.path.text.as_ptr() != source.path.pretty.as_ptr());
 
-                        break 'brk &source.path.pretty;
+                        break 'brk source.path.pretty;
                     } else {
                         // If this isn't in the "file" namespace, just use the full path text
                         // verbatim. This could be a source of cross-platform differences if
                         // plugins are storing platform-specific information in here, but then
                         // that problem isn't caused by esbuild itself.
-                        break 'brk &source.path.text;
+                        break 'brk source.path.text;
                     }
                 };
 
                 // Include the path namespace in the hash
-                hasher.write(&source.path.namespace);
+                hasher.write(source.path.namespace);
 
                 // Then include the file path
                 hasher.write(file_path);
@@ -1856,7 +1857,7 @@ impl<'a> LinkerContext<'a> {
                 .options
                 .public_path
         } else {
-            &self.options.public_path
+            self.options.public_path
         };
 
         // Also hash the public path. If provided, this is used whenever files
@@ -1973,7 +1974,7 @@ impl<'a> LinkerContext<'a> {
 
                             if parent_result_tla_keyword.len > 0 {
                                 let source = &input_files[other_source_index as usize];
-                                tla_pretty_path = &source.path.pretty;
+                                tla_pretty_path = source.path.pretty;
                                 let mut text = Vec::new();
                                 use std::io::Write;
                                 write!(
@@ -2243,7 +2244,9 @@ impl<'a> LinkerContext<'a> {
         // SAFETY: `graph.files` SoA columns are stable heap allocations valid for this
         // call (see above); the printer only reads from this slot.
         let line_offset_table: &bun_sourcemap::line_offset_table::List<bun_alloc::AstAlloc> = unsafe {
-            &*(&raw const self.graph.files.items_line_offset_table()[source_index.get() as usize])
+            bun_ptr::detach_lifetime_ref(
+                &self.graph.files.items_line_offset_table()[source_index.get() as usize],
+            )
         };
         let mangled_props: &MangledProps =
             // SAFETY: `self.mangled_props` is not mutated during printing; detached borrow
@@ -3078,7 +3081,7 @@ impl<'a> LinkerContext<'a> {
     /// `log` is an explicit parameter (not `self.log`) because the dev-server
     /// caller (`finish_from_bake_dev_server`) runs this *before* `load()` has
     /// initialized `self.log`, passing a stack-local `Log` instead.
-    pub fn scan_css_imports(
+    pub(crate) fn scan_css_imports(
         file_source_index: u32,
         file_import_records: &[ImportRecord],
         css_asts: *const [crate::bundled_ast::CssCol],
@@ -3625,24 +3628,17 @@ impl<'a> LinkerContext<'a> {
                         .get(&tracker.import_ref)
                         .unwrap();
 
-                    if named_import.namespace_ref.is_some()
-                        && named_import
-                            .namespace_ref
-                            .expect("infallible: checked is_some")
-                            .is_valid()
+                    if let Some(namespace_ref) = named_import.namespace_ref
+                        && namespace_ref.is_valid()
                     {
                         if result.kind == MatchImportKind::Normal {
                             result.kind = MatchImportKind::NormalAndNamespace;
-                            result.namespace_ref = named_import
-                                .namespace_ref
-                                .expect("infallible: checked is_some");
+                            result.namespace_ref = namespace_ref;
                             result.alias = named_import.alias.expect("infallible: alias present");
                         } else {
                             result = MatchImport {
                                 kind: MatchImportKind::Namespace,
-                                namespace_ref: named_import
-                                    .namespace_ref
-                                    .expect("infallible: checked is_some"),
+                                namespace_ref,
                                 alias: named_import.alias.expect("infallible: alias present"),
                                 ..Default::default()
                             };
@@ -3758,7 +3754,7 @@ impl<'a> LinkerContext<'a> {
 
                         if self.resolver().opts.target == Target::Browser
                             && bun_resolve_builtins::Alias::has(
-                                &next_source.path.pretty,
+                                next_source.path.pretty,
                                 Target::Bun,
                                 bun_resolve_builtins::Cfg::default(),
                             )
@@ -3918,7 +3914,7 @@ impl<'a> LinkerContext<'a> {
     }
 
     /// Spec: `LinkerContext.zig:2471 matchImportsWithExportsForFile`.
-    pub fn match_imports_with_exports_for_file(
+    pub(crate) fn match_imports_with_exports_for_file(
         &mut self,
         named_imports_ptr: *const crate::bundled_ast::NamedImports,
         imports_to_bind: &mut crate::RefImportData,

@@ -331,7 +331,7 @@ impl S3HttpSimpleTask {
     /// # Safety
     /// `this` must be a live heap pointer produced by `S3HttpSimpleTask::new` whose ownership
     /// is being transferred to this call (it is reclaimed and dropped here exactly once).
-    pub unsafe fn on_response(this: *mut Self) -> JsTerminatedResult<()> {
+    pub fn on_response(this: *mut Self) -> JsTerminatedResult<()> {
         // SAFETY: `this` was produced by `S3HttpSimpleTask::new` (heap::alloc) and ownership is
         // reclaimed here exactly once via the ConcurrentTask `.manual_deinit` contract. Dropping
         // `this` at scope exit replaces Zig's `defer this.deinit()`.
@@ -438,7 +438,7 @@ impl S3HttpSimpleTask {
     /// `this` must be a live heap pointer produced by `S3HttpSimpleTask::new` and exclusively
     /// owned by the HTTP thread for the duration of this call. `async_http` must be a valid
     /// pointer to an initialised `AsyncHTTP` for the duration of this call.
-    pub unsafe fn http_callback(
+    pub fn http_callback(
         this: *mut Self,
         async_http: *mut AsyncHTTP<'static>,
         result: HTTPClientResult<'_>,
@@ -470,20 +470,18 @@ impl S3HttpSimpleTask {
             // PORT NOTE: compute the raw self-pointer before borrowing `this.concurrent_task`
             // to avoid a stacked-borrows / aliasing diagnostic on `*this`.
             let this_ptr = std::ptr::from_mut::<Self>(this);
-            let task = std::ptr::from_mut::<ConcurrentTask>(
+            let task = core::ptr::NonNull::from(
                 this.concurrent_task
                     .from(this_ptr, AutoDeinit::ManualDeinit),
             );
             // `vm` is the live per-thread VM BackRef captured at task creation; event_loop
             // is set during VM init and outlives this task. `enqueue_task_concurrent` is `&self`.
-            // SAFETY: `task` is the inline `concurrent_task` field of this heap
-            // request; the queue takes ownership of its `next` link.
-            unsafe {
-                this.vm
-                    .expect("vm set at task creation")
-                    .event_loop_shared()
-                    .enqueue_task_concurrent(task);
-            }
+            // `task` is the inline `concurrent_task` field of this heap request;
+            // the queue takes ownership of its `next` link.
+            this.vm
+                .expect("vm set at task creation")
+                .event_loop_shared()
+                .enqueue_task_concurrent(task);
         }
     }
 }
@@ -684,7 +682,7 @@ pub fn execute_simple_s3_request(
             task_ptr,
             // SAFETY: `task_ptr` was just heap-allocated above and `async_http` is supplied by
             // the HTTP thread as a live pointer for the duration of the callback.
-            |this, http, result| unsafe { S3HttpSimpleTask::http_callback(this, http, result) },
+            |this, http, result| S3HttpSimpleTask::http_callback(this, http, result),
         ),
         FetchRedirect::Follow,
         HttpOptions {

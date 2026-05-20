@@ -70,14 +70,14 @@ impl ThreadSafeStreamBuffer {
         unsafe { p.as_mut() }
     }
 
-    pub unsafe fn ref_(this: *mut Self) {
+    pub fn ref_(this: core::ptr::NonNull<Self>) {
         // SAFETY: `this` is a live heap allocation produced by `new`.
-        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::ref_(this) };
+        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::ref_(this.as_ptr()) };
     }
 
-    pub unsafe fn deref(this: *mut Self) {
+    pub fn deref(this: core::ptr::NonNull<Self>) {
         // SAFETY: `this` is a live heap allocation produced by `new`.
-        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this) };
+        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this.as_ptr()) };
     }
 
     pub fn acquire(&mut self) -> &mut StreamBuffer {

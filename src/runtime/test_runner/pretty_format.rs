@@ -392,11 +392,12 @@ impl Drop for Formatter<'_> {
             // exclusively owned for this `Formatter`'s lifetime; its `data` was
             // initialized by `Map::INIT`, so `assume_init_mut` observes a valid
             // `Map`.
+            let mut node = node;
             unsafe {
-                let data = (*node.as_ptr()).data.assume_init_mut();
+                let data = node.as_mut().data.assume_init_mut();
                 *data = core::mem::take(&mut self.map);
                 data.clear();
-                visited::Pool::release(node.as_ptr());
+                visited::Pool::release(node.as_mut());
             }
         }
     }

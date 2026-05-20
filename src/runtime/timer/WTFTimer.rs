@@ -315,7 +315,7 @@ pub unsafe extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn WTFTimer__update(this: *mut WTFTimer, seconds: f64, repeat: bool) {
     // SAFETY: per fn contract.
-    unsafe { WTFTimer::update(this, seconds, repeat) };
+    WTFTimer::update(this, seconds, repeat);
 }
 
 /// # Safety
@@ -324,7 +324,7 @@ pub unsafe extern "C" fn WTFTimer__update(this: *mut WTFTimer, seconds: f64, rep
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn WTFTimer__deinit(this: *mut WTFTimer) {
     // SAFETY: per fn contract.
-    unsafe { WTFTimer::deinit(this) };
+    WTFTimer::deinit(this);
 }
 
 /// # Safety

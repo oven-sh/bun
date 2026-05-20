@@ -248,15 +248,15 @@ pub struct PendingValue {
     pub task: Option<*mut c_void>,
 
     /// runs after the data is available.
-    pub on_receive_value: Option<unsafe fn(ctx: *mut c_void, value: &mut Value)>,
+    pub on_receive_value: Option<fn(ctx: *mut c_void, value: &mut Value)>,
 
     /// conditionally runs when requesting data
     /// used in HTTP server to ignore request bodies unless asked for it
-    pub on_start_buffering: Option<unsafe fn(ctx: *mut c_void)>,
-    pub on_start_streaming: Option<unsafe fn(ctx: *mut c_void) -> DrainResult>,
+    pub on_start_buffering: Option<fn(ctx: *mut c_void)>,
+    pub on_start_streaming: Option<fn(ctx: *mut c_void) -> DrainResult>,
     pub on_readable_stream_available:
-        Option<unsafe fn(ctx: *mut c_void, global_this: &JSGlobalObject, readable: ReadableStream)>,
-    pub on_stream_cancelled: Option<unsafe fn(ctx: Option<*mut c_void>)>,
+        Option<fn(ctx: *mut c_void, global_this: &JSGlobalObject, readable: ReadableStream)>,
+    pub on_stream_cancelled: Option<fn(ctx: Option<*mut c_void>)>,
     pub size_hint: blob::SizeType,
 
     pub deinit: bool,
@@ -443,9 +443,9 @@ impl PendingValue {
             promise_value.protect();
 
             if let Some(on_start_buffering) = self.on_start_buffering.take() {
-                // SAFETY: `task` is the live request-ctx pointer registered alongside
+                // `task` is the live request-ctx pointer registered alongside
                 // this callback in `prepare_js_request_context`.
-                unsafe { on_start_buffering(self.task.unwrap()) };
+                on_start_buffering(self.task.unwrap());
             }
             Ok(promise_value)
         }
@@ -873,9 +873,7 @@ impl Value {
                 let mut drain_result = DrainResult::EstimatedSize(0);
 
                 if let Some(drain) = locked.on_start_streaming.take() {
-                    // SAFETY: `task` is the live request-ctx pointer registered alongside
-                    // this callback.
-                    drain_result = unsafe { drain(locked.task.unwrap()) };
+                    drain_result = drain(locked.task.unwrap());
                 }
 
                 if matches!(drain_result, DrainResult::Empty | DrainResult::Aborted) {
@@ -930,15 +928,11 @@ impl Value {
                 );
 
                 if let Some(on_readable_stream_available) = locked.on_readable_stream_available {
-                    // SAFETY: `task` is the live request-ctx pointer registered alongside
-                    // this callback.
-                    unsafe {
-                        on_readable_stream_available(
-                            locked.task.unwrap(),
-                            global_this,
-                            locked.readable.get(global_this).unwrap(),
-                        );
-                    }
+                    on_readable_stream_available(
+                        locked.task.unwrap(),
+                        global_this,
+                        locked.readable.get(global_this).unwrap(),
+                    );
                 }
 
                 Ok(locked.readable.get(global_this).unwrap().value)
@@ -1121,9 +1115,7 @@ impl Value {
             }
 
             if let Some(callback) = locked.on_receive_value.take() {
-                // SAFETY: `task` is the live request-ctx pointer registered alongside
-                // this callback.
-                unsafe { callback(locked.task.unwrap(), new) };
+                callback(locked.task.unwrap(), new);
                 return Ok(());
             }
 
@@ -1481,9 +1473,9 @@ impl Value {
             }
 
             if let Some(on_receive_value) = locked.on_receive_value.take() {
-                // SAFETY: `task` is the live request-ctx pointer registered alongside
+                // `task` is the live request-ctx pointer registered alongside
                 // this callback.
-                unsafe { on_receive_value(locked.task.unwrap(), self) };
+                on_receive_value(locked.task.unwrap(), self);
             }
 
             return Ok(());
@@ -1601,9 +1593,7 @@ impl Value {
         let mut drain_result = DrainResult::EstimatedSize(0);
 
         if let Some(drain) = locked.on_start_streaming.take() {
-            // SAFETY: `task` is the live request-ctx pointer registered alongside
-            // this callback.
-            drain_result = unsafe { drain(locked.task.unwrap()) };
+            drain_result = drain(locked.task.unwrap());
         }
 
         if matches!(drain_result, DrainResult::Empty | DrainResult::Aborted) {
@@ -1654,15 +1644,11 @@ impl Value {
         );
 
         if let Some(on_readable_stream_available) = locked.on_readable_stream_available {
-            // SAFETY: `task` is the live request-ctx pointer registered alongside
-            // this callback.
-            unsafe {
-                on_readable_stream_available(
-                    locked.task.unwrap(),
-                    global_this,
-                    locked.readable.get(global_this).unwrap(),
-                );
-            }
+            on_readable_stream_available(
+                locked.task.unwrap(),
+                global_this,
+                locked.readable.get(global_this).unwrap(),
+            );
         }
 
         let teed = match locked.readable.tee(global_this)? {

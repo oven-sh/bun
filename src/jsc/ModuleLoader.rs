@@ -8,6 +8,7 @@
 //! `bun_jsc`).
 
 use core::ffi::c_void;
+use core::ptr::NonNull;
 
 use bun_alloc::Arena as ArenaAllocator;
 use bun_options_types::LoaderExt as _;
@@ -298,9 +299,9 @@ pub fn transpile_source_code(
 }
 
 /// `ModuleLoader.fetchBuiltinModule(jsc_vm, specifier)`.
-pub unsafe fn fetch_builtin_module(
+pub fn fetch_builtin_module(
     jsc_vm: &mut VirtualMachine,
-    global: *mut JSGlobalObject,
+    global: NonNull<JSGlobalObject>,
     specifier: &bun_core::String,
     referrer: &bun_core::String,
     out: &mut ErrorableResolvedSource,
@@ -309,8 +310,9 @@ pub unsafe fn fetch_builtin_module(
         return FetchBuiltinResult::NotFound;
     };
     // SAFETY: hook contract — `jsc_vm` is the live per-thread VM; `out` is a
-    // valid out-param.
-    unsafe { (hooks.fetch_builtin_module)(jsc_vm, global, specifier, referrer, out) }
+    // valid out-param; `global` is the live JS-thread global passed through
+    // opaquely to the §Dispatch hook.
+    unsafe { (hooks.fetch_builtin_module)(jsc_vm, global.as_ptr(), specifier, referrer, out) }
 }
 
 /// `VirtualMachine.resolveMaybeNeedsTrailingSlash(...)` — thin shim over the
@@ -323,9 +325,9 @@ pub unsafe fn fetch_builtin_module(
 /// boundary. The branch is a single length-check / `dirWithTrailingSlash` —
 /// PERF(port): was inline switch; the fn-ptr indirection is one call per
 /// `import` / `require.resolve`, dominated by the resolver's dir-cache walk.
-pub unsafe fn resolve_maybe_needs_trailing_slash(
+pub fn resolve_maybe_needs_trailing_slash(
     res: &mut ErrorableString,
-    global: *mut JSGlobalObject,
+    global: &mut JSGlobalObject,
     specifier: bun_core::String,
     source: bun_core::String,
     query_string: Option<&mut bun_core::String>,
@@ -365,27 +367,24 @@ pub unsafe fn resolve_maybe_needs_trailing_slash(
 /// entry point. Thin wrapper that fixes `is_a_file_path = true`,
 /// `is_user_require_resolve = false`.
 #[inline]
-pub unsafe fn resolve(
+pub fn resolve(
     res: &mut ErrorableString,
-    global: *mut JSGlobalObject,
+    global: &mut JSGlobalObject,
     specifier: bun_core::String,
     source: bun_core::String,
     query_string: Option<&mut bun_core::String>,
     is_esm: bool,
 ) -> JsResult<()> {
-    // SAFETY: caller guarantees `global` is the live JS-thread global.
-    unsafe {
-        resolve_maybe_needs_trailing_slash(
-            res,
-            global,
-            specifier,
-            source,
-            query_string,
-            is_esm,
-            true,
-            false,
-        )
-    }
+    resolve_maybe_needs_trailing_slash(
+        res,
+        global,
+        specifier,
+        source,
+        query_string,
+        is_esm,
+        true,
+        false,
+    )
 }
 
 /// `VirtualMachine.processFetchLog(global, specifier, referrer, log, &errorable,
@@ -461,15 +460,22 @@ pub unsafe extern "C" fn Bun__fetchBuiltinModule(
     ret: *mut ErrorableResolvedSource,
 ) -> bool {
     jsc::mark_binding();
-    // SAFETY: C++ passed valid pointers; `jsc_vm` is the live per-thread VM.
-    let (jsc_vm, specifier, referrer, ret) =
-        unsafe { (&mut *jsc_vm, &*specifier, &*referrer, &mut *ret) };
+    // SAFETY: C++ passed valid pointers; `jsc_vm` is the live per-thread VM and
+    // `global_object` is the live JS-thread global. JSC never passes null.
+    let (jsc_vm, global_object, specifier, referrer, ret) = unsafe {
+        (
+            &mut *jsc_vm,
+            NonNull::new_unchecked(global_object),
+            &*specifier,
+            &*referrer,
+            &mut *ret,
+        )
+    };
     // PORT NOTE: spec ModuleLoader.zig:861-876 — when `fetchBuiltinModule`
     // ERRORS, it calls `VirtualMachine.processFetchLog(..., ret, err)` and
     // returns **true** (so C++ surfaces the error instead of falling through to
     // filesystem resolution). The hook writes `ret` directly on Found/Errored.
-    // SAFETY: `global_object` is the live JS-thread global passed from C++.
-    match unsafe { fetch_builtin_module(jsc_vm, global_object, specifier, referrer, ret) } {
+    match fetch_builtin_module(jsc_vm, global_object, specifier, referrer, ret) {
         FetchBuiltinResult::NotFound => false,
         FetchBuiltinResult::Found | FetchBuiltinResult::Errored => true,
     }

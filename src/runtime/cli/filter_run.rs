@@ -3,9 +3,9 @@ use std::io::Write as _;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
-use crate::api::bun::process::{
-    self as spawn, Process, Rusage, SpawnOptions, SpawnResultExt as _, Status,
-};
+#[cfg(unix)]
+use crate::api::bun::process::SpawnResultExt as _;
+use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
 use crate::cli::Command;
 use crate::cli::filter_arg as FilterArg;
 use crate::cli::run_command::RunCommand;
@@ -901,9 +901,9 @@ pub fn run_scripts_with_filter(
     // already covered by prctl in enable() + linux_pdeathsig on each spawn.
     // SAFETY: `event_loop` is the live per-thread `MiniEventLoop` (init'd above);
     // `as_event_loop_ctx` only stores it as a tagged backref.
-    bun_io::ParentDeathWatchdog::install_on_event_loop(unsafe {
-        MiniEventLoop::as_event_loop_ctx(event_loop)
-    });
+    bun_io::ParentDeathWatchdog::install_on_event_loop(MiniEventLoop::as_event_loop_ctx(unsafe {
+        &mut *event_loop
+    }));
     let shell_bin: &'static ZStr = {
         #[cfg(unix)]
         {

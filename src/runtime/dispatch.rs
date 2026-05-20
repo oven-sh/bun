@@ -96,27 +96,31 @@ use crate::shell::dispatch_tasks::{
     ShellAsyncSubprocessDone, ShellCondExprStatTask, ShellGlobTask, ShellRmDirTask,
 };
 use crate::shell::interpreter::ShellTask;
-use crate::shell::io_writer::{IOWriter as ShellIOWriter, Poll as ShellBufferedWriterPoll};
+use crate::shell::io_writer::IOWriter as ShellIOWriter;
+#[cfg(not(windows))]
+use crate::shell::io_writer::Poll as ShellBufferedWriterPoll;
 use crate::shell::states::r#async::Async as ShellAsync;
 
 use crate::webcore::blob::copy_file::CopyFilePromiseTask;
 use crate::webcore::blob::read_file::ReadFileTask;
 use crate::webcore::blob::write_file::WriteFileTask;
 use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
-use crate::webcore::file_sink::{
-    FlushPendingTask as FlushPendingFileSinkTask, Poll as FileSinkPoll,
-};
+use crate::webcore::file_sink::FlushPendingTask as FlushPendingFileSinkTask;
+#[cfg(not(windows))]
+use crate::webcore::file_sink::Poll as FileSinkPoll;
 use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
 use crate::webcore::s3::simple_request::S3HttpSimpleTask;
 use crate::webcore::streams::Pending as StreamPending;
 
 use crate::api::JSTranspiler::AsyncTransformTask;
 use crate::api::bun_subprocess::Subprocess;
+#[cfg(not(windows))]
 use crate::api::bun_terminal_body::Poll as TerminalPoll;
 use crate::api::cron::CronJob;
 use crate::api::glob::AsyncGlobWalkTask;
 use crate::api::native_promise_context::DeferredDerefTask as NativePromiseContextDeferredDerefTask;
 use crate::image::AsyncImageTask;
+#[cfg(not(windows))]
 use bun_spawn::static_pipe_writer::Poll as StaticPipeWriterPoll;
 
 use crate::napi::{NapiFinalizerTask, ThreadSafeFunction, napi_async_work};
@@ -139,9 +143,12 @@ use crate::node::zlib::{
     native_brotli::NativeBrotli, native_zlib::NativeZlib, native_zstd::NativeZstd,
 };
 
-use crate::dns_jsc::{Resolver as DNSResolver, get_addr_info_request};
+use crate::dns_jsc::Resolver as DNSResolver;
+#[cfg(not(windows))]
+use crate::dns_jsc::get_addr_info_request;
 use crate::server::ServerAllConnectionsClosedTask;
 
+#[cfg(not(windows))]
 use crate::api::bun_process::Process;
 #[cfg(unix)]
 use crate::api::bun_process::waiter_thread_posix::ResultTask as ProcessWaiterThreadTask;
@@ -160,6 +167,7 @@ use crate::test_runner::bun_test::{BunTest, BunTestPtr};
 use crate::timer::{DateHeaderTimer, EventLoopDelayMonitor};
 use bun_jsc::abort_signal::Timeout as AbortSignalTimeout;
 
+#[cfg(not(windows))]
 use bun_io::pipe_writer::PosixPipeWriter; // brings `on_poll` into scope for FileSinkPoll/StaticPipeWriterPoll/etc.
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -236,7 +244,7 @@ pub fn run_task(
         (work $ty:ty) => {{
             let t = cast_ptr!($ty);
             // SAFETY: tag identifies pointee; heap-allocated at schedule time.
-            let r = unsafe { bun_jsc::work_task::WorkTask::run_from_js(t) };
+            let r = bun_jsc::work_task::WorkTask::run_from_js(unsafe { &mut *t });
             // SAFETY: paired with `create_on_js_thread` heap::alloc.
             unsafe { bun_jsc::work_task::WorkTask::destroy(t) };
             r?;
@@ -354,9 +362,7 @@ pub fn run_task(
         }
         task_tag::RuntimeTranspilerStore => {
             let store = cast!(RuntimeTranspilerStore);
-            // SAFETY: `el`/`vm` are the live JS-thread event-loop and owning VM
-            // for this dispatch tick; `run_from_js_thread` reads leaf fields only.
-            unsafe { store.run_from_js_thread(el, global, vm) };
+            store.run_from_js_thread(el.into(), global, vm.into());
         }
 
         // ── hot-reload (Zig early-returns from the drain loop) ───────────
@@ -440,14 +446,12 @@ pub fn run_task(
         }
 
         // ── server / bundler / streams ───────────────────────────────────
-        // SAFETY: `cast_ptr!` yields the heap-allocated task; JS-thread dispatch
-        // is the sole owner here.
-        task_tag::ServerAllConnectionsClosedTask => unsafe {
+        task_tag::ServerAllConnectionsClosedTask => {
             ServerAllConnectionsClosedTask::run_from_js_thread(
                 cast_ptr!(ServerAllConnectionsClosedTask),
                 vm,
             )?;
-        },
+        }
         task_tag::BundleV2DeferredBatchTask => {
             // Zig: `Plugin.drainDeferred` is wrapped in `fromJSHostCallGeneric`
             // (== `call_check_slow`) and the only caller does `catch return`.
@@ -1162,7 +1166,7 @@ pub unsafe fn __bun_js_timer_epoch(
 /// `el` and `vm` must point at live `EventLoop`/`VirtualMachine` instances
 /// with no other `&mut` held across this call.
 #[unsafe(no_mangle)]
-pub unsafe fn __bun_tick_queue_with_count(
+pub fn __bun_tick_queue_with_count(
     el: *mut EventLoop,
     vm: *mut bun_jsc::virtual_machine::VirtualMachine,
     counter: &mut u32,
@@ -1197,7 +1201,7 @@ pub fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
         task_tag::FetchTasklet => {
             // SAFETY: `task.ptr` is the live heap `FetchTasklet`; HTTP daemon is
             // already parked so we hold the sole reference.
-            unsafe { FetchTasklet::deref(task.ptr.cast::<FetchTasklet>()) };
+            FetchTasklet::deref(task.ptr.cast::<FetchTasklet>());
             true
         }
         // `AsyncFSTask`s are `Box::leak`'d in `create()` and freed by

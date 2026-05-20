@@ -1793,10 +1793,10 @@ impl ArchivePtrExt for *mut Archive {
     }
     #[inline]
     fn error_string(self) -> &'static [u8] {
-        // SAFETY: every `ArchivePtrExt` call site holds a live `*mut Archive`
-        // from `archive_{read,write}_new()` (the trait exists precisely so those
+        // Every `ArchivePtrExt` call site holds a live `*mut Archive` from
+        // `archive_{read,write}_new()` (the trait exists precisely so those
         // sites avoid per-call `unsafe { &* }`).
-        unsafe { Archive::error_string(self) }
+        Archive::opaque_ref(self).error_string()
     }
     #[inline]
     fn read_support_format_tar(self) -> ArchiveResult {
@@ -2625,7 +2625,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
         new_boxed_buffered_file_reader(File::from_fd(Fd::invalid()));
 
     // SAFETY: `archive` is the live `archive_write_new()` handle opened above.
-    let mut entry = unsafe { ArchiveEntry::new2(archive) };
+    let mut entry = ArchiveEntry::new2(unsafe { &*archive });
 
     {
         let mut progress = Progress::Progress::default();

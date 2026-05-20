@@ -15,6 +15,7 @@ use super::cron_parser::{self, CronExpression};
 use core::ffi::c_char;
 use std::cell::Cell;
 
+#[cfg(not(windows))]
 use bun_core::env_var;
 use bun_io::BufferedReader as OutputReader;
 use bun_io::{KeepAlive, Loop as AsyncLoop};
@@ -33,9 +34,9 @@ use bun_resolver::fs::RealFS;
 // `api::bun::process` (re-exported under `api::bun::spawn::posix_spawn`, but
 // not at the `spawn` module root). Alias `process` as `spawn` so the
 // `spawn::spawn_process(...)` call site below resolves.
-use crate::api::bun::process::{
-    self as spawn, Process, Rusage, SpawnOptions, SpawnResultExt as _, Status,
-};
+#[cfg(not(windows))]
+use crate::api::bun::process::SpawnResultExt as _;
+use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use bun_core::ZStr;
 use bun_io::pipe_reader::BufferedReaderParent;
@@ -2066,6 +2067,7 @@ trait SpawnCmdTarget: CronJobBase + BufferedReaderParent {
     /// Consumes and frees `this`.
     unsafe fn finish(this: *mut Self);
     fn process_slot(&mut self) -> &mut Option<*mut Process>;
+    #[cfg(unix)]
     fn stdout_reader(&mut self) -> &mut OutputReader;
     #[cfg(windows)]
     fn stderr_reader(&mut self) -> &mut OutputReader;
@@ -2098,6 +2100,7 @@ impl SpawnCmdTarget for CronRegisterJob {
     fn process_slot(&mut self) -> &mut Option<*mut Process> {
         &mut self.process
     }
+    #[cfg(unix)]
     fn stdout_reader(&mut self) -> &mut OutputReader {
         &mut self.stdout_reader
     }
@@ -2121,6 +2124,7 @@ impl SpawnCmdTarget for CronRemoveJob {
     fn process_slot(&mut self) -> &mut Option<*mut Process> {
         &mut self.process
     }
+    #[cfg(unix)]
     fn stdout_reader(&mut self) -> &mut OutputReader {
         &mut self.stdout_reader
     }
@@ -2155,7 +2159,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     #[cfg(not(windows))]
     let resolved_argv0: Option<*const c_char> = None;
     #[cfg(windows)]
-    let mut resolved_argv0: Option<*const c_char> = None;
+    let resolved_argv0: Option<*const c_char>;
     // Hoisted to function scope: `resolved_argv0` borrows into this buffer on
     // Windows and must outlive the SpawnOptions construction below.
     #[cfg(windows)]

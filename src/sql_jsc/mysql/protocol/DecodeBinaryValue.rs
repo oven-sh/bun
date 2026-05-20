@@ -221,11 +221,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
                     Ok(SQLDataCell {
                         tag: CellTag::String,
                         value: CellValue {
-                            string: if !slice.is_empty() {
-                                clone_utf8_wtf_impl(slice)
-                            } else {
-                                core::ptr::null_mut()
-                            },
+                            string: clone_utf8_wtf_impl(slice),
                         },
                         free_value: 1,
                         ..Default::default()

@@ -790,7 +790,7 @@ impl WatcherAtomics {
     /// `old_event` must be a live `HotReloadEvent` previously submitted to the
     /// dev server thread (a slot in `self.events`) and now exclusively owned by
     /// the caller for reset.
-    pub unsafe fn recycle_event_from_dev_server(
+    pub fn recycle_event_from_dev_server(
         &mut self,
         old_event: *mut HotReloadEvent,
     ) -> Option<*mut HotReloadEvent> {
@@ -905,7 +905,7 @@ impl WatcherAtomics {
     /// `ev` must be the pointer returned by the matching
     /// `watcher_acquire_event` call (a slot in `self.events`), and the watcher
     /// thread must still hold exclusive access to it.
-    pub unsafe fn watcher_release_and_submit_event(&mut self, ev: *mut HotReloadEvent) {
+    pub fn watcher_release_and_submit_event(&mut self, ev: *mut HotReloadEvent) {
         // SAFETY: per this function's contract.
         let ev_ref = unsafe { &mut *ev };
 
@@ -969,8 +969,9 @@ impl WatcherAtomics {
                 // SAFETY: `owner` BACKREF is valid; `vm` is a `BackRef` (safe
                 // Deref); `event_loop` points at a sibling field of `VirtualMachine`.
                 unsafe {
-                    (*(&(*ev_ref.owner).vm).event_loop)
-                        .enqueue_task_concurrent(&raw mut ev_ref.concurrent_task);
+                    (*(&(*ev_ref.owner).vm).event_loop).enqueue_task_concurrent(
+                        core::ptr::NonNull::from(&mut ev_ref.concurrent_task),
+                    );
                 }
             }
 

@@ -345,7 +345,7 @@ impl ServerConfig {
 /// `entry` must be a live route pointer that outlives `app` — it is registered
 /// as the uWS userdata and dereferenced from request callbacks for the lifetime
 /// of the app.
-pub unsafe fn apply_static_route<const SSL: bool, T>(
+pub fn apply_static_route<const SSL: bool, T>(
     server: AnyServer,
     app: &mut uws::NewApp<SSL>,
     entry: *mut T,
@@ -420,7 +420,7 @@ pub unsafe fn apply_static_route<const SSL: bool, T>(
 /// `entry` must be a live route pointer that outlives `app` — it is registered
 /// as the uWS userdata and dereferenced from request callbacks for the lifetime
 /// of the app.
-pub unsafe fn apply_static_route_h3<T>(
+pub fn apply_static_route_h3<T>(
     server: AnyServer,
     app: &mut uws::h3::App,
     entry: *mut T,

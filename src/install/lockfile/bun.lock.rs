@@ -2049,11 +2049,12 @@ pub fn parse_into_binary_lockfile(
                     continue;
                 }
 
-                let mut pkg = Package::default();
-
-                pkg.resolution = Resolution::init(crate::resolution::TaggedValue::Workspace(
-                    sbuf!(lockfile).append(path)?,
-                ));
+                let mut pkg = Package {
+                    resolution: Resolution::init(crate::resolution::TaggedValue::Workspace(
+                        sbuf!(lockfile).append(path)?,
+                    )),
+                    ..Default::default()
+                };
 
                 let name_expr = value.get(b"name").unwrap();
                 let name = name_expr

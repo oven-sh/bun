@@ -454,7 +454,7 @@ pub trait HostentWithTtlsHandler: Sized {
     /// `hostent_with_ttls::parse_a` or `parse_aaaa` — selects the c-ares reply
     /// parser for [`hostent_with_ttls::callback_wrapper`]. Mirrors the Zig
     /// `callbackWrapper(comptime lookup_name, ...)` parameterization.
-    const PARSE: unsafe fn(*mut u8, c_int) -> Result<Box<hostent_with_ttls>, Error>;
+    const PARSE: fn(&[u8]) -> Result<Box<hostent_with_ttls>, Error>;
 
     fn on_hostent_with_ttls(
         &mut self,
@@ -498,28 +498,24 @@ impl hostent_with_ttls {
             this.on_hostent_with_ttls(Error::get(status), timeouts, None);
             return;
         }
-        // SAFETY: c-ares passes the reply buffer it owns; valid for `buffer_length`.
-        match unsafe { T::PARSE(buffer, buffer_length) } {
+        // SAFETY: c-ares passes the reply buffer it owns; valid for `buffer_length` bytes.
+        let buffer = unsafe { core::slice::from_raw_parts(buffer, buffer_length as usize) };
+        match (T::PARSE)(buffer) {
             Ok(result) => this.on_hostent_with_ttls(None, timeouts, Some(result)),
             Err(err) => this.on_hostent_with_ttls(Some(err), timeouts, None),
         }
     }
 
-    /// # Safety
-    /// `buffer` must be readable for `buffer_length` bytes (the raw c-ares
-    /// reply buffer passed to the callback).
-    pub unsafe fn parse_a(
-        buffer: *mut u8,
-        buffer_length: c_int,
-    ) -> Result<Box<hostent_with_ttls>, Error> {
+    pub fn parse_a(buffer: &[u8]) -> Result<Box<hostent_with_ttls>, Error> {
         let mut start: *mut struct_hostent = ptr::null_mut();
         let mut addrttls = [struct_ares_addrttl::default(); 256];
         let mut naddrttls: c_int = 256;
-        // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
+        // SAFETY: c-ares FFI; `buffer` is a valid slice; out-params are valid
+        // stack pointers per contract.
         let result = unsafe {
             ares_parse_a_reply(
-                buffer,
-                buffer_length,
+                buffer.as_ptr(),
+                c_int::try_from(buffer.len()).unwrap_or(c_int::MAX),
                 &raw mut start,
                 addrttls.as_mut_ptr(),
                 &raw mut naddrttls,
@@ -539,21 +535,16 @@ impl hostent_with_ttls {
         Ok(with_ttls)
     }
 
-    /// # Safety
-    /// `buffer` must be readable for `buffer_length` bytes (the raw c-ares
-    /// reply buffer passed to the callback).
-    pub unsafe fn parse_aaaa(
-        buffer: *mut u8,
-        buffer_length: c_int,
-    ) -> Result<Box<hostent_with_ttls>, Error> {
+    pub fn parse_aaaa(buffer: &[u8]) -> Result<Box<hostent_with_ttls>, Error> {
         let mut start: *mut struct_hostent = ptr::null_mut();
         let mut addr6ttls = [struct_ares_addr6ttl::default(); 256];
         let mut naddr6ttls: c_int = 256;
-        // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
+        // SAFETY: c-ares FFI; `buffer` is a valid slice; out-params are valid
+        // stack pointers per contract.
         let result = unsafe {
             ares_parse_aaaa_reply(
-                buffer,
-                buffer_length,
+                buffer.as_ptr(),
+                c_int::try_from(buffer.len()).unwrap_or(c_int::MAX),
                 &raw mut start,
                 addr6ttls.as_mut_ptr(),
                 &raw mut naddr6ttls,
@@ -1536,32 +1527,33 @@ impl struct_any_reply {
         buffer: *mut u8,
         buffer_length: c_int,
     ) {
-        unsafe {
-            // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
-            let this = bun_core::callback_ctx::<T>(ctx);
-            if status != ARES_SUCCESS {
-                this.on_any(Error::get(status), timeouts, None);
-                return;
-            }
-            match Self::parse(buffer, buffer_length) {
-                Ok(reply) => this.on_any(None, timeouts, Some(reply)),
-                Err(err) => this.on_any(Some(err), timeouts, None),
-            }
+        // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
+        let this = unsafe { bun_core::callback_ctx::<T>(ctx) };
+        if status != ARES_SUCCESS {
+            this.on_any(Error::get(status), timeouts, None);
+            return;
+        }
+        // SAFETY: c-ares guarantees `buffer` is non-null and readable for
+        // `buffer_length` bytes on a successful callback.
+        let buffer = unsafe {
+            core::slice::from_raw_parts(buffer, usize::try_from(buffer_length).unwrap_or(0))
+        };
+        match Self::parse(buffer) {
+            Ok(reply) => this.on_any(None, timeouts, Some(reply)),
+            Err(err) => this.on_any(Some(err), timeouts, None),
         }
     }
 
     /// Parse a DNS `ANY` reply buffer into a heap-allocated aggregate. Returns
     /// the last per-record parse error if no record type parsed successfully.
-    /// # Safety
-    /// `buffer` must be readable for `buffer_length` bytes (the raw c-ares
-    /// reply buffer passed to the callback).
-    pub unsafe fn parse(buffer: *mut u8, buffer_length: c_int) -> Result<Box<Self>, Error> {
+    pub fn parse(buffer: &[u8]) -> Result<Box<Self>, Error> {
         let mut any_success = false;
         let mut last_error: Option<c_int> = None;
         let mut reply = Box::new(struct_any_reply::default());
+        let abuf = buffer.as_ptr();
+        let alen = c_int::try_from(buffer.len()).unwrap_or(c_int::MAX);
 
-        // SAFETY: forwarded — `buffer[..buffer_length]` validity is the fn-level contract.
-        match unsafe { hostent_with_ttls::parse_a(buffer, buffer_length) } {
+        match hostent_with_ttls::parse_a(buffer) {
             Ok(result) => {
                 reply.a_reply = Some(result);
                 any_success = true;
@@ -1569,8 +1561,7 @@ impl struct_any_reply {
             Err(err) => last_error = Some(err as c_int),
         }
 
-        // SAFETY: forwarded — `buffer[..buffer_length]` validity is the fn-level contract.
-        match unsafe { hostent_with_ttls::parse_aaaa(buffer, buffer_length) } {
+        match hostent_with_ttls::parse_aaaa(buffer) {
             Ok(result) => {
                 reply.aaaa_reply = Some(result);
                 any_success = true;
@@ -1578,44 +1569,44 @@ impl struct_any_reply {
             Err(err) => last_error = Some(err as c_int),
         }
 
-        // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
-        let mut result =
-            unsafe { ares_parse_mx_reply(buffer, buffer_length, &raw mut reply.mx_reply) };
+        // SAFETY: c-ares FFI; `abuf[..alen]` is a valid slice; out-params are
+        // valid stack pointers per contract.
+        let mut result = unsafe { ares_parse_mx_reply(abuf, alen, &raw mut reply.mx_reply) };
         if result == ARES_SUCCESS {
             any_success = true;
         } else {
             last_error = Some(result);
         }
 
-        // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
-        result = unsafe { ares_parse_ns_reply(buffer, buffer_length, &raw mut reply.ns_reply) };
+        // SAFETY: see `ares_parse_mx_reply` call above.
+        result = unsafe { ares_parse_ns_reply(abuf, alen, &raw mut reply.ns_reply) };
         if result == ARES_SUCCESS {
             any_success = true;
         } else {
             last_error = Some(result);
         }
 
-        // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
-        result = unsafe { ares_parse_txt_reply(buffer, buffer_length, &raw mut reply.txt_reply) };
+        // SAFETY: see `ares_parse_mx_reply` call above.
+        result = unsafe { ares_parse_txt_reply(abuf, alen, &raw mut reply.txt_reply) };
         if result == ARES_SUCCESS {
             any_success = true;
         } else {
             last_error = Some(result);
         }
 
-        // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
-        result = unsafe { ares_parse_srv_reply(buffer, buffer_length, &raw mut reply.srv_reply) };
+        // SAFETY: see `ares_parse_mx_reply` call above.
+        result = unsafe { ares_parse_srv_reply(abuf, alen, &raw mut reply.srv_reply) };
         if result == ARES_SUCCESS {
             any_success = true;
         } else {
             last_error = Some(result);
         }
 
-        // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
+        // SAFETY: see `ares_parse_mx_reply` call above.
         result = unsafe {
             ares_parse_ptr_reply(
-                buffer,
-                buffer_length,
+                abuf,
+                alen,
                 ptr::null(),
                 0,
                 AF::INET,
@@ -1628,25 +1619,24 @@ impl struct_any_reply {
             last_error = Some(result);
         }
 
-        // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
-        result =
-            unsafe { ares_parse_naptr_reply(buffer, buffer_length, &raw mut reply.naptr_reply) };
+        // SAFETY: see `ares_parse_mx_reply` call above.
+        result = unsafe { ares_parse_naptr_reply(abuf, alen, &raw mut reply.naptr_reply) };
         if result == ARES_SUCCESS {
             any_success = true;
         } else {
             last_error = Some(result);
         }
 
-        // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
-        result = unsafe { ares_parse_soa_reply(buffer, buffer_length, &raw mut reply.soa_reply) };
+        // SAFETY: see `ares_parse_mx_reply` call above.
+        result = unsafe { ares_parse_soa_reply(abuf, alen, &raw mut reply.soa_reply) };
         if result == ARES_SUCCESS {
             any_success = true;
         } else {
             last_error = Some(result);
         }
 
-        // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
-        result = unsafe { ares_parse_caa_reply(buffer, buffer_length, &raw mut reply.caa_reply) };
+        // SAFETY: see `ares_parse_mx_reply` call above.
+        result = unsafe { ares_parse_caa_reply(abuf, alen, &raw mut reply.caa_reply) };
         if result == ARES_SUCCESS {
             any_success = true;
         } else {

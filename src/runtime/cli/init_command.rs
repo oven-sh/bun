@@ -1505,11 +1505,11 @@ impl Template {
         b".cursor/rules/use-bun-instead-of-node-vite-npm-pnpm.mdc",
         Self::AGENT_RULE,
     );
+    #[cfg(not(windows))]
     const CURSOR_RULE_PATH_TO_CLAUDE_MD: &'static [u8] = b"../../CLAUDE.md";
 
     fn is_claude_code_installed() -> bool {
-        #[cfg(windows)]
-        {
+        if cfg!(windows) {
             // Claude code is not available on Windows, at the time of writing.
             return false;
         }

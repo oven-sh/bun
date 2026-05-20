@@ -3,8 +3,10 @@ use std::collections::VecDeque;
 use bun_alloc::AllocError;
 use bun_bundler::Transpiler;
 use bun_bundler::options::BundleOptions;
+use bun_core::PathString;
+#[cfg(not(windows))]
+use bun_core::ZStr;
 use bun_core::err;
-use bun_core::{PathString, ZStr};
 use bun_core::{StringOrTinyString, strings};
 use bun_output::{declare_scope, scoped_log};
 use bun_paths::{self, PathBuffer};

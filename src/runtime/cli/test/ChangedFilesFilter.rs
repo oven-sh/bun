@@ -20,13 +20,19 @@ use bun_ast::Index;
 use bun_bundler::{BundleV2, Transpiler};
 use bun_collections::{DynamicBitSet, StringHashMap, StringSet};
 use bun_core::PathBuffer as CorePathBuffer;
-use bun_core::{self, Global, Output, ZBox, env_var, fmt as bun_fmt, getenv_z};
-use bun_core::{PathString, ZStr, strings};
+use bun_core::{self, Global, Output, env_var, fmt as bun_fmt};
+use bun_core::{PathString, strings};
+#[cfg(not(windows))]
+use bun_core::{ZBox, ZStr, getenv_z};
+#[cfg(not(windows))]
 use bun_jsc as jsc;
 #[cfg(windows)]
 use bun_jsc::EventLoopHandle;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_paths::{self, PathBuffer, SEP, platform, resolve_path};
+#[cfg(not(windows))]
+use bun_paths::SEP;
+use bun_paths::{self, PathBuffer, platform, resolve_path};
+#[cfg(not(windows))]
 use bun_resolver::fs::RealFS;
 use bun_sys as sys;
 use bun_which::which;
@@ -323,6 +329,7 @@ pub fn filter<'a>(
 /// inherited through every restart. The value is a short path, never
 /// the list itself, so there is no env size concern.
 pub const TRIGGER_FILE_ENV_VAR: &str = "BUN_INTERNAL_TEST_CHANGED_TRIGGER_FILE";
+#[cfg(not(windows))]
 const TRIGGER_FILE_ENV_VAR_Z: &ZStr =
     ZStr::from_static(b"BUN_INTERNAL_TEST_CHANGED_TRIGGER_FILE\0");
 

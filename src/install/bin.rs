@@ -16,7 +16,9 @@ use bun_paths::resolve_path;
 use bun_paths::strings;
 use bun_paths::{self as path, AbsPath, PathBuffer, SEP};
 use bun_semver::{ExternalString, String};
-use bun_sys::{self as sys, Fd, FdExt as _, Mode};
+#[cfg(not(windows))]
+use bun_sys::Mode;
+use bun_sys::{self as sys, Fd, FdExt as _};
 
 use crate::bun_json::{Expr, ExprData};
 use crate::dependency::{Dependency, DependencyExt as _};

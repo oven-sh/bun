@@ -24,6 +24,7 @@ use bun_core::{ZigString, strings};
 use bun_http_types::MimeType::MimeType;
 use bun_url::URL;
 
+#[cfg(unix)]
 use super::SizeType;
 
 // ──────────────────────────────────────────────────────────────────────────

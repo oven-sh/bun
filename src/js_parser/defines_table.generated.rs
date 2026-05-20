@@ -3,17 +3,18 @@
 
 
 #[inline]
+#[allow(clippy::all)]
 pub fn lookup_pure_global_identifier(key: &[u8]) -> Option<PureGlobalIdentifierValue> {
     match key.len() {
         3 => {
             let key: &[u8; 3] = key.try_into().unwrap();
             match key[0] {
-                b'C' => (key == b"CSS").then_some(PureGlobalIdentifierValue::Other),
-                b'M' => (key == b"Map").then_some(PureGlobalIdentifierValue::Other),
-                b'N' => (key == b"NaN").then_some(PureGlobalIdentifierValue::NaN),
-                b'S' => (key == b"Set").then_some(PureGlobalIdentifierValue::Other),
-                b'U' => (key == b"URL").then_some(PureGlobalIdentifierValue::Other),
-                b't' => (key == b"top").then_some(PureGlobalIdentifierValue::Other),
+                b'C' => (key == b"CSS").then(|| PureGlobalIdentifierValue::Other),
+                b'M' => (key == b"Map").then(|| PureGlobalIdentifierValue::Other),
+                b'N' => (key == b"NaN").then(|| PureGlobalIdentifierValue::NaN),
+                b'S' => (key == b"Set").then(|| PureGlobalIdentifierValue::Other),
+                b'U' => (key == b"URL").then(|| PureGlobalIdentifierValue::Other),
+                b't' => (key == b"top").then(|| PureGlobalIdentifierValue::Other),
                 _ => None,
             }
         }
@@ -754,11 +755,11 @@ pub fn lookup_pure_global_identifier(key: &[u8]) -> Option<PureGlobalIdentifierV
         23 => {
             let key: &[u8; 23] = key.try_into().unwrap();
             match key[9] {
-                b'C' => (key == b"HTMLTableCaptionElement").then_some(PureGlobalIdentifierValue::Other),
-                b'S' => (key == b"HTMLTableSectionElement").then_some(PureGlobalIdentifierValue::Other),
-                b'e' => (key == b"SVGAnimateMotionElement").then_some(PureGlobalIdentifierValue::Other),
-                b'r' => (key == b"SVGFEColorMatrixElement").then_some(PureGlobalIdentifierValue::Other),
-                b'n' => (key == b"SVGForeignObjectElement").then_some(PureGlobalIdentifierValue::Other),
+                b'C' => (key == b"HTMLTableCaptionElement").then(|| PureGlobalIdentifierValue::Other),
+                b'S' => (key == b"HTMLTableSectionElement").then(|| PureGlobalIdentifierValue::Other),
+                b'e' => (key == b"SVGAnimateMotionElement").then(|| PureGlobalIdentifierValue::Other),
+                b'r' => (key == b"SVGFEColorMatrixElement").then(|| PureGlobalIdentifierValue::Other),
+                b'n' => (key == b"SVGForeignObjectElement").then(|| PureGlobalIdentifierValue::Other),
                 _ => None,
             }
         }
@@ -781,50 +782,50 @@ pub fn lookup_pure_global_identifier(key: &[u8]) -> Option<PureGlobalIdentifierV
         25 => {
             let key: &[u8; 25] = key.try_into().unwrap();
             match key[0] {
-                b'B' => (key == b"ByteLengthQueuingStrategy").then_some(PureGlobalIdentifierValue::Other),
-                b'I' => (key == b"IntersectionObserverEntry").then_some(PureGlobalIdentifierValue::Other),
-                b'P' => (key == b"PerformanceResourceTiming").then_some(PureGlobalIdentifierValue::Other),
-                b'R' => (key == b"RTCPeerConnectionIceEvent").then_some(PureGlobalIdentifierValue::Other),
-                b'S' => (key == b"SVGTextPositioningElement").then_some(PureGlobalIdentifierValue::Other),
-                b'X' => (key == b"XMLHttpRequestEventTarget").then_some(PureGlobalIdentifierValue::Other),
+                b'B' => (key == b"ByteLengthQueuingStrategy").then(|| PureGlobalIdentifierValue::Other),
+                b'I' => (key == b"IntersectionObserverEntry").then(|| PureGlobalIdentifierValue::Other),
+                b'P' => (key == b"PerformanceResourceTiming").then(|| PureGlobalIdentifierValue::Other),
+                b'R' => (key == b"RTCPeerConnectionIceEvent").then(|| PureGlobalIdentifierValue::Other),
+                b'S' => (key == b"SVGTextPositioningElement").then(|| PureGlobalIdentifierValue::Other),
+                b'X' => (key == b"XMLHttpRequestEventTarget").then(|| PureGlobalIdentifierValue::Other),
                 _ => None,
             }
         }
         26 => {
             let key: &[u8; 26] = key.try_into().unwrap();
             match key[3] {
-                b'L' => (key == b"HTMLFormControlsCollection").then_some(PureGlobalIdentifierValue::Other),
-                b'i' => (key == b"MediaStreamAudioSourceNode").then_some(PureGlobalIdentifierValue::Other),
-                b'A' => (key == b"SVGAnimateTransformElement").then_some(PureGlobalIdentifierValue::Other),
-                b'F' => (key == b"SVGFEConvolveMatrixElement").then_some(PureGlobalIdentifierValue::Other),
-                b'G' => (key == b"WebGLShaderPrecisionFormat").then_some(PureGlobalIdentifierValue::Other),
-                b'e' => (key == b"onwebkitanimationiteration").then_some(PureGlobalIdentifierValue::Other),
+                b'L' => (key == b"HTMLFormControlsCollection").then(|| PureGlobalIdentifierValue::Other),
+                b'i' => (key == b"MediaStreamAudioSourceNode").then(|| PureGlobalIdentifierValue::Other),
+                b'A' => (key == b"SVGAnimateTransformElement").then(|| PureGlobalIdentifierValue::Other),
+                b'F' => (key == b"SVGFEConvolveMatrixElement").then(|| PureGlobalIdentifierValue::Other),
+                b'G' => (key == b"WebGLShaderPrecisionFormat").then(|| PureGlobalIdentifierValue::Other),
+                b'e' => (key == b"onwebkitanimationiteration").then(|| PureGlobalIdentifierValue::Other),
                 _ => None,
             }
         }
         27 => {
             let key: &[u8; 27] = key.try_into().unwrap();
             match key[7] {
-                b'e' => (key == b"MediaElementAudioSourceNode").then_some(PureGlobalIdentifierValue::Other),
-                b'A' => (key == b"OfflineAudioCompletionEvent").then_some(PureGlobalIdentifierValue::Other),
-                b'f' => (key == b"SVGFEDiffuseLightingElement").then_some(PureGlobalIdentifierValue::Other),
-                b's' => (key == b"SVGFEDisplacementMapElement").then_some(PureGlobalIdentifierValue::Other),
+                b'e' => (key == b"MediaElementAudioSourceNode").then(|| PureGlobalIdentifierValue::Other),
+                b'A' => (key == b"OfflineAudioCompletionEvent").then(|| PureGlobalIdentifierValue::Other),
+                b'f' => (key == b"SVGFEDiffuseLightingElement").then(|| PureGlobalIdentifierValue::Other),
+                b's' => (key == b"SVGFEDisplacementMapElement").then(|| PureGlobalIdentifierValue::Other),
                 _ => None,
             }
         }
         28 => {
             let key: &[u8; 28] = key.try_into().unwrap();
             match key[2] {
-                b'r' => (key == b"PerformanceObserverEntryList").then_some(PureGlobalIdentifierValue::Other),
-                b'G' => (key == b"SVGFESpecularLightingElement").then_some(PureGlobalIdentifierValue::Other),
-                b'c' => (key == b"SecurityPolicyViolationEvent").then_some(PureGlobalIdentifierValue::Other),
+                b'r' => (key == b"PerformanceObserverEntryList").then(|| PureGlobalIdentifierValue::Other),
+                b'G' => (key == b"SVGFESpecularLightingElement").then(|| PureGlobalIdentifierValue::Other),
+                b'c' => (key == b"SecurityPolicyViolationEvent").then(|| PureGlobalIdentifierValue::Other),
                 _ => None,
             }
         }
-        29 => (key == b"SVGFEComponentTransferElement").then_some(PureGlobalIdentifierValue::Other),
-        30 => (key == b"SVGAnimatedPreserveAspectRatio").then_some(PureGlobalIdentifierValue::Other),
-        31 => (key == b"MediaStreamAudioDestinationNode").then_some(PureGlobalIdentifierValue::Other),
-        35 => (key == b"SVGComponentTransferFunctionElement").then_some(PureGlobalIdentifierValue::Other),
+        29 => (key == b"SVGFEComponentTransferElement").then(|| PureGlobalIdentifierValue::Other),
+        30 => (key == b"SVGAnimatedPreserveAspectRatio").then(|| PureGlobalIdentifierValue::Other),
+        31 => (key == b"MediaStreamAudioDestinationNode").then(|| PureGlobalIdentifierValue::Other),
+        35 => (key == b"SVGComponentTransferFunctionElement").then(|| PureGlobalIdentifierValue::Other),
         _ => None,
     }
 }

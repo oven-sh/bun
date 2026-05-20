@@ -1,5 +1,5 @@
 use core::hint;
-use core::ptr;
+use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicPtr, Ordering};
 
 #[cfg(any(
@@ -243,19 +243,18 @@ impl<T: Node> UnboundedQueue<T> {
         }
     }
 
-    /// # Safety
-    /// `item` must be a valid, properly aligned pointer to a live `T` whose
-    /// intrusive link is not concurrently accessed outside this queue.
-    pub unsafe fn push(&self, item: *mut T) {
-        // SAFETY: forwarded from this fn's contract — `item` is a valid live node.
-        unsafe { self.push_batch(item, item) };
+    /// `item` must point to a live `T` whose intrusive link is not concurrently
+    /// accessed outside this queue. The caller transfers logical ownership of
+    /// the node to the queue until a `pop`/`pop_batch` returns it.
+    pub fn push(&self, item: NonNull<T>) {
+        self.push_batch(item, item);
     }
 
-    /// # Safety
-    /// `first` and `last` must be valid, properly aligned pointers to live `T`
-    /// nodes, with `last` reachable from `first` via the intrusive link chain.
-    pub unsafe fn push_batch(&self, first: *mut T, last: *mut T) {
-        // SAFETY: caller guarantees `last` is a valid live node (Zig `*T` is non-null).
+    /// `first..=last` must form a valid intrusive chain of live `T` nodes. The
+    /// caller transfers logical ownership of every node in the chain.
+    pub fn push_batch(&self, first: NonNull<T>, last: NonNull<T>) {
+        let (first, last) = (first.as_ptr(), last.as_ptr());
+        // SAFETY: caller guarantees `last` is a live node (NonNull is non-null).
         unsafe { T::set_next(last, ptr::null_mut()) };
         if cfg!(debug_assertions) {
             let mut item = first;

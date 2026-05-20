@@ -559,7 +559,7 @@ impl BunTestRoot {
     /// # Safety
     /// `vm` must point to the live per-thread `VirtualMachine` (from
     /// `JSGlobalObject::bun_vm()`); it is dereferenced to read `is_in_preload`.
-    pub unsafe fn get_active_file_unless_in_preload(&mut self, vm: *mut VirtualMachine) -> Option<&mut BunTest> {
+    pub fn get_active_file_unless_in_preload(&mut self, vm: *mut VirtualMachine) -> Option<&mut BunTest> {
         if unsafe { (*vm).is_in_preload } {
             return None;
         }
@@ -667,7 +667,7 @@ impl BunTest {
     /// # Safety
     /// `bun_test_root` must be a non-null pointer to the stable global
     /// `BunTestRoot` storage that outlives the returned `BunTest`.
-    pub unsafe fn init(
+    pub fn init(
         bun_test_root: *mut BunTestRoot,
         file_id: FileId,
         reporter: Option<NonNull<CommandLineReporter>>,
@@ -923,7 +923,7 @@ impl BunTest {
         fn call_erased(this: *mut RunTestsTask) -> bun_event_loop::JsResult<()> {
             // SAFETY: `this` was `heap::into_raw`'d above and is invoked exactly
             // once by `ManagedTask`.
-            unsafe { RunTestsTask::call(this) }.map_err(Into::into)
+            RunTestsTask::call(this).map_err(Into::into)
         }
         // `new_owned`: if the task never runs (VM teardown), the queue drainer frees `done_callback_test`.
         let task = jsc::ManagedTask::ManagedTask::new_owned::<RunTestsTask>(done_callback_test, call_erased);
@@ -1551,7 +1551,7 @@ impl RunTestsTask {
     /// # Safety
     /// `this` must be a pointer produced by `heap::into_raw` in
     /// `run_next_tick`; ownership is consumed (the box is dropped on return).
-    pub unsafe fn call(this: *mut RunTestsTask) -> JsResult<()> {
+    pub fn call(this: *mut RunTestsTask) -> JsResult<()> {
         let this = unsafe { bun_core::heap::take(this) };
         // defer bun.destroy(this) → Box drops at end of scope
         // defer this.weak.deinit() → Weak drops with Box

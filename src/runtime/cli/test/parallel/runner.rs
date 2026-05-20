@@ -658,7 +658,7 @@ impl<'a> WorkerLoop<'a> {
 /// `vm` must be a valid, exclusively-accessed pointer to a live `VirtualMachine`
 /// for the entire duration of the call (i.e. for the rest of the process, since
 /// this never returns).
-pub unsafe fn run_as_worker(
+pub fn run_as_worker(
     reporter: &mut CommandLineReporter,
     vm: *mut VirtualMachine,
     ctx: Command::Context,

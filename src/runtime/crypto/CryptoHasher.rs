@@ -1180,7 +1180,7 @@ macro_rules! impl_static_hasher {
                 // `bun_sha_hmac::sha::ffi::ENGINE` re-exports `bun_boringssl_sys::ENGINE`,
                 // so the VM-owned engine pointer threads through without a cast.
                 // SAFETY: caller upholds `engine` validity (forwarded).
-                unsafe { <$ty>::hash(input, out, engine) }
+                <$ty>::hash(input, out, engine)
             }
             #[inline]
             fn get_constructor(global: &JSGlobalObject) -> JSValue {

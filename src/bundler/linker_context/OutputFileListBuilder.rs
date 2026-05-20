@@ -56,7 +56,7 @@ impl OutputFileList {
             OutputFileList::calculate_output_file_list_capacity(c, chunks);
         let mut output_files: Vec<options::OutputFile> = Vec::with_capacity(length as usize);
         // PERF(port): was appendNTimesAssumeCapacity.
-        output_files.resize_with(length as usize, || OutputFile::zero_value());
+        output_files.resize_with(length as usize, OutputFile::zero_value);
 
         Ok(Self {
             output_files,

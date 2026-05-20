@@ -20,17 +20,18 @@ use bun_jsc::{
 use bun_paths as path;
 use bun_paths::PathBuffer;
 use bun_resolver::fs as Fs;
-use bun_sys::{self, Fd};
+use bun_sys;
 
 // ─── Local shims for upstream surfaces not yet wired (Phase D) ───────────────
 
 /// `bun.sys.directoryExistsAt(FD.cwd(), path).isTrue()` — local helper while
 /// `bun_core::Fd` lacks an inherent forwarder.
+#[cfg(unix)]
 #[inline]
 fn dir_exists(path: &'static [u8]) -> bool {
     // SAFETY: `path` is a NUL-free static literal; copy into a stack ZBox.
     let z = ZBox::from_bytes(path);
-    bun_sys::directory_exists_at(Fd::cwd(), &z).unwrap_or(false)
+    bun_sys::directory_exists_at(bun_sys::Fd::cwd(), &z).unwrap_or(false)
 }
 
 /// `JSValue.createObject2` — local extern thunk; upstream `bun_jsc` hasn't
@@ -803,14 +804,13 @@ impl CompileC {
 
         for symbol in self.symbols.map.values() {
             if symbol.needs_napi_env() {
-                // SAFETY: napi env is process-lifetime; valid for JIT'd code.
-                unsafe {
-                    state.add_symbol(
+                // napi env is process-lifetime; valid for JIT'd code.
+                state
+                    .add_symbol(
                         zstr!("Bun__thisFFIModuleNapiEnv"),
                         global_this.make_napi_env_for_ffi().cast_const(),
                     )
-                }
-                .map_err(|_| bun_core::err!("DeferredErrors"))?;
+                    .map_err(|_| bun_core::err!("DeferredErrors"))?;
                 break;
             }
         }
@@ -2051,14 +2051,13 @@ impl Function {
         let state = unsafe { self.state.unwrap().as_mut() };
 
         if let Some(env) = napi_env {
-            // SAFETY: `env` is the live VM-owned napi env; process-lifetime.
-            if unsafe {
-                state.add_symbol(
+            // `env` is the live VM-owned napi env; process-lifetime.
+            if state
+                .add_symbol(
                     zstr!("Bun__thisFFIModuleNapiEnv"),
                     std::ptr::from_ref(env).cast::<c_void>(),
                 )
-            }
-            .is_err()
+                .is_err()
             {
                 self.fail(b"Failed to add NAPI env symbol");
                 return Ok(());
@@ -2077,15 +2076,14 @@ impl Function {
         }
 
         CompilerRT::inject(state);
-        // SAFETY: `symbol_from_dynamic_library` is a dlsym'd address; valid
-        // for the loaded library's lifetime, which outlives the TCC state.
-        if unsafe {
-            state.add_symbol(
+        // `symbol_from_dynamic_library` is a dlsym'd address; valid for the
+        // loaded library's lifetime, which outlives the TCC state.
+        if state
+            .add_symbol(
                 self.base_name.as_ref().unwrap(),
                 self.symbol_from_dynamic_library.unwrap(),
             )
-        }
-        .is_err()
+            .is_err()
         {
             debug_assert!(matches!(self.step, Step::Failed { .. }));
             return Ok(());
@@ -2224,9 +2222,12 @@ impl Function {
                 _ => FFI_Callback_call as *const c_void,
             }
         };
-        // SAFETY: `callback_sym` is one of the process-lifetime
-        // `FFI_Callback_call*` extern fns.
-        if unsafe { state.add_symbol(zstr!("FFI_Callback_call"), callback_sym) }.is_err() {
+        // `callback_sym` is one of the process-lifetime `FFI_Callback_call*`
+        // extern fns.
+        if state
+            .add_symbol(zstr!("FFI_Callback_call"), callback_sym)
+            .is_err()
+        {
             self.fail(b"Failed to add FFI callback symbol");
             return Ok(());
         }

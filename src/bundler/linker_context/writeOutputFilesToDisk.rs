@@ -507,8 +507,9 @@ pub fn write_output_files_to_disk(
             entry_point_index: if output_kind == options::OutputKind::EntryPoint {
                 // TODO(port): `bake_types::Framework` is missing
                 // `server_components`; once it lands, restore the
-                // `if fw.server_components.is_some() { 3 } else { 1 }` branch.
-                let offset: u32 = if c.framework.is_some() { 1 } else { 1 };
+                // `if c.framework.is_some_and(|fw| fw.server_components.is_some()) { 3 } else { 1 }`
+                // branch.
+                let offset: u32 = 1;
                 Some(chunk.entry_point.source_index() - offset)
             } else {
                 None

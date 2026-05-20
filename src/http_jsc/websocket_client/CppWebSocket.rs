@@ -98,6 +98,8 @@ impl CppWebSocket {
         event_loop.exit();
     }
 
+    // Forwards `bytes` to C++ without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn did_receive_bytes(&self, bytes: *const u8, byte_len: usize, opcode: u8) {
         // SAFETY: VirtualMachine::get() returns the live current-thread VM;
         // event_loop() yields its raw event-loop pointer (live for VM lifetime).
@@ -118,6 +120,8 @@ impl CppWebSocket {
         result
     }
 
+    // Forwards `buffered_data` to C++ without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn did_connect(
         &self,
         socket: &mut Socket,
@@ -144,6 +148,8 @@ impl CppWebSocket {
         event_loop.exit();
     }
 
+    // Forwards `tunnel` and `buffered_data` to C++ without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn did_connect_with_tunnel(
         &self,
         tunnel: *mut c_void,

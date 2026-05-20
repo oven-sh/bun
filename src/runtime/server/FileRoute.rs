@@ -287,7 +287,7 @@ impl FileRoute {
     /// # Safety
     /// `this` must point to a live heap `FileRoute` (intrusive ref held by the
     /// route table) for the duration of the call.
-    pub unsafe fn on_head_request(this: *mut FileRoute, req: AnyRequest, resp: AnyResponse) {
+    pub fn on_head_request(this: *mut FileRoute, req: AnyRequest, resp: AnyResponse) {
         debug_assert!(unsafe { (*this).server.get() }.is_some());
 
         // SAFETY: forwarded with the same precondition.

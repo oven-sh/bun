@@ -429,7 +429,7 @@ impl Rm {
     ///
     /// # Safety
     /// `task` must be a live `heap::alloc`'d [`ShellRmTask`]; main thread.
-    pub unsafe fn on_shell_rm_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellRmTask) {
+    pub fn on_shell_rm_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellRmTask) {
         // In verbose mode the root DirTask may also be queued for write_verbose;
         // both callbacks hold a pending count and the last one to run frees the
         // ShellRmTask.
@@ -821,7 +821,7 @@ impl ShellRmTask {
     /// # Safety
     /// `this` must be a live `heap::alloc`'d [`ShellRmTask`] posted via
     /// [`finish_concurrently`]; main thread.
-    pub unsafe fn run_from_main_thread(this: *mut ShellRmTask, interp: &Interpreter) {
+    pub fn run_from_main_thread(this: *mut ShellRmTask, interp: &Interpreter) {
         // SAFETY: caller contract.
         unsafe {
             let cmd = (*this).cmd;
@@ -1596,7 +1596,7 @@ impl DirTask {
     /// # Safety
     /// `this` must be a live [`DirTask`] posted via [`queue_for_write`]; the
     /// pending count keeps `task_manager` alive; main thread.
-    pub unsafe fn run_from_main_thread(this: *mut DirTask) {
+    pub fn run_from_main_thread(this: *mut DirTask) {
         // SAFETY: caller contract — `interp` set at create.
         let (interp, cmd) = unsafe {
             let tm = (*this).task_manager;
@@ -1622,7 +1622,7 @@ impl DirTask {
 
 fn dir_task_run_from_main_thread_mini(this: *mut DirTask, _: *mut ()) {
     // SAFETY: mini-loop trampoline for a DirTask posted via `queue_for_write`.
-    unsafe { DirTask::run_from_main_thread(this) };
+    DirTask::run_from_main_thread(this);
 }
 
 // ── RemoveFileHandler — Zig `vtable: anytype` lowered to a trait ───────────
@@ -1791,7 +1791,7 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellRmTask {
     }
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         // SAFETY: `ShellTask::run_from_main_thread` dispatch contract.
-        unsafe { Self::run_from_main_thread(this, interp) }
+        Self::run_from_main_thread(this, interp)
     }
 }
 

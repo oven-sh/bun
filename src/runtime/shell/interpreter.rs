@@ -632,7 +632,7 @@ impl Interpreter {
         let interp_ptr: *mut Interpreter = Interpreter::as_ctx_ptr(&interpreter);
         if let crate::shell::io::InKind::Fd(ref r) = interpreter.root_io.get().stdin {
             // SAFETY: `interp_ptr` is the live `Interpreter` just constructed.
-            unsafe { r.set_interp(interp_ptr) };
+            r.set_interp(interp_ptr);
         }
 
         // ── optional cwd override (Zig `init` tail) ────────────────────────
@@ -1040,7 +1040,7 @@ impl Interpreter {
                 // directly, so it does NOT go through this path.)
                 // SAFETY: `shell` is the live parent `ShellExecEnv` borrowed for the
                 // dupe; `self` is the live interpreter.
-                match unsafe { Subshell::init_dupe_shell_state(self, shell, *s, parent, io) } {
+                match Subshell::init_dupe_shell_state(self, shell, *s, parent, io) {
                     Ok(id) => id,
                     Err(e) => {
                         self.throw(ShellErr::new_sys(&e));
@@ -1246,7 +1246,7 @@ impl Interpreter {
             event_loop,
         );
         // SAFETY: `interp_ptr` is the live `Interpreter` being initialized.
-        unsafe { stdout_writer.set_interp(interp_ptr) };
+        stdout_writer.set_interp(interp_ptr);
         let stderr_writer = IOWriter::init(
             stderr_fd,
             crate::shell::io_writer::Flags {
@@ -1256,7 +1256,7 @@ impl Interpreter {
             event_loop,
         );
         // SAFETY: `interp_ptr` is the live `Interpreter` being initialized.
-        unsafe { stderr_writer.set_interp(interp_ptr) };
+        stderr_writer.set_interp(interp_ptr);
 
         // Spec: `if (event_loop == .js)` — hook captured buffers so the JS
         // `Bun.$` API can read stdout/stderr after completion. The mini path
@@ -1500,9 +1500,9 @@ impl Interpreter {
                         })
                         .collect();
                     for env in owned_envs {
-                        // SAFETY: each `env` was returned by `dupe_for_subshell`
+                        // each `env` was returned by `dupe_for_subshell`
                         // and is owned by exactly one node (filtered above).
-                        unsafe { ShellExecEnv::deinit_impl(env) };
+                        ShellExecEnv::deinit_impl(env);
                     }
                 }
                 this.root_io.set(IO::default());
@@ -1703,7 +1703,7 @@ impl Interpreter {
     /// # Safety
     /// `command_ctx` must be null or point to a live `ContextData` that
     /// outlives this call.
-    pub unsafe fn append_var_argv(
+    pub fn append_var_argv(
         out: &mut Vec<u8>,
         original_int: u8,
         event_loop: EventLoopHandle,
@@ -2025,7 +2025,7 @@ impl ShellExecEnv {
     /// # Safety
     /// `this` must have been returned by `dupe_for_subshell` (or otherwise
     /// `heap::alloc`'d) and not yet freed.
-    pub unsafe fn deinit_impl(this: *mut ShellExecEnv) {
+    pub fn deinit_impl(this: *mut ShellExecEnv) {
         log!("[ShellExecEnv] deinit 0x{:x}", this as usize);
         // SAFETY: precondition above. Reclaim the Box; `Drop` for the env
         // maps / vecs / owned `Bufio` runs on drop. Only `cwd_fd` needs an
@@ -2295,7 +2295,7 @@ impl CowFd {
     ///
     /// # Safety
     /// `this` must point to a live `CowFd` (refcount ≥ 1).
-    pub unsafe fn use_(this: *mut CowFd) -> bun_sys::Result<*mut CowFd> {
+    pub fn use_(this: *mut CowFd) -> bun_sys::Result<*mut CowFd> {
         unsafe {
             if !(*this).being_used {
                 (*this).being_used = true;
@@ -2319,7 +2319,7 @@ impl CowFd {
     ///
     /// # Safety
     /// `this` must point to a live `CowFd`.
-    pub unsafe fn dupe_ref(this: *mut CowFd) -> *mut CowFd {
+    pub fn dupe_ref(this: *mut CowFd) -> *mut CowFd {
         unsafe { (*this).ref_() };
         this
     }
@@ -2327,7 +2327,7 @@ impl CowFd {
     /// # Safety
     /// `this` must point to a live `CowFd` (refcount ≥ 1). If this drops the
     /// refcount to 0, `this` is freed and must not be used again.
-    pub unsafe fn deref(this: *mut CowFd) {
+    pub fn deref(this: *mut CowFd) {
         unsafe {
             (*this).refcount -= 1;
             if (*this).refcount == 0 {

@@ -329,19 +329,14 @@ pub trait HotReloaderEventLoop {
     /// Forward to the inherent `enqueue_task_concurrent`. Takes `&Self` so
     /// the raw-pointer dereference of the `Ctx`-owned `*mut EventLoopType` is
     /// narrowed to the two call sites, not spread across the trait + impls.
-    ///
-    /// # Safety
-    /// `task` must be a valid live `ConcurrentTaskItem` that the queue may
-    /// take ownership of via its intrusive `next` link.
-    unsafe fn enqueue_task_concurrent(this: &Self, task: *mut ConcurrentTask);
+    fn enqueue_task_concurrent(this: &Self, task: core::ptr::NonNull<ConcurrentTask>);
 }
 
 impl HotReloaderEventLoop for EventLoop {
-    unsafe fn enqueue_task_concurrent(this: &Self, task: *mut ConcurrentTask) {
+    fn enqueue_task_concurrent(this: &Self, task: core::ptr::NonNull<ConcurrentTask>) {
         // Inherent `EventLoop::enqueue_task_concurrent(&self, ..)` — inherent
         // methods take precedence over trait methods, so this is not recursive.
-        // SAFETY: forwarded — see trait-level Safety contract.
-        unsafe { this.enqueue_task_concurrent(task) }
+        this.enqueue_task_concurrent(task);
     }
 }
 
@@ -352,7 +347,7 @@ impl HotReloaderEventLoop for EventLoop {
 /// `BundleV2` doesn't even define `eventLoop()` — Zig's lazy compilation never
 /// instantiates it. Match that here.
 impl HotReloaderEventLoop for bun_event_loop::AnyEventLoop<'static> {
-    unsafe fn enqueue_task_concurrent(_this: &Self, _task: *mut ConcurrentTask) {
+    fn enqueue_task_concurrent(_this: &Self, _task: core::ptr::NonNull<ConcurrentTask>) {
         unreachable!()
     }
 }
@@ -735,7 +730,10 @@ where
             // SAFETY: ctx outlives reloader (BACKREF); `event_loop()` returns
             // the live event-loop pointer owned by `Ctx`.
             let event_loop = &*(*ctx).event_loop();
-            EventLoopType::enqueue_task_concurrent(event_loop, std::ptr::from_mut(concurrent));
+            EventLoopType::enqueue_task_concurrent(
+                event_loop,
+                core::ptr::NonNull::from(concurrent),
+            );
         }
         self.count = 0;
     }
@@ -802,10 +800,7 @@ where
         self.ctx.event_loop()
     }
 
-    /// # Safety
-    /// `task` must be a valid live `ConcurrentTaskItem` that the queue may
-    /// take ownership of via its intrusive `next` link.
-    pub unsafe fn enqueue_task_concurrent(&self, task: *mut ConcurrentTask) {
+    pub fn enqueue_task_concurrent(&self, task: core::ptr::NonNull<ConcurrentTask>) {
         if RELOAD_IMMEDIATELY {
             unreachable!();
         }
@@ -813,8 +808,7 @@ where
         // `ctx` is a `BackRef<Ctx>` (Deref) and `event_loop_ref` is the safe
         // accessor on the trait; the event loop is owned by `Ctx` and outlives
         // the reloader.
-        // SAFETY: forwarded — see fn-level Safety contract.
-        unsafe { EventLoopType::enqueue_task_concurrent(self.ctx.event_loop_ref(), task) };
+        EventLoopType::enqueue_task_concurrent(self.ctx.event_loop_ref(), task);
     }
 
     /// # Safety

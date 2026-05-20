@@ -5207,7 +5207,7 @@ pub fn __bun_get_vm_ctx(kind: bun_io::AllocatorType) -> bun_io::EventLoopCtx {
             // for the process and `as_event_loop_ctx` only stores it as a tagged
             // backref.
             let mini = bun_event_loop::MiniEventLoop::GLOBAL.with(|g| g.get());
-            unsafe { bun_event_loop::MiniEventLoop::MiniEventLoop::as_event_loop_ctx(mini) }
+            bun_event_loop::MiniEventLoop::MiniEventLoop::as_event_loop_ctx(unsafe { &mut *mini })
         }
     }
 }

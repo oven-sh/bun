@@ -25,7 +25,7 @@ impl bun_collections::array_hash_map::ArrayHashAdapter<[u8], Box<[u8]>> for Slic
     fn hash(&self, key: &[u8]) -> u32 {
         // Match `LocalScope`'s default `AutoContext` hashing for `Box<[u8]>`.
         use bun_collections::array_hash_map::{ArrayHashContext, AutoContext};
-        AutoContext::default().hash(key)
+        AutoContext.hash(key)
     }
     fn eql(&self, a: &[u8], b: &Box<[u8]>, _i: usize) -> bool {
         a == &**b
@@ -218,7 +218,7 @@ pub fn generate_code_for_lazy_export(
                                                 format_args!(
                                                     "Cannot use the \"composes\" property with the {} file (it is not a CSS file)",
                                                     bun_fmt::quote(
-                                                        &self.all_sources
+                                                        self.all_sources
                                                             [import_record.source_index.get() as usize]
                                                             .path
                                                             .pretty
@@ -282,7 +282,7 @@ pub fn generate_code_for_lazy_export(
                                                 format_args!(
                                                     "The name {} never appears in {} as a CSS modules locally scoped class name. Note that \"composes\" only works with single class selectors.",
                                                     bun_fmt::quote(name_v),
-                                                    bun_fmt::quote(&self.all_sources[idx as usize].path.pretty),
+                                                    bun_fmt::quote(self.all_sources[idx as usize].path.pretty),
                                                 ),
                                             );
                                             continue;

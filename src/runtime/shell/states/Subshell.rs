@@ -53,7 +53,7 @@ impl Subshell {
     /// # Safety
     /// `parent_shell` must point to a live `ShellExecEnv` owned by the parent
     /// state for the duration of this call.
-    pub unsafe fn init_dupe_shell_state(
+    pub fn init_dupe_shell_state(
         interp: &Interpreter,
         parent_shell: *mut ShellExecEnv,
         node: &ast::Subshell,
@@ -142,7 +142,7 @@ impl Subshell {
         if !me.base.shell.is_null() {
             // SAFETY: `me.base.shell` is the duped env this Subshell owned;
             // null-checked and exclusively held here.
-            unsafe { ShellExecEnv::deinit_impl(me.base.shell) };
+            ShellExecEnv::deinit_impl(me.base.shell);
             me.base.shell = core::ptr::null_mut();
         }
         me.base.end_scope();

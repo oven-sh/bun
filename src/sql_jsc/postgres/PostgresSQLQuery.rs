@@ -169,6 +169,7 @@ impl PostgresSQLQuery {
     /// `&mut` is exclusive for the borrow's lifetime; callers must not hold two
     /// results live simultaneously (the request FIFO never does).
     #[inline]
+    #[allow(clippy::mut_from_ref)] // intrusive raw pointer; see SAFETY in doc comment
     pub fn statement_mut(&self) -> Option<&mut PostgresSQLStatement> {
         // SAFETY: see doc comment — intrusive ref held by `self` keeps the
         // pointee alive; single-JS-thread exclusivity.

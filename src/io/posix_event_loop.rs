@@ -401,13 +401,12 @@ impl FilePoll {
         // access over the slot and invalidate `self`'s tag (Stacked Borrows).
         // Decay `self` to a raw slot pointer first, *then* materialise the
         // `&mut Store` via the crate-private backref-deref accessor.
-        let this: *mut FilePoll = std::ptr::from_mut::<FilePoll>(self);
+        let this = ptr::NonNull::from(self);
         // `file_polls_mut()` is the per-thread set-once `Store` back-pointer
         // (`BackRef`-shaped); `&mut self` has been retired to `this` above so
         // the `&mut Store` it produces is the sole unique borrow into the hive.
-        // SAFETY: `this` is the live hive slot derived from `&mut self` above;
-        // `Store::put` touches it only via raw-pointer ops (see its Safety doc).
-        unsafe { vm.file_polls_mut().put(this, vm, was_ever_registered) };
+        // `Store::put` touches `this` only via raw-pointer ops (see its doc).
+        vm.file_polls_mut().put(this, vm, was_ever_registered);
     }
 
     pub fn deinit_with_vm(&mut self, vm: EventLoopCtx) {
@@ -1371,14 +1370,14 @@ impl Store {
         self.pending_free_tail = ptr::null_mut();
     }
 
-    /// # Safety
-    /// `poll` must be a live, fully-initialized slot in `self.hive`. It may
-    /// point *inside* `self.hive`'s inline `[FilePoll; 128]` buffer, so
-    /// accepting it as `&mut FilePoll` while `&mut self` is live would retag
-    /// overlapping storage under Stacked Borrows (UB). Mirror Zig's
-    /// alias-tolerant `poll: *FilePoll` and touch fields only through raw
-    /// pointer ops — same rationale as `process_deferred_frees` above.
-    pub unsafe fn put(&mut self, poll: *mut FilePoll, vm: EventLoopCtx, ever_registered: bool) {
+    /// `poll` is a live, fully-initialized slot in `self.hive`. It may point
+    /// *inside* `self.hive`'s inline `[FilePoll; 128]` buffer, so accepting it
+    /// as `&mut FilePoll` while `&mut self` is live would retag overlapping
+    /// storage under Stacked Borrows (UB). Mirror Zig's alias-tolerant
+    /// `poll: *FilePoll` and touch fields only through raw pointer ops — same
+    /// rationale as `process_deferred_frees` above.
+    pub fn put(&mut self, poll: ptr::NonNull<FilePoll>, vm: EventLoopCtx, ever_registered: bool) {
+        let poll = poll.as_ptr();
         if !ever_registered {
             // SAFETY: `poll` is a fully-initialized hive slot; FilePoll has no
             // drop glue, so `put` is a no-op drop + recycle.

@@ -3,13 +3,13 @@
 use core::ffi::{c_char, c_void};
 use std::sync::Arc;
 
+#[cfg(unix)]
+use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{
-    self as bun_process, Process, Rusage, SignalCodeExt, SpawnOptions, SpawnResultExt as _, Status,
+    self as bun_process, Process, Rusage, SignalCodeExt, SpawnOptions, Status,
 };
 #[cfg(windows)]
-use crate::api::bun::process::{
-    WindowsOptions, WindowsSpawnOptions, WindowsSpawnResult, WindowsStdioResult,
-};
+use crate::api::bun::process::{WindowsOptions, WindowsStdioResult};
 use crate::api::bun::subprocess as JscSubprocess;
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{self, IOWriter};
@@ -635,6 +635,7 @@ impl ShellSubprocess {
             }
         });
 
+        #[cfg(unix)]
         let no_sigpipe = if let Some(iowriter) = &shellio.stdout {
             !iowriter.is_socket()
         } else {
@@ -2057,7 +2058,7 @@ impl PipeReader {
     /// # Safety
     /// `ptr` must be the `*mut PipeReader` registered via
     /// `reader.set_parent(self)` and must point to a live `PipeReader`.
-    pub unsafe fn on_read_chunk(ptr: *mut c_void, chunk: &[u8], has_more: ReadState) -> bool {
+    pub fn on_read_chunk(ptr: *mut c_void, chunk: &[u8], has_more: ReadState) -> bool {
         // SAFETY: caller contract.
         let this: &mut PipeReader = unsafe { bun_ptr::callback_ctx::<PipeReader>(ptr) };
         this.buffered_output.append(chunk);

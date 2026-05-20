@@ -1457,7 +1457,7 @@ impl SignalRef {
     /// # Safety
     /// `this` must be a valid, exclusively-accessible pointer to a live
     /// heap-allocated `SignalRef` owned by `Stream.signal`.
-    pub unsafe fn abort_listener(this: *mut SignalRef, reason: JSValue) {
+    pub fn abort_listener(this: *mut SignalRef, reason: JSValue) {
         bun_output::scoped_log!(H2FrameParser, "abortListener");
         reason.ensure_still_alive();
         // SAFETY: this is a stable heap allocation owned by Stream.signal
@@ -2085,7 +2085,7 @@ impl Stream {
 impl AbortListener for SignalRef {
     fn on_abort(&mut self, reason: JSValue) {
         // SAFETY: `self` is a live heap-allocated SignalRef owned by Stream.signal
-        unsafe { SignalRef::abort_listener(std::ptr::from_mut::<SignalRef>(self), reason) };
+        SignalRef::abort_listener(std::ptr::from_mut::<SignalRef>(self), reason);
     }
 }
 

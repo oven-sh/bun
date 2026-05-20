@@ -1061,8 +1061,9 @@ impl HttpThread {
                 // SAFETY: task points to AsyncHttp.task; recover parent via field offset.
                 let http: *mut AsyncHttp =
                     unsafe { bun_core::from_field_ptr!(AsyncHttp, task, task.as_ptr()) };
-                // SAFETY: `http` recovered from a live batch node; valid until popped.
-                unsafe { this.queued_tasks.push(http) };
+                // SAFETY: `http` recovered from a live batch node (non-null); valid until popped.
+                let http = unsafe { core::ptr::NonNull::new_unchecked(http) };
+                this.queued_tasks.push(http);
             }
         }
         this.wakeup();

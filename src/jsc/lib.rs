@@ -27,7 +27,6 @@
 // accessor inlining (every `VirtualMachine::get_or_null()` ≥3×/run_callback).
 // Precedent: 064951400fa4 did this for `bun_alloc`/`bun_ast`.
 #![feature(thread_local)]
-#![feature(allocator_api)]
 #![allow(incomplete_features)]
 
 extern crate alloc;

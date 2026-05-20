@@ -806,7 +806,7 @@ pub fn update_package_json_and_install_and_cli(
     // SAFETY: `super::init` returns a `*mut PackageManager` to the process-static
     // singleton (Zig `*PackageManager`). We are on the single CLI thread; no worker
     // threads deref `get()` until `install_with_manager` spawns the HTTP thread.
-    let manager: &mut PackageManager = unsafe { &mut *manager_ptr };
+    let manager: &mut PackageManager = &mut *manager_ptr;
 
     if manager.options.should_print_command_name() {
         // Zig: `"..." ++ Global.package_json_version_with_sha ++ "..."` (comptime concat).

@@ -102,6 +102,10 @@ pub trait CompletionStruct: Node + Send + 'static {
     /// `resolver: Resolver<'a>`) that cannot be zero-init'd, so the allocate +
     /// configure pair is folded into one trait call returning the
     /// arena-allocated, fully-configured transpiler.
+    // The returned `&'a mut Transpiler<'a>` is arena-allocated via `bump.alloc(...)`
+    // (bumpalo `Bump`), which hands out `&mut` from `&self` through interior
+    // mutability — the standard arena pattern `mut_from_ref` cannot see through.
+    #[allow(clippy::mut_from_ref)]
     fn create_and_configure_transpiler<'a>(
         &mut self,
         bump: &'a Arena,
@@ -192,6 +196,8 @@ impl<C: CompletionStruct> BundleThread<C> {
     /// `instance` must point to a live `BundleThread` whose bundle thread has been
     /// spawned (so `waker` is initialized). Called concurrently with `thread_main`.
     pub unsafe fn enqueue(instance: *mut Self, completion: *mut C) {
+        // SAFETY: `completion` is a live, caller-owned task node (non-null).
+        let completion = unsafe { core::ptr::NonNull::new_unchecked(completion) };
         // SAFETY: field projections via raw ptr — `thread_main` on the bundle thread
         // accesses the same struct concurrently, so we never materialize `&mut Self`.
         // `UnboundedQueue::push` takes `&self` (lock-free MPSC). `Waker::wake` takes
@@ -270,8 +276,7 @@ impl<C: CompletionStruct> BundleThread<C> {
             }
 
             if has_bundled {
-                // SAFETY: `mi_collect(false)` is a thread-local heap sweep with no preconditions.
-                unsafe { bun_alloc::mimalloc::mi_collect(false) };
+                bun_alloc::mimalloc::mi_collect(false);
                 has_bundled = false;
             }
 
@@ -434,9 +439,14 @@ pub mod singleton {
     }
 
     pub fn enqueue<C: CompletionStruct>(completion: *mut C) {
+        // Validate the caller's pointer at the public boundary so the unsafe
+        // path below never receives null.
+        let completion = NonNull::new(completion).unwrap_or_else(|| {
+            Output::panic(format_args!("BundleThread enqueue: null completion"))
+        });
         // SAFETY: `get()` returns the leaked 'static singleton whose bundle thread is
         // running; `BundleThread::enqueue` only performs raw-ptr field projections.
-        unsafe { BundleThread::enqueue(get::<C>(), completion) };
+        unsafe { BundleThread::enqueue(get::<C>(), completion.as_ptr()) };
     }
 }
 

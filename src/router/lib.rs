@@ -570,9 +570,7 @@ impl Routes {
         params: &mut route_param::List<'p>,
     ) -> Option<*const Route> {
         // its cleaned, so now we search the big list of strings
-        let Some(start) = self.dynamic_start else {
-            return None;
-        };
+        let start = self.dynamic_start?;
         let end = start + self.dynamic_len;
         let dynamic = &self.list.items_route()[start..end];
         let dynamic_names = &self.list.items_name()[start..end];
@@ -851,7 +849,7 @@ impl<'a> RouteLoader<'a> {
                 // Zig `Entry.Kind` is exactly `{dir, file}` (resolver/fs.zig:378).
                 // SAFETY: no other live borrow of `*entry_ptr` here; entries_mutex
                 // held; `resolver.fs_impl()` points at the process-global RealFS.
-                let kind = unsafe { (&mut *entry_ptr).kind(resolver.fs_impl(), false) };
+                let kind = unsafe { (&*entry_ptr).kind(resolver.fs_impl(), false) };
                 // SAFETY: shared read-only borrow for the match arms; the only
                 // subsequent mutation is via `Route::parse` which takes the raw
                 // pointer and reborrows internally.

@@ -17,21 +17,31 @@
 //! before any data); socketpair gives us a proper socket for the read path
 //! and the write path can share it.
 
-use core::ffi::{CStr, c_char};
+#[cfg(not(windows))]
+use core::ffi::CStr;
+use core::ffi::c_char;
 use core::ptr::{self, NonNull};
 use std::io::Write as _;
 
-use bun_core::strings;
-use bun_core::{self, ZBox, ZStr, env_var, getenv_z, zstr};
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use bun_core::ZStr;
+use bun_core::{self, strings};
+#[cfg(not(windows))]
+use bun_core::{ZBox, env_var, getenv_z, zstr};
 use bun_jsc::JSGlobalObject;
+#[cfg(not(windows))]
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_output::{declare_scope, scoped_log};
 use bun_paths::{self, path_buffer_pool, platform, resolve_path};
+use bun_spawn::{self, Process};
+#[cfg(not(windows))]
 use bun_spawn::{
-    self, EventLoopHandle, Process, ProcessExit, ProcessExitKind, SpawnOptions,
-    SpawnResultExt as _, Stdio,
+    EventLoopHandle, ProcessExit, ProcessExitKind, SpawnOptions, SpawnResultExt as _, Stdio,
 };
-use bun_sys::{self, Fd, FdExt as _, O};
+use bun_sys::{self, Fd};
+#[cfg(not(windows))]
+use bun_sys::{FdExt as _, O};
+#[cfg(not(windows))]
 use bun_which::which;
 
 declare_scope!(Chrome, hidden);
@@ -182,6 +192,7 @@ bun_spawn::link_impl_ProcessExit! {
 ///   linux: ~/.cache/ms-playwright/chromium_headless_shell-<rev>/
 ///            chrome-headless-shell-linux64/chrome-headless-shell
 ///            (arm64 non-cft builds use chrome-linux/headless_shell instead)
+#[cfg(not(windows))]
 fn find_chrome(explicit_path: Option<&CStr>) -> Option<ZBox> {
     // Precedence: backend.path > BUN_CHROME_PATH > $PATH > hardcoded > playwright.
     // backend.path is per-Bun.WebView call (first wins — later views reuse
@@ -279,6 +290,7 @@ fn find_chrome(explicit_path: Option<&CStr>) -> Option<ZBox> {
 /// Scan the Playwright cache dir for chromium_headless_shell-<rev> entries,
 /// pick the highest rev, stat the binary inside. Returns null if no cache
 /// dir, no matching entries, or binary missing.
+#[cfg(not(windows))]
 fn find_playwright_shell() -> Option<ZBox> {
     let home = env_var::HOME.get()?;
 
@@ -381,6 +393,7 @@ fn find_playwright_shell() -> Option<ZBox> {
     None
 }
 
+#[cfg(not(windows))]
 fn spawn(
     vm: *mut VirtualMachine,
     user_data_dir: Option<&CStr>,
@@ -389,19 +402,6 @@ fn spawn(
     stdout_inherit: bool,
     stderr_inherit: bool,
 ) -> Result<Fd, bun_core::Error> {
-    #[cfg(windows)]
-    {
-        let _ = (
-            vm,
-            user_data_dir,
-            explicit_path,
-            extra_argv,
-            stdout_inherit,
-            stderr_inherit,
-        );
-        return Err(bun_core::err!("Unsupported"));
-    }
-    #[cfg(not(windows))]
     {
         // PERF(port): was arena bulk-free — all temp strings now individually heap-allocated.
 

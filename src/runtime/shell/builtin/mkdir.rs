@@ -169,11 +169,7 @@ impl Mkdir {
     /// `task` must be a live heap allocation produced by
     /// [`ShellMkdirTask::create`]; ownership is consumed (reclaimed via
     /// `heap::take`).
-    pub unsafe fn on_shell_mkdir_task_done(
-        interp: &Interpreter,
-        cmd: NodeId,
-        task: *mut ShellMkdirTask,
-    ) {
+    pub fn on_shell_mkdir_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellMkdirTask) {
         // SAFETY: task was heap-allocated in create(); reclaim ownership.
         let mut task = unsafe { bun_core::heap::take(task) };
         let output = core::mem::take(&mut task.created_directories);
@@ -368,11 +364,11 @@ impl ShellMkdirTask {
     /// # Safety
     /// `this` must be a live heap allocation produced by [`Self::create`];
     /// ownership is consumed via [`Mkdir::on_shell_mkdir_task_done`].
-    pub unsafe fn run_from_main_thread(this: *mut ShellMkdirTask, interp: &Interpreter) {
+    pub fn run_from_main_thread(this: *mut ShellMkdirTask, interp: &Interpreter) {
         // SAFETY: `this` is a live heap-allocated task.
         let cmd = unsafe { (*this).cmd };
         // SAFETY: forwarded from caller's contract.
-        unsafe { Mkdir::on_shell_mkdir_task_done(interp, cmd, this) };
+        Mkdir::on_shell_mkdir_task_done(interp, cmd, this);
     }
 }
 
@@ -421,7 +417,7 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellMkdirTask {
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         // SAFETY: `ShellTaskCtx` callers guarantee `this` is the live
         // heap-allocated task posted via `ShellTask::schedule`.
-        unsafe { Self::run_from_main_thread(this, interp) }
+        Self::run_from_main_thread(this, interp)
     }
 }
 

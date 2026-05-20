@@ -1712,34 +1712,32 @@ impl Package<u64> {
         value_loc: bun_ast::Loc,
     ) -> Result<Option<Dependency>, bun_core::Error> {
         // TODO(port): narrow error set
+        #[cfg(windows)]
         let external_version = 'brk: {
-            #[cfg(windows)]
-            {
-                match tag.unwrap_or_else(|| dependency::version::Tag::infer(version)) {
-                    dependency::version::Tag::Workspace
-                    | dependency::version::Tag::Folder
-                    | dependency::version::Tag::Symlink
-                    | dependency::version::Tag::Tarball => {
-                        if String::can_inline(version) {
-                            let mut copy = string_builder.append::<String>(version);
-                            path::dangerously_convert_path_to_posix_in_place::<u8>(&mut copy.bytes);
-                            break 'brk copy;
-                        } else {
-                            let str_ = string_builder.append::<String>(version);
-                            let ptr = str_.ptr();
-                            path::dangerously_convert_path_to_posix_in_place::<u8>(
-                                &mut string_builder.string_bytes
-                                    [ptr.off as usize..(ptr.off + ptr.len) as usize],
-                            );
-                            break 'brk str_;
-                        }
+            match tag.unwrap_or_else(|| dependency::version::Tag::infer(version)) {
+                dependency::version::Tag::Workspace
+                | dependency::version::Tag::Folder
+                | dependency::version::Tag::Symlink
+                | dependency::version::Tag::Tarball => {
+                    if String::can_inline(version) {
+                        let mut copy = string_builder.append::<String>(version);
+                        path::dangerously_convert_path_to_posix_in_place::<u8>(&mut copy.bytes);
+                        break 'brk copy;
+                    } else {
+                        let str_ = string_builder.append::<String>(version);
+                        let ptr = str_.ptr();
+                        path::dangerously_convert_path_to_posix_in_place::<u8>(
+                            &mut string_builder.string_bytes
+                                [ptr.off as usize..(ptr.off + ptr.len) as usize],
+                        );
+                        break 'brk str_;
                     }
-                    _ => {}
                 }
+                _ => string_builder.append::<String>(version),
             }
-
-            string_builder.append::<String>(version)
         };
+        #[cfg(not(windows))]
+        let external_version = string_builder.append::<String>(version);
 
         // SAFETY: `buf` aliases `string_builder.string_bytes` while later
         // `string_builder.append()` calls write into the *pre-reserved* tail

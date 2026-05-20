@@ -177,7 +177,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                     (
                         bstr::BStr::new(message),
                         // SAFETY: `archive` is the live `read_new()` handle returned in the Err arm.
-                        bstr::BStr::new(unsafe { Archive::error_string(archive) }),
+                        bstr::BStr::new(Archive::opaque_ref(archive).error_string()),
                     ),
                 );
                 Global::crash();
@@ -198,7 +198,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                         (
                             bstr::BStr::new(message),
                             // SAFETY: `archive` is the live `read_new()` handle returned in the Err arm.
-                            bstr::BStr::new(unsafe { Archive::error_string(archive) }),
+                            bstr::BStr::new(Archive::opaque_ref(archive).error_string()),
                         ),
                     );
                     Global::crash();
@@ -250,7 +250,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                     {
                         // SAFETY: `iter.archive` is the live `read_new()` handle this iterator
                         // was constructed from; `next` is the entry it just yielded.
-                        let r = unsafe { next.read_entry_data(iter.archive) }?;
+                        let r = next.read_entry_data(unsafe { &*iter.archive })?;
                         maybe_package_json_contents = match r {
                             ArchiveIterResult::Err { archive, message } => {
                                 Output::err_generic(
@@ -258,7 +258,9 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                                     (
                                         bstr::BStr::new(message),
                                         // SAFETY: `archive` is the same live handle returned in the Err arm.
-                                        bstr::BStr::new(unsafe { Archive::error_string(archive) }),
+                                        bstr::BStr::new(
+                                            Archive::opaque_ref(archive).error_string(),
+                                        ),
                                     ),
                                 );
                                 Global::crash();
@@ -268,7 +270,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                     } else if maybe_readme.is_none() && is_readme_os_path(filename) {
                         // First matching README wins — libarchive iteration is one-shot.
                         // SAFETY: same as the package.json arm above.
-                        let r = unsafe { next.read_entry_data(iter.archive) }?;
+                        let r = next.read_entry_data(unsafe { &*iter.archive })?;
                         let bytes = match r {
                             ArchiveIterResult::Err { archive, message } => {
                                 Output::err_generic(
@@ -276,7 +278,9 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                                     (
                                         bstr::BStr::new(message),
                                         // SAFETY: `archive` is the same live handle returned in the Err arm.
-                                        bstr::BStr::new(unsafe { Archive::error_string(archive) }),
+                                        bstr::BStr::new(
+                                            Archive::opaque_ref(archive).error_string(),
+                                        ),
                                     ),
                                 );
                                 Global::crash();
@@ -314,7 +318,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                     (
                         bstr::BStr::new(message),
                         // SAFETY: `archive` is the live `read_new()` handle returned in the Err arm.
-                        bstr::BStr::new(unsafe { Archive::error_string(archive) }),
+                        bstr::BStr::new(Archive::opaque_ref(archive).error_string()),
                     ),
                 );
                 Global::crash();

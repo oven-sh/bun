@@ -362,7 +362,7 @@ pub fn list_objects(
             task_ptr,
             // SAFETY: `task_ptr` is the heap-allocated task registered above; the
             // HTTP thread invokes this with that exact pointer.
-            |this, http, result| unsafe { S3HttpSimpleTask::http_callback(this, http, result) },
+            |this, http, result| S3HttpSimpleTask::http_callback(this, http, result),
         ),
         bun_http::FetchRedirect::Follow,
         bun_http::async_http::Options {
@@ -739,7 +739,7 @@ impl Drop for S3UploadStreamWrapper {
         self.detach_sink();
         // task.deref() — release our ref on the MultiPartUpload.
         // SAFETY: `self.task` is the +1 ref held since this stream was created.
-        unsafe { MultiPartUpload::deref_(self.task) };
+        MultiPartUpload::deref_(self.task);
         // endPromise.deinit() — Strong field Drop handles this
     }
 }
@@ -1097,9 +1097,7 @@ pub fn download_stream(
             task_ptr,
             // SAFETY: `task_ptr` is the heap-allocated task registered above; the
             // HTTP thread invokes this with that exact pointer.
-            |this, http, result| unsafe {
-                S3HttpDownloadStreamingTask::http_callback(this, http, result)
-            },
+            |this, http, result| S3HttpDownloadStreamingTask::http_callback(this, http, result),
         ),
         bun_http::FetchRedirect::Follow,
         bun_http::async_http::Options {

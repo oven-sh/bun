@@ -363,7 +363,7 @@ impl HmrSocket {
     /// via `HmrSocket::new`'s caller). uws guarantees the socket context
     /// pointer is valid for the duration of the close callback; this function
     /// consumes ownership and frees it.
-    pub unsafe fn on_close(s: *mut HmrSocket, _ws: AnyWebSocket, _exit_code: i32, _message: &[u8]) {
+    pub fn on_close(s: *mut HmrSocket, _ws: AnyWebSocket, _exit_code: i32, _message: &[u8]) {
         // SAFETY: caller contract above.
         let this = unsafe { &mut *s };
 

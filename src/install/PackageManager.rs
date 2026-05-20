@@ -2114,7 +2114,8 @@ pub fn init(
         let uws_loop = manager.event_loop.r#loop();
         // SAFETY: `uws_loop` is the live process-global `uws::Loop` (`r#loop()` above);
         // the handle's backref is `manager.event_loop`, owned by the singleton.
-        unsafe { EventLoopHandle::from_any(&mut manager.event_loop).set_as_parent_of(uws_loop) };
+        let uws_loop = unsafe { &mut *uws_loop };
+        EventLoopHandle::from_any(&mut manager.event_loop).set_as_parent_of(uws_loop);
     }
     // PORT NOTE: Zig `manager.lockfile = try ctx.allocator.create(Lockfile)` —
     // folded into the struct literal above (`Box::new(Lockfile::default())`) so
@@ -2149,7 +2150,7 @@ pub fn init(
         // SAFETY: singleton fully initialized; main thread, no workers yet.
         let evl = unsafe { &mut (*manager_ptr).event_loop };
         if let AnyEventLoop::Mini(mini) = evl {
-            let mini_ptr: *mut MiniEventLoop<'static> = &mut **mini;
+            let mini_ptr: *mut MiniEventLoop<'static> = &raw mut **mini;
             // Zig spec (PackageManager.zig:893) sets ONLY `MiniEventLoop.global`,
             // NOT `globalInitialized`. The distinction is load-bearing: a later
             // `initGlobal(env, top_level_dir)` (e.g. from `bun pm pack` /

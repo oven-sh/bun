@@ -180,9 +180,11 @@ impl SpawnSyncEventLoop {
         let this = unsafe { this.assume_init_mut() };
         // PORT NOTE: sys-level API is `set_parent_raw(tag, ptr)`; the typed
         // `set_parent_event_loop` lives in a higher tier. Tag 1 = JS, tag 2 = mini.
-        // SAFETY: `this.event_loop` is the live heap-owned `*mut jsc::EventLoop`
-        // returned by `__bun_spawn_sync_create_event_loop` immediately above.
-        let (tag, ptr) = unsafe { EventLoopHandle::init(this.event_loop) }.into_tag_ptr();
+        // `this.event_loop` is the live heap-owned `*mut jsc::EventLoop`
+        // returned by `__bun_spawn_sync_create_event_loop` immediately above —
+        // never null on a successful create.
+        debug_assert!(!this.event_loop.is_null(), "spawn-sync event loop alloc");
+        let (tag, ptr) = EventLoopHandle::init(this.event_loop).into_tag_ptr();
         let loop_data = &mut this.uws_loop_mut().internal_loop_data;
         loop_data.set_parent_raw(tag, ptr);
         loop_data.jsc_vm = core::ptr::null();
@@ -339,9 +341,10 @@ impl SpawnSyncEventLoop {
 
     /// Get an EventLoopHandle for this isolated loop
     pub fn handle(&mut self) -> EventLoopHandle {
-        // SAFETY: `self.event_loop` is the live heap-owned `*mut jsc::EventLoop`
-        // created in `init` and freed only in `Drop`.
-        unsafe { EventLoopHandle::init(self.event_loop) }
+        // `self.event_loop` is the live heap-owned `*mut jsc::EventLoop`
+        // created in `init` and freed only in `Drop` — never null while `self` exists.
+        debug_assert!(!self.event_loop.is_null(), "spawn-sync event loop");
+        EventLoopHandle::init(self.event_loop)
     }
 }
 

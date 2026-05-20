@@ -697,7 +697,6 @@ impl<'a> Run<'a> {
                 }
 
                 let mut blob_: Option<*const WebCore::Blob> = None;
-                let mime_type: Option<&[u8]> = None;
 
                 if value.js_type() == jsc::JSType::DOMWrapper {
                     // LAYERING: `Response`/`Request` (and their `BodyMixin::
@@ -727,14 +726,8 @@ impl<'a> Run<'a> {
                     // shared-view/content-type slices borrow its store.
                     let (bytes, ct) =
                         unsafe { ((*blob).shared_view(), (*blob).content_type_slice()) };
-                    return expr_from_blob(
-                        bytes,
-                        self.bump,
-                        mime_type.unwrap_or(ct),
-                        self.log,
-                        self.caller.loc,
-                    )
-                    .map_err(|_| MacroError::MacroFailed);
+                    return expr_from_blob(bytes, self.bump, ct, self.log, self.caller.loc)
+                        .map_err(|_| MacroError::MacroFailed);
                 }
 
                 return Ok(Expr::init(E::EString::EMPTY, self.caller.loc));

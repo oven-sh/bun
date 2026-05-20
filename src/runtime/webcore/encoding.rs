@@ -491,7 +491,7 @@ pub fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
 /// # Safety
 /// `input` must be valid for reading `len` bytes and `to_ptr` must be valid for
 /// writing `to_len` bytes; the two ranges must not overlap.
-pub unsafe fn write_u8<const ENCODING: u8>(
+pub fn write_u8<const ENCODING: u8>(
     input: *const u8,
     len: usize,
     to_ptr: *mut u8,
@@ -579,7 +579,7 @@ pub unsafe fn write_u8<const ENCODING: u8>(
 
 /// # Safety
 /// `input` must be valid for reading `len` bytes.
-pub unsafe fn byte_length_u8<const ENCODING: u8>(input: *const u8, len: usize) -> usize {
+pub fn byte_length_u8<const ENCODING: u8>(input: *const u8, len: usize) -> usize {
     if len == 0 {
         return 0;
     }
@@ -631,7 +631,7 @@ pub fn encode_into_from8<const ENCODING: u8>(
 /// `input` must be valid for reading `len` `u16`s and `to` must be valid for
 /// writing `to_len` bytes. For `Ucs2`/`Utf16le` the ranges may overlap (memmove
 /// semantics); for all other encodings they must not.
-pub unsafe fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
+pub fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
     input: *const u16,
     len: usize,
     to: *mut u8,
@@ -745,7 +745,7 @@ pub unsafe fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
 
 /// # Safety
 /// `input` must be valid for reading `len` bytes.
-pub unsafe fn construct_from_u8<const ENCODING: u8>(input: *const u8, len: usize) -> Vec<u8> {
+pub fn construct_from_u8<const ENCODING: u8>(input: *const u8, len: usize) -> Vec<u8> {
     if len == 0 {
         return Vec::new();
     }
@@ -826,7 +826,7 @@ pub unsafe fn construct_from_u8<const ENCODING: u8>(input: *const u8, len: usize
 
 /// # Safety
 /// `input` must be valid for reading `len` `u16`s.
-pub unsafe fn construct_from_u16<const ENCODING: u8>(input: *const u16, len: usize) -> Vec<u8> {
+pub fn construct_from_u16<const ENCODING: u8>(input: *const u16, len: usize) -> Vec<u8> {
     if len == 0 {
         return Vec::new();
     }

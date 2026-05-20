@@ -31,6 +31,16 @@ pub use line_offset_table::{LineOffsetTable, LineOffsetTableColumns};
 pub use mapping::{Lookup as MappingLookup, Mapping};
 pub use parsed_source_map::{ParsedSourceMap, SourceContentPtr};
 
+// SAFETY: `ParsedSourceMap` was `bun.ptr.ThreadSafeRefCount` in the Zig
+// original and is shared across threads via the thread-safe `SavedSourceMap`
+// store (its `ref_count` is an `AtomicU32`). The auto-trait inference fails
+// only because `SourceContentPtr` packs raw provider pointers; those are
+// opaque handles that are never dereferenced off the JS thread.
+unsafe impl Send for ParsedSourceMap {}
+// SAFETY: see the `Send` rationale above — refcount is atomic and the raw
+// provider pointers are opaque, never dereferenced off the JS thread.
+unsafe impl Sync for ParsedSourceMap {}
+
 // `bun.Ordinal = OrdinalT(c_int)` lives in bun_core (lower tier). Re-export so
 // `bun_sourcemap::Ordinal` and `bun_core::Ordinal` are the same type — callers
 // in higher tiers (bun_jsc) pass values straight through without conversion.

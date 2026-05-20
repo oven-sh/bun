@@ -1425,7 +1425,7 @@ mod __css_validation {
             // Match `LocalScope`'s default `AutoContext` hashing for `Box<[u8]>`
             // (std `Hash` over the byte slice → wyhash truncated to u32).
             use bun_collections::array_hash_map::{ArrayHashContext, AutoContext};
-            AutoContext::default().hash(key)
+            AutoContext.hash(key)
         }
         fn eql(&self, a: &[u8], b: &Box<[u8]>, _i: usize) -> bool {
             a == &**b

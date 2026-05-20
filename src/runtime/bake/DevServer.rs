@@ -2207,7 +2207,7 @@ impl DevServer {
 
         // SAFETY: `deferred_ptr` is a live, exclusively-owned hive slot just
         // obtained from `deferred_request_pool.get()` and initialized above.
-        unsafe { requests_array.prepend(deferred_ptr) };
+        unsafe { requests_array.prepend(&mut *deferred_ptr) };
         Ok(())
     }
 }

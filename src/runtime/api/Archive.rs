@@ -303,19 +303,17 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
         )));
     }
 
-    // SAFETY: `archive` is a live `archive_write_new()` handle (see `Archive::write_new`
+    // `archive` is a live `archive_write_new()` handle (see `Archive::write_new`
     // above); `growing_buffer` is stack-local and outlives all callback invocations
     // (the archive is closed before this fn returns).
-    let open_rc = unsafe {
-        lib::archive_write_open2(
-            archive.as_ptr(),
-            (&raw mut growing_buffer).cast(),
-            Some(lib::GrowingBuffer::open_callback),
-            Some(lib::GrowingBuffer::write_callback),
-            Some(lib::GrowingBuffer::close_callback),
-            None,
-        )
-    };
+    let open_rc = lib::archive_write_open2(
+        &archive,
+        (&raw mut growing_buffer).cast(),
+        Some(lib::GrowingBuffer::open_callback),
+        Some(lib::GrowingBuffer::write_callback),
+        Some(lib::GrowingBuffer::close_callback),
+        None,
+    );
     if open_rc != 0 {
         return Err(global
             .throw_invalid_arguments(format_args!("Failed to create tarball: ArchiveOpenError")));
@@ -739,8 +737,9 @@ impl<C: TaskContext> AsyncTask<C> {
         unsafe { (*this).ctx.run() };
         // SAFETY: vm points to the live owning VM; concurrent_task is intrusive on the same allocation.
         unsafe {
-            let ct: *mut ConcurrentTask =
-                (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit);
+            let ct = core::ptr::NonNull::from(
+                (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
+            );
             (*(*this).vm).enqueue_task_concurrent(ct);
         }
     }
@@ -749,7 +748,7 @@ impl<C: TaskContext> AsyncTask<C> {
     /// `this` must be the live `heap::into_raw` allocation produced by
     /// [`create`](Self::create), called exactly once on the JS thread after
     /// `run_callback` enqueues it. Takes ownership of the allocation.
-    pub unsafe fn run_from_js(this: *mut Self) -> Result<(), bun_jsc::JsTerminated> {
+    pub fn run_from_js(this: *mut Self) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: see fn-level safety contract.
         let mut owned = unsafe { bun_core::heap::take(this) };
         owned.keep_alive.unref(bun_io::js_vm_ctx());
@@ -1127,11 +1126,8 @@ pub struct FilesContext {
 }
 
 impl FilesContext {
-    /// # Safety
-    /// `archive` must be a live archive handle from `archive_{read,write}_new()`.
-    unsafe fn clone_error_string(archive: *mut libarchive::lib::Archive) -> Option<CString> {
-        // SAFETY: see fn contract.
-        let err_str = unsafe { libarchive::lib::Archive::error_string(archive) };
+    fn clone_error_string(archive: &libarchive::lib::Archive) -> Option<CString> {
+        let err_str = archive.error_string();
         if err_str.is_empty() {
             return None;
         }
@@ -1145,13 +1141,11 @@ impl FilesContext {
 
         if archive.read_open_memory(self.store.shared_view()) != lib::Result::Ok {
             // SAFETY: `archive` is the live `read_new()` handle opened above.
-            return Ok(
-                if let Some(err) = unsafe { Self::clone_error_string(archive.as_ptr()) } {
-                    FilesResult::LibarchiveErr(err)
-                } else {
-                    FilesResult::Err(FilesError::ReadError)
-                },
-            );
+            return Ok(if let Some(err) = Self::clone_error_string(&archive) {
+                FilesResult::LibarchiveErr(err)
+            } else {
+                FilesResult::Err(FilesError::ReadError)
+            });
         }
 
         let mut entries: FileEntryList = Vec::new();
@@ -1189,14 +1183,11 @@ impl FilesContext {
                         // collected entries manually to avoid leaking them.
                         // PORT NOTE: in Rust both `data` and `entries` drop automatically here.
                         // SAFETY: `archive` is the live `read_new()` handle opened above.
-                        return Ok(
-                            if let Some(err) = unsafe { Self::clone_error_string(archive.as_ptr()) }
-                            {
-                                FilesResult::LibarchiveErr(err)
-                            } else {
-                                FilesResult::Err(FilesError::ReadError)
-                            },
-                        );
+                        return Ok(if let Some(err) = Self::clone_error_string(&archive) {
+                            FilesResult::LibarchiveErr(err)
+                        } else {
+                            FilesResult::Err(FilesError::ReadError)
+                        });
                     }
                     if read == 0 {
                         break;

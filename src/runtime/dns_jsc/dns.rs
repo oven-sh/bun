@@ -8,12 +8,15 @@ use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_collections::{ArrayHashMap, HiveArray};
-use bun_core::{self as bun, Output, env_var, fmt as bun_fmt, mach_port};
+#[cfg(not(windows))]
+use bun_core::Output;
+use bun_core::{self as bun, env_var, fmt as bun_fmt, mach_port};
 use bun_core::{ZStr, strings};
+#[cfg(not(windows))]
+use bun_dns::ResultList as GetAddrInfoResultList;
 use bun_dns::{
     self, Backend as GetAddrInfoBackend, GetAddrInfo, GetAddrInfoResult,
     Options as GetAddrInfoOptions, ResultAny as GetAddrInfoResultAny,
-    ResultList as GetAddrInfoResultList,
 };
 use bun_io::{self as Async, FilePoll, KeepAlive};
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -24,6 +27,7 @@ use bun_jsc::{
 use bun_paths::{MAX_PATH_BYTES, PathBuffer};
 #[cfg(windows)]
 use bun_sys::windows::libuv;
+#[cfg(not(windows))]
 use bun_sys::{self as sys};
 use bun_threading::thread_pool;
 use bun_uws::{ConnectingSocket, Loop};
@@ -54,10 +58,6 @@ pub mod netc {
     pub use bun_dns::AI_ADDRCONFIG;
     pub use bun_libuv_sys::{addrinfo, sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage};
     pub use bun_sys::windows::ws2_32::{AF_INET, AF_INET6, AF_UNSPEC, SOCK_STREAM};
-    use core::ffi::c_int;
-    /// `WSAHOST_NOT_FOUND` — value `getaddrinfo` returns on Windows for
-    /// EAI_NONAME (Zig: `std.os.windows.ws2_32.EAI_NONAME`).
-    pub const EAI_NONAME: c_int = 11001;
 }
 type SockaddrStorage = netc::sockaddr_storage;
 type AddrInfo = netc::addrinfo;
@@ -312,10 +312,10 @@ pub mod lib_info {
 // LibC (blocking getaddrinfo on a worker thread; non-Windows)
 // ──────────────────────────────────────────────────────────────────────────
 
+#[cfg(not(windows))]
 pub mod lib_c {
     use super::*;
 
-    #[cfg(not(windows))]
     pub fn lookup(
         this: &Resolver,
         query_init: &GetAddrInfo,
@@ -350,19 +350,10 @@ pub mod lib_c {
 
         let io = get_addr_info_request::Task::create_on_js_thread(global_this, request);
         // SAFETY: `io` was just heap-allocated by `create_on_js_thread`.
-        unsafe { get_addr_info_request::Task::schedule(io) };
+        get_addr_info_request::Task::schedule(unsafe { &mut *io });
         this.request_sent(this.vm());
 
         promise_value
-    }
-
-    #[cfg(windows)]
-    pub fn lookup(
-        _this: &Resolver,
-        _query_init: &GetAddrInfo,
-        _global_this: &JSGlobalObject,
-    ) -> JSValue {
-        unreachable!("Do not use this path on Windows");
     }
 }
 
@@ -1388,13 +1379,13 @@ impl jsc::work_task::WorkTaskContext for GetAddrInfoRequest {
     fn run(this: *mut Self, task: *mut get_addr_info_request::Task) {
         // SAFETY: `WorkTask` invokes `run` on the threadpool with the live heap
         // `GetAddrInfoRequest` it was created from and its owning `WorkTask`.
-        unsafe { GetAddrInfoRequest::run(this, task) };
+        GetAddrInfoRequest::run(this, task);
     }
     #[inline]
     fn then(this: *mut Self, global_this: &JSGlobalObject) -> Result<(), jsc::JsTerminated> {
         // SAFETY: `WorkTask` invokes `then` on the JS thread with the same live
         // heap request that `run` was given.
-        unsafe { GetAddrInfoRequest::then(this, global_this) };
+        GetAddrInfoRequest::then(this, global_this);
         Ok(())
     }
 }
@@ -1510,7 +1501,7 @@ impl GetAddrInfoRequest {
     /// # Safety
     /// `this` must be the live heap `GetAddrInfoRequest` owned by `task`, and
     /// `task` the live `WorkTask` passed in by `run_from_thread_pool`.
-    pub unsafe fn run(this: *mut Self, task: *mut get_addr_info_request::Task) {
+    pub fn run(this: *mut Self, task: *mut get_addr_info_request::Task) {
         // SAFETY: WorkTask invokes this on the threadpool with valid pointers
         unsafe {
             match &mut (*this).backend {
@@ -1518,14 +1509,14 @@ impl GetAddrInfoRequest {
                 _ => unreachable!(),
             }
         }
-        // SAFETY: `task` is the live heap `WorkTask` passed in by `run_from_thread_pool`.
-        unsafe { get_addr_info_request::Task::on_finish(task) };
+        // SAFETY: `task` is the live non-null heap `WorkTask` passed in by `run_from_thread_pool`.
+        get_addr_info_request::Task::on_finish(unsafe { &mut *task });
     }
 
     /// # Safety
     /// `this` must be the live heap `GetAddrInfoRequest` whose `run` already
     /// completed; consumed (freed) on every path.
-    pub unsafe fn then(this: *mut Self, _global: &JSGlobalObject) {
+    pub fn then(this: *mut Self, _global: &JSGlobalObject) {
         bun_output::scoped_log!(GetAddrInfoRequest, "then");
         #[cfg(not(windows))]
         // SAFETY: WorkTask invokes `then` on the JS thread with the heap request it
@@ -1582,7 +1573,7 @@ impl GetAddrInfoRequest {
     /// # Safety
     /// `this` must be the heap `GetAddrInfoRequest` registered with c-ares;
     /// consumed (freed) on every path.
-    pub unsafe fn on_cares_complete(
+    pub fn on_cares_complete(
         this: *mut Self,
         err_: Option<c_ares::Error>,
         timeout: i32,
@@ -2385,7 +2376,7 @@ pub mod internal {
         /// # Safety
         /// `this` must be the heap-allocated `Request` returned by `Request::new`
         /// with `refcount == 0`; freed by this call.
-        pub unsafe fn deinit(this: *mut Self) {
+        pub fn deinit(this: *mut Self) {
             // SAFETY: this is a heap-allocated Request with refcount==0
             unsafe {
                 debug_assert!((*this).notify.is_empty());
@@ -2581,7 +2572,7 @@ pub mod internal {
         /// # Safety
         /// `req` must be a live cache `Request` with a populated `result`; the
         /// callee may take ownership and free it.
-        pub unsafe fn notify_threadsafe(&self, req: *mut Request) {
+        pub fn notify_threadsafe(&self, req: *mut Request) {
             match self {
                 // SAFETY: `socket` is the live usockets handle stored when the request was registered.
                 DNSRequestOwner::Socket(socket) => unsafe {
@@ -2598,7 +2589,7 @@ pub mod internal {
         /// # Safety
         /// `req` must be a live cache `Request` with a populated `result`; the
         /// callee may take ownership and free it.
-        pub unsafe fn notify(&self, req: *mut Request) {
+        pub fn notify(&self, req: *mut Request) {
             match self {
                 DNSRequestOwner::Prefetch(_) => freeaddrinfo(req, 0),
                 // SAFETY: `socket` is the live usockets handle stored when the request was registered.
@@ -2632,7 +2623,7 @@ pub mod internal {
     /// # Safety
     /// `request` must be a live cache `Request` (refcount held by the caller);
     /// `pc` must stay valid until its `on_dns_resolved[_threadsafe]` fires.
-    pub unsafe fn register_quic(request: *mut Request, pc: *mut bun_http::H3::PendingConnect) {
+    pub fn register_quic(request: *mut Request, pc: *mut bun_http::H3::PendingConnect) {
         let guard = global_cache().lock();
         let owner = DNSRequestOwner::Quic(pc);
         // SAFETY: `request` is a live cache entry; `result`/`notify` are only
@@ -3195,12 +3186,7 @@ pub mod internal {
     /// `hostname` (if non-null) must point to a NUL-terminated `[u8; len]` live
     /// for the duration of the call.
     #[unsafe(no_mangle)]
-    pub unsafe fn __bun_dns_prefetch(
-        loop_: *mut c_void,
-        hostname: *const u8,
-        len: usize,
-        port: u16,
-    ) {
+    pub fn __bun_dns_prefetch(loop_: *mut c_void, hostname: *const u8, len: usize, port: u16) {
         let host = if hostname.is_null() || len == 0 {
             None
         } else {
@@ -3590,10 +3576,7 @@ macro_rules! hostent_ttls_newtype {
             }
         }
         impl c_ares::HostentWithTtlsHandler for ResolveInfoRequest<$name> {
-            const PARSE: unsafe fn(
-                *mut u8,
-                c_int,
-            ) -> Result<Box<c_ares::hostent_with_ttls>, c_ares::Error> =
+            const PARSE: fn(&[u8]) -> Result<Box<c_ares::hostent_with_ttls>, c_ares::Error> =
                 c_ares::hostent_with_ttls::$parse;
             fn on_hostent_with_ttls(
                 &mut self,
@@ -4782,7 +4765,7 @@ impl Resolver {
         unsafe {
             let parent: *mut Resolver = (*poll).parent;
             let vm = (*parent).vm.get();
-            let _exit = EventLoop::enter_scope(vm.event_loop());
+            let _exit = vm.enter_event_loop_scope();
             // SAFETY: `parent` is the live heap-allocated Resolver back-ptr.
             let _deref = Self::ref_scope(parent);
             // channel must be non-null here as c_ares must have been initialized if we're receiving callbacks

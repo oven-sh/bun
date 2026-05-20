@@ -1073,20 +1073,19 @@ pub mod waiter_thread_posix {
             bun_core::heap::into_raw(Box::new(v))
         }
 
-        pub fn run_from_js_thread(self: Box<Self>) {
+        pub fn run_from_js_thread(self) {
             self.run_from_main_thread();
         }
 
-        pub fn run_from_main_thread(self: Box<Self>) {
-            let this = *self;
+        pub fn run_from_main_thread(self) {
             // SAFETY: subprocess strong-ref'd before append(); released by
             // on_wait_pid_from_waiter_thread → deref().
             unsafe {
-                T::on_wait_pid_from_waiter_thread(this.subprocess, &this.result, &this.rusage)
+                T::on_wait_pid_from_waiter_thread(self.subprocess, &self.result, &self.rusage)
             };
         }
 
-        pub fn run_from_main_thread_mini(self: Box<Self>, _: *mut ()) {
+        pub fn run_from_main_thread_mini(self, _: *mut ()) {
             self.run_from_main_thread();
         }
     }
@@ -1106,7 +1105,7 @@ pub mod waiter_thread_posix {
             bun_core::heap::into_raw(Box::new(v))
         }
 
-        pub fn run_from_main_thread(self: Box<Self>) {
+        pub fn run_from_main_thread(self) {
             let result = self.result;
             let subprocess = self.subprocess;
             // SAFETY: see ResultTask::run_from_main_thread.
@@ -1164,14 +1163,14 @@ pub mod waiter_thread_posix {
 
     impl<T: ProcessLike> NewQueue<T> {
         pub fn append(&self, process: *mut T) {
-            // SAFETY: freshly boxed `TaskQueueEntry`; `into_raw` yields a valid owned pointer.
-            unsafe {
-                self.queue
-                    .push(bun_core::heap::into_raw(Box::new(TaskQueueEntry {
-                        process,
-                        next: bun_threading::Link::new(),
-                    })))
-            };
+            // freshly boxed `TaskQueueEntry`; `into_raw` yields a valid owned pointer.
+            let entry = bun_core::heap::into_raw(Box::new(TaskQueueEntry {
+                process,
+                next: bun_threading::Link::new(),
+            }));
+            // SAFETY: `entry` was just `into_raw`'d from a live Box (non-null).
+            self.queue
+                .push(unsafe { core::ptr::NonNull::new_unchecked(entry) });
         }
 
         pub fn loop_(&self) {
@@ -1240,14 +1239,16 @@ pub mod waiter_thread_posix {
                                     subprocess: process,
                                     task: AnyTaskWithExtraContext::default(),
                                 });
-                                // SAFETY: `out` just produced by heap::alloc.
+                                // SAFETY: `out` just produced by heap::alloc — non-null.
                                 unsafe {
                                     (*out).task = AnyTaskNew::<ResultTaskMini<T>, ()>::init(
                                         out,
                                         ResultTaskMini::<T>::run_from_main_thread_mini,
                                     );
                                     mini.get_mut().enqueue_task_concurrent(
-                                        core::ptr::addr_of_mut!((*out).task),
+                                        core::ptr::NonNull::new_unchecked(core::ptr::addr_of_mut!(
+                                            (*out).task
+                                        )),
                                     );
                                 }
                                 // PORT NOTE: `out` is now owned by the mini queue;

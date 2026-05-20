@@ -454,12 +454,10 @@ impl<'a> MiniEventLoop<'a> {
         self.tasks.write_item(task).expect("unreachable");
     }
 
-    /// # Safety
-    /// `task` must point to a valid live intrusive `AnyTaskWithExtraContext` node that
-    /// outlives the queued task; ownership stays with the caller.
-    pub unsafe fn enqueue_task_concurrent(&mut self, task: *mut AnyTaskWithExtraContext) {
-        // SAFETY: caller contract — see fn `# Safety`.
-        unsafe { self.concurrent_tasks.push(task) };
+    /// `task` must outlive the queued work item; ownership of the intrusive
+    /// node stays with the caller until the callback runs.
+    pub fn enqueue_task_concurrent(&mut self, task: NonNull<AnyTaskWithExtraContext>) {
+        self.concurrent_tasks.push(task);
         // SAFETY: see `loop_ptr()` invariant.
         unsafe { (*self.loop_ptr()).wakeup() };
     }
@@ -488,8 +486,9 @@ impl<'a> MiniEventLoop<'a> {
         // SAFETY: `task` points at a properly aligned `AnyTaskWithExtraContext` field of `*ctx`.
         unsafe { task.write(New::<C, P>::init(ctx, callback)) };
 
-        // SAFETY: `task` was just initialized above; `*ctx` outlives the queued task.
-        unsafe { self.concurrent_tasks.push(task) };
+        // SAFETY: `task` was just initialized above and is non-null (derived from `ctx`).
+        self.concurrent_tasks
+            .push(unsafe { NonNull::new_unchecked(task) });
 
         // SAFETY: see `loop_ptr()` invariant.
         unsafe { (*self.loop_ptr()).wakeup() };
@@ -562,12 +561,12 @@ bun_io::link_impl_EventLoopCtx! {
 }
 
 impl<'a> MiniEventLoop<'a> {
-    /// # Safety
-    /// `this` must be the live per-thread `MiniEventLoop` singleton; it outlives every
-    /// `EventLoopCtx` derived from it.
+    /// `this` is the per-thread `MiniEventLoop` singleton; the returned ctx
+    /// must not outlive it.
     #[inline]
-    pub unsafe fn as_event_loop_ctx(this: *mut MiniEventLoop<'a>) -> bun_io::EventLoopCtx {
-        // SAFETY: caller contract — see fn `# Safety`.
+    pub fn as_event_loop_ctx(this: &mut MiniEventLoop<'a>) -> bun_io::EventLoopCtx {
+        // SAFETY: `this` is a live `&mut`, so the pointer handed to `new` is
+        // non-null and exclusively borrowed for the call's duration.
         unsafe { bun_io::EventLoopCtx::new(bun_io::EventLoopCtxKind::Mini, this) }
     }
 }

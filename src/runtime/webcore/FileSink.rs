@@ -711,10 +711,10 @@ impl FileSink {
             self.force_sync.get(),
             &mut nonblocking_out,
             &mut force_sync_out,
-            |fs: &mut bool| {
+            |_fs: &mut bool| {
                 #[cfg(unix)]
                 {
-                    *fs = true;
+                    *_fs = true;
                 }
             },
             is_pollable,

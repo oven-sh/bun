@@ -585,14 +585,14 @@ impl<'a> Task<'a> {
                 }
             }
         }
+        let task = core::ptr::NonNull::from(this).cast::<Task<'static>>();
         // SAFETY: `Task<'a>` is layout-identical for all `'a` (the lifetime is
         // a phantom on `&mut NetworkTask` borrows that the queue never reads
         // through); erasing to `'static` matches Zig's lifetime-less queue.
         // `UnboundedQueue::push` takes `&self` (lock-free), so reach it via a
         // shared raw deref — no `&mut PackageManager` is formed.
         unsafe {
-            (*core::ptr::addr_of!((*manager).resolve_tasks))
-                .push(std::ptr::from_mut::<Task<'a>>(this).cast::<Task<'static>>());
+            (*core::ptr::addr_of!((*manager).resolve_tasks)).push(task);
             PackageManager::wake_raw(manager);
         }
 

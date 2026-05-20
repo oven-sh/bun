@@ -423,12 +423,11 @@ impl State {
         Ok(())
     }
 
-    /// Add a symbol to the compiled program
-    ///
-    /// # Safety
-    /// `val` is stored as the symbol's address; it must remain valid for any
-    /// JIT'd code that calls it.
-    pub unsafe fn add_symbol(&mut self, name: &ZStr, val: *const c_void) -> Result<(), Error> {
+    /// Add a symbol to the compiled program. `val` is stored as the symbol's
+    /// address and never dereferenced here; it must remain valid for any JIT'd
+    /// code that calls it (same precondition as `add_symbols`).
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub fn add_symbol(&mut self, name: &ZStr, val: *const c_void) -> Result<(), Error> {
         // SAFETY: self is a valid *mut TCCState; name is NUL-terminated; val is an opaque address.
         if unsafe { tcc_add_symbol(self, name.as_ptr(), val) } != 0 {
             // PERF(port): @branchHint(.unlikely)
@@ -512,12 +511,11 @@ impl State {
         NonNull::new(unsafe { tcc_get_symbol(self, name.as_ptr()) }.cast::<Symbol>())
     }
 
-    /// Return symbol value or NULL if not found
-    ///
-    /// # Safety
-    /// `ctx` is forwarded to `symbol_cb`; it must be valid for every callback
-    /// invocation (or null if `symbol_cb` ignores it).
-    pub unsafe fn list_symbols(&mut self, ctx: *mut c_void, symbol_cb: Option<SymbolCallback>) {
+    /// Return symbol value or NULL if not found.
+    /// `ctx` is forwarded opaquely to `symbol_cb`; it must be valid for every
+    /// callback invocation (or null if `symbol_cb` ignores it).
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub fn list_symbols(&mut self, ctx: *mut c_void, symbol_cb: Option<SymbolCallback>) {
         // SAFETY: SymbolCallback is ABI-identical to the extern's callback type
         // (`*const Symbol` vs `*const c_void` in the last param); mirrors Zig's implicit ptrcast.
         let erased = symbol_cb.map(|f| unsafe {

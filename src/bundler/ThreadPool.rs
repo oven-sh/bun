@@ -152,7 +152,7 @@ mod io_thread_pool {
             unsafe {
                 (*THREAD_POOL.get()).write(ThreadPoolLib::ThreadPool::init(
                     ThreadPoolLib::Config {
-                        max_threads: u32::from(bun_core::get_thread_count().min(4).max(2)),
+                        max_threads: u32::from(bun_core::get_thread_count().clamp(2, 4)),
                         // Use a much smaller stack size for the IO thread pool
                         stack_size: 512 * 1024,
                     },
@@ -336,7 +336,11 @@ impl ThreadPool {
         }
     }
 
-    pub fn schedule_with_options(&self, parse_task: &mut ParseTask, is_inside_thread_pool: bool) {
+    fn schedule_with_options(&self, parse_task: *mut ParseTask, is_inside_thread_pool: bool) {
+        // SAFETY: callers (`schedule`/`schedule_inside_thread_pool`) pass a
+        // live, exclusively-owned ParseTask (heap- or arena-allocated raw
+        // pointer); see call sites in bundle_v2.rs.
+        let parse_task = unsafe { &mut *parse_task };
         if matches!(parse_task.contents_or_fd, ContentsOrFd::Contents(_))
             && matches!(parse_task.stage, ParseTaskStage::NeedsSourceCode)
         {
@@ -395,14 +399,11 @@ impl ThreadPool {
     // PORT NOTE: takes `*mut` (Zig: `*ParseTask`) so callers can pass either a
     // raw heap pointer (e.g. `load.parse_task`) or a `&mut` (auto-coerces).
     pub fn schedule(&self, parse_task: *mut ParseTask) {
-        // SAFETY: caller passes a live, exclusively-owned ParseTask (heap- or
-        // arena-allocated raw pointer); see call sites in bundle_v2.rs.
-        self.schedule_with_options(unsafe { &mut *parse_task }, false);
+        self.schedule_with_options(parse_task, false);
     }
 
     pub fn schedule_inside_thread_pool(&self, parse_task: *mut ParseTask) {
-        // SAFETY: see `schedule` above.
-        self.schedule_with_options(unsafe { &mut *parse_task }, true);
+        self.schedule_with_options(parse_task, true);
     }
 
     // PORT NOTE: returns `&'static mut` — the `Worker` is `heap::alloc`'d
@@ -598,7 +599,7 @@ impl Worker {
     /// `Task.callback` field type at the struct-init site). `task` is the
     /// `deinit_task` field of a live boxed `Worker` — guaranteed by
     /// [`Self::deinit_soon`], the sole scheduler of this callback.
-    pub fn deinit_callback(task: *mut ThreadPoolLib::Task) {
+    fn deinit_callback(task: *mut ThreadPoolLib::Task) {
         bun_core::scoped_log!(ThreadPool, "Worker.deinit()");
         // SAFETY: `task` points to `Worker.deinit_task` (intrusive field) —
         // only ever invoked by the thread pool against a `Worker` enqueued via

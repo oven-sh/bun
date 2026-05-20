@@ -817,6 +817,7 @@ impl IoRequestLoop {
         Self::ensure_init();
         debug_assert!(!request.scheduled);
         request.scheduled = true;
+        let request = core::ptr::NonNull::from(request);
         // SAFETY: `ONCE` above established happens-before for `load()`'s
         // init of `pending`/`waker`. We use `get_unchecked` (no owner assert)
         // and stay in raw-ptr land via `addr_of_mut!` so we never materialize
@@ -963,9 +964,13 @@ impl IoRequestLoop {
                         continue;
                     }
                 }
-                // SAFETY: `pollable.poll()` is the `io_poll` field pointer this
-                // loop registered via `register_for_epoll`; the owner is live.
-                unsafe { Poll::on_update_epoll(pollable.poll(), pollable.tag(), *event) };
+                // `pollable.poll()` is the `io_poll` field pointer this loop
+                // registered via `register_for_epoll`; the owner is live and
+                // non-null (the kernel hands back the udata we registered).
+                let Some(poll) = core::ptr::NonNull::new(pollable.poll()) else {
+                    continue;
+                };
+                Poll::on_update_epoll(poll, pollable.tag(), *event);
             }
         }
     }
@@ -1684,11 +1689,16 @@ impl Poll {
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub unsafe fn on_update_epoll(poll: *mut Poll, tag: PollableTag, event: linux::epoll_event) {
+    pub fn on_update_epoll(
+        poll: core::ptr::NonNull<Poll>,
+        tag: PollableTag,
+        event: linux::epoll_event,
+    ) {
         // ignore empty tags. This case should be unreachable in practice
         if tag == PollableTag::Empty {
             return;
         }
+        let poll = poll.as_ptr();
         // CYCLEBREAK: owner (ReadFile/WriteFile) is T6; dispatch via link-time
         // `extern "Rust"` defined in `bun_runtime::dispatch`. The
         // container_of(io_poll) recovery happens there.

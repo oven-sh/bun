@@ -14,6 +14,7 @@
 
 use bun_collections::VecExt;
 use core::cell::UnsafeCell;
+#[cfg(not(windows))]
 use core::ffi::c_void;
 
 #[cfg(windows)]
@@ -117,6 +118,7 @@ struct Writer {
 }
 
 impl Writer {
+    #[cfg(not(windows))]
     #[inline]
     fn wrote_everything(&self) -> bool {
         self.written >= self.len
@@ -199,7 +201,7 @@ impl IOWriter {
     /// # Safety
     /// `this` must be the `Arc::as_ptr` of a live `Arc<IOWriter>` whose strong
     /// count is held by the async-deinit task; this call drops that ref.
-    pub unsafe fn deinit_on_main_thread(this: *mut IOWriter) {
+    pub fn deinit_on_main_thread(this: *mut IOWriter) {
         // SAFETY: caller contract above.
         unsafe { std::sync::Arc::decrement_strong_count(this) };
     }
@@ -325,7 +327,7 @@ impl IOWriter {
     /// `interp` must be null or point to the live owning `Interpreter` (which
     /// owns the IO struct holding this `Arc`) and outlive it; single-threaded.
     #[inline]
-    pub unsafe fn set_interp(&self, interp: *mut Interpreter) {
+    pub fn set_interp(&self, interp: *mut Interpreter) {
         // SAFETY: caller contract above.
         self.state().interp = unsafe { bun_ptr::ParentRef::from_nullable_mut(interp) };
     }
@@ -357,6 +359,7 @@ impl IOWriter {
     /// `FilePollVTable` round-trips back to the runtime. We pass the address of
     /// the stored `bun_event_loop::EventLoopHandle` so the (runtime-registered)
     /// vtable can recover it.
+    #[cfg(not(windows))]
     #[inline]
     fn io_evtloop(&self) -> bun_io::EventLoopHandle {
         // SAFETY: `bun_io::EventLoopHandle` stores `*mut c_void` purely for
@@ -609,6 +612,7 @@ impl IOWriter {
             // the `'self` lifetime the signature wants — no raw-parts needed.
             return s.winbuf.as_slice();
         }
+        #[cfg(not(windows))]
         result
     }
 
@@ -961,8 +965,6 @@ impl IOWriter {
             WriteOutcome::IsActuallyFile => self.enqueue_file(),
             // FIXME (matches Zig)
             WriteOutcome::Failed => Yield::failed(),
-            #[cfg(windows)]
-            WriteOutcome::IsActuallyFile => unreachable!(),
         }
     }
 
@@ -1043,6 +1045,7 @@ impl IOWriter {
 enum WriteOutcome {
     Suspended,
     Failed,
+    #[cfg(not(windows))]
     IsActuallyFile,
 }
 

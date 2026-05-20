@@ -1,5 +1,6 @@
 use core::cell::Cell;
 use core::ffi::c_void;
+#[cfg(not(windows))]
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -91,16 +92,15 @@ impl FSWatcher {
         self.vm().event_loop()
     }
 
-    /// # Safety
     /// `task` must point to a live heap-allocated `ConcurrentTask` node that
     /// the caller releases ownership of; the concurrent queue takes ownership
     /// and frees it on the JS thread after dispatch.
-    pub unsafe fn enqueue_task_concurrent(&self, task: *mut ConcurrentTask) {
+    pub fn enqueue_task_concurrent(&self, task: core::ptr::NonNull<ConcurrentTask>) {
         // `vm()` is the BACKREF accessor; `event_loop_shared()` is the audited
         // safe `&EventLoop` accessor. `enqueue_task_concurrent` is the
         // documented cross-thread entry point and only touches the lock-free
         // queue.
-        unsafe { self.vm().event_loop_shared().enqueue_task_concurrent(task) }
+        self.vm().event_loop_shared().enqueue_task_concurrent(task);
     }
 
     /// `self`'s address as `*mut Self` for path-watcher / abort-signal /
@@ -230,7 +230,9 @@ impl FSWatchTaskPosix {
             unsafe {
                 (*that).concurrent_task.task = Task::init(that);
                 self.ctx()
-                    .enqueue_task_concurrent(core::ptr::addr_of_mut!((*that).concurrent_task));
+                    .enqueue_task_concurrent(core::ptr::NonNull::new_unchecked(
+                        core::ptr::addr_of_mut!((*that).concurrent_task),
+                    ));
             }
             return;
         }

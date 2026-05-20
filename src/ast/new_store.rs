@@ -104,12 +104,14 @@ macro_rules! new_store {
                 // PERF(port): was IntFittingRange — picks smallest uN; using u32 (Block::SIZE
                 // for AST node stores fits comfortably). Profile.
 
-                /// SAFETY: `this` must point to a valid (possibly uninit-buffer)
-                /// `Block` allocation — non-null, aligned, and writable.
+                /// Initialize the non-buffer fields without touching the (large,
+                /// `MaybeUninit`-wrapped) `buffer`.
                 #[inline]
-                pub unsafe fn zero(this: *mut Block) {
-                    // Avoid initializing the entire struct.
-                    // SAFETY: caller passes a valid (possibly uninit-buffer) Block allocation.
+                pub fn zero(this: &mut MaybeUninit<Block>) {
+                    let this = this.as_mut_ptr();
+                    // SAFETY: `this` is a valid `MaybeUninit<Block>` allocation
+                    // — non-null, aligned, writable. `addr_of_mut!` projects
+                    // field pointers without forming a `&Block` to uninit data.
                     unsafe {
                         addr_of_mut!((*this).bytes_used).write(0);
                         addr_of_mut!((*this).next).write(None);
@@ -149,9 +151,7 @@ macro_rules! new_store {
                 fn new_boxed() -> Box<Block> {
                     // Zig: `backing_allocator.create(Block)` then `.zero()`
                     let mut b: Box<MaybeUninit<Block>> = Box::new_uninit();
-                    // SAFETY: `b` is a fresh `Box<MaybeUninit<Block>>` — non-null,
-                    // aligned, and a valid allocation for `Block`.
-                    unsafe { Block::zero(b.as_mut_ptr()) };
+                    Block::zero(&mut b);
                     // SAFETY: `zero` initialized every non-buffer field; `buffer` is
                     // `[MaybeUninit<u8>; _]` and is valid uninitialized.
                     unsafe { b.assume_init() }

@@ -1186,15 +1186,15 @@ impl<const SSL: bool> Handler<SSL> {
                     }
 
                     // if checkServerIdentity returns false, we dont call firstCall — the connection was rejected
-                    let ssl_ptr = socket
-                        .get_native_handle()
-                        .map(|h| h.cast::<bun_boringssl_sys::SSL>())
-                        .unwrap_or(core::ptr::null_mut());
-                    // SAFETY: `ssl_ptr` is the native `*mut SSL` for this open TLS
-                    // socket (handshake just completed on the `SSL == true` path).
-                    if !unsafe {
-                        client.check_server_identity::<SSL>(socket, handshake_error, ssl_ptr, true)
-                    } {
+                    // SAFETY: the native handle on a TLS socket is `*mut SSL`,
+                    // live and non-null after the handshake completes.
+                    let ssl = unsafe {
+                        &mut *socket
+                            .get_native_handle()
+                            .expect("TLS socket has native handle after handshake")
+                            .cast::<bun_boringssl_sys::SSL>()
+                    };
+                    if !client.check_server_identity::<SSL>(socket, handshake_error, ssl, true) {
                         // checkServerIdentity already called closeAndFail() → fail()
                         // → result callback, which may have destroyed the
                         // AsyncHTTP that embeds `client`. Socket is terminated

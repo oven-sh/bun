@@ -122,7 +122,7 @@ impl Script {
             if !me.base.shell.is_null() {
                 // SAFETY: `me.base.shell` is the duped env this Script owned;
                 // null-checked and exclusively held here.
-                unsafe { ShellExecEnv::deinit_impl(me.base.shell) };
+                ShellExecEnv::deinit_impl(me.base.shell);
                 me.base.shell = core::ptr::null_mut();
             }
         }

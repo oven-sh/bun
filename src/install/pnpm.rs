@@ -556,10 +556,12 @@ pub fn migrate_pnpm_lockfile<'a>(
                     continue;
                 }
 
-                let mut pkg = lockfile::Package::default();
-
-                pkg.resolution =
-                    Resolution::init(TaggedValue::Workspace(sbuf!(lockfile).append(path)?));
+                let mut pkg = lockfile::Package {
+                    resolution: Resolution::init(TaggedValue::Workspace(
+                        sbuf!(lockfile).append(path)?,
+                    )),
+                    ..Default::default()
+                };
 
                 let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
                 let _ = path_buf.append(path); // OOM/capacity: Zig aborts; port keeps fire-and-forget

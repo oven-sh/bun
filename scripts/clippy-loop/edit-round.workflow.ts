@@ -53,12 +53,21 @@ For each diagnostic:
 CROSS-PLATFORM: each diagnostic in the dump is tagged \`[target1, target2, ...]\`. If a diagnostic only fires on non-host targets (e.g. \`[x86_64-pc-windows-msvc]\`), the item is USED on linux but unused/missing on that target — \`#[cfg(...)]\`-gate instead of deleting. If it fires on \`[host]\` AND a non-host target says "cannot find X" for the same name, the item is used only on that other target — \`#[cfg(that_target)]\`-gate the item.
 
 Clippy lints:
-- not_unsafe_ptr_arg_deref: mark the fn \`pub unsafe fn\` and add a \`/// # Safety\` doc stating the pointer precondition. Do NOT update Rust callers in OTHER files (they'll be picked up next round or by codegen regen). If the fn is \`#[no_mangle]\` / preceded by \`// HOST_EXPORT(...)\`, the C++ thunk wrapper handles it.
+- not_unsafe_ptr_arg_deref: NEVER mark \`pub unsafe fn\`. Instead change the param type:
+  * \`*mut T\` → \`&mut T\` (or \`*const T\` → \`&T\`) when the body only ever dereferences (most cases). Update IN-FILE callers: \`foo(ptr)\` → \`foo(unsafe { &mut *ptr })\` if they hold a raw ptr, or just \`foo(x)\` if they already have a reference. If they hold \`NonNull<T>\`, use \`.as_mut()\`/\`.as_ref()\`.
+  * \`*mut T\` → \`NonNull<T>\` when the fn stores the pointer for later (callbacks, registries) — then deref sites become \`unsafe { ptr.as_mut() }\` (smaller \`unsafe\` than the whole fn).
+  * If the fn is \`#[no_mangle]\` / \`extern "C"\` (called from C++), keep \`*mut T\` in the signature but immediately convert at the top: \`let this = unsafe { &mut *this };\` with one \`// SAFETY: C++ guarantees non-null\` comment, then use \`this\` (a \`&mut\`) for the rest of the body. JSC objects (JSCell, JSGlobalObject, CallFrame, JSValue, etc.) are NEVER null from C++.
+  * Delete dead \`if ptr.is_null() { return ... }\` checks that follow — once the param is \`&T\`, the null branch is unreachable.
+  * **Opaque-token forwarding wrapper** (the body NEVER dereferences the pointer in Rust — it just passes it straight to an \`unsafe extern { fn ... }\` call): this is a clippy false positive. Add \`#[allow(clippy::not_unsafe_ptr_arg_deref)]\` on the fn (or impl block if multiple) with a one-line comment: \`// Forwards <param> to C++ without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.\`
 - mut_from_ref: do NOT change the signature. Add \`#[allow(clippy::mut_from_ref)]\` ONLY if the body goes through a raw pointer / UnsafeCell (note in summary). Otherwise skip.
 - derivable_impls: replace the manual impl with \`#[derive(Default)]\` (or whichever trait) on the type.
 - drop_non_drop: delete the \`drop(x)\` call (it's a no-op on a Copy type).
 - large_enum_variant: \`Box<T>\` the large arm; update construction sites IN THIS FILE only.
-- boxed_local / vec_box: skip and note (intentional pattern, lint is warn-level).
+- vec_box: if the doc/comment says addresses must be stable across realloc (HiveArray/intrusive-list pattern), skip and note WHY. Otherwise change \`Vec<Box<T>>\` → \`Vec<T>\` and remove \`Box::new\` at push sites.
+- boxed_local: change \`fn foo(x: Box<T>)\` → \`fn foo(x: T)\` and update IN-FILE callers (drop \`Box::new\`). If trait method with default body that re-boxes, change both.
+- arc_with_non_send_sync: if the type is genuinely thread-safe (refcount/atomic-backed, or the Zig original was thread-shared), add \`unsafe impl Send for T {}\` + \`unsafe impl Sync for T {}\` with a \`// SAFETY:\` comment explaining why. Otherwise change \`Arc\` → \`Rc\`.
+- write_with_newline: \`write!(w, "...\\n", ...)\` → \`writeln!(w, "...", ...)\` (drop the trailing \\n from the format string).
+- needless_borrow / needless_borrows_for_generic_args / unnecessary_mut_passed / clone_on_copy / useless_asref / unnecessary_sort_by: apply clippy's verbatim suggestion.
 - manual_c_str_literals: \`b"...\\0"\` → \`c"..."\`.
 - unnecessary_unwrap / clone_on_copy / useless_conversion / redundant_locals / ptr_eq / precedence / implicit_saturating_sub / manual_swap / mem_replace_option_with_none / question_mark / needless_borrow / redundant_closure / manual_is_ascii_check / unwrap_or_default / write_with_newline / unnecessary_cast / redundant_pattern_matching / match_like_matches_macro / extra_unused_type_parameters / for_kv_map / manual_find / field_reassign_with_default / never_loop / redundant_guards / multiple_bound_locations / needless_maybe_sized / assertions_on_constants / needless_borrows_for_generic_args: apply clippy's suggested rewrite verbatim.
 - vec_init_then_push: replace \`let mut v = Vec::new(); v.push(a); v.push(b);\` with \`let v = vec![a, b];\`.

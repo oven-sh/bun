@@ -296,14 +296,12 @@ impl FetchTasklet {
     /// Centralises the `(*vm.event_loop()).enqueue_task_concurrent(..)` raw
     /// deref. `event_loop()` returns a self-ptr into the VirtualMachine that
     /// is valid for the VM's lifetime; `enqueue_task_concurrent` takes `&self`
-    /// and is thread-safe (lock-free MPSC push).
-    /// # Safety
-    /// `task` must be a valid live `ConcurrentTaskItem` that the queue may
-    /// take ownership of via its intrusive `next` link.
+    /// and is thread-safe (lock-free MPSC push). `task` is a live
+    /// `ConcurrentTaskItem` that the queue takes ownership of via its
+    /// intrusive `next` link.
     #[inline]
-    unsafe fn enqueue_concurrent(vm: &VirtualMachine, task: *mut ConcurrentTask) {
-        // SAFETY: forwarded — see fn-level Safety contract.
-        unsafe { vm.event_loop_shared().enqueue_task_concurrent(task) };
+    fn enqueue_concurrent(vm: &VirtualMachine, task: core::ptr::NonNull<ConcurrentTask>) {
+        vm.event_loop_shared().enqueue_task_concurrent(task);
     }
 
     /// Wrap a borrowed body chunk in a `StreamResult::Temporary*` for
@@ -371,14 +369,14 @@ impl FetchTasklet {
 
     /// # Safety
     /// Caller holds a ref; `this` must be a live heap allocation from `get()`.
-    pub unsafe fn deref(this: *mut FetchTasklet) {
+    pub fn deref(this: *mut FetchTasklet) {
         // SAFETY: caller contract.
         unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this) };
     }
 
     /// # Safety
     /// Caller holds a ref; `this` must be a live heap allocation from `get()`.
-    pub unsafe fn deref_from_thread(this: *mut FetchTasklet) {
+    pub fn deref_from_thread(this: *mut FetchTasklet) {
         // SAFETY: caller contract.
         if !unsafe { bun_ptr::ThreadSafeRefCount::<Self>::release(this) } {
             return;
@@ -395,14 +393,12 @@ impl FetchTasklet {
         }
         // this is really unlikely to happen, but can happen
         // lets make sure that we always call deinit from main thread
-        // SAFETY: `from_callback` heap-allocates a fresh `ConcurrentTaskItem`;
-        // the queue takes ownership of it.
-        unsafe {
-            Self::enqueue_concurrent(
-                self_.javascript_vm,
-                ConcurrentTask::from_callback(this, FetchTasklet::deinit_callback),
-            );
-        }
+        // `from_callback` heap-allocates a fresh `ConcurrentTaskItem`; the queue
+        // takes ownership of it.
+        Self::enqueue_concurrent(
+            self_.javascript_vm,
+            ConcurrentTask::from_callback(this, FetchTasklet::deinit_callback),
+        );
     }
 
     // PORT NOTE: ConcurrentTask::from_callback takes `fn(*mut T) -> bun_event_loop::JsResult<()>`
@@ -435,10 +431,8 @@ impl FetchTasklet {
             // SAFETY: intrusive-refcounted heap allocation from `ThreadSafeStreamBuffer::new`;
             // this side holds one of the two initial refs. Mutex guards cross-thread access
             // to `buffer`, and `callback` is only touched on the main thread (here).
-            unsafe {
-                (*buffer.as_ptr()).clear_drain_callback();
-                ThreadSafeStreamBuffer::deref(buffer.as_ptr());
-            }
+            unsafe { (*buffer.as_ptr()).clear_drain_callback() };
+            ThreadSafeStreamBuffer::deref(buffer);
         }
     }
 
@@ -472,7 +466,7 @@ impl FetchTasklet {
         self.response.clear();
         if let Some(response) = self.native_response.take() {
             // SAFETY: `response` is the +1 ref held in `native_response`.
-            unsafe { Response::unref(response) };
+            Response::unref(response);
         }
 
         self.clear_stream_cancel_handler();
@@ -571,10 +565,10 @@ impl FetchTasklet {
         // SAFETY: caller contract — `this` is live and HTTP-thread-exclusive.
         unsafe { (*this).scheduled_response_buffer = MutableString::default() };
         // SAFETY: caller contract — `this` is live and HTTP-thread-exclusive.
-        unsafe { FetchTasklet::deref_from_thread(this) };
+        FetchTasklet::deref_from_thread(this);
         if !queued_progress_update {
             // SAFETY: caller contract — `this` is live and HTTP-thread-exclusive.
-            unsafe { FetchTasklet::deref_from_thread(this) };
+            FetchTasklet::deref_from_thread(this);
         }
     }
 
@@ -801,7 +795,7 @@ impl FetchTasklet {
             self.mutex.unlock();
             if is_done {
                 // SAFETY: `self` is the live heap tasklet; we hold a ref.
-                unsafe { FetchTasklet::deref(std::ptr::from_mut(self)) };
+                FetchTasklet::deref(std::ptr::from_mut(self));
             }
             return Ok(());
         }
@@ -829,7 +823,7 @@ impl FetchTasklet {
                 let _ = vm;
                 poll_ref.unref(bun_io::js_vm_ctx());
                 // SAFETY: `this` is the live heap tasklet; we hold a ref.
-                unsafe { FetchTasklet::deref(std::ptr::from_mut(this)) };
+                FetchTasklet::deref(std::ptr::from_mut(this));
             }
         };
 
@@ -1634,7 +1628,7 @@ impl FetchTasklet {
 
         if let Some(response) = self.native_response.take() {
             // SAFETY: `response` is the +1 ref held in `native_response`.
-            unsafe { Response::unref(response) };
+            Response::unref(response);
         }
 
         self.ignore_data = true;
@@ -1646,7 +1640,7 @@ impl FetchTasklet {
         // SAFETY: response is a freshly allocated Response; makeMaybePooled takes ownership semantics on the JS side
         let global_this = self.global_this;
         // SAFETY: `response` is freshly allocated above; ownership transfers to JSC.
-        let response_js = unsafe { Response::make_maybe_pooled(&global_this, response) };
+        let response_js = Response::make_maybe_pooled(&global_this, response);
         response_js.ensure_still_alive();
         self.response = jsc::Weak::<FetchTasklet>::create(
             response_js,
@@ -1657,7 +1651,7 @@ impl FetchTasklet {
         // Response is intrusively refcounted; bump for native_response.
         // SAFETY: `response` is the live heap allocation owned by JSC after
         // `make_maybe_pooled`; `ref_` bumps the intrusive refcount.
-        self.native_response = Some(unsafe { Response::ref_(response) });
+        self.native_response = Some(Response::ref_(response));
         response_js
     }
 
@@ -1839,7 +1833,7 @@ impl FetchTasklet {
                 fetch_tasklet_ptr,
                 // SAFETY: `new_with_release` guarantees the pointer/lifetime
                 // contract `callback` documents.
-                |t, h, r| unsafe { FetchTasklet::callback(t, h, r) },
+                |t, h, r| FetchTasklet::callback(t, h, r),
                 FetchTasklet::release_at_shutdown,
             ),
             fetch_options.redirect_type,
@@ -1958,14 +1952,12 @@ impl FetchTasklet {
         }
         // ref until the main thread callback is called
         this_ref.ref_();
-        // SAFETY: `from_callback` heap-allocates a fresh `ConcurrentTaskItem`;
-        // the queue takes ownership of it.
-        unsafe {
-            Self::enqueue_concurrent(
-                this_ref.javascript_vm,
-                ConcurrentTask::from_callback(this, FetchTasklet::resume_request_data_stream),
-            );
-        }
+        // `from_callback` heap-allocates a fresh `ConcurrentTaskItem`; the queue
+        // takes ownership of it.
+        Self::enqueue_concurrent(
+            this_ref.javascript_vm,
+            ConcurrentTask::from_callback(this, FetchTasklet::resume_request_data_stream),
+        );
     }
 
     /// This is ALWAYS called from the main thread
@@ -1985,7 +1977,7 @@ impl FetchTasklet {
         })();
         // deref when done because we ref inside onWriteRequestDataDrain
         // SAFETY: `this` is the live heap tasklet; we hold a ref.
-        unsafe { FetchTasklet::deref(this) };
+        FetchTasklet::deref(this);
         let () = result;
         Ok(())
     }
@@ -2065,7 +2057,7 @@ impl FetchTasklet {
         if let Some(js_error) = err {
             if self.signal_store.aborted.load(Ordering::Relaxed) || self.abort_reason.has() {
                 // SAFETY: `this_ptr` derived from live `&mut self`; we hold a ref.
-                unsafe { FetchTasklet::deref(this_ptr) };
+                FetchTasklet::deref(this_ptr);
                 return;
             }
             if !js_error.is_undefined_or_null() {
@@ -2077,7 +2069,7 @@ impl FetchTasklet {
                 // Using chunked transfer encoding, send the terminating chunk
                 let Some(thread_safe_stream_buffer) = self.stream_buffer_mut() else {
                     // SAFETY: `this_ptr` derived from live `&mut self`; we hold a ref.
-                    unsafe { FetchTasklet::deref(this_ptr) };
+                    FetchTasklet::deref(this_ptr);
                     return;
                 };
                 // Mutex guards `buffer` against the HTTP thread; released when
@@ -2092,7 +2084,7 @@ impl FetchTasklet {
             }
         }
         // SAFETY: `this_ptr` derived from live `&mut self`; we hold a ref.
-        unsafe { FetchTasklet::deref(this_ptr) };
+        FetchTasklet::deref(this_ptr);
     }
 
     pub fn abort_task(&mut self) {
@@ -2131,7 +2123,7 @@ impl FetchTasklet {
     /// `task` must be a live heap-allocated `FetchTasklet` with the
     /// HTTP-thread ref still held; `async_http` must point to the HTTP
     /// thread's live `AsyncHTTP` for the duration of the call.
-    pub unsafe fn callback(
+    pub fn callback(
         task: *mut FetchTasklet,
         async_http: *mut AsyncHTTP<'static>,
         result: HTTPClientResult,
@@ -2225,7 +2217,7 @@ impl FetchTasklet {
                 task_ref.mutex.unlock();
                 if is_done {
                     // SAFETY: `task` is the live heap tasklet; HTTP-thread ref held.
-                    unsafe { FetchTasklet::deref_from_thread(task) };
+                    FetchTasklet::deref_from_thread(task);
                 }
                 return;
             }
@@ -2251,7 +2243,7 @@ impl FetchTasklet {
                 task_ref.mutex.unlock();
                 if is_done {
                     // SAFETY: `task` is the live heap tasklet; HTTP-thread ref held.
-                    unsafe { FetchTasklet::deref_from_thread(task) };
+                    FetchTasklet::deref_from_thread(task);
                 }
                 return;
             }
@@ -2275,25 +2267,27 @@ impl FetchTasklet {
                 // HTTP-side ref. The 1→0 transition runs `dealloc_for_shutdown`
                 // (Rust boxes only — JSC handles are leaked to destructOnExit).
                 // SAFETY: `task` is the live heap tasklet; both refs held.
-                unsafe { FetchTasklet::deref_from_thread(task) };
+                FetchTasklet::deref_from_thread(task);
                 // SAFETY: second ref still held until this 1→0 transition.
-                unsafe { FetchTasklet::deref_from_thread(task) };
+                FetchTasklet::deref_from_thread(task);
             }
             return;
         }
-        let ct = task_ref
-            .concurrent_task
-            .from(task, AutoDeinit::ManualDeinit);
-        // SAFETY: `ct` is the inline `concurrent_task` field of the heap
-        // tasklet; the queue takes ownership of its `next` link.
-        unsafe { Self::enqueue_concurrent(task_ref.javascript_vm, ct) };
+        let ct = core::ptr::NonNull::from(
+            task_ref
+                .concurrent_task
+                .from(task, AutoDeinit::ManualDeinit),
+        );
+        // `ct` is the inline `concurrent_task` field of the heap tasklet; the
+        // queue takes ownership of its `next` link.
+        Self::enqueue_concurrent(task_ref.javascript_vm, ct);
 
         task_ref.mutex.unlock();
         // we are done with the http client so we can deref our side
         // this is a atomic operation and will enqueue a task to deinit on the main thread
         if is_done {
             // SAFETY: `task` is the live heap tasklet; HTTP-thread ref held.
-            unsafe { FetchTasklet::deref_from_thread(task) };
+            FetchTasklet::deref_from_thread(task);
         }
     }
 }

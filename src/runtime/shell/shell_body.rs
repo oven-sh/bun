@@ -294,8 +294,8 @@ impl<'a> GlobalJS<'a> {
             .cast_const()
             .cast_mut();
         let concurrent = bun_event_loop::ConcurrentTask::create(bun_event_loop::Task::init(task));
-        // SAFETY: see above — `enqueue_task_concurrent` only touches the lock-free queue.
-        unsafe { (*vm).enqueue_task_concurrent(concurrent) };
+        // SAFETY: see above — `vm` is a live VM pointer.
+        unsafe { &mut *vm }.enqueue_task_concurrent(concurrent);
     }
 
     #[inline]
@@ -407,10 +407,11 @@ impl<'a> GlobalMini<'a> {
         let anytask = bun_core::heap::into_raw(Box::new(AnyTaskWithExtraContext::default()));
         // SAFETY: `anytask` was just heap-allocated and is exclusively owned here.
         unsafe { (*anytask).from(task, run_from_main_thread_mini) };
-        // SAFETY: `mini` is a long-lived loop; the concurrent queue is thread-safe.
+        // SAFETY: `mini` is a long-lived loop; `anytask` was just heap-allocated
+        // (non-null); the concurrent queue is thread-safe.
         unsafe {
             (*(std::ptr::from_ref::<MiniEventLoop<'a>>(self.mini) as *mut MiniEventLoop<'a>))
-                .enqueue_task_concurrent(anytask)
+                .enqueue_task_concurrent(core::ptr::NonNull::new_unchecked(anytask))
         };
     }
 
@@ -1096,6 +1097,7 @@ pub mod testing_apis {
     ) -> JsResult<JSValue> {
         #[cfg(windows)]
         {
+            let _ = (global, callframe);
             return Ok(JSValue::FALSE);
         }
         #[cfg(not(windows))]

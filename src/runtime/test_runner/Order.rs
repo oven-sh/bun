@@ -130,7 +130,7 @@ impl Order {
     /// `current` must point to a live, uniquely-owned `ExecutionEntry` (Box-owned in
     /// `DescribeScope.entries`) with mutable provenance for the duration of this call. The
     /// `base.parent` chain reachable from `*current` must consist of live `DescribeScope` nodes.
-    pub unsafe fn generate_order_test(&mut self, current: *mut ExecutionEntry) -> JsResult<()> {
+    pub fn generate_order_test(&mut self, current: *mut ExecutionEntry) -> JsResult<()> {
         // Stacked Borrows: `current` is reborrowed as `&mut` inside `list.append` and the skip-past
         // loop below, so we never hold a long-lived `&mut *current` across those calls — each access
         // dereferences the raw pointer locally.

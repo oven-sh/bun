@@ -360,7 +360,7 @@ impl Pipeline {
                 if !shell.is_null() {
                     // SAFETY: `shell` is the duped env this pipeline child owned;
                     // null-checked above and exclusively held here.
-                    unsafe { ShellExecEnv::deinit_impl(shell) };
+                    ShellExecEnv::deinit_impl(shell);
                 }
             }
         }

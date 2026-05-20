@@ -308,8 +308,10 @@ impl hooks::AutoInstaller for PackageManager {
         // Zig: `try manager.lockfile.appendPackage(.{ .name = String.init("", ""),
         //   .resolution = .{ .value = .{ .root = {} }, .tag = .root } })`
         // (resolver.zig:2082).
-        let mut pkg = Package::default();
-        pkg.resolution = resolution::Resolution::init(resolution::TaggedValue::Root);
+        let pkg = Package {
+            resolution: resolution::Resolution::init(resolution::TaggedValue::Root),
+            ..Default::default()
+        };
         let appended = self.lockfile.append_package(&pkg)?;
         Ok(appended.meta.id)
     }

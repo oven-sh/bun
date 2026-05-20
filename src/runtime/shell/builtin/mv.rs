@@ -451,7 +451,7 @@ impl ShellMvCheckTargetTask {
     /// # Safety
     /// `this` must point to a live `ShellMvCheckTargetTask` held in
     /// `MvState::CheckTarget` for the duration of the call.
-    pub unsafe fn run_from_main_thread(this: *mut ShellMvCheckTargetTask, interp: &Interpreter) {
+    pub fn run_from_main_thread(this: *mut ShellMvCheckTargetTask, interp: &Interpreter) {
         // SAFETY: caller contract.
         let cmd = unsafe { (*this).cmd };
         Mv::check_target_task_done(interp, cmd);
@@ -576,7 +576,7 @@ impl ShellMvBatchedTask {
     /// # Safety
     /// `this` must point to a live `ShellMvBatchedTask` held in
     /// `MvState::Executing::tasks` for the duration of the call.
-    pub unsafe fn run_from_main_thread(this: *mut ShellMvBatchedTask, interp: &Interpreter) {
+    pub fn run_from_main_thread(this: *mut ShellMvBatchedTask, interp: &Interpreter) {
         // SAFETY: caller contract.
         let (cmd, idx) = unsafe { ((*this).cmd, (*this).idx) };
         Mv::batched_move_task_done(interp, cmd, idx);
@@ -596,7 +596,7 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellMvCheckTargetTask {
         Self::run_from_thread_pool(this)
     }
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
-        unsafe { Self::run_from_main_thread(this, interp) }
+        Self::run_from_main_thread(this, interp)
     }
 }
 
@@ -606,7 +606,7 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellMvBatchedTask {
         Self::run_from_thread_pool(this)
     }
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
-        unsafe { Self::run_from_main_thread(this, interp) }
+        Self::run_from_main_thread(this, interp)
     }
 }
 

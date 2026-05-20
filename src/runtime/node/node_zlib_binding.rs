@@ -503,7 +503,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             this.poll_ref().with_mut(|p| p.unref(vm));
             // SAFETY: matching `ref_()` in `write()`; `this_ptr` is the heap
             // payload and is not accessed after this call.
-            unsafe { T::deref(this_ptr) };
+            T::deref(this_ptr);
             return;
         };
 
@@ -512,7 +512,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         if !Self::check_error(&this, global, this_value) {
             this.poll_ref().with_mut(|p| p.unref(vm));
             // SAFETY: see above.
-            unsafe { T::deref(this_ptr) };
+            T::deref(this_ptr);
             return;
         }
 
@@ -534,7 +534,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         this.poll_ref().with_mut(|p| p.unref(vm));
         // SAFETY: matching `ref_()` in `write()`; `this_ptr` is the heap payload
         // and is not accessed after this call.
-        unsafe { T::deref(this_ptr) };
+        T::deref(this_ptr);
     }
 
     pub fn write_sync(
@@ -1011,7 +1011,7 @@ macro_rules! __impl_compression_stream {
                 // SAFETY: forwarded trait contract — `this` is live; the
                 // derived `CellRefCounted::deref` routes zero to the per-type
                 // `destroy` (≡ Zig `bun.ptr.RefCount(.., deinit, .{})`).
-                unsafe { <Self as ::bun_ptr::CellRefCounted>::deref(this) }
+                <Self as ::bun_ptr::CellRefCounted>::deref(this)
             }
 
             #[inline] fn write_callback_get_cached(this_value: ::bun_jsc::JSValue) -> Option<::bun_jsc::JSValue> {

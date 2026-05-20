@@ -2306,7 +2306,7 @@ impl TestCommand {
             // results go out over fd 3. Never returns.
             // SAFETY: `vm` is the live per-thread VM; `reporter`/`ctx` outlive
             // this never-returning call.
-            unsafe { ParallelRunner::run_as_worker(&mut reporter, vm, ctx) };
+            ParallelRunner::run_as_worker(&mut reporter, vm, ctx);
         }
 
         // Start the debugger before we scan for files
@@ -3314,7 +3314,7 @@ impl TestCommand {
 
                 let el = vm.event_loop();
                 // SAFETY: el is the VM-owned event loop; vm is passed back as *mut.
-                unsafe { (*el).tick_immediate_tasks(std::ptr::from_mut::<VirtualMachine>(vm)) };
+                unsafe { (*el).tick_immediate_tasks(vm) };
                 drop(buntest_strong);
             }
 

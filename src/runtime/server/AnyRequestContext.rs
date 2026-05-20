@@ -206,7 +206,7 @@ impl AnyRequestContext {
             // so forward the enum as-is — the per-variant assert is redundant.
             // SAFETY: `ctx` is the live request context this `AnyRequestContext`
             // wraps; `on_abort` only derefs that exact pointer.
-            unsafe { T::on_abort(core::ptr::from_mut::<T>(ctx), response) };
+            T::on_abort(core::ptr::from_mut::<T>(ctx), response);
         })
     }
 

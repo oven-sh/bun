@@ -1,12 +1,5 @@
 //! blocking, but off the main thread
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
-use core::ffi::c_int;
-use core::ffi::c_void;
-use core::marker::ConstParamTy;
-#[cfg(windows)]
-use core::mem::offset_of;
-
 use crate::node::fs as node_fs;
 use crate::node::types::PathLikeExt as _;
 use crate::webcore::blob::{self, MAX_SIZE, MkdirpTarget, Retry, SizeType, StoreRef, store};
@@ -17,11 +10,17 @@ use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue};
 use bun_paths::PathBuffer;
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
+#[cfg(not(windows))]
+use bun_sys::Stat;
 #[cfg(windows)]
 use bun_sys::windows::libuv;
-use bun_sys::{self, Fd, FdExt, Mode, Stat, SystemError};
+use bun_sys::{self, Fd, FdExt, Mode, SystemError};
 #[cfg(windows)]
 use bun_sys_jsc::ErrorJsc as _;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use core::ffi::c_int;
+use core::ffi::c_void;
+use core::marker::ConstParamTy;
 
 // Local conversion: `bun_sys::SystemError` -> `bun_jsc::SystemError`. Both mirror
 // the same Zig `jsc.SystemError` extern struct; map field-by-field because the
@@ -961,7 +960,9 @@ impl Drop for CopyFile<'_> {
 
 // Port of `bun.sys.preallocate_supported` / `bun.sys.preallocate_length` (sys.zig).
 // Kept local until bun_sys exports them; values match crate::node::fs.
+#[cfg(not(windows))]
 const PREALLOCATE_SUPPORTED: bool = cfg!(any(target_os = "linux", target_os = "android"));
+#[cfg(not(windows))]
 const PREALLOCATE_LENGTH: SizeType = 2048 * 1024;
 
 const OPEN_DESTINATION_FLAGS: i32 =
@@ -1862,6 +1863,7 @@ pub enum IOWhich {
     Both,
 }
 
+#[cfg(not(windows))]
 fn unsupported_directory_error() -> SystemError {
     SystemError {
         errno: bun_sys::SystemErrno::EISDIR as i32,

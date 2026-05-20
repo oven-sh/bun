@@ -216,7 +216,7 @@ impl Ls {
     /// # Safety
     /// `task` must be a live heap allocation produced by
     /// [`ShellLsTask::create`]; ownership is reclaimed here.
-    pub unsafe fn on_shell_ls_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellLsTask) {
+    pub fn on_shell_ls_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellLsTask) {
         // SAFETY: precondition.
         let mut task = unsafe { bun_core::heap::take(task) };
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
@@ -643,7 +643,7 @@ impl ShellLsTask {
     /// `this` must be a live heap allocation produced by
     /// [`ShellLsTask::create`]; ownership is reclaimed via
     /// [`Ls::on_shell_ls_task_done`].
-    pub unsafe fn run_from_main_thread(this: *mut ShellLsTask, interp: &Interpreter) {
+    pub fn run_from_main_thread(this: *mut ShellLsTask, interp: &Interpreter) {
         // SAFETY: precondition.
         unsafe {
             let cmd = (*this).cmd;
@@ -802,7 +802,7 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellLsTask {
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         // SAFETY: `ShellTask` trampoline hands back the heap allocation
         // produced by `ShellLsTask::create`.
-        unsafe { Self::run_from_main_thread(this, interp) }
+        Self::run_from_main_thread(this, interp)
     }
 }
 

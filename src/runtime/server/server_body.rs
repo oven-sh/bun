@@ -131,16 +131,11 @@ pub trait RequestCtxOps: RequestCtx {
     fn set_is_transfer_encoding(&mut self, v: bool);
     fn set_is_waiting_for_request_body(&mut self, v: bool);
     fn arm_on_data(&mut self, resp: &mut Self::Resp);
-    // body-streaming callback hooks (type-erased, stored on `Body::PendingValue`)
-    /// # Safety
-    /// `this` must be a live `*mut Self::RequestCtx` cast to `*mut c_void`.
-    unsafe fn on_start_buffering_callback(this: *mut c_void);
-    /// # Safety
-    /// `this` must be a live `*mut Self::RequestCtx` cast to `*mut c_void`.
-    unsafe fn on_start_streaming_request_body_callback(this: *mut c_void) -> WebCore::DrainResult;
-    /// # Safety
-    /// `this` must be a live `*mut Self::RequestCtx` cast to `*mut c_void`.
-    unsafe fn on_request_body_readable_stream_available(
+    // body-streaming callback hooks (type-erased, stored on `Body::PendingValue`).
+    // `this` must be a live `*mut Self::RequestCtx` cast to `*mut c_void`.
+    fn on_start_buffering_callback(this: *mut c_void);
+    fn on_start_streaming_request_body_callback(this: *mut c_void) -> WebCore::DrainResult;
+    fn on_request_body_readable_stream_available(
         this: *mut c_void,
         global_this: &JSGlobalObject,
         readable: WebCore::ReadableStream,
@@ -264,11 +259,7 @@ where
         ) where
             S: super::ServerLike + 'static,
         {
-            // SAFETY: `ctx` is the live request context registered via `on_data` below;
-            // uWS invokes this callback on the JS thread with that exact pointer.
-            unsafe {
-                NewRequestContext::<S, SSL_, DBG_, H3_>::on_buffered_body_chunk(ctx, chunk, last);
-            }
+            NewRequestContext::<S, SSL_, DBG_, H3_>::on_buffered_body_chunk(ctx, chunk, last);
         }
         RespLike::to_any_response(resp).on_data(
             handler::<ThisServer, SSL, DBG, H3>,
@@ -276,23 +267,20 @@ where
         );
     }
     #[inline]
-    unsafe fn on_start_buffering_callback(this: *mut c_void) {
-        // SAFETY: forwarded — see trait method `# Safety`.
-        unsafe { Self::on_start_buffering_callback(this) }
+    fn on_start_buffering_callback(this: *mut c_void) {
+        Self::on_start_buffering_callback(this)
     }
     #[inline]
-    unsafe fn on_start_streaming_request_body_callback(this: *mut c_void) -> WebCore::DrainResult {
-        // SAFETY: forwarded — see trait method `# Safety`.
-        unsafe { Self::on_start_streaming_request_body_callback(this) }
+    fn on_start_streaming_request_body_callback(this: *mut c_void) -> WebCore::DrainResult {
+        Self::on_start_streaming_request_body_callback(this)
     }
     #[inline]
-    unsafe fn on_request_body_readable_stream_available(
+    fn on_request_body_readable_stream_available(
         this: *mut c_void,
         global_this: &JSGlobalObject,
         readable: WebCore::ReadableStream,
     ) {
-        // SAFETY: forwarded — see trait method `# Safety`.
-        unsafe { Self::on_request_body_readable_stream_available(this, global_this, readable) }
+        Self::on_request_body_readable_stream_available(this, global_this, readable)
     }
 }
 

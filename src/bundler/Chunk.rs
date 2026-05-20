@@ -360,6 +360,7 @@ impl Order {
 /// This implementation is just slow.
 /// Can we make the JSPrinter itself track this without increasing
 /// complexity a lot?
+#[derive(Default)]
 pub enum IntermediateOutput {
     /// If the chunk has references to other chunks, then "pieces" contains
     /// the contents of the chunk. Another joiner will have to be
@@ -373,6 +374,7 @@ pub enum IntermediateOutput {
     /// because it avoids doing a join operation twice.
     Joiner(StringJoiner),
 
+    #[default]
     Empty,
 }
 
@@ -416,12 +418,6 @@ impl OutputPieces {
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.pieces.is_empty()
-    }
-}
-
-impl Default for IntermediateOutput {
-    fn default() -> Self {
-        IntermediateOutput::Empty
     }
 }
 
@@ -1292,8 +1288,9 @@ pub struct JavaScriptChunk {
 
     // for code splitting
     // TODO(port): Zig uses ArrayHashMapUnmanaged(Ref, string, Ref.ArrayHashCtx, false) — custom hash ctx
-    pub exports_to_other_chunks: ArrayHashMap<Ref, &'static [u8]>,
-    pub imports_from_other_chunks: ImportsFromOtherChunks,
+    // Boxed so `Content::Javascript` stays close to `Content::Css` (clippy::large_enum_variant).
+    pub exports_to_other_chunks: Box<ArrayHashMap<Ref, &'static [u8]>>,
+    pub imports_from_other_chunks: Box<ImportsFromOtherChunks>,
     pub cross_chunk_prefix_stmts: Vec<Stmt>,
     pub cross_chunk_suffix_stmts: Vec<Stmt>,
 
@@ -1443,7 +1440,7 @@ impl CssImportOrder {
             CssImportOrderKind::ExternalPath(_) => 1,
             CssImportOrderKind::SourceIndex(_) => 2,
         };
-        bun_core::write_any_to_hasher(hasher, &tag);
+        bun_core::write_any_to_hasher(hasher, tag);
         match &self.kind {
             CssImportOrderKind::Layers(layers) => {
                 for layer in layers.inner().slice() {
@@ -1464,7 +1461,7 @@ impl CssImportOrder {
             // doesn't impl `AsBytes`; hash the inner u32 (Zig hashed the
             // `Index.Int` bytes directly).
             CssImportOrderKind::SourceIndex(idx) => {
-                bun_core::write_any_to_hasher(hasher, &idx.get())
+                bun_core::write_any_to_hasher(hasher, idx.get())
             }
         }
     }

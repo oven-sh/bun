@@ -13,7 +13,9 @@ use bun_jsc::JsCell;
 use crate::webcore::jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
 };
-use bun_core::{self as bun, Output};
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use bun_core as bun;
+use bun_core::Output;
 use bun_core::{
     OwnedString, String as BunString, WTFStringImplExt as _, ZigString, ZigStringSlice, strings,
 };
@@ -496,7 +498,7 @@ impl BlobExt for Blob {
             promise_value.ensure_still_alive();
 
             // SAFETY: `read_file_task` was just heap-allocated by `create_on_js_thread`.
-            unsafe { read_file::ReadFileTask::schedule(read_file_task) };
+            read_file::ReadFileTask::schedule(unsafe { &mut *read_file_task });
 
             debug!("doReadFile: read_file_task scheduled");
             promise_value
@@ -699,7 +701,7 @@ impl BlobExt for Blob {
                 bun_core::heap::into_raw(file_read),
             );
             // SAFETY: `read_file_task` was just heap-allocated by `create_on_js_thread`.
-            unsafe { read_file::ReadFileTask::schedule(read_file_task) };
+            read_file::ReadFileTask::schedule(unsafe { &mut *read_file_task });
         }
     }
     fn get_content_type(&self) -> Option<ZigStringSlice> {
@@ -4652,7 +4654,7 @@ pub fn write_file_with_source_destination(
             let promise_value = unsafe { (*write_file_promise).promise.value() };
             promise_value.ensure_still_alive();
             // SAFETY: `task` was just heap-allocated by `create_on_js_thread`.
-            unsafe { write_file_mod::WriteFileTask::schedule(task) };
+            write_file_mod::WriteFileTask::schedule(unsafe { &mut *task });
             return Ok(promise_value);
         }
     }
@@ -4936,8 +4938,6 @@ pub fn write_file_internal(
     // PORT NOTE: Zig manually ref/deref's; StoreRef clone+drop achieves the same.
     let _input_store_hold = input_store;
 
-    let mut needs_async = false;
-
     if let Some(mkdir) = options.mkdirp_if_not_exists {
         if mkdir
             && matches!(*path_or_blob, PathOrBlob::Blob(ref b)
@@ -4957,6 +4957,7 @@ pub fn write_file_internal(
     // except if you're on Windows. Windows I/O is slower. Let's not even try.
     #[cfg(not(windows))]
     {
+        let mut needs_async = false;
         let fast_path_ok = matches!(*path_or_blob, PathOrBlob::Path(_))
             || (matches!(*path_or_blob, PathOrBlob::Blob(ref b)
                 if b.offset.get() == 0 && !b.is_s3()
@@ -5297,6 +5298,7 @@ pub fn write_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
 
 const WRITE_PERMISSIONS: bun_sys::Mode = 0o664;
 
+#[cfg(not(windows))]
 fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     global_this: &JSGlobalObject,
     pathlike: &PathOrFileDescriptor,
@@ -5381,11 +5383,12 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     JSPromise::resolved_promise_value(global_this, JSValue::js_number(written.get() as f64))
 }
 
+#[cfg(not(windows))]
 fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
     global_this: &JSGlobalObject,
     pathlike: &PathOrFileDescriptor,
     bytes: &[u8],
-    needs_async: &mut bool,
+    _needs_async: &mut bool,
 ) -> JSValue {
     let fd: Fd = if !NEEDS_OPEN {
         pathlike.fd()
@@ -5405,7 +5408,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
             bun_sys::Result::Err(err) => {
                 #[cfg(not(windows))]
                 if err.get_errno() == bun_sys::E::ENOENT {
-                    *needs_async = true;
+                    *_needs_async = true;
                     return JSValue::ZERO;
                 }
                 return JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
@@ -5435,7 +5438,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
             bun_sys::Result::Err(err) => {
                 #[cfg(not(windows))]
                 if err.get_errno() == bun_sys::E::EAGAIN {
-                    *needs_async = true;
+                    *_needs_async = true;
                     return JSValue::ZERO;
                 }
                 let err_js = if !NEEDS_OPEN {
@@ -5736,7 +5739,7 @@ impl S3BlobDownloadTask {
     /// # Safety
     /// `this` must be the heap-allocated task produced by [`S3BlobDownloadTask::init`];
     /// ownership is consumed (the box is reclaimed and dropped) by this call.
-    pub unsafe fn on_s3_download_resolved(
+    pub fn on_s3_download_resolved(
         result: crate::webcore::__s3_client::S3DownloadResult,
         this: *mut S3BlobDownloadTask,
     ) -> Result<(), jsc::JsTerminated> {
@@ -7103,41 +7106,43 @@ pub trait FileOpener: Sized {
         }
 
         #[cfg(not(windows))]
-        loop {
-            match bun_sys::open(
-                path,
-                Self::OPEN_FLAGS | Self::OPENER_FLAGS,
-                crate::node::fs::DEFAULT_PERMISSION,
-            ) {
-                bun_sys::Result::Ok(fd) => {
-                    self.set_opened_fd(fd);
-                    break;
-                }
-                bun_sys::Result::Err(err) => {
-                    // Zig: `if (@hasField(This, "mkdirp_if_not_exists")) switch (mkdirIfNotExists(...)) { ... }`.
-                    if err.get_errno() == bun_sys::E::ENOENT {
-                        match self.try_mkdirp(err.clone(), path, path_string.slice()) {
-                            Retry::Continue => continue,
-                            Retry::Fail => {
-                                // `mkdir_if_not_exists` already populated
-                                // `errno`/`system_error` on the impl.
-                                self.set_opened_fd(Fd::INVALID);
-                                break;
-                            }
-                            Retry::No => {}
-                        }
+        {
+            loop {
+                match bun_sys::open(
+                    path,
+                    Self::OPEN_FLAGS | Self::OPENER_FLAGS,
+                    crate::node::fs::DEFAULT_PERMISSION,
+                ) {
+                    bun_sys::Result::Ok(fd) => {
+                        self.set_opened_fd(fd);
+                        break;
                     }
-                    self.set_errno(bun_core::errno_to_zig_err(err.errno as i32));
-                    self.set_system_error(jsc::SysErrorJsc::to_system_error(
-                        &err.with_path(path_string.slice()),
-                    ));
-                    self.set_opened_fd(Fd::INVALID);
-                    break;
+                    bun_sys::Result::Err(err) => {
+                        // Zig: `if (@hasField(This, "mkdirp_if_not_exists")) switch (mkdirIfNotExists(...)) { ... }`.
+                        if err.get_errno() == bun_sys::E::ENOENT {
+                            match self.try_mkdirp(err.clone(), path, path_string.slice()) {
+                                Retry::Continue => continue,
+                                Retry::Fail => {
+                                    // `mkdir_if_not_exists` already populated
+                                    // `errno`/`system_error` on the impl.
+                                    self.set_opened_fd(Fd::INVALID);
+                                    break;
+                                }
+                                Retry::No => {}
+                            }
+                        }
+                        self.set_errno(bun_core::errno_to_zig_err(err.errno as i32));
+                        self.set_system_error(jsc::SysErrorJsc::to_system_error(
+                            &err.with_path(path_string.slice()),
+                        ));
+                        self.set_opened_fd(Fd::INVALID);
+                        break;
+                    }
                 }
             }
-        }
 
-        callback(self, self.opened_fd());
+            callback(self, self.opened_fd());
+        }
     }
 
     fn get_fd(&mut self, callback: fn(&mut Self, Fd)) {

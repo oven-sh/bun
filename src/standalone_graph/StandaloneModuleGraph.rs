@@ -536,7 +536,7 @@ bitflags::bitflags! {
 const TRAILER: &[u8] = b"\n---- Bun! ----\n";
 
 impl StandaloneModuleGraph {
-    pub fn from_bytes(
+    fn from_bytes(
         raw_ptr: *mut u8,
         raw_len: usize,
         offsets: Offsets,

@@ -180,7 +180,7 @@ pub unsafe fn rename_symbols_in_chunk(
         let first_top_level_slots: SlotCounts = {
             let mut slots = SlotCounts::default();
             for &i in files_in_order {
-                slots.union_max(nested_slot_counts_col[i as usize].clone());
+                slots.union_max(nested_slot_counts_col[i as usize]);
             }
             slots
         };

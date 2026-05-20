@@ -118,6 +118,6 @@ test("JS running during auto-install's event-loop tick doesn't leave pm.log dang
 
   expect(stderr).toBe("");
   expect(stdout).toContain("ok");
-  expect(exitCode).toBe(0);
   expect(hits).toBeGreaterThan(0);
+  expect(exitCode).toBe(0);
 });

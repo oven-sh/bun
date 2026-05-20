@@ -1,6 +1,8 @@
 #!/usr/bin/env bun
 // Reads workflow output JSON on stdin: [{file, approved, patch}], applies each
-// approved patch with `git apply --unidiff-zero`, logs results.
+// approved patch with `git apply` (strict, then `--recount` fallback). Never
+// uses `--unidiff-zero` or `-C1` — both silently corrupt by joining adjacent
+// source lines when the agent's @@ header counts are off.
 
 import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";

@@ -2565,7 +2565,7 @@ macro_rules! debug_warn {
 /// and any `#[derive(strum::IntoStaticStr)]` enum).
 // TODO(port): the comptime-literal fast path (is_comptime_name) is dropped —
 // could be recovered with a proc-macro overload that detects string literals.
-pub fn err(error_name: impl ErrName, fmt: &str, args: impl FmtTuple) {
+pub fn err(error_name: impl ErrName + Copy, fmt: &str, args: impl FmtTuple) {
     // Zig concatenates `fmt` into the prettyErrorln template, whose trailing-\n
     // check then sees the caller's newline. Here `fmt` is rendered into a `{}`
     // arg, so strip a trailing \n and let pretty_errorln! add exactly one.
@@ -2597,7 +2597,6 @@ pub fn err(error_name: impl ErrName, fmt: &str, args: impl FmtTuple) {
         bstr::BStr::new(error_name.name()),
         body
     );
-    drop(error_name);
 }
 
 /// `Output.err(.TAG, fmt, args)` with a bare string tag — e.g.

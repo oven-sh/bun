@@ -70,10 +70,15 @@ pub struct AutoContext;
 impl<K: Hash + Eq + ?Sized> ArrayHashContext<K> for AutoContext {
     #[inline]
     fn hash(&self, key: &K) -> u32 {
-        // Zig: std.array_hash_map.getAutoHashFn → std.hash.Wyhash. Route through
-        // the one-shot hasher to skip the streaming state's 48-byte zero-fill —
-        // keys here are small POD (`Ref`, indices) so the fold is a single `mum`.
-        bun_wyhash::auto_hash(key) as u32 // @truncate
+        // Keys here are small POD (`Ref`, `u32`, indices). FxHash is a single
+        // mul+rotate per word — measurably cheaper than wyhash's `mum` fold for
+        // 8-byte keys, and what rustc uses for the same workload shape. The Zig
+        // port used wyhash only because that's what `std.array_hash_map` defaults
+        // to; nothing persists these hashes across runs.
+        use core::hash::Hasher;
+        let mut h = rustc_hash::FxHasher::default();
+        key.hash(&mut h);
+        h.finish() as u32 // @truncate
     }
     #[inline]
     fn eql(&self, a: &K, b: &K, _b_index: usize) -> bool {

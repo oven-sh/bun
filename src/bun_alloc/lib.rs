@@ -2335,9 +2335,17 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
             self.list.ptrs[block_id].as_ref().expect("alloc").used as usize > (idx % COUNT)
         );
 
-        // SAFETY: `idx % COUNT < used` (asserted above) ⇒ slot was initialized by `append`.
+        // SAFETY: `block_id <= used` ⇒ `append` allocated `ptrs[block_id]`;
+        // `idx % COUNT < used` ⇒ slot was initialized by `append`.
         unsafe {
-            self.list.ptrs[block_id].as_ref().expect("alloc").items[idx % COUNT].assume_init_ref()
+            self.list
+                .ptrs
+                .get_unchecked(block_id)
+                .as_ref()
+                .unwrap_unchecked()
+                .items
+                .get_unchecked(idx % COUNT)
+                .assume_init_ref()
         }
     }
 
@@ -2352,9 +2360,17 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
             self.list.ptrs[block_id].as_ref().expect("alloc").used as usize > (idx % COUNT)
         );
 
-        // SAFETY: `idx % COUNT < used` (asserted above) ⇒ slot was initialized by `append`.
+        // SAFETY: `block_id <= used` ⇒ `append` allocated `ptrs[block_id]`;
+        // `idx % COUNT < used` ⇒ slot was initialized by `append`.
         unsafe {
-            self.list.ptrs[block_id].as_mut().expect("alloc").items[idx % COUNT].assume_init_mut()
+            self.list
+                .ptrs
+                .get_unchecked_mut(block_id)
+                .as_mut()
+                .unwrap_unchecked()
+                .items
+                .get_unchecked_mut(idx % COUNT)
+                .assume_init_mut()
         }
     }
 }

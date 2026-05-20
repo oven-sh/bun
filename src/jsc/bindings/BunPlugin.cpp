@@ -31,6 +31,8 @@
 
 #include "BunClientData.h"
 #include "JSCommonJSModule.h"
+#include "ModuleLoader.h"
+#include "PathInlines.h"
 #include "isBuiltinModule.h"
 #include "AsyncContextFrame.h"
 #include "ImportMetaObject.h"
@@ -401,6 +403,11 @@ void BunPlugin::OnLoad::addModuleMock(JSC::VM& vm, const String& path, JSC::JSOb
     auto* virtualModules = globalObject->onLoadPlugins.virtualModules;
 
     virtualModules->set(path, JSC::Strong<JSC::JSObject> { vm, mockObject });
+
+    // Invalidate requireActual cache for this module — the real module hasn't changed,
+    // but this keeps behavior consistent if the mock is removed and re-added.
+    if (globalObject->onLoadPlugins.requireActualCache)
+        globalObject->onLoadPlugins.requireActualCache->remove(path);
 }
 
 class JSModuleMock final : public JSC::JSNonFinalObject {
@@ -709,6 +716,181 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     return JSValue::encode(jsUndefined());
 }
 
+BUN_DECLARE_HOST_FUNCTION(JSMock__jsRequireActual);
+BUN_DEFINE_HOST_FUNCTION(JSMock__jsRequireActual, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!globalObject) [[unlikely]] {
+        scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "Cannot run jest.requireActual from a different global context"_s));
+        return {};
+    }
+
+    if (callframe->argumentCount() < 1 || !callframe->argument(0).isString()) {
+        scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "jest.requireActual(moduleName) requires a module name string"_s));
+        return {};
+    }
+
+    JSC::JSString* specifierString = callframe->argument(0).toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    WTF::String specifier = specifierString->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // Resolve the specifier relative to the caller
+    JSC::SourceOrigin sourceOrigin = callframe->callerSourceOrigin(vm);
+    if (!sourceOrigin.isNull()) {
+        const URL& url = sourceOrigin.url();
+        if (url.isValid() && url.protocolIsFile()) {
+            auto fromString = url.fileSystemPath();
+            BunString from = Bun::toString(fromString);
+            auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            auto result = JSValue::decode(Bun__resolveSyncWithSource(globalObject, JSValue::encode(specifierString), &from, true, false));
+            if (topExceptionScope.exception()) {
+                (void)topExceptionScope.tryClearException();
+            }
+            if (result && result.isString()) {
+                auto* specifierStr = result.toString(globalObject);
+                if (specifierStr->length() > 0) {
+                    specifierString = specifierStr;
+                    specifier = specifierString->value(globalObject);
+                }
+            }
+        }
+    }
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // Check cache first — avoid re-parsing the module on repeated calls
+    if (globalObject->onLoadPlugins.requireActualCache) {
+        auto cached = globalObject->onLoadPlugins.requireActualCache->find(specifier);
+        if (cached != globalObject->onLoadPlugins.requireActualCache->end())
+            return JSValue::encode(cached->value.get());
+    }
+
+    // Temporarily remove the mock from virtualModules so require() returns the real module
+    JSC::Strong<JSC::JSObject> savedMock;
+    bool hadMock = false;
+    if (globalObject->onLoadPlugins.hasVirtualModules()) {
+        auto* virtualModules = globalObject->onLoadPlugins.virtualModules;
+        auto iter = virtualModules->find(specifier);
+        if (iter != virtualModules->end()) {
+            hadMock = true;
+            savedMock = iter->value;
+            virtualModules->remove(iter);
+        }
+    }
+
+    // Also temporarily remove from CJS cache so we get a fresh evaluation
+    JSC::Strong<JSC::Unknown> savedCJS;
+    bool hadCJS = false;
+    {
+        JSValue cachedCJSValue = globalObject->requireMap()->get(globalObject, specifierString);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (cachedCJSValue) {
+            hadCJS = true;
+            savedCJS = JSC::Strong<JSC::Unknown>(vm, cachedCJSValue);
+            globalObject->requireMap()->remove(globalObject, specifierString);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
+
+    // Also remove from ESM registry so we don't get the mocked namespace
+    // Also remove from ESM registry so we don't get the mocked namespace
+    auto specifierIdent = JSC::Identifier::fromString(vm, specifier);
+    if (globalObject->moduleLoader()->registryEntry(specifierIdent))
+        globalObject->moduleLoader()->removeEntry(specifierIdent);
+
+    // Create a require function bound to a temporary module and call it
+    JSValue requireResult;
+    {
+        // Get the caller's directory for proper resolution
+        WTF::String referrerPath = "/"_s;
+        if (!sourceOrigin.isNull() && sourceOrigin.url().isValid() && sourceOrigin.url().protocolIsFile()) {
+            referrerPath = sourceOrigin.url().fileSystemPath();
+        }
+
+        JSString* referrerString = jsString(vm, referrerPath);
+        BunString referrerBunStr = Bun::toString(referrerPath);
+
+        // Create a temporary CommonJS module for the require call
+        auto dirIndex = referrerPath.reverseFind(PLATFORM_SEP, referrerPath.length());
+        auto* dirname = jsString(vm, dirIndex != WTF::notFound ? referrerPath.left(dirIndex) : "/"_s);
+        auto* moduleObject = Bun::JSCommonJSModule::create(vm,
+            globalObject->CommonJSModuleObjectStructure(),
+            referrerString, referrerString, dirname, SourceCode());
+
+        // Call fetchCommonJSModule which handles all module types
+        requireResult = Bun::fetchCommonJSModule(
+            globalObject,
+            moduleObject,
+            JSValue(specifierString),
+            specifier,
+            &referrerBunStr,
+            nullptr);
+
+        // If fetch threw, restore all state before returning
+        if (scope.exception()) {
+            if (hadMock)
+                globalObject->onLoadPlugins.virtualModules->set(specifier, savedMock);
+            return {};
+        }
+
+        // fetchCommonJSModule returns -1 when the module is in the ESM registry
+        if (requireResult.isInt32() && requireResult.asInt32() == -1) {
+            auto key = JSC::Identifier::fromString(vm, specifier);
+            auto* entry = globalObject->moduleLoader()->registryEntry(key);
+            if (entry && entry->record()) {
+                auto* ns = entry->record()->getModuleNamespace(globalObject, false);
+                if (scope.exception()) {
+                    if (hadMock)
+                        globalObject->onLoadPlugins.virtualModules->set(specifier, savedMock);
+                    return {};
+                }
+                if (ns)
+                    requireResult = ns;
+            }
+            // If we still have the -1 sentinel, the ESM lookup failed — clear it
+            // so the "Cannot find module" error fires below.
+            if (requireResult.isInt32() && requireResult.asInt32() == -1)
+                requireResult = JSValue{};
+        } else if (auto* resultModule = dynamicDowncast<Bun::JSCommonJSModule>(requireResult)) {
+            requireResult = resultModule->exportsObject();
+        }
+    }
+
+    // Restore the mock
+    if (hadMock) {
+        globalObject->onLoadPlugins.virtualModules->set(specifier, savedMock);
+    }
+
+    // Restore CJS cache entry (the mock's cached version)
+    if (hadCJS) {
+        globalObject->requireMap()->set(globalObject, specifierString, savedCJS.get());
+        RETURN_IF_EXCEPTION(scope, {});
+    } else {
+        JSValue newEntry = globalObject->requireMap()->get(globalObject, specifierString);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (newEntry) {
+            globalObject->requireMap()->remove(globalObject, specifierString);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
+
+    if (!requireResult || requireResult.isUndefinedOrNull()) {
+        scope.throwException(lexicalGlobalObject, JSC::createError(lexicalGlobalObject, makeString("Cannot find module '"_s, specifier, "'"_s)));
+        return {};
+    }
+
+    // Cache the result for subsequent calls
+    if (requireResult.isObject()) {
+        if (!globalObject->onLoadPlugins.requireActualCache)
+            globalObject->onLoadPlugins.requireActualCache = new BunPlugin::VirtualModuleMap;
+        globalObject->onLoadPlugins.requireActualCache->set(specifier, JSC::Strong<JSC::JSObject>(vm, requireResult.getObject()));
+    }
+
+    return JSValue::encode(requireResult);
+}
+
 template<typename Visitor>
 void JSModuleMock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
@@ -964,6 +1146,9 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPluginClear, (JSC::JSGlobalObject * global
 
     delete global->onLoadPlugins.virtualModules;
     global->onLoadPlugins.virtualModules = nullptr;
+
+    delete global->onLoadPlugins.requireActualCache;
+    global->onLoadPlugins.requireActualCache = nullptr;
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }

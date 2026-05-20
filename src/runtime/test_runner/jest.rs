@@ -435,7 +435,7 @@ pub mod Jest {
         mock_fn.put(global_object, b"restore", restore_all_mocks);
         mock_fn.put(global_object, b"clearAllMocks", clear_all_mocks);
 
-        let jest = JSValue::create_empty_object(global_object, 9 + fake_timers::TIMER_FNS_COUNT);
+        let jest = JSValue::create_empty_object(global_object, 10 + fake_timers::TIMER_FNS_COUNT);
         jest.put(global_object, b"fn", mock_fn);
         jest.put(global_object, b"mock", mock_module_fn);
         jest.put(global_object, b"spyOn", spy_on);
@@ -445,6 +445,7 @@ pub mod Jest {
         jest.put(global_object, b"setSystemTime", set_system_time);
         jest.put(global_object, b"now", jsc::JSFunction::create(global_object, "now", JSMock__jsNow, 0, Default::default()));
         jest.put(global_object, b"setTimeout", jsc::JSFunction::create(global_object, "setTimeout", __jsc_host_js_set_default_timeout, 1, Default::default()));
+        jest.put(global_object, b"requireActual", jsc::JSFunction::create(global_object, "requireActual", JSMock__jsRequireActual, 1, Default::default()));
 
         module.put(global_object, b"jest", jest);
         module.put(global_object, b"spyOn", spy_on);
@@ -469,6 +470,7 @@ pub mod Jest {
     bun_jsc::jsc_abi_extern! {
         pub fn JSMock__jsMockFn(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
         pub fn JSMock__jsModuleMock(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
+        pub fn JSMock__jsRequireActual(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
         pub fn JSMock__jsNow(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
         pub fn JSMock__jsSetSystemTime(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
         pub fn JSMock__jsRestoreAllMocks(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;

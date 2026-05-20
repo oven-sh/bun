@@ -276,6 +276,11 @@ pub mod feature_flag {
     // Test-only: bypass the stdin isatty gate in `bun update --interactive` so
     // tests can drive the multi-select by writing keystrokes to a pipe.
     new_feature_flag!(pub BUN_INTERNAL_INTERACTIVE_ASSUME_TTY, "BUN_INTERNAL_INTERACTIVE_ASSUME_TTY", {});
+    /// Set by `bun create` on itself before spawning child `bun install`/`bunx`
+    /// processes so that the security scanner configured in a global
+    /// `~/.bunfig.toml` does not error out in a scaffolded project that has
+    /// no chance of listing it as a dependency. See oven-sh/bun#31149.
+    new_feature_flag!(pub BUN_INTERNAL_SKIP_SECURITY_SCANNER, "BUN_INTERNAL_SKIP_SECURITY_SCANNER", {});
     new_feature_flag!(pub BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN, "BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN", {});
     new_feature_flag!(pub BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT, "BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT", {});
     new_feature_flag!(pub BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF, "BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF", {});

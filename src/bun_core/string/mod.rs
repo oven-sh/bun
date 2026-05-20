@@ -1257,12 +1257,13 @@ impl Default for String {
 // in `Send + Sync` containers), and instead enforce the invariant at the
 // boundary: any code that moves a `String` to another thread MUST first call
 // [`String::to_thread_safe`] (or otherwise guarantee [`String::is_thread_safe`]
-// returns `true`). [`String::debug_assert_thread_safe`] is the debug-build
-// checkpoint for that hand-off; `to_thread_safe()` itself asserts its own
-// postcondition. A `ThreadSafeString` newtype split would make this static,
-// but is deferred until the FFI surface can be reshaped.
-unsafe impl Send for String {}
-unsafe impl Sync for String {}
+// String is NOT Send or Sync. It wraps `bun_alloc::String` whose tag can be
+// `WTFStringImpl` — a ref-counted JSC string pointer bound to the JS thread.
+// Use `to_thread_safe()` to convert to a thread-safe form before crossing
+// thread boundaries.
+//
+// TODO: a `ThreadSafeString` newtype split (noted below) would make this
+// static, but is deferred until the FFI surface can be reshaped.
 
 // ──────────────────────────────────────────────────────────────────────────
 // `OwnedString` — RAII `defer s.deref()`.

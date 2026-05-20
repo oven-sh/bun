@@ -552,9 +552,10 @@ pub struct MultiArrayList<T, A: Allocator = Global> {
     _marker: PhantomData<T>,
 }
 
-// SAFETY: `bytes` is uniquely owned; the only shared state is the allocator.
+// SAFETY: `bytes` is uniquely owned. NOT Sync — `zero(&self)`, `sort(&self)`,
+// and other methods mutate through `&self` via raw pointers (interior mutability).
+// Sharing across threads would cause data races.
 unsafe impl<T: Send, A: Allocator + Send> Send for MultiArrayList<T, A> {}
-unsafe impl<T: Sync, A: Allocator + Sync> Sync for MultiArrayList<T, A> {}
 
 /// A `MultiArrayList::Slice` contains cached start pointers for each field in
 /// the list. These pointers are not normally stored to reduce the size of the

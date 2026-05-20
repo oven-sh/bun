@@ -725,7 +725,7 @@ impl Length {
     pub fn is_compatible(&self, browsers: Browsers) -> bool {
         match self {
             Self::Value(v) => v.is_compatible(browsers),
-            Self::Calc(c) => c.is_compatible(browsers),
+            Self::Calc(c) => c.is_compatible(&browsers),
         }
     }
 }

@@ -2011,9 +2011,8 @@ pub mod dir_entry_accessor {
                     let p: *const DirEntry = &raw const **entry;
                     // SAFETY: ARENA — `entry` (unbounded `&mut DirEntry`) borrows the BSSMap
                     // singleton; reborrow as shared 'static for the Copy handle.
-                    Ok(Ok(DirEntryHandle {
-                        value: Some(unsafe { &*p }),
-                    }))
+                    let value = unsafe { &*p };
+                    Ok(Ok(DirEntryHandle { value: Some(value) }))
                 }
                 EntriesOption::Err(err) => Err(err.original_err),
             }

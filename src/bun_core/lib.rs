@@ -2079,12 +2079,12 @@ pub(crate) mod strings_impl {
     /// For `T = u8` prefer `bun_core::strings::last_index_of_char` (glibc
     /// `memrchr` on Linux).
     #[inline]
-    pub fn last_index_of_char_t<T: Eq>(s: &[T], c: T) -> Option<usize> {
+    pub fn last_index_of_char_t<T: Copy + Eq>(s: &[T], c: T) -> Option<usize> {
         s.iter().rposition(|x| *x == c)
     }
     #[doc(hidden)]
     #[inline]
-    pub fn last_index_of_char<T: Eq>(s: &[T], c: T) -> Option<usize> {
+    pub fn last_index_of_char<T: Copy + Eq>(s: &[T], c: T) -> Option<usize> {
         last_index_of_char_t(s, c)
     }
 
@@ -2955,13 +2955,13 @@ pub mod ffi {
     // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     unsafe impl Zeroable for libc::signalfd_siginfo {}
-    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(any(
         target_os = "linux",
         target_os = "android",
         target_os = "macos",
         target_os = "freebsd"
     ))]
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     unsafe impl Zeroable for libc::statfs {}
     #[cfg(any(
         target_os = "macos",

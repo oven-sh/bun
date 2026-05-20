@@ -560,7 +560,7 @@ impl ExtractTarball {
 
                     match bun_sys::windows::move_opened_file_at(
                         dir_to_move,
-                        Fd::from_std_dir(&cache_dir),
+                        Fd::from_std_dir(cache_dir),
                         path_to_use,
                         true,
                     ) {
@@ -594,9 +594,9 @@ impl ExtractTarball {
                                         let folder_name_z =
                                             ZStr::from_buf(&folder_name_z_buf, folder_name.len());
                                         match sys::renameat(
-                                            Fd::from_std_dir(&cache_dir),
+                                            Fd::from_std_dir(cache_dir),
                                             folder_name_z,
-                                            Fd::from_std_dir(&tmpdir),
+                                            Fd::from_std_dir(tmpdir),
                                             tempdest,
                                         ) {
                                             bun_sys::Result::Err(_) => {}

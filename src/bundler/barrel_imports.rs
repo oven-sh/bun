@@ -328,7 +328,7 @@ fn resolve_barrel_records(
     let source = core::mem::take(&mut this.graph.input_files.items_source_mut()[idx]);
     let source_path: &'static [u8] = source.path.text;
 
-    let resolve_result = this.resolve_import_records(ResolveImportRecordCtx {
+    let resolve_result = this.resolve_import_records(&mut ResolveImportRecordCtx {
         import_records: &mut barrel_ir,
         source: &source,
         loader,
@@ -337,7 +337,7 @@ fn resolve_barrel_records(
 
     this.graph.input_files.items_source_mut()[idx] = source;
 
-    let scheduled = this.process_resolve_queue(resolve_result.resolve_queue, target, barrel_idx);
+    let scheduled = this.process_resolve_queue(&resolve_result.resolve_queue, target, barrel_idx);
 
     this.patch_import_record_source_indices(
         &mut barrel_ir,

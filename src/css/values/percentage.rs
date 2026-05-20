@@ -92,7 +92,7 @@ impl Percentage {
         css::signfns::sign_f32(self.v)
     }
 
-    pub fn try_sign(&self) -> Option<f32> {
+    pub fn try_sign(self) -> Option<f32> {
         Some(self.sign())
     }
 
@@ -127,8 +127,8 @@ impl Percentage {
     }
 
     pub fn try_op<C>(
-        &self,
-        other: &Percentage,
+        self,
+        other: Percentage,
         ctx: C,
         op_fn: impl Fn(C, f32, f32) -> f32,
     ) -> Option<Percentage> {
@@ -224,7 +224,7 @@ where
     {
         match self {
             Self::Dimension(d) => d.is_compatible(browsers),
-            Self::Calc(c) => c.is_compatible(browsers),
+            Self::Calc(c) => c.is_compatible(&browsers),
             Self::Percentage(_) => true,
         }
     }

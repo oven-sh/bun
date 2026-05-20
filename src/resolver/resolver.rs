@@ -833,6 +833,7 @@ impl<'a> Resolver<'a> {
         let slot = unsafe { core::ptr::addr_of_mut!((*self_).log) };
         // SAFETY: `slot` just derived from a live resolver.
         let prev = unsafe { *slot };
+        // SAFETY: same as above — `slot` points at a live resolver field.
         unsafe { *slot = log };
         ResolverLogScope { slot, prev }
     }
@@ -1593,6 +1594,8 @@ impl<'a> Resolver<'a> {
                     bun_options_types::BuiltInModule::Import(path) => {
                         // PORT NOTE: copy out `path` so the `&self.opts.framework` borrow
                         // ends before `self.resolve(&mut self, ...)`.
+                        // SAFETY: `path` borrows `self.opts.framework`, which lives for the
+                        // resolver's lifetime; the `'static` erase only releases the `&self` borrow.
                         let path: &'static [u8] =
                             unsafe { &*std::ptr::from_ref::<[u8]>(path.as_ref()) };
                         let top = self.fs_ref().top_level_dir;
@@ -1667,7 +1670,7 @@ impl<'a> Resolver<'a> {
 
             result.package_json = result
                 .package_json
-                .or(dir.enclosing_package_json.map(|p| std::ptr::from_ref(p)));
+                .or_else(|| dir.enclosing_package_json.map(|p| std::ptr::from_ref(p)));
 
             if needs_side_effects {
                 if let Some(package_json) = Result::deref_package_json(result.package_json) {
@@ -2959,9 +2962,9 @@ impl<'a> Resolver<'a> {
                 // derive a raw pointer once and re-borrow per use — disjoint
                 // from `self`'s storage.
                 let manager_ptr: *mut dyn AutoInstaller = self.get_package_manager();
-                // SAFETY: re-borrowed narrowly per use; PackageManager outlives resolver.
                 macro_rules! manager {
                     () => {
+                        // SAFETY: re-borrowed narrowly per use; PackageManager outlives resolver.
                         unsafe { &mut *manager_ptr }
                     };
                 }
@@ -3386,6 +3389,7 @@ impl<'a> Resolver<'a> {
         let rfs: *mut Fs::file_system::RealFS = self.rfs_ptr();
         macro_rules! rfs {
             () => {
+                // SAFETY: `rfs` points at the process-global RealFS singleton; see note above.
                 unsafe { &mut *rfs }
             };
         }
@@ -3484,12 +3488,12 @@ impl<'a> Resolver<'a> {
 
             dir_entries_option = rfs!()
                 .entries
-                // SAFETY: see block-wide note above.
                 .put(
                     &mut cached_dir_entry_result,
-                    Fs::file_system::real_fs::EntriesOption::Entries(unsafe {
-                        &mut *dir_entries_ptr
-                    }),
+                    Fs::file_system::real_fs::EntriesOption::Entries(
+                        // SAFETY: `dir_entries_ptr` is a live BSSMap slot (`in_place`) or a freshly boxed entry.
+                        unsafe { &mut *dir_entries_ptr },
+                    ),
                 )
                 .expect("unreachable");
         }
@@ -3555,9 +3559,9 @@ impl<'a> Resolver<'a> {
         // PORT NOTE: see `manager_ptr` note in `load_node_modules` — split the
         // `&mut self` borrow by holding the PackageManager via raw pointer.
         let pm_ptr: *mut dyn AutoInstaller = self.get_package_manager();
-        // SAFETY: PackageManager lives in a separate allocation; disjoint from `self`.
         macro_rules! pm {
             () => {
+                // SAFETY: PackageManager lives in a separate allocation; disjoint from `self`.
                 unsafe { &mut *pm_ptr }
             };
         }
@@ -3832,7 +3836,7 @@ impl<'a> Resolver<'a> {
                         resolved_dir_info
                             .package_json()
                             .map(|p| std::ptr::from_ref(p))
-                            .unwrap_or(std::ptr::from_ref(package_json)),
+                            .unwrap_or_else(|| std::ptr::from_ref(package_json)),
                     ),
                     module_type,
                     ..Default::default()
@@ -3847,7 +3851,7 @@ impl<'a> Resolver<'a> {
                     res_copy.is_node_module = true;
                     res_copy.package_json = res_copy
                         .package_json
-                        .or(Some(std::ptr::from_ref(package_json)));
+                        .or_else(|| Some(std::ptr::from_ref(package_json)));
                     return Some(res_copy);
                 }
                 esm_resolution.status = Status::ModuleNotFound;
@@ -4163,6 +4167,7 @@ impl<'a> Resolver<'a> {
         let rfs: *mut Fs::file_system::RealFS = self.rfs_ptr();
         macro_rules! rfs {
             () => {
+                // SAFETY: `rfs` points at the process-global RealFS singleton; see note above.
                 unsafe { &mut *rfs }
             };
         }
@@ -4550,12 +4555,12 @@ impl<'a> Resolver<'a> {
                 };
                 dir_entries_option = rfs!()
                     .entries
-                    // SAFETY: see block-wide note above.
                     .put(
                         &mut cached_dir_entry_result,
-                        Fs::file_system::real_fs::EntriesOption::Entries(unsafe {
-                            &mut *dir_entries_ptr
-                        }),
+                        Fs::file_system::real_fs::EntriesOption::Entries(
+                            // SAFETY: `dir_entries_ptr` is a live BSSMap slot (`in_place`) or a freshly boxed entry.
+                            unsafe { &mut *dir_entries_ptr },
+                        ),
                     )?;
                 // bun.fs.debug("readdir({f}, {s}) = {d}", ...) — TODO(port): scoped log
             }
@@ -5584,6 +5589,7 @@ impl<'a> Resolver<'a> {
         // (debug_logs / load_extension / dirname_store) don't trip borrowck
         // while each read goes through safe `BackRef: Deref` (pointee outlives
         // holder by ARENA invariant).
+        // SAFETY: `rfs` points at the process-global RealFS singleton (see note at fn top).
         let dir_entry: bun_ptr::BackRef<Fs::file_system::real_fs::EntriesOption> =
             match unsafe { &mut *rfs }.read_directory(
                 dir_path,
@@ -5902,15 +5908,18 @@ impl<'a> Resolver<'a> {
         // outlives a `unsafe { &mut *self.fs() }` / `get_entries()` / `parse_package_json()` call.
         // TODO(port): split RealFS borrow once entries iteration is interior-mutability-backed.
         let rfs_ptr: *mut Fs::file_system::RealFS = self.rfs_ptr();
+        // SAFETY: caller passes `_entries` as a live slot in the global BSSMap-backed entries cache (ARENA).
         let entries_ptr: *mut Fs::file_system::DirEntry = unsafe { &mut *_entries }.entries_mut();
         // PORT NOTE: re-borrow per use; see SAFETY note above.
         macro_rules! rfs {
             () => {
+                // SAFETY: `rfs_ptr` points at the process-global RealFS singleton; see note above.
                 unsafe { &mut *rfs_ptr }
             };
         }
         macro_rules! entries {
             () => {
+                // SAFETY: `entries_ptr` is a live BSSMap-backed `DirEntry` slot (ARENA); see note above.
                 unsafe { &mut *entries_ptr }
             };
         }
@@ -6246,6 +6255,8 @@ impl<'a> Resolver<'a> {
                 // PORT NOTE: re-borrow as 'static so the `&self.opts` borrow ends before
                 // `self.parse_tsconfig(&mut self, ...)`. `tsconfig_override` is owned by
                 // BundleOptions (lives for the resolver's lifetime).
+                // SAFETY: `tsconfig_override` is owned by `self.opts` (resolver-lifetime);
+                // the `'static` erase only ends the `&self` borrow for the `&mut self` call below.
                 tsconfig_path = self
                     .opts
                     .tsconfig_override

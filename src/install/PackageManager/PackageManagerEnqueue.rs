@@ -266,8 +266,8 @@ pub fn enqueue_tarball_for_reading(
         dependency_id,
         alias,
         path,
-        *resolution,
-        integrity,
+        resolution,
+        &integrity,
     );
     this.task_batch.push(ThreadPool::Batch::from(task));
 }
@@ -315,7 +315,7 @@ pub fn enqueue_git_for_checkout(
             repo_fd,
             dependency_id,
             alias,
-            *resolution,
+            resolution,
             resolved,
             patch_name_and_version_hash,
         );
@@ -349,7 +349,10 @@ pub fn enqueue_git_for_checkout(
     }
 }
 
-pub fn enqueue_parse_npm_package(
+/// # Safety
+/// `network_task` must point to a live, exclusively-owned `NetworkTask` pool
+/// slot for the duration of the enqueued resolve task.
+pub unsafe fn enqueue_parse_npm_package(
     this: &mut PackageManager,
     task_id: Task::Id,
     name: StringOrTinyString,
@@ -612,7 +615,10 @@ pub fn enqueue_network_task(this: &mut PackageManager, task: *mut NetworkTask) {
     this.network_task_fifo.write_item_assume_capacity(task);
 }
 
-pub fn enqueue_patch_task(this: &mut PackageManager, task: *mut PatchTask) {
+/// # Safety
+/// `task` must be a non-null `heap::alloc`'d `PatchTask` whose ownership is
+/// being transferred to the patch-task fifo.
+pub unsafe fn enqueue_patch_task(this: &mut PackageManager, task: *mut PatchTask) {
     bun_output::scoped_log!(
         PackageManager,
         "Enqueue patch task: 0x{:x} {}",
@@ -629,7 +635,10 @@ pub fn enqueue_patch_task(this: &mut PackageManager, task: *mut PatchTask) {
 }
 
 /// We need to calculate all the patchfile hashes at the beginning so we don't run into problems with stale hashes
-pub fn enqueue_patch_task_pre(this: &mut PackageManager, task: *mut PatchTask) {
+/// # Safety
+/// `task` must be a non-null `heap::alloc`'d `PatchTask` whose ownership is
+/// being transferred to the patch-task fifo.
+pub unsafe fn enqueue_patch_task_pre(this: &mut PackageManager, task: *mut PatchTask) {
     bun_output::scoped_log!(
         PackageManager,
         "Enqueue patch task pre: 0x{:x} {}",
@@ -733,7 +742,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     &this.lockfile,
                     name,
                     name_hash,
-                    new.clone(),
+                    &new,
                 );
 
                 if new.tag == dependency::version::Tag::Catalog {
@@ -747,7 +756,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             &this.lockfile,
                             name,
                             name_hash,
-                            v.clone(),
+                            &v,
                         );
                         break 'version v;
                     }
@@ -768,7 +777,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         &this.lockfile,
                         name,
                         name_hash,
-                        v.clone(),
+                        &v,
                     );
 
                     break 'version v;
@@ -964,7 +973,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                             result.package.meta.id,
                                             install::PreinstallState::CalcingPatchHash,
                                         );
-                                        enqueue_patch_task(this, patch_task);
+                                        // SAFETY: `patch_task` is a non-null `heap::alloc`.
+                                        unsafe { enqueue_patch_task(this, patch_task) };
                                     } else if cb.is_apply()
                                         && get_preinstall_state(this, result.package.meta.id)
                                             == install::PreinstallState::ApplyPatch
@@ -974,7 +984,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                             result.package.meta.id,
                                             install::PreinstallState::ApplyingPatch,
                                         );
-                                        enqueue_patch_task(this, patch_task);
+                                        // SAFETY: `patch_task` is a non-null `heap::alloc`.
+                                        unsafe { enqueue_patch_task(this, patch_task) };
                                     }
                                 }
                             }
@@ -1119,7 +1130,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                         name_hash,
                                                         name,
                                                         dependency,
-                                                        version.clone(),
+                                                        &version,
                                                         id,
                                                         dependency.behavior,
                                                         manifest_ref.get(),
@@ -1282,7 +1293,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     repo_fd,
                     id,
                     alias,
-                    res,
+                    &res,
                     &resolved,
                     None,
                 );
@@ -1605,8 +1616,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         id,
                         dep_name,
                         url,
-                        res,
-                        Integrity::default(),
+                        &res,
+                        &Integrity::default(),
                     );
                     this.task_batch.push(ThreadPool::Batch::from(task));
                 }
@@ -1795,7 +1806,7 @@ pub fn enqueue_git_checkout(
     dir: Fd,
     dependency_id: DependencyID,
     name: &[u8],
-    resolution: Resolution,
+    resolution: &Resolution,
     resolved: &[u8],
     // if patched then we need to do apply step after network task is done
     patch_name_and_version_hash: Option<u64>,
@@ -1814,7 +1825,7 @@ pub fn enqueue_git_checkout(
             request: crate::package_manager_task::Request {
                 git_checkout: ManuallyDrop::new(crate::package_manager_task::GitCheckoutRequest {
                     repo_dir: dir,
-                    resolution,
+                    resolution: *resolution,
                     dependency_id,
                     name: StringOrTinyString::init_append_if_needed(
                         name,
@@ -1876,8 +1887,8 @@ fn enqueue_local_tarball(
     dependency_id: DependencyID,
     name: &[u8],
     path: &[u8],
-    resolution: Resolution,
-    integrity: Integrity,
+    resolution: &Resolution,
+    integrity: &Integrity,
 ) -> *mut ThreadPool::Task {
     // Resolve the on-disk tarball path here on the main thread. The task
     // callback runs on a ThreadPool worker and must not read
@@ -1933,11 +1944,11 @@ fn enqueue_local_tarball(
                         &mut crate::network_task::filename_store_appender(),
                     )
                     .expect("unreachable"),
-                    resolution,
+                    resolution: *resolution,
                     cache_dir: get_cache_directory(this),
                     temp_dir: get_temporary_directory(this).handle,
                     dependency_id,
-                    integrity,
+                    integrity: *integrity,
                     url: StringOrTinyString::init_append_if_needed(
                         path,
                         &mut crate::network_task::filename_store_appender(),
@@ -1966,7 +1977,7 @@ fn update_name_and_name_hash_from_version_replacement(
     lockfile: &Lockfile::Lockfile,
     original_name: SemverString,
     original_name_hash: PackageNameHash,
-    new_version: dependency::Version,
+    new_version: &dependency::Version,
 ) -> (SemverString, PackageNameHash) {
     match new_version.tag {
         // only get name hash for npm and dist_tag. git, github, tarball don't have names until after extracting tarball
@@ -2011,7 +2022,7 @@ fn get_or_put_resolved_package_with_find_result(
     name_hash: PackageNameHash,
     name: SemverString,
     dependency: &Dependency,
-    version: dependency::Version,
+    version: &dependency::Version,
     dependency_id: DependencyID,
     behavior: Behavior,
     manifest: &Npm::PackageManifest,
@@ -2063,7 +2074,7 @@ fn get_or_put_resolved_package_with_find_result(
         if should_update || suppress_peer_satisfies {
             None
         } else {
-            Some(&version)
+            Some(version)
         },
         &Resolution::init(ResolutionTagged::Npm(ResolutionNpmValue {
             version: find_result.version,
@@ -2087,7 +2098,7 @@ fn get_or_put_resolved_package_with_find_result(
     let this_ptr: *mut PackageManager = this;
     // SAFETY: `from_npm` reads `pm` fields disjoint from `pm.lockfile` (options /
     // updating_packages); the raw split mirrors Zig's aliased `*PackageManager`.
-    let package = unsafe { &mut *(*this_ptr).lockfile }.append_package(Package::from_npm(
+    let package = unsafe { &mut *(*this_ptr).lockfile }.append_package(&Package::from_npm(
         unsafe { &mut *this_ptr },
         unsafe { &mut *(*this_ptr).lockfile },
         this.log_mut(),
@@ -2234,7 +2245,7 @@ fn get_or_put_resolved_package(
                     let existing_id = *existing_id;
                     if (existing_id as usize) < resolutions.len() {
                         let existing_resolution = resolutions[existing_id as usize];
-                        if resolution_satisfies_dependency(this, existing_resolution, &version) {
+                        if resolution_satisfies_dependency(this, &existing_resolution, &version) {
                             success_fn(this, dependency_id, existing_id);
                             return Ok(Some(ResolvedPackageResult {
                                 // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
@@ -2280,7 +2291,7 @@ fn get_or_put_resolved_package(
                     for &existing_id in list.iter() {
                         if (existing_id as usize) < resolutions.len() {
                             let existing_resolution = resolutions[existing_id as usize];
-                            if resolution_satisfies_dependency(this, existing_resolution, &version)
+                            if resolution_satisfies_dependency(this, &existing_resolution, &version)
                             {
                                 success_fn(this, dependency_id, existing_id);
                                 return Ok(Some(ResolvedPackageResult {
@@ -2410,6 +2421,8 @@ fn get_or_put_resolved_package(
             let name_str = this.lockfile.str_detached(&name);
 
             let scope = bun_ptr::BackRef::new(
+                // SAFETY: `this_ptr` is the live exclusive `this` borrow; `options`
+                // is read-only here and disjoint from the `manifests` mutation below.
                 unsafe { &(*this_ptr).options }.scope_for_package_name(name_str),
             );
             // SAFETY: `manifests` projected from `this_ptr`; the lookup holds
@@ -2566,7 +2579,7 @@ fn get_or_put_resolved_package(
                 name_hash,
                 name,
                 dependency,
-                version,
+                &version,
                 dependency_id,
                 behavior,
                 manifest_ref.get(),
@@ -2650,7 +2663,7 @@ fn get_or_put_resolved_package(
                 }
 
                 // these are always new
-                package = this.lockfile.append_package(package).expect("OOM");
+                package = this.lockfile.append_package(&package).expect("OOM");
 
                 break 'res FolderResolutionValue::NewPackageId(package.meta.id);
             };
@@ -2682,7 +2695,7 @@ fn get_or_put_resolved_package(
                 .workspace_paths
                 .get(&name_hash)
                 .copied()
-                .unwrap_or(*version.workspace());
+                .unwrap_or_else(|| *version.workspace());
             // PORT NOTE: reshaped for borrowck — `workspace_path` may borrow
             // `string_bytes`; detach the slice lifetime so the
             // `&mut PackageManager` reborrow for `get_or_put` below does not
@@ -2773,7 +2786,7 @@ fn get_or_put_resolved_package(
 
 fn resolution_satisfies_dependency(
     this: &PackageManager,
-    resolution: Resolution,
+    resolution: &Resolution,
     dependency: &dependency::Version,
 ) -> bool {
     let buf = this.lockfile.buffers.string_bytes.as_slice();
@@ -2943,23 +2956,32 @@ impl PackageManager {
     }
 
     #[inline]
-    pub fn enqueue_patch_task(&mut self, task: *mut PatchTask) {
-        enqueue_patch_task(self, task)
+    /// # Safety
+    /// See [`enqueue_patch_task`].
+    pub unsafe fn enqueue_patch_task(&mut self, task: *mut PatchTask) {
+        // SAFETY: forwarded — caller upholds `task` validity.
+        unsafe { enqueue_patch_task(self, task) }
     }
 
     #[inline]
-    pub fn enqueue_patch_task_pre(&mut self, task: *mut PatchTask) {
-        enqueue_patch_task_pre(self, task)
+    /// # Safety
+    /// See [`enqueue_patch_task_pre`].
+    pub unsafe fn enqueue_patch_task_pre(&mut self, task: *mut PatchTask) {
+        // SAFETY: forwarded — caller upholds `task` validity.
+        unsafe { enqueue_patch_task_pre(self, task) }
     }
 
     #[inline]
-    pub fn enqueue_parse_npm_package(
+    /// # Safety
+    /// See [`enqueue_parse_npm_package`].
+    pub unsafe fn enqueue_parse_npm_package(
         &mut self,
         task_id: Task::Id,
         name: StringOrTinyString,
         network_task: *mut NetworkTask,
     ) -> *mut ThreadPool::Task {
-        enqueue_parse_npm_package(self, task_id, name, network_task)
+        // SAFETY: forwarded — caller upholds `network_task` validity.
+        unsafe { enqueue_parse_npm_package(self, task_id, name, network_task) }
     }
 
     #[inline]
@@ -2987,7 +3009,7 @@ impl PackageManager {
         dir: Fd,
         dependency_id: DependencyID,
         name: &[u8],
-        resolution: Resolution,
+        resolution: &Resolution,
         resolved: &[u8],
         patch_name_and_version_hash: Option<u64>,
     ) -> *mut ThreadPool::Task {

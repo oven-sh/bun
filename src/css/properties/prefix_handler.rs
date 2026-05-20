@@ -114,7 +114,7 @@ impl FallbackHandler {
                          a: &bun_alloc::Arena,
                          t,
                          d: &mut css::DeclarationList| {
-                for fb in css::small_list::get_fallbacks_text_shadow(v, a, t)
+                for fb in css::small_list::get_fallbacks_text_shadow(v, a, &t)
                     .to_owned_slice()
                     .into_vec()
                 {

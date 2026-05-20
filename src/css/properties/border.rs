@@ -230,7 +230,7 @@ pub enum LineStyle {
 }
 
 impl LineStyle {
-    pub fn is_compatible(&self, _: Browsers) -> bool {
+    pub fn is_compatible(self, _: &Browsers) -> bool {
         true
     }
 }
@@ -260,9 +260,9 @@ pub enum BorderSideWidth {
 
 impl BorderSideWidth {
     // blocked_on: Length::is_compatible
-    pub fn is_compatible(&self, browsers: Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &Browsers) -> bool {
         match self {
-            BorderSideWidth::Length(len) => len.is_compatible(browsers),
+            BorderSideWidth::Length(len) => len.is_compatible(*browsers),
             _ => true,
         }
     }
@@ -414,6 +414,7 @@ define_size_shorthand! {
     start: BorderBlockStartStyle,
     end: BorderBlockEndStyle
 }
+impl Eq for BorderBlockStyle {}
 
 define_size_shorthand! {
     /// A value for the [border-block-width](https://drafts.csswg.org/css-logical/#propdef-border-block-width) shorthand property.
@@ -437,6 +438,7 @@ define_size_shorthand! {
     start: BorderInlineStartStyle,
     end: BorderInlineEndStyle
 }
+impl Eq for BorderInlineStyle {}
 
 define_size_shorthand! {
     /// A value for the [border-inline-width](https://drafts.csswg.org/css-logical/#propdef-border-inline-width) shorthand property.

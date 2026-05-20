@@ -17,7 +17,7 @@ impl Overflow {
         Ok(Overflow { x, y })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         self.x.to_css(dest)?;
         if self.y != self.x {
             dest.write_char(b' ')?;

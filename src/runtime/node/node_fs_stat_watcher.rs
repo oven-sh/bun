@@ -628,7 +628,8 @@ impl StatWatcher {
 
     #[inline]
     fn ctx_el_ctx(&self) -> bun_io::EventLoopCtx {
-        VirtualMachine::event_loop_ctx(self.ctx.as_ptr())
+        // SAFETY: `self.ctx` is the live per-thread VM singleton backref.
+        unsafe { VirtualMachine::event_loop_ctx(self.ctx.as_ptr()) }
     }
 
     /// `self`'s address as `*mut Self` for `ConcurrentTask` ctx slots. The

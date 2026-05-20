@@ -656,7 +656,7 @@ impl TarballStream {
         // allocator.dupeZ → owned NUL-terminated copy.
         self.tmpname = ZBox::from_bytes(tmpname.as_bytes());
 
-        self.dest = Some(Fd::from_std_dir(&bun_sys::make_path::make_open_path(
+        self.dest = Some(Fd::from_std_dir(bun_sys::make_path::make_open_path(
             tarball.temp_dir,
             self.tmpname.as_bytes(),
             Default::default(),

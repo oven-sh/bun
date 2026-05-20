@@ -447,8 +447,8 @@ impl BackgroundRepeat {
         }
     }
 
-    pub fn deep_clone(&self, _arena: &Bump) -> Self {
-        *self
+    pub fn deep_clone(self, _arena: &Bump) -> Self {
+        self
     }
 }
 
@@ -964,7 +964,7 @@ impl BackgroundHandler {
 
                 if self.flushed_properties.is_empty() {
                     let mut fallbacks =
-                        crate::small_list::get_fallbacks(&mut backgrounds, arena, context.targets);
+                        crate::small_list::get_fallbacks(&mut backgrounds, arena, &context.targets);
                     // PORT NOTE: Vec has no owning iterator; pop in reverse then
                     // re-reverse via a temp Vec to preserve order.
                     let mut tmp: Vec<SmallList<Background, 1>> =
@@ -1026,7 +1026,7 @@ impl BackgroundHandler {
         if let Some(mut images) = maybe_images.take() {
             if !self.flushed_properties.contains(BackgroundProperty::IMAGE) {
                 let mut fallbacks =
-                    crate::small_list::get_fallbacks(&mut images, arena, context.targets);
+                    crate::small_list::get_fallbacks(&mut images, arena, &context.targets);
                 // PORT NOTE: Vec has no owning iterator; pop in reverse then
                 // re-reverse via a temp Vec to preserve order.
                 let mut tmp: Vec<SmallList<Image, 1>> = Vec::with_capacity(fallbacks.len());
@@ -1205,8 +1205,8 @@ impl crate::small_list::ImageFallback for Background {
         Background::get_fallback(self, arena, kind)
     }
     #[inline]
-    fn get_necessary_fallbacks(&self, targets: css::targets::Targets) -> ColorFallbackKind {
-        Background::get_necessary_fallbacks(self, &targets)
+    fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
+        Background::get_necessary_fallbacks(self, targets)
     }
 }
 

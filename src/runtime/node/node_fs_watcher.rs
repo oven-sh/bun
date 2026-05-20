@@ -82,7 +82,8 @@ impl FSWatcher {
 
     #[inline]
     fn vm_ctx(&self) -> bun_io::EventLoopCtx {
-        VirtualMachine::event_loop_ctx(self.ctx)
+        // SAFETY: `self.ctx` is the live per-thread VM singleton backref.
+        unsafe { VirtualMachine::event_loop_ctx(self.ctx) }
     }
 
     #[inline]
@@ -708,7 +709,7 @@ impl<'a> Arguments<'a> {
         })
     }
 
-    pub fn create_fs_watcher(self) -> bun_sys::Result<*mut FSWatcher> {
+    pub fn create_fs_watcher(&self) -> bun_sys::Result<*mut FSWatcher> {
         FSWatcher::init(self)
     }
 }
@@ -1027,7 +1028,7 @@ impl FSWatcher {
         Ok(JSValue::UNDEFINED)
     }
 
-    pub fn init(args: Arguments<'_>) -> bun_sys::Result<*mut FSWatcher> {
+    pub fn init(args: &Arguments<'_>) -> bun_sys::Result<*mut FSWatcher> {
         let mut joined_buf = bun_paths::path_buffer_pool::get();
         let slice = {
             let mut s = args.path.slice();

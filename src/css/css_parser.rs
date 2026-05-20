@@ -2642,7 +2642,7 @@ mod stylesheet_impl {
             &'a self,
             arena: &'a Bump,
             writer: &'a mut dyn bun_io::Write,
-            options: PrinterOptions<'a>,
+            options: &PrinterOptions<'a>,
             import_info: Option<ImportInfo<'a>>,
             local_names: Option<&'a LocalsResultsMap>,
             symbols: &'a bun_ast::symbol::Map,
@@ -2654,7 +2654,7 @@ mod stylesheet_impl {
                 arena,
                 bun_alloc::ArenaVec::new_in(arena),
                 writer,
-                &options,
+                options,
                 import_info,
                 local_names,
                 symbols,
@@ -2759,7 +2759,7 @@ mod stylesheet_impl {
             let result = self.to_css_with_writer(
                 arena,
                 &mut dest,
-                options,
+                &options,
                 import_info,
                 local_names,
                 symbols,
@@ -3091,7 +3091,7 @@ mod stylesheet_impl {
         pub fn to_css<'a>(
             &'a self,
             arena: &'a Bump,
-            options: PrinterOptions<'a>,
+            options: &PrinterOptions<'a>,
             import_info: Option<ImportInfo<'a>>,
         ) -> Result<ToCssResult, PrintErr> {
             // #[cfg(feature = "sourcemap")]
@@ -3108,7 +3108,7 @@ mod stylesheet_impl {
                 arena,
                 bun_alloc::ArenaVec::new_in(arena),
                 &mut dest,
-                &options,
+                options,
                 import_info,
                 None,
                 &symbols,
@@ -6534,7 +6534,7 @@ pub mod to_css {
     pub fn string<'a, T: generic::ToCss>(
         arena: &'a Bump,
         this: &T,
-        options: PrinterOptions<'a>,
+        options: &PrinterOptions<'a>,
         import_info: Option<ImportInfo<'a>>,
         local_names: Option<&'a LocalsResultsMap>,
         symbols: &'a bun_ast::symbol::Map,
@@ -6545,7 +6545,7 @@ pub mod to_css {
             arena,
             bun_alloc::ArenaVec::new_in(arena),
             &mut s,
-            &options,
+            options,
             import_info,
             local_names,
             symbols,

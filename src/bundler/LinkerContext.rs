@@ -476,10 +476,10 @@ impl<'a> LinkerContext<'a> {
 
     pub fn path_with_pretty_initialized(
         &mut self,
-        path: bun_paths::fs::Path<'static>,
+        path: &bun_paths::fs::Path<'static>,
     ) -> Result<bun_paths::fs::Path<'static>, BunError> {
         let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-        generic_path_with_pretty_initialized(&path, self.options.target, top_level_dir, self.arena())
+        generic_path_with_pretty_initialized(path, self.options.target, top_level_dir, self.arena())
     }
 
     pub fn should_include_part(&self, source_index: crate::IndexInt, part: &Part) -> bool {
@@ -1786,7 +1786,7 @@ impl<'a> LinkerContext<'a> {
                         // independent (relative paths and the "/" path separator)
                         if source.path.text.as_ptr() == source.path.pretty.as_ptr() {
                             source.path = self
-                                .path_with_pretty_initialized(source.path.clone())
+                                .path_with_pretty_initialized(&source.path)
                                 .expect("OOM");
                         }
                         // PORT NOTE: `Path::assert_pretty_is_valid` lives on the

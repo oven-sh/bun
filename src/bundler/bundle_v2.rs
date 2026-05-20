@@ -1604,9 +1604,9 @@ pub mod bv2_impl {
     /// caller passes paths whose backing bytes are arena-interned for the bundle's
     /// lifetime (see `interned_slice` / `dupe_alloc`).
     #[inline]
-    pub(crate) fn path_as_static(p: Fs::Path<'_>) -> Fs::Path<'static> {
+    pub(crate) fn path_as_static(p: &Fs::Path<'_>) -> Fs::Path<'static> {
         // SAFETY: caller contract above.
-        unsafe { p.into_static() }
+        unsafe { (*p).into_static() }
     }
 
     // Unified with the canonical definitions at the parent module level (this
@@ -2263,7 +2263,7 @@ pub mod bv2_impl {
                         // For virtual files, use the path text as-is (no relative path computation needed).
                         path_primary.pretty = self.arena().alloc_slice_copy(&path_primary.text);
                         let mut tmp_source = bun_ast::Source {
-                            path: path_as_static(path_primary),
+                            path: path_as_static(&path_primary),
                             contents: std::borrow::Cow::Borrowed(&b""[..]),
                             ..Default::default()
                         };
@@ -2484,7 +2484,7 @@ pub mod bv2_impl {
                 out_source_index = Some(Index::init(existing));
             } else {
                 path = self
-                    .path_with_pretty_initialized(path, target)
+                    .path_with_pretty_initialized(&path, target)
                     .expect("oom");
                 // PORT NOTE: Zig wrote through `path.* = …` (a `*Fs.Path` into
                 // `resolve_result.path_pair`); the borrowck-reshape above cloned
@@ -2508,7 +2508,7 @@ pub mod bv2_impl {
                     // HTML is only allowed at the entry point.
                 };
                 let mut tmp_source = bun_ast::Source {
-                    path: path_as_static(path.dupe_alloc().expect("oom")),
+                    path: path_as_static(&path.dupe_alloc().expect("oom")),
                     contents: std::borrow::Cow::Borrowed(&b""[..]),
                     ..Default::default()
                 };
@@ -2607,7 +2607,7 @@ pub mod bv2_impl {
                 .loader(&self.transpiler.options.loaders)
                 .unwrap_or(Loader::File);
 
-            path = self.path_with_pretty_initialized(path, target)?;
+            path = self.path_with_pretty_initialized(&path, target)?;
             path.assert_pretty_is_valid();
             // PORT NOTE: see `enqueue_entry_item` — write the prettified path back
             // into `result` so `ParseTask::init(&result, ..)` reads the relativized
@@ -2620,7 +2620,7 @@ pub mod bv2_impl {
 
             self.graph.input_files.append(crate::Graph::InputFile {
                 source: bun_ast::Source {
-                    path: path_as_static(path),
+                    path: path_as_static(&path),
                     contents: std::borrow::Cow::Borrowed(&b""[..]),
                     index: bun_ast::Index(source_index.get()),
                     ..Default::default()
@@ -2699,7 +2699,7 @@ pub mod bv2_impl {
             // outlives the bundle pass; erase the arena lifetime back to the resolver's
             // `Path<'static>` alias so `path` doesn't keep `self` borrowed.
             path = unsafe {
-                self.path_with_pretty_initialized(path, target)?
+                self.path_with_pretty_initialized(&path, target)?
                     .into_static()
             };
             path.assert_pretty_is_valid();
@@ -2737,7 +2737,7 @@ pub mod bv2_impl {
             let side_effects = result.primary_side_effects_data;
             self.graph.input_files.append(crate::Graph::InputFile {
                 source: bun_ast::Source {
-                    path: path_as_static(path.clone()),
+                    path: path_as_static(&path),
                     contents: std::borrow::Cow::Borrowed(&b""[..]),
                     index: bun_ast::Index(source_index.get()),
                     ..Default::default()
@@ -4755,7 +4755,7 @@ pub mod bv2_impl {
                             this.free_list.push(result.path);
                             path = this
                                 .path_with_pretty_initialized(
-                                    path,
+                                    &path,
                                     resolve.import_record.original_target,
                                 )
                                 .expect("oom");
@@ -4779,7 +4779,7 @@ pub mod bv2_impl {
                                     source: bun_ast::Source {
                                         // PORT NOTE: Zig assigned `path` (Fs.Path) directly;
                                         // shim to the field-identical `bun_paths::fs::Path<'static>`.
-                                        path: path_as_static(path.clone()),
+                                        path: path_as_static(&path),
                                         contents: std::borrow::Cow::Borrowed(&b""[..]),
                                         index: bun_ast::Index(source_index.get()),
                                         ..Default::default()
@@ -5313,7 +5313,7 @@ pub mod bv2_impl {
         #[cold]
         pub fn start_from_bake_dev_server(
             &mut self,
-            bake_entry_points: bake_types::EntryPointList,
+            bake_entry_points: &bake_types::EntryPointList,
         ) -> Result<DevServerInput, Error> {
             self.unique_key = generate_unique_key();
 
@@ -5322,7 +5322,7 @@ pub mod bv2_impl {
             let mut ctx = DevServerInput {
                 css_entry_points: ArrayHashMap::new(),
             };
-            self.enqueue_entry_points_dev_server(&bake_entry_points, &mut ctx.css_entry_points)?;
+            self.enqueue_entry_points_dev_server(bake_entry_points, &mut ctx.css_entry_points)?;
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
@@ -5835,7 +5835,7 @@ pub mod bv2_impl {
 
         fn path_with_pretty_initialized(
             &self,
-            path: Fs::Path<'static>,
+            path: &Fs::Path<'static>,
             target: options::Target,
         ) -> Result<Fs::Path<'static>, Error> {
             // SAFETY: arena outlives the bundle pass; erase the `&self` lifetime so the
@@ -5845,7 +5845,7 @@ pub mod bv2_impl {
             // DEDUP(D059): route through the canonical body in `ungate_support`;
             // D090 unified `Fs::Path` and `bun_paths::fs::Path<'static>` so the shims are identity.
             let out = crate::ungate_support::generic_path_with_pretty_initialized(
-                &path_as_static(path),
+                path,
                 target,
                 self.transpiler.fs().top_level_dir,
                 bump,
@@ -5948,7 +5948,7 @@ pub mod bv2_impl {
             // parse_result.value (invalidating the `result` pointer).
             let source_index = result.source.index;
             let target = result.ast.target;
-            let mut resolve_result = this.resolve_import_records(ResolveImportRecordCtx {
+            let mut resolve_result = this.resolve_import_records(&mut ResolveImportRecordCtx {
                 import_records: &mut result.ast.import_records,
                 source: &result.source,
                 loader: result.loader,
@@ -6012,7 +6012,7 @@ pub mod bv2_impl {
         #[cold]
         pub fn resolve_import_records(
             &mut self,
-            ctx: ResolveImportRecordCtx,
+            ctx: &mut ResolveImportRecordCtx,
         ) -> ResolveImportRecordResult {
             let source = ctx.source;
             let loader = ctx.loader;
@@ -6253,7 +6253,7 @@ pub mod bv2_impl {
                         if resolve_entry.found_existing {
                             // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
                             import_record.path =
-                                path_as_static(unsafe { &**resolve_entry.value_ptr }.path.clone());
+                                path_as_static(&unsafe { &**resolve_entry.value_ptr }.path);
                             continue;
                         }
 
@@ -6267,7 +6267,7 @@ pub mod bv2_impl {
                                 self.arena().alloc_slice_copy(&path_primary.text),
                             )
                         };
-                        import_record.path = path_as_static(path_primary.clone());
+                        import_record.path = path_as_static(&path_primary);
                         let _ = path_primary.text; // key already interned by get_or_put
                         bun_core::scoped_log!(
                             Bundle,
@@ -6517,7 +6517,7 @@ pub mod bv2_impl {
                             true,
                         )
                     {
-                        import_record.path = path_as_static(resolve_result.path_pair.primary);
+                        import_record.path = path_as_static(&resolve_result.path_pair.primary);
                     }
                     import_record.flags.set(
                         bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS,
@@ -6589,7 +6589,7 @@ pub mod bv2_impl {
                                 import_record.path.text = path.text;
                                 import_record.path.pretty = rel;
                                 import_record.path = path_as_static(
-                                    self.path_with_pretty_initialized(*path, target)
+                                    &self.path_with_pretty_initialized(path, target)
                                         .expect("oom"),
                                 );
                                 if loader == Loader::Html
@@ -6647,15 +6647,15 @@ pub mod bv2_impl {
                 let resolve_entry = resolve_queue.get_or_put(&path.text).expect("oom");
                 if resolve_entry.found_existing {
                     // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
-                    import_record.path = path_as_static(unsafe { &**resolve_entry.value_ptr }.path);
+                    import_record.path = path_as_static(&unsafe { &**resolve_entry.value_ptr }.path);
                     continue;
                 }
 
                 *path = self
-                    .path_with_pretty_initialized(*path, target)
+                    .path_with_pretty_initialized(path, target)
                     .expect("oom");
 
-                import_record.path = path_as_static(*path);
+                import_record.path = path_as_static(path);
                 // key already interned by get_or_put — no key_ptr on StringHashMapGetOrPut
                 bun_core::scoped_log!(Bundle, "created ParseTask: {}", bstr::BStr::new(&path.text));
                 // Arena-owned (Zig: `arena.create(ParseTask)`).
@@ -6706,7 +6706,7 @@ pub mod bv2_impl {
         #[cold]
         pub fn process_resolve_queue(
             &mut self,
-            resolve_queue: ResolveQueue,
+            resolve_queue: &ResolveQueue,
             target: options::Target,
             importer_source_index: IndexInt,
         ) -> i32 {
@@ -6770,7 +6770,7 @@ pub mod bv2_impl {
 
                     new_input_file.source.index =
                         bun_ast::Index(self.graph.input_files.len() as u32);
-                    new_input_file.source.path = path_as_static(new_task.path);
+                    new_input_file.source.path = path_as_static(&new_task.path);
                     new_input_file.loader = loader;
                     let new_source_index: u32 = new_input_file.source.index.0;
                     new_task.source_index = bun_ast::Index(new_source_index);
@@ -6936,7 +6936,7 @@ pub mod bv2_impl {
             // at each use so the `self.*` method calls below don't conflict.
             let heap = self.graph.heap;
             let empty_html_file_source: &mut bun_ast::Source = self.arena_create(bun_ast::Source {
-                path: path_as_static(path.clone()),
+                path: path_as_static(path),
                 index: bun_ast::Index(self.graph.input_files.len() as u32),
                 contents: std::borrow::Cow::Borrowed(&b""[..]),
                 ..Default::default()
@@ -7208,7 +7208,7 @@ pub mod bv2_impl {
                     }
 
                     diff += this.process_resolve_queue(
-                        core::mem::take(&mut resolve_queue),
+                        &resolve_queue,
                         result.ast.target,
                         result_source_index as IndexInt,
                     );
@@ -7347,8 +7347,8 @@ pub mod bv2_impl {
                             // three `Path` mirrors unify.
                             ssr_source.path.pretty = ssr_source.path.text;
                             ssr_source.path = path_as_static(
-                                this.path_with_pretty_initialized(
-                                    ssr_source.path.clone(),
+                                &this.path_with_pretty_initialized(
+                                    &ssr_source.path,
                                     Target::BakeServerComponentsSsr,
                                 )
                                 .expect("oom"),
@@ -7369,8 +7369,8 @@ pub mod bv2_impl {
                             server_source.path.pretty = server_source.path.text;
                             let server_target = this.transpiler.options.target;
                             server_source.path = path_as_static(
-                                this.path_with_pretty_initialized(
-                                    server_source.path.clone(),
+                                &this.path_with_pretty_initialized(
+                                    &server_source.path,
                                     server_target,
                                 )
                                 .expect("oom"),

@@ -540,7 +540,7 @@ fn iterate_included_project_tree(
         // Root (depth 1) is borrowed `Fd::cwd()`-ish; only close subdirs we opened.
         let close_guard = (dir_depth != 1).then(|| CloseOnDrop::dir(dir));
 
-        let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(&dir));
+        let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(dir));
         'next_entry: while let Some(entry) = dir_iter.next().ok().flatten() {
             // PORT NOTE: `.unwrap() catch null` → on iterator error, treat as end
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
@@ -768,7 +768,7 @@ fn add_entire_tree(
             }
         }
 
-        let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
+        let mut iter = DirIterator::iterate(Fd::from_std_dir(dir));
         'next_entry: while let Some(entry) = iter.next().ok().flatten() {
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;
@@ -936,7 +936,7 @@ fn iterate_bundled_deps(
 
     let mut additional_bundled_deps: Vec<DirInfo> = Vec::new();
 
-    let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
+    let mut iter = DirIterator::iterate(Fd::from_std_dir(dir));
     while let Some(entry) = iter.next().ok().flatten() {
         if entry.kind != bun_sys::FileKind::Directory {
             continue;
@@ -960,7 +960,7 @@ fn iterate_bundled_deps(
             };
             let _close_scoped = CloseOnDrop::dir(scoped_dir);
 
-            let mut scoped_iter = DirIterator::iterate(Fd::from_std_dir(&scoped_dir));
+            let mut scoped_iter = DirIterator::iterate(Fd::from_std_dir(scoped_dir));
             while let Some(sub_entry) = scoped_iter.next().ok().flatten() {
                 let entry_name = entry_subpath(_entry_name, sub_entry.name.slice_u8())?;
 
@@ -1076,7 +1076,7 @@ fn add_bundled_dep(
         let DirInfo(dir, dir_subpath, dir_depth) = dir_info;
         let _close = CloseOnDrop::dir(dir);
 
-        let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
+        let mut iter = DirIterator::iterate(Fd::from_std_dir(dir));
         while let Some(entry) = iter.next().ok().flatten() {
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;
@@ -1340,7 +1340,7 @@ fn iterate_project_tree(
             }
         }
 
-        let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(&dir));
+        let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(dir));
         'next_entry: while let Some(entry) = dir_iter.next().ok().flatten() {
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;
@@ -2678,7 +2678,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
 
         while let Some(item) = pack_queue.remove_or_null() {
             let file = match bun_sys::openat(
-                Fd::from_std_dir(&root_dir),
+                Fd::from_std_dir(root_dir),
                 &item.path,
                 bun_sys::O::RDONLY,
                 0,
@@ -2760,7 +2760,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
 
         while let Some(item) = bundled_pack_queue.remove_or_null() {
             let file = match File::openat(
-                Fd::from_std_dir(&root_dir),
+                Fd::from_std_dir(root_dir),
                 &item.path,
                 bun_sys::O::RDONLY,
                 0,
@@ -3223,7 +3223,7 @@ fn archive_package_json(
 ) -> Result<*mut ArchiveEntry, AllocError> {
     // Zig: `entry: *Archive.Entry` → `*Archive.Entry` (same pointer after `.clear()`).
     let entry = ArchiveEntry::opaque_ref(entry);
-    let stat = match bun_sys::fstatat(Fd::from_std_dir(root_dir), bun_core::zstr!("package.json")) {
+    let stat = match bun_sys::fstatat(Fd::from_std_dir(*root_dir), bun_core::zstr!("package.json")) {
         Ok(s) => s,
         Err(err) => {
             Output::err(
@@ -3775,7 +3775,7 @@ impl IgnorePatterns {
         err: bun_core::Error,
     ) -> ! {
         let mut buf = PathBuffer::uninit();
-        let dir_path: &[u8] = match bun_sys::get_fd_path(Fd::from_std_dir(&dir), &mut buf) {
+        let dir_path: &[u8] = match bun_sys::get_fd_path(Fd::from_std_dir(dir), &mut buf) {
             Ok(p) => &*p,
             Err(_) => b"",
         };
@@ -3918,7 +3918,7 @@ fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
     pack_list: PackListOrQueue<'_>,
     package_json_len: usize,
 ) {
-    let root_dir = Fd::from_std_dir(root_dir_std);
+    let root_dir = Fd::from_std_dir(*root_dir_std);
     if ctx.manager.options.log_level == LogLevel::Silent
         || ctx.manager.options.log_level == LogLevel::Quiet
     {

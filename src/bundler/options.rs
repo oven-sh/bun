@@ -2352,7 +2352,7 @@ impl Env {
     }
 
     // For reading from API
-    pub fn set_from_api(&mut self, config: api::EnvConfig) -> Result<(), bun_alloc::AllocError> {
+    pub fn set_from_api(&mut self, config: &api::EnvConfig) -> Result<(), bun_alloc::AllocError> {
         self.set_behavior_from_prefix(config.prefix.as_deref().unwrap_or(b""));
 
         if let Some(defaults) = &config.defaults {
@@ -2517,7 +2517,7 @@ impl EntryPoint {
         }
 
         if let Some(env) = framework_entry_point.env {
-            self.env.set_from_api(env)?;
+            self.env.set_from_api(&env)?;
         }
         Ok(())
     }

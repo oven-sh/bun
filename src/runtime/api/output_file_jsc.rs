@@ -151,7 +151,8 @@ impl OutputFileJsc for OutputFile {
                 BuildArtifact::to_js_boxed(build_output, global_object)
             }
             OutputFileValue::Saved(_) => {
-                let path_to_use: &[u8] = owned_pathname.unwrap_or(self.src_path.text.as_ref());
+                let path_to_use: &[u8] =
+                    owned_pathname.unwrap_or_else(|| self.src_path.text.as_ref());
 
                 // `Store::drop` frees a `PathLike::String` payload via
                 // `PathString::deinit_owned`, so the backing buffer must be

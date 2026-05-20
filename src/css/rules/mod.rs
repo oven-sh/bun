@@ -714,7 +714,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
             while i < sty.selectors.v.len() {
                 if selector::is_compatible(
                     &sty.selectors.v.slice()[i as usize..i as usize + 1],
-                    *context.targets,
+                    context.targets,
                 ) {
                     i += 1;
                 } else {

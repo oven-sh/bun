@@ -70,7 +70,7 @@ impl ImportDependency {
             let s = crate::to_css::string(
                 bump,
                 supports,
-                crate::PrinterOptions::default(),
+                &crate::PrinterOptions::default(),
                 None,
                 local_names,
                 symbols,
@@ -91,7 +91,7 @@ impl ImportDependency {
             let s = crate::to_css::string(
                 bump,
                 &rule.media,
-                crate::PrinterOptions::default(),
+                &crate::PrinterOptions::default(),
                 None,
                 local_names,
                 symbols,

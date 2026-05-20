@@ -94,6 +94,7 @@ impl Collection {
     /// so the pointer is always valid while `self` is.
     #[inline]
     pub fn active_scope(&self) -> &DescribeScope {
+        // SAFETY: `active_scope` always points into `self.root_scope`'s owned tree; see doc comment above.
         unsafe { self.active_scope.as_ref() }
     }
 
@@ -108,6 +109,7 @@ impl Collection {
     /// `step()`), so it carries write-capable provenance.
     #[inline]
     pub fn active_scope_mut(&mut self) -> &mut DescribeScope {
+        // SAFETY: `active_scope` always points into `self.root_scope`'s owned tree with write provenance; see doc comment above.
         unsafe { self.active_scope.as_mut() }
     }
 
@@ -146,14 +148,14 @@ impl Collection {
         &mut self,
         global_this: &JSGlobalObject,
         _: Option<JSValue>,
-        data: RefDataValue,
+        data: &RefDataValue,
     ) -> JsResult<()> {
         let _g = group::begin();
 
         let _formatter = make_formatter(global_this);
 
         let prev_scope: NonNull<DescribeScope> = match data {
-            RefDataValue::Collection { active_scope } => active_scope,
+            RefDataValue::Collection { active_scope } => *active_scope,
             _ => {
                 debug_assert!(false); // this probably can't happen
                 self.active_scope
@@ -173,7 +175,7 @@ impl Collection {
     }
 
     pub fn step(
-        buntest_strong: BunTestPtr,
+        buntest_strong: &BunTestPtr,
         global_this: &JSGlobalObject,
         data: RefDataValue,
     ) -> JsResult<StepResult> {
@@ -182,7 +184,7 @@ impl Collection {
         let this = &mut buntest.collection;
 
         if !matches!(data, RefDataValue::Start) {
-            this.run_one_completed(global_this, None, data)?;
+            this.run_one_completed(global_this, None, &data)?;
         }
 
         let _formatter = make_formatter(global_this);
@@ -230,7 +232,7 @@ impl Collection {
             ));
 
             if let Some(cfg_data) = BunTest::run_test_callback(
-                &buntest_strong,
+                buntest_strong,
                 global_this,
                 callback.get(),
                 false,

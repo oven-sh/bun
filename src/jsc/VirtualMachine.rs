@@ -1910,10 +1910,12 @@ bun_io::link_impl_EventLoopCtx! {
 }
 
 impl VirtualMachine {
+    /// # Safety
+    /// `this` must be a live VM (per-thread or a worker's parent ref) that
+    /// outlives every dispatch through the returned ctx.
     #[inline]
-    pub fn event_loop_ctx(this: *mut Self) -> bun_io::EventLoopCtx {
-        // SAFETY: `this` is a live VM (per-thread or a worker's parent ref);
-        // it outlives every ctx derived from it.
+    pub unsafe fn event_loop_ctx(this: *mut Self) -> bun_io::EventLoopCtx {
+        // SAFETY: caller contract above.
         unsafe { bun_io::EventLoopCtx::new(bun_io::EventLoopCtxKind::Js, this) }
     }
 
@@ -1923,7 +1925,8 @@ impl VirtualMachine {
     #[inline]
     pub fn loop_ctx(&self) -> bun_io::EventLoopCtx {
         debug_assert!(core::ptr::eq(self, Self::get_mut_ptr()));
-        Self::event_loop_ctx(Self::get_mut_ptr())
+        // SAFETY: `get_mut_ptr()` is the live per-thread VM singleton.
+        unsafe { Self::event_loop_ctx(Self::get_mut_ptr()) }
     }
 }
 
@@ -2247,7 +2250,8 @@ impl VirtualMachine {
         // here with their caller's `is_main_thread`; `init_worker` passes
         // `false` so workers never arm the watchdog (matches spec `initWorker`).
         if opts.is_main_thread {
-            bun_io::ParentDeathWatchdog::install_on_event_loop(Self::event_loop_ctx(vm));
+            // SAFETY: `vm` is the freshly-initialised per-thread VM singleton.
+            bun_io::ParentDeathWatchdog::install_on_event_loop(unsafe { Self::event_loop_ctx(vm) });
         }
 
         if opts.smol {
@@ -2878,13 +2882,13 @@ impl IPCInstance {
     }
 
     /// Spec VirtualMachine.zig:3940 `IPCInstance.handleIPCMessage`.
-    pub fn handle_ipc_message(&mut self, message: crate::ipc::DecodedIPCMessage, handle: JSValue) {
+    pub fn handle_ipc_message(&mut self, message: &crate::ipc::DecodedIPCMessage, handle: JSValue) {
         crate::mark_binding!();
         let global_this = self.global_this;
         // SAFETY: VM singleton + its event loop are process-lifetime.
         let event_loop = VirtualMachine::get().event_loop_mut();
 
-        match message {
+        match *message {
             // In future versions we can read this in order to detect version mismatches,
             // or disable future optimizations if the subprocess is old.
             crate::ipc::DecodedIPCMessage::Version(v) => {
@@ -2949,7 +2953,7 @@ impl crate::ipc::SendQueueOwner for IPCInstance {
         IPCInstance::handle_ipc_close(self)
     }
     fn handle_ipc_message(&mut self, msg: crate::ipc::DecodedIPCMessage, handle: JSValue) {
-        IPCInstance::handle_ipc_message(self, msg, handle)
+        IPCInstance::handle_ipc_message(self, &msg, handle)
     }
     /// VM-side owner has no JS-visible `this` (Zig: `.null` arm).
     fn this_jsvalue(&self) -> JSValue {

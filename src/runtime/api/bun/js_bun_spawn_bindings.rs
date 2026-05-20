@@ -1892,7 +1892,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                             // the event loop again, but it should wake up
                             // ~instantly so we can drain the events.
                             crate::test_runner::bun_test::BunTest::bun_test_timeout_callback(
-                                taken_active_file,
+                                &taken_active_file,
                                 &absolute_timespec,
                                 // SAFETY: jsc_vm_ptr is the live thread VM.
                                 unsafe { &*jsc_vm_ptr },

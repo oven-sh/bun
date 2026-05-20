@@ -325,7 +325,13 @@ bun_dispatch::link_interface! {
         fn register_barrel_export(barrel_path: &[u8], alias: &[u8]);
     }
 }
+// SAFETY: the handle is `{ kind, owner: *mut () }`; the raw pointer is what
+// defeats the auto-impl. `owner` is the single per-process `bake::DevServer`
+// (established at `unsafe fn new()`), which outlives every bundler worker
+// thread that carries this handle; thread-safety of each dispatched method is
+// upheld by the `link_impl_DevServerHandle!` bodies, not by the handle itself.
 unsafe impl Send for DevServerHandle {}
+// SAFETY: see `Send` above — sharing the tagged pointer is sound for the same reason.
 unsafe impl Sync for DevServerHandle {}
 
 // VirtualMachine accessors for `normalize_specifier` / `get_loader_and_virtual_source`.

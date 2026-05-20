@@ -877,7 +877,7 @@ impl IoRequestLoop {
                                 readable.fd,
                             ) {
                                 Err(err) => {
-                                    (readable.on_error)(readable.ctx, err);
+                                    (readable.on_error)(readable.ctx, &err);
                                 }
                                 Ok(()) => {
                                     self.active.set(self.active.get() + 1);
@@ -893,7 +893,7 @@ impl IoRequestLoop {
                                 writable.fd,
                             ) {
                                 Err(err) => {
-                                    (writable.on_error)(writable.ctx, err);
+                                    (writable.on_error)(writable.ctx, &err);
                                 }
                                 Ok(()) => {
                                     self.active.set(self.active.get() + 1);
@@ -1305,7 +1305,7 @@ pub struct FileAction<'a> {
     pub poll: &'a mut Poll,
     pub ctx: *mut (),
     pub tag: PollableTag,
-    pub on_error: fn(*mut (), sys::Error),
+    pub on_error: fn(*mut (), &sys::Error),
 }
 
 pub struct CloseAction<'a> {

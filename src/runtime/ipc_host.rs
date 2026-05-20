@@ -198,7 +198,7 @@ pub fn emit_handle_ipc_message(
             return Ok(JSValue::UNDEFINED);
         };
         // SAFETY: `get_ipc_instance` returns the live boxed IPCInstance.
-        unsafe { (*ipc).handle_ipc_message(DecodedIPCMessage::Data(message), handle) };
+        unsafe { (*ipc).handle_ipc_message(&DecodedIPCMessage::Data(message), handle) };
     } else {
         if !target.is_cell() {
             return Ok(JSValue::UNDEFINED);

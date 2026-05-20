@@ -80,9 +80,9 @@ impl FontWeight {
         FontWeight::Absolute(AbsoluteFontWeight::default())
     }
 
-    pub fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
         match self {
-            FontWeight::Absolute(a) => a.is_compatible(&browsers),
+            FontWeight::Absolute(a) => a.is_compatible(browsers),
             FontWeight::Bolder | FontWeight::Lighter => true,
         }
     }
@@ -168,15 +168,15 @@ impl FontSize {
     // parse + to_css — provided by #[derive(css::Parse, css::ToCss)].
     // is_compatible KEPT (custom Rem branch).
 
-    pub fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
         match self {
             FontSize::Length(l) => match l {
                 DimensionPercentage::Dimension(LengthValue::Rem(_)) => {
-                    Feature::FontSizeRem.is_compatible(browsers)
+                    Feature::FontSizeRem.is_compatible(*browsers)
                 }
-                _ => l.is_compatible(browsers),
+                _ => l.is_compatible(*browsers),
             },
-            FontSize::Absolute(a) => a.is_compatible(&browsers),
+            FontSize::Absolute(a) => a.is_compatible(browsers),
             FontSize::Relative(_) => true,
         }
     }
@@ -266,9 +266,9 @@ impl FontStretch {
         }
     }
 
-    pub fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+    pub fn is_compatible(self, browsers: &crate::targets::Browsers) -> bool {
         match self {
-            FontStretch::Percentage(_) => Feature::FontStretchPercentage.is_compatible(browsers),
+            FontStretch::Percentage(_) => Feature::FontStretchPercentage.is_compatible(*browsers),
             FontStretch::Keyword(_) => true,
         }
     }
@@ -429,9 +429,9 @@ impl FontFamily {
         }
     }
 
-    pub fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
         match self {
-            FontFamily::Generic(g) => g.is_compatible(&browsers),
+            FontFamily::Generic(g) => g.is_compatible(browsers),
             FontFamily::FamilyName(_) => true,
         }
     }
@@ -580,11 +580,11 @@ impl FontStyle {
         }
     }
 
-    pub fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+    pub fn is_compatible(self, browsers: &crate::targets::Browsers) -> bool {
         match self {
             FontStyle::Oblique(angle) => {
-                if *angle != FontStyle::default_oblique_angle() {
-                    Feature::FontStyleObliqueAngle.is_compatible(browsers)
+                if angle != FontStyle::default_oblique_angle() {
+                    Feature::FontStyleObliqueAngle.is_compatible(*browsers)
                 } else {
                     true
                 }
@@ -637,7 +637,7 @@ impl FontVariantCaps {
         Ok(value)
     }
 
-    pub fn is_compatible(&self, _: crate::targets::Browsers) -> bool {
+    pub fn is_compatible(self, _: crate::targets::Browsers) -> bool {
         true
     }
 }
@@ -677,9 +677,9 @@ impl LineHeight {
         }
     }
 
-    pub fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
         match self {
-            LineHeight::Length(l) => l.is_compatible(browsers),
+            LineHeight::Length(l) => l.is_compatible(*browsers),
             LineHeight::Normal | LineHeight::Number(_) => true,
         }
     }

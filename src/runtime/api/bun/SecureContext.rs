@@ -152,7 +152,7 @@ impl SecureContext {
         // `init_runtime_state`; the embedded `ssl_ctx_cache` has a stable
         // address for the VM's lifetime and is only touched from the JS thread.
         let cache = unsafe { &mut (*state).ssl_ctx_cache };
-        let Some(ctx) = cache.get_or_create_digest(*ctx_opts, d, &mut err) else {
+        let Some(ctx) = cache.get_or_create_digest(ctx_opts, d, &mut err) else {
             // `err` is only set for the input-validation paths (bad PEM, missing
             // file, …). When BoringSSL itself fails (e.g. unsupported curve) the
             // enum is still `.none`; surface the library error stack instead of

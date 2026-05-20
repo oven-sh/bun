@@ -107,7 +107,7 @@ impl ProgressStrings {
 impl PackageManager {
     pub fn set_node_name<const IS_FIRST: bool>(
         &mut self,
-        node: *mut ProgressNode,
+        node: &mut ProgressNode,
         name: &[u8],
         emoji: &[u8],
     ) {
@@ -127,7 +127,7 @@ impl PackageManager {
                 self.progress_name_buf[..name.len()].copy_from_slice(name);
                 name.len()
             };
-            (*node).name = bun_ptr::detach_lifetime(&self.progress_name_buf[..len]);
+            node.name = bun_ptr::detach_lifetime(&self.progress_name_buf[..len]);
         }
     }
 
@@ -145,7 +145,7 @@ impl PackageManager {
         let node: *mut ProgressNode = self.progress.start(ProgressStrings::download(), 0);
         self.downloads_node = Some(node);
         self.set_node_name::<true>(
-            node,
+            self.downloads_node_mut(),
             ProgressStrings::DOWNLOAD_NO_EMOJI_.as_bytes(),
             ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
         );
@@ -185,7 +185,7 @@ impl PackageManager {
 #[inline]
 pub fn set_node_name<const IS_FIRST: bool>(
     this: &mut PackageManager,
-    node: *mut ProgressNode,
+    node: &mut ProgressNode,
     name: &[u8],
     emoji: &[u8],
 ) {

@@ -436,10 +436,10 @@ impl ReadFile {
         WorkPool::schedule(&raw mut self.task);
     }
 
-    /// Thunk matching `io::FileAction::on_error`'s `fn(*mut (), sys::Error)` shape.
-    fn on_io_error_thunk(ctx: *mut (), err: bun_sys::Error) {
+    /// Thunk matching `io::FileAction::on_error`'s `fn(*mut (), &sys::Error)` shape.
+    fn on_io_error_thunk(ctx: *mut (), err: &bun_sys::Error) {
         // SAFETY: ctx is `self as *mut ReadFile` set in on_request_readable below.
-        unsafe { (*ctx.cast::<ReadFile>()).on_io_error(&err) }
+        unsafe { (*ctx.cast::<ReadFile>()).on_io_error(err) }
     }
 
     pub fn on_request_readable(request: &mut io::Request) -> io::Action<'_> {

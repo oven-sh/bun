@@ -214,7 +214,7 @@ pub(crate) mod sql_hooks {
         // SAFETY: `cache` is `&runtime_state().ssl_ctx_cache`.
         let cache = unsafe { &mut *cache.cast::<crate::api::SSLContextCache::SSLContextCache>() };
         cache
-            .get_or_create_opts(*opts, err)
+            .get_or_create_opts(opts, err)
             .unwrap_or(core::ptr::null_mut())
     }
     unsafe fn ssl_config_from_js(global: &JSGlobalObject, value: JSValue) -> *mut c_void {

@@ -1768,12 +1768,17 @@ impl<'a> PipelineTask<'a> {
                     // here by construction, not omission.
                     Deliver::Buffer => promise.resolve(
                         global,
-                        JSValue::create_buffer_with_ctx(
-                            global,
-                            out.bytes,
-                            core::ptr::null_mut(),
-                            out.free,
-                        ),
+                        // SAFETY: `out.bytes` is the codec-owned allocation whose
+                        // ownership transfers to JSC; `ctx` is null and `out.free`
+                        // ignores it.
+                        unsafe {
+                            JSValue::create_buffer_with_ctx(
+                                global,
+                                out.bytes,
+                                core::ptr::null_mut(),
+                                out.free,
+                            )
+                        },
                     )?,
                     Deliver::Blob => {
                         // Blob.Store frees via an Allocator; dupe for that path.
@@ -1831,12 +1836,17 @@ impl<'a> PipelineTask<'a> {
                     // accepts — and we don't reimplement any of it.
                     Deliver::WriteDest(dest) => {
                         let dest_js = dest.get();
-                        let data = JSValue::create_buffer_with_ctx(
-                            global,
-                            out.bytes,
-                            core::ptr::null_mut(),
-                            out.free,
-                        );
+                        // SAFETY: `out.bytes` is the codec-owned allocation whose
+                        // ownership transfers to JSC; `ctx` is null and `out.free`
+                        // ignores it.
+                        let data = unsafe {
+                            JSValue::create_buffer_with_ctx(
+                                global,
+                                out.bytes,
+                                core::ptr::null_mut(),
+                                out.free,
+                            )
+                        };
                         // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine`
                         // valid for the JS thread; `ArgumentsSlice::init` wants `&`.
                         let args = [dest_js];

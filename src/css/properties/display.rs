@@ -29,9 +29,9 @@ impl Display {
         }
     }
 
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone(self, _bump: &bun_alloc::Arena) -> Self {
         // All payloads are Copy.
-        self.clone()
+        self
     }
 }
 

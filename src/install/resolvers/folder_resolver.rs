@@ -269,7 +269,7 @@ fn normalize_package_json_path<'a>(
 fn read_package_json_from_disk<R: FolderResolverImpl>(
     manager: &mut PackageManager,
     abs: &ZStr,
-    version: dependency::Version,
+    version: &dependency::Version,
     features: Features,
     // PERF(port): was comptime monomorphization (features + ResolverType) — profile if hot
     resolver: &mut R,
@@ -371,14 +371,14 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
     if let Some(existing_id) =
         manager
             .lockfile
-            .get_package_id(package.name_hash, Some(&version), &package.resolution)
+            .get_package_id(package.name_hash, Some(version), &package.resolution)
     {
         package.meta.id = existing_id;
         manager.lockfile.packages.set(existing_id as usize, package);
         return Ok(*manager.lockfile.packages.get(existing_id as usize));
     }
 
-    Ok(manager.lockfile.append_package(package)?)
+    Ok(manager.lockfile.append_package(&package)?)
 }
 
 #[derive(Copy, Clone)]
@@ -453,7 +453,7 @@ pub fn get_or_put(
             break 'global read_package_json_from_disk(
                 manager,
                 abs,
-                version,
+                &version,
                 Features::LINK,
                 &mut resolver,
             );
@@ -464,7 +464,7 @@ pub fn get_or_put(
                 break 'folder read_package_json_from_disk(
                     manager,
                     abs,
-                    version,
+                    &version,
                     Features::FOLDER,
                     &mut resolver,
                 );
@@ -474,7 +474,7 @@ pub fn get_or_put(
                 break 'workspace read_package_json_from_disk(
                     manager,
                     abs,
-                    version,
+                    &version,
                     Features::WORKSPACE,
                     &mut resolver,
                 );
@@ -491,7 +491,7 @@ pub fn get_or_put(
             break 'cache_folder read_package_json_from_disk(
                 manager,
                 abs,
-                version,
+                &version,
                 Features::NPM,
                 &mut resolver,
             );

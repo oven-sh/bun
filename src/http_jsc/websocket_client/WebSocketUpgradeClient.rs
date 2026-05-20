@@ -57,9 +57,13 @@ bun_core::declare_scope!(alloc, hidden);
 
 /// Local `VirtualMachine → EventLoopCtx` adapter for `KeepAlive::{ref,unref}`.
 /// Forwards to the canonical fully-populated vtable in `bun_jsc`.
+///
+/// # Safety
+/// `vm` must be the live per-thread VM singleton.
 #[inline]
-fn vm_loop_ctx(vm: *mut VirtualMachineRef) -> bun_io::EventLoopCtx {
-    bun_jsc::virtual_machine::VirtualMachine::event_loop_ctx(vm)
+unsafe fn vm_loop_ctx(vm: *mut VirtualMachineRef) -> bun_io::EventLoopCtx {
+    // SAFETY: caller contract above.
+    unsafe { bun_jsc::virtual_machine::VirtualMachine::event_loop_ctx(vm) }
 }
 
 /// `uws.NewSocketHandler(ssl)`
@@ -373,7 +377,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
         };
         let connect_port = if using_proxy { proxy_port } else { port };
 
-        client_ref.poll_ref.r#ref(vm_loop_ctx(vm_ptr));
+        // SAFETY: `vm_ptr` is the live per-thread VM (`global.bun_vm_ptr()`).
+        client_ref.poll_ref.r#ref(unsafe { vm_loop_ctx(vm_ptr) });
         let display_host: &[u8] =
             if FeatureFlags::HARDCODE_LOCALHOST_TO_127_0_0_1 && display_host_ == b"localhost" {
                 b"127.0.0.1"
@@ -434,7 +439,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
                             // connection succeed against a host the user didn't
                             // trust. The C++ caller emits an `error` event on null.
                             log!("createSSLContext failed for WebSocket: {:?}", err);
-                            client_ref.poll_ref.unref(vm_loop_ctx(vm_ptr));
+                            // SAFETY: `vm_ptr` is the live per-thread VM.
+                            client_ref.poll_ref.unref(unsafe { vm_loop_ctx(vm_ptr) });
                             // SAFETY: `client` from heap::alloc above; sole owner.
                             unsafe { Self::deref(client) };
                             return None;
@@ -563,8 +569,9 @@ impl<const SSL: bool> HTTPClient<SSL> {
     }
 
     pub fn clear_data(&mut self) {
+        // SAFETY: `get_mut_ptr()` is the live per-thread VM singleton.
         self.poll_ref
-            .unref(vm_loop_ctx(VirtualMachineRef::get_mut_ptr()));
+            .unref(unsafe { vm_loop_ctx(VirtualMachineRef::get_mut_ptr()) });
 
         self.subprotocols.clear_and_free();
         self.clear_input();

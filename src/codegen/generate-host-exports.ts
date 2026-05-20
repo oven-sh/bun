@@ -122,12 +122,13 @@ interface Export {
   params: Param[];
   ret: string;
   shape: "host" | "lazy" | "generic" | "rust";
+  isUnsafe: boolean;
 }
 
 const markerRe = /^\s*\/\/\s*HOST_EXPORT\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:,\s*(jsc|c|rust))?\s*\)\s*$/;
 // `pub fn name(` — capture name; the param list and return type are pulled by
 // a small balanced-paren scanner because params routinely span lines.
-const fnHeadRe = /^\s*pub\s+(?:unsafe\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/;
+const fnHeadRe = /^\s*pub\s+(unsafe\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/;
 
 function ptrify(ty: string): { cTy: string; deref: (n: string) => string } {
   ty = ty.trim();
@@ -207,7 +208,8 @@ for (const { dir, crate } of scanRoots) {
         errors.push(`${file}:${i + 1}: HOST_EXPORT(${symbol}) not followed by \`pub fn\``);
         continue;
       }
-      const fnName = head[1];
+      const isUnsafe = !!head[1];
+      const fnName = head[2];
       // Balanced-paren scan for the param list + return type.
       let buf = lines[j].slice(lines[j].indexOf("(") + 1);
       let depth = 1,
@@ -312,7 +314,7 @@ for (const { dir, crate } of scanRoots) {
       }
       const retRw = rewriteTy(ret);
 
-      exportsFound.push({ symbol, abi, file, line: j + 1, fnName, modPath, params, ret: retRw, shape });
+      exportsFound.push({ symbol, abi, file, line: j + 1, fnName, modPath, params, ret: retRw, shape, isUnsafe });
     }
   }
 }
@@ -450,10 +452,13 @@ pub extern "Rust" fn ${e.symbol}(${sig}) -> ${e.ret} {
       // forward raw.
       const globalParam = e.params.find(p => /JSGlobalObject$/.test(p.ty));
       const cRet = retIsJsResult ? "JSValue" : e.ret;
-      const body =
+      let body =
         retIsJsResult && globalParam
           ? `host_fn::host_fn_result(${globalParam.name}, || ${impl}(${call}))`
           : `${impl}(${call})`;
+      if (e.isUnsafe) {
+        body = `// SAFETY: C++ caller upholds the impl fn's documented safety contract.\n    unsafe { ${body} }`;
+      }
       return `
 // ${loc}
 ${emitNoMangle(e.abi, e.symbol, sig, cRet, `${binds}    ${body}`)}`;

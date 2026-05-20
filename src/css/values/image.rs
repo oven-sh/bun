@@ -57,7 +57,7 @@ impl Image {
                     css::Feature::RepeatingConicGradient.is_compatible(browsers)
                         && repeating_conic.is_compatible(&browsers)
                 }
-                Gradient::WebkitGradient(_) => css::prefixes::Feature::is_webkit_gradient(browsers),
+                Gradient::WebkitGradient(_) => css::prefixes::Feature::is_webkit_gradient(&browsers),
             },
             Image::ImageSet(image_set) => image_set.is_compatible(browsers),
             Image::Url(_) | Image::None => true,
@@ -172,7 +172,7 @@ impl Image {
         // `if (targets.browsers) |b| isWebkitGradient(b) else (false and prefix_image.* == .gradient)`
         if prefixes.contains(VendorPrefix::WEBKIT)
             && if let Some(browsers) = targets.browsers {
-                css::prefixes::Feature::is_webkit_gradient(browsers)
+                css::prefixes::Feature::is_webkit_gradient(&browsers)
             } else {
                 false && matches!(prefix_image, Image::Gradient(_))
             }
@@ -287,8 +287,8 @@ impl crate::small_list::ImageFallback for Image {
         Image::get_fallback(self, arena, kind)
     }
     #[inline]
-    fn get_necessary_fallbacks(&self, targets: css::targets::Targets) -> ColorFallbackKind {
-        Image::get_necessary_fallbacks(self, targets)
+    fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
+        Image::get_necessary_fallbacks(self, *targets)
     }
 }
 

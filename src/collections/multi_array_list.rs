@@ -1206,23 +1206,23 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     }
 
     /// Stable sort by index-based context.
-    pub fn sort<C: SortContext>(&mut self, ctx: C) {
-        self.sort_internal::<C, true>(0, self.len, &ctx);
+    pub fn sort<C: SortContext>(&mut self, ctx: &C) {
+        self.sort_internal::<C, true>(0, self.len, ctx);
     }
 
     /// Stable sort of `[a, b)` by index-based context.
-    pub fn sort_span<C: SortContext>(&mut self, a: usize, b: usize, ctx: C) {
-        self.sort_internal::<C, true>(a, b, &ctx);
+    pub fn sort_span<C: SortContext>(&mut self, a: usize, b: usize, ctx: &C) {
+        self.sort_internal::<C, true>(a, b, ctx);
     }
 
     /// Unstable sort by index-based context.
-    pub fn sort_unstable<C: SortContext>(&mut self, ctx: C) {
-        self.sort_internal::<C, false>(0, self.len, &ctx);
+    pub fn sort_unstable<C: SortContext>(&mut self, ctx: &C) {
+        self.sort_internal::<C, false>(0, self.len, ctx);
     }
 
     /// Unstable sort of `[a, b)` by index-based context.
-    pub fn sort_span_unstable<C: SortContext>(&mut self, a: usize, b: usize, ctx: C) {
-        self.sort_internal::<C, false>(a, b, &ctx);
+    pub fn sort_span_unstable<C: SortContext>(&mut self, a: usize, b: usize, ctx: &C) {
+        self.sort_internal::<C, false>(a, b, ctx);
     }
 
     pub fn capacity_in_bytes(capacity: usize) -> usize {
@@ -1554,7 +1554,7 @@ mod tests {
                 unsafe { *self.a.add(ai) < *self.a.add(bi) }
             }
         }
-        list.sort(Ctx { a: raw, len });
+        list.sort(&Ctx { a: raw, len });
         assert_eq!(list.items::<"a", u32>(), &[0, 1, 2, 3, 4]);
         assert_eq!(list.items::<"c", u64>(), &[0, 10, 20, 30, 40]);
     }

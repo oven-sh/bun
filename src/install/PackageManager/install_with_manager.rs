@@ -589,7 +589,8 @@ pub fn install_with_manager(
             let keys: Vec<u64> = manager.lockfile.patched_dependencies.keys().to_vec();
             for key in keys {
                 let task = PatchTask::new_calc_patch_hash(manager, key, None);
-                enqueue_patch_task_pre(manager, task);
+                // SAFETY: `task` is a fresh `heap::alloc` from `new_calc_patch_hash`.
+                unsafe { enqueue_patch_task_pre(manager, task) };
             }
         }
         // Anything that needs to be downloaded from an update needs to be scheduled here
@@ -1597,7 +1598,7 @@ fn create_new_lockfile_and_enqueue(
         )?;
     }
 
-    root = manager.lockfile.append_package(root)?;
+    root = manager.lockfile.append_package(&root)?;
 
     if root.dependencies.len > 0 {
         let _ = manager.get_cache_directory();
@@ -1607,7 +1608,8 @@ fn create_new_lockfile_and_enqueue(
         let keys: Vec<u64> = manager.lockfile.patched_dependencies.keys().to_vec();
         for key in keys {
             let task = PatchTask::new_calc_patch_hash(manager, key, None);
-            enqueue_patch_task_pre(manager, task);
+            // SAFETY: `task` is a fresh `heap::alloc` from `new_calc_patch_hash`.
+            unsafe { enqueue_patch_task_pre(manager, task) };
         }
     }
     enqueue_dependency_list(manager, root.dependencies);

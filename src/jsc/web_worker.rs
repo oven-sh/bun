@@ -876,9 +876,8 @@ impl WebWorker {
             // SAFETY: `exec_argv` borrows C++ `WorkerOptions` kept alive by the
             // owning `WebCore::Worker` for `self`'s lifetime; the hook only
             // reads the slice and owns its own temporary allocations.
-            if let Some(allow_addons) =
-                unsafe { (hooks.parse_worker_exec_argv_allow_addons)(exec_argv) }
-            {
+            let parsed = unsafe { (hooks.parse_worker_exec_argv_allow_addons)(exec_argv) };
+            if let Some(allow_addons) = parsed {
                 // override the existing even if it was set
                 transform_options.allow_addons = Some(allow_addons);
             }

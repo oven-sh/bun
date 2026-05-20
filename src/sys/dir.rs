@@ -487,7 +487,7 @@ pub fn open_dir(dir: Dir, path: &[u8]) -> core::result::Result<Dir, bun_core::Er
 pub trait FdDirExt: Copy {
     fn make_path(self, sub_path: &[u8]) -> core::result::Result<(), bun_core::Error>;
     fn make_open_path(self, sub_path: &[u8]) -> core::result::Result<Dir, bun_core::Error>;
-    fn from_std_dir(dir: &Dir) -> Self;
+    fn from_std_dir(dir: Dir) -> Self;
 }
 impl FdDirExt for Fd {
     #[inline]
@@ -499,7 +499,7 @@ impl FdDirExt for Fd {
         Dir::from_fd(self).make_open_path(sub_path, OpenDirOptions::default())
     }
     #[inline]
-    fn from_std_dir(dir: &Dir) -> Fd {
+    fn from_std_dir(dir: Dir) -> Fd {
         dir.fd
     }
 }

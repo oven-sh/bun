@@ -300,7 +300,7 @@ impl hooks::AutoInstaller for PackageManager {
 
         string_builder.clamp();
 
-        let appended = lockfile.append_package(package)?;
+        let appended = lockfile.append_package(&package)?;
         Ok(appended.meta.id)
     }
 
@@ -310,7 +310,7 @@ impl hooks::AutoInstaller for PackageManager {
         // (resolver.zig:2082).
         let mut pkg = Package::default();
         pkg.resolution = resolution::Resolution::init(resolution::TaggedValue::Root);
-        let appended = self.lockfile.append_package(pkg)?;
+        let appended = self.lockfile.append_package(&pkg)?;
         Ok(appended.meta.id)
     }
 
@@ -336,7 +336,7 @@ impl hooks::AutoInstaller for PackageManager {
         let path_buf: &mut bun_paths::PathBuffer =
             unsafe { &mut *buf.as_mut_ptr().cast::<bun_paths::PathBuffer>() };
         let r = resolution_from_hooks(resolution);
-        let out = directories::path_for_resolution(self, package_id, r, path_buf)?;
+        let out = directories::path_for_resolution(self, package_id, &r, path_buf)?;
         Ok(&*out)
     }
 

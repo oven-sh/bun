@@ -1100,14 +1100,14 @@ impl<V: CalcValue> Calc<V> {
         *args = reduced;
     }
 
-    pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         match self {
             Calc::Sum { left, right } => {
                 left.is_compatible(browsers) && right.is_compatible(browsers)
             }
             Calc::Product { expression, .. } => expression.is_compatible(browsers),
             Calc::Function(f) => f.is_compatible(browsers),
-            Calc::Value(v) => v.is_compatible(browsers),
+            Calc::Value(v) => v.is_compatible(*browsers),
             Calc::Number(_) => true,
         }
     }
@@ -1422,25 +1422,25 @@ impl<V> MathFunction<V> {
         }
     }
 
-    pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool
+    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool
     where
         V: CalcValue,
     {
         use crate::compat::Feature as F;
         match self {
             MathFunction::Calc(c) => {
-                F::CalcFunction.is_compatible(browsers) && c.is_compatible(browsers)
+                F::CalcFunction.is_compatible(*browsers) && c.is_compatible(browsers)
             }
             MathFunction::Min(m) => {
-                F::MinFunction.is_compatible(browsers)
+                F::MinFunction.is_compatible(*browsers)
                     && m.iter().all(|arg| arg.is_compatible(browsers))
             }
             MathFunction::Max(m) => {
-                F::MaxFunction.is_compatible(browsers)
+                F::MaxFunction.is_compatible(*browsers)
                     && m.iter().all(|arg| arg.is_compatible(browsers))
             }
             MathFunction::Clamp { min, center, max } => {
-                F::ClampFunction.is_compatible(browsers)
+                F::ClampFunction.is_compatible(*browsers)
                     && min.is_compatible(browsers)
                     && center.is_compatible(browsers)
                     && max.is_compatible(browsers)
@@ -1448,28 +1448,28 @@ impl<V> MathFunction<V> {
             MathFunction::Round {
                 value, interval, ..
             } => {
-                F::RoundFunction.is_compatible(browsers)
+                F::RoundFunction.is_compatible(*browsers)
                     && value.is_compatible(browsers)
                     && interval.is_compatible(browsers)
             }
             MathFunction::Rem { dividend, divisor } => {
-                F::RemFunction.is_compatible(browsers)
+                F::RemFunction.is_compatible(*browsers)
                     && dividend.is_compatible(browsers)
                     && divisor.is_compatible(browsers)
             }
             MathFunction::Mod { dividend, divisor } => {
-                F::ModFunction.is_compatible(browsers)
+                F::ModFunction.is_compatible(*browsers)
                     && dividend.is_compatible(browsers)
                     && divisor.is_compatible(browsers)
             }
             MathFunction::Abs(a) => {
-                F::AbsFunction.is_compatible(browsers) && a.is_compatible(browsers)
+                F::AbsFunction.is_compatible(*browsers) && a.is_compatible(browsers)
             }
             MathFunction::Sign(s) => {
-                F::SignFunction.is_compatible(browsers) && s.is_compatible(browsers)
+                F::SignFunction.is_compatible(*browsers) && s.is_compatible(browsers)
             }
             MathFunction::Hypot(h) => {
-                F::HypotFunction.is_compatible(browsers)
+                F::HypotFunction.is_compatible(*browsers)
                     && h.iter().all(|arg| arg.is_compatible(browsers))
             }
         }
@@ -1547,7 +1547,7 @@ pub enum Constant {
 }
 
 impl Constant {
-    pub fn into_f32(&self) -> f32 {
+    pub fn into_f32(self) -> f32 {
         match self {
             Constant::E => core::f32::consts::E,
             Constant::Pi => core::f32::consts::PI,
@@ -1674,7 +1674,7 @@ macro_rules! calc_protocol_forwarders {
     };
     (@ $T:ty; try_op: forward, $($r:tt)*) => {
         impl protocol::TryOp for $T {
-            #[inline] fn try_op<C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> f32) -> Option<Self> { <$T>::try_op(self, rhs, ctx, f) }
+            #[inline] fn try_op<C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> f32) -> Option<Self> { <$T>::try_op(*self, *rhs, ctx, f) }
         }
         calc_protocol_forwarders!(@ $T; $($r)*);
     };
@@ -1718,7 +1718,7 @@ macro_rules! calc_protocol_forwarders {
 calc_protocol_forwarders!(Percentage {
     mul_f32: forward,
     try_from_angle: none,
-    try_sign: forward,
+    try_sign: sign,
     try_map: forward,
     try_op: forward,
     try_op_to: |this, rhs, ctx, f| { Some(this.op_to(*rhs, ctx, f)) },
@@ -1790,7 +1790,7 @@ impl CalcValue for Time {
     }
     #[inline]
     fn eql(&self, other: &Self) -> bool {
-        Time::eql(self, other)
+        Time::eql(*self, *other)
     }
 }
 

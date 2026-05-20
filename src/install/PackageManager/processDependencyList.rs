@@ -223,7 +223,7 @@ impl PackageManager {
                     package.meta.integrity = data.integrity;
                 }
 
-                package = self.lockfile.append_package(package).expect("unreachable");
+                package = self.lockfile.append_package(&package).expect("unreachable");
                 *package_id = package.meta.id;
 
                 if package.dependencies.len > 0 {
@@ -282,7 +282,7 @@ impl PackageManager {
                     package.meta.integrity = data.integrity;
                 }
 
-                package = self.lockfile.append_package(package).expect("unreachable");
+                package = self.lockfile.append_package(&package).expect("unreachable");
                 *package_id = package.meta.id;
 
                 if package.dependencies.len > 0 {

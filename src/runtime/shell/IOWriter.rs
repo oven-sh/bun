@@ -484,7 +484,7 @@ impl IOWriter {
             // destroy us mid-on_error.
             s.started = true;
             if let Err(e) = self.__start() {
-                self.on_error(e);
+                self.on_error(&e);
                 return WriteOutcome::Failed;
             }
             #[cfg(not(windows))]
@@ -513,7 +513,7 @@ impl IOWriter {
             }
             s.is_writing = true;
             if let Err(e) = s.writer.start_with_current_pipe() {
-                self.on_error(e);
+                self.on_error(&e);
                 return WriteOutcome::Failed;
             }
             return WriteOutcome::Suspended;
@@ -533,7 +533,7 @@ impl IOWriter {
                 }
             }
             if let Err(e) = s.writer.start(s.fd, s.flags.pollable) {
-                self.on_error(e);
+                self.on_error(&e);
                 return WriteOutcome::Failed;
             }
             WriteOutcome::Suspended
@@ -738,7 +738,7 @@ impl IOWriter {
                 );
             }
             bun_io::WriteResult::Err(e) => {
-                self.on_error(e);
+                self.on_error(&e);
                 return Yield::done();
             }
         };
@@ -858,7 +858,7 @@ impl IOWriter {
     }
 
     /// Spec: IOWriter.zig `onError`.
-    fn on_error(&self, err: sys::Error) {
+    fn on_error(&self, err: &sys::Error) {
         let _keepalive = self.keepalive();
         self.set_writing(false);
         let s = self.state();
@@ -1131,7 +1131,7 @@ fn drain_buffered_data(
             }
             bun_io::WriteResult::Err(err) => {
                 if drained > 0 {
-                    parent.on_error(err);
+                    parent.on_error(&err);
                     return bun_io::WriteResult::Wrote(drained);
                 }
                 return bun_io::WriteResult::Err(err);

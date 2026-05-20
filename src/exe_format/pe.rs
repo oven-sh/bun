@@ -167,7 +167,7 @@ pub struct DataDirectory {
     pub size: u32,
 }
 
-#[repr(C)]
+#[repr(C, packed)]
 #[derive(Copy, Clone)]
 pub struct SectionHeader {
     pub name: [u8; 8],                // Section name

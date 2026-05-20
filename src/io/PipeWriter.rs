@@ -2795,7 +2795,7 @@ macro_rules! impl_buffered_writer_parent {
             #[inline]
             unsafe fn on_error(this: *mut Self, err: $crate::pipe_writer::__parent_macro::SysError) {
                 // SAFETY: see on_write.
-                unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_error(err) };
+                unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_error(&err) };
             }
             const HAS_ON_CLOSE: bool = true;
             #[inline]
@@ -2858,7 +2858,7 @@ macro_rules! impl_buffered_writer_parent {
             #[inline]
             unsafe fn on_error(this: *mut Self, err: $crate::pipe_writer::__parent_macro::SysError) {
                 // SAFETY: see on_write.
-                unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_error(err) };
+                unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_error(&err) };
             }
             const HAS_ON_CLOSE: bool = true;
             #[inline]

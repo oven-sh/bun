@@ -71,6 +71,7 @@ pub fn from_fetch_headers(
     // contract is satisfied. Disjoint backing memory ⇒ no aliasing.
     let names_ptr: *mut api::StringPointer =
         unsafe { sliced.items_raw::<"name", api::StringPointer>() };
+    // SAFETY: same `items_raw` contract as above; `value` column is a disjoint allocation.
     let values_ptr: *mut api::StringPointer =
         unsafe { sliced.items_raw::<"value", api::StringPointer>() };
     if let Some(h) = h_ptr {

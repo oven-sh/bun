@@ -1,6 +1,6 @@
 // Sub-modules
 
-use core::ffi::c_void as _; // (no FFI here; placeholder to mirror import block shape)
+use core::ffi::c_void;
 
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
 
@@ -151,11 +151,17 @@ impl From<ParserError> for bun_core::Error {
 
 impl<'a> Parser<'a> {
     pub fn get_block_header_at(&mut self, off: usize) -> &mut BlockHeader {
-        // SAFETY: off is an aligned offset into block_bytes produced by start_new_block /
-        // push_container_bytes; the buffer holds a valid BlockHeader at that offset.
+        // SAFETY: `off` is produced by start_new_block / push_container_bytes which pad it
+        // to a multiple of `align_of::<BlockHeader>()`, and the global allocator returns
+        // blocks aligned to at least `align_of::<usize>()`, so the resulting pointer is
+        // 4-byte aligned (asserted below). The buffer holds an initialized BlockHeader there.
         // TODO(port): borrowck — this returns &mut into self.block_bytes while other
         // &mut self borrows may be live at call sites; may need raw *mut.
-        unsafe { &mut *(self.block_bytes.as_mut_ptr().add(off).cast::<BlockHeader>()) }
+        unsafe {
+            let ptr = self.block_bytes.as_mut_ptr().add(off).cast::<c_void>().cast::<BlockHeader>();
+            debug_assert!(ptr.is_aligned());
+            &mut *ptr
+        }
     }
 
     #[inline]

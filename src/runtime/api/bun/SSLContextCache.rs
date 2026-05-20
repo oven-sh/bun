@@ -111,14 +111,14 @@ impl SSLContextCache {
         err: &mut create_bun_socket_error_t,
     ) -> Option<*mut boringssl::SSL_CTX> {
         let opts = config.as_usockets();
-        self.get_or_create_digest(opts, opts.digest(), err)
+        self.get_or_create_digest(&opts, opts.digest(), err)
     }
 
     /// Variant for callers that already projected to `BunSocketContextOptions`
     /// (e.g. via `as_usockets_for_client_verification()`).
     pub fn get_or_create_opts(
         &mut self,
-        opts: uws::SocketContext::BunSocketContextOptions,
+        opts: &uws::SocketContext::BunSocketContextOptions,
         err: &mut create_bun_socket_error_t,
     ) -> Option<*mut boringssl::SSL_CTX> {
         self.get_or_create_digest(opts, opts.digest(), err)
@@ -129,7 +129,7 @@ impl SSLContextCache {
     /// instead of three times on a miss.
     pub fn get_or_create_digest(
         &mut self,
-        opts: uws::SocketContext::BunSocketContextOptions,
+        opts: &uws::SocketContext::BunSocketContextOptions,
         d: Digest,
         err: &mut create_bun_socket_error_t,
     ) -> Option<*mut boringssl::SSL_CTX> {

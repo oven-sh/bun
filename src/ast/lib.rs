@@ -2724,7 +2724,7 @@ impl Source {
         }
     }
 
-    pub fn init_file(file: PathContentsPair) -> Result<Source, bun_core::Error> {
+    pub fn init_file(file: &PathContentsPair) -> Result<Source, bun_core::Error> {
         let mut source = Source {
             path: file.path,
             contents: Cow::Borrowed(file.contents),
@@ -2734,7 +2734,7 @@ impl Source {
         Ok(source)
     }
 
-    pub fn init_recycled_file(file: PathContentsPair) -> Result<Source, bun_core::Error> {
+    pub fn init_recycled_file(file: &PathContentsPair) -> Result<Source, bun_core::Error> {
         let mut source = Source {
             path: file.path,
             contents: Cow::Borrowed(file.contents),

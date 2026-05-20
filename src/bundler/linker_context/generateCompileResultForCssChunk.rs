@@ -121,7 +121,7 @@ fn generate_compile_result_for_css_chunk_impl(
             match css.to_css_with_writer(
                 arena,
                 &mut allocating_writer,
-                printer_options,
+                &printer_options,
                 Some(ImportInfo {
                     import_records: &css_import.condition_import_records,
                     ast_urls_for_css: parse_graph.ast.items_url_for_css(),
@@ -164,7 +164,7 @@ fn generate_compile_result_for_css_chunk_impl(
             match css.to_css_with_writer(
                 arena,
                 &mut allocating_writer,
-                printer_options,
+                &printer_options,
                 Some(ImportInfo {
                     import_records: &import_records,
                     ast_urls_for_css: parse_graph.ast.items_url_for_css(),
@@ -201,7 +201,7 @@ fn generate_compile_result_for_css_chunk_impl(
             match css.to_css_with_writer(
                 arena,
                 &mut allocating_writer,
-                printer_options,
+                &printer_options,
                 Some(ImportInfo {
                     import_records: &c.graph.ast.items_import_records()[idx.get() as usize],
                     ast_urls_for_css: parse_graph.ast.items_url_for_css(),

@@ -1545,7 +1545,7 @@ impl<'a> Transpiler<'a> {
             // the erasure.
             let contents: &'static [u8] =
                 unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(source_backing.as_slice()) };
-            match bun_ast::Source::init_recycled_file(bun_ast::PathContentsPair {
+            match bun_ast::Source::init_recycled_file(&bun_ast::PathContentsPair {
                 path: path.clone(),
                 contents,
             }) {

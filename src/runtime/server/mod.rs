@@ -1487,13 +1487,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if self.poll_ref.is_active() {
             return;
         }
+        // SAFETY: `self.vm` is the live per-thread VM singleton backref.
         self.poll_ref
-            .ref_(jsc::VirtualMachine::event_loop_ctx(self.vm.as_ptr()));
+            .ref_(unsafe { jsc::VirtualMachine::event_loop_ctx(self.vm.as_ptr()) });
     }
 
     pub fn unref(&mut self) {
+        // SAFETY: `self.vm` is the live per-thread VM singleton backref.
         self.poll_ref
-            .unref(jsc::VirtualMachine::event_loop_ctx(self.vm.as_ptr()));
+            .unref(unsafe { jsc::VirtualMachine::event_loop_ctx(self.vm.as_ptr()) });
     }
 
     pub fn stop_listening(&mut self, abrupt: bool) {
@@ -2078,7 +2080,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             path,
                             ud,
                             1, // id 1 means is a user route
-                            ServerWebSocket::behavior::<Self, SSL>(websocket.to_behavior()),
+                            ServerWebSocket::behavior::<Self, SSL>(&websocket.to_behavior()),
                         );
                     }
                 }
@@ -2111,7 +2113,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 path,
                                 ud,
                                 1, // id 1 means is a user route
-                                ServerWebSocket::behavior::<Self, SSL>(websocket.to_behavior()),
+                                ServerWebSocket::behavior::<Self, SSL>(&websocket.to_behavior()),
                             );
                         }
                     }
@@ -2303,7 +2305,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     b"/*",
                     self_ptr.cast(),
                     0, // id 0 means is a fallback route and ctx is the server
-                    ServerWebSocket::behavior::<Self, SSL>(websocket.to_behavior()),
+                    ServerWebSocket::behavior::<Self, SSL>(&websocket.to_behavior()),
                 );
             }
         }

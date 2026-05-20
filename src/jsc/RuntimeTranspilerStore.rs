@@ -662,14 +662,13 @@ impl TranspilerJob {
 
         // SAFETY: `vm` is the live owning VM (BACKREF — see PORT NOTE above);
         // atomic load on a leaf field, no `&VirtualMachine` formed.
-        if self.generation_number
-            != unsafe {
-                (*vm)
-                    .transpiler_store
-                    .generation_number
-                    .load(Ordering::Relaxed)
-            }
-        {
+        let store_generation = unsafe {
+            (*vm)
+                .transpiler_store
+                .generation_number
+                .load(Ordering::Relaxed)
+        };
+        if self.generation_number != store_generation {
             self.parse_error = Some(bun_core::err!("TranspilerJobGenerationMismatch"));
             return;
         }

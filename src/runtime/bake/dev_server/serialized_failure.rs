@@ -51,7 +51,7 @@ pub enum Owner {
 }
 
 impl Owner {
-    pub fn encode(&self) -> Packed {
+    pub fn encode(self) -> Packed {
         match self {
             Owner::None => Packed::new(PackedKind::None, 0),
             Owner::Client(data) => Packed::new(PackedKind::Client, data.get()),
@@ -195,10 +195,10 @@ impl ArrayHashContextViaOwner {
 
 pub struct ArrayHashAdapter;
 impl ArrayHashAdapter {
-    pub fn hash(&self, own: &Owner) -> u32 {
+    pub fn hash(&self, own: Owner) -> u32 {
         bun_wyhash::hash_int(own.encode().bits())
     }
-    pub fn eql(&self, a: &Owner, b: &SerializedFailure, _: usize) -> bool {
+    pub fn eql(&self, a: Owner, b: &SerializedFailure, _: usize) -> bool {
         a.encode().bits() == b.get_owner().encode().bits()
     }
 }

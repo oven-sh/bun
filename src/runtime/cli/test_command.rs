@@ -2150,9 +2150,15 @@ impl TestCommand {
         let concurrent_test_glob_view: Option<Vec<&'static [u8]>> =
             ctx.test_options.concurrent_test_glob.as_ref().map(|v| {
                 v.iter()
-                    .map(|b| unsafe { bun_ptr::detach_lifetime::<u8>(b) })
+                    .map(|b| {
+                        // SAFETY: backing bytes are owned by `ctx.test_options`
+                        // (process-lifetime) and `exec()` never returns.
+                        unsafe { bun_ptr::detach_lifetime::<u8>(b) }
+                    })
                     .collect()
             });
+        // SAFETY: backing bytes are owned by `ctx.test_options` (process-lifetime)
+        // and `exec()` never returns, so detaching to `'static` is sound.
         let path_ignore_patterns_view: Vec<&'static [u8]> = ctx
             .test_options
             .path_ignore_patterns
@@ -2198,10 +2204,13 @@ impl TestCommand {
                     // declared in this never-returning frame (`exec()` only exits
                     // via process exit), mirroring Zig's stack-address capture.
                     file_buf: unsafe { &mut *(&raw mut snapshot_file_buf) },
+                    // SAFETY: same never-returning-frame invariant as `file_buf` above.
                     values: unsafe { &mut *(&raw mut snapshot_values) },
+                    // SAFETY: same never-returning-frame invariant as `file_buf` above.
                     counts: unsafe { &mut *(&raw mut snapshot_counts) },
                     _current_file: None,
                     snapshot_dir_path: None,
+                    // SAFETY: same never-returning-frame invariant as `file_buf` above.
                     inline_snapshots_to_write: unsafe {
                         &mut *(&raw mut inline_snapshots_to_write)
                     },
@@ -2398,6 +2407,9 @@ impl TestCommand {
                             vm.exit_handler.exit_code = 1;
                             vm.is_shutting_down = true;
                             let vm_ptr: *mut VirtualMachine = vm;
+                            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
+                            // `run_with_api_lock` takes `&self` only and `global_exit()`
+                            // diverges, so the closure is the sole mutator.
                             vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
                         }
                     }
@@ -2413,7 +2425,11 @@ impl TestCommand {
             } else {
                 ctx.positionals[1..]
                     .iter()
-                    .map(|b| unsafe { bun_ptr::detach_lifetime::<u8>(&**b) })
+                    .map(|b| {
+                        // SAFETY: bytes live in `ctx.positionals` (process-lifetime)
+                        // and this frame never returns.
+                        unsafe { bun_ptr::detach_lifetime::<u8>(&**b) }
+                    })
                     .collect()
             };
             #[cfg(windows)]
@@ -2493,6 +2509,9 @@ impl TestCommand {
                     vm.exit_handler.exit_code = 1;
                     vm.is_shutting_down = true;
                     let vm_ptr: *mut VirtualMachine = vm;
+                    // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
+                    // `run_with_api_lock` takes `&self` only and `global_exit()`
+                    // diverges, so the closure is the sole mutator.
                     vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
                 }
             }
@@ -2632,16 +2651,24 @@ impl TestCommand {
 
             match vm.hot_reload {
                 jsc::virtual_machine::HOT_RELOAD_HOT => {
-                    jsc::hot_reloader::HotReloader::enable_hot_module_reloading(
-                        std::ptr::from_mut::<VirtualMachine>(vm),
-                        None,
-                    );
+                    // SAFETY: `vm` is the process-lifetime main-thread VM; it
+                    // outlives the leaked reloader.
+                    unsafe {
+                        jsc::hot_reloader::HotReloader::enable_hot_module_reloading(
+                            std::ptr::from_mut::<VirtualMachine>(vm),
+                            None,
+                        );
+                    }
                 }
                 jsc::virtual_machine::HOT_RELOAD_WATCH => {
-                    jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(
-                        std::ptr::from_mut::<VirtualMachine>(vm),
-                        None,
-                    );
+                    // SAFETY: `vm` is the process-lifetime main-thread VM; it
+                    // outlives the leaked reloader.
+                    unsafe {
+                        jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(
+                            std::ptr::from_mut::<VirtualMachine>(vm),
+                            None,
+                        );
+                    }
                 }
                 _ => {}
             }
@@ -3006,6 +3033,9 @@ impl TestCommand {
 
         if vm.hot_reload == jsc::virtual_machine::HOT_RELOAD_WATCH {
             let vm_ptr: *mut VirtualMachine = vm;
+            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
+            // `run_with_api_lock` takes `&self` only, so the closure holds the
+            // unique mutable access on this single-threaded path.
             vm.run_with_api_lock(|| Self::run_event_loop_for_watch(unsafe { &mut *vm_ptr }));
         }
         let summary = reporter.summary();
@@ -3030,12 +3060,17 @@ impl TestCommand {
         // before dropping `reporter` so finalizers running inside the GC can't
         // observe a dangling `TestRunner`.
         reporter.jest.bun_test_root.deinit_for_exit();
+        // SAFETY: `RUNNER` is a `RacyCell` touched only from the single JS thread;
+        // no concurrent reader exists on this shutdown path.
         unsafe {
             jest::Jest::RUNNER.write(None);
         }
         drop(reporter);
         {
             let vm_ptr: *mut VirtualMachine = vm;
+            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
+            // `run_with_api_lock` takes `&self` only and `global_exit()`
+            // diverges, so the closure is the sole mutator.
             vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
         }
         #[allow(unreachable_code)]
@@ -3125,6 +3160,8 @@ impl TestCommand {
             vm: vm_,
             files: files_,
         };
+        // SAFETY: `vm_ptr` was derived from `vm_` above; `ctx` holds the unique
+        // `&mut VirtualMachine` and `run_with_api_lock(&self)` only acquires the JSC lock.
         unsafe { (*vm_ptr).run_with_api_lock(|| ctx.begin()) };
     }
 
@@ -3277,9 +3314,9 @@ impl TestCommand {
                             (*bun_test_root_ptr).deinit_for_exit();
                             jest::Jest::RUNNER.write(None);
                         }
+                        let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm);
                         // SAFETY: global_exit diverges; raw-ptr reborrow mirrors Zig
                         // runWithAPILock(*VM, vm, globalExit).
-                        let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm);
                         unsafe { (*vm_ptr).run_with_api_lock(|| (&mut *vm_ptr).global_exit()) };
                     }
 

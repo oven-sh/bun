@@ -748,7 +748,7 @@ impl FlexHandler {
                     .targets
                     .prefixes(VendorPrefix::NONE, PrefixFeature::FlexDirection);
                 let mut prefixes_2009 = VendorPrefix::empty();
-                if is_flex_2009(*targets) {
+                if is_flex_2009(targets) {
                     prefixes_2009.insert(VendorPrefix::WEBKIT);
                 }
                 if prefixes.contains(VendorPrefix::MOZ) {
@@ -849,7 +849,7 @@ impl FlexHandler {
                                 // 2009 spec, implemented by webkit and firefox
                                 if let Some(targets) = &context.targets.browsers {
                                     let mut prefixes_2009 = VendorPrefix::empty();
-                                    if is_flex_2009(*targets) {
+                                    if is_flex_2009(targets) {
                                         prefixes_2009.insert(VendorPrefix::WEBKIT);
                                     }
                                     if prefix.contains(VendorPrefix::MOZ) {
@@ -898,7 +898,7 @@ impl FlexHandler {
                     .targets
                     .prefixes(VendorPrefix::NONE, PrefixFeature::FlexGrow);
                 let mut prefixes_2009 = VendorPrefix::empty();
-                if is_flex_2009(*targets) {
+                if is_flex_2009(targets) {
                     prefixes_2009.insert(VendorPrefix::WEBKIT);
                 }
                 if prefixes.contains(VendorPrefix::MOZ) {

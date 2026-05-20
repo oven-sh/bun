@@ -1822,13 +1822,17 @@ pub fn element_length_utf8_into_utf16(utf8: &[u8]) -> usize {
         // PORT NOTE: Zig calls `utf16Codepoint` (which takes []const u16) on a []const u8 here —
         // preserved as a TODO; this branch is dead when use_simdutf is true.
         // TODO(port): dead non-simdutf path passes wrong slice type in Zig source
-        // SAFETY: dead path (use_simdutf always true); preserved verbatim from Zig which passes wrong slice type
-        let replacement = utf16_codepoint(unsafe {
-            core::slice::from_raw_parts(
-                utf8_remaining.as_ptr().cast::<u16>(),
-                utf8_remaining.len() / 2,
-            )
-        });
+        let replacement = {
+            let n = utf8_remaining.len() / 2;
+            let mut pair = [0u16; 2];
+            if n >= 1 {
+                pair[0] = u16::from_ne_bytes([utf8_remaining[0], utf8_remaining[1]]);
+            }
+            if n >= 2 {
+                pair[1] = u16::from_ne_bytes([utf8_remaining[2], utf8_remaining[3]]);
+            }
+            utf16_codepoint(&pair[..n.min(2)])
+        };
 
         count += replacement.len as usize;
         utf8_remaining =

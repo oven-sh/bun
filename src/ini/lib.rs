@@ -1073,33 +1073,24 @@ mod draft {
                 head: Expr::init(E::EString::init(&key[..dot_idx]), Loc::EMPTY),
                 next: ptr::null_mut(),
             });
-            // SAFETY: `head` is the same allocation as `rope`'s initial value;
-            // we walk `rope` forward via `append` while keeping `head` to return.
-            // PORT NOTE: reshaped for borrowck — Zig holds two *Rope simultaneously.
-            let head: *mut Rope = std::ptr::from_mut::<Rope>(rope_head);
-            let mut rope: *mut Rope = head;
 
             while dot_idx + 1 < key.len() {
                 let next_dot_idx = match next_dot(&key[dot_idx + 1..]) {
                     Some(n) => dot_idx + 1 + n,
                     None => {
                         let rest = &key[dot_idx + 1..];
-                        // SAFETY: `rope` points into a live bump allocation; no aliasing borrow.
-                        rope = unsafe { &mut *rope }
+                        let _ = rope_head
                             .append(Expr::init(E::EString::init(rest), Loc::EMPTY), ropealloc)?;
                         break;
                     }
                 };
                 let part = &key[dot_idx + 1..next_dot_idx];
-                // SAFETY: `rope` points into a live bump allocation; no aliasing borrow.
-                rope = unsafe { &mut *rope }
+                let _ = rope_head
                     .append(Expr::init(E::EString::init(part), Loc::EMPTY), ropealloc)?;
                 dot_idx = next_dot_idx;
             }
 
-            let _ = rope;
-            // SAFETY: head was created by ropealloc.alloc above and is still live in the bump.
-            Ok(unsafe { &mut *head })
+            Ok(rope_head)
         }
     }
 

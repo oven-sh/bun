@@ -874,7 +874,7 @@ impl BunTest {
     }
 
     pub fn bun_test_timeout_callback(
-        this_strong: BunTestPtr,
+        this_strong: &BunTestPtr,
         _ts: &Timespec,
         vm: &VirtualMachine,
     ) {
@@ -900,7 +900,7 @@ impl BunTest {
                 Phase::Done => {}
             }
         }
-        if let Err(e) = Self::run(&this_strong, global) {
+        if let Err(e) = Self::run(this_strong, global) {
             // SAFETY: re-derive after `run` returned; no `&mut` was held across it.
             unsafe { (*this).on_uncaught_exception(global, Some(global.take_exception(e)), false, &RefDataValue::Done) };
         }
@@ -968,7 +968,7 @@ impl BunTest {
             global_this.clear_termination_exception();
             // SAFETY: `UnsafeCell`-derived `*mut`; short-lived field read between re-entrant calls.
             let step_result: StepResult = match unsafe { (*this).phase } {
-                Phase::Collection => Collection::step(Rc::clone(this_strong), global_this, result)?,
+                Phase::Collection => Collection::step(this_strong, global_this, result)?,
                 Phase::Execution => Execution::Execution::step(Rc::clone(this_strong), global_this, result)?,
                 Phase::Done => StepResult::Complete,
             };

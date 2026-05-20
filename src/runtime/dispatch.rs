@@ -841,7 +841,7 @@ pub unsafe fn __bun_io_pollable_on_io_error(
             // PORT NOTE: WriteFile::on_io_error already takes `*mut ()` (it
             // self-recovers via the io_request path elsewhere); reuse that
             // shape rather than reborrowing `&mut`.
-            WriteFile::on_io_error(this.cast(), err);
+            WriteFile::on_io_error(this.cast(), &err);
         }
         bun_io::PollableTag::Empty => {
             debug_assert!(false, "io::Poll on_io_error with Empty tag");
@@ -1118,7 +1118,7 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
                     nsec: (*now).nsec,
                 }
             };
-            BunTest::bun_test_timeout_callback(strong, &now_core, VirtualMachine::get());
+            BunTest::bun_test_timeout_callback(&strong, &now_core, VirtualMachine::get());
         }
         EventLoopTimerTag::CronJob => timer_arm!(CronJob, event_loop_timer, |c, _now, _vm| {
             CronJob::on_timer_fire(c, VirtualMachine::get())

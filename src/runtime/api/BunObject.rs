@@ -1376,10 +1376,11 @@ pub fn bun_resolve_sync_with_paths(
     paths_ptr: *const BunString,
     paths_len: usize,
 ) -> JSValue {
-    // SAFETY: caller is C++; paths_ptr is valid for paths_len.
     let paths: &[BunString] = if paths_len == 0 {
         &[]
     } else {
+        // SAFETY: C++ caller guarantees `paths_ptr` points to `paths_len`
+        // initialized `BunString`s that outlive this call; `paths_len > 0` here.
         unsafe { core::slice::from_raw_parts(paths_ptr, paths_len) }
     };
 
@@ -1698,8 +1699,8 @@ pub extern "C" fn Bun__escapeHTML16(
         Escaped::Allocated(escaped_html) => {
             // SAFETY: ownership of `escaped_html`'s buffer transfers to JSC via
             // the external-string finalizer; do not drop it here.
+            let escaped_html = core::mem::ManuallyDrop::new(escaped_html);
             let (ptr, len) = (escaped_html.as_ptr(), escaped_html.len());
-            core::mem::forget(escaped_html);
             // SAFETY: `ptr`/`len` describe `escaped_html`'s global-allocator buffer,
             // forgotten above; ownership transfers to JSC's external-string finalizer.
             unsafe { jsc::zig_string_to_external_u16(ptr, len, global_object) }
@@ -2073,6 +2074,9 @@ pub fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResul
     // process singleton — `Graph::get()` returns the same instance the trait
     // object was built from (`vm.standalone_module_graph.is_some()` ⇔
     // `Graph::get().is_some()`).
+    // SAFETY: `Graph::get()` yields the process-lifetime singleton verified
+    // populated by the `is_some()` check above; this getter runs only on the
+    // JS thread, so the `&mut` borrow is exclusive for the call.
     let graph: &mut StandaloneModuleGraph = unsafe {
         &mut *StandaloneModuleGraph::get()
             .expect("vm.standalone_module_graph set ⇔ Graph singleton populated")
@@ -2146,7 +2150,7 @@ fn standalone_file_blob(
     // Hold the (potentially owned) `Cow` for the lifetime of the cached blob.
     // The `by_loader` table only returns `Borrowed(&'static ..)`, so leaking
     // is a no-op for the static case and correct for the owned `OTHER` case.
-    core::mem::forget(mime);
+    let _mime = core::mem::ManuallyDrop::new(mime);
     blob_body
         .name
         .set(BunString::clone_utf8(bun_paths::basename(file.name)));
@@ -2474,30 +2478,30 @@ pub mod JSZlib {
     #[bun_jsc::host_fn]
     pub fn gzip_sync(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let (buffer, options_val) = parse_compress_buffer_and_options(global_this, callframe)?;
-        gzip_or_deflate_sync(global_this, buffer, options_val, true)
+        gzip_or_deflate_sync(global_this, &buffer, options_val, true)
     }
 
     #[bun_jsc::host_fn]
     pub fn inflate_sync(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let (buffer, options_val) = parse_compress_buffer_and_options(global_this, callframe)?;
-        gunzip_or_inflate_sync(global_this, buffer, options_val, false)
+        gunzip_or_inflate_sync(global_this, &buffer, options_val, false)
     }
 
     #[bun_jsc::host_fn]
     pub fn deflate_sync(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let (buffer, options_val) = parse_compress_buffer_and_options(global_this, callframe)?;
-        gzip_or_deflate_sync(global_this, buffer, options_val, false)
+        gzip_or_deflate_sync(global_this, &buffer, options_val, false)
     }
 
     #[bun_jsc::host_fn]
     pub fn gunzip_sync(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let (buffer, options_val) = parse_compress_buffer_and_options(global_this, callframe)?;
-        gunzip_or_inflate_sync(global_this, buffer, options_val, true)
+        gunzip_or_inflate_sync(global_this, &buffer, options_val, true)
     }
 
     pub fn gunzip_or_inflate_sync(
         global_this: &JSGlobalObject,
-        buffer: node::StringOrBuffer,
+        buffer: &node::StringOrBuffer,
         options_val_: Option<JSValue>,
         is_gzip: bool,
     ) -> JsResult<JSValue> {
@@ -2630,8 +2634,10 @@ pub mod JSZlib {
                 }
                 // SAFETY: non-null per check above; freed via the scopeguard below.
                 let decompressor = unsafe { &mut *decompressor_ptr };
-                let _decompressor_guard = scopeguard::guard(decompressor_ptr, |p| unsafe {
-                    bun_libdeflate::Decompressor::destroy(p)
+                let _decompressor_guard = scopeguard::guard(decompressor_ptr, |p| {
+                    // SAFETY: `p` is the non-null `Decompressor::alloc` pointer
+                    // checked above; this guard is its sole owner and runs once.
+                    unsafe { bun_libdeflate::Decompressor::destroy(p) }
                 });
                 let encoding = if is_gzip {
                     bun_libdeflate::Encoding::Gzip
@@ -2675,7 +2681,7 @@ pub mod JSZlib {
 
     pub fn gzip_or_deflate_sync(
         global_this: &JSGlobalObject,
-        buffer: node::StringOrBuffer,
+        buffer: &node::StringOrBuffer,
         options_val_: Option<JSValue>,
         is_gzip: bool,
     ) -> JsResult<JSValue> {
@@ -2778,8 +2784,10 @@ pub mod JSZlib {
                 }
                 // SAFETY: non-null per check above; freed via the scopeguard below.
                 let compressor = unsafe { &mut *compressor_ptr };
-                let _compressor_guard = scopeguard::guard(compressor_ptr, |p| unsafe {
-                    bun_libdeflate::Compressor::destroy(p)
+                let _compressor_guard = scopeguard::guard(compressor_ptr, |p| {
+                    // SAFETY: `p` is the non-null `Compressor::alloc` pointer
+                    // checked above; this guard is its sole owner and runs once.
+                    unsafe { bun_libdeflate::Compressor::destroy(p) }
                 });
                 let encoding = if is_gzip {
                     bun_libdeflate::Encoding::Gzip

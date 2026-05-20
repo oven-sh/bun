@@ -132,7 +132,7 @@ impl NodeModulesFolder {
         let mut path_buf = PathBuffer::uninit();
         let parts: [&[u8]; 2] = [self.path.as_slice(), file_path.as_bytes()];
         bun_sys::directory_exists_at(
-            Fd::from_std_dir(&root_node_modules_dir),
+            Fd::from_std_dir(root_node_modules_dir),
             join_z_buf::<platform::Auto>(path_buf.as_mut_slice(), &parts),
         )
         .unwrap_or(false)
@@ -145,7 +145,7 @@ impl NodeModulesFolder {
         }
 
         let dir = match self.open_dir(root_node_modules_dir) {
-            Ok(d) => Fd::from_std_dir(&d),
+            Ok(d) => Fd::from_std_dir(d),
             Err(_) => return false,
         };
         let res = bun_sys::directory_exists_at(dir, file_path).unwrap_or(false);
@@ -163,7 +163,7 @@ impl NodeModulesFolder {
         let mut path_buf = PathBuffer::uninit();
         let parts: [&[u8]; 2] = [self.path.as_slice(), file_path.as_bytes()];
         bun_sys::File::openat(
-            Fd::from_std_dir(&root_node_modules_dir),
+            Fd::from_std_dir(root_node_modules_dir),
             join_z_buf::<platform::Auto>(path_buf.as_mut_slice(), &parts),
             bun_sys::O::RDONLY,
             0,
@@ -229,7 +229,7 @@ impl NodeModulesFolder {
             }
         }
 
-        let dir = Fd::from_std_dir(&self.open_dir(root_node_modules_dir)?);
+        let dir = Fd::from_std_dir(self.open_dir(root_node_modules_dir)?);
         let res = bun_sys::File::openat(dir, file_path, bun_sys::O::RDONLY, 0);
         dir.close();
         res.map_err(|e| e.to_zig_err())
@@ -243,7 +243,7 @@ impl NodeModulesFolder {
             let mut path_buf = PathBuffer::uninit();
             let path_z = bun_paths::resolve_path::z(self.path.as_slice(), &mut path_buf);
             return Ok(Dir::from_fd(
-                bun_sys::openat(Fd::from_std_dir(&root), path_z, bun_sys::O::DIRECTORY, 0)
+                bun_sys::openat(Fd::from_std_dir(root), path_z, bun_sys::O::DIRECTORY, 0)
                     .map_err(|e| e.to_zig_err())?,
             ));
         }
@@ -615,7 +615,7 @@ impl<'a> PackageInstaller<'a> {
                     target_node_modules_path: target_node_modules_path_opt
                         .as_ref()
                         .map(std::ptr::from_ref::<AbsPath>)
-                        .unwrap_or(nm_ptr.cast_const()),
+                        .unwrap_or_else(|| nm_ptr.cast_const()),
                     // SAFETY: `nm_ptr` = `&raw mut node_modules_path` (live local); the only
                     // other pointer derived from it is the read-only `target_node_modules_path`
                     // above, which `bin::Linker::link` never writes through.
@@ -1591,7 +1591,9 @@ impl<'a> PackageInstaller<'a> {
                             path: self.node_modules.path.clone(),
                         });
                     }
-                    package_manager::enqueue_patch_task(self.manager_mut(), task);
+                    // SAFETY: `task` was just `heap::alloc`'d in `new_apply_patch_hash`;
+                    // ownership transfers to the patch-task fifo here.
+                    unsafe { package_manager::enqueue_patch_task(self.manager_mut(), task) };
                     return;
                 }
             }
@@ -1942,7 +1944,7 @@ impl<'a> PackageInstaller<'a> {
                                         Global::exit(1);
                                     }
                                 };
-                                let stat = match bun_sys::fstat(Fd::from_std_dir(&dir)) {
+                                let stat = match bun_sys::fstat(Fd::from_std_dir(dir)) {
                                     Ok(s) => s,
                                     Err(err) => {
                                         Output::err_tag(

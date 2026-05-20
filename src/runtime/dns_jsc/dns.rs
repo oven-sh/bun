@@ -198,7 +198,7 @@ pub mod lib_info {
         bun_core::Environment::only_mac();
 
         let Some(getaddrinfo_async_start_) = getaddrinfo_async_start() else {
-            return lib_c::lookup(this, query, global_this);
+            return lib_c::lookup(this, &query, global_this);
         };
 
         let key = get_addr_info_request::PendingCacheKey::init(&query);
@@ -330,10 +330,10 @@ pub mod lib_c {
     #[cfg(not(windows))]
     pub fn lookup(
         this: &Resolver,
-        query_init: GetAddrInfo,
+        query_init: &GetAddrInfo,
         global_this: &JSGlobalObject,
     ) -> JSValue {
-        let key = get_addr_info_request::PendingCacheKey::init(&query_init);
+        let key = get_addr_info_request::PendingCacheKey::init(query_init);
 
         let cache =
             this.get_or_put_into_pending_cache(&key, PendingCacheField::PendingHostCacheNative);
@@ -371,7 +371,7 @@ pub mod lib_c {
     #[cfg(windows)]
     pub fn lookup(
         _this: &Resolver,
-        _query_init: GetAddrInfo,
+        _query_init: &GetAddrInfo,
         _global_this: &JSGlobalObject,
     ) -> JSValue {
         unreachable!("Do not use this path on Windows");
@@ -502,7 +502,7 @@ pub mod lib_uv_backend {
                             (*request).cache.pos_in_pending(),
                             (*request).head.global_this(),
                             rc.int(),
-                            GetAddrInfoResultAny::Addrinfo(ptr::null_mut()),
+                            &GetAddrInfoResultAny::Addrinfo(ptr::null_mut()),
                         );
                         return Ok(promise);
                     }
@@ -1506,7 +1506,7 @@ impl GetAddrInfoRequest {
                         (*this).cache.pos_in_pending(),
                         (*this).head.global_this(),
                         status,
-                        GetAddrInfoResultAny::Addrinfo(addr_info),
+                        &GetAddrInfoResultAny::Addrinfo(addr_info),
                     );
                     return;
                 }
@@ -1560,7 +1560,7 @@ impl GetAddrInfoRequest {
                                 (*this).cache.pos_in_pending(),
                                 (*this).head.global_this(),
                                 0,
-                                any,
+                                &any,
                             );
                             return;
                         }
@@ -1569,7 +1569,7 @@ impl GetAddrInfoRequest {
                     // `ptr::read` + `heap::take` would double-Drop `DNSLookup`.
                     let owned = *bun_core::heap::take(this);
                     let mut head = owned.head;
-                    DNSLookup::on_complete_native(&raw mut head, any);
+                    DNSLookup::on_complete_native(&raw mut head, &any);
                 }
                 get_addr_info_request::Backend::Libc(get_addr_info_request::LibcBackend::Err(
                     err,
@@ -1659,7 +1659,7 @@ impl GetAddrInfoRequest {
                         (*this).cache.pos_in_pending(),
                         (*this).head.global_this(),
                         retcode,
-                        result_any,
+                        &result_any,
                     );
                     return;
                 }
@@ -1675,7 +1675,7 @@ impl GetAddrInfoRequest {
             if c_ares::Error::init_eai(retcode).is_some() {
                 DNSLookup::process_get_addr_info_native(&raw mut head, retcode, ptr::null_mut());
             } else {
-                DNSLookup::on_complete_native(&raw mut head, result_any);
+                DNSLookup::on_complete_native(&raw mut head, &result_any);
             }
         }
     }
@@ -2026,11 +2026,11 @@ impl DNSLookup {
     /// SAFETY: `this` must be a live node — either the inline head of a `*Request`
     /// (allocated == false; owner drops it) or a Boxed tail node (allocated == true;
     /// freed via `Self::destroy`). No `&mut` may alias `*this` across this call.
-    pub unsafe fn on_complete_native(this: *mut Self, result: GetAddrInfoResultAny) {
+    pub unsafe fn on_complete_native(this: *mut Self, result: &GetAddrInfoResultAny) {
         bun_output::scoped_log!(DNSLookup, "onCompleteNative");
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
-            let array = super::options_jsc::result_any_to_js(&result, (*this).global_this())
+            let array = super::options_jsc::result_any_to_js(result, (*this).global_this())
                 .ok()
                 .flatten()
                 .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
@@ -2053,7 +2053,7 @@ impl DNSLookup {
                 Self::destroy(this);
                 return;
             }
-            Self::on_complete_native(this, GetAddrInfoResultAny::Addrinfo(result));
+            Self::on_complete_native(this, &GetAddrInfoResultAny::Addrinfo(result));
         }
     }
 
@@ -4485,7 +4485,7 @@ impl Resolver {
         index: u8,
         global_object: &JSGlobalObject,
         err: i32,
-        result: GetAddrInfoResultAny,
+        result: &GetAddrInfoResultAny,
     ) {
         bun_output::scoped_log!(DNSResolver, "drainPendingHostNative");
         let key = self.get_key_host(index, PendingCacheField::PendingHostCacheNative);
@@ -4493,7 +4493,7 @@ impl Resolver {
         // SAFETY: `self` is the live heap allocation; ref_scope keeps count > 0 across re-entrant callbacks.
         let _g = unsafe { Self::ref_scope(self.as_ctx_ptr()) };
 
-        let mut array: JSValue = match super::options_jsc::result_any_to_js(&result, global_object)
+        let mut array: JSValue = match super::options_jsc::result_any_to_js(result, global_object)
             .unwrap_or(None)
         {
             // TODO: properly propagate exception upwards
@@ -4540,7 +4540,7 @@ impl Resolver {
                 let new_global = (*value.as_ptr()).global_this();
                 pending = (*value.as_ptr()).next;
                 if !core::ptr::eq(prev_global, new_global) {
-                    array = super::options_jsc::result_any_to_js(&result, new_global)
+                    array = super::options_jsc::result_any_to_js(result, new_global)
                         .unwrap_or(None)
                         .unwrap(); // TODO: properly propagate exception upwards
                     prev_global = new_global;
@@ -5260,7 +5260,7 @@ impl Resolver {
 
         Ok(match opts.backend {
             GetAddrInfoBackend::CAres => {
-                self.c_ares_lookup_with_normalized_name(query, global_this)?
+                self.c_ares_lookup_with_normalized_name(&query, global_this)?
             }
             GetAddrInfoBackend::Libc => {
                 #[cfg(windows)]
@@ -5269,7 +5269,7 @@ impl Resolver {
                 }
                 #[cfg(not(windows))]
                 {
-                    lib_c::lookup(self, query, global_this)
+                    lib_c::lookup(self, &query, global_this)
                 }
             }
             GetAddrInfoBackend::System => {
@@ -5283,7 +5283,7 @@ impl Resolver {
                 }
                 #[cfg(all(not(target_os = "macos"), not(windows)))]
                 {
-                    lib_c::lookup(self, query, global_this)
+                    lib_c::lookup(self, &query, global_this)
                 }
             }
         })
@@ -5466,7 +5466,7 @@ impl Resolver {
 
     pub fn c_ares_lookup_with_normalized_name(
         &self,
-        query: GetAddrInfo,
+        query: &GetAddrInfo,
         global_this: &JSGlobalObject,
     ) -> JsResult<JSValue> {
         let channel: *mut c_ares::Channel = match self.get_channel() {
@@ -5489,7 +5489,7 @@ impl Resolver {
             }
         };
 
-        let key = get_addr_info_request::PendingCacheKey::init(&query);
+        let key = get_addr_info_request::PendingCacheKey::init(query);
 
         let cache =
             self.get_or_put_into_pending_cache(&key, PendingCacheField::PendingHostCacheCares);
@@ -5506,7 +5506,7 @@ impl Resolver {
             cache,
             get_addr_info_request::Backend::CAres,
             Some(self.as_ctx_ptr()),
-            &query,
+            query,
             global_this,
             PendingCacheField::PendingHostCacheCares,
         );

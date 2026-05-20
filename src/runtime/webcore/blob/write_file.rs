@@ -231,7 +231,7 @@ impl WriteFile {
         WorkPool::schedule(&raw mut self.task);
     }
 
-    pub fn on_io_error(this: *mut (), err: sys::Error) {
+    pub fn on_io_error(this: *mut (), err: &sys::Error) {
         bun_output::scoped_log!(WriteFile, "WriteFile.onIOError()");
         // SAFETY: ctx was set to `self as *mut WriteFile` in `on_request_writable`.
         let this = unsafe { bun_ptr::callback_ctx::<WriteFile>(this.cast()) };

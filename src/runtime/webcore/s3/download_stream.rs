@@ -25,8 +25,7 @@ pub struct S3HttpDownloadStreamingTask {
     pub sign_result: SignResult,
     pub headers: Headers,
     pub callback_context: NonNull<()>,
-    /// this transfers ownership from the chunk
-    pub callback: fn(chunk: MutableString, has_more: bool, err: Option<S3Error>, ctx: *mut c_void),
+    pub callback: fn(chunk: &MutableString, has_more: bool, err: Option<S3Error>, ctx: *mut c_void),
     pub has_schedule_callback: AtomicBool,
     pub signal_store: bun_http::signals::Store,
     pub signals: Signals,
@@ -169,12 +168,12 @@ impl S3HttpDownloadStreamingTask {
         );
         if failed {
             if !has_more {
-                (self.callback)(chunk, false, err, self.callback_context.as_ptr().cast());
+                (self.callback)(&chunk, false, err, self.callback_context.as_ptr().cast());
             }
         } else {
             // dont report empty chunks if we have more data to read
             if !has_more || chunk.len() > 0 {
-                (self.callback)(chunk, has_more, None, self.callback_context.as_ptr().cast());
+                (self.callback)(&chunk, has_more, None, self.callback_context.as_ptr().cast());
                 self.reported_response_buffer.reset();
             }
         }

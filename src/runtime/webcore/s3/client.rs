@@ -949,7 +949,7 @@ pub fn download_stream(
     proxy_url: Option<&[u8]>,
     request_payer: bool,
     callback: fn(
-        chunk: MutableString,
+        chunk: &MutableString,
         has_more: bool,
         err: Option<Error::S3Error>,
         ctx: *mut c_void,
@@ -995,7 +995,7 @@ pub fn download_stream(
             drop(range);
             let error_code_and_message = Error::get_sign_error_code_and_message(sign_err.into());
             callback(
-                MutableString::default(),
+                &MutableString::default(),
                 false,
                 Some(Error::S3Error {
                     code: error_code_and_message.code,
@@ -1230,14 +1230,14 @@ pub fn readable_stream(
         }
 
         pub fn opaque_callback(
-            chunk: MutableString,
+            chunk: &MutableString,
             has_more: bool,
             err: Option<Error::S3Error>,
             opaque_self: *mut c_void,
         ) {
             // SAFETY: opaque_self points to a S3DownloadStreamWrapper allocated in readable_stream
             let self_: &mut Self = unsafe { bun_ptr::callback_ctx::<Self>(opaque_self) };
-            let _ = Self::callback(&chunk, has_more, err, self_); // TODO: properly propagate exception upwards
+            let _ = Self::callback(chunk, has_more, err, self_); // TODO: properly propagate exception upwards
         }
     }
 

@@ -581,16 +581,17 @@ impl ThreadPool {
     }
 
     fn schedule_impl(&self, batch: Batch, try_current: bool) {
+        let Batch { len, head, tail } = batch;
         // Sanity check
-        if batch.len == 0 {
+        if len == 0 {
             return;
         }
 
         // Extract out the `Node`s from the `Task`s
         // batch.len != 0 implies head/tail are Some.
         let mut list = node::List {
-            head: Task::node_of(batch.head.unwrap()),
-            tail: Task::node_of(batch.tail.unwrap()),
+            head: Task::node_of(head.unwrap()),
+            tail: Task::node_of(tail.unwrap()),
         };
 
         // .monotonic access is okay because:
@@ -603,12 +604,12 @@ impl ThreadPool {
         //   in the thread pool, but `is_running` was necessarily set to true before the
         //   thread was created.
         if self.is_running.load(Ordering::Relaxed) {
-            self.wait_group.add(batch.len);
+            self.wait_group.add(len);
         } else {
             // PERF(port): Zig used `add_unsynchronized` (non-atomic `+=`) when the
             // pool isn't running yet. `&self` precludes `&mut WaitGroup` here, so
             // fall back to the relaxed atomic add — semantically identical.
-            self.wait_group.add(batch.len);
+            self.wait_group.add(len);
         }
 
         let current: *mut Thread = 'blk: {
@@ -1539,17 +1540,18 @@ pub mod node {
             assert!(core::mem::align_of::<Node>() >= ((Self::IS_CONSUMING | Self::HAS_CACHE) + 1));
 
         pub(super) fn push(&self, list: List) {
+            let List { head, tail } = list;
             let mut stack = self.stack.load(Ordering::Relaxed);
             loop {
                 // Attach the list to the stack (pt. 1)
                 // SAFETY: list.tail points to a Node owned by the caller.
                 unsafe {
-                    (*list.tail.as_ptr()).next = (stack & Self::PTR_MASK) as *mut Node;
+                    (*tail.as_ptr()).next = (stack & Self::PTR_MASK) as *mut Node;
                 }
 
                 // Update the stack with the list (pt. 2).
                 // Don't change the HAS_CACHE and IS_CONSUMING bits of the consumer.
-                let mut new_stack = list.head.as_ptr() as usize;
+                let mut new_stack = head.as_ptr() as usize;
                 debug_assert!(new_stack & !Self::PTR_MASK == 0);
                 new_stack |= stack & !Self::PTR_MASK;
 

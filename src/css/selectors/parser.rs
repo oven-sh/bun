@@ -1196,8 +1196,8 @@ pub enum WebKitScrollbarPseudoElement {
 
 impl WebKitScrollbarPseudoElement {
     #[inline]
-    pub fn eql(&self, rhs: &Self) -> bool {
-        *self == *rhs
+    pub fn eql(self, rhs: Self) -> bool {
+        self == rhs
     }
     // hash — via `#[derive(CssHash)]`.
 }

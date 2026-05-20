@@ -180,7 +180,7 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
             // the fd path twice (cheap: one `getFdPath` syscall) into two
             // independent `AbsPath` buffers.
             let mut node_modules_path =
-                match <AbsPath>::init_fd_path(Fd::from_std_dir(&node_modules)) {
+                match <AbsPath>::init_fd_path(Fd::from_std_dir(node_modules)) {
                     Ok(p) => p,
                     Err(e) => {
                         if manager.options.log_level != LogLevel::Silent {
@@ -190,7 +190,7 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
                     }
                 };
             let target_node_modules_path =
-                match <AbsPath>::init_fd_path(Fd::from_std_dir(&node_modules)) {
+                match <AbsPath>::init_fd_path(Fd::from_std_dir(node_modules)) {
                     Ok(p) => p,
                     Err(e) => {
                         if manager.options.log_level != LogLevel::Silent {

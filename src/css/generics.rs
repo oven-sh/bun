@@ -485,7 +485,11 @@ mod inherent_bridge {
 
     // `Direction` is re-exported from `properties::text` — bridged below as `TextDirection`.
     use crate::selectors::parser::{ViewTransitionPartName, WebKitScrollbarPseudoElement};
-    bridge_eql!(WebKitScrollbarPseudoElement, ViewTransitionPartName);
+    impl CssEql for WebKitScrollbarPseudoElement {
+        #[inline]
+        fn eql(&self, other: &Self) -> bool { WebKitScrollbarPseudoElement::eql(*self, *other) }
+    }
+    bridge_eql!(ViewTransitionPartName);
     // CssHash for WebKitScrollbarPseudoElement — via #[derive(CssHash)] on the enum.
     bridge_hash!(ViewTransitionPartName);
     bridge_deep_clone_copy!(WebKitScrollbarPseudoElement, ViewTransitionPartName);
@@ -611,7 +615,18 @@ mod inherent_bridge {
     bridge_eql_partialeq!(LineStyle);
     bridge_deep_clone!(BorderSideWidth);
     bridge_deep_clone_copy!(LineStyle);
-    bridge_is_compatible!(BorderSideWidth, LineStyle);
+    impl super::IsCompatible for BorderSideWidth {
+        #[inline]
+        fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+            BorderSideWidth::is_compatible(self, &browsers)
+        }
+    }
+    impl super::IsCompatible for LineStyle {
+        #[inline]
+        fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+            LineStyle::is_compatible(*self, &browsers)
+        }
+    }
     bridge_clone_partialeq!(
         BorderColor,
         BorderStyle,
@@ -668,12 +683,8 @@ mod inherent_bridge {
         BackgroundRepeat, BackgroundSize,
     };
     bridge_eql!(Background);
-    bridge_deep_clone!(
-        Background,
-        BackgroundSize,
-        BackgroundPosition,
-        BackgroundRepeat
-    );
+    bridge_deep_clone!(Background, BackgroundSize, BackgroundPosition);
+    bridge_deep_clone_copy!(BackgroundRepeat);
     bridge_clone_partialeq!(BackgroundAttachment, BackgroundClip, BackgroundOrigin);
 
     // ── properties/align ──
@@ -727,15 +738,48 @@ mod inherent_bridge {
         FontVariantCaps,
         LineHeight,
     );
-    bridge_is_compatible!(
-        FontWeight,
-        FontSize,
-        FontStretch,
-        FontStyle,
-        FontVariantCaps,
-        LineHeight,
-        FontFamily,
-    );
+    impl super::IsCompatible for FontWeight {
+        #[inline]
+        fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+            FontWeight::is_compatible(self, &browsers)
+        }
+    }
+    impl super::IsCompatible for FontSize {
+        #[inline]
+        fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+            FontSize::is_compatible(self, &browsers)
+        }
+    }
+    impl super::IsCompatible for FontStretch {
+        #[inline]
+        fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+            FontStretch::is_compatible(*self, &browsers)
+        }
+    }
+    impl super::IsCompatible for FontStyle {
+        #[inline]
+        fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+            FontStyle::is_compatible(*self, &browsers)
+        }
+    }
+    impl super::IsCompatible for FontVariantCaps {
+        #[inline]
+        fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+            FontVariantCaps::is_compatible(*self, browsers)
+        }
+    }
+    impl super::IsCompatible for LineHeight {
+        #[inline]
+        fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+            LineHeight::is_compatible(self, &browsers)
+        }
+    }
+    impl super::IsCompatible for FontFamily {
+        #[inline]
+        fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+            FontFamily::is_compatible(self, &browsers)
+        }
+    }
     bridge_clone_partialeq!(FontFamily);
     // `Font` DeepClone/CssEql now via `#[derive]` on the struct (properties/font.rs).
 
@@ -747,7 +791,7 @@ mod inherent_bridge {
 
     // ── properties/display ──
     use crate::properties::display::{Display, Visibility};
-    bridge_deep_clone!(Display);
+    bridge_deep_clone_copy!(Display);
     bridge_eql_partialeq!(Display);
     bridge_clone_partialeq!(Visibility);
 
@@ -1462,7 +1506,7 @@ macro_rules! impl_parse_tocss_via_inherent {
                 &self,
                 dest: &mut $crate::printer::Printer,
             ) -> ::core::result::Result<(), $crate::PrintErr> {
-                <$ty>::to_css(self, dest)
+                (*self).to_css(dest)
             }
         }
     )+};

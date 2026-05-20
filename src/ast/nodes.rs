@@ -984,10 +984,10 @@ impl DeclaredSymbolList {
 
     pub fn append_list(
         &mut self,
-        other: DeclaredSymbolList,
+        other: &DeclaredSymbolList,
     ) -> core::result::Result<(), bun_alloc::AllocError> {
         self.ensure_unused_capacity(other.len())?;
-        self.append_list_assume_capacity(&other);
+        self.append_list_assume_capacity(other);
         Ok(())
     }
 

@@ -137,7 +137,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // laundered through a shared-ref `*const _ as *mut` hop — the vtable
         // slots (`file_polls`, `set_after_event_loop_callback`) write through
         // it.
-        jsc::virtual_machine::VirtualMachine::event_loop_ctx(global_this.bun_vm_ptr())
+        unsafe { jsc::virtual_machine::VirtualMachine::event_loop_ctx(global_this.bun_vm_ptr()) }
     }
 
     fn should_compress(&self, data_len: usize, opcode: Opcode) -> bool {

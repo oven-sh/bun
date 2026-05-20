@@ -851,7 +851,7 @@ impl RepositoryExt for Repository {
                 );
 
                 let repo_path = bun_sys::get_fd_path(
-                    bun_sys::Fd::from_std_dir(&repo_dir),
+                    bun_sys::Fd::from_std_dir(repo_dir),
                     // Per-field accessor — disjoint from `folder_name_buf`
                     // borrow above. See `TlBufs` accessor doc.
                     TlBufs::final_path_buf(),

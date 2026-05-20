@@ -1478,16 +1478,24 @@ impl Run {
         // ── hot-reloader enable (bun.js.zig:390-394) ───────────────────────
         match ctx.debug.hot_reload {
             cli::command::HotReload::Hot => {
-                bun_jsc::hot_reloader::HotReloader::enable_hot_module_reloading(
-                    self.vm,
-                    Some(entry),
-                )
+                // SAFETY: `self.vm` is the boxed-and-leaked main-thread VM
+                // (process-lifetime); it outlives the leaked reloader.
+                unsafe {
+                    bun_jsc::hot_reloader::HotReloader::enable_hot_module_reloading(
+                        self.vm,
+                        Some(entry),
+                    )
+                }
             }
             cli::command::HotReload::Watch => {
-                bun_jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(
-                    self.vm,
-                    Some(entry),
-                )
+                // SAFETY: `self.vm` is the boxed-and-leaked main-thread VM
+                // (process-lifetime); it outlives the leaked reloader.
+                unsafe {
+                    bun_jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(
+                        self.vm,
+                        Some(entry),
+                    )
+                }
             }
             _ => {}
         }

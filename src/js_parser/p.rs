@@ -8515,7 +8515,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             ));
                         } else {
                             part.declared_symbols
-                                .append_list(self.declared_symbols.clone().expect("unreachable"))
+                                .append_list(&self.declared_symbols)
                                 .expect("unreachable");
                         }
 

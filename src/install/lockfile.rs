@@ -2419,21 +2419,21 @@ impl Lockfile {
         Ok(())
     }
 
-    pub fn append_package(&mut self, package_: Package) -> Result<Package, AllocError> {
+    pub fn append_package(&mut self, package_: &Package) -> Result<Package, AllocError> {
         let id: PackageID = self.packages.len() as PackageID; // @truncate
         self.append_package_with_id(package_, id)
     }
 
     pub fn append_package_with_id(
         &mut self,
-        package_: Package,
+        package_: &Package,
         id: PackageID,
     ) -> Result<Package, AllocError> {
         // Zig's `defer` reads `package_` (the original arg) for the assertion.
         let name_hash = package_.name_hash;
         let resolution = package_.resolution;
 
-        let mut package = package_;
+        let mut package = *package_;
         package.meta.id = id;
         self.packages.append(package)?;
         self.get_or_put_id(id, name_hash)?;

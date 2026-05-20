@@ -358,7 +358,7 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
 
             let result = match stylesheet.to_css(
                 alloc,
-                PrinterOptions {
+                &PrinterOptions {
                     minify,
                     targets,
                     ..Default::default()

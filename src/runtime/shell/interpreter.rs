@@ -3260,9 +3260,10 @@ pub fn create_shell_interpreter(
         );
         it.this_jsvalue.set(js_value);
         it.keep_alive.with_mut(|k| {
-            k.ref_(crate::jsc::VirtualMachineRef::event_loop_ctx(
-                global.bun_vm_ptr(),
-            ))
+            // SAFETY: `bun_vm_ptr()` is the live per-thread VM singleton.
+            k.ref_(unsafe {
+                crate::jsc::VirtualMachineRef::event_loop_ctx(global.bun_vm_ptr())
+            })
         });
         js_value
     };

@@ -736,11 +736,11 @@ impl ServerWebSocket {
         }
     }
 
-    pub fn behavior<ServerType, const SSL: bool>(opts: WebSocketBehavior) -> WebSocketBehavior
+    pub fn behavior<ServerType, const SSL: bool>(opts: &WebSocketBehavior) -> WebSocketBehavior
     where
         ServerType: WebSocketUpgradeServer<SSL>,
     {
-        Wrap::<ServerType, Self, SSL>::apply(&opts)
+        Wrap::<ServerType, Self, SSL>::apply(opts)
     }
 
     // PORT NOTE: no `#[bun_jsc::host_fn]` here — the constructor extern shim is

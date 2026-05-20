@@ -489,7 +489,7 @@ impl<'a> Task<'a> {
 
                     this.err = None;
                     this.data = Data {
-                        git_clone: ManuallyDrop::new(Fd::from_std_dir(&dir)),
+                        git_clone: ManuallyDrop::new(Fd::from_std_dir(dir)),
                     };
                     this.status = Status::Success;
                 }

@@ -152,6 +152,8 @@ pub unsafe fn get_cache_directory_raw(this: *mut PackageManager) -> Dir {
     if let Some(d) = unsafe { (*this).cache_directory_ } {
         return d;
     }
+    // SAFETY: caller contract — `this` is valid and no live borrow overlaps
+    // `options.enable`/`options.cache_directory`/`env`/`cache_directory_path`.
     let d = unsafe { ensure_cache_directory(this) };
     // SAFETY: as above; single writer.
     unsafe { (*this).cache_directory_ = Some(d) };
@@ -162,7 +164,7 @@ pub unsafe fn get_cache_directory_raw(this: *mut PackageManager) -> Dir {
 pub fn get_cache_directory_and_abs_path(this: &mut PackageManager) -> (Fd, AbsPath) {
     let cache_dir = get_cache_directory(this);
     (
-        Fd::from_std_dir(&cache_dir),
+        Fd::from_std_dir(cache_dir),
         AbsPath::from(this.cache_directory_path.as_bytes())
             .expect("cache_directory_path is absolute"),
     )
@@ -334,7 +336,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
         if elapsed > bun_core::time::NS_PER_MS * 100 {
             let mut path_buf = PathBuffer::uninit();
             let cache_dir_path: &[u8] =
-                match sys::get_fd_path(Fd::from_std_dir(&cache_directory), &mut path_buf) {
+                match sys::get_fd_path(Fd::from_std_dir(cache_directory), &mut path_buf) {
                     Ok(p) => &p[..],
                     Err(_) => b"it",
                 };
@@ -346,7 +348,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
     }
 
     let mut buf = PathBuffer::uninit();
-    let temp_dir_path = match sys::get_fd_path_z(Fd::from_std_dir(&tempdir), &mut buf) {
+    let temp_dir_path = match sys::get_fd_path_z(Fd::from_std_dir(tempdir), &mut buf) {
         Ok(p) => p,
         Err(err) => {
             Output::err(
@@ -818,7 +820,7 @@ pub fn cached_tarball_folder_name(
 }
 
 pub fn is_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool {
-    sys::directory_exists_at(Fd::from_std_dir(&get_cache_directory(this)), folder_path)
+    sys::directory_exists_at(Fd::from_std_dir(get_cache_directory(this)), folder_path)
         .unwrap_or(false)
 }
 
@@ -864,14 +866,14 @@ pub fn global_link_dir(this: &mut PackageManager) -> Dir {
                 Output::err(
                     err,
                     "failed to open global link dir node_modules at '{}'",
-                    (Fd::from_std_dir(&global_dir),),
+                    (Fd::from_std_dir(global_dir),),
                 );
                 Global::exit(1);
             }
         },
     );
     let mut buf = PathBuffer::uninit();
-    let path_ = match sys::get_fd_path(Fd::from_std_dir(&this.global_link_dir.unwrap()), &mut buf) {
+    let path_ = match sys::get_fd_path(Fd::from_std_dir(this.global_link_dir.unwrap()), &mut buf) {
         Ok(p) => p,
         Err(err) => {
             Output::err(
@@ -925,7 +927,7 @@ pub fn path_for_cached_npm_path<'a>(
 
     cache_path_buf[package_name.len()] = SEP;
 
-    let cache_dir: Fd = Fd::from_std_dir(&get_cache_directory(this));
+    let cache_dir: Fd = Fd::from_std_dir(get_cache_directory(this));
 
     #[cfg(windows)]
     {
@@ -963,7 +965,7 @@ pub fn path_for_cached_npm_path<'a>(
 pub fn path_for_resolution<'a>(
     this: &mut PackageManager,
     package_id: PackageID,
-    resolution: Resolution,
+    resolution: &Resolution,
     buf: &'a mut PathBuffer,
 ) -> Result<&'a mut [u8], Error> {
     // TODO(port): narrow error set

@@ -620,8 +620,11 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 .expect("unreachable");
                 // PORT NOTE: reshaped for borrowck — split the nested `&mut
                 // manager` borrows (`task_batch.push` vs. `enqueue_*`).
-                let queued =
-                    enqueue::enqueue_parse_npm_package(manager, task.task_id, name_tiny, task_ptr);
+                // SAFETY: `task_ptr` is non-null (checked by the iterator loop guard)
+                // and exclusively owned by this batch.
+                let queued = unsafe {
+                    enqueue::enqueue_parse_npm_package(manager, task.task_id, name_tiny, task_ptr)
+                };
                 manager.task_batch.push(ThreadPoolBatch::from(queued));
             }
             NetworkTaskCallback::Extract(extract) => {
@@ -1417,7 +1420,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         repo_fd,
                         dep_id,
                         dep_name,
-                        clone.res,
+                        &clone.res,
                         &resolved,
                         None,
                     );

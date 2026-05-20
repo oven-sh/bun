@@ -194,6 +194,7 @@ impl Process {
     /// `this` must point at a live `Process` with refcount ≥ 1.
     #[inline]
     pub unsafe fn deref(this: *mut Self) {
+        // SAFETY: caller contract — `this` is a live `Process` with refcount ≥ 1.
         unsafe { bun_ptr::ThreadSafeRefCount::<Process>::deref(this) };
     }
 
@@ -249,7 +250,7 @@ impl Process {
 
     #[cfg(unix)]
     pub fn init_posix(
-        posix: PosixSpawnResult,
+        posix: &PosixSpawnResult,
         event_loop: EventLoopHandle,
         sync_: bool,
     ) -> *mut Process {
@@ -1120,7 +1121,7 @@ pub mod waiter_thread_posix {
 
         /// Stored thunk for `AnyTaskWithExtraContext` (`fn(*mut T, *mut C)`
         /// shape — `C = ()`). Default Rust ABI.
-        pub fn run_from_main_thread_mini(this: *mut Self, _: *mut ()) {
+        fn run_from_main_thread_mini(this: *mut Self, _: *mut ()) {
             // SAFETY: `this` was heap-allocated in `loop_()` below; the mini
             // event loop hands ownership back here exactly once.
             unsafe { bun_core::heap::take(this) }.run_from_main_thread();
@@ -1743,7 +1744,7 @@ pub trait SpawnResultExt {
 #[cfg(unix)]
 impl SpawnResultExt for PosixSpawnResult {
     fn to_process(self, event_loop: EventLoopHandle, sync_: bool) -> *mut Process {
-        Process::init_posix(self, event_loop, sync_)
+        Process::init_posix(&self, event_loop, sync_)
     }
 }
 
@@ -2309,7 +2310,7 @@ mod spawn_process_body {
         }
 
         impl SyncStdio {
-            pub fn to_stdio(&self) -> SpawnOptionsStdio {
+            pub fn to_stdio(self) -> SpawnOptionsStdio {
                 match self {
                     SyncStdio::Inherit => SpawnOptionsStdio::inherit(),
                     SyncStdio::Ignore => SpawnOptionsStdio::ignore(),
@@ -3284,7 +3285,7 @@ mod spawn_process_body {
                     if let Some(maybe) = r {
                         match maybe {
                             Err(err) => {
-                                cleanup_spawn_posix(&mut out, &out_fds, &process, success);
+                                cleanup_spawn_posix(&mut out, out_fds, &process, success);
                                 return Ok(Err(err));
                             }
                             Ok(st) => break 'blk st,
@@ -3300,7 +3301,7 @@ mod spawn_process_body {
                         if let Some(err) =
                             drain_fd(&mut out_fds_to_wait_for[i], &mut out_fds[i], &mut out[i])
                         {
-                            cleanup_spawn_posix(&mut out, &out_fds, &process, success);
+                            cleanup_spawn_posix(&mut out, out_fds, &process, success);
                             return Ok(Err(err));
                         }
                     }
@@ -3330,7 +3331,7 @@ mod spawn_process_body {
                         bun_sys::E::SUCCESS => {}
                         bun_sys::E::EAGAIN | bun_sys::E::EINTR => continue,
                         err => {
-                            cleanup_spawn_posix(&mut out, &out_fds, &process, success);
+                            cleanup_spawn_posix(&mut out, out_fds, &process, success);
                             return Ok(Err(bun_sys::Error::from_code(err, bun_sys::Tag::poll)));
                         }
                     }
@@ -3354,7 +3355,7 @@ mod spawn_process_body {
             success = true;
             let stdout = core::mem::take(&mut out[0]);
             let stderr = core::mem::take(&mut out[1]);
-            cleanup_spawn_posix(&mut out, &out_fds, &process, success);
+            cleanup_spawn_posix(&mut out, out_fds, &process, success);
             Ok(Ok(Result {
                 status,
                 stdout,
@@ -3365,7 +3366,7 @@ mod spawn_process_body {
         #[cfg(unix)]
         fn cleanup_spawn_posix(
             out: &mut [Vec<u8>; 2],
-            out_fds: &[Fd; 2],
+            out_fds: [Fd; 2],
             process: &PosixSpawnResult,
             success: bool,
         ) {
@@ -3380,7 +3381,7 @@ mod spawn_process_body {
                 let _ = kill(process.pid, 1);
             }
 
-            for &fd in out_fds {
+            for fd in out_fds {
                 if fd != Fd::INVALID {
                     fd.close();
                 }

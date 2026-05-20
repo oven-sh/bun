@@ -126,7 +126,7 @@ pub fn is_equivalent(selectors: &[Selector], other: &[Selector]) -> bool {
 pub fn downlevel_selectors<'bump>(
     bump: &'bump Bump,
     selectors: &mut [Selector],
-    targets: Targets,
+    targets: &Targets,
 ) -> VendorPrefix {
     let mut necessary_prefixes = VendorPrefix::empty();
     for selector in selectors.iter_mut() {
@@ -140,7 +140,7 @@ pub fn downlevel_selectors<'bump>(
 pub fn downlevel_component<'bump>(
     bump: &'bump Bump,
     component: &mut Component,
-    targets: Targets,
+    targets: &Targets,
 ) -> VendorPrefix {
     match component {
         Component::NonTsPseudoClass(pc) => {
@@ -162,10 +162,10 @@ pub fn downlevel_component<'bump>(
                     }
                     VendorPrefix::empty()
                 }
-                _ => pc.get_necessary_prefixes(&targets),
+                _ => pc.get_necessary_prefixes(targets),
             };
         }
-        Component::PseudoElement(pe) => pe.get_necessary_prefixes(&targets),
+        Component::PseudoElement(pe) => pe.get_necessary_prefixes(targets),
         Component::Is(selectors) => {
             let mut necessary_prefixes = downlevel_selectors(bump, selectors, targets);
 
@@ -233,7 +233,7 @@ const RTL_LANGS: &[&[u8]] = &[
     b"nqo", b"pnb", b"ps", b"sd", b"ug", b"ur", b"yi",
 ];
 
-fn downlevel_dir<'bump>(bump: &'bump Bump, dir: parser::Direction, targets: Targets) -> Component {
+fn downlevel_dir<'bump>(bump: &'bump Bump, dir: parser::Direction, targets: &Targets) -> Component {
     // Convert :dir to :lang. If supported, use a list of languages in a single :lang,
     // otherwise, use :is/:not, which may be further downleveled to e.g. :-webkit-any.
     if !targets.should_compile_same(Feature::LangSelectorList) {
@@ -308,7 +308,7 @@ pub fn get_prefix(selectors: &SelectorList) -> VendorPrefix {
     prefix
 }
 
-pub fn is_compatible(selectors: &[parser::Selector], targets: Targets) -> bool {
+pub fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -> bool {
     use Feature as F;
     for selector in selectors {
         for component in selector.components.iter() {
@@ -703,7 +703,7 @@ pub mod serialize {
             // Skip implicit :scope in relative selectors (e.g. :has(:scope > foo) -> :has(> foo))
             if is_relative && compound.len() >= 1 && matches!(compound[0], Component::Scope) {
                 if let Some(combinator) = combinators.next() {
-                    serialize_combinator(&combinator, dest)?;
+                    serialize_combinator(combinator, dest)?;
                 }
                 compound = &compound[1..];
                 is_relative = false;
@@ -847,7 +847,7 @@ pub mod serialize {
             //    single SPACE (U+0020) if the combinator was not whitespace, to
             //    s.
             if let Some(c) = next_combinator {
-                serialize_combinator(&c, dest)?;
+                serialize_combinator(c, dest)?;
             } else {
                 combinators_exhausted = true;
             }
@@ -867,7 +867,7 @@ pub mod serialize {
         context: Option<&StyleContext>,
     ) -> Result<(), PrintErr> {
         match component {
-            Component::Combinator(c) => return serialize_combinator(c, dest),
+            Component::Combinator(c) => return serialize_combinator(*c, dest),
             Component::AttributeInNoNamespace {
                 local_name,
                 operator,
@@ -1016,7 +1016,7 @@ pub mod serialize {
     }
 
     pub fn serialize_combinator(
-        combinator: &parser::Combinator,
+        combinator: parser::Combinator,
         dest: &mut Printer,
     ) -> Result<(), PrintErr> {
         match combinator {
@@ -1537,7 +1537,7 @@ pub mod tocss_servo {
             //    single SPACE (U+0020) if the combinator was not whitespace, to
             //    s.
             if let Some(c) = next_combinator {
-                to_css_combinator(&c, dest)?;
+                to_css_combinator(c, dest)?;
             } else {
                 combinators_exhausted = true;
             }
@@ -1556,7 +1556,7 @@ pub mod tocss_servo {
         dest: &mut Printer,
     ) -> Result<(), PrintErr> {
         match component {
-            Component::Combinator(c) => to_css_combinator(c, dest)?,
+            Component::Combinator(c) => to_css_combinator(*c, dest)?,
             Component::Slotted(selector) => {
                 dest.write_str(b"::slotted(")?;
                 to_css_selector(selector, dest)?;
@@ -1711,7 +1711,7 @@ pub mod tocss_servo {
     }
 
     pub fn to_css_combinator(
-        combinator: &parser::Combinator,
+        combinator: parser::Combinator,
         dest: &mut Printer,
     ) -> Result<(), PrintErr> {
         match combinator {

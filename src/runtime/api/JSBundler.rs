@@ -1809,12 +1809,16 @@ pub mod js_bundler {
         let plugin = unsafe { &mut *plugin };
         match which.as_int32() {
             0 => {
+                // SAFETY: C++ caller passes the live `*mut Resolve` it received from
+                // `Resolve::dispatch` as `ctx` when `which == 0`; sole owner on the JS thread.
                 let resolve = unsafe { bun_ptr::callback_ctx::<Resolve>(ctx) };
                 let msg = plugin_msg_from_js(plugin, &resolve.import_record.source_file, exception);
                 resolve.value = ResolveValue::Err(msg);
                 bv2_mut(resolve.bv2).on_resolve_async(resolve);
             }
             1 => {
+                // SAFETY: C++ caller passes the live `*mut Load` it received from
+                // `Load::dispatch` as `ctx` when `which == 1`; sole owner on the JS thread.
                 let load = unsafe { bun_ptr::callback_ctx::<Load>(ctx) };
                 let msg = plugin_msg_from_js(plugin, &load.path, exception);
                 load.value = LoadValue::Err(msg);
@@ -1854,7 +1858,11 @@ pub use bun_bundler::options::OutputKind;
 #[unsafe(no_mangle)]
 pub fn __bun_blob_from_build_artifact(value: JSValue) -> Option<*mut Blob> {
     <BuildArtifact as bun_jsc::JsClass>::from_js(value)
-        .map(|b| unsafe { core::ptr::addr_of_mut!((*b).blob) })
+        .map(|b| {
+            // SAFETY: `from_js` returns the non-null `*mut BuildArtifact` kept alive by
+            // the JS wrapper; `addr_of_mut!` only computes the field address (no deref).
+            unsafe { core::ptr::addr_of_mut!((*b).blob) }
+        })
 }
 
 impl BuildArtifact {

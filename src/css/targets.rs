@@ -117,7 +117,7 @@ impl Targets {
                 VendorPrefix::all()
             } else {
                 if let Some(b) = self.browsers {
-                    feature.prefixes_for(b)
+                    feature.prefixes_for(&b)
                 } else {
                     prefix
                 }

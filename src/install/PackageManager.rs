@@ -1408,18 +1408,11 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
 // ──────────────────────────────────────────────────────────────────────────
 
 pub fn allocate_package_manager() {
-    // SAFETY: called once before get(); allocates uninitialized PackageManager.
     // Zig: `bun.handleOom(bun.default_allocator.create(PackageManager))` — uninitialized
     // memory, abort-on-OOM. The init() functions below write the full struct via
     // `core::ptr::write` (no Drop on the uninit bytes).
-    unsafe {
-        let layout = core::alloc::Layout::new::<PackageManager>();
-        let ptr = std::alloc::alloc(layout).cast::<PackageManager>();
-        if ptr.is_null() {
-            bun_alloc::out_of_memory();
-        }
-        holder::RAW_PTR.store(ptr, core::sync::atomic::Ordering::Release);
-    }
+    let ptr = Box::into_raw(Box::<PackageManager>::new_uninit()).cast::<PackageManager>();
+    holder::RAW_PTR.store(ptr, core::sync::atomic::Ordering::Release);
     bun_core::add_exit_callback(deinit_caches_at_exit);
 }
 
@@ -1877,20 +1870,10 @@ pub fn init(
     // both into process-lifetime statics (same allocate-then-fill pattern as `holder::RAW_PTR`)
     // instead of `Box::leak`. Zig: `ctx.allocator.create(dot_env::Map)` + `create(dot_env::Loader)`.
     let env: &mut dot_env::Loader = unsafe {
-        let map_ptr =
-            std::alloc::alloc(core::alloc::Layout::new::<dot_env::Map>()).cast::<dot_env::Map>();
-        if map_ptr.is_null() {
-            bun_alloc::out_of_memory();
-        }
-        core::ptr::write(map_ptr, dot_env::Map::init());
+        let map_ptr = bun_core::heap::alloc(dot_env::Map::init());
         holder::ENV_MAP.store(map_ptr);
 
-        let loader_ptr = std::alloc::alloc(core::alloc::Layout::new::<dot_env::Loader<'static>>())
-            .cast::<dot_env::Loader<'static>>();
-        if loader_ptr.is_null() {
-            bun_alloc::out_of_memory();
-        }
-        core::ptr::write(loader_ptr, dot_env::Loader::init(&mut *map_ptr));
+        let loader_ptr = bun_core::heap::alloc(dot_env::Loader::init(&mut *map_ptr));
         holder::ENV_LOADER.store(loader_ptr);
         &mut *loader_ptr
     };

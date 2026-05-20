@@ -402,7 +402,9 @@ impl PatchTask {
                     );
                     if manager.get_preinstall_state(pkg_meta_id) == PreinstallState::ApplyPatch {
                         manager.set_preinstall_state(pkg_meta_id, PreinstallState::ApplyingPatch);
-                        package_manager::enqueue_patch_task(manager, patch_task);
+                        // SAFETY: `patch_task` is a fresh `heap::alloc` from
+                        // `new_apply_patch_hash`; ownership transfers to the fifo.
+                        unsafe { package_manager::enqueue_patch_task(manager, patch_task) };
                     }
                 }
                 _ => {}

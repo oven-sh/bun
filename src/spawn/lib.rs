@@ -90,7 +90,7 @@ bun_dispatch::link_interface! {
         HostProcess,
         SyncWindows,
     ] {
-        fn on_process_exit(process: *mut Process, status: Status, rusage: *const Rusage);
+        fn on_process_exit(process: &mut Process, status: Status, rusage: &Rusage);
     }
 }
 
@@ -269,6 +269,7 @@ pub enum Term {
 
 /// Options for [`run`] — port of `std.process.Child.RunOptions` (subset used
 /// by `repository.zig`).
+#[derive(Clone, Copy)]
 pub struct RunOptions<'a> {
     pub argv: &'a [&'a [u8]],
     pub env_map: &'a bun_sys::EnvMap,

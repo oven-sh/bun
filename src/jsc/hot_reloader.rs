@@ -419,6 +419,9 @@ impl WatchChangedPaths {
 // only the watcher thread dereferences it (see module docs above). The
 // allocation lives in the process-lifetime CLI arena.
 unsafe impl Send for WatchChangedPaths {}
+// SAFETY: `&WatchChangedPaths` is shared via `OnceLock`, but the only mutating
+// access (`get_mut`) is confined to the watcher thread after the init-once
+// publish, so no two threads ever hold `&mut StringSet` concurrently.
 unsafe impl Sync for WatchChangedPaths {}
 
 /// Absolute path of the temp file `flush_changed_paths_for_reload` writes
@@ -738,15 +741,18 @@ where
     Ctx: HotReloaderCtx<EventLoop = EventLoopType>,
     EventLoopType: HotReloaderEventLoop,
 {
-    pub fn init(
+    /// # Safety
+    /// `ctx` must point to a live `Ctx` that outlives the returned watcher and
+    /// the leaked `NewHotReloader` (BACKREF held for the process lifetime).
+    pub unsafe fn init(
         ctx: *mut Ctx,
         fs: &'static FileSystem,
         verbose: bool,
         clear_screen_flag: bool,
     ) -> Box<Watcher> {
-        // SAFETY: `ctx` is the live owning context; it outlives the reloader
-        // and every Task spawned from it (BACKREF).
         let reloader = bun_core::heap::into_raw(Box::new(Self {
+            // SAFETY: precondition — `ctx` is the live owning context; it
+            // outlives the reloader and every Task spawned from it (BACKREF).
             ctx: unsafe { bun_ptr::BackRef::from_raw(ctx) },
             verbose: cfg!(feature = "debug_logs") || verbose,
             pending_count: AtomicU32::new(0),
@@ -801,9 +807,13 @@ where
         EventLoopType::enqueue_task_concurrent(self.ctx.event_loop_ref(), task);
     }
 
-    pub fn enable_hot_module_reloading(this: *mut Ctx, entry_path: Option<&'static [u8]>) {
-        // SAFETY: caller passes the live `Ctx` (VirtualMachine / DevServer)
-        // pointer; it outlives the reloader allocated below.
+    /// # Safety
+    /// `this` must point to a live `Ctx` (VirtualMachine / DevServer / BundleV2)
+    /// that outlives the leaked `NewHotReloader` allocated here — i.e. for the
+    /// process lifetime.
+    pub unsafe fn enable_hot_module_reloading(this: *mut Ctx, entry_path: Option<&'static [u8]>) {
+        // SAFETY: precondition — `this` is the live owning `Ctx`; it outlives
+        // the reloader allocated below.
         let ctx = unsafe { &mut *this };
 
         // Zig: `if (@TypeOf(this.bun_watcher) == ImportWatcher) { if (!= .none) return; }
@@ -858,7 +868,7 @@ where
         self.tombstones.get(key).copied()
     }
 
-    pub fn on_error(_: &mut Self, err: bun_sys::Error) {
+    pub fn on_error(_: &mut Self, err: &bun_sys::Error) {
         // Zig: `Output.err(@as(bun.sys.E, @enumFromInt(err.errno)), ...)`.
         // `bun_sys::Error::name()` does the same errno→tag-name lookup
         // (with the unchecked-@enumFromInt UB folded into a checked path).
@@ -1362,7 +1372,7 @@ where
     }
 
     fn on_error(&mut self, err: bun_sys::Error) {
-        Self::on_error(self, err);
+        Self::on_error(self, &err);
     }
 }
 
@@ -1467,10 +1477,10 @@ type BundlerWatcher =
 fn __bun_jsc_enable_hot_module_reloading_for_bundler(
     bv2: core::ptr::NonNull<bun_bundler::BundleV2<'static>>,
 ) {
-    // SAFETY contract: `bv2` is the `&mut *Box<BundleV2<'static>>` formed in
+    // SAFETY: `bv2` is the `&mut *Box<BundleV2<'static>>` formed in
     // `BundleV2::init`; the lifetime is `'static` for the only caller (build
     // command leaks the CLI arena), and the box is leaked under --watch.
-    BundlerWatcher::enable_hot_module_reloading(bv2.as_ptr(), None);
+    unsafe { BundlerWatcher::enable_hot_module_reloading(bv2.as_ptr(), None) };
 }
 
 pub use crate::MarkedArrayBuffer as Buffer;

@@ -561,8 +561,9 @@ impl JSBundleCompletionTask {
         let _drop_ref = unsafe { bun_ptr::ScopedRef::<Self>::adopt(ctx) };
 
         let vm = this.global_this.bun_vm_ptr();
+        // SAFETY: `vm` is the live per-thread VM (`global_this.bun_vm_ptr()`).
         this.poll_ref
-            .unref(jsc::virtual_machine::VirtualMachine::event_loop_ctx(vm));
+            .unref(unsafe { jsc::virtual_machine::VirtualMachine::event_loop_ctx(vm) });
         if this.cancelled {
             return Ok(());
         }

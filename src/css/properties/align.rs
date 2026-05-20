@@ -18,7 +18,7 @@ use crate::css_properties::flex::{
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// A value for the [align-content](https://www.w3.org/TR/css-align-3/#propdef-align-content) property.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 // Zig: `css.DeriveParse(@This()).parse` / `css.DeriveToCss(@This()).toCss` —
 // comptime-reflection generators ported as proc-macro derives.
 #[derive(css::Parse, css::ToCss)]
@@ -107,7 +107,7 @@ impl BaselinePosition {
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// A value for the [justify-content](https://www.w3.org/TR/css-align-3/#propdef-justify-content) property.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum JustifyContent {
     /// Default justification.
     Normal,
@@ -211,7 +211,7 @@ impl JustifyContent {
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// A value for the [align-self](https://www.w3.org/TR/css-align-3/#align-self-property) property.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 // Zig: `css.DeriveParse` / `css.DeriveToCss`
 #[derive(css::Parse, css::ToCss)]
 pub enum AlignSelf {
@@ -260,7 +260,7 @@ impl AlignSelfSelfPosition {
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// A value for the [justify-self](https://www.w3.org/TR/css-align-3/#justify-self-property) property.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum JustifySelf {
     /// Automatic justification.
     Auto,
@@ -381,7 +381,7 @@ impl JustifySelf {
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// A value for the [align-items](https://www.w3.org/TR/css-align-3/#align-items-property) property.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 // Zig: `css.DeriveParse` / `css.DeriveToCss`
 #[derive(css::Parse, css::ToCss)]
 pub enum AlignItems {
@@ -428,7 +428,7 @@ impl AlignItemsSelfPosition {
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// A value for the [justify-items](https://www.w3.org/TR/css-align-3/#justify-items-property) property.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum JustifyItems {
     /// Default justification.
     Normal,
@@ -1059,7 +1059,7 @@ macro_rules! flush_legacy_property {
                 // 2009 spec, implemented by webkit and firefox.
                 if let Some(targets) = $context.targets.browsers {
                     let mut prefixes_2009 = VendorPrefix::empty();
-                    if Feature::is_flex_2009(targets) {
+                    if Feature::is_flex_2009(&targets) {
                         prefixes_2009.insert(VendorPrefix::WEBKIT);
                     }
                     if prefix.contains(VendorPrefix::MOZ) {

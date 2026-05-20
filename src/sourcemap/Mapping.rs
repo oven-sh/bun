@@ -210,7 +210,7 @@ impl List {
             let generated: *const LineColumnOffset =
                 list.items_raw::<"generated", LineColumnOffset>();
             let len = list.len();
-            list.sort(SortContext { generated, len });
+            list.sort(&SortContext { generated, len });
         })
     }
 

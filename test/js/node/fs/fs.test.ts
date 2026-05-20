@@ -3968,3 +3968,26 @@ describe("synchronous I/O string flags", () => {
     expect(buf.toString("utf8", 0, bytesRead)).toBe("hello");
   });
 });
+
+// POSIX-only: readFileSync on a FIFO whose fstat size is 0 but actual
+// content >256 KB. Zig resets buf.items.len = total before each reserve,
+// so growth is incremental; the test guard is that it returns promptly
+// instead of ballooning RSS.
+if (isPosix) {
+  describe("readFileSync on a FIFO larger than the stat size", () => {
+    it("does not balloon the read buffer", async () => {
+      using dir = tempDir("fs-readfile-fifo", {});
+      const fixture = join(import.meta.path, "../fs-readfile-fifo-fixture.js");
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), fixture, String(dir)],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("len=409600 allA=true");
+      expect(exitCode).toBe(0);
+    });
+  });
+}

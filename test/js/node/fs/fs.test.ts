@@ -3744,7 +3744,7 @@ it("fs.promises.statfs should work with bigint", async () => {
   }
 });
 
-it("fs.statfs should work with bigint", async () => {
+it("fs.statfs (callback) should work with bigint", async () => {
   const { promise, resolve } = Promise.withResolvers();
   fs.statfs(import.meta.path, { bigint: true }, (err, stats) => {
     if (err) return resolve(err);
@@ -3756,19 +3756,10 @@ it("fs.statfs should work with bigint", async () => {
     expect(stats).toHaveProperty(k);
     expect(stats[k]).toBeTypeOf("bigint");
   }
-});
-
-it("fs.statfs should work with bigint", async () => {
-  const { promise, resolve } = Promise.withResolvers();
-  fs.statfs(import.meta.path, { bigint: true }, (err, stats) => {
-    if (err) return resolve(err);
-    resolve(stats);
-  });
-  const stats = await promise;
-  expect(stats).toBeDefined();
-  for (const k of ["type", "bsize", "blocks", "bfree", "bavail", "files", "ffree"]) {
-    expect(stats).toHaveProperty(k);
-    expect(stats[k]).toBeTypeOf("bigint");
+  // See "fs.statfsSync should work" above — same regression gate for #31133.
+  if (isPosix) {
+    expect(stats.bsize > 0n).toBe(true);
+    expect(stats.blocks > 0n).toBe(true);
   }
 });
 

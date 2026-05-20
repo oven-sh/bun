@@ -2048,7 +2048,10 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
       // subarray — on Windows that drove commit charge to tens of GB before
       // VirtualAlloc(MEM_COMMIT) failed in pas_compact_heap_reservation.
       if (!chunk || chunk.buffer.byteLength < chunkSize) {
-        this.$data = chunk = new Uint8Array(chunkSize);
+        // Wrap an ArrayBuffer so the view is born with a shared backing
+        // store; new Uint8Array(n) would start fast-path and get copied to
+        // the C heap (slowDownAndWasteMemory) on the first .buffer/.subarray.
+        this.$data = chunk = new Uint8Array(new ArrayBuffer(chunkSize));
       }
       return chunk;
     }

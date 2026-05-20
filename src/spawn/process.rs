@@ -515,7 +515,7 @@ impl Process {
         // SAFETY: libuv passes the live handle; only reads its POD fields.
         let rusage = uv_getrusage(unsafe { &mut *process });
         // SAFETY: raw read of POD `pid` field on the live handle.
-        let pid = unsafe { (*process).pid };
+        let _pid = unsafe { (*process).pid };
         // SAFETY: `data` was set to the owning `*mut Process` before
         // `uv_spawn`; libuv never overwrites it. `process` is not
         // dereferenced again after this point.
@@ -536,7 +536,7 @@ impl Process {
 
         bun_sys::windows::libuv::log!(
             "Process.onExit({}) code: {}, signal: {:?}",
-            pid,
+            _pid,
             exit_code,
             signal_code
         );
@@ -574,14 +574,14 @@ impl Process {
     extern "C" fn on_close_uv(uv_handle: *mut uv::uv_process_t) {
         // SAFETY: read POD `pid` first — `uv_handle` points at the inline
         // `Poller::Uv` payload inside `*this` (see `on_exit_uv`).
-        let pid = unsafe { (*uv_handle).pid };
+        let _pid = unsafe { (*uv_handle).pid };
         // SAFETY: `*mut Process` back-pointer stashed in `data` at spawn. Stay
         // raw — `ScopedRef::Drop` may free the allocation, so never bind a
         // `&mut Process` whose tag would have to outlive that.
         let this: *mut Process = unsafe { (*uv_handle).data.cast() };
         // SAFETY: adopts the +1 ref taken at `uv_spawn`.
         let _g = unsafe { bun_ptr::ScopedRef::<Process>::adopt(this) };
-        bun_sys::windows::libuv::log!("Process.onClose({})", pid);
+        bun_sys::windows::libuv::log!("Process.onClose({})", _pid);
         // SAFETY: `_g` keeps `this` live for this block.
         unsafe {
             if matches!((*this).poller, Poller::Uv(_)) {

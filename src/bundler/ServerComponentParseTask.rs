@@ -125,7 +125,9 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
         bun_event_loop::AnyEventLoop::Js { owner } => {
             owner.enqueue_task_concurrent(
                 bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(result, |p| {
-                    on_complete(p);
+                    // SAFETY: `p` is the `result` Box leaked above; ownership
+                    // transfers to `on_complete`, which deallocates it.
+                    unsafe { on_complete(p) };
                     Ok(())
                 }),
             );
@@ -148,7 +150,9 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
 
 fn on_complete_mini(result: *mut parse_task::Result, _ctx: *mut BundleV2<'static>) {
     // `on_complete` already recovers `ctx` from `result.ctx`.
-    on_complete(result);
+    // SAFETY: callback contract — `result` is the uniquely-owned Box leaked in
+    // `run_from_thread_pool`; ownership transfers to `on_complete`.
+    unsafe { on_complete(result) };
 }
 
 fn task_callback(

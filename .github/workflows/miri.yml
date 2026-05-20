@@ -28,6 +28,8 @@ on:
       - "Cargo.lock"
       - "rust-toolchain.toml"
       - ".github/workflows/miri.yml"
+      - ".github/actions/setup-bun/**"
+      - ".github/rust-matcher.json"
   merge_group:
 
 env:

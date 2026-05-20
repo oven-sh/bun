@@ -8,8 +8,8 @@ disallowed-methods = [
   { path = "std::fs::create_dir_all", reason = "use bun_sys::dir" },
   { path = "std::fs::metadata", reason = "use bun_sys::file" },
   { path = "std::fs::canonicalize", reason = "use bun_paths" },
-  { path = "std::env::var", reason = "use bun_core::env" },
-  { path = "std::env::var_os", reason = "use bun_core::env" },
+  { path = "std::env::var", reason = "use bun_core::env_var" },
+  { path = "std::env::var_os", reason = "use bun_core::env_var" },
   { path = "std::thread::spawn", reason = "use bun_threading::spawn_named or ThreadPool" },
   { path = "std::mem::zeroed", reason = "use MaybeUninit; zeroed is UB for most Bun types" },
 ]

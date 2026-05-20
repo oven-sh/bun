@@ -52,8 +52,6 @@ pub use unicode_draft::{
     utf16_codepoint, utf16_codepoint_with_fffd, wtf8_sequence,
 };
 
-mod escape_reg_exp {}
-
 /// `bun.strings.visible` — terminal-visible-width helpers (East-Asian-width +
 /// grapheme-aware; SIMD paths demoted to scalar `ScalarVec` — see [`ENABLE_SIMD`]).
 pub use visible_impl::{

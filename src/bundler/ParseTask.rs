@@ -2890,7 +2890,9 @@ pub mod parse_worker {
             bun_event_loop::AnyEventLoop::Js { owner } => {
                 owner.enqueue_task_concurrent(
                     bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(result, |p| {
-                        on_complete(p);
+                        // SAFETY: `p` is the `result` Box leaked above; ownership
+                        // transfers to `on_complete`, which deallocates it.
+                        unsafe { on_complete(p) };
                         Ok(())
                     }),
                 );
@@ -2942,11 +2944,13 @@ pub mod parse_worker {
         unsafe { std::alloc::dealloc(result.cast::<u8>(), std::alloc::Layout::new::<Result>()) };
     }
 
-    pub fn on_complete(result: *mut Result) {
-        on_complete_impl(result);
-    }
-
-    fn on_complete_impl(result: *mut Result) {
+    /// # Safety
+    /// `result` must be a live, uniquely-owned heap allocation produced by
+    /// `bun_core::heap::into_raw(Box<Result>)` in `run_from_thread_pool_impl`
+    /// (or `ServerComponentParseTask`'s equivalent). Ownership transfers to
+    /// this fn, which deallocates `result` before returning. Must run on the
+    /// main/bundler thread (it dereferences `result.ctx` mutably).
+    pub unsafe fn on_complete(result: *mut Result) {
         // SAFETY: result allocated via heap::alloc above; uniquely owned here.
         let r = unsafe { &mut *result };
         let ctx = r.ctx;

@@ -1778,6 +1778,7 @@ fn NewLexer_(
 
                         lexer.end = lexer.current;
                         lexer.token = T.t_syntax_error;
+                        lexer.step();
                     },
                 }
 
@@ -2318,6 +2319,7 @@ fn NewLexer_(
 
                         lexer.end = lexer.current;
                         lexer.token = .t_syntax_error;
+                        lexer.step();
                     },
                 }
 

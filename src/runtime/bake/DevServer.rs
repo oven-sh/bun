@@ -1412,6 +1412,63 @@ pub enum DevHandlerId {
     MemoryVisualizer,
 }
 
+/// DNS-rebinding guard for `/_bun/...` internal routes. A rebound origin
+/// (`attacker.com` → 127.0.0.1) presents `Host: attacker.com`; rejecting
+/// non-loopback / non-IP / non-configured hostnames prevents the attacker's
+/// page from reading bundled source via same-origin fetch.
+fn is_allowed_dev_host(dev: &DevServer, req: &Request) -> bool {
+    let Some(host) = req.header(b"host") else {
+        return false;
+    };
+    let host = if host.first() == Some(&b'[') {
+        match strings::index_of_scalar(host, b']') {
+            Some(end) => &host[..=end],
+            None => host,
+        }
+    } else {
+        match strings::last_index_of_char(host, b':') {
+            Some(colon) => &host[..colon],
+            None => host,
+        }
+    };
+    if strings::eql_case_insensitive_ascii(host, b"localhost", true) {
+        return true;
+    }
+    const DOT_LOCALHOST: &[u8] = b".localhost";
+    if host.len() > DOT_LOCALHOST.len()
+        && strings::eql_case_insensitive_ascii(
+            &host[host.len() - DOT_LOCALHOST.len()..],
+            DOT_LOCALHOST,
+            true,
+        )
+    {
+        return true;
+    }
+    let ip = if host.first() == Some(&b'[') && host.last() == Some(&b']') {
+        &host[1..host.len() - 1]
+    } else {
+        host
+    };
+    if strings::is_ip_address(ip) {
+        return true;
+    }
+    if let Some(server) = dev.server.as_ref() {
+        if let crate::server::server_config::Address::Tcp { hostname: Some(h), .. } =
+            &server.config().address
+        {
+            return strings::eql_case_insensitive_ascii(host, h.as_bytes(), true);
+        }
+    }
+    false
+}
+
+fn host_forbidden(resp: AnyResponse) {
+    resp.corked(move || {
+        resp.write_status(b"403 Forbidden");
+        resp.end(b"Blocked: Host header does not match the dev server", false);
+    });
+}
+
 /// `extern "C"` trampoline: recovers `&mut DevServer` from user-data and wraps
 /// the raw `uws_res` as `AnyResponse`, then calls the handler for `ID`.
 extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
@@ -1429,6 +1486,9 @@ extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
     } else {
         AnyResponse::TCP(res.cast::<bun_uws_sys::response::TCPResponse>())
     };
+    if !matches!(ID, DevHandlerId::Request) && !is_allowed_dev_host(dev, req) {
+        return host_forbidden(resp);
+    }
     match ID {
         DevHandlerId::JsRequest => on_js_request(dev, req, resp),
         DevHandlerId::AssetRequest => on_asset_request(dev, req, resp),

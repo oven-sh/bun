@@ -6,7 +6,6 @@ use crate::schema_api as api;
 use bun_core::String;
 use bun_url::URL as ZigURL;
 
-use crate::module_loader::ModuleLoader;
 use crate::virtual_machine::VirtualMachine;
 use crate::{
     Exception, JSErrorCode, JSGlobalObject, JSRuntimeType, JSValue, ZigStackFrame, ZigStackTrace,
@@ -181,10 +180,11 @@ impl Holder {
             self.loaded = false;
         }
         if self.need_to_clear_parser_arena_on_deinit {
-            // PORT NOTE: reshaped for borrowck — Zig `vm.module_loader.resetArena(vm)`
-            // would borrow `vm` twice; the Rust port made `reset_arena` an
-            // associated fn on `ModuleLoader` taking only `&mut VirtualMachine`.
-            ModuleLoader::reset_arena(vm);
+            // One-off PrintSource fetch — full-reset; `reset_arena`'s
+            // retain-with-limit is for the hot per-module transpile loop.
+            if let Some(arena) = vm.module_loader.transpile_source_code_arena.as_mut() {
+                arena.reset();
+            }
         }
     }
 

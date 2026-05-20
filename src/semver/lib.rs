@@ -509,10 +509,14 @@ pub mod semver_string {
                 let (a_off, a_len) = (a.off as usize, a.len as usize);
                 let (b_off, b_len) = (b.off as usize, b.len as usize);
                 // Binary lockfiles raw-cast these offsets from disk; bounds-check in release.
-                strings::eql(
-                    this_buf.get(a_off..a_off + a_len).unwrap_or_default(),
-                    that_buf.get(b_off..b_off + b_len).unwrap_or_default(),
-                )
+                // OOB handles must not normalize to "" (would make corrupt entries match).
+                match (
+                    this_buf.get(a_off..a_off + a_len),
+                    that_buf.get(b_off..b_off + b_len),
+                ) {
+                    (Some(a), Some(b)) => strings::eql(a, b),
+                    _ => false,
+                }
             }
         }
 

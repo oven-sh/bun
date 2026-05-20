@@ -4409,10 +4409,17 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         // Phase 1: find content_indent and first non-ws char
         // PORT NOTE: labeled-switch loop
+        let mut consumed_indent_this_line = false;
         let (content_indent, first): (Indent, u32) = 'phase1: loop {
             let __c = Enc::wide(self.next());
             match __c {
                 0 => {
+                    // Official yaml-test-suite JEF9/02: trailing indentation
+                    // at EOF without a final break counts as one trailing
+                    // empty line for chomping (matches eemeli/yaml + js-yaml).
+                    if consumed_indent_this_line {
+                        ctx.leading_newlines += 1;
+                    }
                     if explicit_indent.is_none() {
                         ctx.content_indent = self.line_indent;
                     }
@@ -4429,6 +4436,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         return Err(ParseError::UnexpectedCharacter);
                     }
                     ctx.leading_newlines += 1;
+                    consumed_indent_this_line = false;
                     continue;
                 }
                 0x0A => {
@@ -4438,6 +4446,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         return Err(ParseError::UnexpectedCharacter);
                     }
                     ctx.leading_newlines += 1;
+                    consumed_indent_this_line = false;
                     continue;
                 }
                 0x20 => {
@@ -4449,11 +4458,15 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             self.inc(1);
                         }
                         self.line_indent = indent;
+                        if !indent.is_less_than(ci) {
+                            consumed_indent_this_line = true;
+                        }
                         if matches!(Enc::wide(self.next()), 0 | 0x0A | 0x0D) {
                             continue;
                         }
                         break 'phase1 (ci, Enc::wide(self.next()));
                     }
+                    consumed_indent_this_line = true;
                     while Enc::wide(self.next()) == 0x20 {
                         indent.inc(1);
                         self.inc(1);

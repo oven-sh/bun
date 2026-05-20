@@ -3762,15 +3762,12 @@ test("yaml-test-suite/JEF9/01", () => {
 
 test("yaml-test-suite/JEF9/02", () => {
   // Trailing whitespace in streams
-  // Upstream JEF9/02 has no `json:` expectation (only `dump:`); the value
-  // here matches libyaml/PyYAML and spec [70] l-empty (spaces-then-EOF is
-  // not an empty line, so Keep emits nothing).
   const input: string = `- |+
    `;
 
   const parsed = YAML.parse(input);
 
-  const expected: any = [""];
+  const expected: any = ["\n"];
 
   expect(parsed).toEqual(expected);
 });

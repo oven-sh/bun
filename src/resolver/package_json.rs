@@ -3108,28 +3108,50 @@ fn find_invalid_segment(path_: &[u8]) -> Option<&[u8]> {
             path = b"";
         }
 
-        match segment.len() {
-            1 => {
-                if segment == b"." {
-                    return Some(segment);
-                }
-            }
-            2 => {
-                if segment == b".." {
-                    return Some(segment);
-                }
-            }
-            12 => {
-                // "node_modules".len
-                if segment == b"node_modules" {
-                    return Some(segment);
-                }
-            }
-            _ => {}
+        if is_invalid_segment(segment) {
+            return Some(segment);
         }
     }
 
     None
+}
+
+// Node's PACKAGE_TARGET_RESOLVE rejects ".", "..", and "node_modules" segments
+// case-insensitively and including percent-encoded variants. Decode the segment
+// before comparing so spellings like "%2e%2e" or ".%2E" cannot survive the check
+// only to be decoded into ".." by `finalize`.
+fn is_invalid_segment(segment: &[u8]) -> bool {
+    let mut decoded = [0u8; 12];
+    let mut len = 0usize;
+    let mut i = 0usize;
+    while i < segment.len() {
+        let b = segment[i];
+        let c = if b == b'%' && i + 2 < segment.len() {
+            match (
+                bun_core::fmt::hex_digit_value(segment[i + 1]),
+                bun_core::fmt::hex_digit_value(segment[i + 2]),
+            ) {
+                (Some(hi), Some(lo)) => {
+                    i += 3;
+                    (hi << 4) | lo
+                }
+                _ => {
+                    i += 1;
+                    b
+                }
+            }
+        } else {
+            i += 1;
+            b
+        };
+        if len == decoded.len() {
+            return false;
+        }
+        decoded[len] = c.to_ascii_lowercase();
+        len += 1;
+    }
+    let d = &decoded[..len];
+    d == b"." || d == b".." || d == b"node_modules"
 }
 
 // ported from: src/resolver/package_json.zig

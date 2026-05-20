@@ -2483,6 +2483,14 @@ pub fn parse_into_binary_lockfile(
                     };
 
                     pkg.meta.integrity = Integrity::parse(integrity_str);
+                    if !integrity_str.is_empty() && !pkg.meta.integrity.tag.is_supported() {
+                        log.add_error(
+                            Some(source),
+                            integrity_expr.loc,
+                            b"Unsupported or malformed integrity hash",
+                        );
+                        return Err(ParseError::InvalidPackageInfo);
+                    }
                 }
                 ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
                     // integrity is optional for tarball deps (backward compat)
@@ -2490,6 +2498,14 @@ pub fn parse_into_binary_lockfile(
                         let integrity_expr = pkg_info.at(i);
                         if let Some(integrity_str) = integrity_expr.as_utf8_string_literal() {
                             pkg.meta.integrity = Integrity::parse(integrity_str);
+                            if !integrity_str.is_empty() && !pkg.meta.integrity.tag.is_supported() {
+                                log.add_error(
+                                    Some(source),
+                                    integrity_expr.loc,
+                                    b"Unsupported or malformed integrity hash",
+                                );
+                                return Err(ParseError::InvalidPackageInfo);
+                            }
                         }
                     }
                 }
@@ -2508,6 +2524,11 @@ pub fn parse_into_binary_lockfile(
                         return Err(ParseError::InvalidPackageInfo);
                     };
 
+                    if !crate::repository::is_safe_resolved_tag(bun_tag_str) {
+                        log.add_error(Some(source), bun_tag.loc, b"Invalid git dependency tag");
+                        return Err(ParseError::InvalidPackageInfo);
+                    }
+
                     let resolved = sbuf!(lockfile).append(bun_tag_str)?;
                     if tag == ResolutionTag::Git {
                         res.git_mut().resolved = resolved;
@@ -2520,6 +2541,14 @@ pub fn parse_into_binary_lockfile(
                         let integrity_expr = pkg_info.at(i);
                         if let Some(integrity_str) = integrity_expr.as_utf8_string_literal() {
                             pkg.meta.integrity = Integrity::parse(integrity_str);
+                            if !integrity_str.is_empty() && !pkg.meta.integrity.tag.is_supported() {
+                                log.add_error(
+                                    Some(source),
+                                    integrity_expr.loc,
+                                    b"Unsupported or malformed integrity hash",
+                                );
+                                return Err(ParseError::InvalidPackageInfo);
+                            }
                         }
                     }
                 }

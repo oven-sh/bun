@@ -1618,7 +1618,8 @@ impl<'a> Resolver<'a> {
         let mut iter = result.path_pair.iter();
         let mut module_type = result.module_type;
         while let Some(path) = iter.next() {
-            let Ok(Some(dir)) = self.read_dir_info(path.name.dir) else {
+            let name = path.name();
+            let Ok(Some(dir)) = self.read_dir_info(name.dir) else {
                 continue;
             };
             let mut needs_side_effects = true;
@@ -1717,14 +1718,14 @@ impl<'a> Resolver<'a> {
             // This should win out over the module type from package.json
             if !kind.is_from_css()
                 && module_type == options::ModuleType::Unknown
-                && path.name.ext.len() == 4
+                && name.ext.len() == 4
             {
                 module_type =
-                    module_type_from_ext(path.name.ext).unwrap_or(options::ModuleType::Unknown);
+                    module_type_from_ext(name.ext).unwrap_or(options::ModuleType::Unknown);
             }
 
             if let Some(entries) = dir.get_entries_ref(self.generation) {
-                if let Some(query) = entries.get(path.name.filename) {
+                if let Some(query) = entries.get(name.filename) {
                     let symlink_path = query.entry().symlink(self.rfs_ptr(), self.store_fd);
                     if !symlink_path.is_empty() {
                         path.set_realpath(symlink_path);
@@ -2014,8 +2015,6 @@ impl<'a> Resolver<'a> {
                     // Valid node:* modules becomes {} in the output
                     result.path_pair.primary.namespace = b"node";
                     result.path_pair.primary.text = import_path_without_node_prefix;
-                    result.path_pair.primary.name =
-                        Fs::PathName::init(import_path_without_node_prefix);
                     result.module_type = options::ModuleType::Cjs;
                     result.path_pair.primary.is_disabled = true;
                     result.flags.set_is_from_node_modules(true);
@@ -2030,8 +2029,6 @@ impl<'a> Resolver<'a> {
                 {
                     result.path_pair.primary.namespace = b"node";
                     result.path_pair.primary.text = import_path_without_node_prefix;
-                    result.path_pair.primary.name =
-                        Fs::PathName::init(import_path_without_node_prefix);
                     result.module_type = options::ModuleType::Cjs;
                     result.path_pair.primary.is_disabled = true;
                     result.flags.set_is_from_node_modules(true);
@@ -2374,7 +2371,7 @@ impl<'a> Resolver<'a> {
                 if res.package_json.is_some() && self.care_about_browser_field {
                     let base_dir_info = match res.dir_info {
                         Some(d) => d,
-                        None => match self.read_dir_info(result.path_pair.primary.name.dir) {
+                        None => match self.read_dir_info(result.path_pair.primary.name().dir) {
                             Ok(Some(d)) => d,
                             _ => return ResultUnion::Success(result),
                         },
@@ -2439,7 +2436,7 @@ impl<'a> Resolver<'a> {
         result: &Result,
     ) -> Option<*const PackageJSON> {
         let mut dir_info = self
-            .dir_info_cached(result.path_pair.primary.name.dir)
+            .dir_info_cached(result.path_pair.primary.name().dir)
             .ok()
             .flatten()?;
         loop {
@@ -2488,7 +2485,7 @@ impl<'a> Resolver<'a> {
         // Try to avoid the hash table lookup whenever possible
         // That can cause filesystem lookups in parent directories and it requires a lock
         if let Some(pkg) = result.package_json_ref() {
-            if slice == pkg.source.path.name.dir_with_trailing_slash() {
+            if slice == pkg.source.path.name().dir_with_trailing_slash() {
                 return Some(RootPathPair {
                     package_json: std::ptr::from_ref(pkg),
                     base_path: slice,
@@ -4118,6 +4115,22 @@ impl<'a> Resolver<'a> {
                 .map(DirInfoRef::from_slot));
         }
 
+        self.dir_info_cached_miss(enable_logging, input_path, top_result)
+    }
+
+    /// Cold tail of [`dir_info_cached_maybe_log`]: the directory walk +
+    /// `readdir` + `dir_info_uncached` fill that runs only on a cache miss.
+    /// Split out so the hot cache-hit path above doesn't pay the ~8.6 KB stack
+    /// frame (and the per-page stack-probe sequence) that the readdir
+    /// temporaries below force on every call.
+    #[cold]
+    #[inline(never)]
+    fn dir_info_cached_miss(
+        &mut self,
+        enable_logging: bool,
+        input_path: &[u8],
+        top_result: allocators::Result,
+    ) -> core::result::Result<Option<DirInfoRef>, bun_core::Error> {
         let dir_info_uncached_path_buf = bufs!(dir_info_uncached_path);
 
         let mut i: usize = 1;
@@ -4880,7 +4893,7 @@ impl<'a> Resolver<'a> {
 
         if let Some(result) = self.handle_esm_resolution(
             esm_resolution,
-            package_json.source.path.name.dir,
+            package_json.source.path.name().dir,
             kind,
             package_json,
             b"",

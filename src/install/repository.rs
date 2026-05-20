@@ -912,15 +912,9 @@ impl RepositoryExt for Repository {
 
                 if let Err(err) = exec(
                     env,
-                    &[
-                        b"git",
-                        b"-C",
-                        folder,
-                        b"checkout",
-                        b"--quiet",
-                        b"--end-of-options",
-                        resolved,
-                    ],
+                    // `is_safe_resolved_tag` above rejects a leading `-`, so
+                    // `resolved` cannot be parsed as a git option.
+                    &[b"git", b"-C", folder, b"checkout", b"--quiet", resolved],
                 ) {
                     log.add_error_fmt(
                         None,

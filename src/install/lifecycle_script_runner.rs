@@ -23,10 +23,9 @@ use bun_spawn::{Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, Sta
 use bun_sys::Fd;
 // PORT NOTE: `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
 // `bun_io::Loop` is the trait's nominal: `us_loop_t` on POSIX, `uv_loop_t`
-// on Windows. The inherent `loop_()` projects through the uws wrapper
+// on Windows. `AnyEventLoop::native_loop()` projects through the uws wrapper
 // (`WindowsLoop::uv_loop`) on Windows so both paths hand back the same shape
 // `BufferedReaderParent::loop_` expects.
-use bun_io::Loop as AsyncLoop;
 
 bun_output::declare_scope!(Script, visible);
 
@@ -389,11 +388,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     unsafe fn manager_mut(&mut self) -> &mut PackageManager {
         // SAFETY: see fn doc.
         unsafe { self.manager.get_mut() }
-    }
-
-    pub fn loop_(&mut self) -> *mut AsyncLoop {
-        // SAFETY: see [`Self::manager_mut`].
-        unsafe { self.manager_mut() }.event_loop.native_loop()
     }
 
     pub fn event_loop(&self) -> &AnyEventLoop<'static> {
@@ -1269,7 +1263,7 @@ bun_io::impl_buffered_reader_parent! {
     has_on_read_chunk = false;
     on_reader_done  = |this| (*this).on_reader_done();
     on_reader_error = |this, err| (*this).on_reader_error(&err);
-    loop_           = |this| (*this).loop_();
+    loop_           = |this| (*(*this).manager.as_ptr()).event_loop.native_loop();
     event_loop = |this| bun_event_loop::EventLoopHandle::from_any(
         &mut (*(*this).manager.as_ptr()).event_loop,
     ).as_event_loop_ctx();

@@ -136,8 +136,11 @@ pub const fn encode_len_from_size(source: usize) -> usize {
 
 #[inline]
 pub const fn url_safe_encode_len_from_size(n: usize) -> usize {
-    // Copied from WebKit
-    (n * 4).div_ceil(3)
+    // Equivalent to WebKit's `ceil(n * 4 / 3)`, but split so the intermediate
+    // product can't overflow before the divide for large `n`.
+    let full_chunks = n / 3;
+    let leftover = n % 3;
+    full_chunks * 4 + (leftover * 4).div_ceil(3)
 }
 
 #[inline]

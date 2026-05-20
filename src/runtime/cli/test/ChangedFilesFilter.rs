@@ -313,7 +313,9 @@ pub fn filter<'a>(
     // `'static` borrow), so its Drop never runs either; free its heap-backed
     // options through the borrow `bundle` still holds.
     bundle.deinit_without_freeing_arena();
-    bundle.transpiler.deinit();
+    // SAFETY: `bundle.transpiler` is the arena-backed `&'static mut` noted
+    // above — its `Drop` never runs, so `deinit` cannot lead to a double-drop.
+    unsafe { bundle.transpiler.deinit() };
 
     Ok(Result {
         test_files: &mut test_files[0..write],

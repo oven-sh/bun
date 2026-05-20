@@ -528,11 +528,10 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         let root_path_z = unsafe { ZStr::from_raw(path_buf_ptr, root_path_len) };
         let cwd_fd = match A::open(root_path_z)? {
             Err(err) => {
-                let len = root_path_len + 1;
                 return Ok(Err(self.walker.handle_sys_err_with_path(
                     &err,
-                    // SAFETY: NUL at index len-1 written above
-                    unsafe { ZStr::from_raw(path_buf_ptr, len) },
+                    // SAFETY: NUL at index `root_path_len` written above.
+                    unsafe { ZStr::from_raw(path_buf_ptr, root_path_len) },
                 )));
             }
             Ok(fd) => fd,

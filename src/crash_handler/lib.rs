@@ -3220,20 +3220,14 @@ mod draft {
             };
             for &program in programs {
                 // PERF(port): was arena bulk-free + StackFallbackAllocator — using global allocator here.
+                // Only stop once a symbolizer actually ran and exited 0. Any failure
+                // (not found, spawn error, or non-zero exit) tries the next program and
+                // ultimately falls through to the WTF fallback below — a found-but-broken
+                // symbolizer must not leave the crash report with no trace at all.
                 match spawn_symbolizer(program, trace) {
-                    // try next program if this one wasn't found
-                    Err(e) if e == bun_core::err!("FileNotFound") => continue,
-                    // Windows: `bun_core::spawn_sync_inherit` is currently a `#[cfg(not(unix))]`
-                    // stub returning `Unexpected`. Zig's `std.process.Child` *does* work on
-                    // Windows, so until the stub is filled in, treat the sentinel like
-                    // FileNotFound and fall through to the WTF fallback below instead of
-                    // returning with no trace at all.
-                    #[cfg(windows)]
-                    Err(e) if e == bun_core::err!("Unexpected") => continue,
-                    Err(_) => {}
-                    Ok(()) => {}
+                    Ok(()) => return,
+                    Err(_) => continue,
                 }
-                return;
             }
             let _ = limits;
             // INTENTIONAL DIVERGENCE from Zig spec (crash_handler.zig:1749-1760 falls
@@ -3298,6 +3292,7 @@ mod draft {
             let _ = stderr.write_all(b"Failed to invoke command: ");
             let _ = fmt_argv(stderr, &argv);
             let _ = stderr.write_all(b"\n");
+            return Err(bun_core::err!("Unexpected"));
         }
         Ok(())
     }

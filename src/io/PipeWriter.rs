@@ -543,7 +543,11 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     }
 
     pub fn set_parent(&mut self, parent: *mut Parent) {
-        self.parent = core::ptr::NonNull::new(parent).map(bun_ptr::ParentRef::from);
+        // Reject null up front: every dispatch path past this point assumes
+        // `self.parent` is set (see the type-invariant doc on `parent_event_loop`).
+        self.parent = Some(bun_ptr::ParentRef::from(
+            core::ptr::NonNull::new(parent).expect("set_parent: parent must not be null"),
+        ));
         // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
         let owner = std::ptr::from_mut(self).cast::<c_void>();
         self.handle

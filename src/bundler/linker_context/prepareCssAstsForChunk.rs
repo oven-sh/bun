@@ -42,12 +42,12 @@ unsafe impl Send for PrepareCssAstTask {}
 // CONCURRENCY: thread-pool callback — runs on worker threads, one task per
 // CSS chunk. Writes: `chunk.content.css.{asts, ordered_import_records}`
 // (per-chunk disjoint via `*mut Chunk`). Reads `linker.parse_graph`
-// SoA columns + `linker.graph.ast.css` shared. The impl currently materializes
-// `&mut LinkerContext` (see `prepare_css_asts_for_chunk_impl` signature) —
-// safe only because every CSS chunk is unique and the impl reads `c` /
-// writes `chunk` exclusively; no `c.graph` write occurs. `PrepareCssAstTask`
-// is `Send` by virtue of `LinkerContext: Send` + `Chunk: Send` (both raw-ptr
-// fields point at types with `unsafe impl Send`).
+// SoA columns + `linker.graph.ast.css` shared. Every CSS chunk gets exactly
+// one task, so `&mut *chunk` is unique; `linker` is shared across all tasks
+// and is therefore borrowed as `&LinkerContext` (the impl only reads `c` and
+// only ever writes `chunk`). `PrepareCssAstTask` is `Send` by virtue of
+// `LinkerContext: Send` + `Chunk: Send` (both raw-ptr fields point at types
+// with `unsafe impl Send`).
 /// # Safety
 ///
 /// `task` must be the intrusive `task` field of a live [`PrepareCssAstTask`]
@@ -65,26 +65,23 @@ pub unsafe fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
     let worker = {
         // SAFETY: `linker` is a raw `*mut` to `BundleV2.linker` (embedded by value),
         // carrying provenance over the full `BundleV2` allocation. Recover the
-        // parent via container_of. `Worker::get` only needs `&BundleV2`, so we
-        // scope the shared borrow before materializing `&mut *linker` below to
-        // avoid aliasing.
+        // parent via container_of. `Worker::get` only needs `&BundleV2`.
         let bundle_v2: &BundleV2 = unsafe { &*LinkerContext::bundle_v2_ptr(linker) };
         ThreadPool::Worker::get(bundle_v2)
     };
     let worker = scopeguard::guard(worker, |w| w.unget());
 
-    // SAFETY: `linker` outlives this task (owned by the bundle); each CSS chunk
-    // gets exactly one `PrepareCssAstTask` (see generateChunksInParallel.rs),
-    // so `&mut *chunk` is unique. `worker.arena` was initialized in
-    // `Worker::create()` and points at the worker's heap arena.
-    prepare_css_asts_for_chunk_impl(
-        unsafe { &mut *linker },
-        unsafe { &mut *chunk },
-        worker.arena(),
-    );
+    // SAFETY: `linker` outlives this task (owned by the bundle) and is shared
+    // across every concurrently-running `PrepareCssAstTask`, so it must be a
+    // shared `&LinkerContext` — never `&mut`, which would alias across worker
+    // threads. Each CSS chunk gets exactly one `PrepareCssAstTask` (see
+    // generateChunksInParallel.rs), so `&mut *chunk` is unique. `worker.arena`
+    // was initialized in `Worker::create()` and points at the worker's heap
+    // arena.
+    prepare_css_asts_for_chunk_impl(unsafe { &*linker }, unsafe { &mut *chunk }, worker.arena());
 }
 
-fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bump: &Bump) {
+fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &Bump) {
     // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
     // across the log write below (split borrow).
     let parse_graph = unsafe { &*c.parse_graph };

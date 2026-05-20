@@ -133,8 +133,14 @@ impl Default for Content {
 unsafe impl Send for Chunk {}
 // SAFETY: shared `&Chunk` access during the worker fan-out touches only
 // `compile_results_for_chunk` (UnsafeCell-per-slot, disjoint indices) and
-// `files_with_parts_in_chunk` atomic counters; every other field is frozen
-// before fan-out and read single-threaded after the pool join.
+// `files_with_parts_in_chunk` atomic counters; the remaining fields are
+// frozen before fan-out and read single-threaded after the pool join —
+// **except** `renamer`, which the per-part-range printer reborrows `&mut`
+// from each worker (read-only in practice). See `TODO(ub-audit)` above:
+// once `Renamer<'r>` borrows `&'r` instead of `&'r mut`, this caveat (and
+// the matching split-borrow in `generate_compile_result_for_js_chunk`) goes
+// away. Pre-existing; this impl mirrors `unsafe impl Send for Chunk` and
+// the Zig single-pointer fan-out it ports.
 unsafe impl Sync for Chunk {}
 
 /// Disjoint-slot output buffer for [`Chunk::compile_results_for_chunk`].

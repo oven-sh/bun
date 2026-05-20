@@ -300,24 +300,29 @@ impl<const SSL: bool> WebSocket<SSL> {
                 let ssl_ptr: *mut boringssl::c::SSL = socket
                     .get_native_handle()
                     .map_or(core::ptr::null_mut(), |p| p.cast());
+                // Fail closed: with reject_unauthorized=true we cannot verify
+                // the peer without the SSL handle, so a missing handle is a
+                // connection failure rather than a silent skip.
+                if ssl_ptr.is_null() {
+                    self.fail(ErrorCode::FailedToConnect);
+                    return;
+                }
                 // `TLSEXT_NAMETYPE_host_name` is 0 per RFC 6066 / `<openssl/tls1.h>`.
                 const TLSEXT_NAMETYPE_HOST_NAME: c_int = 0;
-                // SAFETY: ssl_ptr is valid for the lifetime of the socket; passing
-                // null is well-defined (BoringSSL returns null).
+                // SAFETY: ssl_ptr is non-null (checked above) and is the live
+                // `SSL*` native handle of the connected socket; the socket
+                // outlives this call.
                 let servername =
                     unsafe { boringssl::c::SSL_get_servername(ssl_ptr, TLSEXT_NAMETYPE_HOST_NAME) };
                 if !servername.is_null() {
                     // SAFETY: servername is a NUL-terminated C string owned by the SSL session.
                     let hostname = unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
-                    if !ssl_ptr.is_null() {
-                        // SAFETY: `ssl_ptr` is non-null (checked above) and is the live
-                        // `SSL*` native handle of the connected socket; the socket outlives
-                        // this call and no other Rust borrow of the `SSL` object exists.
-                        let ssl = unsafe { &mut *ssl_ptr };
-                        if !boringssl::check_server_identity(ssl, hostname) {
-                            self.fail(ErrorCode::FailedToConnect);
-                            return;
-                        }
+                    // SAFETY: `ssl_ptr` is non-null (checked above) and no other
+                    // Rust borrow of the `SSL` object exists.
+                    let ssl = unsafe { &mut *ssl_ptr };
+                    if !boringssl::check_server_identity(ssl, hostname) {
+                        self.fail(ErrorCode::FailedToConnect);
+                        return;
                     }
                 }
             }

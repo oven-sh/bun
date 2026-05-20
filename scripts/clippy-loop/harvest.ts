@@ -8,10 +8,21 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 const dir = process.argv[2];
+if (!dir) {
+  process.stderr.write("Usage: bun harvest.ts <workflow-dir>\n");
+  process.exit(1);
+}
+// Tolerate truncated/partial lines (e.g. from a killed run).
 const journal = readFileSync(join(dir, "journal.jsonl"), "utf8")
   .split("\n")
   .filter(l => l.startsWith("{"))
-  .map(l => JSON.parse(l));
+  .flatMap(l => {
+    try {
+      return [JSON.parse(l)];
+    } catch {
+      return [];
+    }
+  });
 
 const results = new Map<string, any>();
 for (const e of journal) if (e.type === "result") results.set(e.agentId, e.result);

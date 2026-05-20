@@ -339,11 +339,14 @@ impl<T> Clone for StoreSlice<T> {
 
 // SAFETY: same rationale as `StoreStr` — points into a single-threaded bump
 // arena. Asserted Send/Sync so payload types can sit in `static` Prefill
-// tables; callers must not actually share a Store across threads.
-unsafe impl<T> Send for StoreSlice<T> {}
+// tables; callers must not actually share a Store across threads. Bounded on
+// `T: Send` so the impl can't smuggle a non-`Send` payload across a thread
+// boundary through the safe `slice()`/`Deref` accessors.
+unsafe impl<T: Send> Send for StoreSlice<T> {}
 // SAFETY: see the `Send` impl above — `StoreSlice` is a raw `(ptr, len)` into a
-// single-threaded bump arena; never actually shared across threads.
-unsafe impl<T> Sync for StoreSlice<T> {}
+// single-threaded bump arena; never actually shared across threads. Bounded on
+// `T: Sync` for the same reason `Send` is bounded on `T: Send`.
+unsafe impl<T: Sync> Sync for StoreSlice<T> {}
 
 impl<T> StoreSlice<T> {
     pub const EMPTY: StoreSlice<T> = StoreSlice {

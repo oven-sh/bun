@@ -1471,10 +1471,10 @@ pub mod bv2_impl {
             /// `BundleV2.init` — bundle_v2.zig:994). The bundler can't name the
             /// reloader generic (T6), so this is a definer-prefixed extern hook.
             /// `'static` matches the impl-side signature; the sole caller
-            /// (`bun build --watch`) leaks the `Box<BundleV2>` via `mem::forget`
-            /// once `generate_from_cli` succeeds. Watch-mode error exits before
-            /// that point drop the box (pre-existing — same as the prior
-            /// `*mut ()` form).
+            /// (`bun build --watch`) leaks the `Box<BundleV2>` via
+            /// `Box::into_raw` once `generate_from_cli` returns. The watcher is
+            /// installed after the last fallible step in `BundleV2::init`, so the
+            /// box is never dropped while the watcher holds a pointer to it.
             fn __bun_jsc_enable_hot_module_reloading_for_bundler(
                 bv2: core::ptr::NonNull<super::BundleV2<'static>>,
             );
@@ -1531,8 +1531,13 @@ pub mod bv2_impl {
         // thread, read by the bundle thread; `enqueue_task_concurrent` is the only
         // cross-thread call and it goes through `jsc::EventLoop`'s lock-free queue.
         unsafe impl Send for CompletionHandle {}
-        // SAFETY: same as the `Send` impl above — only the lock-free enqueue crosses threads.
-        unsafe impl Sync for CompletionHandle {}
+        // Intentionally not `Sync`: the opaque owner (`JSBundleCompletionTask`)
+        // is modeled as `!Sync`, and this wrapper exposes `result_is_err(&self)`
+        // in addition to the lock-free enqueue path, so blanket `&CompletionHandle`
+        // sharing across threads is not justified. The handle only needs to *move*
+        // to the bundle thread (`Send`), not be shared. If a cross-thread `&` ever
+        // becomes necessary, split out an enqueue-only wrapper and make only that
+        // type `Sync`.
         impl CompletionHandle {
             #[inline]
             pub fn result_is_err(&self) -> bool {
@@ -2908,13 +2913,6 @@ pub mod bv2_impl {
             // `ThreadPool::init` takes `&mut this`.
             let pool: *mut ThreadPool =
                 std::ptr::from_mut(this.arena().alloc(ThreadPool::default()));
-            if cli_watch_flag {
-                // CYCLEBREAK GENUINE: hot_reloader is T6; runtime constructs the
-                // `dispatch::WatcherHandle` (erased owner + `&'static WatcherVTable`)
-                // via this extern hook and writes `bun_watcher` (Zig:
-                // `Watcher.enableHotModuleReloading(this, null)` — bundle_v2.zig:994).
-                dispatch::enable_hot_module_reloading_for_bundler(core::ptr::from_mut(&mut *this));
-            }
             // errdefer this.graph.heap.deinit() — Drop handles arena teardown.
 
             // SAFETY: arena slot is live for the bundle pass; the default value
@@ -2924,6 +2922,18 @@ pub mod bv2_impl {
             }
             this.graph.pool =
                 bun_ptr::BackRef::from(NonNull::new(pool).expect("arena allocation is non-null"));
+            // Install the watcher only after `ThreadPool::init()` has succeeded —
+            // the `?` above is the last early-return in this fn, so the watcher's
+            // raw `*mut BundleV2` can't outlive the box it points at. (Zig installs
+            // it before `pool.* = try .init(..)`, but the Rust caller drops the box
+            // on every error path until `generate_from_cli` leaks it.)
+            if cli_watch_flag {
+                // CYCLEBREAK GENUINE: hot_reloader is T6; runtime constructs the
+                // `dispatch::WatcherHandle` (erased owner + `&'static WatcherVTable`)
+                // via this extern hook and writes `bun_watcher` (Zig:
+                // `Watcher.enableHotModuleReloading(this, null)` — bundle_v2.zig:994).
+                dispatch::enable_hot_module_reloading_for_bundler(core::ptr::from_mut(&mut *this));
+            }
             // `Graph::pool` wraps the `BackRef` deref; `start()` takes `&self`.
             this.graph.pool().start();
             Ok(this)

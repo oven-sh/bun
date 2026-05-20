@@ -309,19 +309,10 @@ impl MutableString {
 
     pub fn inflate(&mut self, amount: usize) -> Result<(), AllocError> {
         // Zig MutableString.inflate: `list.resize(amount)` leaves new bytes
-        // uninitialized. Callers always overwrite the inflated region. Route
-        // through `spare_capacity_mut` so clippy::uninit_vec sees the explicit
-        // MaybeUninit handoff; LLVM lowers the zero-write loop to a `memset`.
-        self.list.reserve(amount.saturating_sub(self.list.len()));
-        let len = self.list.len();
-        if amount > len {
-            for slot in &mut self.list.spare_capacity_mut()[..amount - len] {
-                slot.write(0);
-            }
-        }
-        // SAFETY: capacity ≥ `amount` after `reserve`; the spare slots up to
-        // `amount` were just initialized above.
-        unsafe { self.list.set_len(amount) };
+        // uninitialized. Callers always overwrite the inflated region, so the
+        // zero-fill here is technically redundant — but it lowers to a single
+        // memset and avoids `clippy::uninit_vec` / a `set_len` over uninit bytes.
+        self.list.resize(amount, 0);
         Ok(())
     }
 

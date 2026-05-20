@@ -42,21 +42,19 @@ pub unsafe fn generate_compile_result_for_css_chunk(task: *mut ThreadPoolLib::Ta
         crate::linker_context_mod::crash_guard_for_part_range(c, chunk, &part_range.part_range)
     };
 
-    // SAFETY: `c_ptr` / `chunk_ptr` carry mutable provenance; the disjoint-write
-    // contract is documented on `pending_part_range_prologue`. The `&mut`
-    // borrows below are scoped to the impl call so they do not overlap the
-    // raw slot write that follows. (Peer tasks still hold their own `&mut`
-    // views into the same `LinkerContext`/`Chunk` for read-only printer use —
-    // see TODO(ub-audit) on `unsafe impl Sync for Chunk`.)
+    // CONCURRENCY: the CSS impl is read-only over `c`/`chunk` (the
+    // `bytesInOutput` bump goes through `&AtomicUsize`), so form `&` — never
+    // `&mut` — to avoid aliased exclusive borrows across peer worker tasks.
+    // The `&` borrows are scoped to the impl call so they do not overlap the
+    // raw slot write that follows.
     let result = {
         // SAFETY: `c_ptr` is the live `LinkerContext` returned by
-        // `pending_part_range_prologue` with mutable provenance; see the
-        // disjoint-write contract above.
-        let c_mut: &mut LinkerContext = unsafe { &mut *c_ptr };
+        // `pending_part_range_prologue`; see its contract.
+        let c_ref: &LinkerContext = unsafe { &*c_ptr };
         // SAFETY: `chunk_ptr` is the live `Chunk` from the same prologue; this
-        // `&mut` is scoped so it does not overlap the raw slot write below.
-        let chunk_mut: &mut Chunk = unsafe { &mut *chunk_ptr };
-        generate_compile_result_for_css_chunk_impl(&mut **worker, c_mut, chunk_mut, part_range.i)
+        // `&` is scoped so it does not overlap the raw slot write below.
+        let chunk_ref: &Chunk = unsafe { &*chunk_ptr };
+        generate_compile_result_for_css_chunk_impl(&mut **worker, c_ref, chunk_ref, part_range.i)
     };
 
     // SAFETY: per-task unique `i`; see `Chunk::write_compile_result_slot`.
@@ -67,8 +65,8 @@ pub unsafe fn generate_compile_result_for_css_chunk(task: *mut ThreadPoolLib::Ta
 
 fn generate_compile_result_for_css_chunk_impl(
     worker: &mut Worker,
-    c: &mut LinkerContext,
-    chunk: &mut Chunk,
+    c: &LinkerContext,
+    chunk: &Chunk,
     imports_in_chunk_index: u32,
 ) -> CompileResult {
     let _trace = bun_core::perf::trace("Bundler.generateCodeForFileInChunkCss");

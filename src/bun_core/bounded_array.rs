@@ -302,8 +302,10 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
                 let item = self.const_slice()[after_range + i];
                 self.slice()[after_subrange..][i] = item;
             }
-            self.len = Length::try_from(self.len - len - new_items.len()).unwrap();
-            // PORT NOTE: ported verbatim from Zig (`self.len - len - new_items.len`).
+            self.len = Length::try_from(self.len - len + new_items.len()).expect("int cast");
+            // PORT NOTE: Zig source had `self.len - len - new_items.len`, which over-shrinks
+            // (and underflows when the replacement is non-empty). Removing `len` items and
+            // inserting `new_items.len()` items yields `self.len - len + new_items.len()`.
         }
         Ok(())
     }

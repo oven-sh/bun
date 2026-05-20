@@ -644,11 +644,8 @@ struct SlotAndCount {
 
 impl SlotAndCount {
     fn less_than(a: SlotAndCount, b: SlotAndCount) -> Ordering {
-        if a.count > b.count || (a.count == b.count && a.slot < b.slot) {
-            Ordering::Less
-        } else {
-            Ordering::Greater
-        }
+        // Sort by descending count, then ascending slot.
+        b.count.cmp(&a.count).then_with(|| a.slot.cmp(&b.slot))
     }
 }
 

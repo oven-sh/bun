@@ -819,7 +819,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             .append_slice(p.import_records_for_current_part.as_slice());
         self.last_part
             .declared_symbols
-            .append_list(&core::mem::take(&mut p.declared_symbols))?;
+            .append_list(&p.declared_symbols)?;
 
         // PORT NOTE: Zig assigned the ArrayList's `items` slice directly. `Stmt` is `Copy`;
         // copy into the parser arena so the `StoreSlice<Stmt>` outlives this struct.

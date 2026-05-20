@@ -683,7 +683,7 @@ Full documentation is available at <magenta>https://bun.com/docs/install/patch<r
 Full documentation is available at <magenta>https://bun.com/docs/install/patch<r>.
 "#;
                 pretty_help(intro_text);
-                clap::simple_help(PATCH_PARAMS);
+                clap::simple_help(PATCH_COMMIT_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }

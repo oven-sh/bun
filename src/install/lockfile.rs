@@ -1536,10 +1536,12 @@ impl Lockfile {
         // PORT NOTE: heavy borrowck overlap — Zig calls
         // `manager.manifests.byNameHash(manager, …)` (manifests is a field of
         // manager) and then opens a `string_builder` on `manager.lockfile`
-        // while still holding `&manifest`. Route through a raw root so disjoint
-        // fields (`manifests`, `lockfile.{string_pool, buffers.*}`) can be
-        // split. BACKREF `mgr_ref` wraps the same root for the read-only
-        // `options` projection so it goes through safe `ParentRef::Deref`.
+        // while still holding `&manifest`. Route the `manifests` projection
+        // through a raw root so it can coexist with the lockfile borrows;
+        // lockfile fields are taken from `self` (== `manager.lockfile`), never
+        // re-derived via `manager_ptr`. BACKREF `mgr_ref` wraps the same root
+        // for the read-only `options` projection so it goes through safe
+        // `ParentRef::Deref`.
         let manager_ptr: *mut PackageManager = manager;
         let mgr_ref = bun_ptr::ParentRef::<PackageManager>::from(
             core::ptr::NonNull::new(manager_ptr).expect("derived from &mut, non-null"),
@@ -1596,11 +1598,14 @@ impl Lockfile {
                         continue;
                     };
 
-                    // SAFETY: `manager_ptr` is derived from the `&mut PackageManager`
-                    // arg; this reborrow touches only `lockfile.{buffers,string_pool}`,
-                    // disjoint from the live `manifests` and `self.packages` borrows.
-                    let lockfile = unsafe { &mut *(*manager_ptr).lockfile };
-                    let mut builder = string_builder!(lockfile);
+                    // PORT NOTE: Zig opens the builder on `manager.lockfile`,
+                    // which is the same `*Lockfile` as `this`/`self`. Re-deriving a
+                    // whole `&mut Lockfile` from `manager_ptr` here would create a
+                    // second mutable reference aliasing `self` (UB) — go through
+                    // `self` so the field-level borrows below stay disjoint from the
+                    // live `pkg_*` column views (those point into the columnar heap
+                    // allocation, not the `Lockfile` struct).
+                    let mut builder = string_builder!(self);
 
                     let mut bin_extern_strings_count: u32 = 0;
 
@@ -1614,7 +1619,7 @@ impl Lockfile {
                     // Spec: `defer builder.clamp()` — call explicitly at end of block (no `?`
                     // exits between here and the clamp below).
 
-                    let extern_strings_list = &mut lockfile.buffers.extern_strings;
+                    let extern_strings_list = &mut self.buffers.extern_strings;
                     // PERF(port): was ensureUnusedCapacity
                     let start = extern_strings_list.len();
                     // Default-fill the tail so it is valid before `bin.clone`

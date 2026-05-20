@@ -56,16 +56,19 @@ pub struct AtomicCell<T: Copy> {
     inner: UnsafeCell<T>,
 }
 
-// SAFETY: every access goes through an atomic op; `T: Copy` so no drop glue
-// races. No `T: Send` bound — the only `Copy + !Send` types are raw pointers
-// / `NonNull`, and those are exactly what the `AtomicPtr` specializations
-// exist to carry across threads (matching `AtomicPtr<U>: Send + Sync`
-// unconditionally). What the receiving thread *does* with a loaded pointer is
-// on the caller, same as `AtomicPtr`.
-unsafe impl<T: Copy> Sync for AtomicCell<T> {}
+// SAFETY: every shared access goes through an atomic op; `T: Atom ⊃ Copy` so
+// no drop glue races. We bound on `T: Atom` (not `T: Send`) because `Atom`'s
+// safety contract includes cross-thread transport — that's what lets the
+// pointer specializations carry `*mut U` / `NonNull<U>` across threads
+// (matching `AtomicPtr<U>: Send + Sync` unconditionally) even though raw
+// pointers are `!Send`. What the receiving thread *does* with a loaded pointer
+// is on the caller, same as `AtomicPtr`. A plain `T: Copy` bound would be
+// unsound: `&Cell<u32>` is `Copy + !Send`, and shipping one to another thread
+// via `into_inner()` would be a data race.
+unsafe impl<T: Atom> Sync for AtomicCell<T> {}
 // SAFETY: see the `Sync` justification above — the same invariants apply to
 // moving the cell itself across threads; `T: Copy` has no drop glue to race.
-unsafe impl<T: Copy> Send for AtomicCell<T> {}
+unsafe impl<T: Atom> Send for AtomicCell<T> {}
 
 impl<T: Copy> AtomicCell<T> {
     /// `const` constructor — required because most call sites are `static`
@@ -190,6 +193,13 @@ impl<T: Atom + core::fmt::Debug> core::fmt::Debug for AtomicCell<T> {
 ///   produced from a valid `Self`) yields the original value. This is weaker
 ///   than `bytemuck::AnyBitPattern` — `#[repr(u8)]` enums qualify because the
 ///   cell only ever stores valid discriminants.
+/// - `Self` is safe to transport across threads when stored in an
+///   `AtomicCell` — i.e. it has no thread affinity beyond what the atomic op
+///   itself provides. This is what backs `AtomicCell<T: Atom>: Send + Sync`.
+///   Raw pointers / `NonNull` qualify (the *pointee* may be thread-affine, but
+///   that's the caller's problem, exactly as with `AtomicPtr`). A `Copy`
+///   reference like `&Cell<_>` does **not** — it would alias unsynchronized
+///   interior mutability across threads.
 ///
 /// Prefer the [`unsafe_impl_atom!`](crate::unsafe_impl_atom) macro over a
 /// hand-written `impl`.

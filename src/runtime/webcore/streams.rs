@@ -1969,7 +1969,8 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             // PORT NOTE: Zig `pooled.release()` → Rust `ObjectPool::release(node)`
             // (the Node `Parent` back-ref was dropped in the port; see pool.rs).
             // SAFETY: `pooled` was obtained from `ByteListPool::get_node` and is
-            // exclusively owned by this stream; ownership returns to the pool.
+            // exclusively owned by this stream; `data` was rewritten just above,
+            // so it is initialized. Ownership returns to the pool.
             unsafe { ByteListPool::release(pooled.as_mut()) };
         } else if self.buffer.capacity() == 0 {
             //

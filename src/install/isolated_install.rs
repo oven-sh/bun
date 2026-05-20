@@ -2092,11 +2092,11 @@ pub fn install_isolated_packages(
             summary: Default::default(),
             task_queue: Default::default(),
         };
-        // SAFETY: `manager_ptr` was derived from the caller's `&mut PackageManager`
-        // a few lines above; the only other copy lives in `installer.manager` as a
-        // BACKREF raw pointer that is dereferenced exclusively via `manager_mut()`
-        // on this thread, never while this `&mut` reborrow is live.
-        let manager = unsafe { &mut *manager_ptr };
+        // No long-lived `&mut PackageManager` reborrow here — `installer.start_task()`,
+        // `on_task_complete()`, and `on_task_fail()` below all reach the manager through
+        // `installer.manager_mut()` (the BACKREF), so a shadow `&mut` held across those
+        // calls would alias. Use `installer.manager()` / `installer.manager_mut()`
+        // per-statement instead.
         // (Drop handles installer.deinit())
 
         // PORT NOTE: reshaped for borrowck — Zig writes `installer: &installer`
@@ -2123,11 +2123,15 @@ pub fn install_isolated_packages(
             .iter()
             .any(|r| r.tag == ResolutionTag::Symlink)
         {
-            let _ = crate::package_manager_real::directories::global_link_dir_path(manager);
+            let _ = crate::package_manager_real::directories::global_link_dir_path(
+                installer.manager_mut(),
+            );
         }
 
         // add the pending task count upfront
-        manager.increment_pending_tasks(u32::try_from(store.entries.len()).expect("int cast"));
+        installer
+            .manager_mut()
+            .increment_pending_tasks(u32::try_from(store.entries.len()).expect("int cast"));
         for _entry_id in 0..store.entries.len() {
             let entry_id = store::entry::Id::from(u32::try_from(_entry_id).expect("int cast"));
 
@@ -2242,7 +2246,7 @@ pub fn install_isolated_packages(
                             }
                         };
 
-                    let needs_install = manager.options.enable.force_install()
+                    let needs_install = installer.manager().options.enable.force_install()
                         // A freshly-created `node_modules/.bun` only implies the
                         // *project-local* entries are missing; global virtual-
                         // store entries persist across `rm -rf node_modules` and
@@ -2321,29 +2325,29 @@ pub fn install_isolated_packages(
                     // (== `pkg_res.tag`) names as active.
                     let cache_subpath_z: &bun_core::ZStr = match pkg_res_tag {
                         ResolutionTag::Npm => package_manager::cached_npm_package_folder_name(
-                            manager,
+                            installer.manager(),
                             pkg_name.slice(string_buf),
                             pkg_res.npm().version,
                             patch_info.contents_hash(),
                         ),
                         ResolutionTag::Git => package_manager::cached_git_folder_name(
-                            manager,
+                            installer.manager(),
                             pkg_res.git(),
                             patch_info.contents_hash(),
                         ),
                         ResolutionTag::Github => package_manager::cached_github_folder_name(
-                            manager,
+                            installer.manager(),
                             pkg_res.github(),
                             patch_info.contents_hash(),
                         ),
                         ResolutionTag::LocalTarball => package_manager::cached_tarball_folder_name(
-                            manager,
+                            installer.manager(),
                             *pkg_res.local_tarball(),
                             patch_info.contents_hash(),
                         ),
                         ResolutionTag::RemoteTarball => {
                             package_manager::cached_tarball_folder_name(
-                                manager,
+                                installer.manager(),
                                 *pkg_res.remote_tarball(),
                                 patch_info.contents_hash(),
                             )
@@ -2354,10 +2358,12 @@ pub fn install_isolated_packages(
                     let mut pkg_cache_dir_subpath: AutoRelPath =
                         AutoRelPath::from(cache_subpath_z.as_bytes()).assume_ok();
 
-                    let (cache_dir, cache_dir_path) = manager.get_cache_directory_and_abs_path();
+                    let (cache_dir, cache_dir_path) =
+                        installer.manager_mut().get_cache_directory_and_abs_path();
                     let _ = &cache_dir_path; // dropped at scope exit (Zig: defer cache_dir_path.deinit())
 
-                    let missing_from_cache = match manager.get_preinstall_state(pkg_id) {
+                    let missing_from_cache = match installer.manager().get_preinstall_state(pkg_id)
+                    {
                         install::PreinstallState::Done => false,
                         _ => 'missing_from_cache: {
                             if matches!(patch_info, installer::PatchInfo::None) {
@@ -2381,7 +2387,7 @@ pub fn install_isolated_packages(
                                     .unwrap_or(false),
                                 };
                                 if exists {
-                                    manager.set_preinstall_state(
+                                    installer.manager_mut().set_preinstall_state(
                                         pkg_id,
                                         install::PreinstallState::Done,
                                     );
@@ -2420,7 +2426,7 @@ pub fn install_isolated_packages(
 
                     match pkg_res_tag {
                         ResolutionTag::Npm => {
-                            match manager.enqueue_package_for_download(
+                            match installer.manager_mut().enqueue_package_for_download(
                                 pkg_name.slice(string_buf),
                                 dep_id,
                                 pkg_id,
@@ -2444,7 +2450,7 @@ pub fn install_isolated_packages(
                                         ),
                                     );
                                     Output::flush();
-                                    if manager.options.enable.fail_early() {
+                                    if installer.manager().options.enable.fail_early() {
                                         Global::exit(1);
                                     }
                                     // .monotonic is okay because an error means the task isn't
@@ -2458,7 +2464,7 @@ pub fn install_isolated_packages(
                             }
                         }
                         ResolutionTag::Git => {
-                            manager.enqueue_git_for_checkout(
+                            installer.manager_mut().enqueue_git_for_checkout(
                                 dep_id,
                                 dep.name.slice(string_buf),
                                 &pkg_res,
@@ -2471,9 +2477,9 @@ pub fn install_isolated_packages(
                             // a raw union pun (`git`/`github` arms share `Repository` layout);
                             // Rust's `.git()` accessor adds a `debug_assert_eq!(tag, Git)` that
                             // fires under `Github`, so use the tag-correct `.github()` instead.
-                            let url = manager.alloc_github_url(pkg_res.github());
+                            let url = installer.manager().alloc_github_url(pkg_res.github());
                             // (Drop frees url)
-                            match manager.enqueue_tarball_for_download(
+                            match installer.manager_mut().enqueue_tarball_for_download(
                                 dep_id,
                                 pkg_id,
                                 &url,
@@ -2494,7 +2500,7 @@ pub fn install_isolated_packages(
                                         ),
                                     );
                                     Output::flush();
-                                    if manager.options.enable.fail_early() {
+                                    if installer.manager().options.enable.fail_early() {
                                         Global::exit(1);
                                     }
                                     // .monotonic is okay because an error means the task isn't
@@ -2508,7 +2514,7 @@ pub fn install_isolated_packages(
                             }
                         }
                         ResolutionTag::LocalTarball => {
-                            manager.enqueue_tarball_for_reading(
+                            installer.manager_mut().enqueue_tarball_for_reading(
                                 dep_id,
                                 pkg_id,
                                 dep.name.slice(string_buf),
@@ -2517,7 +2523,7 @@ pub fn install_isolated_packages(
                             );
                         }
                         ResolutionTag::RemoteTarball => {
-                            match manager.enqueue_tarball_for_download(
+                            match installer.manager_mut().enqueue_tarball_for_download(
                                 dep_id,
                                 pkg_id,
                                 pkg_res.remote_tarball().slice(string_buf),
@@ -2538,7 +2544,7 @@ pub fn install_isolated_packages(
                                         ),
                                     );
                                     Output::flush();
-                                    if manager.options.enable.fail_early() {
+                                    if installer.manager().options.enable.fail_early() {
                                         Global::exit(1);
                                     }
                                     // .monotonic is okay because an error means the task isn't
@@ -2567,15 +2573,15 @@ pub fn install_isolated_packages(
             }
         }
 
-        if manager.pending_task_count() > 0 {
-            let mgr: *mut PackageManager = manager;
+        if installer.manager().pending_task_count() > 0 {
+            let mgr: *mut PackageManager = manager_ptr;
             let mut wait = Wait {
                 installer: &mut installer,
                 err: None,
             };
-            // SAFETY: `mgr` derived from the live exclusive `manager` borrow;
-            // `sleep_until` + `tick_raw` hold no `&mut PackageManager` across
-            // `Wait::is_done`.
+            // SAFETY: `mgr` is the same raw `manager_ptr` stored in
+            // `installer.manager`; `sleep_until` + `tick_raw` hold no
+            // `&mut PackageManager` across `Wait::is_done`.
             unsafe { PackageManager::sleep_until(mgr, &mut wait, Wait::is_done) };
 
             if let Some(err) = wait.err {
@@ -2584,14 +2590,14 @@ pub fn install_isolated_packages(
             }
         }
 
-        if manager.options.log_level.show_progress() {
+        if installer.manager().options.log_level.show_progress() {
             progress.root.end();
             *progress = Progress::default();
         }
         // Defensive: clear the stack-local progress-node pointers so the
         // accessors can't observe dangling pointers after this frame returns.
-        manager.scripts_node = None;
-        manager.downloads_node = None;
+        installer.manager_mut().scripts_node = None;
+        installer.manager_mut().downloads_node = None;
 
         if Environment::CI_ASSERT {
             let mut done = true;

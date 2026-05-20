@@ -924,8 +924,9 @@ impl<'a> TablePrinter<'a> {
                             data.clear();
                         }
                         // SAFETY: `node` was obtained from `Pool::get_node()` and is
-                        // exclusively owned by this formatter; ownership returns to the pool.
-                        formatter::visited::Pool::release(unsafe { node.as_mut() });
+                        // exclusively owned by this formatter; `Map::INIT` is `Some`,
+                        // so `data` is initialized. Ownership returns to the pool.
+                        unsafe { formatter::visited::Pool::release(node.as_mut()) };
                     }
                     result?;
                 }
@@ -1483,6 +1484,9 @@ pub fn format2(
     options: FormatOptions,
 ) -> JsResult<()> {
     let len = vals.len();
+    if len == 0 {
+        return Ok(());
+    }
 
     if len == 1 {
         // initialized later in this function.
@@ -1875,8 +1879,9 @@ pub mod formatter {
                     data.clear();
                 }
                 // SAFETY: `node` was obtained from `Pool::get_node()` and is
-                // exclusively owned by this formatter; ownership returns to the pool.
-                visited::Pool::release(unsafe { node.as_mut() });
+                // exclusively owned by this formatter; `Map::INIT` is `Some`,
+                // so `data` is initialized. Ownership returns to the pool.
+                unsafe { visited::Pool::release(node.as_mut()) };
             }
         }
     }
@@ -6106,10 +6111,12 @@ pub extern "C" fn Bun__ConsoleObject__timeLog(
         .unwrap_or(DEFAULT_CONSOLE_LOG_DEPTH);
     fmt.stack_check = StackCheck::init();
     fmt.can_throw_stack_overflow = true;
-    // SAFETY: top-level JS-thread host call ⇒ exclusive access to the
-    // set-once `VirtualMachine.console` box.
-    let console = unsafe { vm_console_mut(global) };
-    let mut writer = console.error_writer();
+    let console = vm_console(global);
+    // SAFETY: see [`vm_console`] — points at the live boxed `ConsoleObject` for
+    // this VM; JS-thread-only. Kept as a raw deref (not `vm_console_mut`) so the
+    // resulting `writer` borrow does not pin a long-lived `&mut ConsoleObject`
+    // across the `fmt.format(...)` calls below, which can re-enter JS.
+    let mut writer = unsafe { (*console).error_writer() };
     // SAFETY: caller passes a valid (args, args_len) pair.
     for &arg in unsafe { bun_core::ffi::slice(args, args_len) } {
         let Ok(tag) = formatter::Tag::get(arg, global) else {

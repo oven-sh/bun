@@ -4525,7 +4525,9 @@ impl VirtualMachine {
         // no-op, so dropping the box just frees its own allocation.
         drop(core::mem::take(&mut self.module_loader));
 
-        self.transpiler.deinit();
+        // SAFETY: this VM is raw-`dealloc`'d (no field `Drop` runs), so
+        // `transpiler` is never auto-dropped after `deinit` clears its fields.
+        unsafe { self.transpiler.deinit() };
 
         drop(core::mem::take(&mut self.resolved_path_dups));
 

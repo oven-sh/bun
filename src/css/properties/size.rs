@@ -474,7 +474,7 @@ macro_rules! property_helper {
         if $category != $this.category
             || ($this.$field.is_some()
                 && $context.targets.browsers.is_some()
-                && !$value.is_compatible(&$context.targets.browsers.unwrap()))
+                && !$value.is_compatible($context.targets.browsers.as_ref().unwrap()))
         {
             $this.flush($dest, $context);
         }

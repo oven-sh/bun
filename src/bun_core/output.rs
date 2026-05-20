@@ -2549,8 +2549,8 @@ macro_rules! debug_warn {
 //
 // By-value `error_name` is intentional: callers pass `"EACCES"` / `b"tag"` /
 // `bun_core::Error` (Copy) and `bun_sys::Error` (non-Copy, consumed). Taking
-// `&impl ErrName` would force `&"literal"` at every site. The trailing `drop`
-// makes the consumption explicit so `needless_pass_by_value` doesn't fire.
+// `&impl ErrName` would force `&"literal"` at every site.
+#[allow(clippy::needless_pass_by_value)] // by-value for call-site ergonomics; see above
 pub fn err(error_name: impl ErrName, fmt: &str, args: impl FmtTuple) {
     // Zig concatenates `fmt` into the prettyErrorln template, whose trailing-\n
     // check then sees the caller's newline. Here `fmt` is rendered into a `{}`
@@ -2583,7 +2583,6 @@ pub fn err(error_name: impl ErrName, fmt: &str, args: impl FmtTuple) {
         bstr::BStr::new(error_name.name()),
         body
     );
-    drop(error_name);
 }
 
 /// `Output.err(.TAG, fmt, args)` with a bare string tag — e.g.

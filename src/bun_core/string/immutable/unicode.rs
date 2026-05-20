@@ -1195,10 +1195,14 @@ pub fn element_length_utf8_into_utf16(utf8: &[u8]) -> usize {
         // TODO(port): dead non-simdutf path passes wrong slice type in Zig source
         let replacement = {
             let n = utf8_remaining.len() / 2;
-            let mut pair = [0u16; 2];
-            if n >= 1 {
-                pair[0] = u16::from_ne_bytes([utf8_remaining[0], utf8_remaining[1]]);
+            if n == 0 {
+                // lone trailing non-ASCII byte; count it as one UTF-16 unit and stop
+                count += 1;
+                utf8_remaining = &utf8_remaining[1..];
+                continue;
             }
+            let mut pair = [0u16; 2];
+            pair[0] = u16::from_ne_bytes([utf8_remaining[0], utf8_remaining[1]]);
             if n >= 2 {
                 pair[1] = u16::from_ne_bytes([utf8_remaining[2], utf8_remaining[3]]);
             }

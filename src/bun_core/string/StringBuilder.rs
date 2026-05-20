@@ -24,7 +24,7 @@ impl StringBuilder {
     pub fn init_capacity(cap: usize) -> StringBuilder {
         // allocator.alloc(u8, cap)
         let buf = Box::<[u8]>::new_uninit_slice(cap);
-        let ptr = NonNull::new(Box::into_raw(buf).cast::<u8>());
+        let ptr = NonNull::new(crate::heap::into_raw(buf).cast::<u8>());
         StringBuilder { cap, len: 0, ptr }
     }
 
@@ -38,7 +38,7 @@ impl StringBuilder {
 
     pub fn allocate(&mut self) -> Result<(), bun_alloc::AllocError> {
         let buf = Box::<[u8]>::new_uninit_slice(self.cap);
-        self.ptr = NonNull::new(Box::into_raw(buf).cast::<u8>());
+        self.ptr = NonNull::new(crate::heap::into_raw(buf).cast::<u8>());
         self.len = 0;
         Ok(())
     }

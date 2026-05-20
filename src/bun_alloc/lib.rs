@@ -1555,8 +1555,9 @@ impl String {
     pub fn is_8bit(&self) -> bool {
         match self.tag {
             Tag::WTFStringImpl => self.wtf_impl().is_8bit(),
-            Tag::ZigString => {
-                // SAFETY: `tag == ZigString` ⇒ `zig_string` is the active union field.
+            Tag::StaticZigString | Tag::ZigString => {
+                // SAFETY: `tag` is `ZigString`/`StaticZigString` ⇒ `zig_string`
+                // is the active union field.
                 unsafe { !self.value.zig_string.is_16bit() }
             }
             _ => true,

@@ -300,9 +300,9 @@ pub struct LexerSnapshot<'a> {
 
 /// The lexer struct produced by `NewLexer_`.
 ///
-/// `'a` is the lifetime of the borrowed `Log` and the source contents (arena/source-owned
-/// slices like `identifier` and `string_literal_raw_content` borrow from the source or from
-/// the parser arena).
+/// `'a` is the lifetime of the source contents (arena/source-owned slices like
+/// `identifier` and `string_literal_raw_content` borrow from the source or from
+/// the parser arena). The `Log` is *not* tied to `'a`; see the `log` field doc.
 pub struct LexerType<
     'a,
     const IS_JSON: bool,
@@ -316,11 +316,12 @@ pub struct LexerType<
 > {
     // err: ?LexerType.Error,
     /// Raw pointer to the caller-owned `Log`. Zig held a `*Log` here while the
-    /// parser held a second aliasing `*Log`; Rust cannot store two `&'a mut Log`
+    /// parser held a second aliasing `*Log`; Rust cannot store two `&mut Log`
     /// to the same allocation (Stacked-Borrows UB), so both the lexer and the
     /// parser keep `NonNull<Log>` and reborrow at use sites via `log()`. The
-    /// pointee must outlive `'a` (enforced by all `init*` constructors taking
-    /// `&'a mut Log`).
+    /// `init*` constructors take a plain `&mut Log` (not tied to `'a`); the
+    /// caller must keep the pointee alive for the lexer's lifetime — see
+    /// `init_without_reading`.
     pub log: core::ptr::NonNull<Log>,
     pub source: &'a Source,
     /// Cached `source.contents()` slice. Zig stores `source: logger.Source` by
@@ -444,9 +445,11 @@ impl<
     type Err = Error;
     #[inline]
     fn log_mut(&mut self) -> &mut Log {
-        // SAFETY: `self.log` was constructed from `&'a mut Log` in the `init*`
-        // constructors, so the pointee is valid and uniquely borrowed for `'a`;
-        // `&mut self` ensures no overlapping reborrow exists for this call.
+        // SAFETY: `self.log` is a non-null raw handle stored by the `init*`
+        // constructors from a caller-supplied `&mut Log`; the caller must keep
+        // the pointee alive and unaliased for the lexer's lifetime (see the
+        // `log` field doc and `init_without_reading`). `&mut self` ensures no
+        // overlapping reborrow exists for this call.
         unsafe { self.log.as_mut() }
     }
     #[inline]
@@ -479,9 +482,11 @@ lexer_impl_header! {
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn log(&self) -> &mut Log {
-        // SAFETY: `self.log` was created from an `&'a mut Log` that outlives
-        // `'a` (and therefore `self`). Only one `&mut Log` is materialized at a
-        // time — every call site is `self.log().method(...)` with no overlap.
+        // SAFETY: `self.log` is a non-null raw handle stored by the `init*`
+        // constructors from a caller-supplied `&mut Log`; the caller must keep
+        // the pointee alive and unaliased for the lexer's lifetime. Only one
+        // `&mut Log` is materialized at a time — every call site is
+        // `self.log().method(...)` with no overlap.
         unsafe { &mut *self.log.as_ptr() }
     }
 

@@ -496,7 +496,7 @@ fn parse_custom_at_rule_prelude<T: CustomAtRuleParser>(
     // same `'static` erasure already applied to `Token`/`AtRulePrelude::Unknown`.
     // SAFETY: `name` points into the parser's source/arena, which outlives every
     // `AtRulePrelude`/warning produced from this parser (see `src_str`).
-    let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(name) };
+    let name: &'static [u8] = unsafe { src_str(name) };
     options.warn(&input.new_error(BasicParseErrorKind::at_rule_invalid(name)));
     input.skip_whitespace();
     let tokens = TokenListFns::parse(input, options, 0)?;
@@ -1325,8 +1325,7 @@ mod rule_parsers {
                     // as `Token` payloads.
                     // SAFETY: the returned slice borrows `input.src`/arena, which outlives
                     // the `AtRulePrelude` it is stored in (see `src_str`).
-                    let url_str: &'static [u8] =
-                        unsafe { &*std::ptr::from_ref::<[u8]>(input.expect_url_or_string()?) };
+                    let url_str: &'static [u8] = unsafe { src_str(input.expect_url_or_string()?) };
 
                     let layer: Option<Option<LayerName>> =
                         if input.try_parse(|p| p.expect_ident_matching(b"layer")).is_ok() {
@@ -1364,14 +1363,13 @@ mod rule_parsers {
                                 // SAFETY: `s` borrows the parser's source/arena, which
                                 // outlives the `AtRulePrelude` it is stored in (see
                                 // `src_str`).
-                                unsafe { &*std::ptr::from_ref::<[u8]>(s) }
+                                unsafe { src_str(s) }
                             })
                         })
                         .ok();
                     // SAFETY: the returned slice borrows `input.src`/arena, which outlives
                     // the `AtRulePrelude` it is stored in (see `src_str`).
-                    let namespace: &'static [u8] =
-                        unsafe { &*std::ptr::from_ref::<[u8]>(input.expect_url_or_string()?) };
+                    let namespace: &'static [u8] = unsafe { src_str(input.expect_url_or_string()?) };
                     return Ok(AtRulePrelude::Namespace { prefix, url: namespace });
                 },
                 b"charset" => {
@@ -1682,7 +1680,7 @@ mod rule_parsers {
             // `Token` payload erasure throughout this file).
             // SAFETY: `name` points into the parser's source/arena, which outlives
             // every prelude/error produced from this parser (see `src_str`).
-            let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(name) };
+            let name: &'static [u8] = unsafe { src_str(name) };
             let result: Self::Prelude = 'brk: {
                 // Zig `ComptimeEnumMap(PreludeEnum)` ASCII-CI dispatch.
                 crate::match_ignore_ascii_case! { name, {
@@ -2477,7 +2475,7 @@ pub fn fill_property_bit_set(
                 // arena-owned `*const [u8]`; detach from `block`'s borrow so
                 // callers can move `block` afterwards. Re-thread once
                 // `PropertyUsage` carries the arena lifetime (TODO at field def).
-                let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(c.name.as_str()) };
+                let name: &'static [u8] = unsafe { src_str(c.name.as_str()) };
                 custom_properties.push(name);
                 continue;
             }
@@ -2492,7 +2490,7 @@ pub fn fill_property_bit_set(
         let tag = match prop {
             Property::Custom(c) => {
                 // SAFETY: see above.
-                let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(c.name.as_str()) };
+                let name: &'static [u8] = unsafe { src_str(c.name.as_str()) };
                 custom_properties.push(name);
                 continue;
             }
@@ -2824,7 +2822,7 @@ mod stylesheet_impl {
                             // TODO(port): lifetime — arena slice; see erasure note.
                             // SAFETY: `comment` borrows `parser.src`, which outlives
                             // `license_comments` (consumed before `parser` drops).
-                            license_comments.push(unsafe { &*std::ptr::from_ref::<[u8]>(comment) });
+                            license_comments.push(unsafe { src_str(comment) });
                         }
                     }
                     _ => break,
@@ -3450,7 +3448,7 @@ impl<'a> Parser<'a> {
         // `StylesheetExtra` alongside the same arena). Detach the borrow so it
         // satisfies `Symbol.original_name: &'static [u8]` (the parser's
         // crate-wide lifetime erasure — see PORTING.md §Lifetimes).
-        let name_static: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(name) };
+        let name_static: &'static [u8] = unsafe { src_str(name) };
 
         let entry = match local_scope.entry(Box::<[u8]>::from(name)) {
             MapEntry::Vacant(v) => {
@@ -3495,7 +3493,7 @@ impl<'a> Parser<'a> {
             // every `ImportRecord` produced by this parse. `bun.fs.Path` in
             // the Zig original stores the same borrowed slice; the lifetime
             // is erased to 'static (see PORTING.md §Lifetimes).
-            let url_static: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(url) };
+            let url_static: &'static [u8] = unsafe { src_str(url) };
             import_records.push(ImportRecord {
                 path: ast::fs::path_init(url_static),
                 kind,
@@ -3517,7 +3515,7 @@ impl<'a> Parser<'a> {
         } else {
             // SAFETY: same lifetime erasure as above; the error token is only
             // used for diagnostics borrowing the same source.
-            let url_static: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(url) };
+            let url_static: &'static [u8] = unsafe { src_str(url) };
             Err(self.new_basic_unexpected_token_error(Token::UnquotedUrl(url_static)))
         }
     }

@@ -163,6 +163,8 @@ impl JSObject {
     }
 
     /// # Safety
+    /// `owner` must be a cell-tagged `JSValue` (its payload is a live
+    /// `JSCell*`) that remains valid for the duration of the call.
     /// `names` must point to `length` initialized `ExternColumnIdentifier`s
     /// valid for the duration of the call; C++ does not retain the pointer.
     pub unsafe fn create_structure(

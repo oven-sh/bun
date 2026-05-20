@@ -1377,11 +1377,18 @@ pub fn shutdown_for_exit() {
             break;
         }
     }
+    let acked = *done;
     drop(done);
+    if !acked {
+        // Timed out without an ack: the HTTP thread may still be inside
+        // `tick()` and could touch parked allocations. Leak them — the
+        // process is exiting and a leak beats a use-after-free.
+        return;
+    }
 
-    // The daemon is parked (or timed out); no further callbacks will fire.
-    // Reclaim boxes that result-callback handlers parked here while the
-    // calling stack still aliased their contents.
+    // The daemon is parked; no further callbacks will fire. Reclaim boxes
+    // that result-callback handlers parked here while the calling stack
+    // still aliased their contents.
     for r in core::mem::take(&mut *SHUTDOWN_RECLAIMS.lock()) {
         // SAFETY: `drop_fn` is paired with `ctx` by `defer_shutdown_reclaim`;
         // each entry is pushed exactly once and drained exactly once here.

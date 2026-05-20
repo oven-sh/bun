@@ -23,7 +23,7 @@ for (const r of results) {
     if (r.reviewNotes) console.error(`[skip] ${r.file}: ${r.reviewNotes}`);
     continue;
   }
-  const patchFile = join(dir, r.file.replace(/[\/]/g, "_") + ".patch");
+  const patchFile = join(dir, r.file.replace(/[\\/]/g, "_") + ".patch");
   // ensure trailing newline; git apply is picky
   writeFileSync(patchFile, r.patch.endsWith("\n") ? r.patch : r.patch + "\n");
   // Strict first; fall back to --recount only (recomputes @@ counts from body).
@@ -44,7 +44,10 @@ for (const r of results) {
     console.error(`[ok]   ${r.file}`);
   } else {
     failed++;
-    console.error(`[fail] ${r.file}: ${res.stderr.trim().split("\n")[0]}`);
+    const errText = res.stderr
+      ? res.stderr.toString().trim().split("\n")[0]
+      : (res.error?.message ?? `git apply exited with status ${res.status}`);
+    console.error(`[fail] ${r.file}: ${errText}`);
     console.error(`       patch saved at ${patchFile}`);
   }
 }

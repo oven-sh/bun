@@ -653,7 +653,6 @@ pub fn find_imported_files_in_css_order<'a>(
                                 )
                             {
                                 // Remove the previous entry and then overwrite it below
-                                let _ = j;
                                 // SAFETY: `duplicate_index == wip_order.len() - 1`
                                 // (checked above), so the new len is `< capacity`.
                                 // The truncated entry's buffers are arena-owned

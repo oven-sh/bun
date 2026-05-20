@@ -18,6 +18,8 @@ on:
       - "clippy.toml"
       - "rust-toolchain.toml"
       - ".github/workflows/clippy.yml"
+      - ".github/actions/setup-bun/**"
+      - ".github/rust-matcher.json"
   merge_group:
 
 env:

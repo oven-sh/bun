@@ -1419,6 +1419,10 @@ impl EString {
         // `len/2` u16s; the lying-length encoding is load-bearing for `len()`/
         // `javascript_length()`/`has_prefix_comptime()` and changing it is a
         // cross-crate refactor (see TODO above).
+        //
+        // The `c_void` hop is clippy's documented escape hatch for
+        // `cast_ptr_alignment` ("alignment is externally guaranteed" — see the
+        // u16-aligned invariant above); it is a no-op reinterpret, not FFI.
         unsafe {
             core::slice::from_raw_parts(
                 self.data.as_ptr().cast::<core::ffi::c_void>().cast::<u16>(),

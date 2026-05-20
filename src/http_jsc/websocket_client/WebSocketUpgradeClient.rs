@@ -766,6 +766,13 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 let ssl_ptr = socket
                     .get_native_handle()
                     .map_or(core::ptr::null_mut(), |h| h.cast::<boringssl::c::SSL>());
+                if ssl_ptr.is_null() {
+                    // No SSL object to verify against — treat as handshake failure
+                    // rather than dereferencing null below.
+                    // SAFETY: no `&mut Self` is live across this call.
+                    unsafe { Self::fail(this.as_ptr(), ErrorCode::TlsHandshakeFailed) };
+                    return;
+                }
                 // SAFETY: ssl_ptr is a live *SSL from the open socket; SSL_get_servername
                 // returns a nullable borrowed C string valid for the SSL's lifetime.
                 // Keep the raw pointer — round-tripping through `&c_char` would
@@ -781,7 +788,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     b""
                 };
                 if hostname.is_empty()
-                    // SAFETY: `ssl_ptr` is the live `*SSL` for this open socket; reached only after a successful TLS handshake.
+                    // SAFETY: `ssl_ptr` is non-null (checked above) and is the live `*SSL`
+                    // for this open socket; reached only after a successful TLS handshake.
                     || !boringssl::check_server_identity(unsafe { &mut *ssl_ptr }, hostname)
                 {
                     // SAFETY: no `&mut Self` is live across this call.

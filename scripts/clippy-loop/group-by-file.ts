@@ -108,7 +108,7 @@ for (const line of input.split("\n")) {
   if (!TARGET_LINTS.has(code)) continue;
   const primary = (m.spans ?? []).find((s: any) => s.is_primary) ?? m.spans?.[0];
   if (!primary) continue;
-  const file = primary.file_name as string;
+  const file = (primary.file_name as string).replaceAll("\\", "/");
   if (!file.startsWith("src/")) continue;
   const diag: Diag = {
     code,

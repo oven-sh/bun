@@ -1602,6 +1602,7 @@ pub mod parse_worker {
             deferred_error: None,
             should_continue_running: &should_continue_running,
             result: core::ptr::null_mut(),
+            original_contents: None,
         };
 
         // SAFETY: ctx backref is valid for the bundle pass (outlives `'r`).
@@ -1640,6 +1641,11 @@ pub mod parse_worker {
         // the parent via offset_of; a `&mut` here would (a) shrink provenance to
         // the inner field and (b) alias with any `&`/`&mut` to the wrapper.
         result: *mut OnBeforeParseResult,
+        // Owns the `Contents` fetched by `fetch_source_code` so the buffer the
+        // native plugin reads through `wrapper.original_source` stays alive for
+        // the duration of `run`. Returned to the caller when the plugin keeps
+        // the original source, dropped otherwise.
+        original_contents: Option<crate::cache::Contents>,
     }
 
     #[repr(C)]
@@ -1952,12 +1958,17 @@ pub mod parse_worker {
             // `.rs:1287` / `resolver/lib.rs:2285`) frees on drop, which would
             // leave `result.source_ptr` / `wrapper.original_source` dangling for
             // the native plugin and `OnBeforeParsePlugin::run` to read through.
-            // Mirror the Zig contract by transferring ownership out of `entry`
-            // and leaking the buffer for the plugin pass: extract ptr/len/fd
-            // from a `ManuallyDrop<Contents>` so the bytes outlive the wrapper.
+            // Stash ownership on `this.original_contents` so the bytes outlive
+            // the wrapper; `OnBeforeParsePlugin::run` returns it when the
+            // plugin keeps the original source, or drops it when the plugin
+            // replaces the source.
             let fd = entry.fd;
-            let contents = core::mem::ManuallyDrop::new(core::mem::take(&mut entry.contents));
-            let contents_slice = contents.as_slice();
+            this.original_contents = Some(core::mem::take(&mut entry.contents));
+            let contents_slice = this
+                .original_contents
+                .as_ref()
+                .expect("just set")
+                .as_slice();
             let source_ptr = contents_slice.as_ptr();
             let source_len = contents_slice.len();
             result.source_ptr = source_ptr;
@@ -2182,11 +2193,24 @@ pub mod parse_worker {
                     }
                     *from_plugin = true;
                     *self.loader = wrapper.result.loader;
+                    // If the plugin called `fetch_source_code` and left the
+                    // source unchanged, hand the original `Contents` back to
+                    // the caller so the buffer is reclaimed instead of leaked.
+                    // Otherwise the plugin replaced the source; the original
+                    // (if any) drops with `self`.
+                    let contents =
+                        if !wrapper.original_source.is_null() && ptr == wrapper.original_source {
+                            self.original_contents
+                                .take()
+                                .expect("original_contents set alongside original_source")
+                        } else {
+                            crate::cache::Contents::External {
+                                ptr,
+                                len: wrapper.result.source_len,
+                            }
+                        };
                     return Ok(CacheEntry {
-                        contents: crate::cache::Contents::External {
-                            ptr,
-                            len: wrapper.result.source_len,
-                        },
+                        contents,
                         external_free_function: ExternalFreeFunction {
                             ctx: wrapper.result.user_context,
                             function: free_fn,

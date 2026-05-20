@@ -382,11 +382,11 @@ pub fn construct_s3_file_with_s3_credentials_and_options(
         } else {
             // PORT NOTE: Zig `initS3WithReferencedCredentials` bumps the
             // intrusive ref on `default_credentials` (a `*S3Credentials`).
-            // The Rust `Store::S3` field is `Arc<S3Credentials>` (separate rc
+            // The Rust `Store::S3` field is `Rc<S3Credentials>` (separate rc
             // layer), so we can't share the existing intrusive allocation —
-            // deep-clone the value instead and let `init_s3` `Arc::new` it.
+            // deep-clone the value instead and let `init_s3` `Rc::new` it.
             // PERF(port): was intrusive ref-bump (no copy) — profile if hot
-            // once Store.rs migrates `Arc<S3Credentials>` → `IntrusiveRc`.
+            // once Store.rs migrates `Rc<S3Credentials>` → `IntrusiveRc`.
             break 'brk blob::Store::init_s3(path, None, default_credentials.clone()).expect("oom");
         }
     };

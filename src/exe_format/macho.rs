@@ -112,7 +112,18 @@ impl MachoFile {
                             let sections_base =
                                 section_offset + size_of::<macho::segment_command_64>();
                             let sect_sz = size_of::<macho::section_64>();
-                            for i in 0..command.nsects as usize {
+                            let nsects = command.nsects as usize;
+                            // `nsects` is untrusted; reject a section table that
+                            // overflows or doesn't fit inside this command's cmdsize
+                            // (`entry.data.len()`) before indexing `self.data`.
+                            let table_end = nsects
+                                .checked_mul(sect_sz)
+                                .and_then(|s| s.checked_add(size_of::<macho::segment_command_64>()))
+                                .ok_or(MachoError::InvalidObject)?;
+                            if table_end > entry.data.len() {
+                                return Err(MachoError::InvalidObject);
+                            }
+                            for i in 0..nsects {
                                 let sect_off = sections_base + i * sect_sz;
                                 let sect: macho::section_64 =
                                     read_struct(&self.data[sect_off..][..sect_sz]);
@@ -344,11 +355,23 @@ impl MachoFile {
             let cmd = entry.hdr;
             let cmd_ptr: *mut u8 = entry.data.as_ptr().cast_mut();
 
+            // `cmdsize` (= `entry.data.len()`) is untrusted; reject commands too
+            // small for the typed struct we're about to read/write so the
+            // unaligned access stays within this command's bytes.
+            let require = |sz: usize| -> Result<(), MachoError> {
+                if entry.data.len() < sz {
+                    return Err(MachoError::InvalidObject);
+                }
+                Ok(())
+            };
+
             match cmd.cmd {
                 macho::LC::SYMTAB => {
+                    require(size_of::<macho::symtab_command>())?;
                     // SAFETY: cmd_ptr points into self.data's load-command region with at least
-                    // cmdsize bytes; symtab_command is #[repr(C)] POD. read/write_unaligned
-                    // tolerate the Vec<u8>'s arbitrary alignment.
+                    // size_of::<symtab_command>() bytes (checked above); symtab_command is
+                    // #[repr(C)] POD. read/write_unaligned tolerate the Vec<u8>'s arbitrary
+                    // alignment.
                     unsafe {
                         let mut symtab: macho::symtab_command =
                             core::ptr::read_unaligned(cmd_ptr.cast::<macho::symtab_command>());
@@ -357,6 +380,7 @@ impl MachoFile {
                     }
                 }
                 macho::LC::DYSYMTAB => {
+                    require(size_of::<macho::dysymtab_command>())?;
                     // SAFETY: as above; dysymtab_command is #[repr(C)] POD.
                     unsafe {
                         let mut dysymtab: macho::dysymtab_command =
@@ -384,6 +408,7 @@ impl MachoFile {
                 | macho::LC::DYLIB_CODE_SIGN_DRS
                 | macho::LC::LINKER_OPTIMIZATION_HINT
                 | macho::LC::DYLD_EXPORTS_TRIE => {
+                    require(size_of::<macho::linkedit_data_command>())?;
                     // SAFETY: as above; linkedit_data_command is #[repr(C)] POD.
                     unsafe {
                         let mut linkedit_cmd: macho::linkedit_data_command =
@@ -404,6 +429,7 @@ impl MachoFile {
                     }
                 }
                 macho::LC::DYLD_INFO | macho::LC::DYLD_INFO_ONLY => {
+                    require(size_of::<macho::dyld_info_command>())?;
                     // SAFETY: as above; dyld_info_command is #[repr(C)] POD.
                     unsafe {
                         let mut dyld_info: macho::dyld_info_command =

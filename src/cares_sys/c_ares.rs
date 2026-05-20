@@ -499,7 +499,9 @@ impl hostent_with_ttls {
             return;
         }
         // SAFETY: c-ares passes the reply buffer it owns; valid for `buffer_length` bytes.
-        let buffer = unsafe { core::slice::from_raw_parts(buffer, buffer_length as usize) };
+        let buffer = unsafe {
+            core::slice::from_raw_parts(buffer, usize::try_from(buffer_length).unwrap_or(0))
+        };
         match (T::PARSE)(buffer) {
             Ok(result) => this.on_hostent_with_ttls(None, timeouts, Some(result)),
             Err(err) => this.on_hostent_with_ttls(Some(err), timeouts, None),
@@ -823,9 +825,9 @@ impl Channel {
         // SAFETY: c-ares FFI; opts/channel are valid stack pointers.
         let rc = unsafe { ares_init_options(&raw mut channel, &raw mut opts, optmask) };
         if let Some(err) = Error::get(rc) {
-            // SAFETY: init failed before any channel was registered; we hold the
-            // library_init reference taken above and no other thread is in c-ares.
-            unsafe { ares_library_cleanup() };
+            // Don't `ares_library_cleanup()` here: `library_init()` is `run_once!`, so
+            // tearing down the library on a per-channel failure would leave every later
+            // `Channel::init()` running against an uninitialized c-ares.
             return Some(err);
         }
 

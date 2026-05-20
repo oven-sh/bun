@@ -88,7 +88,11 @@ pub struct PEFile {
     pub last_va_end: u32,
 }
 
-#[repr(C)]
+// PE/COFF on-disk header structs are byte-packed (no padding) per spec, and may
+// live at arbitrary byte offsets inside a `Vec<u8>` image, so `align_of` must be 1
+// for it to be sound to materialize references/pointers to them from the buffer
+// (the Zig original used `*align(1) const T`).
+#[repr(C, packed)]
 #[derive(Copy, Clone)]
 pub struct DOSHeader {
     pub e_magic: u16,      // Magic number
@@ -112,7 +116,7 @@ pub struct DOSHeader {
     pub e_lfanew: u32,     // File address of new exe header
 }
 
-#[repr(C)]
+#[repr(C, packed)]
 #[derive(Copy, Clone)]
 pub struct PEHeader {
     pub signature: u32,               // PE signature
@@ -125,7 +129,7 @@ pub struct PEHeader {
     pub characteristics: u16,         // Characteristics
 }
 
-#[repr(C)]
+#[repr(C, packed)]
 #[derive(Copy, Clone)]
 pub struct OptionalHeader64 {
     pub magic: u16,                            // Magic number
@@ -160,7 +164,7 @@ pub struct OptionalHeader64 {
     pub data_directories: [DataDirectory; 16], // Data directories
 }
 
-#[repr(C)]
+#[repr(C, packed)]
 #[derive(Copy, Clone)]
 pub struct DataDirectory {
     pub virtual_address: u32,
@@ -197,10 +201,10 @@ const IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY: u16 = 0x0080;
 // Section name constant for exact comparison
 const BUN_SECTION_NAME: [u8; 8] = [b'.', b'b', b'u', b'n', 0, 0, 0, 0];
 
-// Safe access helpers for unaligned views
-// TODO(port): Zig used `*align(1) const T`; Rust references require alignment.
-// These return raw pointers; callers must treat reads/writes as potentially unaligned.
-// Consider `#[repr(C, packed)]` on header structs or `ptr::read_unaligned`.
+// Safe access helpers for unaligned views.
+// All header structs are `#[repr(C, packed)]` (align 1), so a bounds-checked byte
+// pointer into the image can be cast and dereferenced directly — equivalent to the
+// Zig original's `*align(1) const T`.
 fn view_at_const<T>(buf: &[u8], off: usize) -> Result<*const T, Error> {
     if off + size_of::<T>() > buf.len() {
         return Err(Error::OutOfBounds);
@@ -277,8 +281,7 @@ impl PEFile {
         if start + size > self.data.len() {
             return Err(Error::OutOfBounds);
         }
-        // SAFETY: bounds-checked above; SectionHeader is #[repr(C)] POD.
-        // TODO(port): potentially unaligned — Zig used []align(1) const SectionHeader
+        // SAFETY: bounds-checked above; SectionHeader is #[repr(C, packed)] (align 1) POD.
         let ptr = unsafe { self.data.as_ptr().add(start).cast::<SectionHeader>() };
         // SAFETY: `[start, start + size)` lies within `self.data` per the check above; the
         // bytes are initialized from the input PE image and SectionHeader is repr(C) Copy

@@ -7,6 +7,8 @@
 set -euo pipefail
 OUT="${CLIPPY_LOOP_DIR:-/tmp/clippy-loop}"
 mkdir -p "$OUT"
+# GNU base64 decodes with -d; BSD/macOS uses -D. Probe once.
+if printf '' | base64 -d >/dev/null 2>&1; then B64D="-d"; else B64D="-D"; fi
 TARGETS=(
   x86_64-unknown-linux-gnu
   aarch64-apple-darwin
@@ -68,7 +70,7 @@ jq -s '
 rm -rf "$OUT/diags"
 mkdir -p "$OUT/diags"
 jq -r '.[] | @base64' "$OUT/all.grouped.json" | while read -r b64; do
-  entry=$(echo "$b64" | base64 -d)
+  entry=$(echo "$b64" | base64 "$B64D")
   file=$(echo "$entry" | jq -r '.file')
   safe=$(echo "$file" | tr '/' '_')
   echo "$entry" | jq -r '

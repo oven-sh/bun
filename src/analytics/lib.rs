@@ -355,9 +355,13 @@ const PLATFORM_ARCH: analytics::Architecture = {
     {
         analytics::Architecture::Arm
     }
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(target_arch = "x86_64")]
     {
         analytics::Architecture::X64
+    }
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    {
+        analytics::Architecture::None
     }
 };
 

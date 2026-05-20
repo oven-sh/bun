@@ -606,7 +606,7 @@ impl BlobExt for Blob {
             t.poll.ref_(bun_io::js_vm_ctx());
             let proxy = http_proxy_href(global);
             // PORT NOTE: reshaped for borrowck — `heap::alloc(t)` moves `t`,
-            // so clone the `Arc<S3Credentials>` out (cheap atomic ref bump)
+            // so clone the `Rc<S3Credentials>` out (cheap ref bump)
             // and stash `path` as a raw `*const [u8]` whose backing store is
             // kept alive by the same `t.blob` now owned by the heap task.
             let (cred, path, payer);

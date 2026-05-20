@@ -540,7 +540,6 @@ impl Package<u64> {
         }
 
         builder.clamp();
-        let _ = builder_; // release `&mut new.buffers.string_bytes` / `string_pool`
 
         let new_package = new.append_package_with_id(&pkg_value, id)?;
 

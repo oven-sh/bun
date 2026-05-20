@@ -41,7 +41,7 @@
 //! | [`MultiArrayList::free_allocated_bytes`] | `Allocator::deallocate` |
 //! | [`__mal_split_mut_impl`] macro  | N-way disjoint `from_raw_parts_mut` |
 //!
-//! plus `unsafe impl Send`/`Sync` and the `pub unsafe fn` caller-contract
+//! plus `unsafe impl Send` and the `pub unsafe fn` caller-contract
 //! signatures on [`set_len`](MultiArrayList::set_len) and
 //! [`column_bytes_mut`](Slice::column_bytes_mut). All row-level mutations
 //! (insert/remove/swap/append/grow/clone) are rebuilt on safe
@@ -555,9 +555,10 @@ pub struct MultiArrayList<T, A: Allocator = Global> {
 
 // SAFETY: `bytes` is uniquely owned; the only shared state is the allocator.
 unsafe impl<T: Send, A: Allocator + Send> Send for MultiArrayList<T, A> {}
-// SAFETY: no interior mutability; shared access yields only `&[F]` column
-// views over the uniquely-owned buffer, which are `Sync` when `T: Sync`.
-unsafe impl<T: Sync, A: Allocator + Sync> Sync for MultiArrayList<T, A> {}
+// NOTE: deliberately not `Sync`. `slice(&self)` hands out an owned, `Copy`
+// `Slice<T>` whose safe `items_mut`/`set` mutate the shared backing buffer, so
+// two threads holding `&MultiArrayList` could race through `slice()`. Revisit
+// once `Slice<T>` no longer exposes mutation from a shared-derived handle.
 
 /// A `MultiArrayList::Slice` contains cached start pointers for each field in
 /// the list. These pointers are not normally stored to reduce the size of the

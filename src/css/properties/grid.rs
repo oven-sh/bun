@@ -495,6 +495,8 @@ impl GridTemplateAreas {
             }
 
             row += 1;
+            // The final `row += 1` is dead on the last iteration but read on
+            // the next; `unused_assignments` can't see that. Touch it.
             let _ = row;
         }
 
@@ -527,17 +529,8 @@ impl GridTemplateAreas {
             column += 1;
 
             if strings::starts_with_char(rest, b'.') {
-                let idx = 'idx: {
-                    for (i, c) in rest.iter().enumerate() {
-                        if *c != b'.' {
-                            break 'idx i;
-                        }
-                    }
-                    rest.len()
-                };
                 // TODO(port): Zig original falls through here without `continue` — likely a bug (the `.` token
                 // is supposed to push None and continue). Mirroring Zig control flow exactly.
-                let _ = &rest[idx..];
             }
 
             let starts_with_name_codepoint = 'brk: {

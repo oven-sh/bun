@@ -1410,7 +1410,8 @@ pub fn allocate_package_manager() {
     // Zig: `bun.handleOom(bun.default_allocator.create(PackageManager))` — uninitialized
     // memory, abort-on-OOM. The init() functions below write the full struct via
     // `core::ptr::write` (no Drop on the uninit bytes).
-    let ptr = Box::into_raw(Box::<PackageManager>::new_uninit()).cast::<PackageManager>();
+    let ptr =
+        bun_core::heap::into_raw(Box::<PackageManager>::new_uninit()).cast::<PackageManager>();
     holder::RAW_PTR.store(ptr, core::sync::atomic::Ordering::Release);
     bun_core::add_exit_callback(deinit_caches_at_exit);
 }

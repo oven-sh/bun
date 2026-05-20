@@ -957,7 +957,10 @@ impl FontHandler {
                 if $this.$field.is_some()
                     && !crate::generic::eql($this.$field.as_ref().unwrap(), $val)
                     && context.targets.browsers.is_some()
-                    && !crate::generic::is_compatible($val, &context.targets.browsers.unwrap())
+                    && !crate::generic::is_compatible(
+                        $val,
+                        context.targets.browsers.as_ref().unwrap(),
+                    )
                 {
                     $this.flush(dest, context);
                 }

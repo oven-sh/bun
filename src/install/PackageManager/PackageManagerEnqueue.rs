@@ -4,7 +4,7 @@ use core::mem::ManuallyDrop;
 use core::sync::atomic::Ordering;
 
 use crate::bun_fs::FileSystem;
-use bun_core::{Output, fmt as bun_fmt};
+use bun_core::{Output, UnwrapOrOom, fmt as bun_fmt};
 use bun_core::{StringOrTinyString, strings};
 use bun_paths::{self as Path, PathBuffer};
 use bun_semver::{self as Semver, String as SemverString};
@@ -2644,7 +2644,7 @@ fn get_or_put_resolved_package(
                     builder.count(&name_slice);
                     builder.count(&folder_path);
 
-                    builder.allocate().expect("OOM");
+                    builder.allocate().unwrap_or_oom();
 
                     package.name = builder.append::<SemverString>(&name_slice);
                     package.name_hash = name_hash;
@@ -2660,7 +2660,7 @@ fn get_or_put_resolved_package(
                 }
 
                 // these are always new
-                package = this.lockfile.append_package(&package).expect("OOM");
+                package = this.lockfile.append_package(&package).unwrap_or_oom();
 
                 break 'res FolderResolutionValue::NewPackageId(package.meta.id);
             };

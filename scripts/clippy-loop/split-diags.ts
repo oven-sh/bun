@@ -5,6 +5,11 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+if (!process.argv[2] || !process.argv[3]) {
+  process.stderr.write("Usage: split-diags <grouped.json> <out-dir>\n");
+  process.exit(2);
+}
+
 const grouped = JSON.parse(readFileSync(process.argv[2], "utf8")) as Array<{
   file: string;
   count: number;
@@ -14,7 +19,7 @@ const outDir = process.argv[3];
 mkdirSync(outDir, { recursive: true });
 
 const manifest = grouped.map(g => {
-  const safe = g.file.replace(/[\/]/g, "__");
+  const safe = g.file.replace(/[\\/]/g, "__");
   const diagPath = join(outDir, safe + ".txt");
   const body =
     `# ${g.count} clippy diagnostics for ${g.file}\n\n` + g.diagnostics.map(d => d.rendered.trimEnd()).join("\n\n");

@@ -454,8 +454,10 @@ pub extern "Rust" fn ${e.symbol}(${sig}) -> ${e.ret} {
       const cRet = retIsJsResult ? "JSValue" : e.ret;
       let inner = `${impl}(${call})`;
       if (e.isUnsafe) {
-        // `unsafe { }` must wrap the *call*, not the closure expression — a
-        // closure body is its own safety context.
+        // Place `unsafe { }` at the call site so the SAFETY comment sits next
+        // to the actual unsafe operation. (Closures inherit the enclosing
+        // `unsafe` context, so wrapping the whole `host_fn_result(..)`
+        // expression would also compile — this is for clarity, not necessity.)
         inner = `\n        // SAFETY: C++ caller upholds the impl fn's documented safety contract.\n        unsafe { ${inner} }`;
       }
       const body = retIsJsResult && globalParam ? `host_fn::host_fn_result(${globalParam.name}, || ${inner})` : inner;

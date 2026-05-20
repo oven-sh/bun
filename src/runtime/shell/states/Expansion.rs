@@ -142,6 +142,13 @@ impl Expansion {
                 }
                 ExpansionState::BraceExpand => {
                     Self::do_brace_expand(me);
+                    // brace + glob composes: after pushing the literal brace
+                    // variants, glob the original pattern (Zig re-enters the
+                    // `.glob` state). The normal glob path likewise calls
+                    // `transition_to_glob_state` directly (see below).
+                    if matches!(me.state, ExpansionState::Glob) {
+                        return Self::transition_to_glob_state(interp, this);
+                    }
                     continue;
                 }
                 ExpansionState::Done | ExpansionState::Err(_) => break,
@@ -292,7 +299,6 @@ impl Expansion {
         // Spec lines 268-279: push each variant as its own word. The Zig
         // version NUL-terminated then `out.pushResult`; the NodeId port
         // records word boundaries via `bounds` instead.
-        me.current_out.clear();
         for s in expanded {
             if !me.out.buf.is_empty() {
                 me.out.bounds.push(me.out.buf.len() as u32);
@@ -302,15 +308,16 @@ impl Expansion {
 
         let node = me.node;
         let atom = node.get();
-        me.state = if atom.has_glob_expansion() {
-            // Spec: brace+glob composes — re-enter via the glob arm. The
-            // NodeId port currently routes glob through `current_out`, so
-            // brace-produced multi-word + glob is left as a TODO (matches the
-            // Zig "weird behaviour" note above the spec).
-            ExpansionState::Done
+        if atom.has_glob_expansion() {
+            // brace + glob composes (Zig re-enters the `.glob` state). Keep
+            // `current_out` (the original pattern, e.g. `src/*.{ts,tsx}`) so
+            // the glob walker brace-expands and globs it; its matches are
+            // appended after the literal brace variants already pushed above.
+            me.state = ExpansionState::Glob;
         } else {
-            ExpansionState::Done
-        };
+            me.current_out.clear();
+            me.state = ExpansionState::Done;
+        }
     }
 
     /// Spec: Expansion.zig `transitionToGlobState`. Kick off an off-thread

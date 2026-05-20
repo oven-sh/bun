@@ -29,6 +29,16 @@ mod _impl {
             // SAFETY: caller guarantees buf_ptr[0..fill_length] is a valid writable buffer.
             let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr, fill_length) };
 
+            // Per Node docs, `'ascii'` on encode is equivalent to `'latin1'` (verbatim
+            // byte copy, no 7-bit masking). The shared write_u8::<Ascii> helper masks
+            // because the ascii decode path reuses it; fold ascii → latin1 here so
+            // Buffer.fill(str, 'ascii') / Buffer.alloc(n, str, 'ascii') match Node.
+            let encoding = if matches!(encoding, Encoding::Ascii) {
+                Encoding::Latin1
+            } else {
+                encoding
+            };
+
             // PORT NOTE: encoder::write_u8/write_u16 take the encoding as a const-generic
             // `u8` (stable-Rust workaround for `adt_const_params`) — `dispatch_encoding!`
             // expands the runtime `encoding` into nine monomorphized arms.

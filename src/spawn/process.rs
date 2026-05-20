@@ -712,11 +712,22 @@ impl Process {
     /// Windows and other unix targets (where `parent_pid_of` has no
     /// implementation and the verify step would reject everything), falls
     /// back to signalling just this process.
+    ///
+    /// The tree walk is best-effort for descendants (failures are
+    /// swallowed, since we may have already frozen N siblings when N+1
+    /// fails). To keep the root-level error contract consistent with
+    /// [`kill`], we probe `kill(pid, 0)` first and surface that errno — so
+    /// `EPERM` on a child that has changed all its UIDs throws here just as
+    /// it would for `kill()`.
     pub fn kill_tree(&mut self, signal: u8) -> Maybe<()> {
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
         {
             match &self.poller {
                 Poller::WaiterThread(_) | Poller::Fd(_) => {
+                    // Probe permission on the root so EPERM surfaces the
+                    // same way `kill()` would surface it, instead of the
+                    // tree walk silently STOP/CONT'ing and returning Ok.
+                    self.kill(0)?;
                     bun_io::parent_death_watchdog::kill_process_tree(self.pid, signal as c_int);
                 }
                 _ => {}

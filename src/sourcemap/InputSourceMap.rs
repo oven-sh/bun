@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use bun_collections::VecExt;
 
-use crate::{Mapping, ParsedSourceMap};
+use crate::ParsedSourceMap;
 
 /// Parsed inner sourcemap + per-source content bytes, owned.
 ///

@@ -983,7 +983,7 @@ fn iterate_bundled_deps(
                 let subdir = open_subdir(&dir, entry_name.as_bytes(), &entry_subpath_);
                 add_bundled_dep(
                     ctx,
-                    &root_dir,
+                    root_dir,
                     DirInfo(subdir, entry_subpath_.as_bytes().into(), 2),
                     &mut bundled_pack_queue,
                     &mut dedupe,
@@ -1013,7 +1013,7 @@ fn iterate_bundled_deps(
             let subdir = open_subdir(&dir, entry_name, &entry_subpath_);
             add_bundled_dep(
                 ctx,
-                &root_dir,
+                root_dir,
                 DirInfo(subdir, entry_subpath_.as_bytes().into(), 2),
                 &mut bundled_pack_queue,
                 &mut dedupe,
@@ -1041,7 +1041,7 @@ fn iterate_bundled_deps(
 
         add_bundled_dep(
             ctx,
-            &root_dir,
+            root_dir,
             bundled_dir_info,
             &mut bundled_pack_queue,
             &mut dedupe,
@@ -1454,7 +1454,7 @@ fn get_bundled_deps(
                 let Some(b) = bundled_deps.as_bool() else {
                     return Ok(Some(Vec::new()));
                 };
-                if !b == true {
+                if !b {
                     return Ok(Some(Vec::new()));
                 }
 
@@ -2275,7 +2275,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
     }
 
     // Create the edited package.json content after lifecycle scripts have run
-    let edited_package_json = edit_root_package_json(ctx.lockfile, &mut json)?;
+    let edited_package_json = edit_root_package_json(ctx.lockfile, json)?;
 
     let root_dir: Dir = 'root_dir: {
         let mut path_buf = PathBuffer::uninit();
@@ -2441,8 +2441,8 @@ pub fn pack<const FOR_PUBLISH: bool>(
                 Output::pretty(format_args!(
                     "\n{}\n",
                     fmt_tarball_filename(
-                        &package_name,
-                        &package_version,
+                        package_name,
+                        package_version,
                         TarballNameStyle::Normalize
                     )
                 ));
@@ -2452,8 +2452,8 @@ pub fn pack<const FOR_PUBLISH: bool>(
                     opt_pack_destination(ctx.manager),
                     opt_pack_filename(ctx.manager),
                     abs_workspace_path,
-                    &package_name,
-                    &package_version,
+                    package_name,
+                    package_version,
                     &mut dest_buf[..],
                 );
                 Output::pretty(format_args!(
@@ -2482,8 +2482,8 @@ pub fn pack<const FOR_PUBLISH: bool>(
                 opt_pack_destination(ctx.manager),
                 opt_pack_filename(ctx.manager),
                 abs_workspace_path,
-                &package_name,
-                &package_version,
+                package_name,
+                package_version,
                 &mut dest_buf[..],
             );
             // PORT NOTE: `manager`/`command_ctx` reborrowed via raw pointer —
@@ -2585,8 +2585,8 @@ pub fn pack<const FOR_PUBLISH: bool>(
         opt_pack_destination(ctx.manager),
         opt_pack_filename(ctx.manager),
         abs_workspace_path,
-        &package_name,
-        &package_version,
+        package_name,
+        package_version,
         &mut dest_buf[..],
     );
     // PORT NOTE: reshaped for borrowck — abs_tarball_dest borrows dest_buf
@@ -2916,8 +2916,8 @@ pub fn pack<const FOR_PUBLISH: bool>(
         let mut root_full = json.root;
         Some(Publish::PublishCommand::normalized_package(
             manager,
-            &package_name,
-            &package_version,
+            package_name,
+            package_version,
             &mut root_full,
             &json.source,
             shasum,
@@ -2939,7 +2939,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
         if opt_pack_destination(manager).is_empty() && opt_pack_filename(manager).is_empty() {
             Output::pretty(format_args!(
                 "\n{}\n",
-                fmt_tarball_filename(&package_name, &package_version, TarballNameStyle::Normalize)
+                fmt_tarball_filename(package_name, package_version, TarballNameStyle::Normalize)
             ));
         } else {
             Output::pretty(format_args!(
@@ -3753,7 +3753,7 @@ impl IgnorePatterns {
         err: bun_core::Error,
     ) -> ! {
         let mut buf = PathBuffer::uninit();
-        let dir_path: &[u8] = match bun_sys::get_fd_path(Fd::from_std_dir(&dir), &mut buf) {
+        let dir_path: &[u8] = match bun_sys::get_fd_path(Fd::from_std_dir(dir), &mut buf) {
             Ok(p) => &*p,
             Err(_) => b"",
         };

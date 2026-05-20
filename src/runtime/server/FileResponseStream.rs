@@ -124,10 +124,7 @@ impl FileResponseStream {
                 ref_count: Cell::new(1),
                 resp: opts.resp,
                 vm: opts.vm,
-                // SAFETY: `opts.vm.event_loop()` returns the live per-thread `jsc::EventLoop`.
-                event_loop_handle: unsafe {
-                    EventLoopHandle::init(opts.vm.event_loop().cast::<()>())
-                },
+                event_loop_handle: EventLoopHandle::init(opts.vm.event_loop().cast::<()>()),
                 fd: opts.fd,
                 auto_close: opts.auto_close,
                 idle_timeout: opts.idle_timeout,
@@ -532,8 +529,7 @@ impl FileResponseStream {
     }
 
     pub fn event_loop(&self) -> EventLoopHandle {
-        // SAFETY: `self.vm.event_loop()` returns the live per-thread `jsc::EventLoop`.
-        unsafe { EventLoopHandle::init(self.vm.event_loop().cast::<()>()) }
+        EventLoopHandle::init(self.vm.event_loop().cast::<()>())
     }
 
     pub fn r#loop(&self) -> *mut bun_io::Loop {

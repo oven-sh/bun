@@ -31,7 +31,7 @@ impl DiffConfig {
             min_bytes_before_chunking: if is_agent { 0 } else { 2 * 1024 }, // 2kb
             chunk_context_lines: if is_agent { 1 } else { 5 },
             enable_ansi_colors,
-            truncate_threshold: if is_agent { 1 * 1024 } else { 2 * 1024 }, // 2kb
+            truncate_threshold: if is_agent { 1024 } else { 2 * 1024 }, // 2kb
             truncate_context: if is_agent { 50 } else { 100 },
         }
     }
@@ -633,9 +633,9 @@ pub fn print_hunk_header(
     changed_line_count: usize,
 ) -> std::fmt::Result {
     if config.enable_ansi_colors {
-        write!(
+        writeln!(
             writer,
-            "{}@@ -{},{} +{},{} @@{}\n",
+            "{}@@ -{},{} +{},{} @@{}",
             colors::YELLOW,
             original_line_number,
             original_line_count,
@@ -644,9 +644,9 @@ pub fn print_hunk_header(
             colors::RESET
         )
     } else {
-        write!(
+        writeln!(
             writer,
-            "@@ -{},{} +{},{} @@\n",
+            "@@ -{},{} +{},{} @@",
             original_line_number, original_line_count, changed_line_number, changed_line_count
         )
     }

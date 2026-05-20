@@ -189,6 +189,9 @@ impl MultiPartUpload {
     /// `this` must be a live heap-allocated `MultiPartUpload` created via
     /// `heap::alloc` with a non-zero intrusive refcount.
     #[inline]
+    // Forwards `this` to the derived intrusive-rc decrement without dereferencing it here;
+    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn deref_(this: *mut Self) {
         // SAFETY: per fn contract — forwarded to the derived intrusive-rc decrement.
         unsafe { <Self as bun_ptr::CellRefCounted>::deref(this) }
@@ -626,7 +629,7 @@ impl MultiPartUpload {
             // we are a multipart upload so we need to send the etags and commit
             self.state = State::Finished;
             // sort the etags
-            self.multipart_etags.sort_by(|a, b| a.number.cmp(&b.number));
+            self.multipart_etags.sort_by_key(|a| a.number);
             // start the multipart upload list
             self.multipart_upload_list.extend_from_slice(
                 b"<?xml version=\"1.0\" encoding=\"UTF-8\"?><CompleteMultipartUpload xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">",

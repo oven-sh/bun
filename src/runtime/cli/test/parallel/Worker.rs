@@ -160,8 +160,7 @@ impl Worker {
             // (Zig `defer spawned.extra_pipes.deinit()` — handled by Drop.)
             let extra_pipes = core::mem::take(&mut spawned.extra_pipes);
             this.process = Some(spawned.to_process(
-                // SAFETY: `coord.vm.event_loop()` is the live per-thread `jsc::EventLoop`.
-                unsafe { bun_event_loop::EventLoopHandle::init(coord.vm.event_loop().cast()) },
+                bun_event_loop::EventLoopHandle::init(coord.vm.event_loop().cast()),
                 false,
             ));
             if let Some(fd) = stdout {
@@ -417,7 +416,7 @@ impl Worker {
 bun_spawn::link_impl_ProcessExit! {
     TestParallelWorker for Worker => |this| {
         on_process_exit(process, status, rusage) =>
-            (*this).on_process_exit(&*process, status, &*rusage),
+            (*this).on_process_exit(&*process, status, rusage),
     }
 }
 

@@ -191,7 +191,7 @@ impl AuditCommand {
     }
 }
 
-fn print_skipped_packages(skipped_packages: &Vec<Box<[u8]>>) {
+fn print_skipped_packages(skipped_packages: &[Box<[u8]>]) {
     if !skipped_packages.is_empty() {
         pretty!("<d>Skipped<r> ");
         for (i, package_name) in skipped_packages.iter().enumerate() {

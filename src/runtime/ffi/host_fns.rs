@@ -328,16 +328,16 @@ impl Function {
                         i
                     )?;
                 } else if *arg == ABIType::NapiValue {
-                    write!(
+                    writeln!(
                         writer,
-                        "  EncodedJSValue arg{} = {{ .asInt64 = *argsPtr++ }};\n",
+                        "  EncodedJSValue arg{} = {{ .asInt64 = *argsPtr++ }};",
                         i
                     )?;
                 } else if arg.needs_a_cast_in_c() {
                     if i < self.arg_types.len() - 1 {
-                        write!(
+                        writeln!(
                             writer,
-                            "  EncodedJSValue arg{} = {{ .asInt64 = *argsPtr++ }};\n",
+                            "  EncodedJSValue arg{} = {{ .asInt64 = *argsPtr++ }};",
                             i
                         )?;
                     } else {
@@ -348,9 +348,9 @@ impl Function {
                         )?;
                     }
                 } else if i < self.arg_types.len() - 1 {
-                    write!(writer, "  int64_t arg{} = *argsPtr++;\n", i)?;
+                    writeln!(writer, "  int64_t arg{} = *argsPtr++;", i)?;
                 } else {
-                    write!(writer, "  int64_t arg{} = *argsPtr;\n", i)?;
+                    writeln!(writer, "  int64_t arg{} = *argsPtr;", i)?;
                 }
             }
         }
@@ -426,7 +426,7 @@ impl Function {
             let ptr = global_object
                 .map(|g| std::ptr::from_ref(g) as usize)
                 .unwrap_or(0);
-            write!(writer, "#define JS_GLOBAL_OBJECT (void*)0x{:X}ULL\n", ptr)?;
+            writeln!(writer, "#define JS_GLOBAL_OBJECT (void*)0x{:X}ULL", ptr)?;
         }
 
         writer.write_all(b"#define IS_CALLBACK 1\n")?;
@@ -474,9 +474,9 @@ impl Function {
 
         if !self.arg_types.is_empty() {
             let mut arg_buf = [0u8; 32];
-            write!(
+            writeln!(
                 writer,
-                " ZIG_REPR_TYPE arguments[{}];\n",
+                " ZIG_REPR_TYPE arguments[{}];",
                 self.arg_types.len()
             )?;
 
@@ -484,9 +484,9 @@ impl Function {
             for (i, arg) in self.arg_types.iter().enumerate() {
                 let printed = bun_core::fmt::print_int(&mut arg_buf[3..], i);
                 let arg_name = &arg_buf[0..3 + printed];
-                write!(
+                writeln!(
                     writer,
-                    "arguments[{}] = {}.asZigRepr;\n",
+                    "arguments[{}] = {}.asZigRepr;",
                     i,
                     arg.to_js(arg_name)
                 )?;

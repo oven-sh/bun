@@ -1109,7 +1109,7 @@ impl JSValkeyClient {
             }
 
             let field_value_count = args_count - 1; // Exclude key
-            if field_value_count % 2 != 0 {
+            if !field_value_count.is_multiple_of(2) {
                 return Err(global.throw(format_args!(
                     "HSET requires field-value pairs (even number of arguments after key)"
                 )));

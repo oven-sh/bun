@@ -624,7 +624,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// `this` must point to a live heap-allocated `NewServer` for the duration
     /// of the uWS callback frame; `resp` must be the live response handle for
     /// the same frame.
-    pub fn prepare_js_request_context(
+    pub(crate) fn prepare_js_request_context(
         this: *mut Self,
         req: &mut uws_sys::Request,
         resp: *mut uws_sys::NewAppResponse<SSL>,
@@ -707,8 +707,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // SAFETY: `request_pool` points at a process-static (or
         // server-owned) `HiveArray::Fallback`; valid for the server's lifetime.
-        let ctx_slot = unsafe { (*server.request_pool).try_get() };
-        // SAFETY: `try_get` hands out an uninitialized slot; `create()` fully
+        // The `HiveSlot` token is leaked deliberately: the slot is recycled by
+        // `RequestContext::deinit` via `put_raw`, never via `HiveSlot::Drop`.
+        let ctx_slot = std::mem::ManuallyDrop::new(unsafe { (*server.request_pool).claim() })
+            .addr()
+            .as_ptr();
+        // SAFETY: `claim` hands out an uninitialized slot; `create()` fully
         // initializes it via `MaybeUninit::write`.
         let ctx_uninit = unsafe {
             &mut *ctx_slot.cast::<core::mem::MaybeUninit<ServerRequestContext<SSL, DEBUG>>>()
@@ -846,7 +850,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// # Safety
     /// `this` must point to a live heap-allocated `NewServer`; `resp` must be
     /// the live response handle for the request being resumed.
-    pub fn on_saved_request<const ARG_COUNT: usize>(
+    pub(crate) fn on_saved_request<const ARG_COUNT: usize>(
         this: *mut Self,
         req: SavedRequestUnion<'_>,
         resp: *mut uws_sys::NewAppResponse<SSL>,
@@ -1029,7 +1033,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// `this` must point to a live heap-allocated `NewServer` (the userdata
     /// registered with uWS); `resp` must be the live response handle for this
     /// request frame.
-    pub fn on_request(
+    pub(crate) fn on_request(
         this: *mut Self,
         req: &mut uws_sys::Request,
         resp: *mut uws_sys::NewAppResponse<SSL>,
@@ -1074,7 +1078,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// `user_route` must point to a live entry in `server.user_routes` (the
     /// address registered as the uWS callback userdata); `resp` must be the
     /// live response handle for this request frame.
-    pub fn on_user_route_request(
+    pub(crate) fn on_user_route_request(
         user_route: *const UserRoute<SSL, DEBUG>,
         req: &mut uws_sys::Request,
         resp: *mut uws_sys::NewAppResponse<SSL>,
@@ -1159,7 +1163,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// `this` must point to a live heap-allocated `NewServer` (the userdata
     /// registered with uWS); `upgrade_ctx` must be null or a live uWS upgrade
     /// context for this request.
-    pub fn on_node_http_request_with_upgrade_ctx(
+    pub(crate) fn on_node_http_request_with_upgrade_ctx(
         this: *mut Self,
         req: &mut uws_sys::Request,
         resp: &mut uws_sys::NewAppResponse<SSL>,
@@ -1848,7 +1852,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// `this` must be the unique owning pointer to a heap-allocated `NewServer`
     /// produced by [`Self::init`]; no other reference may be live, and `this`
     /// must not be used after this returns.
-    pub fn deinit(this: *mut Self) {
+    pub(crate) fn deinit(this: *mut Self) {
         httplog!("deinit");
         // SAFETY: `this` was heap-allocated in `init()` and is uniquely owned here.
         let this_ref = unsafe { &mut *this };
@@ -2003,10 +2007,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // PORT NOTE: reshaped for borrowck — `dev_server` is `Option<Box<..>>`;
         // snapshot the raw `*mut DevServer` so per-iteration `&mut` derives
         // don't conflict with `&mut self.config` / `&mut self.user_routes`.
-        let dev_server: Option<*mut crate::bake::DevServer::DevServer> = self
-            .dev_server
-            .as_deref_mut()
-            .map(|d| std::ptr::from_mut(d));
+        let dev_server: Option<*mut crate::bake::DevServer::DevServer> =
+            self.dev_server.as_deref_mut().map(std::ptr::from_mut);
 
         // https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md
         // Only enable this when we're using the dev server.
@@ -2206,10 +2208,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 should_add_chrome_devtools_json_route = false;
             }
 
-            // SAFETY: each `p`/`r` is the live `RefPtr<_>` stored in `entry.route`;
+            // Each `p`/`r` is the live `RefPtr<_>` stored in `entry.route`;
             // `app`/`h3_app` are the live uWS app handles owned by `self`.
             match &entry.route {
-                AnyRoute::Static(p) => unsafe {
+                AnyRoute::Static(p) => {
                     server_config::apply_static_route::<SSL, StaticRoute>(
                         any_server,
                         app,
@@ -2229,8 +2231,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             );
                         }
                     }
-                },
-                AnyRoute::File(p) => unsafe {
+                }
+                AnyRoute::File(p) => {
                     server_config::apply_static_route::<SSL, FileRoute>(
                         any_server,
                         app,
@@ -2250,7 +2252,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             );
                         }
                     }
-                },
+                }
                 AnyRoute::Html(r) => {
                     server_config::apply_static_route::<SSL, html_bundle::Route>(
                         any_server,
@@ -2453,7 +2455,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// [`Self::init`], with no other `&`/`&mut` borrow live for the duration
     /// of this call. On listen failure `this` is freed (via [`Self::deinit`])
     /// and must not be used after a `JSValue::ZERO` return.
-    pub fn listen(this: *mut Self) -> JSValue
+    pub(crate) fn listen(this: *mut Self) -> JSValue
     where
         Self: ServerPools<SSL, DEBUG>,
     {
@@ -2779,7 +2781,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             bun_opaque::opaque_deref_mut(h3_app).listen_with_config(
                                 this,
                                 |s: &mut Self, ls: Option<&mut uws_sys::h3::ListenSocket>| {
-                                    s.on_h3_listen(ls.map(|l| std::ptr::from_mut(l)));
+                                    s.on_h3_listen(ls.map(std::ptr::from_mut));
                                 },
                                 &uws_sys::h3::ListenConfig {
                                     port: h3_port,
@@ -3496,11 +3498,9 @@ impl AnyServer {
     /// (see `server.zig`): un-erase the SSL bool from the tag and downcast
     /// `AnyResponse` to the matching `NewAppResponse<SSL>` variant.
     pub fn on_request(&self, req: &mut uws_sys::Request, resp: uws::AnyResponse) {
-        // SAFETY: `s` is the live `*mut NewServer` carried in `self.ptr`,
+        // `s` is the live `*mut NewServer` carried in `self.ptr`,
         // tagged at construction in `AnyServer::from`.
-        any_server_dispatch_resp!(self, resp, |s, r| unsafe {
-            NewServer::on_request(s, req, r)
-        })
+        any_server_dispatch_resp!(self, resp, |s, r| NewServer::on_request(s, req, r))
     }
 
     pub fn on_request_complete(&mut self) {
@@ -3599,9 +3599,9 @@ impl AnyServer {
         callback: jsc::JSValue,
         extra_args: [jsc::JSValue; EXTRA_ARG_COUNT],
     ) {
-        // SAFETY: `s` is the live `*mut NewServer` carried in `self.ptr`,
+        // `s` is the live `*mut NewServer` carried in `self.ptr`,
         // tagged at construction in `AnyServer::from`.
-        any_server_dispatch_resp!(self, resp, |s, r| unsafe {
+        any_server_dispatch_resp!(self, resp, |s, r| {
             NewServer::on_saved_request(s, req, r, callback, extra_args)
         })
     }
@@ -3681,14 +3681,11 @@ pub mod http_server_agent {
     /// `HTTPServerAgent.zig:notifyServerStopped`.
     pub fn notify_server_stopped(this: &HTTPServerAgent, server: AnyServer) {
         let Some(agent) = this.agent else { return };
-        // SAFETY: `agent` is a live C++ handle (see above).
-        unsafe {
-            InspectorHTTPServerAgent::notify_server_stopped(
-                agent.as_ptr(),
-                server.inspector_server_id(),
-                bun_core::time::milli_timestamp() as f64,
-            );
-        }
+        InspectorHTTPServerAgent::notify_server_stopped(
+            agent.as_ptr(),
+            server.inspector_server_id(),
+            bun_core::time::milli_timestamp() as f64,
+        );
     }
 
     /// `HTTPServerAgent.zig:notifyServerRoutesUpdated`.
@@ -3742,15 +3739,12 @@ pub mod http_server_agent {
             });
         }
 
-        // SAFETY: `agent` is a live C++ handle.
-        unsafe {
-            InspectorHTTPServerAgent::notify_server_routes_updated(
-                agent.as_ptr(),
-                server.inspector_server_id(),
-                server.vm().hot_reload_counter as i32,
-                &mut routes,
-            );
-        }
+        InspectorHTTPServerAgent::notify_server_routes_updated(
+            agent.as_ptr(),
+            server.inspector_server_id(),
+            server.vm().hot_reload_counter as i32,
+            &mut routes,
+        );
         // `Vec<Route>` drops → each `Route` drops (derefs path/file_path/etc.).
         Ok(())
     }
@@ -3841,7 +3835,7 @@ impl ServerAllConnectionsClosedTask {
     /// `this` must be the unique owning pointer heap-allocated in
     /// [`Self::schedule`]; ownership is reclaimed and `this` must not be used
     /// after this returns.
-    pub fn run_from_js_thread(
+    pub(crate) fn run_from_js_thread(
         this: *mut Self,
         vm: &mut jsc::VirtualMachine,
     ) -> Result<(), jsc::JsTerminated> {

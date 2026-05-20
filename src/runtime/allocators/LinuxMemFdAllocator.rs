@@ -210,7 +210,7 @@ impl LinuxMemFdAllocator {
             }
 
             if crate::jsc::VirtualMachine::is_smol_mode() {
-                return bytes.len() >= 1024 * 1024 * 1;
+                return bytes.len() >= 1024 * 1024;
             }
 
             // This is a net 2x - 4x slowdown to new Blob([huge])

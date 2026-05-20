@@ -597,9 +597,9 @@ impl Request {
         } else {
             "BunRequest"
         };
-        write!(
+        writeln!(
             writer,
-            "{} ({}) {{\n",
+            "{} ({}) {{",
             class_label,
             bun_fmt::size(self.body_value_mut().size() as usize, Default::default())
         )?;

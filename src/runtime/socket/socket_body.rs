@@ -2854,7 +2854,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             handlers: Cell::new(Some(handlers_ptr)),
             socket: Cell::new(SocketHandler::<true>::DETACHED),
             owned_ssl_ctx: Cell::new(owned_ctx_taken),
-            connection: JsCell::new(this.connection.get().as_ref().map(|c| c.clone())),
+            connection: JsCell::new(this.connection.get().clone()),
             protos: JsCell::new(cfg.and_then(|c| c.protos_bytes().map(Box::<[u8]>::from))),
             server_name: JsCell::new(
                 cfg.and_then(|c| c.server_name_bytes().map(Box::<[u8]>::from)),
@@ -3896,7 +3896,7 @@ pub fn js_upgrade_duplex_to_tls(
                 // `ctx`. `run_event` may free the allocation, so pass the raw
                 // pointer through — never form a `&mut` here whose protector
                 // would span the dealloc.
-                unsafe { DuplexUpgradeContext::run_event(p.cast::<DuplexUpgradeContext>()) };
+                DuplexUpgradeContext::run_event(p.cast::<DuplexUpgradeContext>());
                 Ok(())
             },
         });
@@ -3922,35 +3922,35 @@ pub fn js_upgrade_duplex_to_tls(
             duplex,
             UpgradedDuplexHandlers {
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
-                on_open: |c: *mut ()| unsafe {
+                on_open: |c: *mut ()| {
                     bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_open()
                 },
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
-                on_data: |c: *mut (), d| unsafe {
+                on_data: |c: *mut (), d| {
                     bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_data(d)
                 },
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
-                on_handshake: |c: *mut (), ok, err| unsafe {
+                on_handshake: |c: *mut (), ok, err| {
                     bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_handshake(ok, err)
                 },
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
-                on_close: |c: *mut ()| unsafe {
+                on_close: |c: *mut ()| {
                     bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_close()
                 },
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
-                on_end: |c: *mut ()| unsafe {
+                on_end: |c: *mut ()| {
                     bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_end()
                 },
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
-                on_writable: |c: *mut ()| unsafe {
+                on_writable: |c: *mut ()| {
                     bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_writable()
                 },
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
-                on_error: |c: *mut (), e| unsafe {
+                on_error: |c: *mut (), e| {
                     bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_error(e)
                 },
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
-                on_timeout: |c: *mut ()| unsafe {
+                on_timeout: |c: *mut ()| {
                     bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_timeout()
                 },
                 ctx: duplex_context.cast::<()>(),

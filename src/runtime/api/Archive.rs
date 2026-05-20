@@ -96,9 +96,9 @@ impl Archive {
         let data = self.store.shared_view();
         let fmt_err = |_: core::fmt::Error| bun_core::err!("FormatError");
 
-        write!(
+        writeln!(
             writer,
-            "Archive ({}) {{\n",
+            "Archive ({}) {{",
             bun_core::fmt::size(data.len(), bun_core::fmt::SizeFormatterOptions::default()),
         )
         .map_err(fmt_err)?;
@@ -748,6 +748,9 @@ impl<C: TaskContext> AsyncTask<C> {
     /// `this` must be the live `heap::into_raw` allocation produced by
     /// [`create`](Self::create), called exactly once on the JS thread after
     /// `run_callback` enqueues it. Takes ownership of the allocation.
+    // Forwards `this` to `bun_core::heap::take` without dereferencing it here;
+    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn run_from_js(this: *mut Self) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: see fn-level safety contract.
         let mut owned = unsafe { bun_core::heap::take(this) };
@@ -762,7 +765,7 @@ impl<C: TaskContext> AsyncTask<C> {
         }
 
         let global = vm.global();
-        let mut promise = owned.promise.swap();
+        let promise = owned.promise.swap();
         let result = match owned.ctx.run_from_js(global) {
             Ok(r) => r,
             Err(e) => {
@@ -770,7 +773,7 @@ impl<C: TaskContext> AsyncTask<C> {
                 return promise.reject(global, Ok(global.take_exception(e)));
             }
         };
-        result.fulfill(global, &mut promise)
+        result.fulfill(global, promise)
     }
 }
 

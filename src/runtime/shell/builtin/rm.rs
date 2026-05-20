@@ -429,7 +429,7 @@ impl Rm {
     ///
     /// # Safety
     /// `task` must be a live `heap::alloc`'d [`ShellRmTask`]; main thread.
-    pub fn on_shell_rm_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellRmTask) {
+    pub(crate) fn on_shell_rm_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellRmTask) {
         // In verbose mode the root DirTask may also be queued for write_verbose;
         // both callbacks hold a pending count and the last one to run frees the
         // ShellRmTask.
@@ -821,7 +821,7 @@ impl ShellRmTask {
     /// # Safety
     /// `this` must be a live `heap::alloc`'d [`ShellRmTask`] posted via
     /// [`finish_concurrently`]; main thread.
-    pub fn run_from_main_thread(this: *mut ShellRmTask, interp: &Interpreter) {
+    pub(crate) fn run_from_main_thread(this: *mut ShellRmTask, interp: &Interpreter) {
         // SAFETY: caller contract.
         unsafe {
             let cmd = (*this).cmd;
@@ -1045,7 +1045,7 @@ impl ShellRmTask {
                 allow_enqueue: false,
                 enqueued: false,
             };
-            'out_to_iter: while state.treat_as_dir {
+            if state.treat_as_dir {
                 match bun_sys::rmdirat(dirfd, path) {
                     Ok(()) => return Ok(()),
                     Err(e) => match e.get_errno() {
@@ -1061,7 +1061,6 @@ impl ShellRmTask {
                             if !state.treat_as_dir {
                                 return Ok(());
                             }
-                            break 'out_to_iter;
                         }
                         _ => return Err(self.error_with_path(&e, path.as_bytes())),
                     },
@@ -1596,7 +1595,7 @@ impl DirTask {
     /// # Safety
     /// `this` must be a live [`DirTask`] posted via [`queue_for_write`]; the
     /// pending count keeps `task_manager` alive; main thread.
-    pub fn run_from_main_thread(this: *mut DirTask) {
+    pub(crate) fn run_from_main_thread(this: *mut DirTask) {
         // SAFETY: caller contract — `interp` set at create.
         let (interp, cmd) = unsafe {
             let tm = (*this).task_manager;

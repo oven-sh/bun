@@ -268,12 +268,8 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                         fc.fnh
                     );
                     for &ln in &sorted {
-                        let _ = write!(
-                            &mut w,
-                            "DA:{},{}\n",
-                            ln,
-                            fc.da.get(&ln).expect("unreachable")
-                        );
+                        let _ =
+                            writeln!(&mut w, "DA:{},{}", ln, fc.da.get(&ln).expect("unreachable"));
                     }
                     let _ = write!(
                         &mut w,

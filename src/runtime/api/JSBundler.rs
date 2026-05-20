@@ -446,7 +446,8 @@ pub mod js_bundler {
             // Config implements Drop, so functional-record-update from Default::default()
             // is rejected by rustc (E0509). Construct default then mutate instead.
             let mut this = Config::default();
-            this.define = StringMap::init(true);
+            // `define` defaults to `StringMap::init(false)`; only the flag differs.
+            this.define.dupe_keys = true;
             // errdefer this.deinit(allocator) — handled by `impl Drop for Config` on `?` paths.
             // errdefer if (plugins.*) |plugin| plugin.deinit() — scopeguard below.
             let mut plugins = scopeguard::guard(plugins, |p| {
@@ -1329,8 +1330,7 @@ pub mod js_bundler {
         let mut plugins: Option<*mut Plugin> = None;
         let config = Config::from_js(global_this, arguments[0], &mut plugins)?;
 
-        // SAFETY: bun_vm() returns the live process VirtualMachine pointer.
-        let event_loop = unsafe { (*vm).event_loop() };
+        let event_loop = vm.event_loop();
 
         // `BundleV2.generateFromJavaScript` — the completion-task struct lives in
         // `crate::api::js_bundle_completion_task` (bun_runtime owns it because its

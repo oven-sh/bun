@@ -68,6 +68,9 @@ pub const WINDOWS_DEV_NULL: &ZStr = bun_core::zstr!("NUL");
 // ───────────────────────────── ShellErr ─────────────────────────────
 
 /// The strings in this type are allocated with event loop ctx allocator
+// `Sys(SystemError)` is constructed/matched directly in subproc.rs, Builtin.rs,
+// and builtin/cp.rs; boxing it would ripple through those call sites.
+#[allow(clippy::large_enum_variant)]
 pub enum ShellErr {
     Sys(SystemError),
     Custom(Box<[u8]>),
@@ -178,7 +181,7 @@ impl fmt::Display for ShellErr {
 
 pub enum ShellResult<T> {
     Result(T),
-    Err(ShellErr),
+    Err(Box<ShellErr>),
 }
 
 impl<T: Default> ShellResult<T> {
@@ -193,7 +196,7 @@ impl<T: Default> ShellResult<T> {
 impl<T> ShellResult<T> {
     pub fn as_err(self) -> Option<ShellErr> {
         match self {
-            ShellResult::Err(e) => Some(e),
+            ShellResult::Err(e) => Some(*e),
             ShellResult::Result(_) => None,
         }
     }

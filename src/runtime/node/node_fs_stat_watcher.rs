@@ -148,6 +148,10 @@ impl Drop for WatcherRefGuard {
 impl StatWatcherScheduler {
     /// # Safety
     /// `this` must point to a live `StatWatcherScheduler`.
+    // Forwards `this` to the unsafe `ThreadSafeRefCount` helper without
+    // dereferencing; not_unsafe_ptr_arg_deref is a false positive on
+    // opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
     pub fn ref_(this: *mut Self) {
         // SAFETY: per fn contract.
@@ -156,6 +160,10 @@ impl StatWatcherScheduler {
     /// # Safety
     /// `this` must point to a live `StatWatcherScheduler` and the caller must
     /// own one outstanding ref, which is released.
+    // Forwards `this` to the unsafe `ThreadSafeRefCount` helper without
+    // dereferencing; not_unsafe_ptr_arg_deref is a false positive on
+    // opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
     pub fn deref(this: *mut Self) {
         // SAFETY: per fn contract.
@@ -221,8 +229,7 @@ impl StatWatcherScheduler {
         StatWatcher::ref_(watcher.as_ptr());
         // BACKREF — `this` is live (caller holds a ref).
         let this_ref = ParentRef::from(NonNull::new(this).expect("append: scheduler"));
-        // SAFETY: `watcher` is non-null (checked above) and ref'd; live until deref.
-        unsafe { this_ref.watchers.push(watcher) };
+        this_ref.watchers.push(watcher);
         log!("push watcher {:x}", watcher.as_ptr() as usize);
         let current = this_ref.get_interval();
         if current == 0 || current > w.interval {
@@ -274,14 +281,10 @@ impl StatWatcherScheduler {
         }
 
         // reschedule the timer
-        // SAFETY: `elt` is the live `EventLoopTimer` field of the heap-allocated
-        // scheduler this fn is called on (see `# Safety` on `update`).
-        unsafe {
-            timer_all.update(
-                elt,
-                &Timespec::ms_from_now(TimespecMockMode::AllowMockedTime, i64::from(interval)),
-            );
-        }
+        timer_all.update(
+            elt,
+            &Timespec::ms_from_now(TimespecMockMode::AllowMockedTime, i64::from(interval)),
+        );
     }
 
     /// Schedule a task to set the timer in the main thread
@@ -412,8 +415,7 @@ impl StatWatcherScheduler {
                 closest_next_check = (interval - time_since).min(closest_next_check);
             }
             min_interval = min_interval.min(w.interval);
-            // SAFETY: `watcher` was just popped from this queue; still live and ref'd.
-            unsafe { this_ref.watchers.push(watcher) };
+            this_ref.watchers.push(watcher);
             log!("reinsert watcher {:x}", watcher.as_ptr() as usize);
         }
 
@@ -633,6 +635,10 @@ impl StatWatcher {
 
     /// # Safety
     /// `this` must point to a live `StatWatcher`.
+    // Forwards `this` to the unsafe `ThreadSafeRefCount` helper without
+    // dereferencing; not_unsafe_ptr_arg_deref is a false positive on
+    // opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
     pub fn ref_(this: *mut Self) {
         // SAFETY: per fn contract.
@@ -641,6 +647,10 @@ impl StatWatcher {
     /// # Safety
     /// `this` must point to a live `StatWatcher` and the caller must own one
     /// outstanding ref, which is released.
+    // Forwards `this` to the unsafe `ThreadSafeRefCount` helper without
+    // dereferencing; not_unsafe_ptr_arg_deref is a false positive on
+    // opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
     pub fn deref(this: *mut Self) {
         // SAFETY: per fn contract.
@@ -915,15 +925,11 @@ impl StatWatcher {
         // R-2: derive the ctx pointer from `&self` — the callback derefs it as
         // shared (`&*const`), so no write provenance is required.
         let this_ptr: *mut StatWatcher = self.as_ctx_ptr();
-        // SAFETY: `this_ptr` derives from `&self` (live). Ensure it stays alive
-        // long enough to receive the callback. Task is freshly heap-allocated.
-        unsafe {
-            Self::ref_(this_ptr);
-            self.enqueue_task_concurrent(ConcurrentTask::from_callback(
-                this_ptr,
-                Self::swap_and_call_listener_on_main_thread,
-            ));
-        }
+        Self::ref_(this_ptr);
+        self.enqueue_task_concurrent(ConcurrentTask::from_callback(
+            this_ptr,
+            Self::swap_and_call_listener_on_main_thread,
+        ));
     }
 
     /// After a restat found the file changed, this calls the listener function.
@@ -1008,7 +1014,7 @@ impl StatWatcher {
         let this_ptr = bun_core::heap::into_raw(this);
         // errdefer this.deinit() — `p` was heap-allocated above; on the error
         // path we own the only reference (sole-owner contract for `deinit`).
-        let guard = scopeguard::guard(this_ptr, |p| Self::deinit(p));
+        let guard = scopeguard::guard(this_ptr, Self::deinit);
         // BACKREF — `this_ptr` just leaked from Box; alive until deref drops
         // it. R-2: all field mutation goes through Cell/JsCell so shared `&`
         // suffices (and `to_js_ptr` below creates the JS wrapper, after which
@@ -1175,6 +1181,9 @@ impl InitialStatTask {
         });
     }
 
+    // `owned_task!` requires `fn run_owned(self: Box<Self>)`; clippy::boxed_local
+    // is a false positive on this macro contract.
+    #[allow(clippy::boxed_local)]
     fn run_owned(self: Box<Self>) {
         // `watcher` is a raw `*mut` (Copy), so dropping the Box does not touch
         // the refcount; matches Zig `bun.destroy(initial_stat_task)`.
@@ -1201,26 +1210,20 @@ impl InitialStatTask {
             Ok(ref res) => {
                 // we store the stat, but do not call the callback
                 this_ref.set_last_stat(res);
-                // SAFETY: task is freshly heap-allocated; queue takes ownership.
-                unsafe {
-                    this_ref.enqueue_task_concurrent(ConcurrentTask::from_callback(
-                        this,
-                        StatWatcher::initial_stat_success_on_main_thread,
-                    ));
-                }
+                this_ref.enqueue_task_concurrent(ConcurrentTask::from_callback(
+                    this,
+                    StatWatcher::initial_stat_success_on_main_thread,
+                ));
             }
             Err(_) => {
                 // on enoent, eperm, we call cb with two zeroed stat objects
                 // and store previous stat as a zeroed stat object, and then call the callback.
                 // SAFETY: all-zero is a valid PosixStat (POD #[repr(C)])
                 this_ref.set_last_stat(&bun_core::ffi::zeroed::<PosixStat>());
-                // SAFETY: task is freshly heap-allocated; queue takes ownership.
-                unsafe {
-                    this_ref.enqueue_task_concurrent(ConcurrentTask::from_callback(
-                        this,
-                        StatWatcher::initial_stat_error_on_main_thread,
-                    ));
-                }
+                this_ref.enqueue_task_concurrent(ConcurrentTask::from_callback(
+                    this,
+                    StatWatcher::initial_stat_error_on_main_thread,
+                ));
             }
         }
         // ref ownership transferred to main-thread callback

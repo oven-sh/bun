@@ -613,9 +613,9 @@ impl JunitReporter {
                 }
                 self.contents.extend_from_slice(b">\n");
                 self.contents.extend_from_slice(indent);
-                let _ = write!(
+                let _ = writeln!(
                     &mut self.contents,
-                    "  <failure message=\"test marked with .failing() did not throw\" type=\"AssertionError\"/>\n"
+                    "  <failure message=\"test marked with .failing() did not throw\" type=\"AssertionError\"/>"
                 );
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"</testcase>\n");
@@ -627,9 +627,9 @@ impl JunitReporter {
                 }
                 self.contents.extend_from_slice(b">\n");
                 self.contents.extend_from_slice(indent);
-                let _ = write!(
+                let _ = writeln!(
                     &mut self.contents,
-                    "  <failure message=\"Expected more assertions, but only received {}\" type=\"AssertionError\"/>\n",
+                    "  <failure message=\"Expected more assertions, but only received {}\" type=\"AssertionError\"/>",
                     assertions
                 );
                 self.contents.extend_from_slice(indent);
@@ -642,9 +642,9 @@ impl JunitReporter {
                 }
                 self.contents.extend_from_slice(b">\n");
                 self.contents.extend_from_slice(indent);
-                let _ = write!(
+                let _ = writeln!(
                     &mut self.contents,
-                    "  <failure message=\"TODO passed\" type=\"AssertionError\"/>\n"
+                    "  <failure message=\"TODO passed\" type=\"AssertionError\"/>"
                 );
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"</testcase>\n");
@@ -656,9 +656,9 @@ impl JunitReporter {
                 }
                 self.contents.extend_from_slice(b">\n");
                 self.contents.extend_from_slice(indent);
-                let _ = write!(
+                let _ = writeln!(
                     &mut self.contents,
-                    "  <failure message=\"Expected to have assertions, but none were run\" type=\"AssertionError\"/>\n"
+                    "  <failure message=\"Expected to have assertions, but none were run\" type=\"AssertionError\"/>"
                 );
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"</testcase>\n");
@@ -2153,16 +2153,16 @@ impl TestCommand {
                     // SAFETY: lifetime-erase to `'static`; the backing locals are
                     // declared in this never-returning frame (`exec()` only exits
                     // via process exit), mirroring Zig's stack-address capture.
-                    file_buf: unsafe { &mut *(&raw mut snapshot_file_buf) },
+                    file_buf: unsafe { bun_ptr::detach_lifetime_mut(&mut snapshot_file_buf) },
                     // SAFETY: same never-returning-frame invariant as `file_buf` above.
-                    values: unsafe { &mut *(&raw mut snapshot_values) },
+                    values: unsafe { bun_ptr::detach_lifetime_mut(&mut snapshot_values) },
                     // SAFETY: same never-returning-frame invariant as `file_buf` above.
-                    counts: unsafe { &mut *(&raw mut snapshot_counts) },
+                    counts: unsafe { bun_ptr::detach_lifetime_mut(&mut snapshot_counts) },
                     _current_file: None,
                     snapshot_dir_path: None,
                     // SAFETY: same never-returning-frame invariant as `file_buf` above.
                     inline_snapshots_to_write: unsafe {
-                        &mut *(&raw mut inline_snapshots_to_write)
+                        bun_ptr::detach_lifetime_mut(&mut inline_snapshots_to_write)
                     },
                     last_error_snapshot_name: None,
                 },
@@ -2179,7 +2179,7 @@ impl TestCommand {
                 default_timeout_override: u32::MAX,
                 // SAFETY: lifetime-erase to `'static`; `ctx` is the
                 // process-lifetime CLI context and `exec()` never returns.
-                test_options: unsafe { &*(&raw const ctx.test_options) },
+                test_options: unsafe { bun_ptr::detach_lifetime_ref(&ctx.test_options) },
                 unhandled_errors_between_tests: 0,
                 summary: Summary::default(),
             },
@@ -2313,7 +2313,7 @@ impl TestCommand {
         // But, don't block the main thread waiting if they used --inspect-wait.
         vm.ensure_debugger(false)?;
 
-        let mut scanner = Scanner::init(&mut vm.transpiler, ctx.positionals.len()).expect("oom");
+        let mut scanner = Scanner::init(&vm.transpiler, ctx.positionals.len()).expect("oom");
         // SAFETY: lifetime-erase; `path_ignore_patterns_view` lives in this never-returning
         // frame, underlying bytes live in `ctx` (process-lifetime).
         scanner.path_ignore_patterns =

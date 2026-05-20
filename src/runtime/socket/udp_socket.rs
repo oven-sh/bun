@@ -1194,7 +1194,7 @@ impl UDPSocket {
         let connected = this.connect_info.get().is_some();
 
         let array_len = arg.get_length(global_this)? as usize;
-        if !connected && array_len % 3 != 0 {
+        if !connected && !array_len.is_multiple_of(3) {
             return Err(global_this
                 .throw_invalid_arguments(format_args!("Expected 3 arguments for each packet")));
         }
@@ -1231,7 +1231,7 @@ impl UDPSocket {
             } else {
                 (i / 3) as usize
             };
-            if connected || i % 3 == 0 {
+            if connected || i.is_multiple_of(3) {
                 let payload_val: JSValue = 'blk: {
                     if val.as_array_buffer(global_this).is_some() {
                         break 'blk val;

@@ -574,14 +574,10 @@ impl ReplCommand {
     ];
 
     pub fn find(name: &[u8]) -> Option<&'static ReplCommand> {
-        for cmd in &Self::ALL {
-            if strings::eql_long(cmd.name, name, true)
+        Self::ALL.iter().find(|&cmd| {
+            strings::eql_long(cmd.name, name, true)
                 || (name.len() > 1 && cmd.name.starts_with(name))
-            {
-                return Some(cmd);
-            }
-        }
-        None
+        })
     }
 }
 
@@ -1850,7 +1846,7 @@ impl<'a> Repl<'a> {
             /* GENERATE_SOURCE_MAP */ false,
         >(
             &mut buffer_printer,
-            &arena,
+            arena,
             &ast,
             symbols_map,
             &source,
@@ -2420,9 +2416,9 @@ static SIGINT_VM: core::sync::atomic::AtomicPtr<jsc::VM> =
 extern "C" fn sigint_handler(_: c_int) {
     let vm = SIGINT_VM.load(core::sync::atomic::Ordering::Acquire);
     if !vm.is_null() {
-        // SAFETY: vm was a valid `*mut jsc::VM` when stored (JS thread is
+        // `vm` was a valid `*mut jsc::VM` when stored (JS thread is
         // blocked in wait while the handler runs, so it stays valid).
-        unsafe { vm_set_execution_forbidden(vm, true) };
+        vm_set_execution_forbidden(vm, true);
     }
 }
 

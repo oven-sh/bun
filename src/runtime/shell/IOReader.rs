@@ -89,6 +89,9 @@ impl IOReader {
     /// # Safety
     /// `this` must be the `Arc::as_ptr` of a live `Arc<IOReader>` whose
     /// strong count was held by the async-deinit task.
+    // Forwards `this` to `Arc::decrement_strong_count` without dereferencing;
+    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn deinit_on_main_thread(this: *mut IOReader) {
         // SAFETY: precondition above.
         unsafe { std::sync::Arc::decrement_strong_count(this) };
@@ -178,6 +181,9 @@ impl IOReader {
     /// owns the IO struct that holds this `Arc`) for the lifetime of this
     /// reader; single-threaded.
     #[inline]
+    // Forwards `interp` to `ParentRef::from_nullable_mut` without dereferencing;
+    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn set_interp(&self, interp: *mut Interpreter) {
         // SAFETY: precondition above.
         self.state().interp = unsafe { bun_ptr::ParentRef::from_nullable_mut(interp) };

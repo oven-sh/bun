@@ -225,23 +225,22 @@ fn check_option_like_value(global: &JSGlobalObject, token: &OptionToken) -> JsRe
         let raw_name = RawNameFormatter { token: *token, raw };
 
         // Only show short example if user used short option.
-        let err: JSValue;
-        if raw.has_prefix_comptime(b"--") {
-            err = global.to_type_error(
+        let err: JSValue = if raw.has_prefix_comptime(b"--") {
+            global.to_type_error(
                 bun_jsc::ErrorCode::PARSE_ARGS_INVALID_OPTION_VALUE,
                 format_args!(
                     "Option '{raw_name}' argument is ambiguous.\nDid you forget to specify the option argument for '{raw_name}'?\nTo specify an option argument starting with a dash use '{raw_name}=-XYZ'.",
                 ),
-            );
+            )
         } else {
             let token_name = token.name.as_bun_string(global)?;
-            err = global.to_type_error(
+            global.to_type_error(
                 bun_jsc::ErrorCode::PARSE_ARGS_INVALID_OPTION_VALUE,
                 format_args!(
                     "Option '{raw_name}' argument is ambiguous.\nDid you forget to specify the option argument for '{raw_name}'?\nTo specify an option argument starting with a dash use '--{token_name}=-XYZ' or '{raw_name}-XYZ'.",
                 ),
-            );
-        }
+            )
+        };
         return Err(global.throw_value(err));
     }
     Ok(())
@@ -371,7 +370,7 @@ fn store_option(
         value
     };
 
-    let is_multiple = option_idx.map_or(false, |idx| options[idx].multiple);
+    let is_multiple = option_idx.is_some_and(|idx| options[idx].multiple);
     if is_multiple {
         // Always store value in array, including for boolean.
         // values[long_option] starts out not present,

@@ -221,7 +221,7 @@ impl UpgradedDuplex {
         bun_output::scoped_log!(UpgradedDuplex, "onTimeout");
 
         let has_been_cleared = self.event_loop_timer.state == EventLoopTimerState::CANCELLED
-            || self.vm.map_or(true, |vm| {
+            || self.vm.is_none_or(|vm| {
                 vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running
             });
 

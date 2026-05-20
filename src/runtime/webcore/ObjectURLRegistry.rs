@@ -61,12 +61,8 @@ impl Drop for Entry {
 }
 
 impl ObjectURLRegistry {
-    /// # Safety
-    /// `vm` must be a live, non-null `*mut VirtualMachine` for the duration of
-    /// the call (as returned by `JSGlobalObject::bun_vm()`; Zig spec passes
-    /// `*jsc.VirtualMachine`).
-    pub fn register(&self, vm: *mut VirtualMachine, blob: &Blob) -> UUID {
-        let uuid = unsafe { &mut *vm }.rare_data().next_uuid();
+    pub fn register(&self, vm: &mut VirtualMachine, blob: &Blob) -> UUID {
+        let uuid = vm.rare_data().next_uuid();
         let entry = Entry::init(blob);
 
         self.map.lock().insert(uuid.bytes, entry);
@@ -130,7 +126,7 @@ pub fn bun_create_object_url(
     };
     let registry = ObjectURLRegistry::singleton();
     // SAFETY: `bun_vm_ptr()` returns the live VM pointer for `global_object`.
-    let uuid = unsafe { registry.register(global_object.bun_vm_ptr(), blob) };
+    let uuid = registry.register(unsafe { &mut *global_object.bun_vm_ptr() }, blob);
     let mut str = bun_core::String::create_format(format_args!("blob:{}", uuid));
     str.transfer_to_js(global_object)
 }

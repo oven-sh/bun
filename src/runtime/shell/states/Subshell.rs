@@ -53,6 +53,9 @@ impl Subshell {
     /// # Safety
     /// `parent_shell` must point to a live `ShellExecEnv` owned by the parent
     /// state for the duration of this call.
+    // Caller (Interpreter::spawn_expr) holds the parent env as a raw pointer;
+    // the safety contract is documented above and at the call site.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn init_dupe_shell_state(
         interp: &Interpreter,
         parent_shell: *mut ShellExecEnv,
@@ -60,6 +63,9 @@ impl Subshell {
         parent: NodeId,
         io: IO,
     ) -> bun_sys::Result<NodeId> {
+        // SAFETY: caller guarantees `parent_shell` points to a live
+        // `ShellExecEnv` owned by the parent state for the duration of this
+        // call (see `# Safety` above).
         let duped = unsafe { (*parent_shell).dupe_for_subshell(&io, ShellExecEnvKind::Subshell) }?;
         Ok(Self::init(interp, duped, node, parent, io))
     }

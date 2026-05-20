@@ -362,7 +362,7 @@ unsafe fn init_runtime_state(
         // inner `Box<Arena>` payload is heap-stable and outlives the
         // `Transpiler` (reclaimed in `deinit_runtime_state` after the VM —
         // and hence `vm.transpiler` — is done).
-        let arena: &'static bun_alloc::Arena = unsafe { &*(&raw const *(*state).transpiler_arena) };
+        let arena: &'static bun_alloc::Arena = unsafe { &*(*state).transpiler_arena };
         // Spec VirtualMachine.zig:1244 — forward `opts.env_loader` so the VM
         // shares the caller's `DotEnv.Loader` (e.g. `bun test` writes
         // `NODE_ENV=test` into it after init).
@@ -1410,7 +1410,7 @@ mod vm_loader_ctx {
             read_dir_info_package_json(dir) => {
                 // Short-lived `&mut Resolver` (not `&mut VirtualMachine`) for
                 // the call — narrows the borrow re-entrant JS could alias.
-                match (&mut (*this).transpiler.resolver).read_dir_info(dir) {
+                match (*this).transpiler.resolver.read_dir_info(dir) {
                     Ok(Some(dir_info)) => {
                         dir_info
                             .package_json()
@@ -2682,7 +2682,7 @@ fn transpile_source_code_inner(
                         // SAFETY: `Part.stmts` is an arena-owned slice; the
                         // arena outlives this call (returned to the VM by the
                         // scopeguard above only after we return).
-                        let stmt = unsafe { &(*part.stmts)[0] };
+                        let stmt = &(*part.stmts)[0];
                         let bun_ast::StmtData::SExpr(s_expr) = &stmt.data else {
                             // Parser guarantees JSON/TOML/YAML produce a single
                             // `SExpr` part; anything else is a parser bug.
@@ -4599,9 +4599,7 @@ pub(crate) fn resolve_embedded_file_to_buf(
     // Spec ModuleLoader.zig:47 — `bun.fs.FileSystem.instance.tmpdir()`.
     // SAFETY: `FileSystem::instance()` returns the process-global singleton
     // pointer (initialized at startup).
-    let tmpdir = (unsafe { &mut *Fs::FileSystem::instance() })
-        .tmpdir()
-        .ok()?;
+    let tmpdir = (*Fs::FileSystem::instance()).tmpdir().ok()?;
     let tmpdir_fd: bun_sys::Fd = tmpdir.fd;
 
     // Spec ModuleLoader.zig:50-51 — `bun.Tmpfile.create(tmpdir, tmpfilename)`.
@@ -5207,6 +5205,7 @@ pub fn __bun_get_vm_ctx(kind: bun_io::AllocatorType) -> bun_io::EventLoopCtx {
             // for the process and `as_event_loop_ctx` only stores it as a tagged
             // backref.
             let mini = bun_event_loop::MiniEventLoop::GLOBAL.with(|g| g.get());
+            // SAFETY: `mini` is the live process-global `MiniEventLoop` (see above).
             bun_event_loop::MiniEventLoop::MiniEventLoop::as_event_loop_ctx(unsafe { &mut *mini })
         }
     }

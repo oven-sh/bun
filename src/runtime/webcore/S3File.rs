@@ -329,9 +329,9 @@ pub fn exists(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValu
                     "Expected a S3 or path to check if it exists"
                 )));
             }
-            let mut blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
+            let blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
 
-            S3BlobStatTask::exists(global, &mut blob)
+            S3BlobStatTask::exists(global, &blob)
         }
         PathOrBlob::Blob(blob) => blob.get_exists(global, callframe),
     }
@@ -897,9 +897,9 @@ pub fn stat(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>
                 return Err(global
                     .throw_invalid_arguments(format_args!("Expected a S3 or path to get size")));
             }
-            let mut blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
+            let blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
 
-            S3BlobStatTask::stat(global, &mut blob)
+            S3BlobStatTask::stat(global, &blob)
         }
         PathOrBlob::Blob(blob) => S3BlobStatTask::stat(global, blob),
     }

@@ -295,7 +295,7 @@ pub fn filter<'a>(
         let tf = test_files[i];
         let maybe_source = slot_to_source[i];
         let keep = changed_files.contains(tf.slice())
-            || maybe_source.map_or(false, |src| affected.is_set(src as usize));
+            || maybe_source.is_some_and(|src| affected.is_set(src as usize));
 
         if keep {
             test_files[write] = tf;
@@ -366,12 +366,10 @@ pub fn init_watch_trigger() {
                 use std::io::Write as _;
                 write!(
                     &mut fresh,
-                    "{}{}{}{:x}{}",
+                    "{}{}.bun-test-changed-{:x}.trigger",
                     BStr::new(strings::without_trailing_slash(tmpdir)),
                     SEP as char,
-                    ".bun-test-changed-",
                     rand,
-                    ".trigger",
                 )
                 .expect("unreachable");
             }

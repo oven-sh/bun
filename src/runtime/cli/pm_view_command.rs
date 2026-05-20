@@ -318,10 +318,10 @@ pub fn view(
                 if json_output {
                     Output::print(format_args!(
                         "{}\n",
-                        bun_fmt::format_json_string_utf8(&slice, Default::default())
+                        bun_fmt::format_json_string_utf8(slice, Default::default())
                     ));
                 } else {
-                    Output::print(format_args!("{}\n", BStr::new(&*slice)));
+                    Output::print(format_args!("{}\n", BStr::new(slice)));
                 }
                 Output::flush();
                 return Ok(());

@@ -186,6 +186,10 @@ impl SecureContext {
         self.ctx
     }
 
+    // Codegen's `host_fn_finalize` calls this via `|b| SecureContext::finalize(b)`
+    // and requires `fn finalize(self: Box<Self>)`; clippy::boxed_local is a
+    // false positive on that contract.
+    #[allow(clippy::boxed_local)]
     pub fn finalize(self: Box<Self>) {
         // SAFETY: `ctx` was created by `SSL_CTX_new`; freed exactly once here.
         unsafe { boringssl::SSL_CTX_free(self.ctx) };

@@ -127,17 +127,11 @@ impl Protocol {
     };
 
     pub fn is_tls(self) -> bool {
-        match self {
-            Protocol::StandaloneTls | Protocol::StandaloneTlsUnix => true,
-            _ => false,
-        }
+        matches!(self, Protocol::StandaloneTls | Protocol::StandaloneTlsUnix)
     }
 
     pub fn is_unix(self) -> bool {
-        match self {
-            Protocol::StandaloneUnix | Protocol::StandaloneTlsUnix => true,
-            _ => false,
-        }
+        matches!(self, Protocol::StandaloneUnix | Protocol::StandaloneTlsUnix)
     }
 }
 
@@ -340,10 +334,10 @@ pub struct DeferredFailure {
 }
 
 impl DeferredFailure {
-    pub fn run(self: Box<Self>) -> JsTerminated<()> {
+    pub fn run(self) -> JsTerminated<()> {
         // PORT NOTE: Zig `defer { free(message); destroy(this) }` — both handled by Box<Self> drop.
         debug!("running deferred failure");
-        let mut this = *self;
+        let mut this = self;
         let err = valkey_error_to_js(&this.global_this, &*this.message, this.err);
         ValkeyClient::reject_all_pending_commands(
             &mut this.in_flight,
@@ -362,7 +356,7 @@ impl DeferredFailure {
         fn run_raw(ptr: *mut DeferredFailure) -> bun_event_loop::JsResult<()> {
             // SAFETY: `ptr` was produced by `heap::alloc` below; we are the sole owner.
             let this = unsafe { bun_core::heap::take(ptr) };
-            DeferredFailure::run(this).map_err(Into::into)
+            DeferredFailure::run(*this).map_err(Into::into)
         }
         let managed_task =
             bun_jsc::ManagedTask::ManagedTask::new(bun_core::heap::into_raw(self), run_raw);
@@ -589,8 +583,7 @@ impl ValkeyClient {
             self.write_buffer
                 .consume(u32::try_from(wrote).expect("int cast"));
         }
-        let has_remaining = self.write_buffer.len() > 0;
-        has_remaining
+        self.write_buffer.len() > 0
     }
 
     /// Mark the connection as failed with error message
@@ -1533,7 +1526,7 @@ impl ValkeyClient {
     }
 
     pub fn on_valkey_connect(&mut self, value: &mut RESPValue) -> JsTerminated<()> {
-        Ok(self.parent().on_valkey_connect(value)?)
+        self.parent().on_valkey_connect(value)
     }
 
     pub fn on_valkey_subscribe(&mut self, value: &mut RESPValue) {
@@ -1553,7 +1546,7 @@ impl ValkeyClient {
     }
 
     pub fn on_valkey_close(&mut self) -> JsTerminated<()> {
-        Ok(self.parent().on_valkey_close()?)
+        self.parent().on_valkey_close()
     }
 
     pub fn on_valkey_timeout(&mut self) {

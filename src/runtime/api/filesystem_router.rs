@@ -413,7 +413,7 @@ impl FileSystemRouter {
                         // SAFETY: `entry_ptr` is a live `*mut Entry` in the process-static
                         // EntryStore (checked non-null above); no shared `&Entry` is live
                         // here. entries_mutex held; fs_impl is the process-global RealFS.
-                        unsafe { (&mut *entry_ptr).kind(fs_impl, false) }
+                        unsafe { (&*entry_ptr).kind(fs_impl, false) }
                     };
                     if kind == Fs::EntryKind::Dir {
                         for banned_dir in Router::BANNED_DIRS.iter() {
@@ -689,6 +689,10 @@ impl FileSystemRouter {
         Ok(JSValue::NULL)
     }
 
+    // Codegen's `host_fn_finalize` calls this via `|b| FileSystemRouter::finalize(b)`
+    // and requires `fn finalize(self: Box<Self>)`; clippy::boxed_local is a
+    // false positive on that contract.
+    #[allow(clippy::boxed_local)]
     pub fn finalize(mut self: Box<Self>) {
         // PORT NOTE: RefString deref()s — Zig `?.deref()` on each. `BackRef` Derefs
         // to `&RefString`; use `.get()` to avoid resolving to `<BackRef as Deref>::deref`.

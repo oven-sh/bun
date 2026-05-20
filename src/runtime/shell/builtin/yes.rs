@@ -252,14 +252,13 @@ impl YesTask {
 
     /// Spec: yes.zig `YesTask.runFromMainThread`.
     ///
-    /// # Safety
-    /// `this` must point to a live `YesTask` whose storage is stable inside
+    /// `this` must be a live `YesTask` whose storage is stable inside
     /// `Box<Yes>` in the interpreter arena, with `interp` initialised by
     /// [`Yes::start`]. Reached only via the concurrent-task dispatch installed
     /// in [`enqueue`](Self::enqueue).
-    pub fn run_from_main_thread(this: *mut Self) {
-        // SAFETY: caller contract above.
-        let (interp, cmd) = unsafe { (&*(*this).interp, (*this).cmd) };
+    pub fn run_from_main_thread(this: &Self) {
+        // SAFETY: `interp` was set in `Yes::start` and outlives the task.
+        let (interp, cmd) = unsafe { (&*this.interp, this.cmd) };
         Yes::write_no_io_loop(interp, cmd).run(interp);
     }
 
@@ -269,7 +268,7 @@ impl YesTask {
     fn run_from_main_thread_mini(this: *mut Self, _: *mut ()) {
         // SAFETY: dispatch contract — `this` is the live task previously passed
         // to `enqueue`; see `run_from_main_thread`.
-        Self::run_from_main_thread(this)
+        Self::run_from_main_thread(unsafe { &*this })
     }
 }
 

@@ -543,9 +543,8 @@ impl Builtin {
     /// Spec: Builtin.zig `initRedirections` (lines 413-627). Opens redirect
     /// files / wires ArrayBuffer & Blob targets / handles `2>&1` (`duplicate_out`).
     fn init_redirections(interp: &Interpreter, cmd: NodeId, kind: Kind) -> Option<Yield> {
-        // SAFETY: `node` points into the AST arena which outlives every state
-        // node (see Cmd::next).
-        let node: &ast::Cmd = unsafe { &*interp.as_cmd(cmd).node };
+        // `node` points into the AST arena which outlives every state node (see Cmd::next).
+        let node: &ast::Cmd = &*interp.as_cmd(cmd).node;
         let redirect = node.redirect;
 
         match &node.redirect_file {
@@ -665,8 +664,7 @@ impl Builtin {
                 let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                 if redirect.stdin() {
                     let r = IOReader::init(redirfd, evtloop);
-                    // SAFETY: `interp_ptr` is the live `Interpreter` this builtin runs under.
-                    unsafe { r.set_interp(interp_ptr) };
+                    r.set_interp(interp_ptr);
                     Self::of_mut(interp, cmd).stdin = BuiltinInput::Fd(r);
                 }
 
@@ -690,8 +688,7 @@ impl Builtin {
                     },
                     evtloop,
                 );
-                // SAFETY: `interp_ptr` is the live `Interpreter` this builtin runs under.
-                unsafe { redirect_writer.set_interp(interp_ptr) };
+                redirect_writer.set_interp(interp_ptr);
 
                 if redirect.stdout() {
                     let me = Self::of_mut(interp, cmd);

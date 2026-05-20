@@ -447,11 +447,9 @@ impl Terminal {
                 options.rows
             }),
             _term_name: term_name,
-            // SAFETY: bun_vm() returns the live VM raw pointer for this global;
-            // `event_loop()` is the live per-thread `jsc::EventLoop`.
-            event_loop_handle: unsafe {
-                EventLoopHandle::init(global_object.bun_vm().as_mut().event_loop().cast())
-            },
+            event_loop_handle: EventLoopHandle::init(
+                global_object.bun_vm().as_mut().event_loop().cast(),
+            ),
             global_this: bun_ptr::BackRef::new(global_object),
             writer: JsCell::new(IOWriter::default()),
             reader: JsCell::new(IOReader::init::<Terminal>()),

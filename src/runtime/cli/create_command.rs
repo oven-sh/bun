@@ -299,8 +299,10 @@ impl CreateCommand {
                     bun_paths::platform::Loose,
                 >(filesystem.top_level_dir, dirname))?;
 
-        let mut progress = Progress::default();
-        progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
+        let mut progress = Progress {
+            supports_ansi_escape_codes: Output::enable_ansi_colors_stderr(),
+            ..Default::default()
+        };
         // PORT NOTE: reshaped for borrowck — `Progress::start` returns
         // `&mut Node` borrowing `progress` exclusively for the node's lifetime.
         // Convert to `*mut` immediately so `progress` and `node` can be used
@@ -1745,8 +1747,7 @@ impl CreateCommand {
                 'outer: {
                     if let Some(home_dir) = env_loader.map.get(b"HOME") {
                         let parts = [home_dir, BUN_CREATE_DIR, positional];
-                        // SAFETY: `filesystem` is the process-global FileSystem singleton (non-null after init).
-                        let outdir_path = unsafe { &*filesystem }.abs_buf(&parts, home_dir_buf);
+                        let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
                         let len = outdir_path.len();
                         home_dir_buf[len] = 0;
                         // SAFETY: home_dir_buf[len] == 0 written above
@@ -2723,8 +2724,10 @@ impl CreateListExamplesCommand {
 
         env_loader.load_process()?;
 
-        let mut progress = Progress::default();
-        progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
+        let mut progress = Progress {
+            supports_ansi_escape_codes: Output::enable_ansi_colors_stderr(),
+            ..Default::default()
+        };
         // PORT NOTE: `Progress::start` returns `&mut Node` borrowing `progress`; detach
         // via raw pointer so `progress.refresh()` can re-borrow below (mirrors Zig where
         // both held independent `*Node`/`*Progress` pointers).

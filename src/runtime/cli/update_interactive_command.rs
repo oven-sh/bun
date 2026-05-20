@@ -911,7 +911,7 @@ impl UpdateInteractiveCommand {
         let cache_ctx = manager.manifest_disk_cache_ctx();
         let min_age_ms = manager.options.minimum_release_age_ms;
         let needs_extended = min_age_ms.is_some();
-        let excludes = manager.options.minimum_release_age_excludes.as_deref();
+        let excludes = manager.options.minimum_release_age_excludes;
         let update_to_latest = manager.options.do_.update_to_latest();
         let default_url_hash = *bun_install::npm::Registry::DEFAULT_URL_HASH;
         let global_uses_default_registry = manager.options.scope.url_hash == default_url_hash;

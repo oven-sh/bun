@@ -245,6 +245,9 @@ impl Route {
     /// # Safety
     /// `html_bundle` must point to a live `IntrusiveRc`-managed `HTMLBundle`
     /// allocation; this takes one ref on it.
+    // Forwards `html_bundle` to `IntrusiveRc::init_ref` without dereferencing it
+    // here; not_unsafe_ptr_arg_deref is a false positive on forwarding wrappers.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn init(html_bundle: *mut HTMLBundle) -> IntrusiveRc<Route> {
         IntrusiveRc::new(Route {
             // SAFETY: caller contract.
@@ -358,8 +361,10 @@ impl Route {
                     // matched by the deref in `PendingResponse` drop / on_aborted.
                     unsafe { RefCount::<Route>::ref_(this) };
                     resp.on_aborted(
-                        // SAFETY: `p` was registered from a live `heap::into_raw` allocation above.
-                        |p, r| PendingResponse::on_aborted(p, r),
+                        |p, r| {
+                            // SAFETY: `p` was registered from a live `heap::into_raw` allocation above.
+                            unsafe { PendingResponse::on_aborted(p, r) }
+                        },
                         pending,
                     );
                     req.set_yield(false);
@@ -822,7 +827,7 @@ impl PendingResponse {
     /// `this` must point to a live `PendingResponse` previously boxed via
     /// `heap::into_raw` and registered with `resp.on_aborted`; it may be freed
     /// (via `heap::take`) by this call.
-    pub fn on_aborted(this: *mut PendingResponse, _resp: AnyResponse) {
+    unsafe fn on_aborted(this: *mut PendingResponse, _resp: AnyResponse) {
         // SAFETY: caller contract.
         let this_ref = unsafe { &mut *this };
         debug_assert!(this_ref.is_response_pending);

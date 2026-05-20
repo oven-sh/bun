@@ -1363,6 +1363,11 @@ pub fn bun_resolve_sync(
 /// # Safety
 /// `paths_ptr` must be null or point to `paths_len` initialized `BunString`s
 /// that remain valid for the duration of this call.
+// FFI entry point exported via HOST_EXPORT and called only from C++
+// (ImportMetaObject.cpp / NodeModuleModule.cpp), which upholds the contract
+// above. clippy excludes `extern "C"` fns from this lint; the export wrapper
+// lives in generated code, so allow it here.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn bun_resolve_sync_with_paths(
     global: &JSGlobalObject,
     specifier: JSValue,
@@ -2611,7 +2616,7 @@ pub mod JSZlib {
                     }
                 };
 
-                if let Err(_) = reader.read_all(true) {
+                if reader.read_all(true).is_err() {
                     let msg = reader.error_message().unwrap_or(b"Zlib returned an error");
                     return Err(global_this
                         .throw_value(ZigString::init(msg).to_error_instance(global_this)));
@@ -2765,7 +2770,7 @@ pub mod JSZlib {
                     }
                 };
 
-                if let Err(_) = reader.read_all() {
+                if reader.read_all().is_err() {
                     let msg = reader.error_message().unwrap_or(b"Zlib returned an error");
                     return Err(global_this
                         .throw_value(ZigString::init(msg).to_error_instance(global_this)));
@@ -3164,7 +3169,7 @@ mod stdio_stores {
         });
         let blob = Blob::new(Blob::init_with_store(store, global_this));
         // SAFETY: `Blob::new` heap-allocates; the JS wrapper takes ownership.
-        unsafe { (&mut *blob).to_js(global_this) }
+        unsafe { (&*blob).to_js(global_this) }
     }
 
     pub fn stdin(global_this: &JSGlobalObject) -> JSValue {

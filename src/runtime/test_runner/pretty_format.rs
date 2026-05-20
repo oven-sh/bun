@@ -387,12 +387,11 @@ impl<'a> Formatter<'a> {
 // the borrow-aliasing a `scopeguard` would introduce.
 impl Drop for Formatter<'_> {
     fn drop(&mut self) {
-        if let Some(node) = self.map_node.take() {
+        if let Some(mut node) = self.map_node.take() {
             // SAFETY: `node` came from `visited::Pool::get_node()` and is
             // exclusively owned for this `Formatter`'s lifetime; its `data` was
             // initialized by `Map::INIT`, so `assume_init_mut` observes a valid
             // `Map`.
-            let mut node = node;
             unsafe {
                 let data = node.as_mut().data.assume_init_mut();
                 *data = core::mem::take(&mut self.map);
@@ -1886,7 +1885,8 @@ impl<'a> Formatter<'a> {
 
                     if length == 0 {
                         self.quote_strings = prev_quote_strings;
-                        return Ok(writer.print(format_args!("{} {{}}", map_name)));
+                        writer.print(format_args!("{} {{}}", map_name));
+                        return Ok(());
                     }
 
                     writer.print(format_args!("\n{} {{\n", map_name));
@@ -1931,7 +1931,8 @@ impl<'a> Formatter<'a> {
 
                     if length == 0 {
                         self.quote_strings = prev_quote_strings;
-                        return Ok(writer.print(format_args!("{} {{}}", set_name)));
+                        writer.print(format_args!("{} {{}}", set_name));
+                        return Ok(());
                     }
 
                     writer.print(format_args!("\n{} {{\n", set_name));

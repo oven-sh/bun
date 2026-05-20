@@ -46,6 +46,9 @@ impl ShellAsyncSubprocessDone {
     /// `this` must be the live `heap::alloc` payload enqueued by
     /// `ShellSubprocess::on_process_exit`, and `(*this).interp` must outlive
     /// the call. Ownership of `*this` is consumed.
+    // Dispatch trampoline: `this` validity is guaranteed by the `run_task`
+    // contract; signature is fixed by `dispatch.rs`.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn run_from_main_thread(this: *mut Self) {
         // SAFETY: dispatch contract — `this` is the live `heap::alloc` payload
         // enqueued by `ShellSubprocess::on_process_exit`; `interp` outlives
@@ -76,6 +79,9 @@ impl AsyncDeinitWriter {
     /// # Safety
     /// `this` must be the live `heap::alloc` payload enqueued by
     /// `IOWriter::async_deinit`. Ownership of `*this` is consumed.
+    // Dispatch trampoline: `this` validity is guaranteed by the `run_task`
+    // contract; signature is fixed by `dispatch.rs`.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn run_from_main_thread(this: *mut Self) {
         // SAFETY: dispatch contract — `this` is the live `heap::alloc` payload
         // enqueued by `IOWriter::async_deinit`.
@@ -99,6 +105,9 @@ impl AsyncDeinitReader {
     /// # Safety
     /// `this` must be the live `heap::alloc` payload enqueued by
     /// `IOReader::async_deinit`. Ownership of `*this` is consumed.
+    // Dispatch trampoline: `this` validity is guaranteed by the `run_task`
+    // contract; signature is fixed by `dispatch.rs`.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn run_from_main_thread(this: *mut Self) {
         // SAFETY: dispatch contract — `this` is the live `heap::alloc` payload
         // enqueued by `IOReader::async_deinit`.
@@ -126,6 +135,9 @@ impl ShellCondExprStatTask {
     /// # Safety
     /// `this` must be a live `heap::alloc` payload paired with the schedule
     /// site. Ownership of `*this` is consumed.
+    // Dispatch trampoline: `this` validity is guaranteed by the `run_task`
+    // contract; signature is fixed by `dispatch.rs`.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         // SAFETY: live Box'd task; paired with `heap::alloc` at schedule time.
         let owned = unsafe { bun_core::heap::take(this) };
@@ -167,6 +179,9 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellGlobTask {
             Err(e) => this.err = Some(ShellGlobErr::Unknown(e)),
         }
     }
+    // Dispatch trampoline: `this` validity is guaranteed by the `run_task`
+    // contract; signature is fixed by the `ShellTaskCtx` trait.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         // SAFETY: paired with `heap::alloc` in `create_and_schedule`.
         let mut me = unsafe { bun_core::heap::take(this) };

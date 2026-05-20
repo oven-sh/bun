@@ -398,10 +398,10 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
 
         // First check if the second quarter is the seed for a half-match.
         let half_match_1 =
-            self.diff_half_match_internal(long_text, short_text, (long_text.len() + 3) / 4)?;
+            self.diff_half_match_internal(long_text, short_text, long_text.len().div_ceil(4))?;
         // Check again based on the third quarter.
         let half_match_2 =
-            self.diff_half_match_internal(long_text, short_text, (long_text.len() + 1) / 2)?;
+            self.diff_half_match_internal(long_text, short_text, long_text.len().div_ceil(2))?;
 
         let half_match: HalfMatchResult<Unit> = match (half_match_1, half_match_2) {
             (None, None) => return Ok(None),
@@ -509,7 +509,7 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
     ) -> Result<DiffList<Unit>, DiffError> {
         let before_length: isize = isize::try_from(before.len()).unwrap();
         let after_length: isize = isize::try_from(after.len()).unwrap();
-        let max_d: isize = isize::try_from((before.len() + after.len() + 1) / 2).unwrap();
+        let max_d: isize = isize::try_from((before.len() + after.len()).div_ceil(2)).unwrap();
         let v_offset = max_d;
         let v_length = 2 * max_d;
 
@@ -742,7 +742,7 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
                         let sub_len = sub_diff.len();
                         // PERF(port): was ensureUnusedCapacity + addManyAtAssumeCapacity + @memcpy
                         diffs.splice(pointer..pointer, sub_diff);
-                        pointer = pointer + sub_len;
+                        pointer += sub_len;
                     }
                     count_insert = 0;
                     count_delete = 0;

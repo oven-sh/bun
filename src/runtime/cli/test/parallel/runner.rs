@@ -223,7 +223,7 @@ pub fn run_as_coordinator(
         worker_tmpdir: worker_tmpdir.path(),
         parallel_limit: k,
         scale_up_after_ms: if let Some(d) = ctx.test_options.parallel_delay_ms {
-            i64::try_from(d).unwrap()
+            i64::from(d)
         } else if let Some(s) = env.get(b"BUN_TEST_PARALLEL_SCALE_MS") {
             bun_core::fmt::parse_int::<i64>(s, 10)
                 .unwrap_or(DEFAULT_SCALE_UP_AFTER_MS)
@@ -658,6 +658,10 @@ impl<'a> WorkerLoop<'a> {
 /// `vm` must be a valid, exclusively-accessed pointer to a live `VirtualMachine`
 /// for the entire duration of the call (i.e. for the rest of the process, since
 /// this never returns).
+// `vm` must stay a raw pointer: it is stored in `WorkerLoop`/`WorkerCommands`
+// while a `&mut` derived from it (`vm_ref`) is also live, so a reference param
+// would alias. The `# Safety` contract above documents the caller's obligation.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn run_as_worker(
     reporter: &mut CommandLineReporter,
     vm: *mut VirtualMachine,

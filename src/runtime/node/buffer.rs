@@ -32,20 +32,26 @@ mod _impl {
             // PORT NOTE: encoder::write_u8/write_u16 take the encoding as a const-generic
             // `u8` (stable-Rust workaround for `adt_const_params`) — `dispatch_encoding!`
             // expands the runtime `encoding` into nine monomorphized arms.
+            // SAFETY: `s` and `buf` are valid slices derived above; the source/destination
+            // pointers and lengths passed to the encoder are exactly those slice bounds.
             let result = if str.is_16_bit() {
                 let s = str.utf16_slice_aligned();
                 dispatch_encoding!(encoding, {
-                    Encoding::Ucs2 => encoder::write_u16::<{ Encoding::Utf16le as u8 }, true>(
+                    // SAFETY: caller (`extern "C"` fill) guarantees `s`/`buf` are valid disjoint buffers per the Buffer.fill contract.
+                    Encoding::Ucs2 => unsafe { encoder::write_u16::<{ Encoding::Utf16le as u8 }, true>(
                         s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len(),
-                    ),
-                }, |E| encoder::write_u16::<E, true>(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len()))
+                    ) },
+                // SAFETY: caller (`extern "C"` fill) guarantees `s`/`buf` are valid disjoint buffers per the Buffer.fill contract.
+                }, |E| unsafe { encoder::write_u16::<E, true>(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len()) })
             } else {
                 let s = str.slice();
                 dispatch_encoding!(encoding, {
-                    Encoding::Ucs2 => encoder::write_u8::<{ Encoding::Utf16le as u8 }>(
+                    // SAFETY: caller (`extern "C"` fill) guarantees `s`/`buf` are valid disjoint buffers per the Buffer.fill contract.
+                    Encoding::Ucs2 => unsafe { encoder::write_u8::<{ Encoding::Utf16le as u8 }>(
                         s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len(),
-                    ),
-                }, |E| encoder::write_u8::<E>(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len()))
+                    ) },
+                // SAFETY: caller (`extern "C"` fill) guarantees `s`/`buf` are valid disjoint buffers per the Buffer.fill contract.
+                }, |E| unsafe { encoder::write_u8::<E>(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len()) })
             };
             // Zig writeU8/writeU16 return `!usize`; Rust port returns `Result<usize, _>` so `written` is already usize.
             let Ok(written) = result else {

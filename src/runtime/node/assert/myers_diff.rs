@@ -285,7 +285,7 @@ impl<L: Line, const CHECK_COMMA_DISPARITY: bool> Differ<L, CHECK_COMMA_DISPARITY
     }
 
     fn backtrack(
-        trace: &Vec<Box<[uint]>>,
+        trace: &[Box<[uint]>],
         actual: &[L],
         expected: &[L],
     ) -> Result<DiffList<L>, Error> {
@@ -625,8 +625,7 @@ where
     let newline: T = T::from(b'\n');
     //
     // thing
-    let mut lines: Vec<&[T]> = Vec::new();
-    lines.reserve(s.len() >> 4);
+    let mut lines: Vec<&[T]> = Vec::with_capacity(s.len() >> 4);
     // (Zig: errdefer lines.deinit — Drop handles it.)
     for l in s.split(|c| *c == newline) {
         lines.push(l);

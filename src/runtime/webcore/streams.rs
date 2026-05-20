@@ -690,6 +690,9 @@ impl Pending {
     /// # Safety
     /// `this` must be a valid, uniquely-owned pointer previously produced by
     /// `bun_core::heap::into_raw` (via `Task::from_boxed` in `run_on_next_tick`).
+    // Forwards `this` to `bun_core::heap::take` without dereferencing it here;
+    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn run_from_js_thread(this: *mut Pending) {
         // SAFETY: this was heap-allocated in run_on_next_tick
         let mut boxed = unsafe { bun_core::heap::take(this) };
@@ -1521,12 +1524,8 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
                     // SAFETY: pooled_node is a valid pool checkout; `data` was
                     // written by `ByteListPool::push` (or zero-initialized).
                     // Move the Vec<u8> out by bitwise read and reset the slot.
-                    self.buffer = unsafe {
-                        core::mem::replace(
-                            (*pooled_node.as_ptr()).data.assume_init_mut(),
-                            Vec::<u8>::default(),
-                        )
-                    };
+                    self.buffer =
+                        unsafe { core::mem::take((*pooled_node.as_ptr()).data.assume_init_mut()) };
                 }
             }
         }
@@ -1907,6 +1906,9 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     /// # Safety
     /// `this` must be a valid, uniquely-owned heap pointer to `Self` produced
     /// by `bun_core::heap::into_raw`; the caller transfers ownership.
+    // Forwards `this` to `bun_core::heap::take` without dereferencing it here;
+    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn destroy(this: *mut Self) {
         bun_core::scoped_log!(HTTPServerWritableLog, "destroy()");
         // SAFETY: this was heap-allocated; destroy takes sole ownership. Reclaim
@@ -2194,8 +2196,8 @@ impl NetworkSink {
 
     fn detach_writable(&mut self) {
         if let Some(task) = self.task.take() {
-            // SAFETY: task is ref-counted; deref releases our ref
-            unsafe { bun_s3::MultiPartUpload::deref_(task.as_ptr()) };
+            // task is ref-counted; deref releases our ref
+            bun_s3::MultiPartUpload::deref_(task.as_ptr());
         }
     }
 
@@ -2256,6 +2258,9 @@ impl NetworkSink {
     /// # Safety
     /// `this` must be a valid, uniquely-owned heap pointer to `Self` produced
     /// by `bun_core::heap::into_raw`; the caller transfers ownership.
+    // Forwards `this` to `bun_core::heap::take` without dereferencing it here;
+    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn finalize_and_destroy(this: *mut Self) {
         // SAFETY: this was heap-allocated; reclaim sole ownership before
         // touching fields so no `&mut *this` is live alongside the Box.

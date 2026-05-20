@@ -969,7 +969,9 @@ where
 
     /// # Safety
     /// `ctx` must point to a live `RequestContext` threaded through cork user-data.
-    pub fn render_missing_corked(ctx: *mut Self) {
+    pub(crate) fn render_missing_corked(ctx: *mut Self) {
+        // SAFETY: caller upholds the fn-level contract — `ctx` is the live
+        // `RequestContext` threaded through cork user-data.
         let ctx = unsafe { &mut *ctx };
         if let Some(resp) = ctx.resp {
             if !DEBUG_MODE {
@@ -1022,11 +1024,8 @@ where
         if !self.flags.has_written_status() {
             self.flags.set_has_written_status(true);
             if let Some(resp) = self.resp {
-                // SAFETY: FFI handle
-                unsafe {
-                    resp.write_status(b"500 Internal Server Error");
-                    resp.write_header(b"content-type", &bun_http_types::MimeType::HTML.value);
-                }
+                resp.write_status(b"500 Internal Server Error");
+                resp.write_header(b"content-type", &bun_http_types::MimeType::HTML.value);
             }
         }
 
@@ -1065,10 +1064,7 @@ where
         Fallback::render_backend(&fallback_container, &mut bb).expect("unreachable");
         let try_end_ok = match self.resp {
             None => true,
-            Some(resp) => unsafe {
-                // SAFETY: FFI handle
-                resp.try_end(&bb, bb.len(), self.should_close_connection())
-            },
+            Some(resp) => resp.try_end(&bb, bb.len(), self.should_close_connection()),
         };
         if try_end_ok {
             drop(bb);
@@ -1085,9 +1081,7 @@ where
         if let Some(resp) = self.resp {
             // SAFETY: FFI handle
             resp.on_writable(
-                |this, off, resp| unsafe {
-                    Self::on_writable_complete_response_buffer(this, off, resp)
-                },
+                |this, off, resp| Self::on_writable_complete_response_buffer(this, off, resp),
                 self,
             );
         }
@@ -1140,11 +1134,8 @@ where
             // This will send a terminating 0\r\n\r\n chunk to the client
             // We only want to do that if they're still expecting a body
             // We cannot call this function if the Content-Length header was previously set
-            // SAFETY: FFI handle
-            unsafe {
-                if resp.state().is_response_pending() {
-                    resp.end_stream(close_connection);
-                }
+            if resp.state().is_response_pending() {
+                resp.end_stream(close_connection);
             }
             // No early returns above; explicit deref instead of a scopeguard
             // that would alias `&mut self` through a captured raw pointer.
@@ -1179,12 +1170,14 @@ where
 
     /// # Safety
     /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
-    pub fn on_writable_response_buffer(
+    pub(crate) fn on_writable_response_buffer(
         this: *mut Self,
         _write_offset: u64,
         _resp: uws::AnyResponse,
     ) -> bool {
         ctx_log!("onWritableResponseBuffer");
+        // SAFETY: caller upholds the fn-level contract — `this` is the live
+        // `RequestContext` user-data pointer registered with uWS.
         let this = unsafe { &mut *this };
         debug_assert!(this.resp.is_some());
         if this.is_aborted_or_ended() {
@@ -1194,42 +1187,16 @@ where
         false
     }
 
-    // TODO: should we cork?
     /// # Safety
     /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
-    pub fn on_writable_complete_response_buffer_and_metadata(
-        this: *mut Self,
-        write_offset: u64,
-        resp: uws::AnyResponse,
-    ) -> bool {
-        ctx_log!("onWritableCompleteResponseBufferAndMetadata");
-        let this = unsafe { &mut *this };
-        debug_assert!(this.resp.is_some());
-
-        if this.is_aborted_or_ended() {
-            return false;
-        }
-
-        if !this.flags.has_written_status() {
-            this.render_metadata();
-        }
-
-        if this.method == Method::HEAD {
-            this.end_without_body(this.should_close_connection());
-            return false;
-        }
-
-        this.send_writable_bytes_for_complete_response_buffer(write_offset, resp)
-    }
-
-    /// # Safety
-    /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
-    pub fn on_writable_complete_response_buffer(
+    pub(crate) fn on_writable_complete_response_buffer(
         this: *mut Self,
         write_offset: u64,
         resp: uws::AnyResponse,
     ) -> bool {
         ctx_log!("onWritableCompleteResponseBuffer");
+        // SAFETY: caller upholds the fn-level contract — `this` is the live
+        // `RequestContext` user-data pointer registered with uWS.
         let this = unsafe { &mut *this };
         debug_assert!(this.resp.is_some());
         if this.is_aborted_or_ended() {
@@ -1309,7 +1276,9 @@ where
 
     /// # Safety
     /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
-    pub fn on_timeout(this: *mut Self, _resp: uws::AnyResponse) {
+    pub(crate) fn on_timeout(this: *mut Self, _resp: uws::AnyResponse) {
+        // SAFETY: caller upholds the fn-level contract — `this` is the live
+        // `RequestContext` user-data pointer registered with uWS.
         let this = unsafe { &mut *this };
         debug_assert!(this.resp.is_some());
         debug_assert!(this.server.is_some());
@@ -1340,8 +1309,10 @@ where
 
     /// # Safety
     /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
-    pub fn on_abort(this: *mut Self, resp: uws::AnyResponse) {
+    pub(crate) fn on_abort(this: *mut Self, resp: uws::AnyResponse) {
         ctx_log!("onAbort");
+        // SAFETY: caller upholds the fn-level contract — `this` is the live
+        // `RequestContext` user-data pointer registered with uWS.
         let this = unsafe { &mut *this };
         debug_assert!(this.resp.is_some());
         // An HTTP/3 stream is destroyed once both sides FIN, so this also
@@ -1532,8 +1503,14 @@ where
 
     /// # Safety
     /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
-    pub fn on_writable_bytes(this: *mut Self, write_offset: u64, resp: uws::AnyResponse) -> bool {
+    pub(crate) fn on_writable_bytes(
+        this: *mut Self,
+        write_offset: u64,
+        resp: uws::AnyResponse,
+    ) -> bool {
         ctx_log!("onWritableBytes");
+        // SAFETY: caller upholds the fn-level contract — `this` is the live
+        // `RequestContext` user-data pointer registered with uWS.
         let this = unsafe { &mut *this };
         debug_assert!(this.resp.is_some());
         if this.is_aborted_or_ended() {
@@ -1606,9 +1583,7 @@ where
             self.flags.set_has_marked_pending(true);
             // SAFETY: FFI handle
             resp.on_writable(
-                |this, off, resp| unsafe {
-                    Self::on_writable_complete_response_buffer(this, off, resp)
-                },
+                |this, off, resp| Self::on_writable_complete_response_buffer(this, off, resp),
                 self,
             );
         }
@@ -1806,15 +1781,12 @@ where
                         RangeRequest::Result::Unsatisfiable,
                         Some(stat_size),
                     );
-                    // SAFETY: FFI handle
-                    unsafe {
-                        resp.write_header(b"content-range", cr);
-                        resp.write_header(b"accept-ranges", b"bytes");
-                        let close = resp.should_close_connection();
-                        self.detach_response();
-                        self.end_request_streaming_and_drain();
-                        resp.end(b"", close);
-                    }
+                    resp.write_header(b"content-range", cr);
+                    resp.write_header(b"accept-ranges", b"bytes");
+                    let close = resp.should_close_connection();
+                    self.detach_response();
+                    self.end_request_streaming_and_drain();
+                    resp.end(b"", close);
                     self.deref();
                     return;
                 }
@@ -1870,7 +1842,9 @@ where
 
     /// # Safety
     /// `this` must be a `*mut RequestContext` previously registered as `lock.task`.
-    pub fn do_render_with_body_locked(this: *mut c_void, value: &mut Body::Value) {
+    pub(crate) fn do_render_with_body_locked(this: *mut c_void, value: &mut Body::Value) {
+        // SAFETY: caller upholds the fn-level contract — `this` is the
+        // `*mut RequestContext` previously registered as `lock.task`.
         Self::do_render_with_body(unsafe { bun_ptr::callback_ctx::<Self>(this) }, value, None);
     }
 
@@ -1912,14 +1886,12 @@ where
     /// JSSink<T> is `repr(transparent)` so the inner-ptr free matches the
     /// outer allocation.
     fn destroy_sink(ptr: NonNull<ResponseStreamJSSink<SSL_ENABLED, HTTP3>>) {
-        // SAFETY: `ptr` was `heap::alloc`'d in do_render_stream and is being
-        // consumed exactly once here. `JSSink<T>` is repr(transparent), so the
-        // inner `HTTPServerWritable` shares the allocation Layout.
-        unsafe {
-            ResponseStream::<SSL_ENABLED, HTTP3>::destroy(
-                ptr.as_ptr().cast::<ResponseStream<SSL_ENABLED, HTTP3>>(),
-            );
-        }
+        // `ptr` was `heap::alloc`'d in do_render_stream and is being consumed
+        // exactly once here. `JSSink<T>` is repr(transparent), so the inner
+        // `HTTPServerWritable` shares the allocation Layout.
+        ResponseStream::<SSL_ENABLED, HTTP3>::destroy(
+            ptr.as_ptr().cast::<ResponseStream<SSL_ENABLED, HTTP3>>(),
+        );
     }
 
     fn do_render_stream(pair: *mut StreamPair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3>) {
@@ -2270,20 +2242,17 @@ where
         self.request_body_buf = Vec::new();
 
         if let Some(resp) = self.resp.take() {
-            // SAFETY: FFI handle
-            unsafe {
-                if self.flags.is_waiting_for_request_body() {
-                    self.flags.set_is_waiting_for_request_body(false);
-                    resp.clear_on_data();
-                }
-                if self.flags.has_abort_handler() {
-                    resp.clear_aborted();
-                    self.flags.set_has_abort_handler(false);
-                }
-                if self.flags.has_timeout_handler() {
-                    resp.clear_timeout();
-                    self.flags.set_has_timeout_handler(false);
-                }
+            if self.flags.is_waiting_for_request_body() {
+                self.flags.set_is_waiting_for_request_body(false);
+                resp.clear_on_data();
+            }
+            if self.flags.has_abort_handler() {
+                resp.clear_aborted();
+                self.flags.set_has_abort_handler(false);
+            }
+            if self.flags.has_timeout_handler() {
+                resp.clear_timeout();
+                self.flags.set_has_timeout_handler(false);
             }
         }
     }
@@ -2299,9 +2268,11 @@ where
 
     /// # Safety
     /// `pair` must point to a live stack-local `HeaderResponseSizePair` threaded through cork user-data.
-    pub fn do_render_head_response_after_s3_size_resolved(
+    pub(crate) fn do_render_head_response_after_s3_size_resolved(
         pair: *mut HeaderResponseSizePair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3>,
     ) {
+        // SAFETY: caller upholds the fn-level contract — `pair` points to a
+        // live stack-local `HeaderResponseSizePair` threaded through cork user-data.
         let pair = unsafe { &mut *pair };
         let this = &mut *pair.this;
         this.render_metadata();
@@ -2383,10 +2354,7 @@ where
                     // the bytes outlive renderMetadata().
                     let transfer_encoding_str = transfer_encoding.to_slice_clone();
                     this.render_metadata();
-                    // SAFETY: FFI handle
-                    unsafe {
-                        resp.write_header(b"transfer-encoding", transfer_encoding_str.slice())
-                    };
+                    resp.write_header(b"transfer-encoding", transfer_encoding_str.slice());
                     this.end_without_body(this.should_close_connection());
                     return;
                 }
@@ -2414,13 +2382,10 @@ where
                 let size = blob.size();
                 this.render_metadata();
 
-                // SAFETY: FFI handle
-                unsafe {
-                    if size == crate::webcore::blob::MAX_SIZE {
-                        resp.write_header_int(b"content-length", 0);
-                    } else {
-                        resp.write_header_int(b"content-length", size as u64);
-                    }
+                if size == crate::webcore::blob::MAX_SIZE {
+                    resp.write_header_int(b"content-length", 0);
+                } else {
+                    resp.write_header_int(b"content-length", size as u64);
                 }
                 this.end_without_body(this.should_close_connection());
                 blob.detach();
@@ -2462,13 +2427,10 @@ where
                 this.render_metadata();
 
                 blob.resolve_size();
-                // SAFETY: FFI handle
-                unsafe {
-                    if blob.size.get() == crate::webcore::blob::MAX_SIZE {
-                        resp.write_header_int(b"content-length", 0);
-                    } else {
-                        resp.write_header_int(b"content-length", blob.size.get() as u64);
-                    }
+                if blob.size.get() == crate::webcore::blob::MAX_SIZE {
+                    resp.write_header_int(b"content-length", 0);
+                } else {
+                    resp.write_header_int(b"content-length", blob.size.get() as u64);
                 }
                 this.end_without_body(this.should_close_connection());
             }
@@ -2798,14 +2760,11 @@ where
                         if !req.flags.has_written_status() {
                             req.flags.set_has_written_status(true);
                             if let Some(resp) = req.resp {
-                                // SAFETY: FFI handle
-                                unsafe {
-                                    resp.write_status(b"500 Internal Server Error");
-                                    resp.write_header(
-                                        b"content-type",
-                                        &bun_http_types::MimeType::HTML.value,
-                                    );
-                                }
+                                resp.write_status(b"500 Internal Server Error");
+                                resp.write_header(
+                                    b"content-type",
+                                    &bun_http_types::MimeType::HTML.value,
+                                );
                             }
                         }
 
@@ -3090,7 +3049,9 @@ where
 
     /// # Safety
     /// `this` must point to a live `RequestContext` threaded through cork user-data.
-    pub fn do_render_blob_corked(this: *mut Self) {
+    pub(crate) fn do_render_blob_corked(this: *mut Self) {
+        // SAFETY: caller upholds the fn-level contract — `this` points to a
+        // live `RequestContext` threaded through cork user-data.
         let this = unsafe { &mut *this };
         this.render_metadata();
         this.render_bytes();
@@ -3330,8 +3291,7 @@ where
     pub fn run_error_handler_with_status_code(&mut self, value: JSValue, status: u16) {
         jsc::mark_binding!();
         let Some(resp) = self.resp else { return };
-        // SAFETY: `resp` is a live uWS FFI handle while `self.resp` is bound.
-        if unsafe { resp.has_responded() } {
+        if resp.has_responded() {
             return;
         }
 
@@ -3558,7 +3518,7 @@ where
         if self
             .response_weakref
             .get()
-            .map(|r| std::ptr::from_mut::<Response>(r))
+            .map(std::ptr::from_mut::<Response>)
             == Some(std::ptr::from_mut(response))
         {
             return;
@@ -3576,8 +3536,10 @@ where
 
     /// # Safety
     /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
-    pub fn on_buffered_body_chunk(this: *mut Self, chunk: &[u8], last: bool) {
+    pub(crate) fn on_buffered_body_chunk(this: *mut Self, chunk: &[u8], last: bool) {
         ctx_log!("onBufferedBodyChunk {} {}", chunk.len(), last);
+        // SAFETY: caller upholds the fn-level contract — `this` is the live
+        // `RequestContext` user-data pointer registered with uWS.
         let this = unsafe { &mut *this };
         debug_assert!(this.resp.is_some());
 
@@ -3649,8 +3611,7 @@ where
                 > server.config().max_request_body_size
             {
                 this.request_body_buf = Vec::new();
-                // SAFETY: FFI handle
-                unsafe { this.resp.expect("infallible: resp bound").clear_on_data() };
+                this.resp.expect("infallible: resp bound").clear_on_data();
                 this.flags.set_is_waiting_for_request_body(false);
 
                 let _exit = vm.enter_event_loop_scope();
@@ -3783,11 +3744,13 @@ where
 
     /// # Safety
     /// `ptr` must be a `*mut RequestContext` previously registered as the body callback context.
-    pub fn on_request_body_readable_stream_available(
+    pub(crate) fn on_request_body_readable_stream_available(
         ptr: *mut c_void,
         global_this: &JSGlobalObject,
         readable: WebCore::ReadableStream,
     ) {
+        // SAFETY: caller upholds the fn-level contract — `ptr` is the
+        // `*mut RequestContext` registered as the body callback context.
         let this = unsafe { bun_ptr::callback_ctx::<Self>(ptr) };
         debug_assert!(!this.request_body_readable_stream_ref.has());
         this.request_body_readable_stream_ref =
@@ -3796,13 +3759,19 @@ where
 
     /// # Safety
     /// `this` must be a `*mut RequestContext` previously registered as the body callback context.
-    pub fn on_start_buffering_callback(this: *mut c_void) {
+    pub(crate) fn on_start_buffering_callback(this: *mut c_void) {
+        // SAFETY: caller upholds the fn-level contract — `this` is the
+        // `*mut RequestContext` registered as the body callback context.
         unsafe { bun_ptr::callback_ctx::<Self>(this) }.on_start_buffering();
     }
 
     /// # Safety
     /// `this` must be a `*mut RequestContext` previously registered as the body callback context.
-    pub fn on_start_streaming_request_body_callback(this: *mut c_void) -> WebCore::DrainResult {
+    pub(crate) fn on_start_streaming_request_body_callback(
+        this: *mut c_void,
+    ) -> WebCore::DrainResult {
+        // SAFETY: caller upholds the fn-level contract — `this` is the
+        // `*mut RequestContext` registered as the body callback context.
         unsafe { bun_ptr::callback_ctx::<Self>(this) }.on_start_streaming_request_body()
     }
 

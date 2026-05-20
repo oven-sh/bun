@@ -660,7 +660,7 @@ impl Interpreter {
     /// Spec: interpreter.zig `#deinitFromExec` — full teardown for the
     /// standalone (`MiniEventLoop`) path. Drops root IO refcounts, frees the
     /// root shell env, and consumes the box.
-    fn deinit_from_exec(self: Box<Self>) {
+    fn deinit_from_exec(self) {
         log!("deinit interpreter");
         self.this_jsvalue.set(crate::jsc::JSValue::ZERO);
         // `root_io` holds `Arc<IOReader>`/`Arc<IOWriter>`; replacing with
@@ -1284,9 +1284,7 @@ impl Interpreter {
 
     pub fn run(&self) -> bun_sys::Result<()> {
         log!("Interpreter(0x{:x}) run", std::ptr::from_ref(self) as usize);
-        if let Err(e) = self.setup_io_before_run() {
-            return Err(e);
-        }
+        self.setup_io_before_run()?;
 
         let shell = self.root_shell.as_ptr();
         let ast = &raw const self.args.get().script_ast;
@@ -1703,6 +1701,8 @@ impl Interpreter {
     /// # Safety
     /// `command_ctx` must be null or point to a live `ContextData` that
     /// outlives this call.
+    // `*mut T` sig forced by trait/callback contract; the body's internal deref is SAFETY-commented.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn append_var_argv(
         out: &mut Vec<u8>,
         original_int: u8,
@@ -1770,7 +1770,7 @@ impl Interpreter {
                 // SAFETY: `command_ctx` is the process-global `ContextData`
                 // (see `init`); it outlives the interpreter.
                 let ctx = unsafe { &*command_ctx };
-                if int as usize >= 1 + ctx.passthrough.len() {
+                if int as usize > ctx.passthrough.len() {
                     return;
                 }
                 if int == 0 {
@@ -2025,6 +2025,8 @@ impl ShellExecEnv {
     /// # Safety
     /// `this` must have been returned by `dupe_for_subshell` (or otherwise
     /// `heap::alloc`'d) and not yet freed.
+    // `*mut T` sig forced by trait/callback contract; the body's internal deref is SAFETY-commented.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn deinit_impl(this: *mut ShellExecEnv) {
         log!("[ShellExecEnv] deinit 0x{:x}", this as usize);
         // SAFETY: precondition above. Reclaim the Box; `Drop` for the env
@@ -2292,18 +2294,13 @@ impl CowFd {
     /// Spec: `CowFd.use` — copy-on-write borrow. If nobody is currently
     /// writing through this fd, mark it in-use and return it (refcount +1);
     /// otherwise hand out a fresh `dup()`.
-    ///
-    /// # Safety
-    /// `this` must point to a live `CowFd` (refcount ≥ 1).
-    pub fn use_(this: *mut CowFd) -> bun_sys::Result<*mut CowFd> {
-        unsafe {
-            if !(*this).being_used {
-                (*this).being_used = true;
-                (*this).ref_();
-                return Ok(this);
-            }
-            (*this).dup()
+    pub fn use_(&mut self) -> bun_sys::Result<*mut CowFd> {
+        if !self.being_used {
+            self.being_used = true;
+            self.ref_();
+            return Ok(std::ptr::from_mut(self));
         }
+        self.dup()
     }
 
     /// Spec: `CowFd.doneUsing` — paired with [`use_`].
@@ -2316,18 +2313,18 @@ impl CowFd {
     }
 
     /// Spec: `CowFd.dupeRef` — bump refcount and return the same pointer.
-    ///
-    /// # Safety
-    /// `this` must point to a live `CowFd`.
-    pub fn dupe_ref(this: *mut CowFd) -> *mut CowFd {
-        unsafe { (*this).ref_() };
-        this
+    pub fn dupe_ref(&mut self) -> *mut CowFd {
+        self.ref_();
+        self
     }
 
     /// # Safety
     /// `this` must point to a live `CowFd` (refcount ≥ 1). If this drops the
     /// refcount to 0, `this` is freed and must not be used again.
+    // `*mut T` sig forced by trait/callback contract; the body's internal deref is SAFETY-commented.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn deref(this: *mut CowFd) {
+        // SAFETY: caller upholds the precondition above (`this` is a live `CowFd`).
         unsafe {
             (*this).refcount -= 1;
             if (*this).refcount == 0 {
@@ -3181,11 +3178,9 @@ pub fn create_shell_interpreter(
     let cwd = cwd.map(bun_core::OwnedString::new);
     let cwd_slice = cwd.as_deref().map(|c| c.to_utf8());
 
-    // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global;
-    // dereferencing for `event_loop()` is sound on the mutator thread, and that
+    // bun_vm() returns the live thread-local VM for a Bun-owned global; that
     // pointer is the live `jsc::EventLoop` `EventLoopHandle::init` expects.
-    let event_loop =
-        unsafe { EventLoopHandle::init(global.bun_vm().as_mut().event_loop().cast::<()>()) };
+    let event_loop = EventLoopHandle::init(global.bun_vm().as_mut().event_loop().cast::<()>());
     let interpreter: Box<Interpreter> = match Interpreter::init(
         // command_ctx — unused on the JS event-loop path.
         core::ptr::null_mut(),
@@ -3232,8 +3227,10 @@ pub fn create_shell_interpreter(
         );
         it.this_jsvalue.set(js_value);
         it.keep_alive.with_mut(|k| {
-            // SAFETY: `bun_vm_ptr()` is the live per-thread VM singleton.
-            k.ref_(unsafe { crate::jsc::VirtualMachineRef::event_loop_ctx(global.bun_vm_ptr()) })
+            // `bun_vm_ptr()` is the live per-thread VM singleton.
+            k.ref_(crate::jsc::VirtualMachineRef::event_loop_ctx(
+                global.bun_vm_ptr(),
+            ))
         });
         js_value
     };

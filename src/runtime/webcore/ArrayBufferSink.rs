@@ -62,7 +62,7 @@ impl ArrayBufferSink {
     pub fn flush_from_js(
         &mut self,
         global_this: &JSGlobalObject,
-        wait: bool,
+        _wait: bool,
     ) -> bun_sys::Result<JSValue> {
         if self.streaming {
             // TODO: properly propagate exception upwards (matches Zig `catch .zero`).
@@ -74,7 +74,6 @@ impl ArrayBufferSink {
                     .unwrap_or(JSValue::ZERO)
             };
             self.bytes.clear();
-            if wait {}
             return Ok(value);
         }
 
@@ -88,7 +87,12 @@ impl ArrayBufferSink {
     /// # Safety
     /// `this` must be the m_ctx payload allocated via `heap::alloc` in
     /// init/JSSink, called from JSC lazy sweep on the mutator thread.
+    // Forwards `this` to `destroy` without dereferencing it here;
+    // not_unsafe_ptr_arg_deref is a false positive on this forwarding wrapper.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn finalize(this: *mut Self) {
+        // SAFETY: `this` is the heap-allocated m_ctx payload (see `# Safety`
+        // above); it has not been freed yet, so `destroy` may reclaim it.
         unsafe { Self::destroy(this) };
     }
 

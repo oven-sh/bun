@@ -220,7 +220,7 @@ impl<'a> ProcessHandle<'a> {
 bun_spawn::link_impl_ProcessExit! {
     FilterRunHandle for ProcessHandle<'static> => |this| {
         on_process_exit(process, status, rusage) =>
-            (*this).on_process_exit(&mut *process, status, &*rusage),
+            (*this).on_process_exit(&mut *process, status, rusage),
     }
 }
 
@@ -372,9 +372,9 @@ impl<'a> State<'a> {
             self.draw_buf.clear();
             // flush any remaining buffer
             if !handle.buffer.is_empty() {
-                write!(
+                writeln!(
                     &mut self.draw_buf,
-                    "{}: {}\n",
+                    "{}: {}",
                     bstr::BStr::new(&handle.config.package_name),
                     bstr::BStr::new(&handle.buffer),
                 )?;
@@ -383,18 +383,18 @@ impl<'a> State<'a> {
             // print exit status
             match &handle.process.as_ref().unwrap().status {
                 Status::Exited(exited) => {
-                    write!(
+                    writeln!(
                         &mut self.draw_buf,
-                        "{} {}: Exited with code {}\n",
+                        "{} {}: Exited with code {}",
                         bstr::BStr::new(&handle.config.package_name),
                         bstr::BStr::new(&handle.config.script_name),
                         exited.code,
                     )?;
                 }
                 Status::Signaled(signal) => {
-                    write!(
+                    writeln!(
                         &mut self.draw_buf,
-                        "{} {}: Signaled with code {}\n",
+                        "{} {}: Signaled with code {}",
                         bstr::BStr::new(&handle.config.package_name),
                         bstr::BStr::new(&handle.config.script_name),
                         bun_sys::SignalCode(*signal).name().unwrap_or("UNKNOWN"),
@@ -473,9 +473,7 @@ impl<'a> State<'a> {
         }
         // PORT NOTE: reshaped for borrowck — iterating handles by index since draw_buf is also &mut self.
         for idx in 0..self.handles.len() {
-            // SAFETY: idx in bounds; we need disjoint access to handles[idx] and draw_buf.
-            let handle = unsafe { &*(&raw const self.handles[idx]) };
-            // TODO(port): borrowck — self.handles[idx] borrowed while self.draw_buf is &mut.
+            let handle = &self.handles[idx];
             // normally we truncate the output to 10 lines, but on abort we print everything to aid debugging
             let elide_lines = if is_abort {
                 None

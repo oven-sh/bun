@@ -8,6 +8,7 @@ use crate::shell::interpreter::{
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
+use core::ptr::NonNull;
 
 #[derive(Default)]
 pub struct Mkdir {
@@ -88,58 +89,50 @@ impl Mkdir {
     pub fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         // PORT NOTE: reshaped for borrowck — read scalars, drop the borrow,
         // then act.
-        loop {
-            let action = match &mut Self::state_mut(interp, cmd).state {
-                State::Idle => panic!("Invalid state"),
-                State::Exec(exec) => {
-                    if exec.started {
-                        if exec.tasks_done >= exec.tasks_count
-                            && exec.output_done >= exec.output_waiting
-                        {
-                            let exit_code: ExitCode = if exec.err.is_some() { 1 } else { 0 };
-                            exec.err = None;
-                            NextAction::Done(exit_code)
-                        } else {
-                            return Yield::suspended();
-                        }
+        let action = match &mut Self::state_mut(interp, cmd).state {
+            State::Idle => panic!("Invalid state"),
+            State::Exec(exec) => {
+                if exec.started {
+                    if exec.tasks_done >= exec.tasks_count
+                        && exec.output_done >= exec.output_waiting
+                    {
+                        let exit_code: ExitCode = if exec.err.is_some() { 1 } else { 0 };
+                        exec.err = None;
+                        NextAction::Done(exit_code)
                     } else {
-                        exec.started = true;
-                        NextAction::Schedule(exec.args_start)
+                        return Yield::suspended();
                     }
+                } else {
+                    exec.started = true;
+                    NextAction::Schedule(exec.args_start)
                 }
-                State::WaitingWriteErr => return Yield::failed(),
-                State::Done => return Builtin::done(interp, cmd, 0),
-            };
-            match action {
-                NextAction::Done(code) => {
-                    Self::state_mut(interp, cmd).state = State::Done;
-                    return Builtin::done(interp, cmd, code);
+            }
+            State::WaitingWriteErr => return Yield::failed(),
+            State::Done => return Builtin::done(interp, cmd, 0),
+        };
+        match action {
+            NextAction::Done(code) => {
+                Self::state_mut(interp, cmd).state = State::Done;
+                Builtin::done(interp, cmd, code)
+            }
+            NextAction::Schedule(args_start) => {
+                let argc = Builtin::of(interp, cmd).args_slice().len();
+                let task_count = argc - args_start;
+                if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+                    exec.tasks_count = task_count;
                 }
-                NextAction::Schedule(args_start) => {
-                    let argc = Builtin::of(interp, cmd).args_slice().len();
-                    let task_count = argc - args_start;
-                    if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-                        exec.tasks_count = task_count;
-                    }
-                    let opts = Self::state_mut(interp, cmd).opts;
-                    let cwd = Builtin::shell(interp, cmd).cwd().to_vec();
-                    let evtloop = Builtin::event_loop(interp, cmd);
-                    let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
-                    for i in args_start..argc {
-                        let path = Builtin::of(interp, cmd).arg_bytes(i).to_vec();
-                        let task = ShellMkdirTask::create(
-                            cmd,
-                            opts,
-                            path,
-                            cwd.clone(),
-                            evtloop,
-                            interp_ptr,
-                        );
-                        // SAFETY: freshly heap-allocated.
-                        unsafe { ShellTask::schedule(task) };
-                    }
-                    return Yield::suspended();
+                let opts = Self::state_mut(interp, cmd).opts;
+                let cwd = Builtin::shell(interp, cmd).cwd().to_vec();
+                let evtloop = Builtin::event_loop(interp, cmd);
+                let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
+                for i in args_start..argc {
+                    let path = Builtin::of(interp, cmd).arg_bytes(i).to_vec();
+                    let task =
+                        ShellMkdirTask::create(cmd, opts, path, cwd.clone(), evtloop, interp_ptr);
+                    // SAFETY: freshly heap-allocated.
+                    unsafe { ShellTask::schedule(task) };
                 }
+                Yield::suspended()
             }
         }
     }
@@ -163,15 +156,14 @@ impl Mkdir {
         Self::next(interp, cmd)
     }
 
-    /// Spec: mkdir.zig `onShellMkdirTaskDone`.
-    ///
-    /// # Safety
-    /// `task` must be a live heap allocation produced by
-    /// [`ShellMkdirTask::create`]; ownership is consumed (reclaimed via
-    /// `heap::take`).
-    pub fn on_shell_mkdir_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellMkdirTask) {
-        // SAFETY: task was heap-allocated in create(); reclaim ownership.
-        let mut task = unsafe { bun_core::heap::take(task) };
+    /// Spec: mkdir.zig `onShellMkdirTaskDone`. The caller
+    /// ([`ShellMkdirTask::run_from_main_thread`]) owns the heap allocation and
+    /// drops it after this returns.
+    pub(crate) fn on_shell_mkdir_task_done(
+        interp: &Interpreter,
+        cmd: NodeId,
+        task: &mut ShellMkdirTask,
+    ) {
         let output = core::mem::take(&mut task.created_directories);
         let err = task.err.take();
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
@@ -361,14 +353,14 @@ impl ShellMkdirTask {
         // loops).
     }
 
-    /// # Safety
-    /// `this` must be a live heap allocation produced by [`Self::create`];
-    /// ownership is consumed via [`Mkdir::on_shell_mkdir_task_done`].
-    pub fn run_from_main_thread(this: *mut ShellMkdirTask, interp: &Interpreter) {
-        // SAFETY: `this` is a live heap-allocated task.
-        let cmd = unsafe { (*this).cmd };
-        // SAFETY: forwarded from caller's contract.
-        Mkdir::on_shell_mkdir_task_done(interp, cmd, this);
+    /// Reclaims ownership of the heap allocation produced by [`Self::create`]
+    /// and forwards it to [`Mkdir::on_shell_mkdir_task_done`].
+    pub(crate) fn run_from_main_thread(this: NonNull<ShellMkdirTask>, interp: &Interpreter) {
+        // SAFETY: `this` is a live heap allocation produced by `Self::create`;
+        // the dispatch contract guarantees it is not yet freed.
+        let mut task = unsafe { bun_core::heap::take(this.as_ptr()) };
+        let cmd = task.cmd;
+        Mkdir::on_shell_mkdir_task_done(interp, cmd, &mut task);
     }
 }
 
@@ -415,9 +407,9 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellMkdirTask {
         Self::run_from_thread_pool(this)
     }
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
-        // SAFETY: `ShellTaskCtx` callers guarantee `this` is the live
+        // `ShellTaskCtx` callers guarantee `this` is the live, non-null
         // heap-allocated task posted via `ShellTask::schedule`.
-        Self::run_from_main_thread(this, interp)
+        Self::run_from_main_thread(NonNull::new(this).unwrap(), interp)
     }
 }
 

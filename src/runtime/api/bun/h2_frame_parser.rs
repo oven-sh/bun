@@ -1454,14 +1454,9 @@ impl SignalRef {
         self.signal.aborted()
     }
 
-    /// # Safety
-    /// `this` must be a valid, exclusively-accessible pointer to a live
-    /// heap-allocated `SignalRef` owned by `Stream.signal`.
-    pub fn abort_listener(this: *mut SignalRef, reason: JSValue) {
+    pub fn abort_listener(this: &mut SignalRef, reason: JSValue) {
         bun_output::scoped_log!(H2FrameParser, "abortListener");
         reason.ensure_still_alive();
-        // SAFETY: this is a stable heap allocation owned by Stream.signal
-        let this = unsafe { &mut *this };
         // ParentRef backref — ref()'d in `attach_signal`, valid until detach/deinit.
         // R-2: shared deref — `abort_stream` takes `&self`.
         let parser = this.parser.get();
@@ -2084,8 +2079,7 @@ impl Stream {
 // fn pointer; `bun_jsc::abort_signal::listen` instead expects `*mut C: AbortListener`.
 impl AbortListener for SignalRef {
     fn on_abort(&mut self, reason: JSValue) {
-        // SAFETY: `self` is a live heap-allocated SignalRef owned by Stream.signal
-        SignalRef::abort_listener(std::ptr::from_mut::<SignalRef>(self), reason);
+        SignalRef::abort_listener(self, reason);
     }
 }
 
@@ -4193,7 +4187,7 @@ impl H2FrameParser {
 
         let setting_byte_size = SettingsPayloadUnit::BYTE_SIZE;
         if frame.length > 0 {
-            if is_ack || frame.length as usize % setting_byte_size != 0 {
+            if is_ack || !(frame.length as usize).is_multiple_of(setting_byte_size) {
                 bun_output::scoped_log!(H2FrameParser, "invalid settings frame size");
                 self.send_go_away(
                     frame.stream_identifier,
@@ -4993,9 +4987,6 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Expected errorCode to be a number")));
         }
         let error_code = error_code_arg.to_int32();
-        if error_code < 1 && error_code > 13 {
-            return Err(global_object.throw(format_args!("invalid errorCode")));
-        }
 
         let mut last_stream_id = this.last_stream_id.get();
         if args_list.len >= 2 {
@@ -6193,13 +6184,13 @@ impl H2FrameParser {
     fn get_next_stream_id(&self) -> u32 {
         let mut stream_id: u32 = self.last_stream_id.get();
         if self.is_server.get() {
-            if stream_id % 2 == 0 {
+            if stream_id.is_multiple_of(2) {
                 stream_id += 2;
             } else {
                 stream_id += 1;
             }
         } else {
-            if stream_id % 2 == 0 {
+            if stream_id.is_multiple_of(2) {
                 stream_id += 1;
             } else if stream_id == 0 {
                 stream_id = 1;
@@ -6222,13 +6213,13 @@ impl H2FrameParser {
         debug_assert!(stream_id_arg.is_number());
         let mut last_stream_id = stream_id_arg.to_u32();
         if this.is_server.get() {
-            if last_stream_id % 2 == 0 {
+            if last_stream_id.is_multiple_of(2) {
                 last_stream_id -= 2;
             } else {
                 last_stream_id -= 1;
             }
         } else {
-            if last_stream_id % 2 == 0 {
+            if last_stream_id.is_multiple_of(2) {
                 last_stream_id -= 1;
             } else if last_stream_id == 1 {
                 last_stream_id = 0;
@@ -7343,12 +7334,7 @@ impl H2FrameParser {
                     // pointer back into an owning `Box`.
                     unsafe { Box::from_raw(H2FrameParserHiveAllocator::new_boxed().as_ptr()) }
                 });
-                let slot = pool.try_get();
-                // SAFETY: `slot` is a freshly-claimed, uninitialised `*mut H2FrameParser`
-                // (HiveArray slot or fallback `Box<MaybeUninit<_>>`); `write` moves
-                // `init` in without dropping prior contents.
-                unsafe { slot.write(init) };
-                slot
+                pool.get_init(init).as_ptr()
             })
         } else {
             bun_core::heap::into_raw(Box::new(init))

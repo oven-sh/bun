@@ -449,7 +449,7 @@ impl S3Client {
         };
         let options = args.next_eat();
         // `defer blob.detach()` — handled by Drop of `Option<StoreRef>` field.
-        let mut blob = S3File::construct_s3_file_with_s3_credentials_and_options(
+        let blob = S3File::construct_s3_file_with_s3_credentials_and_options(
             global,
             path,
             options,
@@ -459,7 +459,7 @@ impl S3Client {
             ptr.storage_class,
             ptr.request_payer,
         )?;
-        S3File::S3BlobStatTask::exists(global, &mut blob)
+        S3File::S3BlobStatTask::exists(global, &blob)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -523,7 +523,7 @@ impl S3Client {
         };
         let options = args.next_eat();
         // `defer blob.detach()` — handled by Drop of `Option<StoreRef>` field.
-        let mut blob = S3File::construct_s3_file_with_s3_credentials_and_options(
+        let blob = S3File::construct_s3_file_with_s3_credentials_and_options(
             global,
             path,
             options,
@@ -533,7 +533,7 @@ impl S3Client {
             ptr.storage_class,
             ptr.request_payer,
         )?;
-        S3File::S3BlobStatTask::stat(global, &mut blob)
+        S3File::S3BlobStatTask::stat(global, &blob)
     }
 
     #[bun_jsc::host_fn(method)]

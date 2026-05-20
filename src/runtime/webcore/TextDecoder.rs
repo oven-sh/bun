@@ -156,8 +156,7 @@ impl TextDecoder {
         &self,
         bytes: &[u8],
     ) -> Result<(Vec<u16>, bool), AllocError> {
-        let mut output: Vec<u16> = Vec::new();
-        output.reserve(bytes.len() / 2);
+        let mut output: Vec<u16> = Vec::with_capacity(bytes.len() / 2);
 
         let mut remain = bytes;
         let mut saw_error = false;

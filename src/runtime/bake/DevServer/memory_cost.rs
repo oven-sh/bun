@@ -214,7 +214,7 @@ pub fn memory_cost_array_list<T>(slice: &Vec<T>) -> usize {
 }
 
 pub fn memory_cost_slice<T>(slice: &[T]) -> usize {
-    slice.len() * size_of::<T>()
+    std::mem::size_of_val(slice)
 }
 
 pub fn memory_cost_array_hash_map<K, V, C>(map: &ArrayHashMap<K, V, C>) -> usize {

@@ -178,7 +178,7 @@ impl<'a> GlobPattern<'a> {
     }
 
     fn init_for_name(pattern: &'a [u8]) -> GlobPattern<'a> {
-        if !pattern.iter().any(|&b| b == b'*') {
+        if !pattern.contains(&b'*') {
             return GlobPattern {
                 pattern_type: PatternType::Exact,
                 ..Default::default()
@@ -187,7 +187,7 @@ impl<'a> GlobPattern<'a> {
 
         if pattern.len() >= 3 && pattern[0] == b'*' && pattern[pattern.len() - 1] == b'*' {
             let substring = &pattern[1..pattern.len() - 1];
-            if !substring.is_empty() && !substring.iter().any(|&b| b == b'*') {
+            if !substring.is_empty() && !substring.contains(&b'*') {
                 return GlobPattern {
                     pattern_type: PatternType::Contains,
                     substring,
@@ -213,7 +213,7 @@ impl<'a> GlobPattern<'a> {
                 };
             }
 
-            if pattern[wildcard_pos + 1..].iter().any(|&b| b == b'*') {
+            if pattern[wildcard_pos + 1..].contains(&b'*') {
                 return GlobPattern {
                     pattern_type: PatternType::Invalid,
                     ..Default::default()

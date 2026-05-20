@@ -38,7 +38,7 @@ impl<T: ColonListValue> ColonListType<T> {
     }
 
     pub fn load(&mut self, input: &[&'static [u8]]) -> Result<(), Error> {
-        for (_i, str) in input.iter().enumerate() {
+        for str in input.iter() {
             // Support either ":" or "=" as the separator, preferring whichever is first.
             // ":" is less confusing IMO because that syntax is used with flags
             // but "=" is what esbuild uses and I want this to be somewhat familiar for people using esbuild

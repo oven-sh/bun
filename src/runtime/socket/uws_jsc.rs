@@ -46,12 +46,10 @@ pub fn create_bun_socket_error_to_js(
         // bad cert/key/DH return NULL with .none and the detail is on the
         // BoringSSL error queue. Surfacing it here keeps every
         // `createSSLContext(...) orelse return err.toJS()` site correct.
-        create_bun_socket_error_t::none => {
-            // SAFETY: ERR_get_error is thread-local queue read, always safe to call.
-            crate::crypto::boringssl_jsc::err_to_js(global_object, unsafe {
-                bun_boringssl_sys::ERR_get_error()
-            })
-        }
+        create_bun_socket_error_t::none => crate::crypto::boringssl_jsc::err_to_js(
+            global_object,
+            bun_boringssl_sys::ERR_get_error(),
+        ),
         create_bun_socket_error_t::load_ca_file => global_object
             .err(
                 bun_jsc::ErrorCode::BORINGSSL,

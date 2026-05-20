@@ -1294,7 +1294,7 @@ pub mod get_addr_info_request {
                     },
                     hints
                         .as_ref()
-                        .map(|h| std::ptr::from_ref(h))
+                        .map(std::ptr::from_ref)
                         .unwrap_or(ptr::null()),
                     &raw mut addrinfo,
                 )
@@ -1371,6 +1371,11 @@ pub mod get_addr_info_request {
     }
 }
 
+// `WorkTaskContext` fixes `run`/`then` to take `*mut Self`; the trait method
+// cannot be marked `unsafe fn` and the parameter type cannot change, so the
+// lint is unsatisfiable here. The pointers come from the work-pool hand-off
+// and are guaranteed live (see SAFETY notes below).
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl jsc::work_task::WorkTaskContext for GetAddrInfoRequest {
     const TASK_TAG: bun_event_loop::ConcurrentTask::TaskTag =
         bun_event_loop::ConcurrentTask::task_tag::GetAddrInfoRequestTask;
@@ -1379,7 +1384,7 @@ impl jsc::work_task::WorkTaskContext for GetAddrInfoRequest {
     fn run(this: *mut Self, task: *mut get_addr_info_request::Task) {
         // SAFETY: `WorkTask` invokes `run` on the threadpool with the live heap
         // `GetAddrInfoRequest` it was created from and its owning `WorkTask`.
-        GetAddrInfoRequest::run(this, task);
+        GetAddrInfoRequest::run(unsafe { &mut *this }, unsafe { &mut *task });
     }
     #[inline]
     fn then(this: *mut Self, global_this: &JSGlobalObject) -> Result<(), jsc::JsTerminated> {
@@ -1498,24 +1503,23 @@ impl GetAddrInfoRequest {
         }
     }
 
-    /// # Safety
     /// `this` must be the live heap `GetAddrInfoRequest` owned by `task`, and
     /// `task` the live `WorkTask` passed in by `run_from_thread_pool`.
-    pub fn run(this: *mut Self, task: *mut get_addr_info_request::Task) {
-        // SAFETY: WorkTask invokes this on the threadpool with valid pointers
-        unsafe {
-            match &mut (*this).backend {
-                get_addr_info_request::Backend::Libc(l) => l.run(),
-                _ => unreachable!(),
-            }
+    pub fn run(this: &mut Self, task: &mut get_addr_info_request::Task) {
+        match &mut this.backend {
+            get_addr_info_request::Backend::Libc(l) => l.run(),
+            _ => unreachable!(),
         }
-        // SAFETY: `task` is the live non-null heap `WorkTask` passed in by `run_from_thread_pool`.
-        get_addr_info_request::Task::on_finish(unsafe { &mut *task });
+        get_addr_info_request::Task::on_finish(task);
     }
 
     /// # Safety
     /// `this` must be the live heap `GetAddrInfoRequest` whose `run` already
     /// completed; consumed (freed) on every path.
+    // `this` is reclaimed via `heap::take` (Box::from_raw) inside; forming
+    // `&mut *this` at entry would invalidate the pointer's allocation
+    // provenance, so the param must stay `*mut`.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn then(this: *mut Self, _global: &JSGlobalObject) {
         bun_output::scoped_log!(GetAddrInfoRequest, "then");
         #[cfg(not(windows))]
@@ -1573,6 +1577,10 @@ impl GetAddrInfoRequest {
     /// # Safety
     /// `this` must be the heap `GetAddrInfoRequest` registered with c-ares;
     /// consumed (freed) on every path.
+    // `this` is reclaimed via `heap::take` (Box::from_raw) inside; forming
+    // `&mut *this` at entry would invalidate the pointer's allocation
+    // provenance, so the param must stay `*mut`.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn on_cares_complete(
         this: *mut Self,
         err_: Option<c_ares::Error>,
@@ -1683,11 +1691,7 @@ impl c_ares::AddrInfoHandler for GetAddrInfoRequest {
         } else {
             Some(results)
         };
-        // SAFETY: `self` is the heap request registered with c-ares; the
-        // callback wrapper does not touch `self` after this returns.
-        unsafe {
-            Self::on_cares_complete(std::ptr::from_mut::<Self>(self), status, timeouts, result)
-        };
+        Self::on_cares_complete(std::ptr::from_mut::<Self>(self), status, timeouts, result);
     }
 }
 
@@ -2229,7 +2233,7 @@ pub mod internal {
                 0
             };
             Self {
-                host: name.map(|n| std::ptr::from_ref::<ZStr>(n)),
+                host: name.map(std::ptr::from_ref::<ZStr>),
                 hash,
                 port,
             }
@@ -2376,6 +2380,10 @@ pub mod internal {
         /// # Safety
         /// `this` must be the heap-allocated `Request` returned by `Request::new`
         /// with `refcount == 0`; freed by this call.
+        // `this` is reclaimed via `heap::take` (Box::from_raw); forming
+        // `&mut *this` at entry would invalidate the pointer's allocation
+        // provenance, so the param must stay `*mut`.
+        #[allow(clippy::not_unsafe_ptr_arg_deref)]
         pub fn deinit(this: *mut Self) {
             // SAFETY: this is a heap-allocated Request with refcount==0
             unsafe {
@@ -2572,6 +2580,9 @@ pub mod internal {
         /// # Safety
         /// `req` must be a live cache `Request` with a populated `result`; the
         /// callee may take ownership and free it.
+        // Forwards `req` to C++ without dereferencing; not_unsafe_ptr_arg_deref
+        // is a false positive on opaque-token forwarding.
+        #[allow(clippy::not_unsafe_ptr_arg_deref)]
         pub fn notify_threadsafe(&self, req: *mut Request) {
             match self {
                 // SAFETY: `socket` is the live usockets handle stored when the request was registered.
@@ -2589,6 +2600,9 @@ pub mod internal {
         /// # Safety
         /// `req` must be a live cache `Request` with a populated `result`; the
         /// callee may take ownership and free it.
+        // Forwards `req` to C++ without dereferencing; not_unsafe_ptr_arg_deref
+        // is a false positive on opaque-token forwarding.
+        #[allow(clippy::not_unsafe_ptr_arg_deref)]
         pub fn notify(&self, req: *mut Request) {
             match self {
                 DNSRequestOwner::Prefetch(_) => freeaddrinfo(req, 0),
@@ -2623,6 +2637,10 @@ pub mod internal {
     /// # Safety
     /// `request` must be a live cache `Request` (refcount held by the caller);
     /// `pc` must stay valid until its `on_dns_resolved[_threadsafe]` fires.
+    // `request` is forwarded to `owner.notify`, which may free it inline
+    // (see fn doc); forming `&mut *request` at entry would be unsound across
+    // that hand-off, so the param must stay `*mut`.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn register_quic(request: *mut Request, pc: *mut bun_http::H3::PendingConnect) {
         let guard = global_cache().lock();
         let owner = DNSRequestOwner::Quic(pc);
@@ -2763,9 +2781,7 @@ pub mod internal {
         drop(guard);
 
         for query in notify {
-            // SAFETY: `req` is the live cache entry whose `result` was just set
-            // above; each owner held a refcount on it.
-            unsafe { query.notify_threadsafe(req) };
+            query.notify_threadsafe(req);
         }
     }
 
@@ -3140,14 +3156,13 @@ pub mod internal {
 
         let hostname_or_url = arguments[0];
 
-        let hostname_slice;
-        if hostname_or_url.is_string() {
-            hostname_slice = hostname_or_url.to_slice(global_this)?;
+        let hostname_slice = if hostname_or_url.is_string() {
+            hostname_or_url.to_slice(global_this)?
         } else {
             return Err(
                 global_this.throw_invalid_arguments(format_args!("hostname must be a string"))
             );
-        }
+        };
 
         let hostname_z = bun::ZBox::from_bytes(hostname_slice.slice());
 
@@ -3185,6 +3200,9 @@ pub mod internal {
     /// # Safety
     /// `hostname` (if non-null) must point to a NUL-terminated `[u8; len]` live
     /// for the duration of the call.
+    // `hostname` is null-guarded before the deref; the non-null contract is
+    // documented above and on the `bun_dns` extern decl.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[unsafe(no_mangle)]
     pub fn __bun_dns_prefetch(loop_: *mut c_void, hostname: *const u8, len: usize, port: u16) {
         let host = if hostname.is_null() || len == 0 {
@@ -3325,8 +3343,7 @@ pub mod internal {
         request: *mut Request,
         pc: *mut bun_http::H3::PendingConnect,
     ) {
-        // SAFETY: forwarded; see fn contract.
-        unsafe { register_quic(request, pc) }
+        register_quic(request, pc)
     }
 }
 
@@ -3722,8 +3739,7 @@ impl bun_ptr::RefCounted for Resolver {
         unsafe { &raw mut (*this).ref_count }
     }
     unsafe fn destructor(this: *mut Self, _ctx: ()) {
-        // SAFETY: last ref dropped; allocated via Box in `init()`.
-        unsafe { Self::deinit(this) };
+        Self::deinit(this);
     }
 }
 
@@ -4296,27 +4312,24 @@ impl Resolver {
     ) -> get_addr_info_request::PendingCacheKey {
         let cache = self.pending_host_cache(field);
         // SAFETY: slot at `index` was alloc'd by `get_or_put_into_resolve_pending_cache`.
-        let entry = unsafe { cache.box_at(index as usize) }
+        unsafe { cache.box_at(index as usize) }
             .expect("pending DNS slot")
-            .into_inner();
-        entry
+            .into_inner()
     }
     fn get_key_addr(&self, index: u8) -> get_host_by_addr_info_request::PendingCacheKey {
         self.pending_addr_cache_cares.with_mut(|cache| {
             // SAFETY: slot at `index` was alloc'd by `get_or_put_into_resolve_pending_cache`.
-            let entry = unsafe { cache.box_at(index as usize) }
+            unsafe { cache.box_at(index as usize) }
                 .expect("pending DNS slot")
-                .into_inner();
-            entry
+                .into_inner()
         })
     }
     fn get_key_nameinfo(&self, index: u8) -> get_name_info_request::PendingCacheKey {
         self.pending_nameinfo_cache_cares.with_mut(|cache| {
             // SAFETY: slot at `index` was alloc'd by `get_or_put_into_resolve_pending_cache`.
-            let entry = unsafe { cache.box_at(index as usize) }
+            unsafe { cache.box_at(index as usize) }
                 .expect("pending DNS slot")
-                .into_inner();
-            entry
+                .into_inner()
         })
     }
 
@@ -4335,10 +4348,9 @@ impl Resolver {
         let key = {
             let cache = self.pending_cache_for::<T>(T::CACHE_FIELD);
             // SAFETY: slot at `index` was alloc'd by `get_or_put_into_resolve_pending_cache`.
-            let key = unsafe { cache.box_at(index as usize) }
+            unsafe { cache.box_at(index as usize) }
                 .expect("pending DNS slot")
-                .into_inner();
-            key
+                .into_inner()
         };
 
         let Some(addr) = result else {

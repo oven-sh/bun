@@ -175,8 +175,6 @@ fn get_argv0(
     let mut path_buf: Box<bun_core::PathBuffer> = Box::default();
     // drops at scope exit (was `defer bun.default_allocator.destroy(path_buf)`).
 
-    let actual_argv0: ZBox;
-
     let argv0_to_use: &[u8] = arg0.slice();
 
     // This mimicks libuv's behavior, which mimicks execvpe
@@ -195,14 +193,14 @@ fn get_argv0(
         b""
     };
 
-    if path_to_use.is_empty() {
-        actual_argv0 = ZBox::from_bytes(argv0_to_use);
+    let actual_argv0: ZBox = if path_to_use.is_empty() {
+        ZBox::from_bytes(argv0_to_use)
     } else {
         let Some(resolved) = bun_which::which(&mut path_buf, path_to_use, cwd, argv0_to_use) else {
             return Err(throw_command_not_found(global_this, argv0_to_use));
         };
-        actual_argv0 = ZBox::from_bytes(resolved.as_bytes());
-    }
+        ZBox::from_bytes(resolved.as_bytes())
+    };
 
     Ok(Argv0Result {
         argv0: actual_argv0,
@@ -1033,8 +1031,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
     }
 
-    // SAFETY: `event_loop` is the live per-thread `jsc::EventLoop` (caller-provided).
-    let loop_handle = unsafe { EventLoopHandle::init(event_loop.cast::<()>()) };
+    let loop_handle = EventLoopHandle::init(event_loop.cast::<()>());
 
     let mut spawn_options = SpawnOptions {
         cwd: cwd.to_vec().into_boxed_slice(),

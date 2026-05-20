@@ -50,6 +50,10 @@ impl Collection {
     /// `bun_test_root` must be a valid, exclusive pointer to a live `BunTestRoot` for the
     /// duration of this call. The caller (`BunTest::init`) passes a pointer to its own
     /// `bun_test_root` field.
+    // The `# Safety` contract above documents the deref precondition; the only caller is
+    // `BunTest::init`, which passes a pointer to its own field. Changing the signature to
+    // `&mut BunTestRoot` would require editing the caller in `bun_test.rs`.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn init(bun_test_root: *mut BunTestRoot) -> Collection {
         let _g = group::begin();
         // SAFETY: see fn-level Safety doc.

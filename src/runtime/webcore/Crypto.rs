@@ -153,8 +153,6 @@ impl Crypto {
     pub fn constructor(global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<*mut Crypto> {
         Err(global.throw_illegal_constructor("Crypto"))
     }
-
-    pub fn finalize(self: Box<Self>) {}
 }
 
 fn random_data(global: &JSGlobalObject, slice: &mut [u8]) {

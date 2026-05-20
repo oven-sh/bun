@@ -306,6 +306,10 @@ impl Image {
         Ok(img.to_js(global))
     }
 
+    // Codegen's `host_fn_finalize` calls this via `|b| Image::finalize(b)`
+    // and requires `fn finalize(self: Box<Self>)`; clippy::boxed_local is a
+    // false positive on that contract.
+    #[allow(clippy::boxed_local)]
     pub fn finalize(self: Box<Self>) {
         self.this_ref.with_mut(|r| r.finalize());
         // `source` is dropped by Box drop.
@@ -489,7 +493,7 @@ impl Image {
         // coerce_int for the same NaN/Inf/huge-finite reasons as everywhere else;
         // ±1e15 is plenty of headroom for "any multiple of 90 a user might pass".
         let raw: i64 = coerce_int!(i64, args[0].as_number(), -1e15, 1e15);
-        let deg: u32 = u32::try_from(((raw % 360) + 360) % 360).unwrap();
+        let deg: u32 = u32::try_from(raw.rem_euclid(360)).unwrap();
         if deg != 0 && deg != 90 && deg != 180 && deg != 270 {
             return Err(global.throw_invalid_arguments(format_args!(
                 "rotate: only multiples of 90 are supported"
@@ -523,7 +527,7 @@ impl Image {
                 if v.is_number() {
                     let x = v.as_number();
                     m.brightness = if x.is_finite() {
-                        x.max(0.0).min(1e4) as f32
+                        x.clamp(0.0, 1e4) as f32
                     } else {
                         1.0
                     };
@@ -533,7 +537,7 @@ impl Image {
                 if v.is_number() {
                     let x = v.as_number();
                     m.saturation = if x.is_finite() {
-                        x.max(0.0).min(1e4) as f32
+                        x.clamp(0.0, 1e4) as f32
                     } else {
                         1.0
                     };
@@ -1289,7 +1293,7 @@ impl<'a> BlobReadChain<'a> {
     }
 
     /// JS thread — `read_bytes_to_handler` guarantees this. `r.ok` is owned by us.
-    fn on_read_bytes_impl(self: Box<Self>, r: ReadBytesResult) {
+    fn on_read_bytes_impl(self, r: ReadBytesResult) {
         let global = self.global;
         // SAFETY: `image` is a BACKREF kept alive by the Strong `this_ref`
         // bump in `start()`; we are on the JS thread. R-2: shared deref —

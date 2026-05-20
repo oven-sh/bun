@@ -152,8 +152,7 @@ impl OutputFileJsc for OutputFile {
                 BuildArtifact::to_js_boxed(build_output, global_object)
             }
             OutputFileValue::Saved(_) => {
-                let path_to_use: &[u8] =
-                    owned_pathname.unwrap_or_else(|| self.src_path.text.as_ref());
+                let path_to_use: &[u8] = owned_pathname.unwrap_or(self.src_path.text);
 
                 // `Store::drop` frees a `PathLike::String` payload via
                 // `PathString::deinit_owned`, so the backing buffer must be
@@ -161,7 +160,7 @@ impl OutputFileJsc for OutputFile {
                 // caller drops its `Box<[u8]>` after this returns), so dupe it.
                 let store_path = match owned_pathname {
                     Some(p) => PathLike::String(PathString::init_owned(p.to_vec())),
-                    None => dupe_path_like(self.src_path.text.as_ref()),
+                    None => dupe_path_like(self.src_path.text),
                 };
                 let file_blob = match BlobStore::init_file(
                     PathOrFileDescriptor::Path(store_path),
@@ -194,7 +193,7 @@ impl OutputFileJsc for OutputFile {
 
                 let path: Box<[u8]> = match owned_pathname {
                     Some(p) => Box::from(p),
-                    None => Box::from(self.src_path.text.as_ref()),
+                    None => Box::from(self.src_path.text),
                 };
 
                 let build_output = Box::new(BuildArtifact {
@@ -234,7 +233,7 @@ impl OutputFileJsc for OutputFile {
 
         let mime = self
             .loader
-            .to_mime_type(&[self.dest_path.as_ref(), self.src_path.text.as_ref()]);
+            .to_mime_type(&[self.dest_path.as_ref(), self.src_path.text]);
 
         match value {
             OutputFileValue::Copy(copy) => {
@@ -250,7 +249,7 @@ impl OutputFileJsc for OutputFile {
             }
             OutputFileValue::Saved(_) => {
                 let file_blob = BlobStore::init_file(
-                    PathOrFileDescriptor::Path(dupe_path_like(self.src_path.text.as_ref())),
+                    PathOrFileDescriptor::Path(dupe_path_like(self.src_path.text)),
                     Some(mime),
                 )?;
                 Ok(Blob::init_with_store(file_blob, global_this))

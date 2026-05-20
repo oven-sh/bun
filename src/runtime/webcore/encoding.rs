@@ -312,7 +312,7 @@ pub fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding) -> Bun
         }
         Encoding::Ucs2 | Encoding::Utf16le => {
             // Avoid incomplete characters - if input length is 0 or odd, handle gracefully
-            let usable_len = if input.len() % 2 != 0 {
+            let usable_len = if !input.len().is_multiple_of(2) {
                 input.len() - 1
             } else {
                 input.len()
@@ -491,7 +491,7 @@ pub fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
 /// # Safety
 /// `input` must be valid for reading `len` bytes and `to_ptr` must be valid for
 /// writing `to_len` bytes; the two ranges must not overlap.
-pub fn write_u8<const ENCODING: u8>(
+pub unsafe fn write_u8<const ENCODING: u8>(
     input: *const u8,
     len: usize,
     to_ptr: *mut u8,
@@ -552,7 +552,7 @@ pub fn write_u8<const ENCODING: u8>(
             // `to_slice` already covers `to_ptr[..to_len]`; for the aligned fast
             // path, `bytemuck` gives a safe `&mut [u8] → &mut [u16]` view (it
             // re-checks alignment + even length, both proven here).
-            if (to_slice.as_ptr() as usize) % core::mem::align_of::<u16>() == 0 {
+            if (to_slice.as_ptr() as usize).is_multiple_of(core::mem::align_of::<u16>()) {
                 let output: &mut [u16] = bytemuck::cast_slice_mut(&mut to_slice[..out_units * 2]);
                 let written = strings::copy_latin1_into_utf16(output, buf).written as usize;
                 Ok(written * 2)
@@ -579,7 +579,7 @@ pub fn write_u8<const ENCODING: u8>(
 
 /// # Safety
 /// `input` must be valid for reading `len` bytes.
-pub fn byte_length_u8<const ENCODING: u8>(input: *const u8, len: usize) -> usize {
+pub unsafe fn byte_length_u8<const ENCODING: u8>(input: *const u8, len: usize) -> usize {
     if len == 0 {
         return 0;
     }
@@ -631,7 +631,7 @@ pub fn encode_into_from8<const ENCODING: u8>(
 /// `input` must be valid for reading `len` `u16`s and `to` must be valid for
 /// writing `to_len` bytes. For `Ucs2`/`Utf16le` the ranges may overlap (memmove
 /// semantics); for all other encodings they must not.
-pub fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
+pub unsafe fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
     input: *const u16,
     len: usize,
     to: *mut u8,
@@ -745,7 +745,7 @@ pub fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
 
 /// # Safety
 /// `input` must be valid for reading `len` bytes.
-pub fn construct_from_u8<const ENCODING: u8>(input: *const u8, len: usize) -> Vec<u8> {
+pub unsafe fn construct_from_u8<const ENCODING: u8>(input: *const u8, len: usize) -> Vec<u8> {
     if len == 0 {
         return Vec::new();
     }
@@ -767,10 +767,7 @@ pub fn construct_from_u8<const ENCODING: u8>(input: *const u8, len: usize) -> Ve
         }
         Encoding::Utf8 => {
             // need to encode
-            match strings::allocate_latin1_into_utf8(input_slice) {
-                Ok(v) => v,
-                Err(_) => Vec::new(),
-            }
+            strings::allocate_latin1_into_utf8(input_slice).unwrap_or_default()
         }
         // encode latin1 into UTF16
         // return as bytes
@@ -826,7 +823,7 @@ pub fn construct_from_u8<const ENCODING: u8>(input: *const u8, len: usize) -> Ve
 
 /// # Safety
 /// `input` must be valid for reading `len` `u16`s.
-pub fn construct_from_u16<const ENCODING: u8>(input: *const u16, len: usize) -> Vec<u8> {
+pub unsafe fn construct_from_u16<const ENCODING: u8>(input: *const u16, len: usize) -> Vec<u8> {
     if len == 0 {
         return Vec::new();
     }

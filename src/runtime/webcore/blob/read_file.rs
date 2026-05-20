@@ -102,7 +102,7 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
         // `&mut self`, but the promise is GC-heap-owned and outlives `handler`.
         // Decay to a raw pointer so `handler` can be dropped before resolution.
         let promise: *mut jsc::JSPromise = handler.promise.swap();
-        let mut blob = core::mem::take(&mut handler.context);
+        let blob = core::mem::take(&mut handler.context);
         // `context` was populated via `this.dupe()` in doReadFile(), so it
         // owns a store ref, a name ref, and possibly a content_type copy.
         // (blob is dropped at end of scope — Drop handles deinit.)
@@ -120,7 +120,7 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
                 // `#[track_caller]` `to_js_host_call` inside `AnyPromise::wrap`
                 // give the same source-location/exception-scope behaviour.
                 AnyPromise::Normal(promise).wrap(global_this, move |g| {
-                    F::call(&mut blob, g, bytes, Lifetime::Temporary)
+                    F::call(&blob, g, bytes, Lifetime::Temporary)
                 })?;
             }
             ReadFileResultType::Err(err) => {
@@ -157,6 +157,9 @@ pub struct ReadFileRead {
 }
 
 /// Zig: `SystemError.Maybe(ReadFileRead)`
+// Mirrors the Zig union and is constructed/matched in Blob.rs and Body.rs;
+// boxing the Err arm would change the cross-file callback ABI for no real win.
+#[allow(clippy::large_enum_variant)]
 pub enum ReadFileResultType {
     Result(ReadFileRead),
     Err(SystemError),
@@ -164,6 +167,11 @@ pub enum ReadFileResultType {
 
 pub type ReadFileTask = bun_jsc::work_task::WorkTask<ReadFile>;
 
+// `WorkTaskContext` fixes `run`/`then` to take `*mut Self`; the trait method
+// cannot be marked `unsafe fn` and the parameter type cannot change, so the
+// lint is unsatisfiable here. The pointers come from the work-pool hand-off
+// and are guaranteed live (see SAFETY notes below).
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl bun_jsc::work_task::WorkTaskContext for ReadFile {
     const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ReadFileTask;
     fn run(this: *mut Self, task: *mut bun_jsc::work_task::WorkTask<Self>) {
@@ -304,6 +312,11 @@ impl FileCloser for ReadFile {
         })
     }
 
+    // `FileCloser` fixes `on_close_io_request` to take `*mut WorkPoolTask`;
+    // the trait method cannot be marked `unsafe fn`, so the lint is
+    // unsatisfiable here. The pointer is the intrusive `&mut self.task` set
+    // in `on_io_request_closed` and is guaranteed live.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask) {
         // SAFETY: only reached via `WorkPoolTask::callback` with `task` =
         // `&mut self.task` (intrusive) registered in `on_io_request_closed`;

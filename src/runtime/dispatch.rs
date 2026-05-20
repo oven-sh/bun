@@ -280,23 +280,20 @@ pub fn run_task(
         }
 
         // ── archive ──────────────────────────────────────────────────────
-        // SAFETY: `cast_ptr!` yields the heap-allocated task registered with this
+        // `cast_ptr!` yields the heap-allocated task registered with this
         // tag; the JS-thread dispatch is the sole owner at this point.
-        task_tag::ArchiveExtractTask => unsafe {
+        task_tag::ArchiveExtractTask => {
             ArchiveAsyncTask::run_from_js(cast_ptr!(ArchiveExtractTask))?;
-        },
-        // SAFETY: see ArchiveExtractTask arm above.
-        task_tag::ArchiveBlobTask => unsafe {
+        }
+        task_tag::ArchiveBlobTask => {
             ArchiveAsyncTask::run_from_js(cast_ptr!(ArchiveBlobTask))?;
-        },
-        // SAFETY: see ArchiveExtractTask arm above.
-        task_tag::ArchiveWriteTask => unsafe {
+        }
+        task_tag::ArchiveWriteTask => {
             ArchiveAsyncTask::run_from_js(cast_ptr!(ArchiveWriteTask))?;
-        },
-        // SAFETY: see ArchiveExtractTask arm above.
-        task_tag::ArchiveFilesTask => unsafe {
+        }
+        task_tag::ArchiveFilesTask => {
             ArchiveAsyncTask::run_from_js(cast_ptr!(ArchiveFilesTask))?;
-        },
+        }
 
         // ── shell interpreter (cold — hoisted to `run_task_cold`) ────────
         task_tag::ShellAsync
@@ -320,15 +317,14 @@ pub fn run_task(
         task_tag::FetchTasklet => {
             cast!(FetchTasklet).on_progress_update()?;
         }
-        // SAFETY: `cast_ptr!` yields the heap-allocated S3 task; JS-thread dispatch
+        // `cast_ptr!` yields the heap-allocated S3 task; JS-thread dispatch
         // is the sole owner here.
-        task_tag::S3HttpSimpleTask => unsafe {
+        task_tag::S3HttpSimpleTask => {
             S3HttpSimpleTask::on_response(cast_ptr!(S3HttpSimpleTask))?;
-        },
-        // SAFETY: see S3HttpSimpleTask arm above.
-        task_tag::S3HttpDownloadStreamingTask => unsafe {
+        }
+        task_tag::S3HttpDownloadStreamingTask => {
             S3HttpDownloadStreamingTask::on_response(cast_ptr!(S3HttpDownloadStreamingTask));
-        },
+        }
 
         // ── glob / image / transpiler ────────────────────────────────────
         task_tag::AsyncGlobWalkTask => run_then_destroy!(AsyncGlobWalkTask<'_>),
@@ -467,10 +463,10 @@ pub fn run_task(
         task_tag::FlushPendingFileSinkTask => unsafe {
             FlushPendingFileSinkTask::run_from_js_thread(cast_ptr!(FlushPendingFileSinkTask));
         },
-        // SAFETY: `cast_ptr!` yields the heap-allocated task; sole owner.
-        task_tag::StreamPending => unsafe {
+        // `cast_ptr!` yields the heap-allocated task; sole owner.
+        task_tag::StreamPending => {
             StreamPending::run_from_js_thread(cast_ptr!(StreamPending));
-        },
+        }
 
         // ── timer wrappers (declared in the union but never dispatched
         //    here in Zig either — see Task.zig trailing `else`) ───────────
@@ -552,23 +548,19 @@ fn run_task_cold(task: Task) {
         }
         task_tag::ShellAsyncSubprocessDone => {
             let t = cast_ptr!(ShellAsyncSubprocessDone);
-            // SAFETY: live Box'd task.
-            unsafe { ShellAsyncSubprocessDone::run_from_main_thread(t) };
+            ShellAsyncSubprocessDone::run_from_main_thread(t);
         }
         task_tag::ShellIOWriterAsyncDeinit => {
             let t = cast_ptr!(ShellIOWriterAsyncDeinit);
-            // SAFETY: live Box'd task.
-            unsafe { ShellIOWriterAsyncDeinit::run_from_main_thread(t) };
+            ShellIOWriterAsyncDeinit::run_from_main_thread(t);
         }
         task_tag::ShellIOWriter => {
             let t = cast_ptr!(ShellIOWriter);
-            // SAFETY: live IOWriter (ref-counted).
-            unsafe { ShellIOWriter::run_from_main_thread(t) };
+            ShellIOWriter::run_from_main_thread(t);
         }
         task_tag::ShellIOReaderAsyncDeinit => {
             let t = cast_ptr!(ShellIOReaderAsyncDeinit);
-            // SAFETY: live Box'd task.
-            unsafe { ShellIOReaderAsyncDeinit::run_from_main_thread(t) };
+            ShellIOReaderAsyncDeinit::run_from_main_thread(t);
         }
         task_tag::ShellCondExprStatTask => {
             // Spec: `task.get(..).?.task.runFromMainThread()` — one level of
@@ -584,8 +576,7 @@ fn run_task_cold(task: Task) {
         task_tag::ShellRmTask => shell_dispatch!(ShellRmTask),
         task_tag::ShellRmDirTask => {
             let t = cast_ptr!(ShellRmDirTask);
-            // SAFETY: live DirTask child of a ShellRmTask tree.
-            unsafe { ShellRmDirTask::run_from_main_thread(t) };
+            ShellRmDirTask::run_from_main_thread(t);
         }
         task_tag::ShellGlobTask => shell_dispatch!(ShellGlobTask),
 
@@ -1132,9 +1123,10 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             };
             BunTest::bun_test_timeout_callback(&strong, &now_core, VirtualMachine::get());
         }
-        EventLoopTimerTag::CronJob => timer_arm!(CronJob, event_loop_timer, |c, _now, _vm| {
-            CronJob::on_timer_fire(c, VirtualMachine::get())
-        }),
+        EventLoopTimerTag::CronJob => {
+            let c: *mut CronJob = owner!(CronJob, event_loop_timer);
+            CronJob::on_timer_fire(c, VirtualMachine::get());
+        }
     }
 }
 
@@ -1166,7 +1158,7 @@ pub unsafe fn __bun_js_timer_epoch(
 /// `el` and `vm` must point at live `EventLoop`/`VirtualMachine` instances
 /// with no other `&mut` held across this call.
 #[unsafe(no_mangle)]
-pub fn __bun_tick_queue_with_count(
+pub unsafe fn __bun_tick_queue_with_count(
     el: *mut EventLoop,
     vm: *mut bun_jsc::virtual_machine::VirtualMachine,
     counter: &mut u32,

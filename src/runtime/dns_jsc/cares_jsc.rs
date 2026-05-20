@@ -674,7 +674,7 @@ impl ErrorDeferred {
         })
     }
 
-    pub fn reject(mut self: Box<Self>, global_this: &JSGlobalObject) -> JsResult<()> {
+    pub fn reject(mut self, global_this: &JSGlobalObject) -> JsResult<()> {
         let code = self.errno.code();
         // TODO(port): bun.String.createFormat used Zig {f} spec for bun.String — verify Display impl
         let message = if let Some(hostname) = &self.hostname {

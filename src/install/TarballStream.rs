@@ -527,7 +527,7 @@ impl TarballStream {
                             lib::Result::Failed | lib::Result::Fatal => {
                                 // SAFETY: `(*this).archive` is the live `read_new()` handle
                                 // opened in `init` and held until `finish` frees it.
-                                let msg = unsafe { (*(*this).archive.unwrap()).error_string() };
+                                let msg = (*(*this).archive.unwrap()).error_string();
                                 bun_output::scoped_log!(
                                     TarballStream,
                                     "readNextHeader: {}",
@@ -555,7 +555,7 @@ impl TarballStream {
                             _ => {
                                 // SAFETY: `(*this).archive` is the live `read_new()` handle
                                 // opened in `init` and held until `finish` frees it.
-                                let msg = unsafe { (*(*this).archive.unwrap()).error_string() };
+                                let msg = (*(*this).archive.unwrap()).error_string();
                                 bun_output::scoped_log!(
                                     TarballStream,
                                     "read_data_block: {}",
@@ -919,6 +919,10 @@ impl TarballStream {
     /// `&mut self`) so no Rust reference dangles across the
     /// `heap::take` self-destruction (Zig spec: `this.deinit()` with a
     /// freely-aliasing `*TarballStream`).
+    // The `&(&(*task).request.extract)` wrappers below are deliberate — they
+    // sidestep `dangerous_implicit_autorefs` by making the ref explicit before
+    // the union deref. `needless_borrow` flags them as redundant but they are not.
+    #[allow(clippy::needless_borrow)]
     unsafe fn finish(this: *mut Self) {
         // SAFETY: see fn-level # Safety — `this`/`task`/`network`/`manager`
         // are live raw pointers; this fn is the sole owner. After
@@ -1006,13 +1010,14 @@ impl TarballStream {
     /// `task` must be live and exclusively owned by this drain. Takes a raw
     /// pointer (Zig: freely-aliasing `*Task`) so `tarball` (a borrow into
     /// `task.request`) can coexist with writes to `task.log`/`task.data`.
+    // The `&(&(*task).request.extract)` wrapper below sidesteps
+    // `dangerous_implicit_autorefs`; `needless_borrow` is wrong here.
+    #[allow(clippy::needless_borrow)]
     unsafe fn populate_result(&mut self, task: *mut Task) {
         // SAFETY: see fn-level # Safety — `task` is live and exclusively
         // owned by this drain; union field `extract` is the active variant
         // for streaming tarballs (set by `enqueueExtractNPMPackage`).
         unsafe {
-            // Explicit `&` (no implicit autoref through the raw-ptr deref) for
-            // the `ManuallyDrop` → `ExtractRequest` deref.
             let tarball = &(&(*task).request.extract).tarball;
             (*task).data = TaskData {
                 extract: ManuallyDrop::new(Default::default()),

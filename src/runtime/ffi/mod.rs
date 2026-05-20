@@ -409,6 +409,7 @@ impl CompilerRT {
     /// Caller (TCC-compiled code) guarantees `dest[0..byte_count]` is writable.
     #[inline(never)]
     pub unsafe extern "C" fn memset(dest: *mut u8, c: u8, byte_count: usize) {
+        // SAFETY: caller (TCC-compiled code) guarantees `dest[0..byte_count]` is writable.
         unsafe { core::slice::from_raw_parts_mut(dest, byte_count) }.fill(c);
     }
 
@@ -417,6 +418,8 @@ impl CompilerRT {
     /// `source[0..byte_count]` are valid and non-overlapping.
     #[inline(never)]
     pub unsafe extern "C" fn memcpy(dest: *mut u8, source: *const u8, byte_count: usize) {
+        // SAFETY: caller (TCC-compiled code) guarantees `dest[0..byte_count]` and
+        // `source[0..byte_count]` are valid and non-overlapping.
         unsafe {
             core::slice::from_raw_parts_mut(dest, byte_count)
                 .copy_from_slice(core::slice::from_raw_parts(source, byte_count));

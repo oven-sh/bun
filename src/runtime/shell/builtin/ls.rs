@@ -1,3 +1,4 @@
+use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use std::io::Write as _;
 
@@ -60,132 +61,127 @@ impl Ls {
     }
 
     pub fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
-        loop {
-            // PORT NOTE: reshaped for borrowck — match on a tag, drop the
-            // borrow, then act.
-            enum Tag {
-                Idle,
-                Exec,
-                WaitingWriteErr,
-                Done,
-            }
-            let tag = match Self::state_mut(interp, cmd).state {
-                State::Idle => Tag::Idle,
-                State::Exec(_) => Tag::Exec,
-                State::WaitingWriteErr => Tag::WaitingWriteErr,
-                State::Done => Tag::Done,
-            };
-            match tag {
-                Tag::Idle => {
-                    // Parse opts; will be None if called with no args, in
-                    // which case we run once with ".".
-                    let paths_start = match Self::parse_opts(interp, cmd) {
-                        Ok(p) => p,
-                        Err(e) => {
-                            let buf: Vec<u8> = match e {
-                                LsParseError::IllegalOption(opt) => Builtin::fmt_error_arena(
-                                    interp,
-                                    cmd,
-                                    Some(Kind::Ls),
-                                    format_args!(
-                                        "illegal option -- {}\n",
-                                        bstr::BStr::new(&opt[..])
-                                    ),
-                                )
-                                .to_vec(),
-                                LsParseError::ShowUsage => Kind::Ls.usage_string().to_vec(),
-                            };
-                            Self::state_mut(interp, cmd).state = State::WaitingWriteErr;
-                            return Builtin::write_failing_error(interp, cmd, &buf, 1);
-                        }
-                    };
-
-                    let argc = Builtin::of(interp, cmd).args_slice().len();
-                    let task_count = match paths_start {
-                        Some(start) => argc - start,
-                        None => 1,
-                    };
-                    Self::state_mut(interp, cmd).state = State::Exec(ExecState {
-                        err: None,
-                        task_count: AtomicUsize::new(task_count),
-                        tasks_done: 0,
-                        output_waiting: 0,
-                        output_done: 0,
-                        output_queue: std::collections::VecDeque::new(),
-                    });
-
-                    // Stable address: `Ls` lives in `Box<Ls>` (Builtin::Impl::Ls),
-                    // and the `Exec` variant is held until all tasks finish.
-                    let task_count_ptr: *const AtomicUsize = {
-                        let State::Exec(exec) = &Self::state_mut(interp, cmd).state else {
-                            unreachable!()
-                        };
-                        &raw const exec.task_count
-                    };
-
-                    let cwd = Builtin::cwd(interp, cmd);
-                    let opts = Self::state_mut(interp, cmd).opts;
-                    let evtloop = Builtin::event_loop(interp, cmd);
-                    let interp_ptr = interp.as_ctx_ptr();
-                    if let Some(start) = paths_start {
-                        let print_directory = task_count > 1;
-                        for i in start..argc {
-                            let path = Builtin::of(interp, cmd).arg_bytes(i);
-                            let task = ShellLsTask::create(
+        // PORT NOTE: reshaped for borrowck — match on a tag, drop the
+        // borrow, then act.
+        enum Tag {
+            Idle,
+            Exec,
+            WaitingWriteErr,
+            Done,
+        }
+        let tag = match Self::state_mut(interp, cmd).state {
+            State::Idle => Tag::Idle,
+            State::Exec(_) => Tag::Exec,
+            State::WaitingWriteErr => Tag::WaitingWriteErr,
+            State::Done => Tag::Done,
+        };
+        match tag {
+            Tag::Idle => {
+                // Parse opts; will be None if called with no args, in
+                // which case we run once with ".".
+                let paths_start = match Self::parse_opts(interp, cmd) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        let buf: Vec<u8> = match e {
+                            LsParseError::IllegalOption(opt) => Builtin::fmt_error_arena(
+                                interp,
                                 cmd,
-                                opts,
-                                task_count_ptr,
-                                cwd,
-                                ZBox::from_bytes(path),
-                                evtloop,
-                                interp_ptr,
-                            );
-                            // SAFETY: freshly heap-allocated.
-                            unsafe {
-                                (*task).print_directory = print_directory;
-                                ShellTask::schedule_no_ref::<ShellLsTask>(task);
-                            }
-                        }
-                    } else {
+                                Some(Kind::Ls),
+                                format_args!("illegal option -- {}\n", bstr::BStr::new(&opt[..])),
+                            )
+                            .to_vec(),
+                            LsParseError::ShowUsage => Kind::Ls.usage_string().to_vec(),
+                        };
+                        Self::state_mut(interp, cmd).state = State::WaitingWriteErr;
+                        return Builtin::write_failing_error(interp, cmd, &buf, 1);
+                    }
+                };
+
+                let argc = Builtin::of(interp, cmd).args_slice().len();
+                let task_count = match paths_start {
+                    Some(start) => argc - start,
+                    None => 1,
+                };
+                Self::state_mut(interp, cmd).state = State::Exec(ExecState {
+                    err: None,
+                    task_count: AtomicUsize::new(task_count),
+                    tasks_done: 0,
+                    output_waiting: 0,
+                    output_done: 0,
+                    output_queue: std::collections::VecDeque::new(),
+                });
+
+                // Stable address: `Ls` lives in `Box<Ls>` (Builtin::Impl::Ls),
+                // and the `Exec` variant is held until all tasks finish.
+                let task_count_ptr: *const AtomicUsize = {
+                    let State::Exec(exec) = &Self::state_mut(interp, cmd).state else {
+                        unreachable!()
+                    };
+                    &raw const exec.task_count
+                };
+
+                let cwd = Builtin::cwd(interp, cmd);
+                let opts = Self::state_mut(interp, cmd).opts;
+                let evtloop = Builtin::event_loop(interp, cmd);
+                let interp_ptr = interp.as_ctx_ptr();
+                if let Some(start) = paths_start {
+                    let print_directory = task_count > 1;
+                    for i in start..argc {
+                        let path = Builtin::of(interp, cmd).arg_bytes(i);
                         let task = ShellLsTask::create(
                             cmd,
                             opts,
                             task_count_ptr,
                             cwd,
-                            ZBox::from_bytes(b"."),
+                            ZBox::from_bytes(path),
                             evtloop,
                             interp_ptr,
                         );
                         // SAFETY: freshly heap-allocated.
-                        unsafe { ShellTask::schedule_no_ref::<ShellLsTask>(task) };
+                        unsafe {
+                            (*task).print_directory = print_directory;
+                            ShellTask::schedule_no_ref::<ShellLsTask>(task);
+                        }
                     }
-                    return Yield::suspended();
+                } else {
+                    let task = ShellLsTask::create(
+                        cmd,
+                        opts,
+                        task_count_ptr,
+                        cwd,
+                        ZBox::from_bytes(b"."),
+                        evtloop,
+                        interp_ptr,
+                    );
+                    // SAFETY: freshly heap-allocated.
+                    unsafe { ShellTask::schedule_no_ref::<ShellLsTask>(task) };
                 }
-                Tag::Exec => {
-                    let done = {
-                        let State::Exec(exec) = &Self::state_mut(interp, cmd).state else {
+                Yield::suspended()
+            }
+            Tag::Exec => {
+                let done = {
+                    let State::Exec(exec) = &Self::state_mut(interp, cmd).state else {
+                        unreachable!()
+                    };
+                    exec.tasks_done >= exec.task_count.load(Ordering::Relaxed)
+                        && exec.output_done >= exec.output_waiting
+                };
+                if done {
+                    let exit_code: ExitCode = {
+                        let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
                             unreachable!()
                         };
-                        exec.tasks_done >= exec.task_count.load(Ordering::Relaxed)
-                            && exec.output_done >= exec.output_waiting
+                        let code = if exec.err.is_some() { 1 } else { 0 };
+                        exec.err = None;
+                        code
                     };
-                    if done {
-                        let exit_code: ExitCode = {
-                            let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
-                                unreachable!()
-                            };
-                            let code = if exec.err.is_some() { 1 } else { 0 };
-                            exec.err = None;
-                            code
-                        };
-                        Self::state_mut(interp, cmd).state = State::Done;
-                        return Builtin::done(interp, cmd, exit_code);
-                    }
-                    return Yield::suspended();
+                    Self::state_mut(interp, cmd).state = State::Done;
+                    return Builtin::done(interp, cmd, exit_code);
                 }
-                Tag::WaitingWriteErr => return Yield::failed(),
-                Tag::Done => return Builtin::done(interp, cmd, 0),
+                Yield::suspended()
             }
+            Tag::WaitingWriteErr => Yield::failed(),
+            Tag::Done => Builtin::done(interp, cmd, 0),
         }
     }
 
@@ -216,9 +212,9 @@ impl Ls {
     /// # Safety
     /// `task` must be a live heap allocation produced by
     /// [`ShellLsTask::create`]; ownership is reclaimed here.
-    pub fn on_shell_ls_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellLsTask) {
+    pub fn on_shell_ls_task_done(interp: &Interpreter, cmd: NodeId, task: NonNull<ShellLsTask>) {
         // SAFETY: precondition.
-        let mut task = unsafe { bun_core::heap::take(task) };
+        let mut task = unsafe { bun_core::heap::take(task.as_ptr()) };
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.tasks_done += 1;
         }
@@ -643,12 +639,10 @@ impl ShellLsTask {
     /// `this` must be a live heap allocation produced by
     /// [`ShellLsTask::create`]; ownership is reclaimed via
     /// [`Ls::on_shell_ls_task_done`].
-    pub fn run_from_main_thread(this: *mut ShellLsTask, interp: &Interpreter) {
+    pub fn run_from_main_thread(this: NonNull<ShellLsTask>, interp: &Interpreter) {
         // SAFETY: precondition.
-        unsafe {
-            let cmd = (*this).cmd;
-            Ls::on_shell_ls_task_done(interp, cmd, this);
-        }
+        let cmd = unsafe { this.as_ref() }.cmd;
+        Ls::on_shell_ls_task_done(interp, cmd, this);
     }
 }
 
@@ -800,9 +794,9 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellLsTask {
         Self::run_from_thread_pool(this)
     }
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
-        // SAFETY: `ShellTask` trampoline hands back the heap allocation
-        // produced by `ShellLsTask::create`.
-        Self::run_from_main_thread(this, interp)
+        // The `ShellTask` trampoline hands back the live, non-null heap
+        // allocation produced by `ShellLsTask::create`.
+        Self::run_from_main_thread(NonNull::new(this).unwrap(), interp)
     }
 }
 

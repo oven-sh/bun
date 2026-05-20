@@ -603,6 +603,9 @@ impl<Op: PasswordOp> Drop for PasswordJob<Op> {
 bun_threading::owned_task!([Op: PasswordOp] PasswordJob<Op>, task);
 
 impl<Op: PasswordOp> PasswordJob<Op> {
+    // `owned_task!` requires `fn run_owned(self: Box<Self>)`; clippy::boxed_local
+    // is a false positive on this macro contract.
+    #[allow(clippy::boxed_local)]
     fn run_owned(mut self: Box<Self>) {
         let value = self.op.compute(&self.password);
         let result = bun_core::heap::into_raw(Box::new(PasswordResult::<Op> {

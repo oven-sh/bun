@@ -88,7 +88,7 @@ pub fn do_send(
         global_object.validate_object("options", options_, Default::default())?;
     }
 
-    let connected = ipc.as_ref().map_or(false, |i| i.is_connected());
+    let connected = ipc.as_ref().is_some_and(|i| i.is_connected());
     if !connected {
         let msg = match from {
             FromEnum::Process => "process.send() can only be used if the IPC channel is open.",

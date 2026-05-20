@@ -1192,13 +1192,11 @@ impl FileSink {
             // SAFETY: `construct` is only called from JSSink codegen on a thread
             // that already has a Bun VM (`get()` panics otherwise); `event_loop()`
             // is the live per-thread `jsc::EventLoop`.
-            event_loop_handle: unsafe {
-                EventLoopHandle::init(
-                    (*bun_jsc::VirtualMachineRef::get())
-                        .event_loop()
-                        .cast::<()>(),
-                )
-            },
+            event_loop_handle: EventLoopHandle::init(
+                (*bun_jsc::VirtualMachineRef::get())
+                    .event_loop()
+                    .cast::<()>(),
+            ),
             ..FileSink::default_fields()
         };
         LIVE_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -1544,7 +1542,7 @@ impl FileSink {
             // PORT NOTE: `EventLoopHandle` has no `Default`; null Js variant is the
             // closest sentinel — every constructor overwrites this field.
             // SAFETY: sentinel only; never dispatched (overwritten before use).
-            event_loop_handle: unsafe { EventLoopHandle::init(core::ptr::null_mut()) },
+            event_loop_handle: EventLoopHandle::init(core::ptr::null_mut()),
             written: Cell::new(0),
             pending: JsCell::new(streams::WritablePending {
                 result: streams::Writable::Done,

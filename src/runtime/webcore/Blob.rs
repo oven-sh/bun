@@ -779,6 +779,9 @@ impl BlobExt for Blob {
     ) {
         // no-op
     }
+    // C++ codegen calls this with a live `*mut *mut u8` cursor and end pointer; the
+    // trait signature is fixed, so the deref is documented with the SAFETY comment below.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn on_structured_clone_deserialize(
         global_this: &JSGlobalObject,
         ptr: *mut *mut u8,
@@ -1576,18 +1579,14 @@ impl BlobExt for Blob {
             {
                 let sink = webcore::FileSink::init(
                     Fd::INVALID,
-                    // SAFETY: `global_this().bun_vm().event_loop()` is the live
-                    // per-thread `jsc::EventLoop`.
-                    unsafe {
-                        jsc::EventLoopHandle::init(
-                            self.global_this()
-                                .expect("Blob.global_this set at construction")
-                                .bun_vm()
-                                .as_mut()
-                                .event_loop()
-                                .cast::<()>(),
-                        )
-                    },
+                    jsc::EventLoopHandle::init(
+                        self.global_this()
+                            .expect("Blob.global_this set at construction")
+                            .bun_vm()
+                            .as_mut()
+                            .event_loop()
+                            .cast::<()>(),
+                    ),
                 );
 
                 let input_path: webcore::PathOrFileDescriptor = match &store.data.as_file().pathlike
@@ -1943,18 +1942,14 @@ impl BlobExt for Blob {
         {
             let sink = webcore::FileSink::init(
                 bun_sys::Fd::INVALID,
-                // SAFETY: `global_this().bun_vm().event_loop()` is the live
-                // per-thread `jsc::EventLoop`.
-                unsafe {
-                    jsc::EventLoopHandle::init(
-                        self.global_this()
-                            .expect("Blob.global_this set at construction")
-                            .bun_vm()
-                            .as_mut()
-                            .event_loop()
-                            .cast::<()>(),
-                    )
-                },
+                jsc::EventLoopHandle::init(
+                    self.global_this()
+                        .expect("Blob.global_this set at construction")
+                        .bun_vm()
+                        .as_mut()
+                        .event_loop()
+                        .cast::<()>(),
+                ),
             );
 
             let input_path: webcore::PathOrFileDescriptor = match &store.data.as_file().pathlike {
@@ -2350,7 +2345,7 @@ impl BlobExt for Blob {
                 if let store::Data::File(file) =
                     &self.store().expect("infallible: store present").data
                 {
-                    if file.seekable.unwrap_or(true) == false && file.max_size == MAX_SIZE {
+                    if !file.seekable.unwrap_or(true) && file.max_size == MAX_SIZE {
                         return JSValue::js_number(f64::INFINITY);
                     }
                 }
@@ -2847,15 +2842,17 @@ impl BlobExt for Blob {
         if view_ptr.len() == 0 {
             return Ok(ZigString::EMPTY.to_js(global));
         }
-        // SAFETY: `view_ptr` is the store-backed view from `shared_view_raw`;
-        // valid for reads while the store ref is held. `Temporary` is unreachable.
         match lifetime {
+            // SAFETY: `view_ptr` is the store-backed view from `shared_view_raw`;
+            // valid for reads while the store ref is held.
             Lifetime::Clone => unsafe {
                 self.to_string_with_bytes::<{ Lifetime::Clone }>(global, view_ptr)
             },
+            // SAFETY: same as `Clone` above.
             Lifetime::Transfer => unsafe {
                 self.to_string_with_bytes::<{ Lifetime::Transfer }>(global, view_ptr)
             },
+            // SAFETY: same as `Clone` above.
             Lifetime::Share => unsafe {
                 self.to_string_with_bytes::<{ Lifetime::Share }>(global, view_ptr)
             },
@@ -2883,15 +2880,17 @@ impl BlobExt for Blob {
         // `StoreRef::as_ptr`). `to_json_with_bytes` only reads through it for the
         // non-`Temporary` lifetimes below. Mirrors Zig `@constCast(this.sharedView())`.
         let view_ptr = self.shared_view_raw();
-        // SAFETY: `view_ptr` is the store-backed view from `shared_view_raw`;
-        // valid for reads while the store ref is held. `Temporary` is unreachable.
         match lifetime {
+            // SAFETY: `view_ptr` is the store-backed view from `shared_view_raw`;
+            // valid for reads while the store ref is held.
             Lifetime::Clone => unsafe {
                 self.to_json_with_bytes::<{ Lifetime::Clone }>(global, view_ptr)
             },
+            // SAFETY: same as `Clone` above.
             Lifetime::Transfer => unsafe {
                 self.to_json_with_bytes::<{ Lifetime::Transfer }>(global, view_ptr)
             },
+            // SAFETY: same as `Clone` above.
             Lifetime::Share => unsafe {
                 self.to_json_with_bytes::<{ Lifetime::Share }>(global, view_ptr)
             },
@@ -3207,19 +3206,21 @@ impl BlobExt for Blob {
         if view_ptr.len() == 0 {
             return jsc::ArrayBuffer::create::<TYPED_ARRAY_VIEW>(global, b"");
         }
-        // SAFETY: `view_ptr` is the store-backed view from `shared_view_raw`;
-        // valid for the store's lifetime. `Temporary` is unreachable.
         match lifetime {
+            // SAFETY: `view_ptr` is the store-backed view from `shared_view_raw`;
+            // valid for the store's lifetime.
             Lifetime::Clone => unsafe {
                 self.to_array_buffer_view_with_bytes::<{ Lifetime::Clone }, TYPED_ARRAY_VIEW>(
                     global, view_ptr,
                 )
             },
+            // SAFETY: same as `Clone` above.
             Lifetime::Share => unsafe {
                 self.to_array_buffer_view_with_bytes::<{ Lifetime::Share }, TYPED_ARRAY_VIEW>(
                     global, view_ptr,
                 )
             },
+            // SAFETY: same as `Clone` above.
             Lifetime::Transfer => unsafe {
                 self.to_array_buffer_view_with_bytes::<{ Lifetime::Transfer }, TYPED_ARRAY_VIEW>(
                     global, view_ptr,
@@ -3790,7 +3791,7 @@ impl BlobExt for Blob {
     /// Takes ownership of `self` by value. Invalidates `self`.
     fn take_ownership(&mut self) -> Blob {
         // PORT NOTE: Zig writes `self.* = undefined` after the copy.
-        let mut result = core::mem::replace(self, Blob::default());
+        let mut result = std::mem::take(self);
         result.set_not_heap_allocated();
         result
     }
@@ -4758,7 +4759,7 @@ pub fn write_file_with_source_destination(
                         )?,
                         ctx,
                     )? {
-                        return Ok(s3_client::upload_stream(
+                        return s3_client::upload_stream(
                             if options.extra_options.is_some() {
                                 aws_options.credentials.dupe()
                             } else {
@@ -4779,7 +4780,7 @@ pub fn write_file_with_source_destination(
                             aws_options.request_payer,
                             None,
                             core::ptr::null_mut(),
-                        )?);
+                        );
                     } else {
                         return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             ctx,
@@ -4858,7 +4859,7 @@ pub fn write_file_with_source_destination(
                     )?,
                     ctx,
                 )? {
-                    return Ok(s3_client::upload_stream(
+                    return s3_client::upload_stream(
                         if options.extra_options.is_some() {
                             aws_options.credentials.dupe()
                         } else {
@@ -4879,7 +4880,7 @@ pub fn write_file_with_source_destination(
                         aws_options.request_payer,
                         None,
                         core::ptr::null_mut(),
-                    )?);
+                    );
                 } else {
                     return Ok(
                         JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
@@ -5739,6 +5740,9 @@ impl S3BlobDownloadTask {
     /// # Safety
     /// `this` must be the heap-allocated task produced by [`S3BlobDownloadTask::init`];
     /// ownership is consumed (the box is reclaimed and dropped) by this call.
+    // S3 callback ABI hands us a raw `*mut Self`; ownership is reclaimed below via
+    // `heap::take`, so the param stays a raw pointer rather than `&mut`.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn on_s3_download_resolved(
         result: crate::webcore::__s3_client::S3DownloadResult,
         this: *mut S3BlobDownloadTask,
@@ -5824,13 +5828,7 @@ impl S3BlobDownloadTask {
             result: crate::webcore::__s3_client::S3DownloadResult<'_>,
             ctx: *mut c_void,
         ) -> Result<(), jsc::JsTerminated> {
-            // SAFETY: `ctx` is the boxed task handed to the S3 client by `init`.
-            unsafe {
-                S3BlobDownloadTask::on_s3_download_resolved(
-                    result,
-                    ctx.cast::<S3BlobDownloadTask>(),
-                )
-            }
+            S3BlobDownloadTask::on_s3_download_resolved(result, ctx.cast::<S3BlobDownloadTask>())
         }
 
         if blob.offset.get() > 0 {
@@ -6230,6 +6228,9 @@ pub struct ToArrayBufferWithBytesFn;
 pub struct ToUint8ArrayWithBytesFn;
 pub struct ToFormDataWithBytesFn;
 
+// `ReadFileToJs::call`'s `by: *mut [u8]` is fixed by the trait; each impl forwards
+// it to the matching unsafe `*_with_bytes` body, so the deref is documented there.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl read_file::ReadFileToJs for ToStringWithBytesFn {
     fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         // SAFETY: `by` upholds the `ReadFileToJs::call` contract — a leaked
@@ -6244,6 +6245,7 @@ impl read_file::ReadFileToJs for ToStringWithBytesFn {
         }
     }
 }
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl read_file::ReadFileToJs for ToJsonWithBytesFn {
     fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         // SAFETY: see `ToStringWithBytesFn::call`.
@@ -6257,6 +6259,7 @@ impl read_file::ReadFileToJs for ToJsonWithBytesFn {
         }
     }
 }
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl read_file::ReadFileToJs for ToArrayBufferWithBytesFn {
     fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         // SAFETY: see `ToStringWithBytesFn::call`.
@@ -6272,6 +6275,7 @@ impl read_file::ReadFileToJs for ToArrayBufferWithBytesFn {
         }
     }
 }
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl read_file::ReadFileToJs for ToUint8ArrayWithBytesFn {
     fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         // SAFETY: see `ToStringWithBytesFn::call`.
@@ -6287,6 +6291,7 @@ impl read_file::ReadFileToJs for ToUint8ArrayWithBytesFn {
         }
     }
 }
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl read_file::ReadFileToJs for ToFormDataWithBytesFn {
     fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         let _ = l; // FormData ignores lifetime — bytes are read-only.
@@ -6310,6 +6315,10 @@ impl read_file::ReadFileToJs for ToFormDataWithBytesFn {
 // Any (AnyBlob)
 // ──────────────────────────────────────────────────────────────────────────
 
+// Mirrors Zig's `AnyBlob` tagged union and is constructed/matched by-value
+// across many crates (spawn stdio, shell, ReadableStream, DevServer, fetch);
+// boxing the `Blob` arm would change the public ABI in all of them.
+#[allow(clippy::large_enum_variant)]
 pub enum Any {
     Blob(Blob),
     InternalBlob(Internal),

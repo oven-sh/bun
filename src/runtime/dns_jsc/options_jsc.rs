@@ -204,11 +204,9 @@ pub fn result_any_to_js(this: &ResultAny, global: &JSGlobalObject) -> JsResult<O
         }
         ResultAny::List(list) => 'brk: {
             let array = JSValue::create_empty_array(global, list.len())?;
-            let mut i: u32 = 0;
             let items: &[GaiResult] = list.as_slice();
-            for item in items {
+            for (i, item) in (0_u32..).zip(items.iter()) {
                 array.put_index(global, i, result_to_js(item, global)?)?;
-                i += 1;
             }
             break 'brk Some(array);
         }

@@ -330,7 +330,7 @@ pub type WatchFd = Fd;
 bun_spawn::link_impl_ProcessExit! {
     Shell for ShellSubprocess => |this| {
         on_process_exit(process, status, rusage) =>
-            (*this).on_process_exit(&*process, &status, &*rusage),
+            (*this).on_process_exit(&*process, &status, rusage),
     }
 }
 
@@ -564,6 +564,10 @@ impl ShellSubprocess {
         }
     }
 
+    // `sh::Result`'s `ShellErr` is a shared shell-wide error type defined in
+    // `shell_body.rs`; boxing it here would change `pub fn` signatures across
+    // every `?`-propagating shell caller.
+    #[allow(clippy::result_large_err)]
     pub fn spawn_async(
         event_loop: EventLoopHandle,
         shellio: &mut ShellIO,
@@ -592,6 +596,9 @@ impl ShellSubprocess {
         }
     }
 
+    // See `spawn_async`: `sh::Result`'s `ShellErr` is shared shell-wide; not
+    // boxable from this file.
+    #[allow(clippy::result_large_err)]
     fn spawn_maybe_sync_impl(
         event_loop: EventLoopHandle,
         spawn_args: &mut SpawnArgs<'_>,
@@ -1962,6 +1969,13 @@ impl PipeReader {
         // hand it to `reader.set_parent` / `container_of` consumers.
         // `Arc::from(Box<T>)` would reallocate into a new ArcInner and leave
         // every BufferedReader callback with a dangling parent pointer.
+        //
+        // `PipeReader` is deliberately `!Send + !Sync` (raw `*mut Interpreter`
+        // / `*mut ShellSubprocess` fields); thread confinement is enforced at
+        // compile time by `__pipe_reader_thread_confined`, so the `Arc` is the
+        // Zig intrusive-refcount shape, not a cross-thread handle. `Rc` would
+        // change the `pub fn create -> Arc<PipeReader>` ABI.
+        #[allow(clippy::arc_with_non_send_sync)]
         let arc = Arc::new(PipeReader {
             process: Some(process),
             reader: IOReader::init::<PipeReader>(),
@@ -2055,32 +2069,29 @@ impl PipeReader {
     pub const TO_JS: fn(Arc<Self>, &JSGlobalObject) -> jsc::JsResult<JSValue> =
         Self::to_readable_stream;
 
-    /// # Safety
-    /// `ptr` must be the `*mut PipeReader` registered via
-    /// `reader.set_parent(self)` and must point to a live `PipeReader`.
-    pub fn on_read_chunk(ptr: *mut c_void, chunk: &[u8], has_more: ReadState) -> bool {
-        // SAFETY: caller contract.
-        let this: &mut PipeReader = unsafe { bun_ptr::callback_ctx::<PipeReader>(ptr) };
-        this.buffered_output.append(chunk);
+    /// `BufferedReaderParent::on_read_chunk` adapter — invoked with the
+    /// `PipeReader` registered via `reader.set_parent(self)`.
+    pub fn on_read_chunk(&mut self, chunk: &[u8], has_more: ReadState) -> bool {
+        self.buffered_output.append(chunk);
         log!(
             "PipeReader(0x{:x}, {}) onReadChunk(chunk_len={}, has_more={})",
-            std::ptr::from_mut(this) as usize,
-            out_kind_str(this.out_type),
+            std::ptr::from_mut(self) as usize,
+            out_kind_str(self.out_type),
             chunk.len(),
             read_state_str(has_more)
         );
 
-        this.captured_writer.do_write(chunk);
+        self.captured_writer.do_write(chunk);
 
         let should_continue = has_more != ReadState::Eof;
 
         if should_continue {
             #[cfg(unix)]
             {
-                this.reader.register_poll();
+                self.reader.register_poll();
             }
             #[cfg(not(unix))]
-            match this.reader.start_with_current_pipe() {
+            match self.reader.start_with_current_pipe() {
                 bun_sys::Result::Err(e) => {
                     Output::panic(format_args!(
                         "TODO: implement error handling in Bun Shell PipeReader.onReadChunk\n{:?}",
@@ -2482,7 +2493,7 @@ impl Drop for PipeReader {
 bun_io::impl_buffered_reader_parent! {
     ShellPipeReader for PipeReader;
     has_on_read_chunk = true;
-    on_read_chunk   = |this, chunk, has_more| PipeReader::on_read_chunk(this.cast::<c_void>(), chunk, has_more);
+    on_read_chunk   = |this, chunk, has_more| (*this).on_read_chunk(chunk, has_more);
     on_reader_done  = |this| PipeReader::on_reader_done(this);
     on_reader_error = |this, err| PipeReader::on_reader_error(this, &err);
     loop_           = |this| (*this).r#loop();

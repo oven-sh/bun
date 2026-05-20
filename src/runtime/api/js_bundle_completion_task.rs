@@ -986,10 +986,10 @@ impl CompletionStruct for JSBundleCompletionTask {
                 .conditions
                 .append_slice(&[b"development"])?;
         }
-        // SAFETY: `transpiler.env` is the dotenv loader installed by
+        // `transpiler.env` is the dotenv loader installed by
         // `Transpiler::init`; non-null and valid for `'a`.
         transpiler.resolver.env_loader =
-            NonNull::new(unsafe { transpiler.env.cast::<bun_dotenv::Loader<'_>>() });
+            NonNull::new(transpiler.env.cast::<bun_dotenv::Loader<'_>>());
         // `Resolver.opts` is the resolver-crate subset
         // — re-project from the now-mutated `transpiler.options` (Zig assigned
         // the struct by value: `resolver.opts = transpiler.options`).
@@ -999,12 +999,10 @@ impl CompletionStruct for JSBundleCompletionTask {
 
     fn complete_on_bundle_thread(&mut self) {
         // `jsc_event_loop` is a `BackRef<EventLoop>` — safe Deref.
-        // SAFETY: `ConcurrentTask::create` heap-allocates a fresh task; the
+        // `ConcurrentTask::create` heap-allocates a fresh task; the
         // queue takes ownership of it.
-        unsafe {
-            self.jsc_event_loop
-                .enqueue_task_concurrent(jsc::ConcurrentTask::create(self.task.task()));
-        }
+        self.jsc_event_loop
+            .enqueue_task_concurrent(jsc::ConcurrentTask::create(self.task.task()));
     }
     fn set_result(&mut self, result: BundleV2Result) {
         self.result = result;

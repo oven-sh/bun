@@ -62,7 +62,7 @@ Clippy lints:
 - mut_from_ref: do NOT change the signature. Add \`#[allow(clippy::mut_from_ref)]\` ONLY if the body goes through a raw pointer / UnsafeCell (note in summary). Otherwise skip.
 - derivable_impls: replace the manual impl with \`#[derive(Default)]\` (or whichever trait) on the type.
 - drop_non_drop: delete the \`drop(x)\` call (it's a no-op on a Copy type).
-- large_enum_variant: \`Box<T>\` the large arm; update construction sites IN THIS FILE only.
+- large_enum_variant: \`Box<T>\` the large arm; update construction + match sites IN THIS FILE only. If the enum is a public ABI type (matches a Zig union, or has \`#[repr(C)]\`, or is constructed/matched in many other files), add \`#[allow(clippy::large_enum_variant)]\` with a one-line comment explaining why boxing isn't viable.
 - vec_box: if the doc/comment says addresses must be stable across realloc (HiveArray/intrusive-list pattern), skip and note WHY. Otherwise change \`Vec<Box<T>>\` → \`Vec<T>\` and remove \`Box::new\` at push sites.
 - boxed_local: change \`fn foo(x: Box<T>)\` → \`fn foo(x: T)\` and update IN-FILE callers (drop \`Box::new\`). If trait method with default body that re-boxes, change both.
 - arc_with_non_send_sync: if the type is genuinely thread-safe (refcount/atomic-backed, or the Zig original was thread-shared), add \`unsafe impl Send for T {}\` + \`unsafe impl Sync for T {}\` with a \`// SAFETY:\` comment explaining why. Otherwise change \`Arc\` → \`Rc\`.

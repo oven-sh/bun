@@ -151,8 +151,8 @@ impl BufferedIoClosed {
     /// Spec: `BufferedIoClosed.allClosed`.
     pub fn all_closed(&self) -> bool {
         let stdin_closed = self.stdin.unwrap_or(true);
-        let stdout_closed = self.stdout.as_ref().map_or(true, BufferedIoState::closed);
-        let stderr_closed = self.stderr.as_ref().map_or(true, BufferedIoState::closed);
+        let stdout_closed = self.stdout.as_ref().is_none_or(BufferedIoState::closed);
+        let stderr_closed = self.stderr.as_ref().is_none_or(BufferedIoState::closed);
         let ret = stdin_closed && stdout_closed && stderr_closed;
         log!(
             "BufferedIOClosed all_closed={} stdin={} stdout={} stderr={}",

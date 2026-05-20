@@ -82,7 +82,7 @@ fn eat_zig_string(iter: &mut ArgumentsSlice<'_>, global: &JSGlobalObject) -> JsR
     if value.is_undefined_or_null() {
         return Err(global.throw_invalid_arguments(format_args!("Expected string")));
     }
-    Ok(value.get_zig_string(global)?)
+    value.get_zig_string(global)
 }
 
 /// `wrapInstanceMethod` arm for `jsc.JSValue` (required) — eat next arg or
@@ -348,13 +348,13 @@ impl HTMLRewriter {
     pub fn begin_transform(
         &self,
         global: &JSGlobalObject,
-        response: *mut Response,
+        response: &mut Response,
     ) -> JsResult<JSValue> {
         let new_context = Rc::clone(&self.context);
-        // SAFETY: `response` is a live `*mut Response` whose JS wrapper is on
+        // SAFETY: `response` is a live `Response` whose JS wrapper is on
         // the caller's stack (see `transform_`); `self.builder` was created by
         // `HTMLRewriterBuilder::init` and is live until `finalize`.
-        BufferOutputSink::init(new_context, global, response, self.builder)
+        unsafe { BufferOutputSink::init(new_context, global, response, self.builder) }
     }
 
     pub fn transform_(
@@ -375,7 +375,9 @@ impl HTMLRewriter {
                     global.throw_invalid_arguments(format_args!("Response body already used"))
                 );
             }
-            let out = self.begin_transform(global, response)?;
+            // SAFETY: `response` is the live m_ctx of `response_value` (kept
+            // alive on the caller's stack), never null.
+            let out = self.begin_transform(global, unsafe { &mut *response })?;
             // Check if the returned value is an error and throw it properly
             if let Some(err) = out.to_error() {
                 return Err(global.throw_value(err));
@@ -415,7 +417,8 @@ impl HTMLRewriter {
                 Response::finalize(unsafe { Box::from_raw(r) })
             });
 
-            let out_response_value = self.begin_transform(global, resp)?;
+            // SAFETY: `resp` is a live `heap::into_raw` allocation, never null.
+            let out_response_value = self.begin_transform(global, unsafe { &mut *resp })?;
             // Check if the returned value is an error and throw it properly
             if let Some(err) = out_response_value.to_error() {
                 return Err(global.throw_value(err));
@@ -596,29 +599,26 @@ impl HTMLRewriterLoader {
         self.finalize();
     }
 
-    /// # Safety
     /// `builder` must be a live `HTMLRewriterBuilder` (from
     /// `HTMLRewriterBuilder::init`) not yet destroyed.
     pub fn setup(
         &mut self,
-        builder: *mut lolhtml_sys::HTMLRewriterBuilder,
+        builder: &mut lolhtml_sys::HTMLRewriterBuilder,
         context: Rc<RefCell<LOLHTMLContext>>,
         size_hint: Option<usize>,
         mut output: webcore::Sink<'static>,
     ) -> Option<lolhtml::HTMLString> {
         let chunk_size = size_hint.unwrap_or(16384).max(1024);
-        // SAFETY: builder valid; `self` outlives the rewriter (deinit'd in finalize()).
-        let built = unsafe {
-            (*builder).build(
-                lolhtml::Encoding::UTF8,
-                lolhtml::MemorySettings {
-                    preallocated_parsing_buffer_size: chunk_size,
-                    max_allowed_memory_usage: u32::MAX as usize,
-                },
-                false,
-                self,
-            )
-        };
+        // `self` outlives the rewriter (deinit'd in finalize()).
+        let built = builder.build(
+            lolhtml::Encoding::UTF8,
+            lolhtml::MemorySettings {
+                preallocated_parsing_buffer_size: chunk_size,
+                max_allowed_memory_usage: u32::MAX as usize,
+            },
+            false,
+            self,
+        );
         self.rewriter = match built {
             Ok(r) => r,
             Err(_) => {
@@ -751,7 +751,7 @@ impl BufferOutputSink {
     /// `original` must point to a live `Response` whose JS wrapper is kept
     /// alive for the duration of this call. `builder` must be a live
     /// `HTMLRewriterBuilder` not yet destroyed.
-    pub fn init(
+    unsafe fn init(
         context: Rc<RefCell<LOLHTMLContext>>,
         global: &JSGlobalObject,
         original: *mut Response,
@@ -971,7 +971,7 @@ impl BufferOutputSink {
     /// # Safety
     /// `sink` must be a live `BufferOutputSink` heap allocation with
     /// refcount > 0 (the +1 taken in `init()` is consumed here).
-    pub fn on_finished_buffering(
+    unsafe fn on_finished_buffering(
         sink: *mut BufferOutputSink,
         bytes: &[u8],
         js_err: Option<webcore::body::ValueError>,
@@ -1032,7 +1032,7 @@ impl BufferOutputSink {
         }
 
         // SAFETY: `sink` is live (refcount > 0, see fn safety contract).
-        if let Some(ret_err) = Self::run_output_sink(sink, bytes, is_async) {
+        if let Some(ret_err) = unsafe { Self::run_output_sink(sink, bytes, is_async) } {
             ret_err.ensure_still_alive();
             ret_err.protect();
             Self::write_tmp_sync_error(sink, ret_err);
@@ -1048,7 +1048,7 @@ impl BufferOutputSink {
     /// # Safety
     /// `sink` must be a live `BufferOutputSink` heap allocation with
     /// refcount > 0; `(*sink).rewriter` and `(*sink).response` must be set.
-    pub fn run_output_sink(sink: *mut Self, bytes: &[u8], is_async: bool) -> Option<JSValue> {
+    unsafe fn run_output_sink(sink: *mut Self, bytes: &[u8], is_async: bool) -> Option<JSValue> {
         // SAFETY: sink is a live heap allocation (refcount > 0, caller
         // invariant). Read fields into locals before the FFI calls so no
         // borrow of `*sink` is live across the re-entrant callback.
@@ -1335,7 +1335,7 @@ macro_rules! impl_wrapper_like {
             unsafe fn deref(this: *mut Self) {
                 // SAFETY: `WrapperLike::deref` contract — `this` is a live
                 // `heap::alloc` allocation with refcount >= 1.
-                Self::deref(this)
+                unsafe { Self::deref(this) }
             }
             unsafe fn to_js(this: *mut Self, g: &JSGlobalObject) -> JSValue {
                 // SAFETY: `this` is a live `heap::alloc` allocation

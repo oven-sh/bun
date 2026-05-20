@@ -275,10 +275,7 @@ fn memmove<T: Copy>(dst: &mut [T], src: &[T]) {
 /// Based on Node v21.6.1 private helper posixCwd:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1074
 pub fn posix_cwd_t<T: PathCharCwd>(buf: &mut [T]) -> MaybeBuf<'_, T> {
-    let cwd = match get_cwd_t(buf) {
-        Ok(r) => r,
-        Err(e) => return Err(e),
-    };
+    let cwd = get_cwd_t(buf)?;
     let len = cwd.len();
     if len == 0 {
         return Ok(cwd);
@@ -2474,10 +2471,7 @@ pub fn relative_posix_t<'a, T: PathCharCwd>(
 
     // Trim leading forward slashes.
     // Backed by expandable buf2 because fromOrig may be long.
-    let from_orig = match resolve_posix_t(&[from], buf2, buf3) {
-        Ok(r) => r,
-        Err(e) => return Err(e),
-    };
+    let from_orig = resolve_posix_t(&[from], buf2, buf3)?;
     let from_orig_len = from_orig.len();
     // Backed by buf.
     // PORT NOTE: reshaped for borrowck — resolve into buf, then operate via raw indices.
@@ -2485,9 +2479,9 @@ pub fn relative_posix_t<'a, T: PathCharCwd>(
     // buf; copy it in so indexing `buf[..to_orig_len]` below observes the
     // resolved value (matches Zig, which captures the returned slice itself).
     let to_orig_len = {
-        let (ptr, len) = match resolve_posix_t(&[to], buf, buf3) {
-            Ok(r) => (r.as_ptr(), r.len()),
-            Err(e) => return Err(e),
+        let (ptr, len) = {
+            let r = resolve_posix_t(&[to], buf, buf3)?;
+            (r.as_ptr(), r.len())
         };
         if ptr != buf.as_ptr() {
             // SAFETY: ptr is a 'static disjoint from buf, len <= buf.len().
@@ -2622,10 +2616,7 @@ pub fn relative_windows_t<'a, T: PathCharCwd>(
     }
 
     // Backed by expandable buf2 because fromOrig may be long.
-    let from_orig = match resolve_windows_t(&[from], buf2, buf3) {
-        Ok(r) => r,
-        Err(e) => return Err(e),
-    };
+    let from_orig = resolve_windows_t(&[from], buf2, buf3)?;
     let from_orig_len = from_orig.len();
     // Backed by buf.
     // PORT NOTE: reshaped for borrowck — resolve into buf, then operate via raw indices.
@@ -2633,9 +2624,9 @@ pub fn relative_windows_t<'a, T: PathCharCwd>(
     // buf; copy it in so indexing `buf[..to_orig_len]` below observes the
     // resolved value (matches Zig, which captures the returned slice itself).
     let to_orig_len = {
-        let (ptr, len) = match resolve_windows_t(&[to], buf, buf3) {
-            Ok(r) => (r.as_ptr(), r.len()),
-            Err(e) => return Err(e),
+        let (ptr, len) = {
+            let r = resolve_windows_t(&[to], buf, buf3)?;
+            (r.as_ptr(), r.len())
         };
         if ptr != buf.as_ptr() {
             // SAFETY: ptr is a 'static disjoint from buf, len <= buf.len().
@@ -2918,10 +2909,7 @@ pub fn resolve_posix_t<'a, T: PathCharCwd>(
         } else {
             // cwd is limited to MAX_PATH_BYTES.
             tmp_buf = [T::default(); MAX_PATH_SIZE_UPPER];
-            match posix_cwd_t(&mut tmp_buf) {
-                Ok(r) => &*r,
-                Err(e) => return Err(e),
-            }
+            &*posix_cwd_t(&mut tmp_buf)?
         };
         // validateString of `path` is performed in pub fn resolve.
         let len = path.len();
@@ -3051,10 +3039,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
             path_len = p.len();
         } else if resolved_device_len == 0 {
             // cwd is limited to MAX_PATH_BYTES.
-            cwd_len = match get_cwd_t(&mut tmp_buf[..]) {
-                Ok(r) => r.len(),
-                Err(e) => return Err(e),
-            };
+            cwd_len = get_cwd_t(&mut tmp_buf[..])?.len();
             path_ptr = tmp_buf.as_ptr();
             path_len = cwd_len;
         } else {
@@ -3150,10 +3135,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
                 path_len = ep_len;
             } else {
                 // cwd is limited to MAX_PATH_BYTES.
-                cwd_len = match get_cwd_t(&mut tmp_buf[..]) {
-                    Ok(r) => r.len(),
-                    Err(e) => return Err(e),
-                };
+                cwd_len = get_cwd_t(&mut tmp_buf[..])?.len();
                 path_ptr = tmp_buf.as_ptr();
                 path_len = cwd_len;
                 // We must set envPath here so that it doesn't hit the null check just below.
@@ -3550,10 +3532,7 @@ pub fn to_namespaced_path_windows_t<'a, T: PathCharCwd>(
     // validateString of `path` is performed in pub fn toNamespacedPath.
     // Backed by buf.
     // PORT NOTE: reshaped for borrowck — capture length, then re-borrow buf.
-    let resolved_len = match resolve_windows_t(&[path], buf, buf2) {
-        Ok(r) => r.len(),
-        Err(e) => return Err(e),
-    };
+    let resolved_len = resolve_windows_t(&[path], buf, buf2)?.len();
 
     let len = resolved_len;
     if len <= 2 {

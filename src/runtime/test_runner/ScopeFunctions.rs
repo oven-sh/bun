@@ -353,9 +353,7 @@ impl ScopeFunctions {
         // handle test reporter agent for debugger
         let vm = global.bun_vm().as_mut();
         let mut test_id_for_debugger: i32 = 0;
-        // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine` for any
-        // Bun-owned global; single JS thread so no aliasing across this borrow.
-        if let Some(debugger) = unsafe { (*vm).debugger.as_mut() } {
+        if let Some(debugger) = (*vm).debugger.as_mut() {
             if debugger.test_reporter_agent.is_enabled() {
                 // Zig: fn-local `struct { var max_test_id_for_debugger: i32 = 0; }` — process-global static.
                 static MAX_TEST_ID_FOR_DEBUGGER: AtomicI32 = AtomicI32::new(0);
@@ -389,7 +387,7 @@ impl ScopeFunctions {
         // Use the file's default concurrent setting (determined once when entering the file)
         // or the global concurrent flag from the runner
         if bun_test.default_concurrent
-            || jest::Jest::runner().map_or(false, |r| r.concurrent)
+            || jest::Jest::runner().is_some_and(|r| r.concurrent)
         {
             // Only set to concurrent if still inheriting
             if base.self_concurrent == SelfConcurrent::Inherit {

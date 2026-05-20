@@ -115,10 +115,7 @@ impl PipeReader {
             process: Some(ParentRef::from(process)),
             reader: IOReader::init::<PipeReader>(),
             event_loop: event_loop.into(),
-            // SAFETY: `event_loop` is a live `BackRef<EventLoop>` (per-thread).
-            event_loop_handle: unsafe {
-                bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>())
-            },
+            event_loop_handle: bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>()),
             stdio_result: result,
             state: State::Pending,
         });
@@ -156,9 +153,7 @@ impl PipeReader {
         self.r#ref();
         self.process = Some(ParentRef::from(process));
         self.event_loop = event_loop.into();
-        // SAFETY: `event_loop` is a live `BackRef<EventLoop>` (per-thread).
-        self.event_loop_handle =
-            unsafe { bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>()) };
+        self.event_loop_handle = bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>());
         #[cfg(windows)]
         {
             return self.reader.start_with_current_pipe();

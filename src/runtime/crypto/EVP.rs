@@ -202,6 +202,8 @@ impl EVP {
     /// # Safety
     /// `md` must be a valid `EVP_MD` pointer (BoringSSL static singleton) and
     /// `engine` must be either null or a valid `ENGINE` pointer.
+    // Forwards `md`/`engine` to BoringSSL without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn init(
         algorithm: Algorithm,
         md: *const boringssl::EVP_MD,
@@ -221,6 +223,8 @@ impl EVP {
 
     /// # Safety
     /// `engine` must be either null or a valid `ENGINE` pointer.
+    // Forwards `engine` to BoringSSL without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn reset(&mut self, engine: *mut boringssl::ENGINE) {
         // SAFETY: FFI into BoringSSL; ERR_clear_error has no preconditions. self.ctx was
         // initialized in init() and remains valid for the lifetime of EVP; self.md is a
@@ -233,6 +237,8 @@ impl EVP {
 
     /// # Safety
     /// `engine` must be either null or a valid `ENGINE` pointer.
+    // Forwards `engine` to BoringSSL without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn hash(
         &mut self,
         engine: *mut boringssl::ENGINE,
@@ -276,8 +282,7 @@ impl EVP {
             return &mut output[..0];
         }
 
-        // SAFETY: caller upholds the `engine` precondition.
-        unsafe { self.reset(engine) };
+        self.reset(engine);
 
         &mut output[..outsize as usize]
     }

@@ -605,7 +605,7 @@ mod _async_tasks {
 
             /// # Safety
             /// `task` must point to the `task` field of a live `AsyncMkdirp`.
-            pub fn work_pool_callback(task: *mut WorkPoolTask) {
+            fn work_pool_callback(task: *mut WorkPoolTask) {
                 // SAFETY: task points to AsyncMkdirp.task
                 let this = unsafe { &mut *AsyncMkdirp::from_task_ptr(task) };
 
@@ -1368,7 +1368,7 @@ mod _async_tasks {
 
             let _dispatch = self.tracker.dispatch(global_object);
 
-            let success = matches!(result, Ok(_));
+            let success = result.is_ok();
             let promise_value = self.promise.value();
             let promise = self.promise.get();
             let result = match &mut result {
@@ -1634,8 +1634,8 @@ mod _async_tasks {
                 // Sentinel — overwritten by `finish_concurrently` (gated by the
                 // `has_result` CAS) before any read on the JS thread.
                 result: core::cell::Cell::new(Ok(())),
-                // SAFETY: `vm.event_loop` is the live per-thread `jsc::EventLoop` field.
-                evtloop: unsafe { EventLoopHandle::init(vm.event_loop.cast()) },
+                // `vm.event_loop` is the live per-thread `jsc::EventLoop` field.
+                evtloop: EventLoopHandle::init(vm.event_loop.cast()),
                 task: work_pool_task(Self::work_pool_callback),
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),
@@ -1794,7 +1794,7 @@ mod _async_tasks {
             }
             // SAFETY: non-null erased *mut JSGlobalObject from the JS event loop vtable.
             let global_object: &JSGlobalObject = unsafe { &*go_ptr.cast::<JSGlobalObject>() };
-            let success = matches!(*self.result.get_mut(), Ok(_));
+            let success = (*self.result.get_mut()).is_ok();
             let promise_value = self.promise.value();
             // Captured as a raw pointer because `Self::destroy(self)` runs *before* the
             // resolve/reject (matching Zig). The `JSPromise` itself lives on the JS heap
@@ -1869,7 +1869,7 @@ mod _async_tasks {
             // every spawned SingleTask's reference have been dropped.
             // `this` is the live Box-leaked task; on_subtask_done only enqueues destruction
             // once every reference (including this one) has been dropped.
-            let _done = scopeguard::guard(this, |p| Self::on_subtask_done(p));
+            let _done = scopeguard::guard(this, Self::on_subtask_done);
             // SAFETY: same pointer as above; valid for the duration of this fn.
             // Shared borrow only — once `_cp_async_directory` spawns `CpSingleTask`s,
             // other workpool threads concurrently hold `&Self` to this same allocation.
@@ -2299,6 +2299,9 @@ mod _async_tasks {
     bun_threading::owned_task!(ReaddirSubtask, task);
 
     impl ReaddirSubtask {
+        // `owned_task!` requires `fn run_owned(self: Box<Self>)`; clippy::boxed_local
+        // is a false positive on this macro contract.
+        #[allow(clippy::boxed_local)]
         fn run_owned(self: Box<Self>) {
             let ReaddirSubtask {
                 readdir_task,
@@ -2616,13 +2619,11 @@ mod _async_tasks {
             // SAFETY: `bun_vm_concurrently()` returns the process-singleton VM;
             // sole `&mut` borrow at this point on the work-pool thread.
             let vm = unsafe { &mut *self.global_object().bun_vm_concurrently() };
-            // SAFETY: `ConcurrentTask::create` heap-allocates a fresh task; the
+            // `ConcurrentTask::create` heap-allocates a fresh task; the
             // queue takes ownership of it.
-            unsafe {
-                vm.enqueue_task_concurrent(ConcurrentTask::create(Task::init(
-                    std::ptr::from_mut::<Self>(self),
-                )));
-            }
+            vm.enqueue_task_concurrent(ConcurrentTask::create(Task::init(std::ptr::from_mut::<
+                Self,
+            >(self))));
         }
 
         fn clear_result_list(&mut self) {
@@ -3323,7 +3324,7 @@ pub mod args {
                         if str.eql_comptime("junction") {
                             break 'link_type SymlinkLinkType::Junction;
                         }
-                        return Err(ctx.err(bun_jsc::ErrorCode::ERR_INVALID_ARG_VALUE, format_args!("Symlink type must be one of \"dir\", \"file\", or \"junction\". Received \"{}\"", &*str)).throw());
+                        return Err(ctx.err(bun_jsc::ErrorCode::ERR_INVALID_ARG_VALUE, format_args!("Symlink type must be one of \"dir\", \"file\", or \"junction\". Received \"{}\"", *str)).throw());
                     }
                     // not a string. fallthrough to auto detect.
                     return Err(ctx
@@ -3345,7 +3346,6 @@ pub mod args {
                 #[cfg(not(windows))]
                 link_type: {
                     let _ = link_type;
-                    ()
                 },
             })
         }
@@ -3862,7 +3862,7 @@ pub mod args {
                         }
                         let length = current.to_int64();
                         let buf_len = args.buffer.buffer().map(|b| b.slice().len()).unwrap_or(0);
-                        let max_offset = (buf_len as i64).min(i64::MAX);
+                        let max_offset = buf_len as i64;
                         if args.offset as i64 > max_offset {
                             return Err(ctx.throw_range_error(
                                 args.offset as f64,
@@ -4023,7 +4023,7 @@ pub mod args {
                     length_float,
                     bun_jsc::RangeErrorOptions {
                         field_name: b"length",
-                        max: (buf_len as i64).min(i64::MAX),
+                        max: buf_len as i64,
                         ..Default::default()
                     },
                 ));
@@ -4862,26 +4862,17 @@ impl NodeFS {
         match &args.file {
             PathOrFileDescriptor::Fd(fd) => {
                 while !data.is_empty() {
-                    let written = match Syscall::write(*fd, data) {
-                        Ok(result) => result,
-                        Err(err) => return Err(err),
-                    };
+                    let written = Syscall::write(*fd, data)?;
                     data = &data[written..];
                 }
                 Ok(())
             }
             PathOrFileDescriptor::Path(path_) => {
                 let path = path_.slice_z(&mut self.sync_error_buf);
-                let fd = match Syscall::open(path, FileSystemFlags::A.as_int(), args.mode) {
-                    Ok(result) => result,
-                    Err(err) => return Err(err),
-                };
+                let fd = Syscall::open(path, FileSystemFlags::A.as_int(), args.mode)?;
                 let _close = scopeguard::guard(fd, |fd| fd.close());
                 while !data.is_empty() {
-                    let written = match Syscall::write(fd, data) {
-                        Ok(result) => result,
-                        Err(err) => return Err(err),
-                    };
+                    let written = Syscall::write(fd, data)?;
                     data = &data[written..];
                 }
                 Ok(())
@@ -4946,7 +4937,7 @@ impl NodeFS {
         }
         // buf_to_free dropped at scope exit
 
-        let mut remain = stat_size.max(0) as u64;
+        let mut remain = stat_size as u64;
         // VERIFY-FIX(round1): Zig `while (cond) {} else {}` runs the else only when
         // the loop exits because `cond` became false — never on `break`. The
         // `if remain == 0` check below was wrong: `break 'toplevel` after
@@ -5303,16 +5294,10 @@ impl NodeFS {
             let src = args.src.slice_z(&mut src_buf);
             let dest = args.dest.slice_z(&mut dest_buf);
 
-            let src_fd = match Syscall::open(src, sys::O::RDONLY, 0o644) {
-                Ok(result) => result,
-                Err(err) => return Err(err),
-            };
+            let src_fd = Syscall::open(src, sys::O::RDONLY, 0o644)?;
             let _close_src = scopeguard::guard(src_fd, |fd| fd.close());
 
-            let stat_ = match Syscall::fstat(src_fd) {
-                Ok(result) => result,
-                Err(err) => return Err(err),
-            };
+            let stat_ = Syscall::fstat(src_fd)?;
 
             if !sys::S::ISREG(stat_.st_mode as u32) {
                 return Err(sys::Error {
@@ -5334,10 +5319,7 @@ impl NodeFS {
                 flags |= sys::O::EXCL;
             }
 
-            let dest_fd = match Syscall::open(dest, flags, DEFAULT_PERMISSION) {
-                Ok(result) => result,
-                Err(err) => return Err(err),
-            };
+            let dest_fd = Syscall::open(dest, flags, DEFAULT_PERMISSION)?;
 
             let mut size: usize = stat_.st_size.max(0) as usize;
 
@@ -6788,7 +6770,7 @@ impl NodeFS {
             }
         });
         // Re-borrow through the guard so `root_fd` stays observable at drop.
-        let root_fd: &mut FD = &mut *_close_root;
+        let root_fd: &mut FD = *_close_root;
         // PORT NOTE: Zig kept `root_fd` as a plain local and closed it in a
         // bare `defer`. Rust's guard captures `&mut`, so all reads below go
         // through the same place.
@@ -7192,17 +7174,13 @@ impl NodeFS {
         let temporary_read_buffer_before_stat_call: &[u8] = {
             let mut available: &mut [u8] = &mut pre_stat_buf[..];
             while !available.is_empty() {
-                match Syscall::read(fd, available) {
-                    Err(err) => return Err(err),
-                    Ok(amt) => {
-                        if amt == 0 {
-                            did_succeed = true;
-                            break;
-                        }
-                        total += amt;
-                        available = &mut available[amt..];
-                    }
+                let amt = Syscall::read(fd, available)?;
+                if amt == 0 {
+                    did_succeed = true;
+                    break;
                 }
+                total += amt;
+                available = &mut available[amt..];
             }
             &pre_stat_buf[..total]
         };
@@ -7276,10 +7254,7 @@ impl NodeFS {
             return Err(abort_err());
         }
 
-        let stat_ = match Syscall::fstat(fd) {
-            Err(err) => return Err(err),
-            Ok(stat_) => stat_,
-        };
+        let stat_ = Syscall::fstat(fd)?;
 
         // For certain files, the size might be 0 but the file might still have contents.
         // https://github.com/oven-sh/bun/issues/1220
@@ -7345,51 +7320,47 @@ impl NodeFS {
             // Do NOT pre-grow here; growth happens only in the `total > size && amt != 0 &&
             // !has_max_size` arm below.
             let upper = (buf.capacity() as u64).min(max_size) as usize;
-            match Syscall::read(fd, &mut buf[total..upper]) {
-                Err(err) => return Err(err),
-                Ok(amt) => {
-                    total += amt;
+            let amt = Syscall::read(fd, &mut buf[total..upper])?;
+            total += amt;
 
-                    if args.limit_size_for_javascript {
-                        if let Some(err) = Self::should_throw_out_of_memory_early_for_javascript(
-                            args.encoding,
-                            total,
-                            sys::Tag::read,
-                        ) {
-                            return Err(with_path_like(err, &args.path));
-                        }
-                    }
-
-                    // There are cases where stat()'s size is wrong or out of date
-                    if (total as u64) > size && amt != 0 && !has_max_size {
-                        // Reset len to the bytes actually read (Zig:
-                        // `buf.items.len = total;`). `expand_to_capacity` left
-                        // `len == capacity`, so without this `try_reserve(8192)`
-                        // would reallocate every read and RawVec doubling grows
-                        // the buffer exponentially (a >256 KB FIFO / proc file
-                        // balloons to multi-GB RSS).
-                        buf.truncate(total);
-                        if buf.try_reserve(8192).is_err() {
-                            return Err(with_path_like(
-                                sys::Error::from_code(E::ENOMEM, sys::Tag::read),
-                                &args.path,
-                            ));
-                        }
-                        // SAFETY: `u8` has no validity invariant; kernel only stores.
-                        unsafe { buf.expand_to_capacity() };
-                        continue;
-                    }
-
-                    if amt == 0 {
-                        did_succeed = true;
-                        break;
-                    }
-
-                    if phase == 0 && (total as u64) >= size {
-                        // fall through into the unbounded tail loop
-                        phase = 1;
-                    }
+            if args.limit_size_for_javascript {
+                if let Some(err) = Self::should_throw_out_of_memory_early_for_javascript(
+                    args.encoding,
+                    total,
+                    sys::Tag::read,
+                ) {
+                    return Err(with_path_like(err, &args.path));
                 }
+            }
+
+            // There are cases where stat()'s size is wrong or out of date
+            if (total as u64) > size && amt != 0 && !has_max_size {
+                // Reset len to the bytes actually read (Zig:
+                // `buf.items.len = total;`). `expand_to_capacity` left
+                // `len == capacity`, so without this `try_reserve(8192)`
+                // would reallocate every read and RawVec doubling grows
+                // the buffer exponentially (a >256 KB FIFO / proc file
+                // balloons to multi-GB RSS).
+                buf.truncate(total);
+                if buf.try_reserve(8192).is_err() {
+                    return Err(with_path_like(
+                        sys::Error::from_code(E::ENOMEM, sys::Tag::read),
+                        &args.path,
+                    ));
+                }
+                // SAFETY: `u8` has no validity invariant; kernel only stores.
+                unsafe { buf.expand_to_capacity() };
+                continue;
+            }
+
+            if amt == 0 {
+                did_succeed = true;
+                break;
+            }
+
+            if phase == 0 && (total as u64) >= size {
+                // fall through into the unbounded tail loop
+                phase = 1;
             }
         }
         let _ = phase; // phase only mirrors Zig's while/else split for source parity
@@ -8458,9 +8429,7 @@ impl NodeFS {
                         (dd + 1 + name_slice.len()) as PathInt,
                         args,
                     );
-                    if let Err(_) = r {
-                        return r;
-                    }
+                    r?;
                 }
                 _ => {
                     // NUL written at [len] above; `from_buf` debug-asserts it.
@@ -8763,10 +8732,7 @@ impl NodeFS {
                 flags |= sys::O::EXCL;
             }
 
-            let dest_fd = match Self::_cp_open_dest_with_mkdir(self, dest, flags) {
-                Ok(fd) => fd,
-                Err(e) => return Err(e),
-            };
+            let dest_fd = Self::_cp_open_dest_with_mkdir(self, dest, flags)?;
 
             let mut size: usize = stat_.st_size.max(0) as usize;
 
@@ -9181,9 +9147,7 @@ impl NodeFS {
                         recursive: true,
                         ..Default::default()
                     });
-                    if let Err(e) = mkdir_result {
-                        return Err(e);
-                    }
+                    mkdir_result?;
                     if let Ok(result) = Syscall::open(dest, flags, DEFAULT_PERMISSION) {
                         return Ok(result);
                     }
@@ -9675,14 +9639,13 @@ pub unsafe extern "C" fn Bun__mkdirp(global_this: &JSGlobalObject, path: *const 
     // `*NodeFS` (type-erased to `*mut c_void` in `bun_jsc` to break the dep cycle).
     let node_fs: &mut NodeFS =
         unsafe { &mut *global_this.bun_vm().as_mut().node_fs().cast::<NodeFS>() };
-    !matches!(
-        node_fs.mkdir_recursive(&args::Mkdir {
+    node_fs
+        .mkdir_recursive(&args::Mkdir {
             path: PathLike::String(PathString::init(path_bytes)),
             recursive: true,
             ..Default::default()
-        }),
-        Err(_)
-    )
+        })
+        .is_ok()
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -9837,8 +9800,8 @@ pub fn zig_delete_tree(
             item.iter.iter.dir.close();
         }
     };
-    let mut _close_all = scopeguard::guard(&mut stack, |s| close_all(s));
-    let stack: &mut Vec<DeleteTreeStackItem> = &mut *_close_all;
+    let mut _close_all = scopeguard::guard(&mut stack, close_all);
+    let stack: &mut Vec<DeleteTreeStackItem> = *_close_all;
 
     stack.push(DeleteTreeStackItem {
         name: Vec::new(),

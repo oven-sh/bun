@@ -93,12 +93,12 @@ impl BuildCommand {
                 let mut keys: Vec<Box<[u8]>> =
                     Vec::with_capacity(compile_define_keys.len() + define.keys.len());
                 keys.extend(compile_define_keys.iter().map(|s| Box::<[u8]>::from(*s)));
-                keys.extend(define.keys.drain(..));
+                keys.append(&mut define.keys);
                 // PERF(port): was appendSliceAssumeCapacity — profile if it shows up on a hot path.
                 let mut values: Vec<Box<[u8]>> =
                     Vec::with_capacity(compile_define_values.len() + define.values.len());
                 values.extend(compile_define_values.iter().map(|s| Box::<[u8]>::from(*s)));
-                values.extend(define.values.drain(..));
+                values.append(&mut define.values);
 
                 define.keys = keys;
                 define.values = values;

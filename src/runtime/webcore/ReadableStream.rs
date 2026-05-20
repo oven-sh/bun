@@ -357,13 +357,9 @@ impl ReadableStream {
                 let reader = NewSource::<FileReader>::new_mut(NewSource {
                     global_this: Some(bun_ptr::BackRef::new(global_this)),
                     context: FileReader {
-                        // SAFETY: bun_vm() returns a non-null *mut VirtualMachine; event_loop()
-                        // returns a non-null *mut EventLoop. Both outlive this call.
-                        event_loop: core::cell::Cell::new(unsafe {
-                            jsc::EventLoopHandle::init(
-                                global_this.bun_vm().as_mut().event_loop().cast(),
-                            )
-                        }),
+                        event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
+                            global_this.bun_vm().as_mut().event_loop().cast(),
+                        )),
                         start_offset: Some(blob.offset.get() as usize),
                         max_size: if blob.size.get() != webcore::blob::MAX_SIZE {
                             Some(blob.size.get() as usize)
@@ -422,12 +418,9 @@ impl ReadableStream {
                 let reader = NewSource::<FileReader>::new_mut(NewSource {
                     global_this: Some(bun_ptr::BackRef::new(global_this)),
                     context: FileReader {
-                        // SAFETY: bun_vm()/event_loop() return non-null ptrs that outlive this call.
-                        event_loop: core::cell::Cell::new(unsafe {
-                            jsc::EventLoopHandle::init(
-                                global_this.bun_vm().as_mut().event_loop().cast(),
-                            )
-                        }),
+                        event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
+                            global_this.bun_vm().as_mut().event_loop().cast(),
+                        )),
                         start_offset: Some(offset),
                         // `store.clone()` is the RAII +1 equivalent of Zig's `store.ref()`.
                         lazy: bun_jsc::JsCell::new(webcore::file_reader::Lazy::Blob(store.clone())),
@@ -451,10 +444,9 @@ impl ReadableStream {
         let source = NewSource::<FileReader>::new_mut(NewSource {
             global_this: Some(bun_ptr::BackRef::new(global_this)),
             context: FileReader {
-                // SAFETY: bun_vm()/event_loop() return non-null ptrs that outlive this call.
-                event_loop: core::cell::Cell::new(unsafe {
-                    jsc::EventLoopHandle::init(global_this.bun_vm().as_mut().event_loop().cast())
-                }),
+                event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
+                    global_this.bun_vm().as_mut().event_loop().cast(),
+                )),
                 ..Default::default()
             },
             ..Default::default()

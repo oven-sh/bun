@@ -31,21 +31,12 @@ use bun_uws::create_bun_socket_error_t;
 // `jsc.API.ServerConfig.SSLConfig` — re-exported from src/runtime/socket/SSLConfig.rs
 use crate::api::server::server_config::SSLConfig;
 
+#[derive(Default)]
 pub struct SSLContextCache {
     // TODO(port): ArrayHashMap needs custom context = DigestContext, store_hash = false
     map: ArrayHashMap<Digest, *mut Entry>,
     mutex: Mutex,
     ops_since_compact: u32,
-}
-
-impl Default for SSLContextCache {
-    fn default() -> Self {
-        Self {
-            map: ArrayHashMap::default(),
-            mutex: Mutex::default(),
-            ops_since_compact: 0,
-        }
-    }
 }
 
 pub type Digest = [u8; 32];
@@ -220,6 +211,11 @@ impl SSLContextCache {
 /// e.g. `HTTPThread`'s, or build-fail paths). Runs synchronously inside
 /// whichever `SSL_CTX_free` took the refcount to zero, on that caller's
 /// thread; for the per-VM cache that's always the JS thread.
+// `ptr` is the ex_data slot value: null (CTX never went through the cache) or
+// a live `*Entry`; the deref is null-guarded. The C `CRYPTO_EX_free` ABI fixes
+// the parameter as `void*`, so the function cannot be marked `unsafe` or take a
+// reference — not_unsafe_ptr_arg_deref is a false positive here.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[unsafe(no_mangle)]
 pub extern "C" fn bun_ssl_ctx_cache_on_free(
     parent: *mut c_void,

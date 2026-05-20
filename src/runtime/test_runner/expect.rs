@@ -628,6 +628,10 @@ impl Expect {
         Ok(buf)
     }
 
+    // Codegen's `host_fn_finalize` calls this via `|b| Expect::finalize(b)`
+    // and requires `fn finalize(self: Box<Self>)`; clippy::boxed_local is a
+    // false positive on that contract.
+    #[allow(clippy::boxed_local)]
     pub fn finalize(mut self: Box<Self>) {
         self.custom_label.deref();
         // .zig:331 `if (this.parent) |parent| parent.deref();`
@@ -1615,7 +1619,7 @@ impl Expect {
             expect.flags.get(),
             global_this,
             value,
-            &matcher_name,
+            matcher_name,
             &matcher_params,
             false,
         )?;
@@ -1741,9 +1745,7 @@ impl Expect {
     }
 
     pub fn post_match(&self, global_this: &JSGlobalObject) {
-        let vm = global_this.bun_vm();
-        // SAFETY: bun_vm() returns the live VM pointer for this global.
-        unsafe { (*vm).auto_garbage_collect() };
+        global_this.bun_vm().auto_garbage_collect();
     }
 
     /// RAII for Zig's `defer this.postMatch(globalThis)`. The returned guard holds the
@@ -2375,9 +2377,7 @@ impl ExpectAnything {
         let anything_js_value = ExpectAnything { flags: Cell::new(Flags::default()) }.to_js(global_this);
         anything_js_value.ensure_still_alive();
 
-        let vm = global_this.bun_vm();
-        // SAFETY: bun_vm() returns the live VM pointer for this global.
-        unsafe { (*vm).auto_garbage_collect() };
+        global_this.bun_vm().auto_garbage_collect();
 
         Ok(anything_js_value)
     }
@@ -2403,9 +2403,7 @@ impl ExpectStringMatching {
         let string_matching_js_value = ExpectStringMatching { flags: Cell::new(Flags::default()) }.to_js(global_this);
         expect_string_matching_js::test_value_set_cached(string_matching_js_value, global_this, test_value);
 
-        let vm = global_this.bun_vm();
-        // SAFETY: bun_vm() returns the live VM pointer for this global.
-        unsafe { (*vm).auto_garbage_collect() };
+        global_this.bun_vm().auto_garbage_collect();
         Ok(string_matching_js_value)
     }
 }
@@ -2444,9 +2442,7 @@ impl ExpectCloseTo {
         expect_close_to_js::number_value_set_cached(instance_jsvalue, global_this, number_value);
         expect_close_to_js::digits_value_set_cached(instance_jsvalue, global_this, precision_value);
 
-        let vm = global_this.bun_vm();
-        // SAFETY: bun_vm() returns the live VM pointer for this global.
-        unsafe { (*vm).auto_garbage_collect() };
+        global_this.bun_vm().auto_garbage_collect();
         Ok(instance_jsvalue)
     }
 }
@@ -2472,9 +2468,7 @@ impl ExpectObjectContaining {
         let instance_jsvalue = ExpectObjectContaining { flags: Cell::new(Flags::default()) }.to_js(global_this);
         expect_object_containing_js::object_value_set_cached(instance_jsvalue, global_this, object_value);
 
-        let vm = global_this.bun_vm();
-        // SAFETY: bun_vm() returns the live VM pointer for this global.
-        unsafe { (*vm).auto_garbage_collect() };
+        global_this.bun_vm().auto_garbage_collect();
         Ok(instance_jsvalue)
     }
 }
@@ -2500,9 +2494,7 @@ impl ExpectStringContaining {
         let string_containing_js_value = ExpectStringContaining { flags: Cell::new(Flags::default()) }.to_js(global_this);
         expect_string_containing_js::string_value_set_cached(string_containing_js_value, global_this, string_value);
 
-        let vm = global_this.bun_vm();
-        // SAFETY: bun_vm() returns the live VM pointer for this global.
-        unsafe { (*vm).auto_garbage_collect() };
+        global_this.bun_vm().auto_garbage_collect();
         Ok(string_containing_js_value)
     }
 }
@@ -2547,9 +2539,7 @@ impl ExpectAny {
         expect_any_js::constructor_value_set_cached(any_js_value, global_this, constructor);
         any_js_value.ensure_still_alive();
 
-        let vm = global_this.bun_vm();
-        // SAFETY: bun_vm() returns the live VM pointer for this global.
-        unsafe { (*vm).auto_garbage_collect() };
+        global_this.bun_vm().auto_garbage_collect();
 
         Ok(any_js_value)
     }
@@ -2576,9 +2566,7 @@ impl ExpectArrayContaining {
         let array_containing_js_value = ExpectArrayContaining { flags: Cell::new(Flags::default()) }.to_js(global_this);
         expect_array_containing_js::array_value_set_cached(array_containing_js_value, global_this, array_value);
 
-        let vm = global_this.bun_vm();
-        // SAFETY: bun_vm() returns the live VM pointer for this global.
-        unsafe { (*vm).auto_garbage_collect() };
+        global_this.bun_vm().auto_garbage_collect();
         Ok(array_containing_js_value)
     }
 }

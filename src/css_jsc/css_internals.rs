@@ -138,7 +138,10 @@ pub fn testing_impl(
     // writes through it during parsing; `log` outlives the parsed stylesheet and
     // is not aliased for the duration. Erasing to `'static` matches the
     // `&'static Bump` erasure above (re-threads to `'bump` with the rest of bun_css).
-    let log_ref = unsafe { &mut *(&raw mut log) };
+    let log_ptr: *mut Log = &raw mut log;
+    // SAFETY: `log` is a stack-local that outlives the parsed stylesheet and
+    // is not aliased for the duration of the parse.
+    let log_ref = unsafe { &mut *log_ptr };
 
     let mut browsers: Option<Browsers> = None;
     let parser_options = {
@@ -351,8 +354,10 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     ) {
         Ok(stylesheet_) => {
             let mut stylesheet = stylesheet_;
-            let mut minify_options = MinifyOptions::default();
-            minify_options.targets = targets;
+            let minify_options = MinifyOptions {
+                targets,
+                ..Default::default()
+            };
             stylesheet.minify(minify_options);
 
             let result = match stylesheet.to_css(

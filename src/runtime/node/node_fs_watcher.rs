@@ -117,6 +117,7 @@ impl FSWatcher {
     pub fn finalize(self: Box<Self>) {
         // stop all managers and signals
         self.detach();
+        drop(self);
     }
 }
 
@@ -995,7 +996,7 @@ impl FSWatcher {
             // (it self-destroys via `heap::take` on the last handler, so it cannot
             // soundly take `&mut self`). `watcher` is the live pointer returned by
             // `path_watcher::watch`.
-            unsafe { path_watcher::PathWatcher::detach(watcher, ctx_ptr) };
+            path_watcher::PathWatcher::detach(watcher, ctx_ptr);
         }
 
         if self.persistent.get() {
@@ -1073,7 +1074,7 @@ impl FSWatcher {
 
         ctx_ref
             .path_watcher
-            .set(if args.signal.map_or(true, |s| !s.aborted()) {
+            .set(if args.signal.is_none_or(|s| !s.aborted()) {
                 // PORT NOTE: Zig passes `comptime callback` / `comptime updateEnd`
                 // and both backends `@compileError` if they aren't exactly
                 // `onPathUpdateFn` / `onUpdateEndFn`. The Windows port dropped

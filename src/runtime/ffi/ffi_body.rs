@@ -821,7 +821,11 @@ impl CompileC {
                 .map_err(|_| bun_core::err!("DeferredErrors"))?;
         }
 
-        if let Err(_) = self.source.add(state, &mut self.current_file_for_errors) {
+        if self
+            .source
+            .add(state, &mut self.current_file_for_errors)
+            .is_err()
+        {
             if !self.deferred_errors.is_empty() {
                 return Err(bun_core::err!("DeferredErrors"));
             } else {
@@ -1175,16 +1179,16 @@ impl FFI {
                     } else {
                         compile_c.source.first().as_bytes()
                     };
-                    write!(
+                    writeln!(
                         &mut combined,
-                        "{} errors while compiling {}\n",
+                        "{} errors while compiling {}",
                         compile_c.deferred_errors.len(),
                         BStr::new(file_for_err)
                     )
                     .ok();
 
                     for deferred_error in compile_c.deferred_errors.iter() {
-                        write!(&mut combined, "{}\n", BStr::new(deferred_error)).ok();
+                        writeln!(&mut combined, "{}", BStr::new(deferred_error)).ok();
                     }
 
                     return Err(global_this.throw(format_args!("{}", BStr::new(&combined))));
@@ -2180,14 +2184,12 @@ impl Function {
         let state = unsafe { self.state.unwrap().as_mut() };
 
         if self.needs_napi_env() {
-            // SAFETY: napi env is process-lifetime; valid for JIT'd code.
-            if unsafe {
-                state.add_symbol(
+            if state
+                .add_symbol(
                     zstr!("Bun__thisFFIModuleNapiEnv"),
                     js_context.make_napi_env_for_ffi().cast_const(),
                 )
-            }
-            .is_err()
+                .is_err()
             {
                 self.fail(b"Failed to add NAPI env symbol");
                 return Ok(());
@@ -2318,16 +2320,16 @@ impl Function {
                         i
                     )?;
                 } else if *arg == ABIType::NapiValue {
-                    write!(
+                    writeln!(
                         writer,
-                        "  EncodedJSValue arg{} = {{ .asInt64 = *argsPtr++ }};\n",
+                        "  EncodedJSValue arg{} = {{ .asInt64 = *argsPtr++ }};",
                         i
                     )?;
                 } else if arg.needs_a_cast_in_c() {
                     if i < self.arg_types.len() - 1 {
-                        write!(
+                        writeln!(
                             writer,
-                            "  EncodedJSValue arg{} = {{ .asInt64 = *argsPtr++ }};\n",
+                            "  EncodedJSValue arg{} = {{ .asInt64 = *argsPtr++ }};",
                             i
                         )?;
                     } else {
@@ -2339,9 +2341,9 @@ impl Function {
                     }
                 } else {
                     if i < self.arg_types.len() - 1 {
-                        write!(writer, "  int64_t arg{} = *argsPtr++;\n", i)?;
+                        writeln!(writer, "  int64_t arg{} = *argsPtr++;", i)?;
                     } else {
-                        write!(writer, "  int64_t arg{} = *argsPtr;\n", i)?;
+                        writeln!(writer, "  int64_t arg{} = *argsPtr;", i)?;
                     }
                 }
             }
@@ -2422,7 +2424,7 @@ impl Function {
                 .map(|g| std::ptr::from_ref(g) as usize)
                 .unwrap_or(0);
             let fmt = bun_fmt::hex_int_upper::<16>(ptr as u64);
-            write!(writer, "#define JS_GLOBAL_OBJECT (void*)0x{}ULL\n", fmt)?;
+            writeln!(writer, "#define JS_GLOBAL_OBJECT (void*)0x{}ULL", fmt)?;
         }
 
         writer.write_all(b"#define IS_CALLBACK 1\n")?;
@@ -2472,9 +2474,9 @@ impl Function {
 
         if !self.arg_types.is_empty() {
             let mut arg_buf = [0u8; 512];
-            write!(
+            writeln!(
                 writer,
-                " ZIG_REPR_TYPE arguments[{}];\n",
+                " ZIG_REPR_TYPE arguments[{}];",
                 self.arg_types.len()
             )?;
 
@@ -2482,9 +2484,9 @@ impl Function {
             for (i, arg) in self.arg_types.iter().enumerate() {
                 let printed = bun_core::fmt::print_int(&mut arg_buf[3..], i);
                 let arg_name = &arg_buf[0..3 + printed];
-                write!(
+                writeln!(
                     writer,
-                    "arguments[{}] = {}.asZigRepr;\n",
+                    "arguments[{}] = {}.asZigRepr;",
                     i,
                     arg.to_js(arg_name)
                 )?;
@@ -2725,63 +2727,59 @@ impl CompilerRT {
     }
 
     pub fn inject(state: &mut TCC::State) {
-        // SAFETY: every value passed to `add_symbol` below is a process-lifetime
-        // function or static address; valid for any JIT'd code that calls it.
-        unsafe {
-            state
-                .add_symbol(zstr!("memset"), Self::memset as *const c_void)
-                .expect("unreachable");
-            state
-                .add_symbol(zstr!("memcpy"), Self::memcpy as *const c_void)
-                .expect("unreachable");
-            // Re-declare the C++ NapiHandleScope hooks locally — the canonical
-            // declarations live in `crate::napi::napi_body` which is private, and
-            // we only need the symbol addresses to hand to TCC. The canonical
-            // signatures use `*mut NapiHandleScope` (an opaque type not re-exported
-            // here); `*mut c_void` is ABI-identical for address-taking purposes.
-            #[allow(clashing_extern_declarations)]
-            unsafe extern "C" {
-                fn NapiHandleScope__open(env: *mut napi::NapiEnv, escapable: bool) -> *mut c_void;
-                fn NapiHandleScope__close(env: *mut napi::NapiEnv, current: *mut c_void);
-            }
-            state
-                .add_symbol(
-                    zstr!("NapiHandleScope__open"),
-                    NapiHandleScope__open as *const c_void,
-                )
-                .expect("unreachable");
-            state
-                .add_symbol(
-                    zstr!("NapiHandleScope__close"),
-                    NapiHandleScope__close as *const c_void,
-                )
-                .expect("unreachable");
-
-            state
-                .add_symbol(
-                    zstr!("JSVALUE_TO_INT64_SLOW"),
-                    WORKAROUND.jsvalue_to_int64 as *const c_void,
-                )
-                .expect("unreachable");
-            state
-                .add_symbol(
-                    zstr!("JSVALUE_TO_UINT64_SLOW"),
-                    WORKAROUND.jsvalue_to_uint64 as *const c_void,
-                )
-                .expect("unreachable");
-            state
-                .add_symbol(
-                    zstr!("INT64_TO_JSVALUE_SLOW"),
-                    WORKAROUND.int64_to_jsvalue as *const c_void,
-                )
-                .expect("unreachable");
-            state
-                .add_symbol(
-                    zstr!("UINT64_TO_JSVALUE_SLOW"),
-                    WORKAROUND.uint64_to_jsvalue as *const c_void,
-                )
-                .expect("unreachable");
+        state
+            .add_symbol(zstr!("memset"), Self::memset as *const c_void)
+            .expect("unreachable");
+        state
+            .add_symbol(zstr!("memcpy"), Self::memcpy as *const c_void)
+            .expect("unreachable");
+        // Re-declare the C++ NapiHandleScope hooks locally — the canonical
+        // declarations live in `crate::napi::napi_body` which is private, and
+        // we only need the symbol addresses to hand to TCC. The canonical
+        // signatures use `*mut NapiHandleScope` (an opaque type not re-exported
+        // here); `*mut c_void` is ABI-identical for address-taking purposes.
+        #[allow(clashing_extern_declarations)]
+        unsafe extern "C" {
+            fn NapiHandleScope__open(env: *mut napi::NapiEnv, escapable: bool) -> *mut c_void;
+            fn NapiHandleScope__close(env: *mut napi::NapiEnv, current: *mut c_void);
         }
+        state
+            .add_symbol(
+                zstr!("NapiHandleScope__open"),
+                NapiHandleScope__open as *const c_void,
+            )
+            .expect("unreachable");
+        state
+            .add_symbol(
+                zstr!("NapiHandleScope__close"),
+                NapiHandleScope__close as *const c_void,
+            )
+            .expect("unreachable");
+
+        state
+            .add_symbol(
+                zstr!("JSVALUE_TO_INT64_SLOW"),
+                WORKAROUND.jsvalue_to_int64 as *const c_void,
+            )
+            .expect("unreachable");
+        state
+            .add_symbol(
+                zstr!("JSVALUE_TO_UINT64_SLOW"),
+                WORKAROUND.jsvalue_to_uint64 as *const c_void,
+            )
+            .expect("unreachable");
+        state
+            .add_symbol(
+                zstr!("INT64_TO_JSVALUE_SLOW"),
+                WORKAROUND.int64_to_jsvalue as *const c_void,
+            )
+            .expect("unreachable");
+        state
+            .add_symbol(
+                zstr!("UINT64_TO_JSVALUE_SLOW"),
+                WORKAROUND.uint64_to_jsvalue as *const c_void,
+            )
+            .expect("unreachable");
     }
 }
 

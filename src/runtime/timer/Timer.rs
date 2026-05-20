@@ -41,6 +41,11 @@ impl All {
 
     /// # Safety
     /// `vm` must point to the live per-thread `VirtualMachine`.
+    // Forwards `vm` to `DateHeaderTimer::enable` without dereferencing it here;
+    // the raw pointer is intentional (avoids aliased-`&mut` across the
+    // jsc/runtime crate cycle — see DateHeaderTimer.rs). Opaque-token
+    // forwarding makes not_unsafe_ptr_arg_deref a false positive.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn update_date_header_timer_if_necessary(
         &mut self,
         loop_: &UwsLoop,
@@ -301,10 +306,9 @@ impl All {
         // exposes `get_index` + `swap_remove_at`, so combine them.
         let value: *mut EventLoopTimer = if let Some(idx) = self.maps.set_timeout.get_index(&id) {
             self.maps.set_timeout.swap_remove_at(idx).1
-        } else if let Some(idx) = self.maps.set_interval.get_index(&id) {
-            self.maps.set_interval.swap_remove_at(idx).1
         } else {
-            return None;
+            let idx = self.maps.set_interval.get_index(&id)?;
+            self.maps.set_interval.swap_remove_at(idx).1
         };
         // SAFETY: entry value points to EventLoopTimer embedded in a TimeoutObject
         debug_assert!(unsafe { (*value).tag } == EventLoopTimerTag::TimeoutObject);
@@ -460,7 +464,7 @@ impl DateHeaderTimer {
     /// # Safety
     /// `vm` must point to the live per-thread `VirtualMachine`; its `uws_loop()`
     /// must outlive this call.
-    pub fn enable(&mut self, vm: *mut VirtualMachine, now: &Timespec) {
+    pub(super) unsafe fn enable(&mut self, vm: *mut VirtualMachine, now: &Timespec) {
         debug_assert!(self.event_loop_timer.state != EventLoopTimerState::ACTIVE);
 
         // PORT NOTE: `EventLoopTimer.next` is the lower-tier `ElTimespec` stub

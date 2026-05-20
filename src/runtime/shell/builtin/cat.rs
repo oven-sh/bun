@@ -165,8 +165,7 @@ impl Cat {
                     BuiltinInput::Fd(r) => Arc::clone(r),
                     _ => unreachable!("needs_io() returned true"),
                 };
-                // SAFETY: `interp_ptr` is the live `Interpreter` this builtin runs under.
-                unsafe { reader.set_interp(interp_ptr) };
+                reader.set_interp(interp_ptr);
                 reader.add_reader(ReaderChildPtr {
                     node: cmd,
                     tag: ReaderTag::Cat,
@@ -215,8 +214,7 @@ impl Cat {
                 let evtloop = Builtin::event_loop(interp, cmd);
                 let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                 let reader = IOReader::init(fd, evtloop);
-                // SAFETY: `interp_ptr` is the live `Interpreter` this builtin runs under.
-                unsafe { reader.set_interp(interp_ptr) };
+                reader.set_interp(interp_ptr);
                 if let CatState::ExecFilepathArgs {
                     reader: slot,
                     chunks_done,

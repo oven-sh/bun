@@ -329,8 +329,7 @@ impl napi_value {
     }
 
     pub fn get(self) -> JSValue {
-        // SAFETY: napi_value stores the same 64-bit encoding as JSValue.
-        unsafe { JSValue::from_encoded(self.0 as usize) }
+        JSValue::from_encoded(self.0 as usize)
     }
 
     pub fn create(env: &NapiEnv, val: JSValue) -> napi_value {
@@ -1536,8 +1535,7 @@ pub extern "C" fn napi_resolve_deferred(
     let deferred_box = unsafe { bun_core::heap::take(deferred) };
     // `deferred_box` drops at scope exit (deinit + free).
     let resolution = resolution_.get();
-    // SAFETY: `deferred_box` holds a live JSPromise strong ref.
-    let prom = unsafe { deferred_box.get() };
+    let prom = deferred_box.get();
     if prom.resolve(env.to_js(), resolution).is_err() {
         return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception);
     }
@@ -1555,8 +1553,7 @@ pub extern "C" fn napi_reject_deferred(
     // SAFETY: deferred was created by heap::alloc in napi_create_promise.
     let deferred_box = unsafe { bun_core::heap::take(deferred) };
     let rejection = rejection_.get();
-    // SAFETY: `deferred_box` holds a live JSPromise strong ref.
-    let prom = unsafe { deferred_box.get() };
+    let prom = deferred_box.get();
     if prom.reject(env.to_js(), Ok(rejection)).is_err() {
         return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception);
     }
@@ -1762,6 +1759,9 @@ impl napi_async_work {
         }))
     }
 
+    // Forwards `this` to `heap::take` without dereferencing it here;
+    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn destroy(this: *mut napi_async_work) {
         // SAFETY: `this` was created by heap::alloc in `new`.
         // env.deinit() runs via Drop on NapiEnvRef.
@@ -1917,7 +1917,7 @@ pub static NAPI_NODE_VERSION_GLOBAL: napi_node_version = napi_node_version {
     major: parse_semver_component(bun_core::Environment::REPORTED_NODEJS_VERSION, 0),
     minor: parse_semver_component(bun_core::Environment::REPORTED_NODEJS_VERSION, 1),
     patch: parse_semver_component(bun_core::Environment::REPORTED_NODEJS_VERSION, 2),
-    release: b"node\0".as_ptr().cast::<c_char>(),
+    release: c"node".as_ptr(),
 };
 
 bun_opaque::opaque_ffi! { pub struct struct_napi_async_cleanup_hook_handle__; }
@@ -2441,6 +2441,10 @@ impl ThreadSafeFunction {
     // This has two states:
     // 1. We need to run potentially multiple tasks.
     // 2. We need to finalize the ThreadSafeFunction.
+    //
+    // Dispatched via the event-loop task table (`dispatch.rs`), which hands us
+    // a `*mut ThreadSafeFunction`; the signature is fixed by that registry.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn on_dispatch(this: *mut ThreadSafeFunction) {
         // SAFETY: `this` is a live heap allocation owned by the event loop dispatch.
         let self_ = unsafe { &mut *this };
@@ -2654,12 +2658,8 @@ impl ThreadSafeFunction {
         match prev {
             x if x == DispatchState::Idle as u8 => {
                 let self_ptr: *mut Self = self;
-                // SAFETY: `create_from` heap-allocates a fresh task; the queue
-                // takes ownership of it.
-                unsafe {
-                    self.event_loop
-                        .enqueue_task_concurrent(ConcurrentTask::create_from(self_ptr));
-                }
+                self.event_loop
+                    .enqueue_task_concurrent(ConcurrentTask::create_from(self_ptr));
             }
             x if x == DispatchState::Running as u8 => {
                 // it will check if it has more work to do
@@ -2875,8 +2875,7 @@ pub extern "C" fn napi_unref_threadsafe_function(
     // SAFETY: func is non-null per N-API contract.
     let func = unsafe { &mut *func };
     debug_assert!(core::ptr::eq(
-        // SAFETY: event_loop is the live JS-thread loop; `global` is set after init.
-        unsafe { (*func.event_loop).global.unwrap().as_ptr() },
+        (*func.event_loop).global.unwrap().as_ptr(),
         env.to_js()
     ));
     func.unref();
@@ -2893,8 +2892,7 @@ pub extern "C" fn napi_ref_threadsafe_function(
     // SAFETY: func is non-null per N-API contract.
     let func = unsafe { &mut *func };
     debug_assert!(core::ptr::eq(
-        // SAFETY: event_loop is the live JS-thread loop; `global` is set after init.
-        unsafe { (*func.event_loop).global.unwrap().as_ptr() },
+        (*func.event_loop).global.unwrap().as_ptr(),
         env.to_js()
     ));
     func.ref_();
@@ -4208,12 +4206,8 @@ impl NapiFinalizerTask {
         if !is_main_thread {
             // TODO(@heimskr): do we need to handle the case where the vm is shutting down?
             let this = bun_core::heap::into_raw(self);
-            // SAFETY: `ConcurrentTask::create` heap-allocates a fresh task; the
-            // queue takes ownership of it.
-            unsafe {
-                vm.event_loop_ref()
-                    .enqueue_task_concurrent(ConcurrentTask::create(Task::init(this)));
-            }
+            vm.event_loop_ref()
+                .enqueue_task_concurrent(ConcurrentTask::create(Task::init(this)));
             return;
         }
 
@@ -4243,6 +4237,9 @@ impl NapiFinalizerTask {
         }
     }
 
+    // Forwards `this` to `heap::take` without dereferencing it here;
+    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn run_on_js_thread(this: *mut NapiFinalizerTask) {
         // SAFETY: `this` was created by heap::alloc in `schedule`.
         let mut this_box = unsafe { bun_core::heap::take(this) };

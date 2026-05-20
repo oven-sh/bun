@@ -477,8 +477,7 @@ pub mod Jest {
     pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let vm = global_object.bun_vm();
 
-        // SAFETY: bun_vm() returns the live per-thread VM; deref for a single field read.
-        if unsafe { (*vm).is_in_preload } || runner().is_none() {
+        if vm.is_in_preload || runner().is_none() {
             // in preload, no arguments needed
         } else {
             let arguments = callframe.arguments_old::<2>();
@@ -543,7 +542,7 @@ pub mod on_unhandled_rejection {
             // PORT NOTE: split entry()/sequence() borrows via raw-ptr capture (per-use reborrow).
             let entry_ptr: Option<*mut bun_test::ExecutionEntry> = current_state_data
                 .entry(buntest)
-                .map(|e| std::ptr::from_mut::<bun_test::ExecutionEntry>(e));
+                .map(std::ptr::from_mut::<bun_test::ExecutionEntry>);
             if let Some(entry) = entry_ptr {
                 if let Some(sequence) = current_state_data.sequence(buntest) {
                     if sequence.test_entry.map(|p| p.as_ptr()) != Some(entry) {

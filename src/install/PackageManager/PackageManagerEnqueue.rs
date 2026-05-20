@@ -356,10 +356,11 @@ pub unsafe fn enqueue_parse_npm_package(
     name: StringOrTinyString,
     network_task: *mut NetworkTask,
 ) -> *mut ThreadPool::Task {
-    let task = this.preallocated_resolve_tasks.get();
-    // SAFETY: task is a freshly acquired slot from the preallocated pool; we own the write.
-    unsafe {
-        task.write(Task::Task {
+    // SAFETY: `this` is a live `&mut PackageManager`; `network_task` is a
+    // freshly-vended pool slot whose `'static` reborrow matches the
+    // `Task<'static>` slot lifetime.
+    let task_value = unsafe {
+        Task::Task {
             package_manager: Some(bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<
                 PackageManager,
             >(this))),
@@ -368,8 +369,6 @@ pub unsafe fn enqueue_parse_npm_package(
             request: crate::package_manager_task::Request {
                 package_manifest: ManuallyDrop::new(
                     crate::package_manager_task::PackageManifestRequest {
-                        // SAFETY: `network_task` is a freshly-vended pool slot; the
-                        // `'static` reborrow matches the `Task<'static>` slot lifetime.
                         network: &mut *network_task,
                         name,
                     },
@@ -378,9 +377,11 @@ pub unsafe fn enqueue_parse_npm_package(
             id: task_id,
             // TODO(port): `data: undefined` — Task::data left uninitialized in Zig
             ..Task::uninit()
-        });
-        &raw mut (*task).threadpool_task
-    }
+        }
+    };
+    let task = this.preallocated_resolve_tasks.get_init(task_value);
+    // SAFETY: `task` points to a freshly initialized pool slot.
+    unsafe { &raw mut (*task.as_ptr()).threadpool_task }
 }
 
 pub fn enqueue_package_for_download(
@@ -1663,12 +1664,11 @@ fn init_extract_task(
     tarball: &ExtractTarball,
     network_task: *mut NetworkTask,
 ) -> *mut Task::Task<'static> {
-    let task = this.preallocated_resolve_tasks.get();
-    // SAFETY: task is a freshly acquired uninitialized slot from the preallocated
-    // pool; we own the write. `ptr::write` (no drop of prior value) matches Zig's
-    // `task.* = Task{...}` semantics on uninit memory.
-    unsafe {
-        task.write(Task::Task {
+    // SAFETY: `this` is a live `&mut PackageManager`; `network_task` is a
+    // freshly-vended pool slot whose `'static` reborrow matches the
+    // `Task<'static>` slot lifetime.
+    let task_value = unsafe {
+        Task::Task {
             package_manager: Some(bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<
                 PackageManager,
             >(this))),
@@ -1676,8 +1676,6 @@ fn init_extract_task(
             tag: crate::package_manager_task::Tag::Extract,
             request: crate::package_manager_task::Request {
                 extract: ManuallyDrop::new(crate::package_manager_task::ExtractRequest {
-                    // SAFETY: `network_task` is a freshly-vended pool slot; the
-                    // `'static` reborrow matches the `Task<'static>` slot lifetime.
                     network: &mut *network_task,
                     tarball: ExtractTarball {
                         skip_verify: !this
@@ -1691,9 +1689,11 @@ fn init_extract_task(
             id: (*network_task).task_id,
             // TODO(port): `data: undefined`
             ..Task::uninit()
-        });
-        task
-    }
+        }
+    };
+    this.preallocated_resolve_tasks
+        .get_init(task_value)
+        .as_ptr()
 }
 
 pub fn enqueue_extract_npm_package(
@@ -1807,12 +1807,9 @@ pub fn enqueue_git_checkout(
     // if patched then we need to do apply step after network task is done
     patch_name_and_version_hash: Option<u64>,
 ) -> *mut ThreadPool::Task {
-    let task = this.preallocated_resolve_tasks.get();
-    // SAFETY: task is a freshly acquired uninitialized slot from the preallocated
-    // pool; we own the write. `ptr::write` (no drop of prior value) matches Zig's
-    // `task.* = Task{...}` semantics on uninit memory.
-    unsafe {
-        task.write(Task::Task {
+    // SAFETY: `this` is a live `&mut PackageManager`.
+    let task_value = unsafe {
+        Task::Task {
             package_manager: Some(bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<
                 PackageManager,
             >(this))),
@@ -1872,9 +1869,11 @@ pub fn enqueue_git_checkout(
             id: task_id,
             // TODO(port): `data: undefined`
             ..Task::uninit()
-        });
-        &raw mut (*task).threadpool_task
-    }
+        }
+    };
+    let task = this.preallocated_resolve_tasks.get_init(task_value);
+    // SAFETY: `task` points to a freshly initialized pool slot.
+    unsafe { &raw mut (*task.as_ptr()).threadpool_task }
 }
 
 fn enqueue_local_tarball(

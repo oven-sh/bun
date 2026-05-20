@@ -11,6 +11,10 @@ pub struct DoneCallback {
 }
 
 impl DoneCallback {
+    // Codegen's `host_fn_finalize` calls this via `|b| DoneCallback::finalize(b)`
+    // and requires `fn finalize(self: Box<Self>)`; clippy::boxed_local is a
+    // false positive on that contract.
+    #[allow(clippy::boxed_local)]
     pub fn finalize(mut self: Box<Self>) {
         let _g = group_begin!();
 

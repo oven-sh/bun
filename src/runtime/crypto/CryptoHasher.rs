@@ -96,9 +96,7 @@ impl CryptoHasher {
             return Some(CryptoHasher::new(CryptoHasher::Zig(JsCell::new(inner))));
         }
 
-        let Some(algorithm) = evp::lookup(name) else {
-            return None;
-        };
+        let algorithm = evp::lookup(name)?;
 
         match algorithm {
             evp::Algorithm::Ripemd160
@@ -109,18 +107,13 @@ impl CryptoHasher {
                     // `Algorithm::md()` lives in `bun_sha_hmac` and
                     // returns that crate's opaque `EVP_MD`; cast to the boringssl-sys
                     // opaque (same underlying C `struct env_md_st`).
-                    return Some(CryptoHasher::new(CryptoHasher::Evp(Box::new(
-                        // SAFETY: `md` is a BoringSSL static `EVP_MD` singleton
-                        // (from `EVP_get_digestbyname`); `boring_engine` returns the
-                        // VM-registered engine or null.
-                        JsCell::new(unsafe {
-                            EVP::init(
-                                algorithm,
-                                md.cast::<boring_ssl::EVP_MD>(),
-                                boring_engine(global),
-                            )
-                        }),
-                    ))));
+                    return Some(CryptoHasher::new(CryptoHasher::Evp(Box::new(JsCell::new(
+                        EVP::init(
+                            algorithm,
+                            md.cast::<boring_ssl::EVP_MD>(),
+                            boring_engine(global),
+                        ),
+                    )))));
                 }
             }
             _ => {
@@ -142,8 +135,7 @@ impl CryptoHasher {
                 Some(hasher)
             }
             CryptoHasher::Evp(other) => {
-                // SAFETY: `boring_engine` returns the VM-registered engine or null.
-                let evp = match unsafe { other.get().copy(boring_engine(global)) } {
+                let evp = match other.get().copy(boring_engine(global)) {
                     Ok(e) => e,
                     Err(_) => return None,
                 };
@@ -161,6 +153,8 @@ impl CryptoHasher {
     /// being returned to Rust (not yet destroyed).
     #[unsafe(no_mangle)]
     pub unsafe extern "C" fn Bun__CryptoHasherExtern__destroy(handle: *mut CryptoHasher) {
+        // SAFETY: caller transfers ownership of a valid `Box<CryptoHasher>` raw
+        // pointer previously returned to C++ (see `# Safety` above).
         CryptoHasher::finalize(unsafe { Box::from_raw(handle) });
     }
 
@@ -189,8 +183,7 @@ impl CryptoHasher {
             }
             CryptoHasher::Evp(evp) => {
                 let engine = boring_engine(global);
-                // SAFETY: `engine` is the VM-registered engine or null.
-                let res = evp.with_mut(move |e| unsafe { e.r#final(engine, digest_buf) });
+                let res = evp.with_mut(move |e| e.r#final(engine, digest_buf));
                 u32::try_from(res.len()).expect("int cast")
             }
             _ => 0,
@@ -359,9 +352,7 @@ impl CryptoHasher {
             )));
         }
 
-        // SAFETY: `boring_engine` returns the VM-registered engine or null.
-        let Some(len) =
-            (unsafe { evp.hash(boring_engine(global), input.slice(), &mut output_digest_buf) })
+        let Some(len) = evp.hash(boring_engine(global), input.slice(), &mut output_digest_buf)
         else {
             let err = boring_ssl::ERR_get_error();
             let instance = create_crypto_error(global, err);
@@ -408,10 +399,7 @@ impl CryptoHasher {
             output_digest_slice = unsafe { core::slice::from_raw_parts_mut(output_buf.ptr, size) };
         }
 
-        // SAFETY: `boring_engine` returns the VM-registered engine or null.
-        let Some(len) =
-            (unsafe { evp.hash(boring_engine(global), input.slice(), output_digest_slice) })
-        else {
+        let Some(len) = evp.hash(boring_engine(global), input.slice(), output_digest_slice) else {
             let err = boring_ssl::ERR_get_error();
             let instance = create_crypto_error(global, err);
             boring_ssl::ERR_clear_error();
@@ -645,8 +633,9 @@ impl CryptoHasher {
     pub fn copy(this: &Self, global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         let copied: CryptoHasher = match this {
             CryptoHasher::Evp(inner) => CryptoHasher::Evp(Box::new(JsCell::new(
-                // SAFETY: `boring_engine` returns the VM-registered engine or null.
-                unsafe { inner.get().copy(boring_engine(global)) }
+                inner
+                    .get()
+                    .copy(boring_engine(global))
                     // bun.handleOom → unwrap (abort on OOM)
                     .expect("OOM"),
             ))),
@@ -780,8 +769,7 @@ impl CryptoHasher {
                 // returned `&'a mut [u8]` borrows `output_digest_slice` (not
                 // `self`), so it escapes the closure cleanly.
                 let engine = boring_engine(global);
-                // SAFETY: `engine` is the VM-registered engine or null.
-                Ok(inner.with_mut(move |e| unsafe { e.r#final(engine, output_digest_slice) }))
+                Ok(inner.with_mut(move |e| e.r#final(engine, output_digest_slice)))
             }
             CryptoHasher::Zig(inner) => Ok(inner.with_mut(move |z| z.final_(output_digest_slice))),
         }
@@ -1180,7 +1168,7 @@ macro_rules! impl_static_hasher {
                 // `bun_sha_hmac::sha::ffi::ENGINE` re-exports `bun_boringssl_sys::ENGINE`,
                 // so the VM-owned engine pointer threads through without a cast.
                 // SAFETY: caller upholds `engine` validity (forwarded).
-                <$ty>::hash(input, out, engine)
+                unsafe { <$ty>::hash(input, out, engine) }
             }
             #[inline]
             fn get_constructor(global: &JSGlobalObject) -> JSValue {

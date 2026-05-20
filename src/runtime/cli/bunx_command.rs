@@ -622,9 +622,9 @@ impl BunxCommand {
         let mut initial_bin_name_is_a_guess = false;
         let initial_bin_name: &[u8] = if let Some(bin_name) = opts.binary_name {
             bin_name
-        } else if &*update_request.name == b"typescript" {
+        } else if update_request.name == b"typescript" {
             b"tsc"
-        } else if &*update_request.name == b"@anthropic-ai/claude-code" {
+        } else if update_request.name == b"@anthropic-ai/claude-code" {
             b"claude"
         } else if update_request.version.tag == VersionTag::Github {
             update_request
@@ -632,11 +632,11 @@ impl BunxCommand {
                 .github()
                 .repo
                 .slice(update_request.version_buf())
-        } else if let Some(index) = strings::last_index_of_char(&update_request.name, b'/') {
+        } else if let Some(index) = strings::last_index_of_char(update_request.name, b'/') {
             initial_bin_name_is_a_guess = true;
             &update_request.name[index + 1..]
         } else {
-            &update_request.name
+            update_request.name
         };
         bun_output::scoped_log!(bunx, "initial_bin_name: {}", BStr::new(initial_bin_name));
 
@@ -726,7 +726,7 @@ impl BunxCommand {
             #[cfg(not(windows))]
             const BANNED_PATH_CHARS: &[u8] = b":";
 
-            let has_banned_char = strings::index_of_any(&update_request.name, BANNED_PATH_CHARS)
+            let has_banned_char = strings::index_of_any(update_request.name, BANNED_PATH_CHARS)
                 .is_some()
                 || strings::index_of_any(display_version, BANNED_PATH_CHARS).is_some();
 
@@ -742,7 +742,7 @@ impl BunxCommand {
                     "{}@{}@{}",
                     BStr::new(initial_bin_name),
                     <&'static str>::from(update_request.version.tag),
-                    hash(&update_request.name).wrapping_add(hash(display_version)),
+                    hash(update_request.name).wrapping_add(hash(display_version)),
                 )
                 .map_err(|_| bun_core::err!("OutOfMemory"))?;
             } else {
@@ -770,7 +770,7 @@ impl BunxCommand {
                     BStr::new(display_version),
                 )
                 .map_err(|_| bun_core::err!("OutOfMemory"))?;
-                (v, &update_request.name)
+                (v, update_request.name)
             } else {
                 // When there is not a clear package name (URL/GitHub/etc), we force the package name
                 // to be the same as the calculated initial bin name. This allows us to have a predictable
@@ -1162,24 +1162,13 @@ impl BunxCommand {
                         }
                         Err(err) => {
                             if err == GetBinNameError::NoBinFound {
-                                if opts.specified_package.is_some() && opts.binary_name.is_some() {
-                                    Output::err_generic(
-                                        "Package <b>{}<r> does not provide a binary named <b>{}<r>",
-                                        (
-                                            BStr::new(&update_request.name),
-                                            BStr::new(opts.binary_name.unwrap()),
-                                        ),
-                                    );
-                                    Output::prettyln(format_args!(
-                                        "  <d>hint: try running without --package to install and run {} directly<r>",
-                                        BStr::new(opts.binary_name.unwrap()),
-                                    ));
-                                } else {
-                                    Output::err_generic(
-                                        "could not determine executable to run for package <b>{}<r>",
-                                        format_args!("{}", BStr::new(&update_request.name)),
-                                    );
-                                }
+                                // `opts.binary_name` is `None` here (checked at the
+                                // enclosing `if` above), so the `--package` + binary
+                                // hint message can never apply on this path.
+                                Output::err_generic(
+                                    "could not determine executable to run for package <b>{}<r>",
+                                    format_args!("{}", BStr::new(&update_request.name)),
+                                );
                                 Global::exit(1);
                             }
                         }

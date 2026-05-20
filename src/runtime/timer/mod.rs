@@ -833,6 +833,10 @@ impl All {
     /// # Safety
     /// `timer` must point to a live `EventLoopTimer` with whole-container
     /// provenance for its tag (see [`js_timer_flags_ptr`]).
+    // `timer` must stay `*mut`: the body forms only short-lived `&mut *timer`
+    // so re-entrant `remove_lock_held` does not alias an outstanding `&mut`
+    // (see PORT NOTEs below); contract is documented in `# Safety`.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn update(&mut self, timer: *mut EventLoopTimer, time: &Timespec) {
         self.lock.lock();
         // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer.
@@ -881,6 +885,9 @@ impl All {
     /// # Safety
     /// `vm` is the erased `*mut VirtualMachine` for the calling JS thread and
     /// must remain live across any `EventLoopTimer::fire` re-entry.
+    // Forwards `vm` to `__bun_fire_timer` without dereferencing it;
+    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn get_timeout(
         &mut self,
         spec: &mut Timespec,
@@ -1018,6 +1025,9 @@ impl All {
     /// # Safety
     /// `vm` is the erased `*mut VirtualMachine` for the calling JS thread and
     /// must remain live across any `EventLoopTimer::fire` re-entry.
+    // Forwards `vm` to `__bun_fire_timer` without dereferencing it;
+    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn drain_timers(&mut self, vm: *mut () /* erased *mut VirtualMachine */) {
         // PORT NOTE (§Forbidden aliased-&mut): spec Timer.zig:346-354 takes
         // `*All` (raw pointer) because fired handlers re-enter `vm.timer`
@@ -1060,6 +1070,10 @@ impl All {
 
     /// # Safety
     /// `uws_loop` must point to the calling VM's live uws loop.
+    // `uws_loop` is an FFI handle held as `*mut` by every caller; contract is
+    // documented in `# Safety` above. Cannot be `&mut` without breaking the
+    // out-of-file call sites that hold raw pointers.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn increment_immediate_ref(&mut self, delta: i32, uws_loop: *mut bun_uws_sys::Loop) {
         let old = self.immediate_ref_count;
         let new = old + delta;
@@ -1106,6 +1120,10 @@ impl All {
 
     /// # Safety
     /// `uws_loop` must point to the calling VM's live uws loop.
+    // `uws_loop` is an FFI handle held as `*mut` by every caller; contract is
+    // documented in `# Safety` above. Cannot be `&mut` without breaking the
+    // out-of-file call sites that hold raw pointers.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn increment_timer_ref(&mut self, delta: i32, uws_loop: *mut bun_uws_sys::Loop) {
         let old = self.active_timer_count;
         let new = old + delta;

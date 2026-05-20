@@ -570,7 +570,7 @@ impl PublishCommand {
             let context = match Context::<false>::from_tarball_path(
                 ctx,
                 manager,
-                &cli.positionals[1],
+                cli.positionals[1],
             ) {
                 Ok(c) => c,
                 Err(err) => {
@@ -1204,7 +1204,6 @@ impl PublishCommand {
                     "\nAuthenticate your account at (press <b>ENTER<r> to open in browser):\n",
                 ));
 
-                const OFFSET: usize = 0;
                 const PADDING: usize = 1;
 
                 let horizontal = if Output::enable_ansi_colors_stdout() {
@@ -1240,18 +1239,12 @@ impl PublishCommand {
 
                 let width: usize = (PADDING * 2) + auth_url_str.len();
 
-                for _ in 0..OFFSET {
-                    Output::print(format_args!(" "));
-                }
                 Output::print(format_args!("{}", top_left));
                 for _ in 0..width {
                     Output::print(format_args!("{}", horizontal));
                 }
                 Output::print(format_args!("{}\n", top_right));
 
-                for _ in 0..OFFSET {
-                    Output::print(format_args!(" "));
-                }
                 Output::print(format_args!("{}", vertical));
                 for _ in 0..PADDING {
                     Output::print(format_args!(" "));
@@ -1265,9 +1258,6 @@ impl PublishCommand {
                 }
                 Output::print(format_args!("{}\n", vertical));
 
-                for _ in 0..OFFSET {
-                    Output::print(format_args!(" "));
-                }
                 Output::print(format_args!("{}", bottom_left));
                 for _ in 0..width {
                     Output::print(format_args!("{}", horizontal));
@@ -2108,13 +2098,12 @@ impl PublishCommand {
         {
             write!(
                 &mut buf,
-                ",\"_attachments\":{{\"{}\":{{\"content_type\":\"{}\",\"data\":\"",
+                ",\"_attachments\":{{\"{}\":{{\"content_type\":\"application/octet-stream\",\"data\":\"",
                 pack::fmt_tarball_filename(
                     &ctx.package_name,
                     &ctx.package_version,
                     pack::TarballNameStyle::Raw
                 ),
-                "application/octet-stream",
             )
             .ok();
 

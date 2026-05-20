@@ -185,7 +185,7 @@ impl S3HttpDownloadStreamingTask {
     /// `this` must be a live heap pointer produced by `Self::new`; the event loop guarantees
     /// exclusive main-thread access for the duration of this call. When the loaded state's
     /// `has_more` is false this call reclaims and drops the allocation exactly once.
-    pub fn on_response(this: *mut Self) {
+    pub(crate) fn on_response(this: *mut Self) {
         // SAFETY: `this` is a live heap allocation created via `Self::new`; the event loop
         // guarantees exclusive access on the main thread for the duration of this callback.
         let self_ = unsafe { &mut *this };
@@ -336,7 +336,7 @@ impl S3HttpDownloadStreamingTask {
     /// `this` must be a live heap pointer produced by `Self::new`, valid for the duration of the
     /// HTTP request; `mutex` serializes against `on_response`. `async_http` must be a valid
     /// pointer to an initialised `AsyncHTTP` for the duration of this call.
-    pub fn http_callback(
+    pub(crate) fn http_callback(
         this: *mut Self,
         async_http: *mut AsyncHTTP<'static>,
         result: HTTPClientResult,

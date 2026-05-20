@@ -498,7 +498,7 @@ impl FSEventsLoop {
                     .name("CFThreadLoop".into())
                     .spawn(move || {
                         // SAFETY: see above — `this` is a valid heap allocation for the thread's lifetime.
-                        unsafe { (*(this_addr as *mut FSEventsLoop)).cf_thread_loop() }
+                        (*(this_addr as *mut FSEventsLoop)).cf_thread_loop()
                     })
                     .expect("failed to spawn thread"),
             );
@@ -899,12 +899,12 @@ pub type UpdateEndCallback = fn(ctx: *mut c_void);
 
 impl FSEventsWatcher {
     /// # Safety
-    /// `loop_` must be a valid, live `*mut FSEventsLoop` (the heap-allocated
+    /// `loop_` must point to a valid, live `FSEventsLoop` (the heap-allocated
     /// global default loop from `FSEventsLoop::init`) for the lifetime of the
     /// returned watcher; mutable access to its watcher list is serialized by
     /// `loop_.mutex` inside `register_watcher`.
     pub fn init(
-        loop_: *mut FSEventsLoop,
+        loop_: NonNull<FSEventsLoop>,
         path: &[u8],
         recursive: bool,
         callback: Callback,
@@ -915,13 +915,13 @@ impl FSEventsWatcher {
             path: bun_ptr::RawSlice::new(path),
             callback,
             flush_callback: update_end,
-            loop_: core::cell::Cell::new(NonNull::new(loop_)),
+            loop_: core::cell::Cell::new(Some(loop_)),
             recursive,
             ctx,
         });
 
         // SAFETY: caller contract — see `# Safety` above.
-        unsafe { (*loop_).register_watcher(&raw mut *this) };
+        unsafe { (*loop_.as_ptr()).register_watcher(&raw mut *this) };
         this
     }
 
@@ -958,7 +958,7 @@ pub fn watch(
 ) -> Result<Box<FSEventsWatcher>, bun_core::Error> {
     // TODO(port): narrow error set
     let loop_ = FSEVENTS_DEFAULT_LOOP.load(Ordering::Acquire);
-    if !loop_.is_null() {
+    if let Some(loop_) = NonNull::new(loop_) {
         // SAFETY: `loop_` is the heap-allocated global default loop published
         // under `FSEVENTS_DEFAULT_LOOP_MUTEX`; valid for the program lifetime.
         return Ok(FSEventsWatcher::init(
@@ -978,6 +978,7 @@ pub fn watch(
     }
     // SAFETY: `loop_` is the heap-allocated global default loop (just created or
     // re-read under the mutex); valid for the program lifetime.
+    let loop_ = NonNull::new(loop_).expect("FSEventsLoop::init returned non-null");
     Ok(FSEventsWatcher::init(
         loop_, path, recursive, callback, update_end, ctx,
     ))

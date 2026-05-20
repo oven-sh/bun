@@ -337,6 +337,13 @@ impl PathWatcher {
     /// # Safety
     /// `this` must be a live `PathWatcher` produced by [`PathWatcher::new`] whose
     /// `handlers` still contains `ctx`. Called from the JS thread only.
+    // The param must stay `*mut PathWatcher`: forming `&mut *this` at entry would
+    // assert exclusive access for the whole call, but on macOS the CF thread may
+    // concurrently raw-read the disjoint `manager` field while we're between
+    // `unlock()` and `remove_watch()` (see the SAFETY notes below). Each `&mut`
+    // is therefore scoped to the region where exclusivity actually holds, so
+    // clippy's `&mut` rewrite would be unsound here, not just stylistic.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn detach(this: *mut PathWatcher, ctx: *mut c_void) {
         // SAFETY: `this` is a live PathWatcher created via `PathWatcher::new`. Read
         // `manager` via the raw pointer so no `&mut PathWatcher` is asserted before
@@ -714,8 +721,7 @@ mod inotify_masks {
 impl Linux {
     fn init(manager: &mut PathWatcherManager) -> sys::Result<()> {
         use bun_sys::linux::IN;
-        // SAFETY: thin wrapper over libc::inotify_init1.
-        let rc = unsafe { sys::linux::inotify_init1(IN::CLOEXEC) };
+        let rc = sys::linux::inotify_init1(IN::CLOEXEC);
         if rc < 0 {
             return Err(sys::Error::from_code_int(sys::last_errno(), Tag::watch));
         }
@@ -841,8 +847,7 @@ impl Linux {
             }
             if owners.is_empty() {
                 wd_map.remove(&wd);
-                // SAFETY: thin wrapper over libc::inotify_rm_watch.
-                unsafe { sys::linux::inotify_rm_watch(fd.native(), wd) };
+                sys::linux::inotify_rm_watch(fd.native(), wd);
             }
         }
         watcher.platform.wds.clear();

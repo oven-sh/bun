@@ -127,6 +127,10 @@ pub struct FetchTasklet {
     pub ref_count: bun_ptr::ThreadSafeRefCount<FetchTasklet>,
 }
 
+// Boxing `AnyBlob` is not viable: the `AnyBlob` arm is constructed/matched in
+// `fetch.rs` (e.g. `HTTPRequestBodyExt::any_blob`) and would require changes
+// across files. The enum is also short-lived per-request, so the size cost is bounded.
+#[allow(clippy::large_enum_variant)]
 pub enum HTTPRequestBody {
     AnyBlob(AnyBlob),
     Sendfile(http::SendFile),
@@ -369,6 +373,10 @@ impl FetchTasklet {
 
     /// # Safety
     /// Caller holds a ref; `this` must be a live heap allocation from `get()`.
+    // Forwards `this` to ThreadSafeRefCount without dereferencing; signature must stay
+    // `*mut` because the call may drop the last ref and free the allocation, so a `&mut`
+    // here would be UB.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn deref(this: *mut FetchTasklet) {
         // SAFETY: caller contract.
         unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this) };
@@ -376,6 +384,9 @@ impl FetchTasklet {
 
     /// # Safety
     /// Caller holds a ref; `this` must be a live heap allocation from `get()`.
+    // Forwards `this` to ThreadSafeRefCount/dealloc without dereferencing; signature must
+    // stay `*mut` because the call may drop the last ref and free the allocation.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn deref_from_thread(this: *mut FetchTasklet) {
         // SAFETY: caller contract.
         if !unsafe { bun_ptr::ThreadSafeRefCount::<Self>::release(this) } {
@@ -1238,7 +1249,7 @@ impl FetchTasklet {
         let path = if let Some(metadata) = &self.metadata {
             BunString::clone_utf8(metadata.url.slice())
         } else if let Some(http_) = &self.http {
-            BunString::clone_utf8(http_.url.href.as_ref())
+            BunString::clone_utf8(http_.url.href)
         } else {
             BunString::EMPTY
         };
@@ -1583,7 +1594,7 @@ impl FetchTasklet {
             .filter(|canon| *canon == http_response.status)
         {
             Some(canon) => BunString::static_(canon),
-            None => BunString::clone_utf8(&http_response.status),
+            None => BunString::clone_utf8(http_response.status),
         };
         let url = BunString::clone_utf8(metadata.url.slice());
         let redirected = self.result.redirected;
@@ -1833,7 +1844,7 @@ impl FetchTasklet {
                 fetch_tasklet_ptr,
                 // SAFETY: `new_with_release` guarantees the pointer/lifetime
                 // contract `callback` documents.
-                |t, h, r| FetchTasklet::callback(t, h, r),
+                FetchTasklet::callback,
                 FetchTasklet::release_at_shutdown,
             ),
             fetch_options.redirect_type,
@@ -2123,6 +2134,9 @@ impl FetchTasklet {
     /// `task` must be a live heap-allocated `FetchTasklet` with the
     /// HTTP-thread ref still held; `async_http` must point to the HTTP
     /// thread's live `AsyncHTTP` for the duration of the call.
+    // Signature is fixed by `HTTPClientResultCallback`; `task` may be freed by the
+    // trailing `deref_from_thread`, so it cannot become `&mut`.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn callback(
         task: *mut FetchTasklet,
         async_http: *mut AsyncHTTP<'static>,
@@ -2160,10 +2174,10 @@ impl FetchTasklet {
         // Zig: `task.response_buffer = result.body.?.*` — verify the aliasing invariant
         // that makes that bitwise copy a no-op (see PORT NOTE below at the original site).
         debug_assert!(
-            result.body.as_deref().map_or(true, |b| core::ptr::eq(
-                b,
-                &raw const task_ref.response_buffer
-            )),
+            result
+                .body
+                .as_deref()
+                .is_none_or(|b| core::ptr::eq(b, &raw const task_ref.response_buffer)),
             "HTTPClientResult.body must alias FetchTasklet.response_buffer",
         );
 

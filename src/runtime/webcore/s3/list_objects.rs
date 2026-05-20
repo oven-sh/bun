@@ -217,7 +217,7 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
             }
 
             if let Some(end) = strings::index_of(&xml[i + 1..], b">") {
-                i = i + 1;
+                i += 1;
                 let tag_name_end_pos = i + end; // +1 for <
 
                 let tag_name = &xml[i..tag_name_end_pos];
@@ -390,46 +390,46 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                 } else if tag_name == b"Name" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</Name>") {
                         result.name = Some(&xml[i..i + _end]);
-                        i = i + _end;
+                        i += _end;
                     }
                 } else if tag_name == b"Delimiter" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</Delimiter>") {
                         result.delimiter = Some(&xml[i..i + _end]);
-                        i = i + _end;
+                        i += _end;
                     }
                 } else if tag_name == b"NextContinuationToken" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</NextContinuationToken>") {
                         result.next_continuation_token = Some(&xml[i..i + _end]);
-                        i = i + _end;
+                        i += _end;
                     }
                 } else if tag_name == b"ContinuationToken" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</ContinuationToken>") {
                         result.continuation_token = Some(&xml[i..i + _end]);
-                        i = i + _end;
+                        i += _end;
                     }
                 } else if tag_name == b"StartAfter" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</StartAfter>") {
                         result.start_after = Some(&xml[i..i + _end]);
-                        i = i + _end;
+                        i += _end;
                     }
                 } else if tag_name == b"EncodingType" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</EncodingType>") {
                         result.encoding_type = Some(&xml[i..i + _end]);
-                        i = i + _end;
+                        i += _end;
                     }
                 } else if tag_name == b"KeyCount" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</KeyCount>") {
                         let key_count = &xml[i..i + _end];
                         result.key_count = bun_core::fmt::parse_decimal::<i64>(key_count);
 
-                        i = i + _end;
+                        i += _end;
                     }
                 } else if tag_name == b"MaxKeys" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</MaxKeys>") {
                         let max_keys = &xml[i..i + _end];
                         result.max_keys = bun_core::fmt::parse_decimal::<i64>(max_keys);
 
-                        i = i + _end;
+                        i += _end;
                     }
                 } else if tag_name == b"Prefix" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</Prefix>") {
@@ -439,7 +439,7 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                             result.prefix = Some(prefix);
                         }
 
-                        i = i + _end;
+                        i += _end;
                     }
                 } else if tag_name == b"IsTruncated" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</IsTruncated>") {
@@ -451,12 +451,12 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                             result.is_truncated = Some(false);
                         }
 
-                        i = i + _end;
+                        i += _end;
                     }
                 } else if tag_name == b"CommonPrefixes" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</CommonPrefixes>") {
                         let common_prefixes_string = &xml[i..i + _end];
-                        i = i + _end;
+                        i += _end;
 
                         let mut j: usize = 0;
                         while j < common_prefixes_string.len() {
@@ -469,7 +469,7 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                                     strings::index_of(&common_prefixes_string[j..], b"</Prefix>")
                                 {
                                     common_prefixes.push(&common_prefixes_string[j..j + __end]);
-                                    j = j + __end;
+                                    j += __end;
                                 }
                             } else {
                                 break;

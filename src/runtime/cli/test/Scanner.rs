@@ -316,7 +316,7 @@ impl<'a> Scanner<'a> {
         // root; 4096 bytes covers any sane test directory depth (POSIX PATH_MAX).
         let mut buf = [0u8; 4096];
         let rel_with_slash: Option<&[u8]> = if !rel_path.is_empty()
-            && rel_path.len() + 1 <= buf.len()
+            && rel_path.len() < buf.len()
             && rel_path[rel_path.len() - 1] != b'/'
         {
             buf[..rel_path.len()].copy_from_slice(rel_path);

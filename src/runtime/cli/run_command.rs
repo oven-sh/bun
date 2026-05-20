@@ -903,10 +903,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         path_buf[entry_path.len()] = 0;
         // SAFETY: NUL-terminated above; `path_buf` outlives the call.
         let path_z = ZStr::from_buf(&path_buf[..], entry_path.len());
-        let src = match sys::File::read_from(Fd::cwd(), path_z) {
-            Ok(bytes) => bytes,
-            Err(err) => return Err(err.into()),
-        };
+        let src = sys::File::read_from(Fd::cwd(), path_z)?;
 
         crate::shell::Interpreter::init_and_run_from_file(ctx, mini, entry_path, &src)
     }
@@ -2119,18 +2116,15 @@ impl RunCommand {
             BunXFastPath::try_launch(ctx, new_len, env, passthrough);
         }
 
-        // SAFETY: `executable_z` is a valid NUL-terminated `ZStr`.
-        unsafe {
-            Self::run_binary_without_bunx_path(
-                ctx,
-                executable,
-                executable_z.as_ptr().cast::<c_char>(),
-                cwd,
-                env,
-                passthrough,
-                original_script_for_bun_run,
-            )
-        }
+        Self::run_binary_without_bunx_path(
+            ctx,
+            executable,
+            executable_z,
+            cwd,
+            env,
+            passthrough,
+            original_script_for_bun_run,
+        )
     }
 
     fn run_binary_generic_error(executable: &[u8], silent: bool, err: &sys::Error) -> ! {
@@ -2144,14 +2138,11 @@ impl RunCommand {
         Global::exit(1);
     }
 
-    /// # Safety
-    /// `executable_z` must point to a valid NUL-terminated string that lives
-    /// for the duration of the call (it is the NUL-terminated form of
-    /// `executable`).
+    /// `executable_z` is the NUL-terminated form of `executable`.
     pub fn run_binary_without_bunx_path(
         ctx: &mut ContextData,
         executable: &[u8],
-        executable_z: *const c_char,
+        executable_z: &ZStr,
         cwd: &[u8],
         env: &mut DotEnv::Loader<'static>,
         passthrough: &[Box<[u8]>],
@@ -2173,7 +2164,7 @@ impl RunCommand {
 
         let spawn_result = match sync::spawn(&sync::Options {
             argv,
-            argv0: Some(executable_z),
+            argv0: Some(executable_z.as_ptr().cast::<c_char>()),
             envp: Some(envp.as_ptr().cast::<*const c_char>()),
             cwd: cwd.to_vec().into_boxed_slice(),
             stderr: sync::SyncStdio::Inherit,
@@ -2206,13 +2197,7 @@ impl RunCommand {
                     if !silent {
                         #[cfg(unix)]
                         {
-                            // SAFETY: `executable_z` is the NUL-terminated form
-                            // of `executable` (caller invariant).
-                            let exec_z = unsafe {
-                                let cstr = bun_core::ffi::cstr(executable_z);
-                                ZStr::from_raw(cstr.as_ptr().cast(), cstr.to_bytes().len())
-                            };
-                            match sys::stat(exec_z) {
+                            match sys::stat(executable_z) {
                                 Ok(stat) => {
                                     if sys::S::ISDIR(stat.st_mode as _) {
                                         pretty_errorln!(
@@ -2734,19 +2719,15 @@ impl RunCommand {
                     let out = destination.as_bytes();
                     let stored = fs.dirname_store.append_slice(out)?;
                     let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();
-                    // SAFETY: `destination` is the NUL-terminated path returned
-                    // by `which`; it stays alive for the duration of the call.
-                    unsafe {
-                        Self::run_binary_without_bunx_path(
-                            ctx,
-                            stored,
-                            destination.as_ptr().cast::<c_char>(),
-                            top_level_dir,
-                            env_loader,
-                            &passthrough,
-                            Some(target_name),
-                        )?;
-                    }
+                    Self::run_binary_without_bunx_path(
+                        ctx,
+                        stored,
+                        destination,
+                        top_level_dir,
+                        env_loader,
+                        &passthrough,
+                        Some(target_name),
+                    )?;
                 }
             }
         }
@@ -3490,7 +3471,7 @@ impl RunCommand {
             // directly. Honor COLUMNS so piped output and tests can
             // pin a width.
             if let Some(env) = bun_core::getenv_z(bun_core::zstr!("COLUMNS")) {
-                if let Some(n) = bun_core::fmt::parse_int::<u16>(env, 10).ok() {
+                if let Ok(n) = bun_core::fmt::parse_int::<u16>(env, 10) {
                     if n > 0 {
                         break 'brk n;
                     }
@@ -3699,8 +3680,7 @@ impl RunCommand {
                     .ok()
                     .flatten()
                 {
-                    // SAFETY: resolver cache owns the DirInfo for the process lifetime.
-                    if let Some(entries) = unsafe { &*bin_dir }.get_entries_const() {
+                    if let Some(entries) = bin_dir.get_entries_const() {
                         let mut path_buf = PathBuffer::uninit();
                         let mut iter = entries.data.iter();
                         let mut has_copied = false;

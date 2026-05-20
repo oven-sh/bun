@@ -331,6 +331,10 @@ impl S3HttpSimpleTask {
     /// # Safety
     /// `this` must be a live heap pointer produced by `S3HttpSimpleTask::new` whose ownership
     /// is being transferred to this call (it is reclaimed and dropped here exactly once).
+    //
+    // ConcurrentTask dispatch entrypoint (see `runtime::dispatch`): `this` is the raw task
+    // pointer the queue hands back, non-null by the `ConcurrentTask::from` contract.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn on_response(this: *mut Self) -> JsTerminatedResult<()> {
         // SAFETY: `this` was produced by `S3HttpSimpleTask::new` (heap::alloc) and ownership is
         // reclaimed here exactly once via the ConcurrentTask `.manual_deinit` contract. Dropping
@@ -438,6 +442,10 @@ impl S3HttpSimpleTask {
     /// `this` must be a live heap pointer produced by `S3HttpSimpleTask::new` and exclusively
     /// owned by the HTTP thread for the duration of this call. `async_http` must be a valid
     /// pointer to an initialised `AsyncHTTP` for the duration of this call.
+    //
+    // `HTTPClientResultCallback` entrypoint: invoked by the HTTP thread with the raw task and
+    // request pointers it captured at schedule time, both non-null by construction.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn http_callback(
         this: *mut Self,
         async_http: *mut AsyncHTTP<'static>,
@@ -682,7 +690,7 @@ pub fn execute_simple_s3_request(
             task_ptr,
             // SAFETY: `task_ptr` was just heap-allocated above and `async_http` is supplied by
             // the HTTP thread as a live pointer for the duration of the callback.
-            |this, http, result| S3HttpSimpleTask::http_callback(this, http, result),
+            S3HttpSimpleTask::http_callback,
         ),
         FetchRedirect::Follow,
         HttpOptions {

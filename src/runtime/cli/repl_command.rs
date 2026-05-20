@@ -127,7 +127,7 @@ impl ReplCommand {
         b.options.env.behavior = EnvBehavior::LoadAllWithoutInlining;
         b.options.dead_code_elimination = false; // REPL needs all code
 
-        if let Err(_) = b.configure_defines() {
+        if b.configure_defines().is_err() {
             Self::dump_build_error(VirtualMachine::get());
             Global::exit(1);
         }
@@ -154,10 +154,13 @@ impl ReplCommand {
             // PORT NOTE: ctx is the process-global ContextData; extend the
             // borrow past the local reborrow lifetime via raw ptr (the runner
             // never outlives ctx — global_exit() is `!`).
-            // SAFETY: ctx.runtime_options.eval.script lives in the process-global
-            // ContextData; the raw-ptr reborrow is sound because the runner never
-            // outlives it — hold_api_lock returns into global_exit() (`!`).
-            eval_script: unsafe { &*(&raw const *ctx.runtime_options.eval.script) },
+            eval_script: {
+                let ptr: *const [u8] = &raw const *ctx.runtime_options.eval.script;
+                // SAFETY: ctx.runtime_options.eval.script lives in the process-global
+                // ContextData; the raw-ptr reborrow is sound because the runner never
+                // outlives it — hold_api_lock returns into global_exit() (`!`).
+                unsafe { &*ptr }
+            },
             eval_and_print: ctx.runtime_options.eval.eval_and_print,
         };
         // TODO(port): @constCast(&arena) — vm.arena stores a *mut Arena pointing at runner.arena;
@@ -222,7 +225,7 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
         let vm = VirtualMachine::get().as_mut();
 
         // Set up the REPL environment (now inside API lock)
-        if let Err(_) = this.setup_repl_environment() {
+        if this.setup_repl_environment().is_err() {
             // setupGlobalRequire threw a JS exception — surface it and exit
             if let Some(exception) = vm.global().try_take_exception() {
                 vm.print_error_like_object_to_console(exception);

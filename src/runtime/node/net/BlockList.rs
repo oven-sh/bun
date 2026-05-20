@@ -391,6 +391,10 @@ impl BlockList {
         _ = writer.write_int_le(std::ptr::from_ref::<Self>(this) as usize);
     }
 
+    // C++ codegen calls this with a live `*mut *mut u8` cursor and end pointer; the
+    // signature is fixed by `generate-classes.ts`, so the deref is documented with
+    // the SAFETY comment below.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn on_structured_clone_deserialize(
         global: &JSGlobalObject,
         ptr: *mut *mut u8,

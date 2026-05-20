@@ -451,7 +451,7 @@ impl<'a> Snapshots<'a> {
                 file: bun_sys::File::from_fd(fd),
             };
 
-            let file_text: Vec<u8> = file.file.read_to_end().map_err(|e| Error::from(e))?;
+            let file_text: Vec<u8> = file.file.read_to_end().map_err(Error::from)?;
 
             let source =
                 bun_ast::Source::init_path_string(test_filename_z.as_bytes(), file_text.as_slice());

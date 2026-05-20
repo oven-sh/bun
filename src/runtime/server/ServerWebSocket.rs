@@ -744,6 +744,10 @@ impl ServerWebSocket {
         Err(global_object.throw(format_args!("Cannot construct ServerWebSocket")))
     }
 
+    // Codegen's `host_fn_finalize` calls this via `|b| ServerWebSocket::finalize(b)`
+    // and requires `fn finalize(self: Box<Self>)`; clippy::boxed_local is a
+    // false positive on that contract.
+    #[allow(clippy::boxed_local)]
     pub fn finalize(self: Box<Self>) {
         bun_output::scoped_log!(WebSocketServer, "finalize");
         self.this_value.with_mut(|v| v.finalize());

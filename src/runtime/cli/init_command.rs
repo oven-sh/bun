@@ -1416,17 +1416,14 @@ impl TemplateFile {
 
 impl Template {
     pub fn should_use_source_file_project_generator(self) -> bool {
-        match self {
-            Template::Blank | Template::TypescriptLibrary => false,
-            _ => true,
-        }
+        !matches!(self, Template::Blank | Template::TypescriptLibrary)
     }
 
     pub fn is_react(self) -> bool {
-        match self {
-            Template::ReactBlank | Template::ReactTailwind | Template::ReactTailwindShadcn => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            Template::ReactBlank | Template::ReactTailwind | Template::ReactTailwindShadcn
+        )
     }
 
     pub fn write_to_package_json(

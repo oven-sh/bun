@@ -264,7 +264,7 @@ fn map_floyd_steinberg(
 
 #[inline]
 fn clamp255(v: i32) -> i32 {
-    v.max(0).min(255)
+    v.clamp(0, 255)
 }
 
 /// Recompute a box's tight min/max over its pixel slice.

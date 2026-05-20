@@ -63,10 +63,11 @@ pub struct JSTranspiler {
 }
 
 fn default_transform_options() -> api::TransformOptions {
-    let mut opts: api::TransformOptions = api::TransformOptions::default();
-    opts.disable_hmr = true;
-    opts.target = Some(api::Target::Browser);
-    opts
+    api::TransformOptions {
+        disable_hmr: true,
+        target: Some(api::Target::Browser),
+        ..Default::default()
+    }
 }
 
 pub struct Config {
@@ -100,10 +101,9 @@ impl Default for Config {
             tsconfig_buf: Box::default(),
             macros_buf: Box::default(),
             log: bun_ast::Log::default(), // overwritten at construction
-            runtime: {
-                let mut r = Runtime::Features::default();
-                r.top_level_await = true;
-                r
+            runtime: Runtime::Features {
+                top_level_await: true,
+                ..Default::default()
             },
             tree_shaking: false,
             trim_unused_imports: None,
@@ -821,8 +821,8 @@ impl<'a> TransformTask<'a> {
             path: source.path,
             virtual_source: Some(source),
             replace_exports: self.replace_exports.entries.clone().expect("OOM"),
-            experimental_decorators: self.tsconfig.map_or(false, |ts| ts.experimental_decorators),
-            emit_decorator_metadata: self.tsconfig.map_or(false, |ts| ts.emit_decorator_metadata),
+            experimental_decorators: self.tsconfig.is_some_and(|ts| ts.experimental_decorators),
+            emit_decorator_metadata: self.tsconfig.is_some_and(|ts| ts.emit_decorator_metadata),
             macro_js_ctx: MacroJSCtx::ZERO,
             file_hash: None,
             file_fd_ptr: None,
@@ -1315,11 +1315,11 @@ impl JSTranspiler {
             experimental_decorators: config
                 .tsconfig
                 .as_deref()
-                .map_or(false, |ts| ts.experimental_decorators),
+                .is_some_and(|ts| ts.experimental_decorators),
             emit_decorator_metadata: config
                 .tsconfig
                 .as_deref()
-                .map_or(false, |ts| ts.emit_decorator_metadata),
+                .is_some_and(|ts| ts.emit_decorator_metadata),
             file_hash: None,
             file_fd_ptr: None,
             inject_jest_globals: false,
@@ -1687,7 +1687,7 @@ fn named_imports_to_js(
         }
 
         array.ensure_still_alive();
-        let path = JscZigString::init(record.path.text.as_ref()).to_js(global);
+        let path = JscZigString::init(record.path.text).to_js(global);
         let kind = JscZigString::init(record.kind.label()).to_js(global);
         let entry = JSValue::create_object2(global, &path_label, &kind_label, path, kind)?;
         array.put_index(global, i, entry)?;
@@ -1792,10 +1792,9 @@ impl JSTranspiler {
         }
         opts.macro_context = transpiler.macro_context.as_mut();
 
-        // SAFETY: `options.define` is `Box<Define>` owned by the long-lived
-        // `Transpiler`; the parser borrows it for the arena lifetime. Erase to
-        // satisfy `JavaScript::scan`'s `&'a Define` param (Zig held `*const Define`).
-        let define = unsafe { &*(&raw const *transpiler.options.define) };
+        // `options.define` is `Box<Define>` owned by the long-lived `Transpiler`;
+        // the parser borrows it for the arena lifetime (Zig held `*const Define`).
+        let define = &*transpiler.options.define;
 
         // PORT NOTE: spec calls `transpiler.resolver.caches.js.scan`. The
         // resolver-side `cache::JavaScript` is a fieldless shell with

@@ -162,7 +162,7 @@ impl<'a> ProcessHandle<'a> {
                     envp.as_ptr().cast::<*const c_char>(),
                 )
             }?
-            .map_err(|e| Error::from(e))?
+            .map_err(Error::from)?
         };
         // `mut` needed on Windows where `WindowsSpawnResult::to_process` takes `&mut self`
         // and the stdout/stderr pipes are `.take()`n below; on POSIX `to_process` consumes
@@ -411,15 +411,15 @@ impl<'a> State<'a> {
         match &handle.process.as_ref().unwrap().status {
             Status::Exited(exited) => {
                 if exited.code != 0 {
-                    write!(writer, "Exited with code {}\n", exited.code)?;
+                    writeln!(writer, "Exited with code {}", exited.code)?;
                 } else {
                     if let (Some(start), Some(end)) = (handle.start_time, handle.end_time) {
                         let duration = end.duration_since(start);
                         let ms = duration.as_nanos() as f64 / 1_000_000.0;
                         if ms > 1000.0 {
-                            write!(writer, "Done in {:.2}s\n", ms / 1000.0)?;
+                            writeln!(writer, "Done in {:.2}s", ms / 1000.0)?;
                         } else {
-                            write!(writer, "Done in {:.0}ms\n", ms)?;
+                            writeln!(writer, "Done in {:.0}ms", ms)?;
                         }
                     } else {
                         writer.write_all(b"Done\n")?;
@@ -428,7 +428,7 @@ impl<'a> State<'a> {
             }
             Status::Signaled(signal) => {
                 let name = bun_sys::SignalCode(*signal).name().unwrap_or("unknown");
-                write!(writer, "Signaled: {}\n", name)?;
+                writeln!(writer, "Signaled: {}", name)?;
             }
             _ => {
                 writer.write_all(b"Error\n")?;
@@ -939,7 +939,7 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
         // Phase 3: Build configs from sorted packages
         for pkg in &matched_packages {
             for raw_name in &script_names {
-                if raw_name.iter().any(|&b| b == b'*') {
+                if raw_name.contains(&b'*') {
                     // Glob: expand against this package's scripts
                     let mut matches: Vec<&[u8]> = Vec::new();
                     for key in pkg.scripts.keys() {
@@ -1016,14 +1016,12 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
             }
         };
 
-        // SAFETY: read_dir_info returns a borrow into the resolver's directory cache
-        // (process-lifetime).
-        let package_json = unsafe { (*root_dir_info).enclosing_package_json };
+        let package_json = (*root_dir_info).enclosing_package_json;
         let scripts_map: Option<&ScriptsMap> = package_json.and_then(|pkg| pkg.scripts.as_deref());
 
         for raw_name in &script_names {
             // Check if this is a glob pattern
-            if raw_name.iter().any(|&b| b == b'*') {
+            if raw_name.contains(&b'*') {
                 if let Some(sm) = scripts_map {
                     // Collect matching script names
                     let mut matches: Vec<&[u8]> = Vec::new();

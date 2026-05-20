@@ -58,15 +58,17 @@ impl Readable {
         unsafe { &mut *pipe.as_ptr() }
     }
 
-    /// Consume an owned `IntrusiveRc<PipeReader>`, clear its `process` backref,
-    /// and release the ref (Zig: `pipe.detach()`). Centralises what was the
-    /// `into_raw()` + `unsafe { PipeReader::detach(raw) }` dance so the three
-    /// callers in `finalize` / `to_js` / `to_buffered_value` stay safe — the
-    /// owned `IntrusiveRc` already encodes the "live + one ref" invariant
-    /// `detach()` needs, and `RefPtr::deref` is the safe drop.
+    /// Clear the `PipeReader`'s `process` backref and release the caller's ref
+    /// (Zig: `pipe.detach()`). Centralises what was the `into_raw()` +
+    /// `unsafe { PipeReader::detach(raw) }` dance so the three callers in
+    /// `finalize` / `to_js` / `to_buffered_value` stay safe — the caller's
+    /// `IntrusiveRc` encodes the "live + one ref" invariant `detach()` needs,
+    /// and `RefPtr::deref` is the safe drop. Callers pass the `IntrusiveRc`
+    /// they just moved out of `self` and drop it (a no-op — `RefPtr` has no
+    /// `Drop`) immediately after.
     #[inline]
-    fn pipe_detach(pipe: IntrusiveRc<PipeReader>) {
-        Self::pipe_reader_mut(&pipe).process = None;
+    fn pipe_detach(pipe: &IntrusiveRc<PipeReader>) {
+        Self::pipe_reader_mut(pipe).process = None;
         pipe.deref();
     }
 
@@ -235,7 +237,7 @@ impl Readable {
                         unsafe { PipeReader::deref(pipe.as_ptr()) };
                     }
                 }
-                Self::pipe_detach(pipe);
+                Self::pipe_detach(&pipe);
             }
             Readable::Buffer(_) => {
                 // PORT NOTE: Zig calls `buf.deinit(default_allocator)` without resetting the tag.
@@ -258,7 +260,7 @@ impl Readable {
                     unreachable!()
                 };
                 let result = Self::pipe_reader_mut(&pipe).to_js(global);
-                Self::pipe_detach(pipe);
+                Self::pipe_detach(&pipe);
                 result
             }
             Readable::Buffer(_) => {
@@ -300,7 +302,7 @@ impl Readable {
                     unreachable!()
                 };
                 let result = Self::pipe_reader_mut(&pipe).to_buffer(global);
-                Self::pipe_detach(pipe);
+                Self::pipe_detach(&pipe);
                 Ok(result)
             }
             Readable::Buffer(_) => {

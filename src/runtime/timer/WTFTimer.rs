@@ -144,7 +144,7 @@ impl WTFTimer {
 
         // There's only one of these per VM, and each VM has its own imminent_gc_timer.
         // Only set imminent if it's not already set to avoid overwriting another timer.
-        if !(seconds > 0.0) {
+        if seconds.partial_cmp(&0.0) != Some(core::cmp::Ordering::Greater) {
             let _ = imminent.compare_exchange(
                 ptr::null_mut(),
                 self_opaque,
@@ -315,7 +315,7 @@ pub unsafe extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn WTFTimer__update(this: *mut WTFTimer, seconds: f64, repeat: bool) {
     // SAFETY: per fn contract.
-    WTFTimer::update(this, seconds, repeat);
+    unsafe { WTFTimer::update(this, seconds, repeat) };
 }
 
 /// # Safety
@@ -324,7 +324,7 @@ pub unsafe extern "C" fn WTFTimer__update(this: *mut WTFTimer, seconds: f64, rep
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn WTFTimer__deinit(this: *mut WTFTimer) {
     // SAFETY: per fn contract.
-    WTFTimer::deinit(this);
+    unsafe { WTFTimer::deinit(this) };
 }
 
 /// # Safety

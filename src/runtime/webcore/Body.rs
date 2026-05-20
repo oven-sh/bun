@@ -70,7 +70,7 @@ fn as_dom_form_data(value: JSValue) -> Option<*mut DOMFormData> {
     // `DOMFormData` is an opaque C++ type without a `#[bun_jsc::JsClass]` derive;
     // route through the hand-written `from_js` (`DOMFormData.rs`) instead of
     // `value.as_::<DOMFormData>()`.
-    DOMFormData::from_js(value).map(|r| std::ptr::from_mut::<DOMFormData>(r))
+    DOMFormData::from_js(value).map(std::ptr::from_mut::<DOMFormData>)
 }
 #[inline]
 fn as_url_search_params(value: JSValue) -> Option<*mut URLSearchParams> {
@@ -368,7 +368,7 @@ impl PendingValue {
         self.readable.has()
             || self
                 .promise
-                .map_or(false, |p| !p.is_empty_or_undefined_or_null())
+                .is_some_and(|p| !p.is_empty_or_undefined_or_null())
     }
 
     // TODO(port): ReadableStream::to_any_blob (see above).
@@ -499,6 +499,9 @@ pub trait BodyOwnerJs {
 /// This is a duplex stream!
 #[derive(bun_core::EnumTag)]
 #[enum_tag(existing = Tag)]
+// Mirrors the Zig `Body.Value` union and is pooled inline in `HiveRef` slots; boxing
+// `Blob` would change construction/match sites across many files and defeat the pool.
+#[allow(clippy::large_enum_variant)]
 pub enum Value {
     Blob(Blob),
 
@@ -585,6 +588,9 @@ pub enum Tag {
     Null,
 }
 
+// Mirrors the Zig `Body.Value.ValueError` union and is constructed/matched across
+// several modules; boxing `SystemError` would ripple through those callers.
+#[allow(clippy::large_enum_variant)]
 pub enum ValueError {
     AbortReason(CommonAbortReason),
     SystemError(SystemError),
@@ -851,10 +857,10 @@ impl Value {
                 // would leak. `deinit()` = detach + free_content_type and is a
                 // no-op on the heap-free path (`is_heap_allocated()` is false —
                 // asserted in `use_()`). Same gap exists in the Zig spec.
-                let mut blob = scopeguard::guard(self.use_(), |mut b| b.deinit());
+                let blob = scopeguard::guard(self.use_(), |mut b| b.deinit());
                 blob.resolve_size();
                 let blob_size = blob.size.get();
-                let value = ReadableStream::from_blob_copy_ref(global_this, &mut blob, blob_size)?;
+                let value = ReadableStream::from_blob_copy_ref(global_this, &blob, blob_size)?;
 
                 let stream = ReadableStream::from_js(value, global_this)?.unwrap();
                 *self = Value::Locked(PendingValue {

@@ -797,7 +797,7 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         err_msg: None,
         tmp_path: None,
         // SAFETY: `vm_mut().event_loop()` returns the live per-thread `jsc::EventLoop`.
-        event_loop_handle: unsafe { EventLoopHandle::init(vm_mut().event_loop().cast::<()>()) },
+        event_loop_handle: EventLoopHandle::init(vm_mut().event_loop().cast::<()>()),
     }));
     let promise_value = {
         // SAFETY: just allocated; unique. Short-lived borrow ends before
@@ -1316,7 +1316,7 @@ pub fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
         err_msg: None,
         tmp_path: None,
         // SAFETY: `vm_mut().event_loop()` returns the live per-thread `jsc::EventLoop`.
-        event_loop_handle: unsafe { EventLoopHandle::init(vm_mut().event_loop().cast::<()>()) },
+        event_loop_handle: EventLoopHandle::init(vm_mut().event_loop().cast::<()>()),
     }));
     let promise_value = {
         // SAFETY: just allocated; unique. Short-lived borrow ends before
@@ -1665,7 +1665,7 @@ impl CronJob {
         };
         // SAFETY: `event_loop_timer` is the live inline timer field of the
         // heap-allocated `CronJob` `this_ref` borrows.
-        unsafe { timer_all().update(this_ref.event_loop_timer.as_ptr(), &next_time) };
+        timer_all().update(this_ref.event_loop_timer.as_ptr(), &next_time);
     }
 
     pub fn on_timer_fire(this: *mut Self, vm: &VirtualMachine) {
@@ -1907,7 +1907,7 @@ impl CronJob {
         job_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         // SAFETY: `event_loop_timer` is the live inline timer field of the
         // heap-allocated `CronJob` `job_ref` borrows.
-        unsafe { timer_all().update(job_ref.event_loop_timer.as_ptr(), &next_time) };
+        timer_all().update(job_ref.event_loop_timer.as_ptr(), &next_time);
 
         Ok(js_value)
     }
@@ -1943,7 +1943,7 @@ bun_jsc::jsc_host_abi! {
 fn on_promise_resolve(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let args = frame.arguments();
     let this: *mut CronJob = args[args.len() - 1].as_promise_ptr::<CronJob>();
-    let _guard = scopeguard::guard(this, |p| CronJob::release_pending_ref(p));
+    let _guard = scopeguard::guard(this, CronJob::release_pending_ref);
     // `pending_ref` holds a ref on `this`.
     let this_ref = CronJob::from_ctx_ptr(this);
     // SAFETY: `bun_vm()` returns the per-thread singleton.
@@ -1958,7 +1958,7 @@ fn on_promise_resolve(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<J
 fn on_promise_reject(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let args = frame.arguments();
     let this: *mut CronJob = args[args.len() - 1].as_promise_ptr::<CronJob>();
-    let _guard = scopeguard::guard(this, |p| CronJob::release_pending_ref(p));
+    let _guard = scopeguard::guard(this, CronJob::release_pending_ref);
     // `pending_ref` holds a ref on `this`.
     let this_ref = CronJob::from_ctx_ptr(this);
     // SAFETY: `bun_vm()` returns the per-thread singleton.
@@ -2078,13 +2078,13 @@ bun_spawn::link_impl_ProcessExit! {
     CronRegister for CronRegisterJob => |this| {
         // Forward `this` raw — `on_process_exit` → `maybe_finished` may free it.
         on_process_exit(process, status, rusage) =>
-            <CronRegisterJob as CronJobBase>::on_process_exit(this, &*process, status, &*rusage),
+            <CronRegisterJob as CronJobBase>::on_process_exit(this, &*process, status, rusage),
     }
 }
 bun_spawn::link_impl_ProcessExit! {
     CronRemove for CronRemoveJob => |this| {
         on_process_exit(process, status, rusage) =>
-            <CronRemoveJob as CronJobBase>::on_process_exit(this, &*process, status, &*rusage),
+            <CronRemoveJob as CronJobBase>::on_process_exit(this, &*process, status, rusage),
     }
 }
 
@@ -2341,7 +2341,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     }
 
     // SAFETY: `vm_mut().event_loop()` returns the live per-thread `jsc::EventLoop`.
-    let ev_handle = unsafe { EventLoopHandle::init(vm_mut().event_loop().cast::<()>()) };
+    let ev_handle = EventLoopHandle::init(vm_mut().event_loop().cast::<()>());
     let process = spawned.to_process(ev_handle, false);
     *s.process_slot() = Some(process);
     // SAFETY: `process` was just allocated by `to_process`; we hold the only
@@ -2599,7 +2599,7 @@ pub fn cron_to_calendar_interval(schedule: &[u8]) -> Result<Vec<u8>, CalendarErr
     // Determine if we need an <array> wrapper (multiple dicts or OR split)
     let needs_product = field_values
         .iter()
-        .any(|fv| fv.as_ref().map_or(false, |v| v.len() > 1));
+        .any(|fv| fv.as_ref().is_some_and(|v| v.len() > 1));
     let needs_array = needs_product || needs_or_split;
 
     // Borrow as slices for emit_calendar_dicts.
@@ -2801,9 +2801,9 @@ pub fn cron_to_task_xml(
         .map_err(|_| TaskXmlError::InvalidCron)?;
 
         xml.extend_from_slice(b"    <CalendarTrigger>\n");
-        let _ = write!(
+        let _ = writeln!(
             &mut xml,
-            "      <StartBoundary>{}</StartBoundary>\n",
+            "      <StartBoundary>{}</StartBoundary>",
             bstr::BStr::new(sb)
         );
 
@@ -2815,9 +2815,9 @@ pub fn cron_to_task_xml(
                     b"      <Repetition><Interval>PT1M</Interval></Repetition>\n",
                 );
             } else {
-                let _ = write!(
+                let _ = writeln!(
                     &mut xml,
-                    "      <Repetition><Interval>PT{}M</Interval></Repetition>\n",
+                    "      <Repetition><Interval>PT{}M</Interval></Repetition>",
                     m
                 );
             }
@@ -2825,9 +2825,9 @@ pub fn cron_to_task_xml(
             // Case 2: hour-based repetition
             let h = hour_interval.unwrap();
             if h > 1 {
-                let _ = write!(
+                let _ = writeln!(
                     &mut xml,
-                    "      <Repetition><Interval>PT{}H</Interval></Repetition>\n",
+                    "      <Repetition><Interval>PT{}H</Interval></Repetition>",
                     h
                 );
             }
@@ -2945,7 +2945,7 @@ fn append_days_of_month_xml(xml: &mut Vec<u8>, days: u32) -> Result<(), TaskXmlE
     xml.extend_from_slice(b"        <DaysOfMonth>\n");
     for day in 1..32u32 {
         if days & (1u32 << day) != 0 {
-            let _ = write!(xml, "          <Day>{}</Day>\n", day);
+            let _ = writeln!(xml, "          <Day>{}</Day>", day);
         }
     }
     xml.extend_from_slice(b"        </DaysOfMonth>\n");
@@ -2971,7 +2971,7 @@ fn append_months_xml(xml: &mut Vec<u8>, months: u16) -> Result<(), TaskXmlError>
     xml.extend_from_slice(b"        <Months>\n");
     for mo in 1..13usize {
         if months & (1u16 << mo) != 0 {
-            let _ = write!(xml, "          <{}/>\n", MONTH_NAMES[mo]);
+            let _ = writeln!(xml, "          <{}/>", MONTH_NAMES[mo]);
         }
     }
     xml.extend_from_slice(b"        </Months>\n");
@@ -2991,7 +2991,7 @@ fn append_days_of_week_xml(xml: &mut Vec<u8>, weekdays: u8) -> Result<(), TaskXm
     xml.extend_from_slice(b"        <DaysOfWeek>\n");
     for d in 0..7usize {
         if weekdays & (1u8 << d) != 0 {
-            let _ = write!(xml, "          <{}/>\n", DAY_NAMES[d]);
+            let _ = writeln!(xml, "          <{}/>", DAY_NAMES[d]);
         }
     }
     xml.extend_from_slice(b"        </DaysOfWeek>\n");
@@ -3019,9 +3019,9 @@ fn append_calendar_trigger_with_schedule(
     sched: ScheduleType,
 ) -> Result<(), TaskXmlError> {
     xml.extend_from_slice(b"    <CalendarTrigger>\n");
-    let _ = write!(
+    let _ = writeln!(
         xml,
-        "      <StartBoundary>{}</StartBoundary>\n",
+        "      <StartBoundary>{}</StartBoundary>",
         bstr::BStr::new(start_boundary)
     );
 

@@ -357,6 +357,8 @@ impl Subprocess<'_> {
 /// `AbortSignal::add_listener`; the AbortSignal guarantees it is live for the
 /// duration of the callback.
 pub unsafe extern "C" fn on_abort_signal(ctx: *mut c_void, reason: JSValue) {
+    // SAFETY: caller upholds the `# Safety` contract above — `ctx` is the live
+    // `*mut Subprocess` registered with the AbortSignal.
     unsafe { Subprocess::on_abort_signal_c(ctx, reason) }
 }
 
@@ -366,7 +368,7 @@ bun_spawn::link_impl_ProcessExit! {
         // hand it to `VirtualMachine::on_subprocess_exit` without a const→mut
         // provenance cast.
         on_process_exit(process, status, rusage) =>
-            (*this).on_process_exit(process, &status, &*rusage),
+            (*this).on_process_exit(process, &status, rusage),
     }
 }
 
@@ -674,8 +676,7 @@ impl Subprocess<'_> {
         self.event_loop_timer_refd.set(refd);
         let uws_loop = self.global_this().bun_vm().uws_loop();
         let delta: i32 = if refd { 1 } else { -1 };
-        // SAFETY: `uws_loop` is the live per-thread uws loop.
-        unsafe { Self::timer_all().increment_timer_ref(delta, uws_loop) };
+        Self::timer_all().increment_timer_ref(delta, uws_loop);
     }
 
     #[inline]
@@ -901,6 +902,10 @@ impl Subprocess<'_> {
     /// `process` must be the live `*mut Process` threaded from the
     /// `link_impl_ProcessExit!` vtable thunk (mutable provenance, valid for the
     /// duration of the call).
+    // Forwards `process` to `VirtualMachine::on_subprocess_exit` without
+    // dereferencing it; not_unsafe_ptr_arg_deref is a false positive on
+    // opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn on_process_exit(&self, process: *mut Process, status: &Status, rusage: &Rusage) {
         bun_output::scoped_log!(Subprocess, "onProcessExit()");
         let this_jsvalue = self.this_value.get().try_get().unwrap_or(JSValue::ZERO);
@@ -1058,10 +1063,9 @@ impl Subprocess<'_> {
 
         let mut did_update_has_pending_activity = false;
 
-        // SAFETY: `jsc_vm` is the live VM; `event_loop()` returns its owned EventLoop.
         // Kept as raw `*mut` so the enter guard and the body can both call
         // `&mut`-taking methods without tripping borrowck.
-        let event_loop = unsafe { (*jsc_vm).event_loop() };
+        let event_loop = (*jsc_vm).event_loop();
 
         if !is_sync {
             if !this_jsvalue.is_empty() {

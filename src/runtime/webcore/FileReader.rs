@@ -80,8 +80,8 @@ impl Default for FileReader {
             started: Cell::new(false),
             waiting_for_on_reader_done: Cell::new(false),
             // TODO(port): event_loop has no Zig default; callers must overwrite before use
-            // SAFETY: sentinel only; never dispatched (overwritten before use).
-            event_loop: Cell::new(unsafe { EventLoopHandle::init(core::ptr::null_mut()) }),
+            // sentinel only; never dispatched (overwritten before use).
+            event_loop: Cell::new(EventLoopHandle::init(core::ptr::null_mut())),
             lazy: JsCell::new(Lazy::None),
             buffered: JsCell::new(Vec::new()),
             read_inside_on_pull: JsCell::new(ReadDuringJSOnPullResult::None),
@@ -189,12 +189,7 @@ impl Lazy {
                         }
                     }
 
-                    match fd
-                        .make_lib_uv_owned_for_syscall(sys::Tag::dup, sys::ErrorCase::CloseOnFail)
-                    {
-                        Ok(owned_fd) => owned_fd,
-                        Err(err) => return Err(err),
-                    }
+                    fd.make_lib_uv_owned_for_syscall(sys::Tag::dup, sys::ErrorCase::CloseOnFail)?
                 }
             }
             PathOrFileDescriptor::Path(path) => {
@@ -350,11 +345,11 @@ impl FileReader {
         // `bun_vm()` returns a raw `*mut VirtualMachine` (never null for a Bun
         // global); deref to call `event_loop()`.
         let global = self.parent_global();
-        // SAFETY: `bun_vm()` is the live thread-local VM; `event_loop()` is its
+        // `bun_vm()` is the live thread-local VM; `event_loop()` is its
         // per-thread `jsc::EventLoop`.
-        self.event_loop.set(unsafe {
-            EventLoopHandle::init(global.bun_vm().as_mut().event_loop().cast::<()>())
-        });
+        self.event_loop.set(EventLoopHandle::init(
+            global.bun_vm().as_mut().event_loop().cast::<()>(),
+        ));
     }
 
     pub fn on_start(&self) -> streams::Start {
@@ -427,11 +422,11 @@ impl FileReader {
         // global); deref to call `event_loop()`.
         {
             let global = self.parent_global();
-            // SAFETY: `bun_vm()` is the live thread-local VM; `event_loop()` is its
+            // `bun_vm()` is the live thread-local VM; `event_loop()` is its
             // per-thread `jsc::EventLoop`.
-            self.event_loop.set(unsafe {
-                EventLoopHandle::init(global.bun_vm().as_mut().event_loop().cast::<()>())
-            });
+            self.event_loop.set(EventLoopHandle::init(
+                global.bun_vm().as_mut().event_loop().cast::<()>(),
+            ));
         }
 
         if was_lazy {
@@ -641,8 +636,9 @@ impl FileReader {
                 ReadDuringJSOnPullResult::Js(in_progress) => {
                     if in_progress.len() >= buf.len() && !has_more {
                         in_progress[0..buf.len()].copy_from_slice(buf);
+                        let remaining: *mut [u8] = &raw mut in_progress[buf.len()..];
                         // SAFETY: lifetime laundering matches the field's TODO(port) note.
-                        let remaining = unsafe { &mut *(&raw mut in_progress[buf.len()..]) };
+                        let remaining = unsafe { &mut *remaining };
                         *riop = ReadDuringJSOnPullResult::Js(remaining);
                     } else if !in_progress.is_empty() && !has_more {
                         // `buf` outlives the `on_pull` call that consumes this

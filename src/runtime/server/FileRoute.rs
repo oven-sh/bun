@@ -287,13 +287,17 @@ impl FileRoute {
     /// # Safety
     /// `this` must point to a live heap `FileRoute` (intrusive ref held by the
     /// route table) for the duration of the call.
+    // Forwards `this` to `Self::on` without dereferencing; not_unsafe_ptr_arg_deref
+    // is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn on_head_request(this: *mut FileRoute, req: AnyRequest, resp: AnyResponse) {
-        debug_assert!(unsafe { (*this).server.get() }.is_some());
-
         // SAFETY: forwarded with the same precondition.
         unsafe { Self::on(this, req, resp, Method::HEAD) };
     }
 
+    // Forwards `this` to `Self::on` without dereferencing; not_unsafe_ptr_arg_deref
+    // is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn on_request(this: *mut FileRoute, req: AnyRequest, resp: AnyResponse) {
         let method = Method::find(req.method()).unwrap_or(Method::GET);
         // SAFETY: `this` is a live heap FileRoute — intrusive ref held by the

@@ -47,6 +47,9 @@ pub struct Dup2 {
     pub to: StdioKind,
 }
 
+// Mirrors the Zig `bun.spawn.Stdio` union and is constructed/matched in many
+// other files (subprocess, shell); boxing `Blob` would ripple through all of them.
+#[allow(clippy::large_enum_variant)]
 pub enum Stdio {
     Inherit,
     Capture(Capture),

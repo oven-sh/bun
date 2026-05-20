@@ -708,9 +708,9 @@ impl Response {
         // `fmt::Error` (Zig's `anyerror!void` carried no payload either).
         let js_err = |_: JsError| core::fmt::Error;
 
-        write!(
+        writeln!(
             writer,
-            "Response ({}) {{\n",
+            "Response ({}) {{",
             bun_core::fmt::size(self.get_body_len(), Default::default())
         )?;
 
@@ -850,7 +850,7 @@ impl Response {
     /// `ptr` must point to a live `Response` allocation (e.g. freshly boxed via
     /// [`Response::clone`]); ownership of the +1 ref transfers to the returned
     /// JS wrapper.
-    pub fn make_maybe_pooled(global_object: &JSGlobalObject, ptr: *mut Response) -> JSValue {
+    pub(crate) fn make_maybe_pooled(global_object: &JSGlobalObject, ptr: *mut Response) -> JSValue {
         // SAFETY: caller contract — `ptr` is live and uniquely owned.
         unsafe { (*ptr).to_js(global_object) }
     }
@@ -919,7 +919,7 @@ impl Response {
     /// # Safety
     /// `this` must point to a live `Response` on which the caller already holds
     /// at least one intrusive ref.
-    pub fn ref_(this: *mut Response) -> *mut Response {
+    pub(crate) fn ref_(this: *mut Response) -> *mut Response {
         // SAFETY: caller contract — `this` is live.
         unsafe {
             (*this).ref_count.set((*this).ref_count.get() + 1);
@@ -931,7 +931,7 @@ impl Response {
     /// `this` must point to a live `Response` on which the caller holds one
     /// intrusive ref; that ref is released (and the allocation destroyed if it
     /// was the last).
-    pub fn unref(this: *mut Response) {
+    pub(crate) fn unref(this: *mut Response) {
         // SAFETY: caller contract — `this` is live.
         unsafe {
             let rc = (*this).ref_count.get();
@@ -1058,7 +1058,7 @@ impl Response {
                 match Init::init(global_this, arg_init) {
                     Ok(Some(init)) => response.init.set(init),
                     Ok(None) => {}
-                    Err(e) if e == bun_jsc::JsError::Thrown => return Ok(JSValue::ZERO),
+                    Err(bun_jsc::JsError::Thrown) => return Ok(JSValue::ZERO),
                     Err(_) => {}
                 }
             }

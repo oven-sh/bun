@@ -153,7 +153,11 @@ impl Touch {
     /// # Safety
     /// `task` must be a live heap allocation produced by
     /// [`ShellTouchTask::create`]; ownership is reclaimed here.
-    pub fn on_shell_touch_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellTouchTask) {
+    pub(crate) fn on_shell_touch_task_done(
+        interp: &Interpreter,
+        cmd: NodeId,
+        task: *mut ShellTouchTask,
+    ) {
         // SAFETY: task was heap-allocated in create(); reclaim.
         let mut task = unsafe { bun_core::heap::take(task) };
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
@@ -324,7 +328,7 @@ impl ShellTouchTask {
     /// # Safety
     /// `this` must be a live heap allocation produced by [`Self::create`];
     /// ownership is consumed via [`Touch::on_shell_touch_task_done`].
-    pub fn run_from_main_thread(this: *mut ShellTouchTask, interp: &Interpreter) {
+    pub(crate) fn run_from_main_thread(this: *mut ShellTouchTask, interp: &Interpreter) {
         // SAFETY: `this` is a live heap-allocated task.
         let cmd = unsafe { (*this).cmd };
         // SAFETY: forwarded from caller's contract.

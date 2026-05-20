@@ -73,8 +73,7 @@ impl CurrentTime {
         // PORT NOTE: Zig stored `@bitCast(v.offset.ns())` (i128 → u128). The Rust
         // `VirtualMachine.overridden_performance_now` is `Option<u64>` and
         // `Timespec::ns()` already returns `u64`, so no bitcast needed.
-        // SAFETY: `vm` is the live per-thread VirtualMachine (never null).
-        unsafe { (*vm).overridden_performance_now = Some(offset.ns()) };
+        vm.overridden_performance_now = Some(offset.ns());
     }
 
     pub fn clear(&self, global: &JSGlobalObject) {
@@ -85,8 +84,7 @@ impl CurrentTime {
         bun_core::mock_time::clear();
         // SAFETY: FFI call into C++ JSMock; global is a valid &JSGlobalObject
         JSMock__setOverridenDateNow(global, -1.0);
-        // SAFETY: `vm` is the live per-thread VirtualMachine (never null).
-        unsafe { (*vm).overridden_performance_now = None };
+        vm.overridden_performance_now = None;
     }
 }
 
@@ -131,7 +129,7 @@ impl FakeTimers {
             &*(bun_core::from_field_ptr!(timer::All, fake_timers, std::ptr::from_ref::<Self>(self)))
         };
         match mode {
-            AssertMode::Locked => debug_assert!(owner.lock.try_lock() == false),
+            AssertMode::Locked => debug_assert!(!owner.lock.try_lock()),
             // can't assert unlocked because another thread could be holding the lock
             AssertMode::Unlocked => {}
         }

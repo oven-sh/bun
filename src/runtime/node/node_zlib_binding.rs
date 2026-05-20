@@ -300,11 +300,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
         let in_off: u32;
         let in_len: u32;
-        let out_off: u32;
-        let out_len: u32;
-        let flush: u32;
         let in_: Option<&[u8]>;
-        let out: Option<&mut [u8]>;
 
         let this_value = callframe.this();
 
@@ -316,7 +312,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 )
                 .throw());
         }
-        flush = jsv_to_u32(arguments[0]);
+        let flush: u32 = jsv_to_u32(arguments[0]);
         if !flush_value_is_valid(flush) {
             return Err(global_this
                 .err(
@@ -372,8 +368,8 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 )
                 .throw());
         };
-        out_off = jsv_to_u32(arguments[5]);
-        out_len = jsv_to_u32(arguments[6]);
+        let out_off: u32 = jsv_to_u32(arguments[5]);
+        let out_len: u32 = jsv_to_u32(arguments[6]);
         if out_buf.byte_len < out_off as usize + out_len as usize {
             return Err(global_this
                 .err(
@@ -388,7 +384,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         }
         // Bounds checked above; `byte_slice_mut` is the safe accessor for the JS
         // ArrayBuffer's backing store (rooted via `arguments[4]` on the call stack).
-        out = Some(
+        let out: Option<&mut [u8]> = Some(
             &mut out_buf.byte_slice_mut()[out_off as usize..out_off as usize + out_len as usize],
         );
         let _ = (in_off, in_len, out_off, out_len);
@@ -503,7 +499,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             this.poll_ref().with_mut(|p| p.unref(vm));
             // SAFETY: matching `ref_()` in `write()`; `this_ptr` is the heap
             // payload and is not accessed after this call.
-            T::deref(this_ptr);
+            unsafe { T::deref(this_ptr) };
             return;
         };
 
@@ -512,7 +508,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         if !Self::check_error(&this, global, this_value) {
             this.poll_ref().with_mut(|p| p.unref(vm));
             // SAFETY: see above.
-            T::deref(this_ptr);
+            unsafe { T::deref(this_ptr) };
             return;
         }
 
@@ -534,7 +530,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         this.poll_ref().with_mut(|p| p.unref(vm));
         // SAFETY: matching `ref_()` in `write()`; `this_ptr` is the heap payload
         // and is not accessed after this call.
-        T::deref(this_ptr);
+        unsafe { T::deref(this_ptr) };
     }
 
     pub fn write_sync(
@@ -556,11 +552,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
         let in_off: u32;
         let in_len: u32;
-        let out_off: u32;
-        let out_len: u32;
-        let flush: u32;
         let in_: Option<&[u8]>;
-        let out: Option<&mut [u8]>;
 
         if arguments[0].is_undefined() {
             return Err(global_this
@@ -570,7 +562,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 )
                 .throw());
         }
-        flush = jsv_to_u32(arguments[0]);
+        let flush: u32 = jsv_to_u32(arguments[0]);
         if !flush_value_is_valid(flush) {
             return Err(global_this
                 .err(
@@ -626,8 +618,8 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 )
                 .throw());
         };
-        out_off = jsv_to_u32(arguments[5]);
-        out_len = jsv_to_u32(arguments[6]);
+        let out_off: u32 = jsv_to_u32(arguments[5]);
+        let out_len: u32 = jsv_to_u32(arguments[6]);
         if out_buf.byte_len < out_off as usize + out_len as usize {
             return Err(global_this
                 .err(
@@ -642,7 +634,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         }
         // Bounds checked above; `byte_slice_mut` is the safe accessor for the JS
         // ArrayBuffer's backing store (rooted via `arguments[4]` on the call stack).
-        out = Some(
+        let out: Option<&mut [u8]> = Some(
             &mut out_buf.byte_slice_mut()[out_off as usize..out_off as usize + out_len as usize],
         );
         let _ = (in_off, in_len, out_off, out_len);
@@ -1011,7 +1003,7 @@ macro_rules! __impl_compression_stream {
                 // SAFETY: forwarded trait contract — `this` is live; the
                 // derived `CellRefCounted::deref` routes zero to the per-type
                 // `destroy` (≡ Zig `bun.ptr.RefCount(.., deinit, .{})`).
-                <Self as ::bun_ptr::CellRefCounted>::deref(this)
+                unsafe { <Self as ::bun_ptr::CellRefCounted>::deref(this) }
             }
 
             #[inline] fn write_callback_get_cached(this_value: ::bun_jsc::JSValue) -> Option<::bun_jsc::JSValue> {

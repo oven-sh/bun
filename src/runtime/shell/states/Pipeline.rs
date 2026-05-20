@@ -187,8 +187,7 @@ impl Pipeline {
                 me.io.stdin.clone()
             } else {
                 let r = IOReader::init(pipes[cmd_idx - 1][0], evtloop);
-                // SAFETY: `interp_ptr` is the live `Interpreter` this pipeline runs under.
-                unsafe { r.set_interp(interp_ptr) };
+                r.set_interp(interp_ptr);
                 InKind::Fd(r)
             };
             let stdout = if cmd_count == 1 || cmd_idx == cmd_count - 1 {
@@ -206,8 +205,7 @@ impl Pipeline {
                     },
                     evtloop,
                 );
-                // SAFETY: `interp_ptr` is the live `Interpreter` this pipeline runs under.
-                unsafe { w.set_interp(interp_ptr) };
+                w.set_interp(interp_ptr);
                 OutKind::Fd(crate::shell::io::OutFd {
                     writer: w,
                     captured: None,

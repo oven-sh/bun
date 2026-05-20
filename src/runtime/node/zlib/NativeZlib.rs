@@ -88,8 +88,10 @@ mod _impl {
                 ));
             }
 
-            let mut stream = Context::default();
-            stream.mode = c::NodeMode::from_int(mode_int as u8);
+            let stream = Context {
+                mode: c::NodeMode::from_int(mode_int as u8),
+                ..Default::default()
+            };
             Ok(Box::new(Self {
                 ref_count: Cell::new(1),
                 // JSC_BORROW backref — the global outlives this m_ctx payload.
@@ -276,7 +278,7 @@ impl Context {
             DEFLATE | INFLATE => window_bits,
             GZIP | GUNZIP => window_bits + 16,
             UNZIP => window_bits + 32,
-            DEFLATERAW | INFLATERAW => window_bits * -1,
+            DEFLATERAW | INFLATERAW => -window_bits,
             BROTLI_DECODE | BROTLI_ENCODE => unreachable!(),
             ZSTD_COMPRESS | ZSTD_DECOMPRESS => unreachable!(),
         };

@@ -375,14 +375,17 @@ mod _impl {
                 //NOTE: libuv assumes this is fixed on Linux, not sure that's actually the case
                 let scale: u64 = 10;
 
-                let mut times = CPUTimes::default();
                 // TODO(port): narrow error set
-                times.user = scale * parse_u64(toks.next().ok_or_else(|| bun_core::err!("eol"))?)?;
-                times.nice = scale * parse_u64(toks.next().ok_or_else(|| bun_core::err!("eol"))?)?;
-                times.sys = scale * parse_u64(toks.next().ok_or_else(|| bun_core::err!("eol"))?)?;
-                times.idle = scale * parse_u64(toks.next().ok_or_else(|| bun_core::err!("eol"))?)?;
-                let _ = toks.next().ok_or_else(|| bun_core::err!("eol"))?; // skip iowait
-                times.irq = scale * parse_u64(toks.next().ok_or_else(|| bun_core::err!("eol"))?)?;
+                let times = CPUTimes {
+                    user: scale * parse_u64(toks.next().ok_or_else(|| bun_core::err!("eol"))?)?,
+                    nice: scale * parse_u64(toks.next().ok_or_else(|| bun_core::err!("eol"))?)?,
+                    sys: scale * parse_u64(toks.next().ok_or_else(|| bun_core::err!("eol"))?)?,
+                    idle: scale * parse_u64(toks.next().ok_or_else(|| bun_core::err!("eol"))?)?,
+                    irq: {
+                        let _ = toks.next().ok_or_else(|| bun_core::err!("eol"))?; // skip iowait
+                        scale * parse_u64(toks.next().ok_or_else(|| bun_core::err!("eol"))?)?
+                    },
+                };
 
                 // Actually create the JS object representing the CPU
                 let cpu = JSValue::create_empty_object(global_this, 1);

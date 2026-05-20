@@ -1405,11 +1405,11 @@ impl TinyLog {
     pub fn print(&self, rel_path: &[u8]) {
         let cursor_at = self.cursor_at as usize;
         let cursor_len = self.cursor_len as usize;
-        let after = &rel_path[cursor_at.max(0)..];
+        let after = &rel_path[cursor_at..];
         Output::err_generic(
             "\"{}<blue>{}<r>{}\" is not a valid route",
             (
-                bstr::BStr::new(&rel_path[0..cursor_at.max(0)]),
+                bstr::BStr::new(&rel_path[0..cursor_at]),
                 bstr::BStr::new(&after[0..cursor_len.min(after.len())]),
                 bstr::BStr::new(&after[cursor_len.min(after.len())..]),
             ),

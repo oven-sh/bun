@@ -362,7 +362,7 @@ pub fn list_objects(
             task_ptr,
             // SAFETY: `task_ptr` is the heap-allocated task registered above; the
             // HTTP thread invokes this with that exact pointer.
-            |this, http, result| S3HttpSimpleTask::http_callback(this, http, result),
+            S3HttpSimpleTask::http_callback,
         ),
         bun_http::FetchRedirect::Follow,
         bun_http::async_http::Options {
@@ -1097,7 +1097,7 @@ pub fn download_stream(
             task_ptr,
             // SAFETY: `task_ptr` is the heap-allocated task registered above; the
             // HTTP thread invokes this with that exact pointer.
-            |this, http, result| S3HttpDownloadStreamingTask::http_callback(this, http, result),
+            S3HttpDownloadStreamingTask::http_callback,
         ),
         bun_http::FetchRedirect::Follow,
         bun_http::async_http::Options {

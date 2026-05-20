@@ -439,6 +439,9 @@ pub extern "C" fn Bun__WebSocket__parseSSLConfig(
 pub unsafe extern "C" fn Bun__WebSocket__freeSSLConfig(
     config: *mut bun_http::ssl_config::SSLConfig,
 ) {
+    // SAFETY: caller upholds the `# Safety` contract above — `config` is null
+    // or a live pointer from `Bun__WebSocket__parseSSLConfig` whose ownership
+    // is being transferred back. `heap::take` handles the null case.
     drop(unsafe { bun_core::heap::take(config) });
 }
 

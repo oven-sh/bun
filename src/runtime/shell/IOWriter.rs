@@ -201,6 +201,9 @@ impl IOWriter {
     /// # Safety
     /// `this` must be the `Arc::as_ptr` of a live `Arc<IOWriter>` whose strong
     /// count is held by the async-deinit task; this call drops that ref.
+    // Forwards `this` to `Arc::decrement_strong_count` without dereferencing it
+    // here; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn deinit_on_main_thread(this: *mut IOWriter) {
         // SAFETY: caller contract above.
         unsafe { std::sync::Arc::decrement_strong_count(this) };
@@ -326,6 +329,9 @@ impl IOWriter {
     /// # Safety
     /// `interp` must be null or point to the live owning `Interpreter` (which
     /// owns the IO struct holding this `Arc`) and outlive it; single-threaded.
+    // Forwards `interp` to `ParentRef::from_nullable_mut` without dereferencing
+    // it here; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
     pub fn set_interp(&self, interp: *mut Interpreter) {
         // SAFETY: caller contract above.

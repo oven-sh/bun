@@ -345,6 +345,10 @@ impl ServerConfig {
 /// `entry` must be a live route pointer that outlives `app` — it is registered
 /// as the uWS userdata and dereferenced from request callbacks for the lifetime
 /// of the app.
+// Forwards `entry` to `T::set_server` and to uWS as opaque userdata without
+// dereferencing it here; not_unsafe_ptr_arg_deref is a false positive on
+// opaque-token forwarding.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn apply_static_route<const SSL: bool, T>(
     server: AnyServer,
     app: &mut uws::NewApp<SSL>,
@@ -420,6 +424,10 @@ pub fn apply_static_route<const SSL: bool, T>(
 /// `entry` must be a live route pointer that outlives `app` — it is registered
 /// as the uWS userdata and dereferenced from request callbacks for the lifetime
 /// of the app.
+// Forwards `entry` to `T::set_server` and to uWS as opaque userdata without
+// dereferencing it here; not_unsafe_ptr_arg_deref is a false positive on
+// opaque-token forwarding.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn apply_static_route_h3<T>(
     server: AnyServer,
     app: &mut uws::h3::App,

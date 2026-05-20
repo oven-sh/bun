@@ -611,11 +611,7 @@ impl SourceMapStore {
 
         if self.weak_ref_sweep_timer.state != EventLoopTimerState::ACTIVE {
             map_log!("arming weak ref sweep timer");
-            // SAFETY: `self.weak_ref_sweep_timer` is the live inline timer field.
-            unsafe {
-                Self::timer_all()
-                    .update(core::ptr::addr_of_mut!(self.weak_ref_sweep_timer), &expire);
-            }
+            Self::timer_all().update(core::ptr::addr_of_mut!(self.weak_ref_sweep_timer), &expire);
         }
         map_log!("addWeakRef {:x}, ref_count: {}", key.get(), entry_ref_count);
     }
@@ -676,6 +672,11 @@ impl SourceMapStore {
     /// `timer` must point to the `weak_ref_sweep_timer` field of a live
     /// `SourceMapStore` that is itself the `source_maps` field of a live
     /// heap-allocated `DevServer`.
+    // `timer` is never dereferenced in Rust — `from_timer_ptr` only does
+    // `container_of` pointer arithmetic to recover the parent `SourceMapStore`;
+    // the deref is of that recovered parent pointer, not the parameter.
+    // not_unsafe_ptr_arg_deref is a false positive on this fieldParentPtr pattern.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn sweep_weak_refs(
         timer: *mut EventLoopTimer,
         now_ts: &bun_event_loop::EventLoopTimer::Timespec,

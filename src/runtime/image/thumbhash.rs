@@ -27,7 +27,7 @@ pub fn encode<'a>(out: &'a mut [u8; MAX_LEN], w: u32, h: u32, rgba: &[u8]) -> &'
     let mut i: usize = 0;
     while i < rgba.len() {
         let a: f32 = rgba[i + 3] as f32 / 255.0;
-        avg[0] += a / 255.0 * rgba[i + 0] as f32;
+        avg[0] += a / 255.0 * rgba[i] as f32;
         avg[1] += a / 255.0 * rgba[i + 1] as f32;
         avg[2] += a / 255.0 * rgba[i + 2] as f32;
         avg[3] += a;
@@ -58,7 +58,7 @@ pub fn encode<'a>(out: &'a mut [u8; MAX_LEN], w: u32, h: u32, rgba: &[u8]) -> &'
     let mut px: usize = 0;
     while i < rgba.len() {
         let al: f32 = rgba[i + 3] as f32 / 255.0;
-        let r = avg[0] * (1.0 - al) + al / 255.0 * rgba[i + 0] as f32;
+        let r = avg[0] * (1.0 - al) + al / 255.0 * rgba[i] as f32;
         let g = avg[1] * (1.0 - al) + al / 255.0 * rgba[i + 1] as f32;
         let b = avg[2] * (1.0 - al) + al / 255.0 * rgba[i + 2] as f32;
         l[px] = (r + g + b) / 3.0;
@@ -297,7 +297,7 @@ pub fn decode(hash: &[u8]) -> Result<Decoded, DecodeError> {
             let r = (3.0 * lv - b + qv) / 2.0;
             let g = r - qv;
             let o = (y * w as usize + x) * 4;
-            rgba[o + 0] = clamp8(r);
+            rgba[o] = clamp8(r);
             rgba[o + 1] = clamp8(g);
             rgba[o + 2] = clamp8(b);
             rgba[o + 3] = clamp8(av);

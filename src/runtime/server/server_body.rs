@@ -719,7 +719,7 @@ impl AnyRoute {
                     // slot would leak +1 per first-seen HTMLBundle.
                     // SAFETY: `html_bundle` is the live `RefPtr<HTMLBundle>` from the
                     // route map; `init` consumes its +1 ref into the new `Route`.
-                    let route = unsafe { html_bundle::Route::init(html_bundle) };
+                    let route = html_bundle::Route::init(html_bundle);
                     // SAFETY: `route.data` is the just-allocated NonNull (rc=1);
                     // wrap without bumping so the map slot stays non-owning
                     // (`RefPtr<T>` has no `Drop`; this is the bit-copy Zig did).
@@ -2127,7 +2127,7 @@ where
 
         data_value.ensure_still_alive();
         let ws = ServerWebSocket::init(
-            &mut self.config.websocket.as_mut().unwrap().handler,
+            &self.config.websocket.as_mut().unwrap().handler,
             data_value,
             signal,
         );
@@ -2253,7 +2253,7 @@ where
         if self.inspector_server_id.get() != 0 {
             if let Some(debugger) = self.vm().as_mut().debugger.as_deref_mut() {
                 bun_core::handle_oom(super::http_server_agent::notify_server_routes_updated(
-                    &mut debugger.http_server_agent,
+                    &debugger.http_server_agent,
                     self.as_any_server(),
                 ));
             }
@@ -3209,16 +3209,14 @@ where
         let should_deinit_context = core::cell::Cell::new(false);
         // SAFETY: `server_ptr` is the live heap server registered for this route;
         // `req`/`resp` are the live uWS handles passed to the route handler.
-        let Some(mut prepared) = (unsafe {
-            Self::prepare_js_request_context(
-                server_ptr,
-                req,
-                resp,
-                Some(bun_ptr::BackRef::new(&should_deinit_context)),
-                CreateJsRequest::No,
-                method,
-            )
-        }) else {
+        let Some(mut prepared) = Self::prepare_js_request_context(
+            server_ptr,
+            req,
+            resp,
+            Some(bun_ptr::BackRef::new(&should_deinit_context)),
+            CreateJsRequest::No,
+            method,
+        ) else {
             return;
         };
         // SAFETY: `prepared.ctx` is the freshly-allocated RequestContext slot.
@@ -3299,19 +3297,20 @@ where
         }
         this.pending_requests += 1;
         req.set_yield(false);
-        // SAFETY: pointer is non-null and owns a fresh pool slot.
-        let ctx_slot = unsafe { (*this.request_pool).get() };
+        // SAFETY: `request_pool` is non-null while the server is alive; `claim()`
+        // reserves a fresh slot whose `Drop` releases it on panic before init.
+        let ctx_slot = unsafe { (*this.request_pool).claim() };
         let should_deinit_context = core::cell::Cell::new(false);
         <ServerRequestContext<SSL, DEBUG> as RequestCtxOps>::create_in(
-            ctx_slot,
+            ctx_slot.addr().as_ptr(),
             self_ptr,
             req,
             resp,
             Some(bun_ptr::BackRef::new(&should_deinit_context)),
             None,
         );
-        // SAFETY: ctx_slot was just initialized by create_in.
-        let ctx = unsafe { &mut *ctx_slot };
+        // SAFETY: `create_in` fully initialized the slot via `MaybeUninit::write`.
+        let ctx = unsafe { &mut *ctx_slot.assume_init().as_ptr() };
 
         // Pooled body slot, ref_count = 1.
         let body_hive = crate::webcore::body::hive_alloc(BodyValue::Null);

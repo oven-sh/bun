@@ -2712,6 +2712,11 @@ impl BlobExt for Blob {
             // Mirrors Zig `bun.reinterpretSlice(u16, buf)`: drop a trailing odd byte
             // (`@divTrunc`) so `bytemuck::cast_slice` cannot panic on slop.
             // +1 WTF ref; `OwnedString` releases it on scope exit (Zig: `defer out.deref()`).
+            //
+            // ZIG PARITY: this branch intentionally does NOT `self.detach()` for
+            // `Lifetime::Transfer` — `Blob.zig` `toStringWithBytes` (UTF-16LE arm)
+            // returns without detaching, unlike `toJSONWithBytes`. Any change to
+            // that asymmetry belongs upstream in the Zig source, not here.
             let buf = &buf[..buf.len() & !1];
             let out =
                 OwnedString::new(BunString::clone_utf16(bytemuck::cast_slice::<u8, u16>(buf)));

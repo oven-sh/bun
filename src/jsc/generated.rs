@@ -432,6 +432,7 @@ impl SSLConfigSingleFile {
         match ext.tag {
             0 => Self::String(GenVal(adopt_string(unsafe { ext.data._0 }))),
             1 => Self::Buffer(GenVal(unsafe { ext.data._1 })),
+            // SAFETY: tag == 2 selects the initialized _2 arm per C++ contract.
             2 => Self::File(GenVal(unsafe { ext.data._2 })),
             // SAFETY: tag space is 0..=2 per bindgen contract.
             _ => unsafe { core::hint::unreachable_unchecked() },
@@ -465,6 +466,7 @@ impl SSLConfigFile {
             0 => Self::None,
             1 => Self::String(GenVal(adopt_string(unsafe { ext.data._1 }))),
             2 => Self::Buffer(GenVal(unsafe { ext.data._2 })),
+            // SAFETY: tag == 3 selects the initialized _3 arm per C++ contract.
             3 => Self::File(GenVal(unsafe { ext.data._3 })),
             4 => {
                 // SAFETY: tag == 4 ⇒ `_4` is the initialized arm.

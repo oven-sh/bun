@@ -292,6 +292,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             // Erase the loader's borrowed lifetime to `'static` for the
             // singleton handoff (Zig passed a raw `*DotEnv.Loader`).
             let mini = bun_event_loop::MiniEventLoop::init_global(
+                // SAFETY: env loader is process-lifetime; borrowed lifetime erased for singleton handoff.
                 Some(unsafe {
                     &mut *std::ptr::from_mut::<DotEnv::Loader<'_>>(env)
                         .cast::<DotEnv::Loader<'static>>()
@@ -831,10 +832,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         bun_http::http_thread::init(&Default::default());
 
         for url_str in preconnect {
-            // SAFETY: `ctx.runtime_options.preconnect` is process-lifetime
-            // (CLI argv-derived, never freed); erase the borrow lifetime so
-            // `URL<'static>` (which `AsyncHTTP::preconnect` requires) can hold
-            // a backref into it.
+            // SAFETY: `ctx.runtime_options.preconnect` is process-lifetime (CLI argv-derived,
+            // never freed); url_str.as_ptr() is valid for url_str.len() bytes, and erasing to
+            // `'static` is sound because the slice outlives the process.
             let url_str: &'static [u8] =
                 unsafe { ::core::slice::from_raw_parts(url_str.as_ptr(), url_str.len()) };
             let url = bun_url::URL::parse(url_str);
@@ -984,6 +984,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             // PORT NOTE: `ctx.runtime_options.eval.script` is process-lifetime
             // (CLI argv); erase the borrow lifetime so the `Source` (stored in
             // the VM for the process duration) can backref into it.
+            // SAFETY: eval.script is process-lifetime CLI argv; pointer and length are valid
+            // for the duration of the process, so erasing to `'static` is sound.
             let script: &'static [u8] = unsafe {
                 ::core::slice::from_raw_parts(
                     ctx.runtime_options.eval.script.as_ptr(),
@@ -1782,13 +1784,12 @@ impl RunCommand {
         unsafe(link_section = ".text.unlikely")
     )]
     fn boot_failed_exit(ctx: &mut ContextData, display_name: &[u8], err: &bun_core::Error) -> ! {
-        // SAFETY: `ctx.log` was set in `create_context_data` (single-threaded
-        // CLI startup) and is process-lifetime.
-        //
         // PORT NOTE: `Log::print` is generic over `IntoLogWrite`, which is
         // implemented for `*mut io::Writer` (not `&mut`). `error_writer()`
         // returns the process-global writer; cast to the raw pointer the
         // trait expects.
+        // SAFETY: `ctx.log` was set in `create_context_data` (single-threaded CLI startup)
+        // and is process-lifetime; no aliasing reference exists at this call site.
         let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
             Output::error_writer(),
         ));
@@ -2163,9 +2164,9 @@ impl RunCommand {
             windows: crate::api::bun_process::WindowsOptions {
                 loop_: bun_jsc::EventLoopHandle::init_mini(
                     bun_event_loop::MiniEventLoop::init_global(
+                        // SAFETY: env loader is process-lifetime; erase borrowed lifetime
+                        // for the MiniEventLoop singleton handoff (single-threaded Windows path).
                         Some(unsafe {
-                            // SAFETY: env loader is process-lifetime; erase
-                            // borrowed lifetime for the singleton handoff.
                             &mut *::core::ptr::from_mut::<DotEnv::Loader<'_>>(env)
                                 .cast::<DotEnv::Loader<'static>>()
                         }),
@@ -2569,12 +2570,17 @@ impl RunCommand {
         // ── module resolution fallback (run_command.zig:1820-1857) ──────────
         // load module and run that module
         // TODO: run module resolution here - try the next condition if the module can't be found
-        bun_core::scoped_log!(
-            RUN_LOG,
-            "Try resolve `{}` in `{}`",
-            bstr::BStr::new(target_name),
-            bstr::BStr::new(unsafe { (*this_transpiler.fs).top_level_dir }),
-        );
+        {
+            // SAFETY: `Transpiler::init` always initialises `fs` to a valid non-null pointer;
+            // top_level_dir is a byte-slice field whose lifetime is tied to the transpiler.
+            let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
+            bun_core::scoped_log!(
+                RUN_LOG,
+                "Try resolve `{}` in `{}`",
+                bstr::BStr::new(target_name),
+                bstr::BStr::new(top_level_dir),
+            );
+        }
         // Temporarily honor `--preserve-symlinks-main` / NODE_PRESERVE_SYMLINKS_MAIN
         // for this one resolve. Zig: `defer resolver.opts.preserve_symlinks = saved`.
         let resolution: ::core::result::Result<bun_resolver::Result, bun_core::Error> = {
@@ -2660,6 +2666,8 @@ impl RunCommand {
             // `\\?\` — `try_launch` hands this to NtCreateFile.
             let root = bun_core::w!("\\??\\");
             buf[..root.len()].copy_from_slice(root);
+            // SAFETY: buf is a DIRECT_LAUNCH_BUFFER WPathBuffer (PATH_MAX_WIDE u16 elements);
+            // we pass `buf.len() - 4` as the capacity so the kernel cannot overrun it.
             let cwd_len = unsafe {
                 sys::windows::kernel32::GetCurrentDirectoryW(
                     (buf.len() - 4) as u32,
@@ -3311,6 +3319,8 @@ impl RunCommand {
                 let url = &*::core::ptr::addr_of!((*slot).url);
                 ::core::slice::from_raw_parts(url.as_ptr(), url.len())
             };
+            // SAFETY: `slot` points to a freshly allocated MaybeUninit<RemoteImageDownload>;
+            // addr_of_mut! takes a raw offset without forming a reference to uninit memory.
             let response_buffer_ptr: *mut bun_core::MutableString =
                 unsafe { ::core::ptr::addr_of_mut!((*slot).response_buffer) };
             let d_ptr: *mut RemoteImageDownload = slot;
@@ -3887,11 +3897,11 @@ impl RunCommand {
             .keys()
             .iter()
             .map(|k| -> &'static [u8] {
-                // SAFETY: every key is a freshly-boxed `Box<[u8]>` owned by
-                // `results`. The owning `ArrayHashMap` is parked in the
-                // process-lifetime `runner_arena()` below and `bumpalo::Bump`
-                // never runs `Drop`, so the boxed bytes live until process
-                // exit and erasing to `'static` is sound.
+                // SAFETY: every key is a freshly-boxed `Box<[u8]>` owned by `results`.
+                // The owning `ArrayHashMap` is parked in the process-lifetime `runner_arena()`
+                // below and `bumpalo::Bump` never runs `Drop`, so the boxed bytes live until
+                // process exit and erasing to `'static` is sound.
+                // SAFETY: k.as_ptr() is valid for k.len() bytes; 'static erase is sound (see above).
                 unsafe { ::core::slice::from_raw_parts(k.as_ptr(), k.len()) }
             })
             .collect();
@@ -4126,6 +4136,8 @@ impl BunXFastPath {
         // intermediate `&mut` retag covers the caller's borrows.
         // WPathBuffer is `#[repr(transparent)] [u16; PATH_MAX_WIDE]` —
         // reinterpret as `[u8; 2N]` for the UTF-16→UTF-8 transcoder's output.
+        // SAFETY: DIRECT_LAUNCH_BUFFER is a thread-local UnsafeCell<WPathBuffer>; no other
+        // reference to it exists in this frame; WPathBuffer is [u16; N] so its byte length is 2*N.
         let out_buf = unsafe {
             let raw = bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER.get();
             ::core::slice::from_raw_parts_mut(raw.cast::<u8>(), bun_paths::PATH_MAX_WIDE * 2)

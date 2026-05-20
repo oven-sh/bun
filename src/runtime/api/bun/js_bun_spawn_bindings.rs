@@ -1706,6 +1706,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         // `add_listener` may synchronously fire `on_abort_signal` (already
         // aborted), which re-enters via `subprocess_ptr` — write through the
         // raw pointer so no `&mut Subprocess` is held across the call.
+        // SAFETY: see multi-line comment above this block.
         unsafe {
             (*signal).pending_activity_ref();
             let _ = (*signal).add_listener(subprocess_ptr.cast(), Subprocess::on_abort_signal);

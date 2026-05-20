@@ -246,6 +246,7 @@ impl Impl {
                 this.as_ptr(),
             );
         }
+        // SAFETY: outer `unsafe fn destroy`; `this` is a valid handle from `init`; consumed exactly once.
         unsafe { Bun__StrongRef__delete(this.as_ptr()) };
     }
 }

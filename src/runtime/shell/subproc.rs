@@ -259,6 +259,7 @@ impl CmdHandle {
         // the widen is centralised in `bun_ptr` and grep-able. The `'static` is
         // a lie scoped to the (3) callers, all of which drop the borrow before
         // `free_node` recycles the slot.
+        // SAFETY: see fn-level Safety doc — `interp` is live with write provenance, `id` indexes a valid Cmd.
         unsafe { bun_ptr::detach_lifetime_mut(self.interp.assume_mut().as_cmd_mut(self.id)) }
     }
 }
@@ -770,6 +771,7 @@ impl ShellSubprocess {
         // ended before the call). Written *before* any callback below
         // (`watch`/`start`/`read_all`) so re-entrant `Cmd` callbacks see a
         // populated `exec.subproc.child`.
+        // SAFETY: see comment above — `out_subproc` is a uniquely-accessible slot, written before callbacks.
         unsafe { *out_subproc = subprocess };
 
         let stdin = match Writable::init(stdio0, event_loop, subprocess, spawn_stdin) {
@@ -861,6 +863,7 @@ impl ShellSubprocess {
                 // path that drops the FileSinkPtr. `init_with_type` is
                 // `unsafe fn` (caller asserts the handler outlives the
                 // `Signal`).
+                // SAFETY: see comment above — single-threaded, disjoint allocations, handler outlives Signal.
                 pipe.signal.set(unsafe {
                     webcore::streams::Signal::init_with_type::<Writable>(stdin_ptr)
                 });
@@ -2318,6 +2321,7 @@ impl PipeReader {
                 // carries allocation-level provenance (not borrowed from a
                 // `&mut`), so the pointer escaped into the stream stays
                 // valid past `this`'s drop — `from_pipe` takes its own ref.
+                // SAFETY: `me` has allocation-level provenance; no overlapping &Self; from_pipe takes its ref.
                 let stream =
                     ReadableStream::from_pipe(global_object, me, unsafe { &mut (*me).reader })?;
                 // SAFETY: as above; field write only.
@@ -2421,6 +2425,7 @@ impl PipeReader {
         // `ptr::replace` reads/writes through the raw field pointer without
         // materializing a `&mut Self` (on_reader_done may still hold one on the
         // caller's stack via the BufferedReader parent backref).
+        // SAFETY: JS-thread single-mutator invariant; ptr::replace avoids forming &mut Self.
         let old = unsafe {
             core::ptr::replace(
                 core::ptr::addr_of_mut!((*this).state),

@@ -632,8 +632,11 @@ pub fn execute_simple_s3_request(
     // outlives. AsyncHTTP::init wants `'static` borrows because the HTTP thread reads them
     // concurrently; they remain valid until `task` is dropped in `on_response`. The Zig source
     // passed raw slices with the same ownership contract.
+    // SAFETY: `task.sign_result.url` is heap-allocated and outlives the async HTTP call;
+    // `detach_lifetime_ref` extends to `'static` matching AsyncHTTP's requirements.
     let url = URL::parse(unsafe { bun_ptr::detach_lifetime_ref(&*task.sign_result.url) });
     let headers_buf: &'static [u8] =
+        // SAFETY: `task.headers.buf` is heap-allocated and outlives the async HTTP call.
         unsafe { bun_ptr::detach_lifetime(task.headers.buf.as_slice()) };
     // SAFETY (lifetime extension): unlike the borrows above, `body` is NOT stored in the task —
     // it is caller-owned (e.g. multipart upload part data / multipart_upload_list). The Zig source
@@ -642,8 +645,12 @@ pub fn execute_simple_s3_request(
     // lifetime-extension pattern, retained verbatim to match Zig semantics.
     // TODO(port): take body as `*const [u8]` in AsyncHTTP::init (or store an owned copy on the
     // task) to drop the `'static` pretence.
+    // SAFETY: caller keeps `options.body` alive until the request completes (Zig `.zig:431`
+    // passes the same slice with the same implicit contract).
     let body: &'static [u8] = unsafe { bun_ptr::detach_lifetime(options.body) };
     let http_proxy = if !task.proxy_url.is_empty() {
+        // SAFETY: `task.proxy_url` is a heap-allocated Box<[u8]> owned by `task`
+        // which outlives the async HTTP call; detaching the lifetime is safe.
         Some(URL::parse(unsafe {
             bun_ptr::detach_lifetime_ref(&*task.proxy_url)
         }))

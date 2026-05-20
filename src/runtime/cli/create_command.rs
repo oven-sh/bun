@@ -817,6 +817,7 @@ impl CreateCommand {
                     package_json_contents.list.as_slice(),
                 );
 
+                // SAFETY: single-threaded CLI path; no other borrow of the process-lifetime `Log` is live.
                 let log: &mut bun_ast::Log = unsafe { ctx.log_mut() };
                 let bump = bun_alloc::Arena::new();
                 let mut package_json_expr = match JSON::parse_utf8(&source, log, &bump) {
@@ -2524,6 +2525,7 @@ impl Example {
         refresher.refresh();
         bun_ast::initialize_store();
         let source = bun_ast::Source::init_path_string(b"package.json", mutable.list.as_slice());
+        // SAFETY: single-threaded CLI path; no other borrow of the process-lifetime `Log` is live.
         let log = unsafe { ctx.log_mut() };
         let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
         let expr = match JSON::parse_utf8(&source, log, bump) {
@@ -2688,6 +2690,7 @@ impl Example {
         // field (global mimalloc) — use the process-lifetime CLI arena (examples
         // slices borrow from it and the CLI exits shortly after).
         let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
+        // SAFETY: single-threaded CLI path; no other borrow of the process-lifetime `Log` is live.
         let log = unsafe { ctx.log_mut() };
         let examples_object = match JSON::parse_utf8(&source, log, bump) {
             Ok(e) => e,

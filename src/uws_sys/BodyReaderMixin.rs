@@ -181,11 +181,15 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
                 // TODO(port): Zig handled OOM gracefully here; Vec::extend_from_slice aborts.
                 // Consider try_reserve if graceful 500 on OOM is required.
                 body.extend_from_slice(chunk);
+                // SAFETY: `wrap` is the original heap-allocated pointer; the &mut to
+                // mixin.body has ended, so `on_body` receives sole ownership.
                 unsafe { Wrap::on_body(wrap, body.as_slice(), resp)? };
             } else {
                 if chunk.len() > MAX_BODY_SIZE {
                     return Err(bun_core::err!(RequestBodyTooLarge));
                 }
+                // SAFETY: same as above — `wrap` is valid heap-allocated; no &mut to mixin
+                // is live when `on_body` is called (the chunk path skips the take entirely).
                 unsafe { Wrap::on_body(wrap, chunk, resp)? };
             }
             // `body` drops here (was `defer body.deinit()` in Zig)

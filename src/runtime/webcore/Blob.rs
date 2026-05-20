@@ -760,6 +760,7 @@ impl BlobExt for Blob {
         // SerializedScriptValue for the duration of this call.
         let cursor = unsafe { &mut *ptr };
         let total_length: usize = (end as usize) - (*cursor as usize);
+        // SAFETY: `*cursor` to `end` is the valid serialized byte range from SerializedScriptValue.
         let mut buffer_stream =
             bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(*cursor, total_length) });
 
@@ -1598,6 +1599,7 @@ impl BlobExt for Blob {
         // guaranteed ABI-identical to `*mut c_void` (see const-asserts on
         // `Signal` in streams.rs), so C++ (`JSSink::assignToStream`) may write
         // the controller cell through this as `void**`.
+        // SAFETY: `file_sink` is live +1; `&raw mut` projection to the `ptr` field is sound.
         let signal_ptr: *mut *mut c_void =
             unsafe { (&raw mut (*(*file_sink).signal.as_ptr()).ptr).cast::<*mut c_void>() };
         let assignment_result: JSValue = webcore::file_sink::JSSink::assign_to_stream(
@@ -2095,6 +2097,7 @@ impl BlobExt for Blob {
             global_this,
             relative_start,
             relative_end,
+            // SAFETY: `content_type` is a `'static` slice or a freshly-leaked Box<[u8]>.
             unsafe { &*content_type },
             content_type_was_allocated,
         ))
@@ -2690,6 +2693,7 @@ impl BlobExt for Blob {
                     self.detach();
                 }
                 if LIFETIME == Lifetime::Temporary {
+                    // SAFETY: `raw_bytes` is a leaked Box for `Temporary` lifetime; reclaiming is sound.
                     unsafe { drop(bun_core::heap::take(raw_bytes)) };
                 }
                 // Ownership of the UTF-16 buffer transfers to JSC's external-string
@@ -2839,6 +2843,7 @@ impl BlobExt for Blob {
         let (bom, buf) = strings::BOM::detect_and_split(unsafe { &*raw_bytes });
         if buf.is_empty() {
             if LIFETIME == Lifetime::Temporary {
+                // SAFETY: `raw_bytes` is a leaked Box for `Temporary` lifetime; reclaiming ownership is sound.
                 unsafe { drop(bun_core::heap::take(raw_bytes)) };
             }
             return Ok(
@@ -2910,6 +2915,7 @@ impl BlobExt for Blob {
         // `FormData::to_js` only reads it.
         match crate::webcore::form_data::FormData::to_js(
             global,
+            // SAFETY: `buf` is valid for reads — leaked Box (Temporary) or store-backed view.
             unsafe { &*buf },
             &encoder.encoding,
         ) {
@@ -4979,6 +4985,7 @@ pub fn write_file_internal(
                     BodyValue::Error(err_ref) => {
                         let err_js = err_ref.to_js(global_this);
                         destination_blob.detach();
+                        // SAFETY: `body_value` is a live `*mut Body::Value`; re-deref after `detach()` is sound.
                         let _ = unsafe { &mut *body_value }.use_();
                         Ok(ControlFlow::Break(
                         JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
@@ -5660,6 +5667,7 @@ impl S3BlobDownloadTask {
                 if this.blob.size.get() == MAX_SIZE {
                     this.blob.size.set(bytes.len() as SizeType);
                 }
+                // SAFETY: `bytes` points into the store just set on `this.blob`; store is live for the call.
                 let value =
                     JSPromise::wrap(global, |_g| Ok(this.call_handler(unsafe { &mut *bytes })))?;
                 this.promise.resolve(global, value)?;
@@ -5820,6 +5828,7 @@ pub fn on_file_stream_reject_request_stream(
     // PORT NOTE: Zig defers `this.sink.deref()` here but does NOT call `this.deinit()`
     // (leaks the wrapper). We take ownership via Box so Drop runs `sink.deref()`
     // and frees the wrapper — same observable effect on the sink, fixes the leak.
+    // SAFETY: the last argument encodes a `*mut FileStreamWrapper` as a JS number; `heap::take` reclaims it.
     let mut this: Box<FileStreamWrapper> = unsafe {
         bun_core::heap::take(args.ptr[args.len - 1].as_number() as usize as *mut FileStreamWrapper)
     };

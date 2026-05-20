@@ -1140,6 +1140,7 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
     // `*mut CopyFileWindows` with out-of-bounds provenance (UB under Stacked/Tree
     // Borrows). After forming `this`, access the request via `this.io_request` — never
     // through `(*req)`, which would alias the live `&mut`.
+    // SAFETY: `req->data` was set to `core::ptr::from_mut(self)` (whole-struct provenance) before scheduling.
     let this: &mut CopyFileWindows = unsafe { &mut *(*req).data.cast::<CopyFileWindows>() };
     debug_assert!(core::ptr::addr_of_mut!(this.io_request) == req);
 

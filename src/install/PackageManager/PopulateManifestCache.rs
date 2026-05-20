@@ -199,6 +199,7 @@ pub fn populate_manifest_cache(
                     needs_extended_manifest,
                 );
                 if cached.is_none() {
+                    // SAFETY: `manager_ptr` is the SRW provenance root; `manifests` borrow ended.
                     start_manifest_task(
                         unsafe { &mut *manager_ptr },
                         pkg_name_slice,
@@ -207,6 +208,7 @@ pub fn populate_manifest_cache(
                     )?;
                 }
 
+                // SAFETY: `manager_ptr` is the SRW provenance root; no overlapping borrows active.
                 run_tasks::flush_network_queue(unsafe { &mut *manager_ptr });
                 let _ = run_tasks::schedule_tasks(unsafe { &mut *manager_ptr });
             }
@@ -247,6 +249,8 @@ pub fn populate_manifest_cache(
                         needs_extended_manifest,
                     );
                     if cached.is_none() {
+                        // SAFETY: `manager_ptr` is the SRW provenance root; no other live
+                        // `&mut PackageManager` aliases this call site.
                         start_manifest_task(
                             unsafe { &mut *manager_ptr },
                             package_name,
@@ -254,6 +258,8 @@ pub fn populate_manifest_cache(
                             needs_extended_manifest,
                         )?;
 
+                        // SAFETY: `manager_ptr` is the SRW provenance root; flush/schedule
+                        // only alias disjoint fields from the manifests access above.
                         run_tasks::flush_network_queue(unsafe { &mut *manager_ptr });
                         let _ = run_tasks::schedule_tasks(unsafe { &mut *manager_ptr });
                     }

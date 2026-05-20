@@ -218,6 +218,7 @@ impl IniTestingAPIs {
         // `parser.arena.arena()`); split the borrow via raw ptr so the bump
         // outlives the `&mut parser` for the call. SAFETY: `parser.arena` is
         // not moved/dropped for the lifetime of `parser`.
+        // SAFETY: `parser.arena` is not moved/dropped while `parser` is live; raw-const avoids a stacked borrow.
         let bump: &bun_alloc::Arena = unsafe { &*(&raw const parser.arena) };
         parser.parse(bump)?;
 

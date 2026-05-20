@@ -269,6 +269,7 @@ impl WindowsNamedPipeContext {
         // through a raw pointer to obtain the `&mut` the upstream API requires.
         let vm = ptr::from_ref::<VirtualMachine>(unsafe { (*this).vm }).cast_mut();
         let task = unsafe { ptr::addr_of_mut!((*this).task) };
+        // SAFETY: `vm` is the process-global VirtualMachine; cast needed to call `&mut` API.
         unsafe { (*vm).enqueue_task(Task::init(task)) };
     }
 

@@ -25,6 +25,8 @@ impl Header {
         if self.name.is_null() {
             &[]
         } else {
+            // SAFETY: see doc comment above: lsquic populates `name`/`name_len`
+            // for the callback lifetime; `Header::init` borrows from a caller slice.
             unsafe { core::slice::from_raw_parts(self.name, self.name_len as usize) }
         }
     }
@@ -36,6 +38,8 @@ impl Header {
         if self.value.is_null() {
             &[]
         } else {
+            // SAFETY: see doc comment above: `value`/`value_len` have the same
+            // validity guarantee as `name`/`name_len` described in `name_bytes`.
             unsafe { core::slice::from_raw_parts(self.value, self.value_len as usize) }
         }
     }

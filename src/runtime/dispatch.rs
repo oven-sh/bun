@@ -1088,6 +1088,7 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             // `BunTestCell` is a `UnsafeCell<BunTest>` newtype — same
             // layout as `BunTest`, so the raw `*mut BunTest` recovered above is
             // also the `Rc` payload pointer.
+            // SAFETY: `container` is the payload of a live `Rc<BunTestCell>`; see comment above.
             let strong: BunTestPtr = unsafe {
                 let rc = std::rc::Rc::from_raw(
                     container as *const crate::test_runner::bun_test::BunTestCell,

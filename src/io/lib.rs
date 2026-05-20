@@ -433,23 +433,28 @@ macro_rules! __impl_buffered_reader_parent_body {
                     $rc_chunk: &[u8],
                     $rc_more: $crate::ReadState,
                 ) -> bool {
+                    // SAFETY: outer `unsafe fn on_read_chunk` propagates the `BufferedReaderParent` aliasing contract.
                     unsafe { $rc }
                 }
             )?
             #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
             unsafe fn on_reader_done($rd_this: *mut Self) {
+                // SAFETY: outer `unsafe fn on_reader_done` propagates the `BufferedReaderParent` aliasing contract.
                 unsafe { $rd }
             }
             #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
             unsafe fn on_reader_error($re_this: *mut Self, $re_err: $crate::__bun_sys::Error) {
+                // SAFETY: outer `unsafe fn on_reader_error` propagates the `BufferedReaderParent` aliasing contract.
                 unsafe { $re }
             }
             #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
             unsafe fn loop_($l_this: *mut Self) -> *mut $crate::pipe_reader::Loop {
+                // SAFETY: outer `unsafe fn loop_` propagates the `BufferedReaderParent` aliasing contract.
                 unsafe { $lp }
             }
             #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
             unsafe fn event_loop($e_this: *mut Self) -> $crate::EventLoopHandle {
+                // SAFETY: outer `unsafe fn event_loop` propagates the `BufferedReaderParent` aliasing contract.
                 unsafe { $ev }
             }
             $(
@@ -458,6 +463,7 @@ macro_rules! __impl_buffered_reader_parent_body {
                     $mb_this: *mut Self,
                     $mb_buf: ::core::ptr::NonNull<$crate::max_buf::MaxBuf>,
                 ) {
+                    // SAFETY: outer `unsafe fn on_max_buffer_overflow` propagates the `BufferedReaderParent` aliasing contract.
                     unsafe { $mb }
                 }
             )?
@@ -801,6 +807,7 @@ impl IoRequestLoop {
         // regardless of the queue's internal atomics. All IO-thread-mutable
         // state lives behind `Cell` so `&self` suffices; thread-confinement
         // of those `Cell`s is debug-asserted by `ThreadCell::get()` above.
+        // SAFETY: `ONCE` ensures `LOOP` is initialized; taking `&IoRequestLoop` (not `&mut`) is sound here.
         unsafe { (*LOOP.get()).assume_init_ref() }.tick();
     }
 
@@ -818,6 +825,7 @@ impl IoRequestLoop {
         // a `&mut IoRequestLoop` that would alias the IO thread's `tick()`
         // borrow. `pending.push` takes `&self` (lock-free MPSC); `waker.wake`
         // is async-signal-safe by design.
+        // SAFETY: `ONCE` guarantees `LOOP` initialized; `addr_of!`/`addr_of_mut!` avoid `&mut IoRequestLoop`.
         unsafe {
             let loop_p = (*LOOP.get_unchecked()).as_mut_ptr();
             (*core::ptr::addr_of!((*loop_p).pending)).push(request);

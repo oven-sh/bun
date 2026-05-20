@@ -569,12 +569,10 @@ pub fn compute_chunks(
             },
         ));
         debug_assert_eq!(written.len(), chunk::UNIQUE_KEY_LEN);
-        // SAFETY: `written` borrows the builder's fixed-capacity heap
-        // allocation; ownership of that allocation is transferred to
-        // `this.unique_key_buf` after this loop, which outlives every `Chunk` for
-        // the link step (BACKREF — same as `final_rel_path`). On any `?` error
-        // before the transfer, `sorted_chunks` is dropped alongside the builder,
-        // so no dangling slice escapes.
+        // SAFETY: `written` borrows the builder's heap allocation whose ownership
+        // is transferred to `this.unique_key_buf` after this loop, outliving every
+        // `Chunk` for the link step. On any `?` error, the builder is dropped with
+        // `sorted_chunks` so no dangling slice escapes.
         chunk.unique_key = unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(written) };
         if this.unique_key_prefix.is_empty() {
             this.unique_key_prefix = chunk.unique_key[..prefix_len].into();

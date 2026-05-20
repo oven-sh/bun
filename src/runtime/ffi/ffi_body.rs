@@ -1425,6 +1425,7 @@ impl FFI {
         };
 
         let mut symbols = StringArrayHashMap::<Function>::default();
+        // SAFETY: `obj` was returned by `get_object()` and is valid for the JS call duration.
         if let Some(val) =
             generate_symbols(global, &mut symbols, unsafe { &*obj }).unwrap_or(Some(JSValue::ZERO))
         {
@@ -1522,6 +1523,7 @@ impl FFI {
         }
 
         let mut symbols = StringArrayHashMap::<Function>::default();
+        // SAFETY: `object` was returned by `get_object()` and is valid for the JS call duration.
         if let Some(val) = generate_symbols(global, &mut symbols, unsafe { &*object })
             .unwrap_or(Some(JSValue::ZERO))
         {
@@ -1670,6 +1672,7 @@ impl FFI {
         };
 
         let mut symbols = StringArrayHashMap::<Function>::default();
+        // SAFETY: `object` was returned by `get_object()` and is valid for the JS call duration.
         if let Some(val) = generate_symbols(global, &mut symbols, unsafe { &*object })
             .unwrap_or(Some(JSValue::ZERO))
         {

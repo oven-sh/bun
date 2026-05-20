@@ -181,6 +181,7 @@ impl<const SSL: bool> App<SSL> {
     //       req: *mut Request,
     //       user_data: *mut c_void,
     //   ) {
+    // SAFETY: the shim below uses raw-ptr derefs only after the uWS callback contract guarantees liveness.
     //       let user_data = unsafe { &mut *(user_data as *mut U) };
     //       HANDLER(user_data, unsafe { &mut *req }, unsafe { &mut *(res as *mut Response<SSL>) });
     //   }

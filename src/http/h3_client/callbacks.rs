@@ -158,6 +158,7 @@ extern "C" fn on_conn_close(qs: *mut quic::Socket) {
         );
     }
     let _ = H3::live_sessions.fetch_sub(1, Ordering::Relaxed);
+    // SAFETY: session was ref'd when registered; deref is the matching decrement on connection close.
     unsafe { ClientSession::deref(session) };
 }
 

@@ -436,6 +436,7 @@ impl PostgresSQLQuery {
         // (`..Default::default()`) is forbidden (E0509). `ptr` was already
         // `default()`-initialised by `Box::new` above, so just overwrite the
         // three non-default fields in place.
+        // SAFETY: `ptr` is exclusively owned by this scope (Box::into_raw above).
         unsafe {
             (*ptr).query = query.to_bun_string(global_this)?;
             (*ptr).this_value.set(JsRef::init_weak(this_value));

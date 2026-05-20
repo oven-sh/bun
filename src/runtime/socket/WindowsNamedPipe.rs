@@ -222,6 +222,7 @@ impl WindowsNamedPipe {
             // `close_and_destroy` reclaims via `Box::from_raw` either
             // immediately (never-init'd, `loop_ == null`) or in the `uv_close`
             // callback (init'd). Ownership transfers here exactly once.
+            // SAFETY: see multi-line comment above; sole owner, reclaimed via close_and_destroy.
             unsafe { uv::Pipe::close_and_destroy(pipe.as_ptr()) };
         }
     }
@@ -304,6 +305,7 @@ impl WindowsNamedPipe {
             // path that WOULD mutate `self.wrapper` (`release_resources`)
             // skips its `= None`, so the payload bytes stay valid and
             // un-overwritten for the duration of this call.
+            // SAFETY: see multi-line comment above; WRAPPER_BUSY keeps payload valid.
             unsafe { (*w).receive_data(data.as_slice()) };
             if !was_busy {
                 self.flags.remove(Flags::WRAPPER_BUSY);
@@ -392,18 +394,23 @@ impl WindowsNamedPipe {
     // SAFETY (all): `this` is the `ctx` we set to `self as *mut _` when building
     // the wrapper; SSLWrapper never holds a competing `&mut WindowsNamedPipe`.
     fn ssl_on_open(this: *mut Self) {
+        // SAFETY: `this` is the ctx pointer set during wrapper construction; live, single JS thread.
         unsafe { (*this).on_open() }
     }
     fn ssl_on_handshake(this: *mut Self, ok: bool, e: us_bun_verify_error_t) {
+        // SAFETY: same invariant as ssl_on_open — ctx pointer, single JS thread.
         unsafe { (*this).on_handshake(ok, e) }
     }
     fn ssl_on_data(this: *mut Self, d: &[u8]) {
+        // SAFETY: same invariant as ssl_on_open — ctx pointer, single JS thread.
         unsafe { (*this).on_data(d) }
     }
     fn ssl_on_close(this: *mut Self) {
+        // SAFETY: same invariant as ssl_on_open — ctx pointer, single JS thread.
         unsafe { (*this).on_close() }
     }
     fn ssl_write(this: *mut Self, d: &[u8]) {
+        // SAFETY: same invariant as ssl_on_open — ctx pointer, single JS thread.
         unsafe { (*this).internal_write(d) }
     }
 
@@ -918,6 +925,7 @@ impl WindowsNamedPipe {
         // `pipe` lives in a separate heap allocation (the `uv::Pipe` aliased by
         // `self.pipe: NonNull`), so its bytes are outside `*self` and unaffected
         // by the `req` projection.
+        // SAFETY: `ctx` is `self` (set two lines above); `pipe` is a disjoint field.
         let pipe: *mut uv::Pipe = unsafe { (*ctx).pipe }.unwrap().as_ptr();
         // SAFETY: `req`/`pipe` are live disjoint fields of `*self`; libuv stashes
         // `req`/`ctx` until the connect callback fires (this struct outlives that).
@@ -1080,6 +1088,8 @@ impl WindowsNamedPipe {
             // `on_close` nulls it defensively and `Drop` only reclaims when
             // `PIPE_ADOPTED` was never set.
             self.flags.insert(Flags::PIPE_ADOPTED);
+            // SAFETY: see multi-line SAFETY comment above; pipe_nn is the Box-leaked
+            // NonNull and ownership transfers to the writer's source field exactly once.
             let start_pipe_result = unsafe { self.writer.start_with_pipe(pipe_nn.as_ptr()) };
             if let bun_sys::Result::Err(err) = start_pipe_result {
                 self.on_error(err);
@@ -1188,6 +1198,7 @@ impl WindowsNamedPipe {
             // Re-entrancy: see `on_read` — only the OUTERMOST scope may clear
             // the flag / run the deferred-drop epilogue.
             let was_busy = unsafe { (*this).flags.contains(Flags::WRAPPER_BUSY) };
+            // SAFETY: `this` is the live self pointer; flags field is accessible.
             unsafe { (*this).flags.insert(Flags::WRAPPER_BUSY) };
             // SAFETY: see `on_read` — WRAPPER_BUSY keeps the `Some` payload
             // bytes at `*w` valid for the call's duration.
@@ -1223,6 +1234,7 @@ impl WindowsNamedPipe {
             // Re-entrancy: see `on_read` — only the OUTERMOST scope may clear
             // the flag / run the deferred-drop epilogue.
             let was_busy = unsafe { (*this).flags.contains(Flags::WRAPPER_BUSY) };
+            // SAFETY: `this` is the live self pointer; flags field is accessible.
             unsafe { (*this).flags.insert(Flags::WRAPPER_BUSY) };
             // SAFETY: see `on_read` — WRAPPER_BUSY keeps the `Some` payload
             // bytes at `*w` valid for the call's duration.

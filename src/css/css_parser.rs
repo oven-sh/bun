@@ -499,7 +499,9 @@ fn parse_custom_at_rule_prelude<T: CustomAtRuleParser>(
     }
 
     // TODO(port): lifetime — `name` borrows the input arena. The detach is the
-    // same `'static` erasure already applied to `Token`/`AtRulePrelude::Unknown`.
+    // same `'static` erasure applied to `Token`/`AtRulePrelude::Unknown`.
+    // SAFETY: `name` is arena-backed and lives for the parse session; the `'static`
+    // lifetime erasure matches the existing `Token` convention in this codebase.
     let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(name) };
     options.warn(input.new_error(BasicParseErrorKind::at_rule_invalid(name)));
     input.skip_whitespace();
@@ -1327,8 +1329,9 @@ mod rule_parsers {
                     if (this.state as u8) > (TopLevelState::Imports as u8) {
                         return Err(input.new_custom_error(ParserError::unexpected_import_rule));
                     }
-                    // TODO(port): lifetime — arena-owned slice; same `'static` erasure
-                    // as `Token` payloads.
+                    // TODO(port): lifetime — arena-owned slice; same `'static` erasure as `Token`.
+                    // SAFETY: arena-owned slice lives for the parse session; `'static` matches
+                    // the convention used for `Token` payloads throughout this parser.
                     let url_str: &'static [u8] =
                         unsafe { &*std::ptr::from_ref::<[u8]>(input.expect_url_or_string()?) };
 
@@ -1364,10 +1367,13 @@ mod rule_parsers {
                     }
                     let prefix = input
                         .try_parse(|p| {
-                            p.expect_ident()
-                                .map(|s| -> &'static [u8] { unsafe { &*std::ptr::from_ref::<[u8]>(s) } })
+                            p.expect_ident().map(|s| -> &'static [u8] {
+                                // SAFETY: arena-owned slice; `'static` lifetime matches `Token` convention.
+                                unsafe { &*std::ptr::from_ref::<[u8]>(s) }
+                            })
                         })
                         .ok();
+                    // SAFETY: arena-owned slice; `'static` lifetime matches `Token` convention.
                     let namespace: &'static [u8] =
                         unsafe { &*std::ptr::from_ref::<[u8]>(input.expect_url_or_string()?) };
                     return Ok(AtRulePrelude::Namespace { prefix, url: namespace });
@@ -1675,9 +1681,10 @@ mod rule_parsers {
             name: &[u8],
             input: &mut Parser,
         ) -> CssResult<Self::Prelude> {
-            // TODO(port): lifetime — `name` borrows the input arena. Detach to
-            // `'static` to feed `BasicParseErrorKind::at_rule_invalid` (matches the
-            // `Token` payload erasure throughout this file).
+            // TODO(port): lifetime — `name` borrows the input arena; detach to `'static`
+            // to feed `BasicParseErrorKind::at_rule_invalid` (matches `Token` payload erasure).
+            // SAFETY: `name` is arena-owned and lives for the parse session; `'static`
+            // matches the convention used for all `Token` payloads in this parser.
             let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(name) };
             let result: Self::Prelude = 'brk: {
                 // Zig `ComptimeEnumMap(PreludeEnum)` ASCII-CI dispatch.
@@ -2673,13 +2680,11 @@ mod stylesheet_impl {
 
             if let Some(config) = &self.options.css_modules {
                 let mut references = CssModuleReferences::default();
-                // SAFETY: `'bump`-erasure — `Printer<'a>` stores `CssModule<'a>` which
-                // holds `&'a mut CssModuleReferences<'a>`; tying the borrow to `'a`
-                // (the printer's whole lifetime) makes the local `references`
-                // unmovable. Detach the borrow here and re-attach by clearing
-                // `printer.css_module` before moving `references` out below.
-                // Re-thread once `Printer<'a>` / `CssModule<'a>` split borrow vs.
-                // arena lifetimes (see rules/mod.rs `decl_block_static`).
+                // `'bump`-erasure: tying `CssModuleReferences` borrow to `'a` would make
+                // `references` unmovable; detach here and re-attach by clearing
+                // `printer.css_module` before moving `references` out (see below).
+                // SAFETY: `references` is a local on this stack frame; the `&mut` is
+                // cleared (`printer.css_module = None`) before `references` is moved.
                 let references_mut: &mut CssModuleReferences<'_> =
                     unsafe { &mut *(&raw mut references) };
                 printer.css_module = Some(CssModule::new(
@@ -2701,16 +2706,20 @@ mod stylesheet_impl {
                 // moving `references` into the result.
                 printer.css_module = None;
 
-                // SAFETY: `'bump`-erasure — `ToCssResultInternal` carries `'static`
-                // placeholders for `CssModuleExports`/`References` until the arena
-                // lifetime threads (see field TODO at the struct def).
+                // `ToCssResultInternal` uses `'static` placeholders until arena lifetimes
+                // are threaded through (see field TODO at the struct def). The printer has
+                // already released the `&mut references` borrow (`printer.css_module = None`).
                 return Ok(ToCssResultInternal {
                     dependencies,
+                    // SAFETY: `'static` placeholder — exports are arena-backed for the
+                    // parse session; `printer.css_module` is cleared before this move.
                     exports: Some(unsafe {
                         core::mem::transmute::<CssModuleExports<'_>, CssModuleExports<'static>>(
                             exports,
                         )
                     }),
+                    // SAFETY: same `'static` placeholder as exports; the `&mut references`
+                    // borrow was released by setting `printer.css_module = None` above.
                     references: Some(unsafe {
                         core::mem::transmute::<CssModuleReferences<'_>, CssModuleReferences<'static>>(
                             references,
@@ -2827,7 +2836,8 @@ mod stylesheet_impl {
                     Token::Whitespace(_) => {}
                     Token::Comment(comment) => {
                         if comment.first() == Some(&b'!') {
-                            // TODO(port): lifetime — arena slice; see erasure note.
+                            // SAFETY: `comment` is arena-owned for the parse session; `'static`
+                            // lifetime matches the `Token` payload erasure convention in this parser.
                             license_comments.push(unsafe { &*std::ptr::from_ref::<[u8]>(comment) });
                         }
                     }
@@ -3452,11 +3462,10 @@ impl<'a> Parser<'a> {
         let local_scope = &mut extra.local_scope;
         let source_index = extra.source_index.get();
 
-        // SAFETY: `name` is a slice into the parser source / arena, both of
-        // which outlive the symbol table (`ParserExtra` is consumed into
-        // `StylesheetExtra` alongside the same arena). Detach the borrow so it
-        // satisfies `Symbol.original_name: &'static [u8]` (the parser's
-        // crate-wide lifetime erasure — see PORTING.md §Lifetimes).
+        // `name` is a slice into the parser source/arena, both outliving the symbol table;
+        // `'static` erasure satisfies `Symbol.original_name: &'static [u8]` (crate convention).
+        // SAFETY: `name` is arena-backed for at least the parse session duration; `'static`
+        // lifetime matches the crate-wide erasure for `Symbol.original_name`.
         let name_static: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(name) };
 
         let entry = match local_scope.entry(Box::<[u8]>::from(name)) {
@@ -4498,12 +4507,13 @@ const MAX_THREE_B: u32 = 0x10000;
 /// the honest lifetime.
 // TODO(port): delete once `Token<'a>` lands in lib.rs; see verifier bug
 // "src_str / Tokenizer::slice_from / CopyOnWriteStr::to_slice".
-// SAFETY: every call site below feeds either (a) a sub-slice of `self.src`
-// (`&'a [u8]`) or (b) an arena-allocated `CopyOnWriteStr::to_slice()` whose
-// backing storage lives in `self.arena: &'a Bump`. The returned reference
-// is only ever stored in a `Token` reachable through that same `Parser<'a>`.
+// Each call site feeds either a sub-slice of `self.src` or an arena-allocated
+// `CopyOnWriteStr::to_slice()`; the result is only stored in a `Token` from
+// the same `Parser<'a>`.
 #[inline(always)]
 pub unsafe fn src_str(s: &[u8]) -> &'static [u8] {
+    // SAFETY: outer `unsafe fn` contract: `s` is either a `self.src` sub-slice or
+    // arena-allocated bytes, both valid for `'a`; detached `'static` matches `Token` convention.
     unsafe { bun_collections::detach_lifetime(s) }
 }
 

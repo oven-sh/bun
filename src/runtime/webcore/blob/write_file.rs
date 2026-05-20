@@ -374,6 +374,7 @@ impl WriteFile {
         let cb_ctx;
         let system_error;
         let total_written;
+        // SAFETY: `this` is the Box-allocated WriteFile owned by WorkTask; sole consumer at this point.
         unsafe {
             cb = (*this).on_complete_callback;
             cb_ctx = (*this).on_complete_ctx;
@@ -690,6 +691,7 @@ mod windows_impl {
             // so we operate through the raw `write_file` pointer rather than
             // holding a `&mut` across those calls (Stacked Borrows: a `&mut`
             // local would dangle once `deinit` reclaims the Box).
+            // SAFETY: `write_file` is just allocated (sole owner); operating via raw ptr to avoid dangling `&mut`.
             unsafe {
                 (*write_file).io_request.loop_ = (*event_loop).uv_loop();
                 (*write_file).io_request.data = write_file.cast::<c_void>();

@@ -1841,6 +1841,7 @@ mod draft {
         // the `-> !` path). `msg_buf` outlives every read of `reason` below — the
         // borrow is fully consumed by the `Display`/`TraceString` writes inside
         // this frame and never escapes.
+        // SAFETY: `msg_buf` outlives `reason`; borrow is consumed within this stack frame.
         let reason =
             CrashReason::Panic(unsafe { bun_collections::detach_lifetime(msg_buf.const_slice()) });
 
@@ -2033,6 +2034,7 @@ mod draft {
         let reason = match unsafe { (*info.ExceptionRecord).ExceptionCode } {
             bun_sys::windows::EXCEPTION_DATATYPE_MISALIGNMENT => CrashReason::DatatypeMisalignment,
             bun_sys::windows::EXCEPTION_ACCESS_VIOLATION => {
+                // SAFETY: kernel guarantees `info.ExceptionRecord` is non-null and valid.
                 CrashReason::SegmentationFault(unsafe {
                     (*info.ExceptionRecord).ExceptionInformation[1]
                 })
@@ -2041,6 +2043,7 @@ mod draft {
                 // `ExceptionAddress` is the faulting RIP for `STATUS_ILLEGAL_
                 // INSTRUCTION` (winnt.h); avoids depending on the arch-specific
                 // `CONTEXT` layout (Zig reached `ContextRecord.Rip` directly).
+                // SAFETY: kernel guarantees `info.ExceptionRecord` is non-null and valid.
                 CrashReason::IllegalInstruction(
                     unsafe { (*info.ExceptionRecord).ExceptionAddress } as usize
                 )
@@ -2060,6 +2063,7 @@ mod draft {
         crash_handler(
             reason,
             None,
+            // SAFETY: kernel guarantees `info.ExceptionRecord` is non-null and valid.
             Some(unsafe { (*info.ExceptionRecord).ExceptionAddress } as usize),
         );
     }
@@ -2488,6 +2492,7 @@ mod draft {
                         continue;
                     }
                     // This 'slide' is the ASLR offset. Subtract from `address` to get a stable address
+                    // SAFETY: `i < image_count`; dyld guarantees the slide is valid for live images.
                     let vmaddr_slide =
                         unsafe { bun_sys::c::_dyld_get_image_vmaddr_slide(i) } as usize;
 

@@ -146,6 +146,7 @@ impl<'a> Installer<'a> {
         // `bun_crash_handler::cli_state::set_main_thread_id` is actually
         // wired at startup — today the sentinel is never set, so the assert
         // would fire unconditionally.
+        // SAFETY: BACKREF — `self.manager` is non-null and outlives `'a`; caller is on main thread.
         unsafe { &mut *self.manager }
     }
     #[inline]
@@ -156,6 +157,7 @@ impl<'a> Installer<'a> {
         // `trusted_dependencies_mutex` via a raw narrowed `addr_of_mut!` place
         // (Task::run), not a `&mut Lockfile`. Callers must not project into
         // `trusted_dependencies` from this `&Lockfile` across a tick.
+        // SAFETY: BACKREF — `self.lockfile` is non-null and outlives `'a`.
         unsafe { &*self.lockfile }
     }
 
@@ -794,6 +796,7 @@ impl Task {
         // lives outside the `Installer` allocation and `items_step()` is atomic.
         // This also avoids leaking the erased `'static` from
         // `*mut Installer<'static>` into a whole-struct borrow.
+        // SAFETY: `self.installer` is a live BACKREF; raw field-read via `addr_of!` avoids forming `&Installer`.
         let store: &Store = unsafe { *core::ptr::addr_of!((*self.installer.as_ptr()).store) };
         store.entries.items_step()[self.entry_id.get() as usize]
             .store(next_step as u32, Ordering::Release);
@@ -1115,6 +1118,7 @@ impl Task {
                     // Concurrent task threads may race the same once-init path — that
                     // is a data-level race the once-init guards, not an aliasing
                     // violation here because no long-lived `&mut PackageManager` exists.
+                    // SAFETY: `manager_ptr` is a live BACKREF; exclusive borrow scoped to this call only.
                     let (cache_dir, cache_dir_path) =
                         directories::get_cache_directory_and_abs_path(unsafe { &mut *manager_ptr });
 
@@ -1710,6 +1714,7 @@ impl Task {
                                 // no `&mut PackageManager` is formed — concurrent task
                                 // threads' `&*manager_ptr` reborrows of other fields stay
                                 // valid.
+                                // SAFETY: mutex held; narrowing to `manager_ptr.trusted_deps_to_add_to_package_json` via raw place.
                                 unsafe {
                                     (*core::ptr::addr_of_mut!(
                                         (*manager_ptr).trusted_deps_to_add_to_package_json
@@ -1722,6 +1727,7 @@ impl Task {
                                 // task threads hold `&Lockfile` (and the `pkgs`/`pkg_*`
                                 // slices above borrow it) for their entire run(), and those
                                 // borrows never touch `trusted_dependencies`.
+                                // SAFETY: mutex held; narrowing to `lockfile_ptr.trusted_dependencies` via raw place.
                                 let trusted = unsafe {
                                     &mut *core::ptr::addr_of_mut!(
                                         (*lockfile_ptr).trusted_dependencies
@@ -1973,6 +1979,7 @@ impl Task {
                 }
                 this.result = Result::RunScripts(list);
                 installer.task_queue.push(this);
+                // SAFETY: `manager_ptr` is a live BACKREF (`Installer.manager`); `wake_raw` is async-signal-safe.
                 unsafe { PackageManager::wake_raw(manager_ptr) };
             }
             Yield::Done => {
@@ -1986,6 +1993,7 @@ impl Task {
                 }
                 this.result = Result::Done;
                 installer.task_queue.push(this);
+                // SAFETY: `manager_ptr` is a live BACKREF (`Installer.manager`); `wake_raw` is async-signal-safe.
                 unsafe { PackageManager::wake_raw(manager_ptr) };
             }
             Yield::Blocked => {
@@ -1999,6 +2007,7 @@ impl Task {
                 }
                 this.result = Result::Blocked;
                 installer.task_queue.push(this);
+                // SAFETY: `manager_ptr` is a live BACKREF (`Installer.manager`); `wake_raw` is async-signal-safe.
                 unsafe { PackageManager::wake_raw(manager_ptr) };
             }
             Yield::Fail(err) => {
@@ -2014,6 +2023,7 @@ impl Task {
                     .store(Step::Done as u32, Ordering::Release);
                 this.result = Result::Err(err);
                 installer.task_queue.push(this);
+                // SAFETY: `manager_ptr` is a live BACKREF (`Installer.manager`); `wake_raw` is async-signal-safe.
                 unsafe { PackageManager::wake_raw(manager_ptr) };
             }
         }

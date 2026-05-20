@@ -810,6 +810,8 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
     ));
     // shell_bin is NUL-terminated ([:0]const u8) for argv use.
     let shell_bin: Box<[u8]> = if cfg!(unix) {
+        // SAFETY: `env_ptr` is the process-lifetime `*mut DotEnvLoader<'static>`
+        // derived above; no concurrent mutable access exists at this point.
         let path_env = unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b"");
         Box::from(
             RunCommand::find_shell(path_env, cwd)
@@ -840,6 +842,8 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
 
         let mut root_buf = PathBuffer::uninit();
         let resolve_root = FilterArg::get_candidate_package_patterns(
+            // SAFETY: `log_mut` returns an unbounded `&mut Log`; caller ensures
+            // no other `log_mut` result is live concurrently (single-threaded CLI path).
             unsafe { ctx.log_mut() },
             &mut patterns,
             cwd,

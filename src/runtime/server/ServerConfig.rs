@@ -373,6 +373,7 @@ pub fn apply_static_route<const SSL: bool, T>(
         } else {
             bun_uws_sys::AnyResponse::TCP(resp.cast())
         };
+        // SAFETY: see comment above — uWS-supplied pointers are live; `user_data` is the registered route entry.
         unsafe { T::on_request(route, bun_uws_sys::AnyRequest::H1(req), any_resp) };
     }
 
@@ -389,6 +390,7 @@ pub fn apply_static_route<const SSL: bool, T>(
         } else {
             bun_uws_sys::AnyResponse::TCP(resp.cast())
         };
+        // SAFETY: see `handler` above — uWS-supplied pointers are live; `user_data` is the registered route entry.
         unsafe { T::on_head_request(route, bun_uws_sys::AnyRequest::H1(req), any_resp) };
     }
 

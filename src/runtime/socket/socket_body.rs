@@ -728,9 +728,9 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// slot holds the unique heap allocation); JS-thread only.
     pub unsafe fn on_writable(this: *mut Self, _socket: SocketHandler<SSL>) {
         jsc::mark_binding!();
-        // SAFETY (whole body): per fn contract; R-2 — every field is
-        // `Cell`/`JsCell`, so a single shared reborrow is sufficient and no
-        // borrow spans `callback.call`.
+        // Per fn contract (`unsafe fn`): `this` is a live heap-allocated `NewSocket`;
+        // every field is `Cell`/`JsCell` so a shared reborrow suffices.
+        // SAFETY: outer `unsafe fn` contract; `this` is valid for the duration of this call.
         let this: &Self = unsafe { &*this };
         if this.socket.get().is_detached() {
             return;
@@ -782,7 +782,8 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// `this` points at a live `NewSocket`; JS-thread only.
     pub unsafe fn on_timeout(this: *mut Self, _socket: SocketHandler<SSL>) {
         jsc::mark_binding!();
-        // SAFETY (whole body): per fn contract; R-2 shared reborrow.
+        // SAFETY: outer `unsafe fn` contract; `this` is a live `NewSocket`; shared
+        // reborrow is sufficient because all fields are `Cell`/`JsCell` (no exclusive alias).
         let this: &Self = unsafe { &*this };
         if this.socket.get().is_detached() {
             return;
@@ -852,8 +853,8 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// # Safety
     /// `this` points at a live `NewSocket`; JS-thread only.
     pub unsafe fn handle_connect_error(this: *mut Self, errno: c_int) -> JsResult<()> {
-        // SAFETY (whole body): per fn contract; R-2 — shared reborrow, all
-        // mutated fields are `Cell`/`JsCell`.
+        // SAFETY: outer `unsafe fn` contract; `this` is a live `NewSocket`; shared
+        // reborrow is valid because all mutated fields are `Cell`/`JsCell`.
         let this: &Self = unsafe { &*this };
         let handlers = this.get_handlers();
         log!(
@@ -928,11 +929,9 @@ impl<const SSL: bool> NewSocket<SSL> {
             let flags = this.flags.get();
             if flags.contains(Flags::OWNS_HANDLERS) && !flags.contains(Flags::IS_ACTIVE) {
                 if let Some(h) = this.handlers.take() {
-                    // SAFETY: `OWNS_HANDLERS` ⇒ `h` is this socket's own
-                    // `heap::alloc` Handlers box. `!IS_ACTIVE` ⇒ neither the
-                    // `cleanup` guard nor `Handlers::mark_inactive()` will
-                    // touch it after this, and `take()` nulls the cell so
-                    // `deinit_and_destroy()` can't double-free.
+                    // SAFETY: `OWNS_HANDLERS` ⇒ `h` is this socket's unique `heap::alloc`
+                    // Box; `!IS_ACTIVE` ⇒ no other path will touch it; `take()` nulled
+                    // the cell so `deinit_and_destroy()` cannot double-free.
                     drop(unsafe { bun_core::heap::take(h.as_ptr()) });
                 }
             }
@@ -1181,9 +1180,9 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// # Safety
     /// `this` points at a live `NewSocket`; JS-thread only.
     pub unsafe fn on_open(this: *mut Self, socket: SocketHandler<SSL>) {
-        // SAFETY (whole body): per fn contract; R-2 — shared reborrow, all
-        // mutated fields are `Cell`/`JsCell`.
         let this_ptr = this;
+        // SAFETY: outer `unsafe fn` contract; `this` is a live `NewSocket`; shared
+        // reborrow is valid because all mutated fields are `Cell`/`JsCell`.
         let this: &Self = unsafe { &*this };
         log!(
             "onOpen {} {:p} {} {}",
@@ -1253,11 +1252,8 @@ impl<const SSL: bool> NewSocket<SSL> {
                                 ptr::null_mut(),
                             );
                         } else {
-                            // SAFETY: `ssl_ptr` non-null in this branch;
-                            // `protos.as_ptr()` is readable for `protos.len()`
-                            // bytes (borrowed `&[u8]` from `this.protos`) and
-                            // BoringSSL copies the buffer internally — raw
-                            // ptr+len pair is the genuine FFI precondition here.
+                            // SAFETY: `ssl_ptr` is non-null in this branch; `protos`
+                            // is a valid `&[u8]`; BoringSSL copies the buffer internally.
                             unsafe {
                                 boringssl_sys::SSL_set_alpn_protos(
                                     ssl_ptr,
@@ -1352,7 +1348,8 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// `this` points at a live `NewSocket`; JS-thread only.
     pub unsafe fn on_end(this: *mut Self, _socket: SocketHandler<SSL>) {
         jsc::mark_binding!();
-        // SAFETY (whole body): per fn contract; R-2 shared reborrow.
+        // SAFETY: outer `unsafe fn` contract; `this` is a live `NewSocket`; shared
+        // reborrow is valid — all fields are `Cell`/`JsCell`.
         let this: &Self = unsafe { &*this };
         if this.socket.get().is_detached() {
             return;
@@ -1406,7 +1403,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         ssl_error: uws::us_bun_verify_error_t,
     ) -> JsResult<()> {
         jsc::mark_binding!();
-        // SAFETY (whole body): per fn contract; R-2 shared reborrow.
+        // SAFETY: outer `unsafe fn` contract; `this` is a live `NewSocket`; shared
+        // reborrow is valid — all mutated fields are `Cell`/`JsCell`.
         let this: &Self = unsafe { &*this };
         this.update_flags(|f| f.insert(Flags::HANDSHAKE_COMPLETE));
         this.socket.set(s);
@@ -1520,7 +1518,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         reason: Option<*mut c_void>,
     ) -> JsResult<()> {
         jsc::mark_binding!();
-        // SAFETY (whole body): per fn contract; R-2 shared reborrow.
+        // SAFETY: outer `unsafe fn` contract; `this` is a live `NewSocket`; shared
+        // reborrow is valid — all mutated fields are `Cell`/`JsCell`.
         let this: &Self = unsafe { &*this };
         let handlers = this.get_handlers();
         log!(
@@ -1538,11 +1537,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         // here, then retire it. `raw.twin == None` so this doesn't
         // recurse, and `onClose` derefs the +1 we took at creation.
         if let Some(raw) = this.twin.with_mut(|t| t.take()) {
-            // SAFETY: twin holds a +1 intrusive ref; uniquely accessed here.
-            // `on_close` itself runs `this.deref()` (via the cleanup guard),
-            // which releases that +1 — so hand it the raw pointer instead of
-            // letting `IntrusiveRc::drop` release a *second* time.
+            // `on_close` calls `this.deref()` via its cleanup guard, releasing
+            // the twin's +1 — pass raw ptr to avoid `IntrusiveRc::drop` doubling.
             let raw = IntrusiveRc::into_raw(raw);
+            // SAFETY: twin holds a +1 intrusive ref; `on_close` releases it via its
+            // cleanup guard; no other reference to `raw` exists at this call site.
             unsafe { Self::on_close(raw, socket, err, reason).ok() };
         }
         // PORT NOTE: reshaped for borrowck — `defer this.deref()` + `defer markInactive()`.
@@ -1651,7 +1650,8 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// `this` points at a live `NewSocket`; JS-thread only.
     pub unsafe fn on_data(this: *mut Self, s: SocketHandler<SSL>, data: &[u8]) {
         jsc::mark_binding!();
-        // SAFETY (whole body): per fn contract; R-2 shared reborrow.
+        // SAFETY: outer `unsafe fn` contract; `this` is a live `NewSocket`; shared
+        // reborrow is valid — all mutated fields are `Cell`/`JsCell`.
         let this: &Self = unsafe { &*this };
         this.socket.set(s);
         if this.socket.get().is_detached() {
@@ -3649,11 +3649,10 @@ impl DuplexUpgradeContext {
                 // fire on top of that (over-deref → UAF on the JS wrapper's
                 // pointee).
                 let p = IntrusiveRc::into_raw(tls);
-                // SAFETY: intrusive refcount; single-threaded dispatch. The
-                // +1 transferred via `into_raw` is released by
-                // `handle_connect_error`'s `needs_deref` arm (socket is
-                // UpgradedDuplex, not Detached) — do NOT reconstruct the
-                // IntrusiveRc. `handle_connect_error` takes `*mut Self`.
+                // The +1 from `into_raw` is released by `handle_connect_error`'s
+                // `needs_deref` arm — do NOT reconstruct the `IntrusiveRc`.
+                // SAFETY: `p` is a valid intrusive-refcounted `TLSSocket`; single-threaded;
+                // `handle_connect_error` takes `*mut Self` and will release the transferred +1.
                 let _ = unsafe {
                     TLSSocket::handle_connect_error(p, sys::SystemErrno::ECONNREFUSED as c_int)
                 };

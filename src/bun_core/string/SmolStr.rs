@@ -329,6 +329,7 @@ impl Inlined {
         // `&mut self.0`, so the resulting reference has provenance over the full u128 and
         // is uniquely borrowed for the lifetime of `&mut self` — no other reference to
         // `self.0` can exist while the returned `&mut [u8; 15]` is live.
+        // SAFETY: see comment above — `ptr()` from `&mut self.0` has full u128 provenance; uniquely borrowed.
         unsafe { &mut *self.ptr().cast::<[u8; Self::MAX_LEN]>() }
     }
 

@@ -195,6 +195,7 @@ mod platform {
                 let d_reclen: u16 = unsafe { addr_of!((*entry).d_reclen).read_unaligned() };
                 let d_namlen: u16 = unsafe { addr_of!((*entry).d_namlen).read_unaligned() };
                 let d_ino: u64 = unsafe { addr_of!((*entry).d_ino).read_unaligned() };
+                // SAFETY: entry points at a valid dirent record (bounds checked); addr_of! avoids forming a reference.
                 let d_type: u8 = unsafe { addr_of!((*entry).d_type).read_unaligned() };
                 let entry_idx = self.index;
                 self.index += d_reclen as usize;
@@ -814,6 +815,7 @@ mod platform {
                 // packed as `[dirent_t][name bytes][dirent_t]...` with no padding between the
                 // variable-length name and the next header), so we must `read_unaligned` rather
                 // than form a `&dirent_t` — matching Zig's `*align(1) w.dirent_t` cast.
+                // SAFETY: index < end_index <= buf.len(); fd_readdir guarantees a valid dirent header at this offset.
                 let entry: w::dirent_t = unsafe {
                     core::ptr::read_unaligned(
                         self.buf.as_ptr().add(self.index).cast::<w::dirent_t>(),

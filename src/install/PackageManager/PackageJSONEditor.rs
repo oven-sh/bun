@@ -1099,6 +1099,9 @@ pub fn edit(
             // derived from a `StoreRef` to the same `E::EString` is live inside this loop body,
             // so this is the sole mutable borrow — matches the Zig original which stores
             // `?*E.String` for this deferred-write pattern.
+            // SAFETY: `e_string` is a valid `*mut E::EString` from either the ast_arena or
+            // the parsed input tree (see provenance note above); no other `&mut` to the same
+            // slot exists in this loop body.
             let e_string = unsafe { &mut *e_string };
             if request.package_id as usize >= resolutions.len()
                 || resolutions[request.package_id as usize].tag == resolution::Tag::Uninitialized

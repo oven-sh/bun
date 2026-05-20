@@ -297,6 +297,8 @@ impl AnimationName {
         // outlives this parse (CSSString = &'static [u8]).
         if let Ok(s) = input.try_parse(|i| i.expect_string().map(|s| std::ptr::from_ref::<[u8]>(s)))
         {
+            // SAFETY: `s` is a raw pointer to a slice in the input arena (CSSString = &'static [u8]);
+            // the arena outlives this parse call, so the re-borrow is valid.
             return Ok(AnimationName::String(unsafe { &raw const *s }));
         }
         let ident = CustomIdent::parse(input)?;

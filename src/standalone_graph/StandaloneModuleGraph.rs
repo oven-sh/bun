@@ -316,6 +316,7 @@ mod pe {
         if length == 0 {
             return None;
         }
+        // SAFETY: FFI call; `Bun__getStandaloneModuleGraphPEData` returns a valid static pointer or null.
         let data_ptr = unsafe { Bun__getStandaloneModuleGraphPEData() };
         if data_ptr.is_null() {
             return None;
@@ -583,6 +584,7 @@ impl StandaloneModuleGraph {
             // (serialized by `to_bytes`) and disjoint from the writable bytecode/module_info
             // subranges; section bytes are a live 'static allocation.
             // PERF(port): was putAssumeCapacity
+            // SAFETY: each subrange is in-bounds per serialization invariant; section bytes are a live 'static allocation.
             let _ = modules.put(
                 unsafe { slice_to_z(raw_const, raw_len, module.name) }.as_bytes(),
                 File {
@@ -613,6 +615,7 @@ impl StandaloneModuleGraph {
                         std::ptr::from_mut::<[u8]>(&mut [])
                     },
                     bytecode_origin_path: if module.bytecode_origin_path.length > 0 {
+                        // SAFETY: `bytecode_origin_path` subrange is in-bounds and read-only (same invariant as `name`/`contents`).
                         unsafe { slice_to_z(raw_const, raw_len, module.bytecode_origin_path) }
                             .as_bytes()
                     } else {
@@ -660,6 +663,7 @@ unsafe fn slice_to(base: *const u8, len: usize, ptr: StringPointer) -> &'static 
     let n = ptr.length as usize;
     debug_assert!(off.checked_add(n).is_some_and(|end| end <= len));
     let _ = len;
+    // SAFETY: outer `unsafe fn` contract — `base[..len]` is a live 'static allocation; subrange `[off, off+n)` is in-bounds.
     unsafe { core::slice::from_raw_parts(base.add(off), n) }
 }
 
@@ -674,6 +678,7 @@ unsafe fn slice_to_mut(base: *mut u8, len: usize, ptr: StringPointer) -> *mut [u
     let n = ptr.length as usize;
     debug_assert!(off.checked_add(n).is_some_and(|end| end <= len));
     let _ = len;
+    // SAFETY: outer `unsafe fn` contract — `base[..len]` is a live allocation with write permission; subrange `[off, off+n)` is in-bounds.
     core::ptr::slice_from_raw_parts_mut(unsafe { base.add(off) }, n)
 }
 
@@ -687,6 +692,7 @@ unsafe fn slice_to_z(base: *const u8, len: usize, ptr: StringPointer) -> &'stati
     let n = ptr.length as usize;
     debug_assert!(off.checked_add(n).is_some_and(|end| end < len));
     let _ = len;
+    // SAFETY: outer `unsafe fn` contract — `base[..len]` is a live 'static allocation; `base[off + n] == 0` guaranteed by serializer.
     unsafe { ZStr::from_raw(base.add(off), n) }
 }
 

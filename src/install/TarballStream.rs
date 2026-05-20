@@ -488,6 +488,7 @@ impl TarballStream {
         // provenance). Transient `&mut *this` for `open_destination` /
         // `begin_entry` / `write_data_block` / `close_output_file` is sound:
         // those do not call into libarchive.
+        // SAFETY: see fn-level # Safety — raw-ptr field projection, no aliasing `&mut TarballStream`.
         unsafe {
             if (*this).archive.is_none() {
                 Self::open_archive(this)?;

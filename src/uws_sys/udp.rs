@@ -206,6 +206,7 @@ impl PacketBuffer {
         // other Rust or C path holds a reference to it. The reborrow of `&mut self`
         // ties the returned lifetime to this handle, so the borrow checker prevents
         // obtaining a second overlapping `&mut` via `get_peer`/`get_payload`.
+        // SAFETY: `index < packet_count`; uSockets returns a non-null, aligned peer pointer.
         unsafe { &mut *us_udp_packet_buffer_peer(self, index) }
     }
 
@@ -215,6 +216,7 @@ impl PacketBuffer {
         // exclusively loaned to the data callback for its duration. The
         // returned borrow is tied to `&mut self`, so the borrow checker
         // prevents overlapping `&mut` via `get_peer`/`get_payload`.
+        // SAFETY: `index < packet_count`; uSockets returns valid initialized bytes.
         unsafe {
             let payload = us_udp_packet_buffer_payload(self, index);
             let len = us_udp_packet_buffer_payload_length(self, index);

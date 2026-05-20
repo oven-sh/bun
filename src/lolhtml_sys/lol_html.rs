@@ -1062,6 +1062,8 @@ impl AttributeIterator {
         if p.is_null() {
             None
         } else {
+            // SAFETY: lol-html guarantees the returned non-null pointer is valid
+            // until the next call to `next` or `free` on this iterator.
             Some(unsafe { &*p })
         }
     }

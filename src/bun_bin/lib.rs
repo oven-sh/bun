@@ -165,6 +165,7 @@ pub extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
 
     // SIGPIPE/SIGXFSZ → SIG_IGN, like main.zig's posix block.
     #[cfg(unix)]
+    // SAFETY: signal() is called at single-threaded startup before any threads are spawned; SIG_IGN is a valid handler.
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_IGN);
         libc::signal(libc::SIGXFSZ, libc::SIG_IGN);

@@ -1071,6 +1071,7 @@ mod _impl {
                             .sin_addr
                             .s_addr
                     }),
+                    // SAFETY: family is AF_INET6; storage is sockaddr_in6-sized.
                     libc::AF_INET6 => netmask_to_cidr_suffix(u128::from_ne_bytes(unsafe {
                         (*netmask.as_sockaddr().cast::<libc::sockaddr_in6>())
                             .sin6_addr
@@ -1291,6 +1292,7 @@ mod _impl {
                         netmask_to_cidr_suffix(unsafe { iface.netmask.netmask4.sin_addr.s_addr })
                     }
                     bun_sys::posix::AF::INET6 => {
+                        // SAFETY: family is AF_INET6; the union member `netmask6` is valid.
                         netmask_to_cidr_suffix(u128::from_ne_bytes(unsafe {
                             iface.netmask.netmask6.sin6_addr.s6_addr
                         }))

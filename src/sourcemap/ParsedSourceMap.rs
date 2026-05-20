@@ -115,9 +115,11 @@ impl AnySourceProvider {
             AnySourceProvider::Zig(p) => unsafe {
                 (**p).get_source_map(source_filename, load_hint, result)
             },
+            // SAFETY: same as Zig arm above — pointer is a valid FFI handle tied to the JSC SourceProvider.
             AnySourceProvider::Bake(p) => unsafe {
                 (**p).get_source_map(source_filename, load_hint, result)
             },
+            // SAFETY: same as Zig arm above — pointer is a valid FFI handle tied to the JSC SourceProvider.
             AnySourceProvider::DevServer(p) => unsafe {
                 (**p).get_source_map(source_filename, load_hint, result)
             },

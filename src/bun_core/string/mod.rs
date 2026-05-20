@@ -233,6 +233,7 @@ impl String {
         if s.is_empty() {
             return Self::EMPTY;
         }
+        // SAFETY: `s` is a valid slice; ptr and len are in bounds and the slice outlives the call.
         unsafe { BunString__fromLatin1(s.as_ptr(), s.len()) }
     }
     /// `bun.String.cloneUTF16` — narrows to Latin-1 if all-ASCII (string.zig:207).
@@ -250,6 +251,7 @@ impl String {
         }
     }
     pub fn create_atom(s: &[u8]) -> Self {
+        // SAFETY: `s` is a valid slice; ptr and len are in bounds and the slice outlives the call.
         unsafe { BunString__createAtom(s.as_ptr(), s.len()) }
     }
     /// `bun.String.tryCreateAtom` — `None` if `bytes` is non-ASCII or too long
@@ -1364,6 +1366,7 @@ impl core::fmt::Display for OwnedString {
 impl core::fmt::Display for String {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let s = self.to_utf8_without_ref();
+        // SAFETY: `to_utf8_without_ref` always returns a valid UTF-8 byte slice.
         f.write_str(unsafe { core::str::from_utf8_unchecked(s.slice()) })
     }
 }

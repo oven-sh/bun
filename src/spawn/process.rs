@@ -194,6 +194,8 @@ impl Process {
     /// `this` must point at a live `Process` with refcount ≥ 1.
     #[inline]
     pub unsafe fn deref(this: *mut Self) {
+        // SAFETY: outer `unsafe fn` propagates the caller's contract that `this` points to a
+        // live Process with refcount ≥ 1; ThreadSafeRefCount::deref is the matching decrement.
         unsafe { bun_ptr::ThreadSafeRefCount::<Process>::deref(this) };
     }
 
@@ -1204,11 +1206,9 @@ pub mod waiter_thread_posix {
                 let mut remove = false;
 
                 let process = active[i];
-                // SAFETY: each `*mut T` in `active` was strong-ref'd by the
-                // producer (`Process::watch` → `ref_()`) before `append()`;
-                // the matching `deref()` is in `on_wait_pid_from_waiter_thread`,
-                // so the pointee outlives this shared borrow. Single deref
-                // serves both `pid()` and `event_loop()` accessor reads.
+                // SAFETY: each `*mut T` in `active` was strong-ref'd before `append()`;
+                // the matching `deref()` is in `on_wait_pid_from_waiter_thread`, so the
+                // pointee outlives this shared borrow. Used for pid() and event_loop() reads.
                 let process_ref = unsafe { &*process };
                 let pid = T::pid(process_ref);
                 // this case shouldn't really happen
@@ -2009,6 +2009,7 @@ mod spawn_process_body {
                     // `from_uv_rc` sets `from_libuv` so display goes through the
                     // checked uv→errno translator (raw codes are sparse on Windows;
                     // an unchecked `E::from_raw` would be UB for unmapped values).
+                    // SAFETY: dup_fds is a 2-element out-array allocated on the stack; uv_pipe writes both fds.
                     if let Some(err) = bun_sys::Error::from_uv_rc(
                         unsafe { uv::uv_pipe(&mut dup_fds, 0, 0) },
                         bun_sys::Tag::pipe,
@@ -2222,6 +2223,8 @@ mod spawn_process_body {
                         // reconstructing the Box here is the *sole* ownership
                         // transfer — the borrowed `options` dropping later is a
                         // no-op on the raw pointer.
+                        // SAFETY: stdio.data.stream is the *mut uv::Pipe from create_zeroed_pipe;
+                        // heap::take reclaims its sole ownership (WindowsStdio has no Drop).
                         *result_stdio = WindowsStdioResult::Buffer(unsafe {
                             bun_core::heap::take(stdio.data.stream.cast::<uv::Pipe>())
                         });
@@ -2469,6 +2472,7 @@ mod spawn_process_body {
                 // and libuv's subsequent write into `base[..nread]` is
                 // Stacked-Borrows UB. Construct from `as_mut_ptr()` directly so the
                 // raw pointer carries write provenance.
+                // SAFETY: `buffer` is a libuv out-parameter; we write via raw pointer to avoid SharedReadOnly tag.
                 unsafe {
                     *buffer = uv::uv_buf_t {
                         len: buf.len() as uv::ULONG,

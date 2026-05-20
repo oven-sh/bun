@@ -236,6 +236,9 @@ pub fn install_isolated_packages(
     // passing `*PackageManager` (which owns it); take a raw pointer so column
     // borrows below don't tie up `&mut manager`.
     let lockfile: *mut Lockfile = &raw mut *manager.lockfile;
+    // SAFETY: `lockfile` was derived from `manager.lockfile` (a non-null field);
+    // the raw pointer is the only access path from here so no other `&mut`
+    // to the same lockfile is live while this reborrow exists.
     let lockfile: &mut Lockfile = unsafe { &mut *lockfile };
 
     let store: Store = 'store: {
@@ -2095,6 +2098,9 @@ pub fn install_isolated_packages(
             summary: Default::default(),
             task_queue: Default::default(),
         };
+        // SAFETY: `manager_ptr` was derived from the live `&mut PackageManager`
+        // argument; the `installer` struct only stores it as a BACKREF raw pointer
+        // (no `&mut` reborrow), so this exclusive reborrow is the unique live one.
         let manager = unsafe { &mut *manager_ptr };
         // (Drop handles installer.deinit())
 

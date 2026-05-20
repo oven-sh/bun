@@ -322,11 +322,11 @@ impl PathWatcher {
         };
 
         manager.mutex.lock();
-        // SAFETY: holding manager.mutex; the reader/CF threads only form their own
-        // `&mut PathWatcher` while holding this lock, so ours is exclusive. Scope
-        // `w` so its last use is before `unlock()` (NLL ends the borrow there) —
-        // on macOS the tail below must not hold a `&mut` across `fse.deinit()`.
+        // Holding `manager.mutex`; reader/CF threads only form `&mut PathWatcher`
+        // under this lock, so this borrow is exclusive. `w` is scoped so NLL ends
+        // it before `unlock()` — the macOS tail must not hold `&mut` across deinit.
         {
+            // SAFETY: `manager.mutex` is held; this is the only `&mut PathWatcher` in scope.
             let w = unsafe { &mut *this };
             w.handlers.swap_remove(&ctx);
             if w.handlers.len() > 0 {
@@ -362,7 +362,8 @@ impl PathWatcher {
     /// `this` must have been produced by `PathWatcher::new` and have no remaining
     /// references (handlers empty, removed from manager maps).
     unsafe fn destroy(this: *mut PathWatcher) {
-        // handlers, platform, path all dropped by Box drop.
+        // SAFETY: outer `unsafe fn` contract: `this` was produced by `PathWatcher::new`
+        // with no remaining references; `heap::take` reconstructs the Box and drops it.
         drop(unsafe { bun_core::heap::take(this) });
     }
 }
@@ -919,11 +920,11 @@ impl Linux {
                 // caching `getPtr(wd)` across the loop.
                 let mut oi: usize = 0;
                 loop {
-                    // SAFETY: holding manager.mutex. Re-project `wd_map` each iteration
-                    // (raw-ptr access, no long-lived `&mut`): the recursive branch below
-                    // calls `add_one`/`walk_and_add`, which take their own `&mut wd_map`
-                    // and may rehash. Extract the owner's watcher ptr and subpath bytes,
-                    // then drop the map borrow before any of that runs.
+                    // Holding manager.mutex; re-project `wd_map` each iteration via raw ptr
+                    // because the recursive branch may call `add_one`/`walk_and_add` and rehash.
+                    // SAFETY: `manager.mutex` is held; `wd_map` access is via raw ptr with no
+                    // long-lived `&mut`; subpath bytes are laundered through raw ptr to decouple
+                    // from the map borrow before any rehash-capable call runs.
                     let (owner_watcher, owner_subpath): (*mut PathWatcher, &[u8]) = unsafe {
                         let Some(owners) = (*plat).wd_map.get(&wd) else {
                             break;
@@ -941,14 +942,12 @@ impl Linux {
                             &*std::ptr::from_ref::<[u8]>(o.subpath.as_bytes()),
                         )
                     };
-                    // SAFETY: owner_watcher live under manager.mutex. Read the scalar
-                    // fields and the path bytes via the raw pointer *before* forming
-                    // `&mut *owner_watcher` so `rel` (which may borrow them) is
-                    // decoupled from the exclusive borrow `emit()` needs — a named
-                    // shared borrow of `watcher.path` cannot coexist with the
-                    // `&mut self` receiver. `path` is a `ZBox`; its heap bytes are a
-                    // separate allocation, so this mirrors the `owner_subpath`
-                    // raw-ptr laundering above.
+                    // Read scalar fields and path bytes via raw ptr *before* forming
+                    // `&mut *owner_watcher` so `rel` (borrowing them) is decoupled from
+                    // the exclusive `&mut self` that `emit()` needs. `path` is a `ZBox`;
+                    // its heap bytes are a separate allocation (mirrors `owner_subpath` laundering).
+                    // SAFETY: `owner_watcher` is live under `manager.mutex`; path bytes are
+                    // laundered through raw ptr to avoid aliasing the later `&mut` borrow.
                     let (watcher_is_file, watcher_recursive, watcher_path): (bool, bool, &[u8]) = unsafe {
                         (
                             (*owner_watcher).is_file,
@@ -956,6 +955,8 @@ impl Linux {
                             &*std::ptr::from_ref::<[u8]>((*owner_watcher).path.as_bytes()),
                         )
                     };
+                    // SAFETY: `owner_watcher` is live under `manager.mutex`; the scalar/path
+                    // borrows above have ended, so this `&mut` is the sole borrow of the watcher.
                     let watcher = unsafe { &mut *owner_watcher };
 
                     // Build the path relative to this owner's root.
@@ -1406,14 +1407,14 @@ impl Kqueue {
                 if entry.generation != kev.udata as usize {
                     continue;
                 }
-                // SAFETY: entry.watcher live under manager.mutex; PathWatcher is a
-                // separate heap allocation, disjoint from the `entries` borrow above.
-                // Launder the path bytes via the raw pointer so `rel` is decoupled
-                // from the `&mut self` activated for `emit()` — a named shared borrow
-                // of `watcher.path` cannot coexist with that exclusive reborrow.
-                // `path` is a `ZBox`; its heap bytes are a separate allocation.
+                // `entry.watcher` is live under `manager.mutex`; path bytes are
+                // laundered through raw ptr so `rel` is decoupled from the `&mut`
+                // that `emit()` requires (`ZBox` heap is a separate allocation).
+                // SAFETY: watcher ptr is valid under mutex; path bytes are from a
+                // separate `ZBox` heap, disjoint from the `entries` borrow.
                 let watcher_path: &[u8] =
                     unsafe { &*((*entry.watcher).path.as_bytes() as *const [u8]) };
+                // SAFETY: path bytes borrow above has ended; `&mut` is now the sole borrow.
                 let watcher = unsafe { &mut *entry.watcher };
 
                 let event_type: EventType = if kev.fflags

@@ -207,10 +207,8 @@ macro_rules! string_store_impl {
             }
             pub fn append(&self, value: &[u8]) -> core::result::Result<&'static [u8], AllocError> {
                 // SAFETY: `backing()` is the live process-lifetime singleton;
-                // `BSSStringList::append` serializes on its inner mutex. The
-                // returned slice borrows the singleton's never-freed storage
-                // (heap-owned by a `'static` `BSSStringList` or a leaked
-                // mi_malloc), so widening to `'static` is sound.
+                // `BSSStringList::append` serializes on its inner mutex and never frees its storage,
+                // so widening the returned slice to `'static` is sound.
                 unsafe { <$bty>::append(Self::backing(), value) }
             }
             /// Zig: `FileSystem.DirnameStore.print(fmt, args)` — format directly
@@ -1539,6 +1537,8 @@ impl RealFS {
                 // retags the whole `DirEntry` and invalidates `entries_ptr` — making
                 // the later `*entries_ptr = new_entry` UB. Zig's `existing.entries.*`
                 // / `existing.entries.data` go through one `*DirEntry`; mirror that.
+                // SAFETY: entries_ptr is derived from `&raw mut **entries`; addr_of_mut! projects
+                // the field without forming an intermediate &mut DirEntry.
                 let prev_map_ptr: *mut dir_entry::EntryMap =
                     unsafe { core::ptr::addr_of_mut!((*entries_ptr).data) };
                 let handle_dir = match bun_sys::Dir::open(dir_path) {

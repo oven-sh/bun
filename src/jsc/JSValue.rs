@@ -1116,7 +1116,9 @@ impl JSValue {
         // a dynamic `b"asyncIterator"` would fetch the *symbol* property instead
         // of the *string* property. Always go through the by-name FFI; callers
         // that statically know they want a builtin should call `fast_get` directly.
-        // `[[ZIG_EXPORT(zero_is_throw)]]` — zero ⟺ threw. SAFETY: bytes valid for the call.
+        // `[[ZIG_EXPORT(zero_is_throw)]]` — zero ⟺ threw.
+        // SAFETY: `property` is a valid byte slice for the duration of this call;
+        // the C++ FFI function only reads the bytes and does not store the pointer.
         let v = unsafe {
             crate::cpp::JSC__JSValue__getIfPropertyExistsImpl(
                 self,

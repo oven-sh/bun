@@ -274,6 +274,7 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                 // column read through `self.c` / `self.flags` / `self.parts`),
                 // valid for `graph.files.len()` writes for the duration of the
                 // link step. No `&` to this column is live here.
+                // SAFETY: disjoint SoA column pointer; no aliasing `&` to it.
                 unsafe {
                     (*self.entry_point_chunk_indices)[source_index as usize] = self.chunk_index;
                 }

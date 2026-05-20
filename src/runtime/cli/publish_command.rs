@@ -461,6 +461,8 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         let mut lockfile = Lockfile::default();
         let manager_ptr: *mut PackageManager = manager;
         let log: &mut bun_ast::Log = manager.log_mut();
+        // SAFETY: `manager_ptr` was derived from `manager` above; `log` is a distinct field borrow;
+        // no other `&mut PackageManager` is live across this call.
         let load_from_disk_result =
             lockfile.load_from_cwd::<false>(Some(unsafe { &mut *manager_ptr }), log);
 

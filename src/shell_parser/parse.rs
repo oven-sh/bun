@@ -4568,6 +4568,7 @@ unsafe impl core::alloc::Allocator for SmolListAlloc {
     }
     #[inline]
     unsafe fn deallocate(&self, ptr: core::ptr::NonNull<u8>, layout: core::alloc::Layout) {
+        // SAFETY: outer `unsafe fn` propagates the `Allocator::deallocate` safety contract; this is a thin forward to the arena allocator.
         unsafe { core::alloc::Allocator::deallocate(&self.arena(), ptr, layout) }
     }
     #[inline]
@@ -4577,6 +4578,7 @@ unsafe impl core::alloc::Allocator for SmolListAlloc {
         old: core::alloc::Layout,
         new: core::alloc::Layout,
     ) -> Result<core::ptr::NonNull<[u8]>, core::alloc::AllocError> {
+        // SAFETY: outer `unsafe fn` propagates the `Allocator::grow` safety contract; this is a thin forward to the arena allocator.
         unsafe { core::alloc::Allocator::grow(&self.arena(), ptr, old, new) }
     }
     #[inline]
@@ -4586,6 +4588,7 @@ unsafe impl core::alloc::Allocator for SmolListAlloc {
         old: core::alloc::Layout,
         new: core::alloc::Layout,
     ) -> Result<core::ptr::NonNull<[u8]>, core::alloc::AllocError> {
+        // SAFETY: outer `unsafe fn` propagates the `Allocator::shrink` safety contract; this is a thin forward to the arena allocator.
         unsafe { core::alloc::Allocator::shrink(&self.arena(), ptr, old, new) }
     }
 }

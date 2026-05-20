@@ -1273,6 +1273,8 @@ impl<'a> JsCallbackRenderer<'a> {
         // is dropped). The `RendererImpl` trait erases the concrete lifetime,
         // so we widen it to `'static` for storage on the stack — same pattern
         // as `ParseStackEntry` above.
+        // SAFETY: `detail` borrows from `src_text` which outlives the stack; widening to `'static`
+        // for stack storage is sound — the stack is fully drained before `src_text` is dropped.
         let detail: md::SpanDetail<'static> = unsafe { detail.detach_lifetime() };
         self.stack.push(CallbackStackEntry {
             detail,

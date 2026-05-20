@@ -136,9 +136,15 @@ fn expand_host_fn(args: HostFnArgs, func: ItemFn) -> syn::Result<TokenStream2> {
         .inputs
         .first()
         .is_some_and(|a| matches!(a, FnArg::Receiver(r) if r.mutability.is_none()));
+    // SAFETY: the generated `unsafe { &*__this }` / `unsafe { &mut *__this }` in the quote!
+    // fragments are emitted into host-fn shims where `__this` is the m_ctx raw pointer
+    // (non-null, valid for the call duration). Shared receivers use `&*` to permit
+    // re-entry; exclusive receivers use `&mut *` when no re-entrant path exists.
     let this_reborrow = if receiver_is_shared {
+        // SAFETY: generated code fragment — `__this` is the live m_ctx; shared deref for re-entrant receivers.
         quote! { let __t = unsafe { &*__this }; }
     } else {
+        // SAFETY: generated code fragment — `__this` is the live m_ctx; exclusive deref for non-re-entrant receivers.
         quote! { let __t = unsafe { &mut *__this }; }
     };
 

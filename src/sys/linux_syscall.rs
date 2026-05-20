@@ -495,6 +495,7 @@ pub unsafe fn getdents64(fd: i32, buf: *mut u8, len: usize) -> isize {
     // is what the Zig path compiles to as well.
     // PERF(port): switch to `rustix::fs::RawDir` once `WrappedIterator` is
     // reworked to consume `RawDirEntry` instead of hand-parsing bytes.
+    // SAFETY: outer `unsafe fn` propagates the caller's contract; buf is valid for len bytes.
     unsafe { libc::syscall(libc::SYS_getdents64, fd as libc::c_long, buf, len) as isize }
 }
 

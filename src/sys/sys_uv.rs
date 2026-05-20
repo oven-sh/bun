@@ -239,6 +239,7 @@ pub fn statfs(file_path: &ZStr) -> Result<StatFS> {
         // The value is copied out *before* `FsReq::drop` runs `uv_fs_req_cleanup`
         // and frees the backing allocation.
         let p = unsafe { req.ptr_as::<StatFS>() };
+        // SAFETY: libuv guarantees `req.ptr` points to a valid `uv_statfs_t` on success; copied before cleanup.
         Result::Ok(unsafe { core::ptr::read_unaligned(p) })
     }
 }
@@ -344,6 +345,7 @@ pub fn readlink<'a>(file_path: &ZStr, buf: &'a mut [u8]) -> Result<&'a mut ZStr>
     } else {
         // Seems like `rc` does not contain the size?
         debug_assert!(rc.int() == 0);
+        // SAFETY: libuv guarantees `req.ptr` is a valid `c_char` pointer on success (rc == 0).
         let result_ptr: *mut c_char = unsafe { req.ptr_as::<c_char>() } as *mut c_char;
         let Some(result_ptr) = (!result_ptr.is_null()).then_some(result_ptr) else {
             return Result::Err(

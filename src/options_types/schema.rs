@@ -29,6 +29,8 @@ impl<'a> Writer<'a> {
     /// Zig: `writeInt` — `std.mem.asBytes(&int)` is native-endian raw bytes.
     #[inline]
     pub fn write_int<I: Copy>(&mut self, int: I) {
+        // SAFETY: `int` is a stack `Copy` value; `(&raw const int).cast::<u8>()` is aligned, non-null,
+        // and `size_of::<I>()` bytes are fully initialized. The slice borrows the stack local for this statement only.
         let bytes = unsafe {
             core::slice::from_raw_parts((&raw const int).cast::<u8>(), core::mem::size_of::<I>())
         };

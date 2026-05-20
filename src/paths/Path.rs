@@ -299,6 +299,7 @@ impl PathUnit for u8 {
 
     #[inline]
     unsafe fn zslice_from_raw<'a>(ptr: *const u8, len: usize) -> &'a ZStr {
+        // SAFETY: outer `unsafe fn zslice_from_raw` propagates the caller's safety contract to `ZStr::from_raw`.
         unsafe { ZStr::from_raw(ptr, len) }
     }
     fn pool_get() -> Box<PathBuffer> {
@@ -346,6 +347,7 @@ impl PathUnit for u16 {
 
     #[inline]
     unsafe fn zslice_from_raw<'a>(ptr: *const u16, len: usize) -> &'a WStr {
+        // SAFETY: outer `unsafe fn zslice_from_raw` propagates the caller's safety contract to `WStr::from_raw`.
         unsafe { WStr::from_raw(ptr, len) }
     }
     fn pool_get() -> Box<WPathBuffer> {

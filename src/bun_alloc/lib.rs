@@ -365,6 +365,9 @@ pub mod default_alloc {
     #[inline]
     pub fn malloc(size: usize) -> *mut c_void {
         if cfg!(bun_asan) {
+            // SAFETY: `libc::malloc` has no memory-safety preconditions; it
+            // returns null on failure. Used only under `bun_asan` where the
+            // global allocator is the system libc allocator.
             unsafe { libc::malloc(size) }
         } else {
             crate::mimalloc::mi_malloc(size)
@@ -374,6 +377,8 @@ pub mod default_alloc {
     #[inline]
     pub fn zalloc(size: usize) -> *mut c_void {
         if cfg!(bun_asan) {
+            // SAFETY: `libc::calloc` has no memory-safety preconditions;
+            // returns null on failure. Used only under `bun_asan`.
             unsafe { libc::calloc(1, size) }
         } else {
             crate::mimalloc::mi_zalloc(size)
@@ -383,6 +388,8 @@ pub mod default_alloc {
     #[inline]
     pub fn calloc(count: usize, size: usize) -> *mut c_void {
         if cfg!(bun_asan) {
+            // SAFETY: `libc::calloc` has no memory-safety preconditions;
+            // returns null on failure. Used only under `bun_asan`.
             unsafe { libc::calloc(count, size) }
         } else {
             crate::mimalloc::mi_calloc(count, size)
@@ -394,8 +401,10 @@ pub mod default_alloc {
     #[inline]
     pub unsafe fn realloc(ptr: *mut c_void, new_size: usize) -> *mut c_void {
         if cfg!(bun_asan) {
+            // SAFETY: caller guarantees `ptr` is null or a live libc allocation.
             unsafe { libc::realloc(ptr, new_size) }
         } else {
+            // SAFETY: caller guarantees `ptr` is null or a live mimalloc allocation.
             unsafe { crate::mimalloc::mi_realloc(ptr, new_size) }
         }
     }
@@ -405,8 +414,10 @@ pub mod default_alloc {
     #[inline]
     pub unsafe fn free(ptr: *mut c_void) {
         if cfg!(bun_asan) {
+            // SAFETY: caller guarantees `ptr` is null or a live libc allocation.
             unsafe { libc::free(ptr) }
         } else {
+            // SAFETY: caller guarantees `ptr` is null or a live mimalloc allocation.
             unsafe { crate::mimalloc::mi_free(ptr) }
         }
     }
@@ -423,10 +434,14 @@ pub mod default_alloc {
         // OS (`malloc_usable_size` on Linux, `malloc_size` on macOS). `bun_asan`
         // is only ever set on Linux or macOS, so the catch-all (non-asan, every
         // `check-all` target including Windows) stays on mimalloc.
+        // SAFETY: caller guarantees `ptr` is a live allocation from the matching
+        // allocator; null was already returned early above.
         #[cfg(all(bun_asan, target_os = "linux"))]
         return unsafe { libc::malloc_usable_size(ptr.cast_mut()) };
+        // SAFETY: same as linux branch above — non-null, live libc allocation.
         #[cfg(all(bun_asan, target_os = "macos"))]
         return unsafe { libc::malloc_size(ptr) };
+        // SAFETY: same invariant — non-null, live mimalloc allocation.
         #[cfg(not(any(all(bun_asan, target_os = "linux"), all(bun_asan, target_os = "macos"))))]
         return unsafe { crate::mimalloc::mi_usable_size(ptr) };
     }
@@ -444,10 +459,14 @@ pub mod default_alloc {
     #[inline]
     pub fn malloc_aligned(size: usize, align: usize) -> *mut c_void {
         if align <= crate::MAX_ALIGN_T {
+            // SAFETY: `libc::malloc` has no memory-safety preconditions; returns
+            // null on failure. Sufficient alignment because `align <= MAX_ALIGN_T`.
             return unsafe { libc::malloc(size) };
         }
         let mut p: *mut c_void = core::ptr::null_mut();
         let align = align.max(core::mem::size_of::<*mut c_void>());
+        // SAFETY: `align` is a power-of-two ≥ `sizeof(void*)` (ensured by the
+        // `.max` above); `p` is a valid out-pointer. Returns non-zero on failure.
         if unsafe { libc::posix_memalign(&mut p, align, size) } != 0 {
             return core::ptr::null_mut();
         }
@@ -464,10 +483,15 @@ pub mod default_alloc {
     #[inline]
     pub fn zalloc_aligned(size: usize, align: usize) -> *mut c_void {
         if align <= crate::MAX_ALIGN_T {
+            // SAFETY: `libc::calloc` has no memory-safety preconditions; returns
+            // null on failure. Alignment is within `MAX_ALIGN_T`, so libc malloc
+            // guarantees sufficient alignment.
             return unsafe { libc::calloc(1, size) };
         }
         let p = malloc_aligned(size, align);
         if !p.is_null() {
+            // SAFETY: `p` is a fresh, exclusively-owned allocation of `size` bytes
+            // from `malloc_aligned`; valid for `size` byte writes.
             unsafe { core::ptr::write_bytes(p.cast::<u8>(), 0, size) };
         }
         p
@@ -478,6 +502,8 @@ pub mod default_alloc {
     #[cfg(not(bun_asan))]
     #[inline]
     pub unsafe fn realloc_aligned(ptr: *mut c_void, new_size: usize, align: usize) -> *mut c_void {
+        // SAFETY: caller guarantees `ptr` is null or a live mimalloc allocation
+        // with alignment `align`; `mi_realloc_aligned` preserves the prefix.
         unsafe { crate::mimalloc::mi_realloc_aligned(ptr, new_size, align) }
     }
 
@@ -487,6 +513,7 @@ pub mod default_alloc {
     #[inline]
     pub unsafe fn realloc_aligned(ptr: *mut c_void, new_size: usize, align: usize) -> *mut c_void {
         if align <= crate::MAX_ALIGN_T {
+            // SAFETY: caller guarantees `ptr` is null or a live libc allocation.
             return unsafe { libc::realloc(ptr, new_size) };
         }
         let new_ptr = malloc_aligned(new_size, align);
@@ -494,6 +521,10 @@ pub mod default_alloc {
             return core::ptr::null_mut();
         }
         if !ptr.is_null() {
+            // SAFETY: `ptr` is a live libc/posix_memalign allocation (caller
+            // contract); `new_ptr` is a fresh, exclusively-owned allocation of
+            // `new_size` bytes; regions are non-overlapping; `copy` ≤ both.
+            // `libc::free` matches the allocator that produced `ptr`.
             unsafe {
                 let copy = usable_size(ptr).min(new_size);
                 core::ptr::copy_nonoverlapping(ptr.cast::<u8>(), new_ptr.cast::<u8>(), copy);
@@ -821,6 +852,9 @@ unsafe impl core::alloc::GlobalAlloc for Mimalloc {
     #[inline]
     unsafe fn dealloc(&self, ptr: *mut u8, _layout: core::alloc::Layout) {
         // mimalloc tracks size+alignment in page metadata; `mi_free` is universal.
+        // SAFETY: `GlobalAlloc::dealloc` contract — `ptr` was allocated by this
+        // allocator and has not been freed yet. mimalloc accepts any pointer it
+        // previously returned regardless of which mi_malloc* variant was used.
         unsafe { mimalloc::mi_free(ptr.cast()) }
     }
 
@@ -831,6 +865,10 @@ unsafe impl core::alloc::GlobalAlloc for Mimalloc {
         layout: core::alloc::Layout,
         new_size: usize,
     ) -> *mut u8 {
+        // SAFETY: `GlobalAlloc::realloc` contract — `ptr` is a live allocation
+        // from this allocator, `layout` describes its original size/alignment,
+        // and `new_size` is non-zero. Both mi_realloc variants preserve the
+        // min(old, new) prefix and return null on failure.
         unsafe {
             if layout.align() <= MI_MAX_ALIGN_SIZE {
                 mimalloc::mi_realloc(ptr.cast(), new_size)
@@ -1502,7 +1540,11 @@ impl String {
     #[inline]
     pub fn to_zig_string(&self) -> ZigString {
         match self.tag {
-            Tag::StaticZigString | Tag::ZigString => unsafe { self.value.zig_string },
+            Tag::StaticZigString | Tag::ZigString => {
+                // SAFETY: `tag` is `ZigString` or `StaticZigString` ⇒ `zig_string`
+                // is the active union field, initialized by the constructor.
+                unsafe { self.value.zig_string }
+            }
             Tag::WTFStringImpl => self.wtf_impl().to_zig_string(),
             _ => ZigString::EMPTY,
         }
@@ -1526,7 +1568,11 @@ impl String {
     pub fn is_8bit(&self) -> bool {
         match self.tag {
             Tag::WTFStringImpl => self.wtf_impl().is_8bit(),
-            Tag::ZigString => unsafe { !self.value.zig_string.is_16bit() },
+            Tag::ZigString => {
+                // SAFETY: `tag == ZigString` ⇒ `zig_string` is the active union
+                // field; `is_16bit` only reads the pointer tag bits (no deref).
+                unsafe { !self.value.zig_string.is_16bit() }
+            }
             _ => true,
         }
     }
@@ -1861,11 +1907,13 @@ macro_rules! bss_singleton {
 #[inline]
 pub fn bss_heap_init<T>(init_at: unsafe fn(*mut T)) -> NonNull<T> {
     let ptr = bss_lazy_bytes(size_of::<T>(), core::mem::align_of::<T>()).cast::<T>();
-    // SAFETY: ptr is a fresh, exclusively-owned, properly-aligned, all-zeros-on-read
+    // `ptr` is a fresh, exclusively-owned, properly-aligned, all-zeros-on-read
     // allocation; lives for process lifetime (singleton; never freed/unmapped,
     // matching Zig). `init_at` is therefore free to skip writing any field whose
     // all-zeros bit pattern is already a valid initial value (e.g. `OverflowList`'s
     // 32 KiB `[Option<Box<_>>; 4095]` array — `None` is the null niche).
+    // SAFETY: `ptr` is valid for writes of `size_of::<T>()` bytes, properly
+    // aligned, exclusively owned, and lives for the process lifetime.
     unsafe { init_at(ptr.as_ptr()) };
     ptr
 }
@@ -1997,6 +2045,9 @@ fn bss_mmap_noreserve(len: usize) -> *mut u8 {
     const MAP_FLAGS: libc::c_int = libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE;
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     const MAP_FLAGS: libc::c_int = libc::MAP_PRIVATE | libc::MAP_ANONYMOUS;
+    // SAFETY: `MAP_ANONYMOUS` ignores the fd (-1) and offset (0); `len` is
+    // non-zero (checked by caller); PROT_READ|WRITE is valid. On success the
+    // kernel owns the VMA; MAP_FAILED is checked immediately after.
     let p = unsafe {
         libc::mmap(
             core::ptr::null_mut(),
@@ -2446,6 +2497,8 @@ impl<ValueType> BSSListOverflowBlock<ValueType> {
         // https://github.com/ziglang/zig/issues/24313
         // Raw `ptr::write` — `*this` may be uninit; assignment would run drop glue
         // on garbage (UAF for `prev: Option<Box<..>>`).
+        // SAFETY: caller contract — `this` points to writable, properly-aligned
+        // storage; `addr_of_mut!` avoids forming a reference to uninit memory.
         unsafe {
             addr_of_mut!((*this).used).write(AtomicU16::new(0));
             addr_of_mut!((*this).prev).write(None);
@@ -2829,6 +2882,8 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
     /// `(ptr, len)` must describe a region returned from `append*` on this instance, point
     /// into our owned mutable backing storage, and have no other live borrow.
     pub unsafe fn editable_slice<'a>(ptr: *mut u8, len: usize) -> &'a mut [u8] {
+        // SAFETY: caller contract — `(ptr, len)` describes a region from `append*`,
+        // is mutable-provenance, and has no other live borrow (see `# Safety` doc).
         unsafe { core::slice::from_raw_parts_mut(ptr, len) }
     }
 
@@ -2890,11 +2945,12 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         // count-then-reserve path below.
         const STACK: usize = 512;
         let mut scratch = [MaybeUninit::<u8>::uninit(); STACK];
-        // SAFETY: `SliceCursor::write_str` only *writes* into `buf[at..end]`
+        // `SliceCursor::write_str` only *writes* into `buf[at..end]`
         // via `copy_from_slice` and never reads it, so forming `&mut [u8]` over
         // uninit bytes is sound here — every byte in `[..c.at]` is initialized
         // before being observed below. Same pattern as `do_append`'s
         // `backing_buf` slice formation.
+        // SAFETY: `scratch` is valid for STACK byte writes; no aliasing borrow.
         let mut c = crate::SliceCursor::new(unsafe {
             core::slice::from_raw_parts_mut(scratch.as_mut_ptr().cast::<u8>(), STACK)
         });
@@ -3013,12 +3069,13 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
             self.backing_buf_used += value_len as u64;
             let end = self.backing_buf_used as usize;
 
-            // SAFETY: `backing_buf` is a process-lifetime mapping of
-            // `COUNT*ITEM_LENGTH` writable bytes owned by this singleton; we
-            // hold `&mut self` so no other live borrow of the region exists.
-            // Forming `&mut [u8]` only over `[start..end]` — these bytes are
-            // about to be fully written (payload + trailing NUL), so no uninit
-            // byte is exposed through the reference.
+            // `backing_buf` is a process-lifetime mapping of `COUNT*ITEM_LENGTH`
+            // writable bytes owned by this singleton; we hold `&mut self` so no
+            // other live borrow of the region exists. Forming `&mut [u8]` only
+            // over `[start..end]` — these bytes are about to be fully written
+            // (payload + trailing NUL), so no uninit byte is exposed.
+            // SAFETY: `[start..end]` is within the owned `backing_buf` mapping;
+            // `&mut self` ensures exclusive access to this range.
             let dst: &mut [u8] = unsafe {
                 core::slice::from_raw_parts_mut(
                     self.backing_buf.as_ptr().cast::<u8>().add(start),
@@ -3118,11 +3175,13 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
     /// storage of `size_of::<Self>()` bytes that lives for `'static`.
     /// `backing_buf` is intentionally left uninitialized; only `[0..used]` is read.
     pub unsafe fn init_at(slot: *mut Self) {
-        // SAFETY: caller contract — `slot` is a valid, exclusive, aligned
-        // `*mut Self` in all-zeros storage from `bss_heap_init`. The 32 KiB
+        // caller contract: `slot` is a valid, exclusive, aligned `*mut Self`
+        // in all-zeros storage from `bss_heap_init`. The 32 KiB
         // `overflow_list.list.ptrs` array is already `[None; 4095]` (null
         // niche), so write only the three counters; `backing_buf` is
         // intentionally left uninitialized (Zig: `undefined`).
+        // SAFETY: `slot` is exclusively owned, properly-aligned, and valid for
+        // writes; `addr_of_mut!` avoids forming references to uninit fields.
         unsafe {
             addr_of_mut!((*slot).mutex).write(Mutex::new());
             addr_of_mut!((*slot).index).write(IndexMap::default());
@@ -3380,11 +3439,13 @@ impl<
                 if !index.is_overflow() {
                     let i = index.index() as usize;
                     debug_assert!(i < COUNT);
-                    // SAFETY: a non-sentinel non-overflow index was assigned by
-                    // `put` (which bumps `backing_buf_used`) and its key stored
-                    // by `put_key` at this slot before any reader could observe
-                    // the index — the slot is initialized. `key_list_slices` is
-                    // a process-lifetime mapping of `COUNT` slots.
+                    // Non-sentinel non-overflow index: assigned by `put` (bumps
+                    // `backing_buf_used`) and its key stored by `put_key` at
+                    // this slot before any reader sees the index — initialized.
+                    // `key_list_slices` is a process-lifetime mapping of `COUNT`
+                    // slots; `i < COUNT` is asserted above.
+                    // SAFETY: `i < COUNT` (debug-asserted); slot is initialized;
+                    // `key_list_slices` owns `COUNT` valid `&'static [u8]` entries.
                     Some(unsafe { *self.key_list_slices.cast::<&'static [u8]>().as_ptr().add(i) })
                 } else {
                     // TODO(port): see key_list_overflow note — Zig indexes `.items` here.

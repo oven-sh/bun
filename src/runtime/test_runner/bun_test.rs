@@ -494,10 +494,8 @@ impl BunTestRoot {
         // `destructOnExit`.
         for ptr in self.pending_then_refs.borrow_mut().drain(..) {
             // SAFETY: `ptr` was produced by `IntrusiveRc::into_raw` in
-            // `BunTest::run_test_callback`; it is live because the promise
-            // never settled (the settle path removes the entry before
-            // `deref()`). `RefPtr<T>` has no `Drop`, so explicitly `.deref()`
-            // to release the `+1` and destroy the box. Single-threaded.
+            // `BunTest::run_test_callback`; still live because the promise never
+            // settled (the settle path removes entries before `deref()`).
             unsafe { RefDataPtr::from_raw(ptr.cast_mut()) }.deref();
         }
     }

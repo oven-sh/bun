@@ -102,8 +102,10 @@ pub fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> 
                 // finished reading `entry_points` before invoking `on_fetch`, and this
                 // callback never returns (`Global::exit` below), so forming fresh `&mut`
                 // here is exclusive for the remainder of the process.
+                // SAFETY: cli is a live stack-local from the enclosing scope; exclusive (see above).
                 let cli = unsafe { &mut *this.cli };
                 cli.positionals = positionals.as_slice();
+                // SAFETY: ctx is a live stack-local from the enclosing scope; exclusive (see above).
                 let ctx = unsafe { &mut *this.ctx };
 
                 update_package_json_and_install_and_cli(ctx, this.subcommand, cli.clone())?;

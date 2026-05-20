@@ -105,6 +105,7 @@ fn intern_slow(name: &'static str) -> NonZeroU16 {
     let mut extra = EXTRA.write();
     // Double-checked: another thread may have inserted while we waited.
     if let Some(i) = extra.iter().position(|&s| s == name) {
+        // SAFETY: `SEED.len() + 1 + i >= 2` (SEED is non-empty, i ≥ 0); total ≤ u16::MAX.
         return unsafe { NonZeroU16::new_unchecked((SEED.len() + 1 + i) as u16) };
     }
     extra.push(name);
@@ -130,6 +131,7 @@ pub fn intern_cached(slot: &core::sync::atomic::AtomicU16, name: &'static str) -
 
 impl Error {
     // ── const handles into SEED (indices are load-bearing) ────────────────
+    // SAFETY: 1, 2, and 6 are non-zero and within the SEED table's fixed index range.
     pub const UNEXPECTED: Self = Self(unsafe { NonZeroU16::new_unchecked(1) });
     pub const OUT_OF_MEMORY: Self = Self(unsafe { NonZeroU16::new_unchecked(2) });
     pub const WRITE_FAILED: Self = Self(unsafe { NonZeroU16::new_unchecked(6) });
@@ -155,6 +157,7 @@ impl Error {
         {
             let extra = EXTRA.read();
             if let Some(i) = extra.iter().position(|&s| s == name) {
+                // SAFETY: `SEED.len() + 1 + i >= 2` and ≤ SEED.len() + extra.len() ≤ u16::MAX.
                 return Self(unsafe { NonZeroU16::new_unchecked((SEED.len() + 1 + i) as u16) });
             }
         }

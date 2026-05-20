@@ -112,6 +112,7 @@ pub fn install_hoisted_packages(
     // setup through the install loop) is a fresh child of `mgr_ptr` under
     // Stacked Borrows — `&mut *mgr_ptr` inside the block above popped the
     // line-77 reborrow's tag.
+    // SAFETY: mgr_ptr is the provenance root for PackageManager (live singleton); fresh reborrow after filter() completes.
     let this = unsafe { &mut *mgr_ptr };
 
     let _restore_buffers = scopeguard::guard(
@@ -241,6 +242,7 @@ pub fn install_hoisted_packages(
             bun_ptr::BackRef<Vec<DependencyID>>,
             bun_ptr::BackRef<Vec<crate::Dependency>>,
             bun_ptr::BackRef<Vec<u8>>,
+        // SAFETY: mgr_ptr is live; lockfile is Box-heap-owned; addr_of_mut projections are non-overlapping (see above).
         ) = unsafe {
             let lockfile_ptr: *mut crate::lockfile::Lockfile = &raw mut *(*mgr_ptr).lockfile;
             let buffers = core::ptr::addr_of_mut!((*lockfile_ptr).buffers);

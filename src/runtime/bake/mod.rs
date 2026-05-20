@@ -295,6 +295,8 @@ impl Framework {
         // arena lifetime so `BundleOptions<'a>` can borrow it for the bundle pass.
         let framework_view: *mut bun_bundler::bake_types::Framework =
             arena.alloc(self.as_bundler_view());
+        // SAFETY: `framework_view` points into `arena` which has the same lifetime
+        // as `BundleOptions<'a>`; the allocation is stable and non-null.
         out.options.framework = Some(unsafe { &*framework_view });
         out.options.inline_entrypoint_import_meta_main = true;
         if let Some(ignore) = bundler_options.ignore_dce_annotations {

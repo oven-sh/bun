@@ -977,6 +977,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     // (HTTP completed, so it IS init) so the inner
                     // `AsyncHTTP.{request,response}_headers: EntryList` don't
                     // leak per put/get cycle.
+                    // SAFETY: HTTP completed so `unsafe_http_client` is init; `net_ptr` is live.
                     unsafe {
                         (*net_ptr).unsafe_http_client.assume_init_drop();
                         (*manager_ptr).preallocated_network_tasks.put(net_ptr);
@@ -1068,6 +1069,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     // `unsafe_http_client` is `MaybeUninit` so `put()`'s drop
                     // skips it — drop manually so headers don't leak.
                     if !net_ptr.is_null() {
+                        // SAFETY: `net_ptr` is non-null and is the sole live handle; headers are init.
                         unsafe {
                             (*net_ptr).unsafe_http_client.assume_init_drop();
                             (*manager_ptr).preallocated_network_tasks.put(net_ptr);
@@ -1108,6 +1110,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             Task::Tag::Extract => unsafe {
                                 &(*task.request.extract.network).url_buf
                             },
+                            // SAFETY: `task.tag == LocalTarball` selects the active union arm.
                             Task::Tag::LocalTarball => unsafe {
                                 task.request.local_tarball.tarball.url.slice()
                             },
@@ -1889,6 +1892,7 @@ pub fn generate_network_task_for_tarball<'a>(
             t
         };
         let extract_task = enqueue::create_extract_task_for_streaming(this, tarball_ref, net_ptr);
+        // SAFETY: `net_ptr` is the sole live handle to this pool slot; no aliasing borrows remain.
         unsafe {
             (*net_ptr).streaming_extract_task = extract_task;
             (*net_ptr).tarball_stream = Some(bun_core::heap::take(TarballStream::init(

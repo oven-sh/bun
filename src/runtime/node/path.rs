@@ -3745,6 +3745,7 @@ macro_rules! export_path_host_fn {
                 // (Body kept in sync with the non-Windows arm below — bughunt
                 // changed the target signature to take a slice but only updated
                 // one cfg arm.)
+                // SAFETY: `args_ptr` / `args_len` come from C++ CallFrame; valid for the synchronous duration.
                 let args = unsafe { bun_core::ffi::slice(args_ptr, args_len as usize) };
                 crate::jsc::host_fn::to_js_host_call(
                     global,

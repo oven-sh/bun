@@ -232,11 +232,14 @@ pub mod os {
     pub unsafe fn take_environ() -> (*mut *mut c_char, usize) {
         // `&raw mut` (no intermediate `&mut`) — `static_mut_refs` is hard-denied
         // under rust_2024_compatibility, and we never need a borrow here.
+        // SAFETY: outer `unsafe fn` — single-threaded startup; raw pointer to static avoids &mut aliasing.
         unsafe { core::ptr::replace(&raw mut ENVIRON, (core::ptr::null_mut(), 0)) }
     }
     /// SAFETY: single-threaded startup only; `ptr` must be valid for `len`
     /// elements for the process lifetime (leaked allocation).
     pub unsafe fn set_environ(ptr: *mut *mut c_char, len: usize) {
+        // SAFETY: outer `unsafe fn` — single-threaded startup; `ptr` is valid for
+        // `len` elements for the process lifetime per caller contract.
         unsafe {
             core::ptr::write(&raw mut ENVIRON, (ptr, len));
         }
@@ -244,6 +247,8 @@ pub mod os {
     /// Borrowed view of the current envp slice (read side of `std.os.environ`).
     /// SAFETY: caller must not race with `set_environ`.
     pub unsafe fn environ() -> &'static [*mut c_char] {
+        // SAFETY: outer `unsafe fn` — caller guarantees no concurrent `set_environ`;
+        // if non-null, `p` points to `n` valid process-lifetime elements.
         unsafe {
             let (p, n) = core::ptr::read(&raw const ENVIRON);
             if p.is_null() {
@@ -409,6 +414,7 @@ pub mod vec {
         // already-written prefix stays in spare capacity and is *leaked* (not
         // dropped) — sound, and acceptable for the constant/`Default`/index
         // fills this helper targets.
+        // SAFETY: `reserve(n)` + loop above fully initialize `spare[..n]`; see comment above.
         unsafe { v.set_len(prev + n) };
     }
 
@@ -518,6 +524,8 @@ pub mod vec {
     /// slice, call [`commit_spare`]`(v, n)` to expose them.
     #[inline]
     pub unsafe fn spare_bytes_mut(v: &mut Vec<u8>) -> &mut [u8] {
+        // SAFETY: outer `unsafe fn` — `MaybeUninit<u8>` and `u8` have identical
+        // layout; the slice covers exactly `[len, capacity)` of `v`'s allocation.
         unsafe {
             let spare = v.spare_capacity_mut();
             // SAFETY: `MaybeUninit<u8>` and `u8` have identical layout; the slice
@@ -537,6 +545,8 @@ pub mod vec {
     /// Same as [`spare_bytes_mut`].
     #[inline]
     pub unsafe fn reserve_spare_bytes(v: &mut Vec<u8>, n: usize) -> &mut [u8] {
+        // SAFETY: outer `unsafe fn` — delegates to `spare_bytes_mut` after reserving;
+        // caller upholds the write-only contract on the returned uninitialized slice.
         unsafe {
             v.reserve(n);
             spare_bytes_mut(v)
@@ -568,6 +578,8 @@ pub mod vec {
     /// fully initialized (typically by the FFI/syscall that just returned `n`).
     #[inline]
     pub unsafe fn commit_spare(v: &mut Vec<u8>, n: usize) {
+        // SAFETY: outer `unsafe fn` — caller guarantees `n <= capacity - len` and
+        // that `v[len .. len+n]` has been fully initialized by the prior producer.
         unsafe {
             debug_assert!(n <= v.capacity() - v.len());
             v.set_len(v.len() + n);
@@ -593,6 +605,8 @@ pub mod vec {
         min_spare: usize,
         f: impl FnOnce(&mut [u8]) -> (usize, R),
     ) -> R {
+        // SAFETY: outer `unsafe fn` — caller upholds the write-only contract on
+        // the spare bytes passed to `f`, and ensures `bytes_written <= spare.len()`.
         unsafe {
             if min_spare > 0 {
                 v.reserve(min_spare);
@@ -1459,6 +1473,7 @@ pub(crate) mod strings_impl {
             libc::strncasecmp(a.as_ptr().cast(), b.as_ptr().cast(), a.len()) == 0
         }
         // Windows MSVC libc has no `strncasecmp`; `_strnicmp` is the equivalent.
+        // SAFETY: a and b are non-empty (asserted above); `_strnicmp` reads up to a.len() bytes from each.
         #[cfg(windows)]
         unsafe {
             unsafe extern "C" {
@@ -1859,6 +1874,7 @@ pub(crate) mod strings_impl {
         // `n_u16 * 2` readable bytes) into it as raw `u8`, then expose them as
         // initialized `u16` via `set_len`. No `&[u16]` is ever formed over the
         // possibly-misaligned source.
+        // SAFETY: see comment above — aligned Vec<u16> allocation, n_u16*2 bytes written then set_len.
         unsafe {
             core::ptr::copy_nonoverlapping(
                 le_bytes.as_ptr(),
@@ -3027,6 +3043,7 @@ pub mod ffi {
         // site bounds `H: Fn*` (fn items / capture-less closures), and those
         // are always inhabited — uninhabited ZSTs (`!`, `Infallible`) do not
         // implement the `Fn` traits and so cannot reach a real instantiation.
+        // SAFETY: `size_of::<H>() == 0` — see comment block above; zeroed is valid for ZSTs.
         unsafe { core::mem::zeroed() }
     }
 
@@ -3221,6 +3238,10 @@ pub extern "C" fn Bun__captureStackTrace(begin: usize, out: *mut usize, cap: usi
     if out.is_null() || cap == 0 {
         return 0;
     }
+    // SAFETY: `out` is non-null and `cap > 0` (checked above). `out` points to
+    // a caller-owned buffer of at least `cap` `usize`-sized slots. `backtrace`
+    // writes at most `cap` pointers; `ptr::copy` shifts them within the same
+    // buffer using valid in-bounds offsets.
     unsafe {
         // FreeBSD's libexecinfo backtrace() takes/returns size_t; glibc/macOS use int.
         #[cfg(any(

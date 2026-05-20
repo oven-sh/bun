@@ -265,6 +265,7 @@ impl WebSocketProxyTunnel {
         // from `wrapper` (`ref_count`, `ssl`, `sni_hostname`, `write_buffer`,
         // `socket`, …), so the `&mut SslWrapper` formed here — which covers only
         // the `wrapper` field bytes — is never aliased.
+        // SAFETY: see multi-line comment above; raw field projection, no aliasing.
         let wrapper_ptr = unsafe { ptr::addr_of_mut!((*this).wrapper) };
         if !initial_data.is_empty() {
             // SAFETY: deref of field projection; `this` is live.
@@ -447,6 +448,7 @@ impl WebSocketProxyTunnel {
         // `start`) holds a live `&mut SslWrapper` derived from `(*this).wrapper`, so
         // a whole-struct `&mut *this` here would alias it (Stacked Borrows UB).
         // Project to the disjoint `write_buffer`/`socket` fields only.
+        // SAFETY: see multi-line comment above; disjoint field projections only.
         let (write_buffer, socket) = unsafe {
             (
                 &mut *ptr::addr_of_mut!((*this).write_buffer),

@@ -742,6 +742,8 @@ impl ShellCpTask {
                 // PORT NOTE: reshaped for borrowck — read the raw `global`
                 // field instead of `vm.global()` so the `&mut VirtualMachine`
                 // passed below doesn't overlap a `&JSGlobalObject` borrow.
+                // SAFETY: `vm_ptr` points to a live VM (set at interpreter construction); `global`
+                // and `vm` reference disjoint data — no aliasing between the two borrows.
                 let (global, vm) = unsafe { (&*(*vm_ptr).global, &mut *vm_ptr) };
                 let _ = crate::node::fs::ShellAsyncCpTask::create_with_shell_task(
                     global,

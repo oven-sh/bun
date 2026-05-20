@@ -104,6 +104,7 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         // field, so `from_task_ptr` recovers the live heap `Self` parent,
         // exclusively owned by the work pool for this callback's duration.
         // `ctx` is read through the recovered backref in the same audited scope.
+        // SAFETY: see comment above — WorkPool fires callback with the exact task field; Self is exclusively owned.
         let (this, ctx) = unsafe {
             let this = Self::from_task_ptr(task);
             (this, (*this).ctx)
@@ -138,6 +139,7 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         // re-initializes it in place and returns the same address. Passing
         // `this` while holding `&mut *this` is sound because `from` only stores
         // the pointer (does not dereference it).
+        // SAFETY: see comment above — `this` is alive, called from Context::run on thread pool.
         let this_ref = unsafe { &mut *this };
         let event_loop = this_ref.event_loop;
         let task = std::ptr::from_mut(

@@ -3346,13 +3346,9 @@ pub fn set_data_store_override(p: *const bun_alloc::Arena) {
 pub fn data_store_dupe_str(bytes: &[u8]) -> &'static [u8] {
     let ov = DATA_STORE_OVERRIDE.get();
     if !ov.is_null() {
-        // SAFETY: override is installed by an RAII `ASTMemoryAllocator::Scope`
-        // that outlives this call, so `*ov` is a live `Arena`. The returned
-        // slice is borrowed from that arena; its lifetime is widened to
-        // `'static` per the `StoreStr` convention (arena ownership, bulk-freed
-        // on scope drop — callers must not hold it past that boundary). This is
-        // lifetime erasure, not a value cast, so no safe `bytemuck`/`as`
-        // equivalent exists.
+        // SAFETY: `ov` is installed by an RAII `ASTMemoryAllocator::Scope` that
+        // outlives this call; `*ov` is a live `Arena`; the returned slice is
+        // lifetime-erased to `'static` per the `StoreStr` convention.
         return unsafe {
             let dup: *const [u8] = (*ov).alloc_slice_copy(bytes);
             &*dup

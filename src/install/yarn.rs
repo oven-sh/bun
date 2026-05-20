@@ -1400,8 +1400,8 @@ pub fn migrate_yarn_lockfile<'a>(
     let final_deps_len = ((dependencies_buf.as_mut_ptr() as usize)
         - (dependencies_base_ptr as usize))
         / core::mem::size_of::<Dependency>();
+    // SAFETY: all elements in 0..final_deps_len were initialized in the loop above; capacity >= num_deps.
     unsafe {
-        // SAFETY: all elements in 0..final_deps_len initialized above; capacity >= num_deps
         this.buffers.dependencies.set_len(final_deps_len);
         this.buffers.resolutions.set_len(final_deps_len);
     }

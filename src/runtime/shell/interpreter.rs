@@ -476,6 +476,9 @@ impl Interpreter {
         let jsobjs_raw: &'a mut [bun_shell_parser::JSValueRaw] = {
             let len = jsobjs.len();
             let ptr = jsobjs.as_mut_ptr().cast::<bun_shell_parser::JSValueRaw>();
+            // SAFETY: `bun_jsc::JSValue` and `bun_shell_parser::JSValueRaw` are both
+            // `repr(transparent)` over `usize`; `ptr` and `len` come from `jsobjs`
+            // which is a valid, uniquely-owned slice, so the cast is sound.
             unsafe { core::slice::from_raw_parts_mut(ptr, len) }
         };
         *out_parser = Some(Parser::new(arena, lex_result, jsobjs_raw)?);
@@ -2850,6 +2853,8 @@ impl<P: OutputTaskVTable> OutputTask<P> {
     ) -> Yield {
         log!("OutputTask(0x{:x}) onIOWriterChunk", this as usize);
         // Zig derefs the SystemError; in Rust drop handles it.
+        // SAFETY: outer `unsafe fn` forwards the caller's contract; `this` is a
+        // live heap-allocated `Self` as required by `next`.
         unsafe { Self::next(this, interp) }
     }
 
@@ -3051,11 +3056,9 @@ impl ShellTask {
     pub unsafe fn on_finish<C: ShellTaskCtx>(ctx: *mut C) {
         use bun_event_loop::{ConcurrentTask::AutoDeinit, EventLoopTask, EventLoopTaskPtr};
         log!("ShellTask onFinish");
-        // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
-        // Stay on raw pointers: once `enqueue_task_concurrent` returns, the
-        // main thread may already be touching `*this`, so no live `&mut`
-        // into it may span that call. `this` is live and exclusively owned by
-        // this thread until the enqueue below.
+        // SAFETY: `ctx` embeds `ShellTask` at `C::TASK_OFFSET` (caller contract);
+        // `this` is live and exclusively owned by this thread until `enqueue_task_concurrent`.
+        // Raw pointers are used so no live `&mut` spans the enqueue call.
         let (event_loop, task_ptr) = unsafe {
             let this = ctx.cast::<u8>().add(C::TASK_OFFSET).cast::<ShellTask>();
             let event_loop = (*this).event_loop;

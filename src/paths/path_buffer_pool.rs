@@ -43,14 +43,9 @@ impl PoolStorage for PathBuffer {
     }
     #[inline]
     fn new_boxed() -> Box<Self> {
-        // SAFETY: `PathBuffer` is `#[repr(transparent)]` over `[u8; N]`;
-        // `new_zeroed` writes every byte to `0`, which is a valid `u8`, so the
-        // value is fully initialized before `assume_init`. We use `new_zeroed`
-        // rather than `new_uninit` because materializing a `Box<T>` whose bytes
-        // were never written is UB even for integer arrays. This path runs only
-        // on pool cache miss (≤ once per slot per thread); `alloc_zeroed` for a
-        // 64 KB heap block is typically satisfied by fresh OS-zeroed pages, so
-        // there is no hot-path memset cost.
+        // SAFETY: `PathBuffer` is `#[repr(transparent)]` over `[u8; N]`; every
+        // byte is zeroed by `new_zeroed` which is a valid `u8` bit pattern, so
+        // the value is fully initialized before `assume_init` is called.
         unsafe { Box::<Self>::new_zeroed().assume_init() }
     }
 }

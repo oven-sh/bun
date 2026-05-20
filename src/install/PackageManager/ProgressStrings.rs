@@ -116,6 +116,7 @@ impl PackageManager {
         // singleton; `progress_name_buf` is an inline field of that same
         // singleton, so erasing the slice lifetime to `'static` matches Zig's
         // raw-pointer aliasing (`node.name = this.progress_name_buf[..]`).
+        // SAFETY: see comment above — node and progress_name_buf are owned by the PackageManager singleton.
         unsafe {
             let len = if Output::enable_ansi_colors_stderr() {
                 if IS_FIRST {

@@ -251,6 +251,7 @@ unsafe impl<const N: usize, A: Allocator> Allocator for &StackFallback<N, A> {
             // `newp` came from `bump`, `is_last(ptr,..)` was false ⇒
             // `ptr+old.size() ≤ prev_cur < newp` ⇒ disjoint. If `newp` came from
             // `fallback`, disjoint by allocation.
+            // SAFETY: `ptr`/`newp` are non-overlapping (see above); both valid for `old.size()` bytes.
             unsafe {
                 ptr::copy_nonoverlapping(ptr.as_ptr(), newp.as_ptr().cast::<u8>(), old.size());
                 self.deallocate(ptr, old);
@@ -364,6 +365,7 @@ unsafe impl Allocator for ArenaPtr {
         // free path; `&MimallocArena::deallocate` is `mi_free` (heap-agnostic),
         // so the `Some` arm is correct even if `ptr` was allocated under a
         // different arena and later grown here.
+        // SAFETY: outer `unsafe fn deallocate`; forwarding `ptr`/`layout` to matching arm.
         unsafe {
             match self.arena_ref() {
                 Some(a) => a.deallocate(ptr, layout),
@@ -533,6 +535,7 @@ mod tests {
         }
         unsafe fn deallocate(&self, p: NonNull<u8>, l: Layout) {
             self.deallocs.set(self.deallocs.get() + 1);
+            // SAFETY: outer `unsafe fn deallocate` forwards `p`/`l` to `Global` unchanged.
             unsafe { Global.deallocate(p, l) }
         }
     }
@@ -562,6 +565,7 @@ mod tests {
         let q = a.allocate(Layout::from_size_align(16, 1).unwrap()).unwrap();
         assert!(!sf.owns(q.cast::<u8>().as_ptr()));
         assert_eq!(sf.fallback().allocs.get(), 1);
+        // SAFETY: `q` was returned by `a.allocate` with the same layout; now freeing it.
         unsafe { a.deallocate(q.cast(), Layout::from_size_align(16, 1).unwrap()) };
         assert_eq!(sf.fallback().deallocs.get(), 1);
     }
@@ -575,9 +579,11 @@ mod tests {
         let q = a.allocate(l8).unwrap().cast::<u8>();
         assert_eq!(sf.cur.get(), 16);
         // freeing `p` (non-last) is a no-op leak bounded by N
+        // SAFETY: `p` was just allocated by `a` with layout `l8`; it is still live.
         unsafe { a.deallocate(p, l8) };
         assert_eq!(sf.cur.get(), 16);
         // freeing `q` (last) rewinds
+        // SAFETY: `q` was just allocated by `a` with layout `l8` and is still live.
         unsafe { a.deallocate(q, l8) };
         assert_eq!(sf.cur.get(), 8);
         // neither touched the fallback
@@ -591,6 +597,7 @@ mod tests {
         let old = Layout::from_size_align(8, 1).unwrap();
         let new = Layout::from_size_align(24, 1).unwrap();
         let p = a.allocate(old).unwrap().cast::<u8>();
+        // SAFETY: `p` was just allocated by `a` with layout `old`; `new` is larger and still fits.
         let g = unsafe { a.grow(p, old, new) }.unwrap();
         // last alloc → grew in place: same address, cursor advanced
         assert_eq!(g.cast::<u8>().as_ptr(), p.as_ptr());
@@ -606,12 +613,16 @@ mod tests {
         let new = Layout::from_size_align(48, 1).unwrap();
         let p = a.allocate(old).unwrap().cast::<u8>();
         // write a pattern so we can verify the prefix copy
+        // SAFETY: `p` is the non-null pointer just allocated by `a` with 16 bytes capacity.
         unsafe { ptr::write_bytes(p.as_ptr(), 0xAB, 16) };
+        // SAFETY: `p` was just allocated by `a` with `old`; growing to `new` (larger); initialized via `write_bytes` above.
         let g = unsafe { a.grow(p, old, new) }.unwrap();
         assert!(!sf.owns(g.cast::<u8>().as_ptr()));
         assert_eq!(sf.fallback().allocs.get(), 1);
+        // SAFETY: `g` is a valid allocation of ≥16 bytes returned by `a.grow`; still live.
         let bytes = unsafe { core::slice::from_raw_parts(g.cast::<u8>().as_ptr(), 16) };
         assert!(bytes.iter().all(|&b| b == 0xAB));
+        // SAFETY: `g` was returned by `a.grow` with layout `new`; now deallocating it.
         unsafe { a.deallocate(g.cast(), new) };
     }
 
@@ -635,6 +646,7 @@ mod tests {
             .cast::<u8>();
         assert_eq!(q.as_ptr().addr() % 256, 0);
         assert!(!sf.owns(q.as_ptr()));
+        // SAFETY: `q` was just allocated by `a` via the fallback with the same layout.
         unsafe { a.deallocate(q, Layout::from_size_align(8, 256).unwrap()) };
     }
 
@@ -646,6 +658,7 @@ mod tests {
         let new = Layout::from_size_align(8, 1).unwrap();
         let p = a.allocate(old).unwrap().cast::<u8>();
         assert_eq!(sf.cur.get(), 32);
+        // SAFETY: `p` was just allocated by `a` with `old`; the contract for `shrink` is satisfied.
         let s = unsafe { a.shrink(p, old, new) }.unwrap();
         assert_eq!(s.cast::<u8>().as_ptr(), p.as_ptr());
         assert_eq!(sf.cur.get(), 8);

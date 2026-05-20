@@ -112,6 +112,7 @@ trait CronJobBase: Sized {
             );
             *s.err_msg_mut() = Some(msg);
         }
+        // SAFETY: outer `unsafe fn` — `this` is valid; `maybe_finished` may free it.
         unsafe { Self::maybe_finished(this) };
     }
 
@@ -193,6 +194,7 @@ impl CronJobBase for CronRegisterJob {
         &mut self.exit_status
     }
     unsafe fn maybe_finished(this: *mut Self) {
+        // SAFETY: outer `unsafe fn` propagates the raw-ptr-receiver contract to `CronRegisterJob::maybe_finished`.
         unsafe { CronRegisterJob::maybe_finished(this) }
     }
 }
@@ -222,6 +224,7 @@ impl CronRegisterJob {
             }
         }
         if s.err_msg.is_some() {
+            // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
             return unsafe { Self::finish(this) };
         }
         let Some(status) = s.exit_status.take() else {
@@ -265,6 +268,7 @@ impl CronRegisterJob {
                                  To fix this, either run Bun as a regular user account, or create the scheduled task manually with: \
                                  schtasks /create /xml <file> /tn <name> /ru SYSTEM /f"
                             ));
+                            // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
                             return unsafe { Self::finish(this) };
                         }
                     }
@@ -273,12 +277,14 @@ impl CronRegisterJob {
                     } else {
                         s.set_err(format_args!("Process exited with code {}", exited.code));
                     }
+                    // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
                     return unsafe { Self::finish(this) };
                 }
             }
             Status::Signaled(sig) => {
                 if s.state != RegisterState::BootingOut {
                     s.set_err(format_args!("Process killed by signal {}", sig as i32));
+                    // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
                     return unsafe { Self::finish(this) };
                 }
             }
@@ -287,10 +293,12 @@ impl CronRegisterJob {
                     "Process error: {}",
                     <&'static str>::from(err.get_errno())
                 ));
+                // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
                 return unsafe { Self::finish(this) };
             }
             Status::Running => return,
         }
+        // SAFETY: outer `unsafe fn` — `this` is valid; `advance_state` may consume it.
         unsafe { Self::advance_state(this) };
     }
 
@@ -301,11 +309,15 @@ impl CronRegisterJob {
         #[cfg(target_os = "macos")]
         {
             match s.state {
+                // SAFETY: outer `unsafe fn` — `this` is valid; callee may consume it.
                 RegisterState::WritingPlist => unsafe { Self::spawn_bootout(this) },
+                // SAFETY: outer `unsafe fn` — `this` is valid; callee may consume it.
                 RegisterState::BootingOut => unsafe { Self::spawn_bootstrap(this) },
+                // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
                 RegisterState::Bootstrapping => unsafe { Self::finish(this) },
                 _ => {
                     s.set_err(format_args!("Unexpected state"));
+                    // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
                     unsafe { Self::finish(this) };
                 }
             }
@@ -313,10 +325,13 @@ impl CronRegisterJob {
         #[cfg(not(target_os = "macos"))]
         {
             match s.state {
+                // SAFETY: outer `unsafe fn` — `this` is valid; callee may consume it.
                 RegisterState::ReadingCrontab => unsafe { Self::process_crontab_and_install(this) },
+                // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
                 RegisterState::InstallingCrontab => unsafe { Self::finish(this) },
                 _ => {
                     s.set_err(format_args!("Unexpected state"));
+                    // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
                     unsafe { Self::finish(this) };
                 }
             }
@@ -363,6 +378,7 @@ impl CronRegisterJob {
         stdin_opt: spawn::Stdio,
         stdout_opt: spawn::Stdio,
     ) {
+        // SAFETY: outer `unsafe fn` propagates the raw-ptr-receiver contract to `spawn_cmd_generic`.
         unsafe { spawn_cmd_generic(this, argv, stdin_opt, stdout_opt) };
     }
 
@@ -378,10 +394,12 @@ impl CronRegisterJob {
         s.stdout_reader.set_parent(this.cast());
         let Some(crontab_path) = find_crontab() else {
             s.set_err(format_args!("crontab not found in PATH"));
+            // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
             return unsafe { Self::finish(this) };
         };
         let mut argv: [*const c_char; 3] =
             [crontab_path, b"-l\0".as_ptr().cast(), core::ptr::null()];
+        // SAFETY: outer `unsafe fn` — `this` is valid; `spawn_cmd` may consume it on error.
         unsafe { Self::spawn_cmd(this, &mut argv, spawn::Stdio::Ignore, spawn::Stdio::Buffer) };
     }
 
@@ -394,6 +412,7 @@ impl CronRegisterJob {
 
         if filter_crontab(existing_content, s.title.as_bytes(), &mut result).is_err() {
             s.set_err(format_args!("Out of memory building crontab"));
+            // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
             return unsafe { Self::finish(this) };
         }
 
@@ -410,6 +429,7 @@ impl CronRegisterJob {
         .is_err()
         {
             s.set_err(format_args!("Out of memory"));
+            // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
             return unsafe { Self::finish(this) };
         }
         result.extend_from_slice(&new_entry);
@@ -418,6 +438,7 @@ impl CronRegisterJob {
             Ok(p) => p,
             Err(_) => {
                 s.set_err(format_args!("Out of memory"));
+                // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
                 return unsafe { Self::finish(this) };
             }
         };
@@ -433,12 +454,14 @@ impl CronRegisterJob {
             Ok(f) => f,
             Err(_) => {
                 s.set_err(format_args!("Failed to create temp file"));
+                // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
                 return unsafe { Self::finish(this) };
             }
         };
         if file.write_all(&result).is_err() {
             let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
             s.set_err(format_args!("Failed to write temp file"));
+            // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
             return unsafe { Self::finish(this) };
         }
         let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
@@ -448,9 +471,11 @@ impl CronRegisterJob {
         s.stdout_reader = OutputReader::init::<CronRegisterJob>();
         let Some(crontab_path) = find_crontab() else {
             s.set_err(format_args!("crontab not found in PATH"));
+            // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
             return unsafe { Self::finish(this) };
         };
         let mut argv: [*const c_char; 3] = [crontab_path, tmp_path_ptr.cast(), core::ptr::null()];
+        // SAFETY: outer `unsafe fn` — `this` is valid; `spawn_cmd` may consume it on error.
         unsafe { Self::spawn_cmd(this, &mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore) };
     }
 
@@ -466,12 +491,14 @@ impl CronRegisterJob {
             Ok(x) => x,
             Err(_) => {
                 s.set_err(format_args!("Invalid cron expression"));
+                // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
                 return unsafe { Self::finish(this) };
             }
         };
 
         let Some(home) = env_var::HOME.get() else {
             s.set_err(format_args!("HOME environment variable not set"));
+            // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
             return unsafe { Self::finish(this) };
         };
 
@@ -485,6 +512,7 @@ impl CronRegisterJob {
             s.set_err(format_args!(
                 "Failed to create ~/Library/LaunchAgents directory"
             ));
+            // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
             return unsafe { Self::finish(this) };
         }
 
@@ -496,6 +524,7 @@ impl CronRegisterJob {
             Ok(p) => p,
             Err(_) => {
                 s.set_err(format_args!("Out of memory"));
+                // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
                 return unsafe { Self::finish(this) };
             }
         };
@@ -508,6 +537,7 @@ impl CronRegisterJob {
                     Ok(v) => v,
                     Err(_) => {
                         s.set_err(format_args!("Out of memory"));
+                        // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
                         return unsafe { Self::finish(this) };
                     }
                 }
@@ -552,6 +582,7 @@ impl CronRegisterJob {
         .is_err()
         {
             s.set_err(format_args!("Out of memory"));
+            // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
             return unsafe { Self::finish(this) };
         }
 
@@ -564,16 +595,19 @@ impl CronRegisterJob {
             Ok(f) => f,
             Err(_) => {
                 s.set_err(format_args!("Failed to create plist file"));
+                // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
                 return unsafe { Self::finish(this) };
             }
         };
         if file.write_all(&plist).is_err() {
             let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
             s.set_err(format_args!("Failed to write plist"));
+            // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
             return unsafe { Self::finish(this) };
         }
         let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
 
+        // SAFETY: outer `unsafe fn` — `this` is valid; `spawn_bootout` may consume it.
         unsafe { Self::spawn_bootout(this) };
     }
 
@@ -590,6 +624,7 @@ impl CronRegisterJob {
             Ok(v) => v,
             Err(_) => {
                 s.set_err(format_args!("Out of memory"));
+                // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
                 return unsafe { Self::finish(this) };
             }
         };
@@ -599,6 +634,7 @@ impl CronRegisterJob {
             uid_str.as_ptr().cast(),
             core::ptr::null(),
         ];
+        // SAFETY: outer `unsafe fn` — `this` is valid; `spawn_cmd` may consume it on error.
         unsafe { Self::spawn_cmd(this, &mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore) };
         drop(uid_str);
     }
@@ -610,12 +646,14 @@ impl CronRegisterJob {
         s.state = RegisterState::Bootstrapping;
         let Some(plist_path) = s.tmp_path.take() else {
             s.set_err(format_args!("No plist path"));
+            // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
             return unsafe { Self::finish(this) };
         };
         let uid_str = match alloc_print_z(format_args!("gui/{}", get_uid())) {
             Ok(v) => v,
             Err(_) => {
                 s.set_err(format_args!("Out of memory"));
+                // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
                 return unsafe { Self::finish(this) };
             }
         };
@@ -627,6 +665,7 @@ impl CronRegisterJob {
             core::ptr::null(),
         ];
         // tmp_path already cleared via take() — don't delete the installed plist
+        // SAFETY: outer `unsafe fn` — `this` is valid; `spawn_cmd` may consume it on error.
         unsafe { Self::spawn_cmd(this, &mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore) };
         drop(uid_str);
         drop(plist_path);
@@ -767,10 +806,14 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         CronRegisterJob::start_mac(job)
     };
     #[cfg(windows)]
+    // SAFETY: `job` is the freshly-leaked Box; `start_*` consumes it on
+    // synchronous failure or hands it to the event loop on success.
     unsafe {
         CronRegisterJob::start_windows(job)
     };
     #[cfg(all(not(target_os = "macos"), not(windows)))]
+    // SAFETY: `job` is the freshly-leaked Box; `start_*` consumes it on
+    // synchronous failure or hands it to the event loop on success.
     unsafe {
         CronRegisterJob::start_linux(job)
     };
@@ -794,6 +837,7 @@ impl CronRegisterJob {
             Ok(v) => v,
             Err(_) => {
                 s.set_err(format_args!("Out of memory"));
+                // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
                 return unsafe { Self::finish(this) };
             }
         };
@@ -814,6 +858,7 @@ impl CronRegisterJob {
                 } else {
                     s.set_err(format_args!("Failed to build task XML"));
                 }
+                // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
                 return unsafe { Self::finish(this) };
             }
         };
@@ -822,6 +867,7 @@ impl CronRegisterJob {
             Ok(p) => p,
             Err(_) => {
                 s.set_err(format_args!("Out of memory"));
+                // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
                 return unsafe { Self::finish(this) };
             }
         };
@@ -837,12 +883,14 @@ impl CronRegisterJob {
             Ok(f) => f,
             Err(_) => {
                 s.set_err(format_args!("Failed to create temp XML file"));
+                // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
                 return unsafe { Self::finish(this) };
             }
         };
         if file.write_all(&xml).is_err() {
             let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
             s.set_err(format_args!("Failed to write temp XML file"));
+            // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
             return unsafe { Self::finish(this) };
         }
         let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
@@ -858,6 +906,7 @@ impl CronRegisterJob {
             b"/f\0".as_ptr().cast(),
             core::ptr::null(),
         ];
+        // SAFETY: outer `unsafe fn` — `this` is valid; `spawn_cmd` may consume it on error.
         unsafe { Self::spawn_cmd(this, &mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore) };
         drop(task_name);
     }
@@ -943,6 +992,7 @@ impl CronJobBase for CronRemoveJob {
         &mut self.exit_status
     }
     unsafe fn maybe_finished(this: *mut Self) {
+        // SAFETY: outer `unsafe fn` propagates the raw-ptr-receiver contract to `CronRemoveJob::maybe_finished`.
         unsafe { CronRemoveJob::maybe_finished(this) }
     }
 }
@@ -972,6 +1022,7 @@ impl CronRemoveJob {
             }
         }
         if s.err_msg.is_some() {
+            // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
             return unsafe { Self::finish(this) };
         }
         let Some(status) = s.exit_status.take() else {
@@ -1003,12 +1054,14 @@ impl CronRemoveJob {
                     } else {
                         s.set_err(format_args!("Process exited with code {}", exited.code));
                     }
+                    // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
                     return unsafe { Self::finish(this) };
                 }
             }
             Status::Signaled(sig) => {
                 if s.state != RemoveState::BootingOut {
                     s.set_err(format_args!("Process killed by signal {}", sig as i32));
+                    // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
                     return unsafe { Self::finish(this) };
                 }
             }
@@ -1017,10 +1070,12 @@ impl CronRemoveJob {
                     "Process error: {}",
                     <&'static str>::from(err.get_errno())
                 ));
+                // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
                 return unsafe { Self::finish(this) };
             }
             Status::Running => return,
         }
+        // SAFETY: outer `unsafe fn` — `this` is valid; `advance_state` may consume it.
         unsafe { Self::advance_state(this) };
     }
 
@@ -1034,6 +1089,7 @@ impl CronRemoveJob {
                 RemoveState::BootingOut => {
                     let Some(home) = env_var::HOME.get() else {
                         s.set_err(format_args!("HOME not set"));
+                        // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
                         return unsafe { Self::finish(this) };
                     };
                     if let Ok(plist_path) = alloc_print_z(format_args!(
@@ -1044,12 +1100,15 @@ impl CronRemoveJob {
                         let _ = sys::unlink(&plist_path);
                     } else {
                         s.set_err(format_args!("Out of memory"));
+                        // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
                         return unsafe { Self::finish(this) };
                     }
+                    // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
                     unsafe { Self::finish(this) };
                 }
                 _ => {
                     s.set_err(format_args!("Unexpected state"));
+                    // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
                     unsafe { Self::finish(this) };
                 }
             }
@@ -1057,10 +1116,13 @@ impl CronRemoveJob {
         #[cfg(not(target_os = "macos"))]
         {
             match s.state {
+                // SAFETY: outer `unsafe fn` — `this` is valid; callee may consume it.
                 RemoveState::ReadingCrontab => unsafe { Self::remove_crontab_entry(this) },
+                // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
                 RemoveState::InstallingCrontab => unsafe { Self::finish(this) },
                 _ => {
                     s.set_err(format_args!("Unexpected state"));
+                    // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
                     unsafe { Self::finish(this) };
                 }
             }
@@ -1107,6 +1169,7 @@ impl CronRemoveJob {
         stdin_opt: spawn::Stdio,
         stdout_opt: spawn::Stdio,
     ) {
+        // SAFETY: outer `unsafe fn` propagates the raw-ptr-receiver contract to `spawn_cmd_generic`.
         unsafe { spawn_cmd_generic(this, argv, stdin_opt, stdout_opt) };
     }
 
@@ -1120,10 +1183,12 @@ impl CronRemoveJob {
         s.stdout_reader.set_parent(this.cast());
         let Some(crontab_path) = find_crontab() else {
             s.set_err(format_args!("crontab not found in PATH"));
+            // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
             return unsafe { Self::finish(this) };
         };
         let mut argv: [*const c_char; 3] =
             [crontab_path, b"-l\0".as_ptr().cast(), core::ptr::null()];
+        // SAFETY: outer `unsafe fn` — `this` is valid; `spawn_cmd` may consume it on error.
         unsafe { Self::spawn_cmd(this, &mut argv, spawn::Stdio::Ignore, spawn::Stdio::Buffer) };
     }
 
@@ -1136,6 +1201,7 @@ impl CronRemoveJob {
 
         if filter_crontab(existing_content, s.title.as_bytes(), &mut result).is_err() {
             s.set_err(format_args!("Out of memory"));
+            // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
             return unsafe { Self::finish(this) };
         }
 
@@ -1143,6 +1209,7 @@ impl CronRemoveJob {
             Ok(p) => p,
             Err(_) => {
                 s.set_err(format_args!("Out of memory"));
+                // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
                 return unsafe { Self::finish(this) };
             }
         };
@@ -1158,12 +1225,14 @@ impl CronRemoveJob {
             Ok(f) => f,
             Err(_) => {
                 s.set_err(format_args!("Failed to create temp file"));
+                // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
                 return unsafe { Self::finish(this) };
             }
         };
         if file.write_all(&result).is_err() {
             let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
             s.set_err(format_args!("Failed to write temp file"));
+            // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
             return unsafe { Self::finish(this) };
         }
         let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
@@ -1172,9 +1241,11 @@ impl CronRemoveJob {
         s.stdout_reader = OutputReader::init::<CronRemoveJob>();
         let Some(crontab_path) = find_crontab() else {
             s.set_err(format_args!("crontab not found in PATH"));
+            // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
             return unsafe { Self::finish(this) };
         };
         let mut argv: [*const c_char; 3] = [crontab_path, tmp_path_ptr.cast(), core::ptr::null()];
+        // SAFETY: outer `unsafe fn` — `this` is valid; `spawn_cmd` may consume it on error.
         unsafe { Self::spawn_cmd(this, &mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore) };
     }
 
@@ -1191,6 +1262,7 @@ impl CronRemoveJob {
             Ok(v) => v,
             Err(_) => {
                 s.set_err(format_args!("Out of memory"));
+                // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
                 return unsafe { Self::finish(this) };
             }
         };
@@ -1200,6 +1272,7 @@ impl CronRemoveJob {
             uid_str.as_ptr().cast(),
             core::ptr::null(),
         ];
+        // SAFETY: outer `unsafe fn` — `this` is valid; `spawn_cmd` may consume it on error.
         unsafe { Self::spawn_cmd(this, &mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore) };
         drop(uid_str);
     }
@@ -1249,14 +1322,20 @@ pub fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
     // SAFETY: `job` is the freshly-leaked Box; `start_*` consumes it on
     // synchronous failure or hands it to the event loop on success.
     #[cfg(target_os = "macos")]
+    // SAFETY: `job` is the freshly-leaked Box; `start_*` consumes it on
+    // synchronous failure or hands it to the event loop on success.
     unsafe {
         CronRemoveJob::start_mac(job)
     };
     #[cfg(windows)]
+    // SAFETY: `job` is the freshly-leaked Box; `start_*` consumes it on
+    // synchronous failure or hands it to the event loop on success.
     unsafe {
         CronRemoveJob::start_windows(job)
     };
     #[cfg(all(not(target_os = "macos"), not(windows)))]
+    // SAFETY: `job` is the freshly-leaked Box; `start_*` consumes it on
+    // synchronous failure or hands it to the event loop on success.
     unsafe {
         CronRemoveJob::start_linux(job)
     };
@@ -1276,6 +1355,7 @@ impl CronRemoveJob {
             Ok(v) => v,
             Err(_) => {
                 s.set_err(format_args!("Out of memory"));
+                // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `finish` consumes it.
                 return unsafe { Self::finish(this) };
             }
         };
@@ -1287,6 +1367,7 @@ impl CronRemoveJob {
             b"/f\0".as_ptr().cast(),
             core::ptr::null(),
         ];
+        // SAFETY: outer `unsafe fn` — `this` is valid; `spawn_cmd` may consume it on error.
         unsafe { Self::spawn_cmd(this, &mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore) };
         drop(task_name);
     }
@@ -1371,9 +1452,11 @@ impl CronJob {
     /// whose generated trait `destroy` upholds the sole-owner contract.
     fn destroy_impl(this: *mut Self) {
         // deinit: this_value.deinit() then destroy.
-        // SAFETY: last ref; nobody else holds a pointer.
         // PORT NOTE: `JsRef::deinit()` was dropped — Strong's Drop on
         // reassignment handles teardown (JSRef.rs trailer).
+        // SAFETY: refcount reached zero — `this` is the sole live pointer to
+        // the Box-allocated CronJob; deref of `(*this)` is valid, and
+        // `heap::take` consumes the allocation.
         unsafe {
             (*this).this_value.set(JsRef::empty());
             drop(bun_core::heap::take(this));
@@ -1418,6 +1501,7 @@ impl CronJob {
         // `as_promise_ptr` / `from_timer_ptr`, with refcount > 0 for the
         // returned borrow's duration. All mutation is interior, so a shared
         // `&Self` is sound even across JS re-entry.
+        // SAFETY: (see above) `this` is the live heap allocation with refcount > 0.
         unsafe { &*this }
     }
 
@@ -1836,6 +1920,9 @@ bun_jsc::jsc_host_abi! {
         global: *mut JSGlobalObject,
         frame: *mut CallFrame,
     ) -> JSValue {
+        // SAFETY: JSC C ABI — `global` and `frame` are valid non-null pointers
+        // provided by the engine on the JS thread; the borrows last only for
+        // this call.
         let (global, frame) = unsafe { (&*global, &*frame) };
         jsc::host_fn::to_js_host_fn_result(global, on_promise_resolve(global, frame))
     }
@@ -1846,6 +1933,9 @@ bun_jsc::jsc_host_abi! {
         global: *mut JSGlobalObject,
         frame: *mut CallFrame,
     ) -> JSValue {
+        // SAFETY: JSC C ABI — `global` and `frame` are valid non-null pointers
+        // provided by the engine on the JS thread; the borrows last only for
+        // this call.
         let (global, frame) = unsafe { (&*global, &*frame) };
         jsc::host_fn::to_js_host_fn_result(global, on_promise_reject(global, frame))
     }
@@ -2005,6 +2095,7 @@ impl SpawnCmdTarget for CronRegisterJob {
         CronRegisterJob::set_err(self, args)
     }
     unsafe fn finish(this: *mut Self) {
+        // SAFETY: outer `unsafe fn` propagates the sole-owner contract to `CronRegisterJob::finish`.
         unsafe { CronRegisterJob::finish(this) }
     }
     fn process_slot(&mut self) -> &mut Option<*mut Process> {
@@ -2026,6 +2117,7 @@ impl SpawnCmdTarget for CronRemoveJob {
         CronRemoveJob::set_err(self, args)
     }
     unsafe fn finish(this: *mut Self) {
+        // SAFETY: outer `unsafe fn` propagates the sole-owner contract to `CronRemoveJob::finish`.
         unsafe { CronRemoveJob::finish(this) }
     }
     fn process_slot(&mut self) -> &mut Option<*mut Process> {
@@ -2082,6 +2174,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
                     "Could not find '{}' in PATH",
                     bstr::BStr::new(argv0)
                 ));
+                // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `T::finish` consumes it.
                 return unsafe { T::finish(this) };
             }
         }
@@ -2107,6 +2200,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
             }
             Err(_) => {
                 s.set_err(format_args!("Failed to create environment block"));
+                // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `T::finish` consumes it.
                 return unsafe { T::finish(this) };
             }
         }
@@ -2168,12 +2262,14 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
                 "Failed to spawn process: {}",
                 bstr::BStr::new(err.name())
             ));
+            // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `T::finish` consumes it.
             return unsafe { T::finish(this) };
         }
         Err(e) => {
             #[cfg(windows)]
             spawn_options.stderr.deinit();
             s.set_err(format_args!("Failed to spawn process: {}", e.name()));
+            // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `T::finish` consumes it.
             return unsafe { T::finish(this) };
         }
     };
@@ -2199,6 +2295,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
                 }
                 if s.stdout_reader().start(stdout, true).is_err() {
                     s.set_err(format_args!("Failed to start reading stdout"));
+                    // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `T::finish` consumes it.
                     return unsafe { T::finish(this) };
                 }
                 if let Some(p) = s.stdout_reader().handle.get_poll() {
@@ -2229,6 +2326,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
             *s.remaining_fds() += 1;
             if s.stderr_reader().start_with_current_pipe().is_err() {
                 s.set_err(format_args!("Failed to start reading stderr"));
+                // SAFETY: outer `unsafe fn` — `this` is the Box-allocated job; `T::finish` consumes it.
                 return unsafe { T::finish(this) };
             }
         }

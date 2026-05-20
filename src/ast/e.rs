@@ -1421,6 +1421,7 @@ impl EString {
         // `len/2` u16s; the lying-length encoding is load-bearing for `len()`/
         // `javascript_length()`/`has_prefix_comptime()` and changing it is a
         // cross-crate refactor (see TODO above).
+        // SAFETY: u16-aligned ptr from init_utf16; len is the u16 element count (see above).
         unsafe { core::slice::from_raw_parts(self.data.as_ptr().cast::<u16>(), self.data.len()) }
     }
     /// Const constructor for `'static` literals (Prefill globals).

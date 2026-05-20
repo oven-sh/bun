@@ -1347,6 +1347,7 @@ impl<'a> ReadFileUV<'a> {
             // wrapping `self.buffer`'s spare capacity (libuv copies the iovec
             // descriptor before returning), `opened_fd.uv()` is the open fd, and
             // `on_read` is a valid `uv_fs_cb` that recovers `self` from `req.data`.
+            // SAFETY: all FFI preconditions described above are met.
             let res = unsafe {
                 libuv::uv_fs_read(
                     self.loop_,

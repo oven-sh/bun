@@ -167,8 +167,10 @@ pub extern "C" fn FileSink__assertLive(ptr: *const c_void) {
     // SAFETY: probe-only — reads `magic` at its repr(Rust) offset. Worst case
     // (non-FileSink ptr ≥ sizeof(FileSink) bytes from a page edge) is the very
     // bug we're catching; the panic that follows is the intended outcome.
+    // SAFETY: probe-only read of `magic` field; see multi-line comment above.
     let magic = unsafe { (*ptr.cast::<FileSink>()).magic.get() };
     if magic != FILESINK_LIVE {
+        // SAFETY: read_unaligned for diagnostic hexdump; worst-case is the bug being caught.
         let head: [u8; 64] = unsafe { core::ptr::read_unaligned(ptr.cast::<[u8; 64]>()) };
         // Full diagnostic to stderr first — `rust_panic_hook` formats into a
         // 1024-byte `BoundedArray` whose `write_str` is all-or-nothing, so a
@@ -382,6 +384,7 @@ impl FileSink {
     /// provenance over the allocation.
     pub unsafe fn on_attached_process_exit(this: *mut FileSink, status: &SpawnStatus) {
         bun_core::scoped_log!(FileSink, "onAttachedProcessExit()");
+        // SAFETY: outer `unsafe fn` — caller guarantees `this` is the live canonical pointer.
         unsafe {
             // `writer.close()` below re-enters `onClose` which releases the
             // keep-alive ref, and `stream.cancel`/`runPending` drain microtasks
@@ -437,6 +440,7 @@ impl FileSink {
     /// may re-enter JS / drop refs / free `this` on the last `deref`; the body
     /// reborrows `(*this).field` per-statement only.
     unsafe fn run_pending(this: *mut FileSink) {
+        // SAFETY: outer `unsafe fn` — caller guarantees `this` is the live canonical pointer.
         unsafe {
             let _guard = FileSinkRef::new_ref(this);
 
@@ -460,6 +464,7 @@ impl FileSink {
     /// [`on_attached_process_exit`](Self::on_attached_process_exit)).
     pub unsafe fn on_write(this: *mut FileSink, amount: usize, status: WriteStatus) {
         bun_core::scoped_log!(FileSink, "onWrite({}, {})", amount, status as u8);
+        // SAFETY: outer `unsafe fn` — caller guarantees `this` is the live canonical pointer.
         unsafe {
             // `runPending()` below drains microtasks and may drop the JS wrapper's
             // ref, and `writer.end()`/`writer.close()` re-enter `onClose` which
@@ -537,6 +542,7 @@ impl FileSink {
     /// [`on_attached_process_exit`](Self::on_attached_process_exit)).
     pub unsafe fn on_error(this: *mut FileSink, err: sys::Error) {
         bun_core::scoped_log!(FileSink, "onError({:?})", err);
+        // SAFETY: outer `unsafe fn` — caller guarantees `this` is the live canonical pointer.
         unsafe {
             if (*this).pending.get().state == streams::PendingState::Pending {
                 (*this)
@@ -576,6 +582,7 @@ impl FileSink {
     /// [`on_attached_process_exit`](Self::on_attached_process_exit)).
     pub unsafe fn on_ready(this: *mut FileSink) {
         bun_core::scoped_log!(FileSink, "onReady()");
+        // SAFETY: outer `unsafe fn` — caller guarantees `this` is the live canonical pointer.
         unsafe { (*this).signal.with_mut(|s| s.ready(None, None)) };
     }
 
@@ -585,6 +592,7 @@ impl FileSink {
     /// at the end may free `this`.
     pub unsafe fn on_close(this: *mut FileSink) {
         bun_core::scoped_log!(FileSink, "onClose()");
+        // SAFETY: outer `unsafe fn` — caller guarantees `this` is the live canonical pointer.
         unsafe {
             // SAFETY(JsCell): `Strong::has`/`get` are read-only on the GC root.
             if (*this).readable_stream.get_mut().has() {
@@ -615,6 +623,7 @@ impl FileSink {
     /// pointer (= `this`), so this must be that pointer; it must not be used
     /// afterwards.
     unsafe fn clear_keep_alive_ref(this: *mut FileSink) {
+        // SAFETY: outer `unsafe fn` — caller guarantees `this` is the live canonical pointer.
         unsafe {
             if (*this).must_be_kept_alive_until_eof.get() {
                 (*this).must_be_kept_alive_until_eof.set(false);
@@ -905,6 +914,7 @@ impl FileSink {
     /// [`on_attached_process_exit`](Self::on_attached_process_exit)): live,
     /// with write+dealloc provenance over the allocation.
     pub unsafe fn on_auto_flush(this: *mut FileSink) -> bool {
+        // SAFETY: outer `unsafe fn` — caller guarantees `this` is the live canonical pointer.
         unsafe {
             if (*this).done.get() || !(*this).writer.get().has_pending_data() {
                 (*this).update_ref(false);
@@ -1370,6 +1380,7 @@ impl FileSink {
 
                 // SAFETY(JsCell): `WritablePending::promise` allocates a JSPromise
                 // (may GC) but does not invoke any FileSink host-fn synchronously.
+                // SAFETY: JsCell — called on JS thread; sole mutable access to `pending`.
                 let promise_result = unsafe { self.pending.get_mut() }.promise(global_this);
 
                 // SAFETY: `WritablePending::promise()` never returns null.
@@ -1458,6 +1469,7 @@ impl crate::webcore::sink::JsSinkType for FileSink {
     }
     fn signal(&mut self) -> Option<&mut streams::Signal> {
         // SAFETY(JsCell): trait receiver is `&mut self`; sole borrow.
+        // SAFETY: JsCell — `&mut self` trait receiver guarantees sole mutable access.
         Some(unsafe { self.signal.get_mut() })
     }
     fn done(&self) -> bool {
@@ -1656,6 +1668,7 @@ impl FileSink {
         // `Option<NonNull<c_void>>` is ABI-identical to `*mut c_void` (see
         // const-asserts on `Signal` in streams.rs), so FFI may write the
         // JSValue bits back through this `void**`.
+        // SAFETY: see multi-line comment above; raw field project without forming a reference.
         let signal_ptr: *mut *mut c_void =
             unsafe { (&raw mut (*self.signal.as_ptr()).ptr).cast::<*mut c_void>() };
         // Zig parity (FileSink.zig:801-802): only the transient `_guard` above

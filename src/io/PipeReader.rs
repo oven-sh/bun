@@ -643,6 +643,7 @@ impl PosixBufferedReader {
         // re-borrow). The reader struct is an inline field of its parent
         // (never freed mid-call), so `*this` stays a valid place even if
         // re-entry calls `done()`/`close()`.
+        // SAFETY: this is derived from &mut parent (live, single JS thread); raw-ptr reborrow survives vtable re-entry (see above).
         let parent = unsafe { &mut *this };
         let mut received_hup = received_hup_initially;
         loop {
@@ -833,6 +834,7 @@ impl PosixBufferedReader {
         // but a raw-ptr-derived borrow (precedent: `JSMySQLQuery::resolve`).
         // The reader struct is an inline field of its parent (never freed
         // mid-call), so `*this` stays a valid place across re-entry.
+        // SAFETY: this is derived from &mut parent (live, single JS thread); raw-ptr reborrow to survive re-entry (see above).
         let parent = unsafe { &mut *this };
         let streaming = parent.vtable.is_streaming_enabled();
 
@@ -1459,6 +1461,7 @@ impl WindowsBufferedReader {
         // `from_fs_callback` snapshots `result`/`data` then container_of's the
         // owning `&mut File`; that borrow does not overlap the later
         // `&mut WindowsBufferedReader` (distinct heap allocations).
+        // SAFETY: fs is the uv_fs_t embedded in a live heap-boxed source::File; event loop guarantees single-owner (see above).
         let (file, result, parent_ptr) = unsafe { crate::source::File::from_fs_callback(fs) };
         let nread_int = result.int();
         let was_canceled = nread_int == uv::UV_ECANCELED as i64;
@@ -1484,6 +1487,7 @@ impl WindowsBufferedReader {
         // allocation — and its borrow ends (NLL) before this point in the
         // non-null path, so this is the sole live `&mut` to the reader
         // (single-owner).
+        // SAFETY: parent_ptr is a live *mut Self set via set_data; file borrow has ended (see above).
         let this: &mut WindowsBufferedReader =
             unsafe { bun_ptr::callback_ctx::<WindowsBufferedReader>(parent_ptr) };
 

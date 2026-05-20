@@ -138,6 +138,7 @@ pub type OwnedIn<T /*, Allocator */> = Box<T>;
 //     .slice:    → unsafe { bun_core::heap::take(core::ptr::slice_from_raw_parts_mut(ptr, len)) }
 //                  or, when `data` came from `Vec::into_raw_parts`:
 //                  unsafe { Vec::from_raw_parts(ptr, len, cap) }.into_boxed_slice()
+// SAFETY: porting note — the `unsafe { }` below is a code pattern in a comment, not live code.
 //     optional:  → if data.is_null() { None } else { Some(unsafe { bun_core::heap::take(data) }) }
 //
 // PORT NOTE: the Zig doc's caveat about `bun.new` vs `bun.default_allocator.create` is the

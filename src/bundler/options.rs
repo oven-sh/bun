@@ -1641,6 +1641,8 @@ impl<'a> BundleOptions<'a> {
     /// holds a live `&mut Log` from one of those aliases concurrently.
     #[inline]
     pub fn log(&self) -> &bun_ast::Log {
+        // SAFETY: `self.log` is non-null after init; pointee is a caller-owned `Log`
+        // that outlives `self`; no live `&mut Log` from aliased fields exists here.
         unsafe { &*self.log }
     }
 
@@ -1654,6 +1656,8 @@ impl<'a> BundleOptions<'a> {
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn log_mut(&self) -> &mut bun_ast::Log {
+        // SAFETY: `self.log` is non-null after init; callers must not hold two
+        // results simultaneously or across aliased `*mut Log` writes (see doc).
         unsafe { &mut *self.log }
     }
 

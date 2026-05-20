@@ -303,6 +303,7 @@ impl Store {
             // `&mut FilePoll` here would alias the `&mut self.hive` borrow taken by
             // `put()` below (the slot may live inside the inline hive buffer). Zig's
             // `*FilePoll` freely aliases, so raw-ptr discipline is the faithful port.
+            // SAFETY: see multi-line comment above this block.
             unsafe {
                 next = (*current).next_to_free;
                 (*current).next_to_free = ptr::null_mut();

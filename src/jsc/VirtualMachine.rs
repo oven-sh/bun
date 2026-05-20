@@ -2094,6 +2094,7 @@ impl VirtualMachine {
         // formed while non-zero-valid fields are still zero. Every target is
         // either zero-valid (no Drop on the overwritten bytes) or written via
         // `ptr::write` (no Drop of the uninit bytes).
+        // SAFETY: `vm` is a fresh unique zeroed allocation; all writes via `addr_of_mut!`; see SAFETY comment above.
         unsafe {
             use core::ptr::addr_of_mut;
             addr_of_mut!((*vm).global).write(core::ptr::null_mut());
@@ -2218,6 +2219,7 @@ impl VirtualMachine {
         // pattern as the `init_runtime_state` hook above. `global` is freshly
         // created and live for VM lifetime; `vm_ptr()` returns the FFI
         // `*mut VM` directly (no `&VM` reborrow), preserving mutable provenance.
+        // SAFETY: writes go through raw `vm` ptr; no `&mut VirtualMachine` held live; `global` is valid; see SAFETY comment above.
         let jsc_vm = unsafe {
             (*vm).global = global;
             (*vm).regular_event_loop.global = NonNull::new(global);
@@ -2662,6 +2664,7 @@ impl<'a> SourceMapHandlerGetter<'a> {
     /// Borrows). Only the worker-safe `debugger` bytes are retagged here.
     #[inline]
     fn vm_debugger(&self) -> Option<&crate::debugger::Debugger> {
+        // SAFETY: `self.vm` is non-null; leaf field projection only; see Safety doc comment above.
         unsafe { (*self.vm).debugger.as_deref() }
     }
 
@@ -2677,6 +2680,7 @@ impl<'a> SourceMapHandlerGetter<'a> {
     /// touches none of those bytes.
     #[inline]
     fn vm_source_mappings_mut(&mut self) -> &mut SavedSourceMap {
+        // SAFETY: `self.vm` is non-null; leaf field `source_mappings` projected without forming `&mut VirtualMachine`; see Safety doc comment above.
         unsafe { &mut (*self.vm).source_mappings }
     }
 
@@ -2752,6 +2756,7 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
         // `&mut BufferPrinter` from the raw pointer after
         // `print_with_source_map` returns (see jsc_hooks.rs). See
         // `printer_ptr()` for why this is not a `&mut`-returning accessor.
+        // SAFETY: `self.printer` is a valid non-null `*mut BufferPrinter`; writer has emitted last byte; see SAFETY above.
         let printer = unsafe { &mut *self.printer };
 
         let encode_len = bun_base64::encode_len(temp_json_buffer.list.as_slice());
@@ -2778,6 +2783,7 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
                     temp_json_buffer.list.as_slice(),
                 )
             };
+            // SAFETY: `grow_if_needed` reserved ≥encode_len spare; `wrote ≤ encode_len` bytes were written.
             unsafe { bun_core::vec::commit_spare(buf, wrote) };
         }
         printer
@@ -3513,6 +3519,7 @@ impl VirtualMachine {
             // and `add_file_by_path_slow` serializes the inner watchlist write
             // via `Watcher.mutex`. Borrow is scoped to this single
             // mutex-guarded call (Zig spec uses alias-allowed `*Watcher`).
+            // SAFETY: `watcher` is a non-null `*mut ImportWatcher`; write is serialized by `Watcher.mutex`; see SAFETY above.
             let _ = unsafe { (*watcher).add_file_by_path_slow(main, loader) };
         }
     }
@@ -3659,6 +3666,7 @@ impl VirtualMachine {
         while !cond.get() {
             unsafe { (*this).event_loop_mut().tick() };
             if !cond.get() {
+                // SAFETY: `this` is the unique live VM; momentary deref, no borrow held across re-entrant call.
                 unsafe { (*this).auto_tick() };
             }
         }
@@ -3907,6 +3915,7 @@ impl VirtualMachine {
                 // WTF on the JS thread when the impl refcount hits zero, with
                 // `ref_` as ctx.
                 let s = bun_core::String::create_external::<*mut RefString>(
+                    // SAFETY: `ptr`/`len` are the owned latin-1 buffer of `ref_`; valid for the external string's lifetime.
                     unsafe { bun_core::ffi::slice(ptr, len) },
                     true,
                     ref_,
@@ -4876,13 +4885,16 @@ impl VirtualMachine {
                 let exception_list = if ctx.exception_list.is_null() {
                     None
                 } else {
+                    // SAFETY: `ctx.exception_list` is non-null and valid for the `for_each` duration; from caller's stack.
                     Some(unsafe { &mut *ctx.exception_list })
                 };
                 vm.print_errorlike_object(
                     next_value,
                     None,
                     exception_list,
+                    // SAFETY: `ctx.formatter` is a valid `*mut` derived from the caller's stack local; no aliasing borrow.
                     unsafe { &mut *ctx.formatter },
+                    // SAFETY: `ctx.writer` is a valid `*mut` from caller's stack local; no aliasing borrow.
                     unsafe { &mut *ctx.writer },
                     ctx.allow_ansi_color,
                     ctx.allow_side_effects,

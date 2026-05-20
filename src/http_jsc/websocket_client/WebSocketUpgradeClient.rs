@@ -354,13 +354,11 @@ impl<const SSL: bool> HTTPClient<SSL> {
             subprotocols,
         }));
         bun_core::scoped_log!(alloc, "new({}) = {:p}", Self::TYPE_NAME, client);
-        // SAFETY: just allocated above; we hold the only ref. This `&mut` is
-        // used only for pre-connect setup and MUST NOT span any
-        // `Socket::connect_*_group` call below — those install `client` as
-        // socket userdata and may synchronously dispatch
-        // `handle_connect_error(*mut Self)` (see .zig:1152), which would
-        // alias this borrow under Stacked Borrows. A fresh `&mut *client` is
-        // re-derived after each connect call returns.
+        // Just allocated above; `&mut` is used only for pre-connect setup and must
+        // not span any `Socket::connect_*_group` call (those can synchronously
+        // dispatch `handle_connect_error(*mut Self)`, aliasing this borrow).
+        // SAFETY: `client` was just heap-allocated; we hold the only reference.
+        // The `&mut` ends before any `connect_*_group` call below.
         let client_ref = unsafe { &mut *client };
 
         // Store TLS config if provided (ownership transferred to client)
@@ -1639,6 +1637,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             let socket = tcp;
 
             // Normal mode: pass socket directly to WebSocket client
+            // SAFETY: `this` is valid; the short-lived `&mut` from `take()` above has ended.
             unsafe { (*this).tcp.detach() };
             if let uws::InternalSocket::Connected(native_socket) = socket.socket {
                 // SAFETY: live C++ back-reference.
@@ -1660,13 +1659,12 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 // SAFETY: no `&mut Self` is live across this call.
                 unsafe { Self::terminate(this, ErrorCode::FailedToConnect) };
             }
-            // SAFETY: two refs are released here (the outgoing_websocket ref
-            // then the TCP socket ref). The first call cannot reach zero
-            // because the second ref is still held. The second may free
-            // `this`; no `&mut Self` is live.
-            // Once for the outgoing_websocket.
+            // Two refs are released: outgoing_websocket ref then TCP socket ref.
+            // The first call cannot reach zero because the second ref is still held.
+            // The second may free `this`; no `&mut Self` is live at either call.
+            // SAFETY: releases the outgoing_websocket ref; refcount > 0 while TCP ref is held.
             unsafe { Self::deref(this) };
-            // Once again for the TCP socket.
+            // SAFETY: releases the TCP socket ref; may free `this`; no &mut Self is live.
             unsafe { Self::deref(this) };
         } else if tcp.is_closed() {
             // SAFETY: no `&mut Self` is live across this call.

@@ -313,6 +313,8 @@ impl FileReader {
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn reader(&self) -> &mut IOReader {
+        // SAFETY: single-threaded JS event loop; UnsafeCell wraps self.reader so this is the
+        // sole access point — re-entrant vtable callbacks still ultimately route through here.
         unsafe { &mut *self.reader.get() }
     }
 

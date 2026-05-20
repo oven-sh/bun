@@ -214,6 +214,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         &*std::ptr::from_ref::<[u8]>(source_ref.contents.as_ref())
                     }),
                     contents_is_recycled: source_ref.contents_is_recycled,
+                    // SAFETY: `source_ref` is `&'static Source`; re-borrowing its slice as `&'static [u8]` is sound.
                     identifier_name: std::borrow::Cow::Borrowed(unsafe {
                         &*std::ptr::from_ref::<[u8]>(source_ref.identifier_name.as_ref())
                     }),
@@ -292,6 +293,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         && namespace_export_part_index < part_range.part_index_end
         && parts_live.is_set(namespace_export_part_index as usize)
     {
+        // SAFETY: `parts` is a valid `*mut [Part]` into un-resized MultiArrayList storage; index is within part_range bounds.
         let ns_part_stmts: &[Stmt] =
             unsafe { (*parts)[namespace_export_part_index as usize].stmts }.slice();
         if let Err(err) = convert_stmts_for_chunk(
@@ -415,6 +417,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         new_properties.as_mut_ptr(),
                         src_len,
                     );
+                    // SAFETY: `copy_nonoverlapping` wrote `src_len` valid elements; capacity was pre-reserved.
                     unsafe { new_properties.set_len((src_len as u32) as usize) };
                 }
 

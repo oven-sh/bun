@@ -379,6 +379,7 @@ pub fn terminate_all_and_wait(timeout_ms: u64) {
                 // We deliberately do NOT bind `&VirtualMachine` — the worker
                 // thread may hold a live mutable view of the VM; raw-pointer
                 // field/method access keeps any autoref scoped to the access.
+                // SAFETY: `vm_ptr` is non-null (checked above) and published under `vm_lock`; `notify_need_termination` is VMTraps thread-safe.
                 unsafe { (*(*vm_ptr).jsc_vm.cast_const()).notify_need_termination() };
                 // SAFETY: event_loop() returns the live `*mut EventLoop` self-ptr.
                 unsafe { (*(*vm_ptr).event_loop()).wakeup() };
@@ -706,6 +707,7 @@ impl WebWorker {
             // documented thread-safe (VMTraps). Cast through the real opaque
             // `crate::VM` (the `crate::VM` stub is layout-only). No
             // `&VirtualMachine` binding — see `terminate_all_and_wait`.
+            // SAFETY: `vm_ptr` is non-null (checked above) and published under `vm_lock`; `notify_need_termination` is VMTraps thread-safe.
             unsafe { (*(*vm_ptr).jsc_vm.cast_const()).notify_need_termination() };
             // SAFETY: event_loop() returns the live `*mut EventLoop` self-ptr.
             unsafe { (*(*vm_ptr).event_loop()).wakeup() };
@@ -1271,6 +1273,7 @@ impl WebWorker {
                 // PORT NOTE: reshaped for borrowck — `close_all_socket_groups`
                 // wants `&VirtualMachine` while `rare` is `&mut` borrowed from
                 // `vm`. Re-derive `vm` through the raw ptr (sole owner).
+                // SAFETY: `vm_ptr` is the sole owner of the live `VirtualMachine`; re-deriving `&*vm_ptr` is valid here (sole reference, no concurrent `&mut`).
                 rare.close_all_socket_groups(unsafe { &*vm_ptr });
             }
             exit_code = i32::from(vm.exit_handler.exit_code);
@@ -1663,6 +1666,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
     // sites (`create()` on the parent thread, `spin()` on the worker thread)
     // satisfy that. The cross-thread readers under `vm_lock` never touch
     // `transpiler`.
+    // SAFETY: `parent` is valid per fn contract; `global` is a read-only field; `transpiler` is accessed only on the owning thread.
     let global = unsafe { (*parent).global };
     let resolved_entry_point = match unsafe { (*parent).transpiler.resolve_entry_point(str) } {
         Ok(r) => r,

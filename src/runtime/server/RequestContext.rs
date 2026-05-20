@@ -575,6 +575,7 @@ where
         // `'r` may exceed `&self` because the server is not borrowed from
         // `*self`; it lives independently and outlives every context.
         let p = self.server.expect("infallible: server bound").as_ptr();
+        // SAFETY: `server` is non-null after `init()` and `NewServer` outlives this context.
         unsafe { &*p }
     }
 
@@ -1069,8 +1070,8 @@ where
         Fallback::render_backend(&fallback_container, &mut bb).expect("unreachable");
         let try_end_ok = match self.resp {
             None => true,
+            // SAFETY: `resp` is a live uWS response handle; FFI preconditions met.
             Some(resp) => unsafe {
-                // SAFETY: FFI handle
                 resp.try_end(&bb, bb.len(), self.should_close_connection())
             },
         };
@@ -1556,6 +1557,7 @@ where
         // Copy to stack memory to prevent aliasing issues in release builds
         // PORT NOTE: AnyBlob is not Copy in Rust; reborrow through a raw ptr
         // so the slice borrow doesn't conflict with `&mut self` below.
+        // SAFETY: detach_lifetime reborrow; `this.blob` is not mutated while `bytes` is live.
         let bytes: &[u8] = unsafe { bun_ptr::detach_lifetime(this.blob.slice()) };
 
         let _ = this.send_writable_bytes_for_blob(bytes, write_offset, resp);
@@ -3524,6 +3526,8 @@ where
         // copy it to stack memory to prevent aliasing issues in release builds
         // PORT NOTE: AnyBlob is not Copy in Rust; reborrow through a raw ptr
         // so the slice borrow doesn't conflict with `&mut self` below.
+        // SAFETY: detach_lifetime extends the borrow beyond `&mut self`; no
+        // mutable access to `self.blob` occurs while `bytes` is live.
         let bytes: &[u8] = unsafe { bun_ptr::detach_lifetime(self.blob.slice()) };
         if let Some(resp) = self.resp {
             // SAFETY: FFI handle

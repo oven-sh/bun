@@ -4955,6 +4955,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // `Scope` — see `Scope::get_or_put_member_with_hash`.
         let mut scope: js_ast::StoreRef<js_ast::Scope> = self.current_scope;
         let scope_kind = scope.kind;
+        // SAFETY: `name` points into source text or the lexer string-table, both outliving
+        // the arena-owned Scope; no other mutable borrow of scope.members exists here.
         let entry = unsafe { scope.members.get_or_put_borrowed(name) };
         if entry.found_existing {
             let existing: js_ast::scope::Member = *entry.value_ptr;
@@ -6746,6 +6748,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // backing `original_name` bytes live for `'a`. Erase the local
                 // borrow lifetime to satisfy `handle_identifier`'s
                 // `Option<&'a [u8]>` param.
+                // SAFETY: original_name borrows `p.define: &'a Define`; the backing bytes live for `'a`.
                 let original_name: &'a [u8] =
                     unsafe { bun_collections::detach_lifetime(original_name) };
                 return self.handle_identifier(
@@ -9487,6 +9490,7 @@ impl LowerUsingDeclarationsContext {
                     let items = data.items.slice();
                     exports.reserve(items.len());
                     for item in items {
+                        // SAFETY: ClauseItem is POD (arena-owned); source slot is never read again after this loop.
                         exports.push(unsafe { core::ptr::read(item) });
                     }
                     continue;

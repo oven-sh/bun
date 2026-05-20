@@ -733,6 +733,8 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     let arena: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(options.arena) };
     let mut bundler_framework_views: Vec<*mut bun_bundler::bake_types::Framework> =
         Vec::with_capacity(4);
+    // SAFETY: `p` points to a partially-initialized `DevServer` box; each field
+    // accessed below has already been written; `addr_of_mut!` borrows are disjoint.
     unsafe {
         let framework = &mut *addr_of_mut!((*p).framework);
         let log = &mut *addr_of_mut!((*p).log);
@@ -1807,6 +1809,8 @@ impl RequestEnsureRouteBundledCtx {
     /// outlives the ctx (the ctx is stack-local in the request handler scope).
     #[inline]
     fn dev_mut(&mut self) -> &mut DevServer {
+        // SAFETY: `self.dev` is set from a live `&mut DevServer`; the ctx is
+        // stack-local so `*self.dev` is valid and exclusively borrowed here.
         unsafe { &mut *self.dev }
     }
 
@@ -1847,6 +1851,7 @@ impl RequestEnsureRouteBundledCtx {
                 // `Strong` field is move-only. Take ownership out of `self.req`
                 // (it is consumed by `on_framework_request_with_bundle`).
                 let req = match ::core::mem::replace(&mut self.req, ReqOrSaved::Aborted) {
+                    // SAFETY: `r` is a live stack request pointer valid for this call scope; JS-thread only.
                     ReqOrSaved::Req(r) => SavedRequestUnion::Stack(unsafe { &mut *r }),
                     ReqOrSaved::Saved(s) => SavedRequestUnion::Saved(s),
                     ReqOrSaved::Aborted => unreachable!(),
@@ -2204,6 +2209,7 @@ impl DevServer {
                                     // T" contract. `put_raw` recycles/frees without
                                     // `drop_in_place`, matching Zig's `pool.put`
                                     // (no destructor).
+                                    // SAFETY: `deferred_ptr` is a live uninitialized hive slot; `put_raw` skips drop.
                                     unsafe { self.deferred_request_pool.put_raw(deferred_ptr) };
                                     return Ok(());
                                 }
@@ -2435,10 +2441,12 @@ impl DevServer {
         };
         // Held raw; deref per-access. `router.types` is a `Box<[Type]>` — never
         // reallocated for the lifetime of `DevServer`.
+        // SAFETY: `this` is valid; `router.types` is never reallocated; index is valid.
         let router_type: *mut framework_router::Type =
             unsafe { (*this).router.type_ptr(route_type_idx) };
         // Scalar copy — `route_bundles[i]` is otherwise only read (via
         // `generate_css_js_array`, which now takes `&RouteBundle`).
+        // SAFETY: `this` is valid; `route_bundles` is not reallocated in this scope.
         let client_script_generation: u32 = unsafe {
             (&(*this).route_bundles)[route_bundle_index.get() as usize].client_script_generation
         };
@@ -2480,6 +2488,7 @@ impl DevServer {
                     // `route_bundles`; `route` is a `&Route` reborrowed per step.
                     let keys = unsafe { (*this).server_graph.bundled_files.keys() };
                     let mut n: usize = 1;
+                    // SAFETY: `router.routes` is a stable `Box<[Route]>`; index is valid.
                     let mut route =
                         unsafe { (*this).router.route_ptr(framework_bundle.route_index) };
                     loop {
@@ -2487,12 +2496,15 @@ impl DevServer {
                             n += 1;
                         }
                         let Some(p) = route.parent else { break };
+                        // SAFETY: `router.routes` is a stable `Box<[Route]>`; `p` is a valid index.
                         route = unsafe { (*this).router.route_ptr(p) };
                     }
                     let arr = JSValue::create_empty_array(global, n)?;
+                    // SAFETY: `router.routes` is a stable `Box<[Route]>`; index is valid.
                     route = unsafe { (*this).router.route_ptr(framework_bundle.route_index) };
                     {
                         let mut buf = paths::path_buffer_pool::get();
+                        // SAFETY: `this` is valid; `relative_path` only reads `self.root`; `keys` index is in range.
                         let mut route_name = BunString::clone_utf8(unsafe {
                             (*this).relative_path(
                                 &mut *buf,
@@ -2508,6 +2520,7 @@ impl DevServer {
                     loop {
                         if let Some(layout) = route.file_layout {
                             let mut buf = paths::path_buffer_pool::get();
+                            // SAFETY: `this` is valid; `relative_path` only reads `self.root`; `keys` index is in range.
                             let mut layout_name = BunString::clone_utf8(unsafe {
                                 (*this).relative_path(
                                     &mut *buf,
@@ -2523,6 +2536,7 @@ impl DevServer {
                             n += 1;
                         }
                         let Some(p) = route.parent else { break };
+                        // SAFETY: `router.types` is `Box<[Type]>`, never reallocated; `p` is a valid index.
                         route = unsafe { (*this).router.route_ptr(p) };
                     }
                     framework_bundle.cached_module_list = jsc::StrongOptional::create(arr, global);
@@ -2562,6 +2576,7 @@ impl DevServer {
                     // here is the *only* one in this fn — no other `&`/`&mut`
                     // derived from `*this` is live across it (`router_type` /
                     // `keys` / `route` were all consumed in earlier arms).
+                    // SAFETY: `this` is valid; no other `&mut *this` reborrow is live.
                     let js = unsafe {
                         (*this).generate_css_js_array(
                             &(&(*this).route_bundles)[route_bundle_index.get() as usize],
@@ -2605,6 +2620,7 @@ impl DevServer {
         // aliased `dev` across this scope.
         let route_bundle: *mut RouteBundle = self.route_bundle_ptr(route_bundle_index);
         debug_assert!(matches!(
+            // SAFETY: `route_bundle` is a pointer into `self.route_bundles`, valid for fn lifetime.
             unsafe { &(*route_bundle).data },
             route_bundle::Data::Framework(_)
         ));
@@ -3435,11 +3451,11 @@ impl DevServer {
         self.client_graph.reset();
         // `current_chunk_parts`/`current_chunk_len` are scratch buffers shared with
         // the HMR pipeline. We must leave them cleared on every exit path.
-        // SAFETY: see `self_ptr` SAFETY above.
         // PORT NOTE: copy `self_ptr` so the `defer!` closure captures a distinct
         // local — otherwise borrowck treats `*self_ptr` as held for the guard's
         // lifetime and rejects later `&mut (*self_ptr).…` reborrows.
         let self_ptr_defer: *mut Self = self_ptr;
+        // SAFETY: `self_ptr` is valid for the entire fn; JS-thread only (no concurrent writes).
         scopeguard::defer! { unsafe { (*self_ptr_defer).client_graph.reset() } };
         self.trace_all_route_imports(route_bundle, &mut gts, TraceImportGoal::FindClientModules)?;
 
@@ -3800,6 +3816,7 @@ pub fn finalize_bundle(
             // every use of this macro. `dev.current_bundle` is never reassigned
             // (so the inner `CurrentBundle` is not moved) between here and the
             // outer-defer.
+            // SAFETY: `current_bundle_ptr` is valid; `dev.current_bundle` is `Some`.
             unsafe { &mut *current_bundle_ptr }
         };
     }
@@ -4564,10 +4581,10 @@ pub fn finalize_bundle(
     if !dev.incremental_result.failures_added.is_empty() {
         dev.bundles_since_last_error = 0;
 
-        // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
         // PORT NOTE: erase the agent borrow to a raw pointer so it can be passed
         // through `send_serialized_failures` (which also borrows `dev`) and then
         // re-used below — Zig passed the optional pointer by value.
+        // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
         let mut inspector_agent_ptr: Option<*mut BunFrontendDevServerAgent> =
             unsafe { dev.inspector() }.map(|a| std::ptr::from_mut(a));
         if current_bundle!().promise.strong.has_value() {
@@ -4725,6 +4742,9 @@ pub fn finalize_bundle(
                         route_bundle::Data::Html(html) => {
                             Some(dev.relative_path(
                                 &mut *buf,
+                                // SAFETY: `html.html_bundle` is a pointer into a
+                                // bundler-owned allocation that lives for the DevServer
+                                // lifetime; JS-thread only (no concurrent mutation).
                                 &unsafe { &*html.html_bundle }.bundle.path,
                             ))
                         }
@@ -5209,6 +5229,7 @@ impl DevServer {
                 // R-2: `dev_server_id` is `Cell<Option<Index>>`; `Cell::as_ptr`
                 // yields the inner `*mut Option<Index>` so the `*index_location`
                 // read/write below stays raw and matches the framework arm's type.
+                // SAFETY: `html` is a live IntrusiveRc-owned pointer; JS-thread only.
                 unsafe { (*html).dev_server_id.as_ptr() }
             }
         };
@@ -6674,6 +6695,9 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
     /// construction; the ctx is stack-local in the request handler scope.
     #[inline]
     fn dev_mut(&mut self) -> &mut DevServer {
+        // SAFETY: `self.dev` is set from a live `&mut DevServer` at ctx
+        // construction; the ctx is stack-local in the request handler scope,
+        // so `*self.dev` is valid and exclusively borrowed for this call.
         unsafe { &mut *self.dev }
     }
 

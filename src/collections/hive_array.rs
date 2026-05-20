@@ -1278,6 +1278,7 @@ mod tests {
 
         // Heap allocation: fill the hive first, then init another.
         // SAFETY: same pool contract.
+        // SAFETY: pool_ptr is live for the test; HiveRef::init requires a live pool pointer.
         let inline0 = unsafe {
             HiveRef::init(
                 Tracked {
@@ -1287,6 +1288,7 @@ mod tests {
                 pool_ptr,
             )
         };
+        // SAFETY: same pool contract — pool_ptr outlives this handle.
         let inline1 = unsafe {
             HiveRef::init(
                 Tracked {
@@ -1296,6 +1298,7 @@ mod tests {
                 pool_ptr,
             )
         };
+        // SAFETY: same pool contract — pool_ptr outlives this handle.
         let heap = unsafe {
             HiveRef::init(
                 Tracked {
@@ -1370,6 +1373,7 @@ mod tests {
 
         // Heap fallback path (CAP=1, second handle spills).
         // SAFETY: `pool` outlives every handle.
+        // SAFETY: pool_ptr is live (pool outlives every handle); HiveRefHandle::new requires a live pool pointer.
         let inline = unsafe {
             HiveRefHandle::new(
                 Tracked {
@@ -1379,6 +1383,7 @@ mod tests {
                 pool_ptr,
             )
         };
+        // SAFETY: same pool contract — pool_ptr outlives this handle.
         let heap = unsafe {
             HiveRefHandle::new(
                 Tracked {

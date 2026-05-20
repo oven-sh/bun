@@ -146,6 +146,7 @@ pub fn init_global(
     // the pointer while this exclusive borrow is live. The `&mut` is scoped to
     // this function body — NOT `'static` — and ends before we publish/return the
     // raw ptr.
+    // SAFETY: `global_ptr` was just allocated; this thread holds the sole reference; GLOBAL thread-local is not yet published.
     let global = unsafe { &mut *global_ptr };
 
     // PORT NOTE: `InternalLoopData::set_parent_event_loop` (typed) lives in a
@@ -299,6 +300,7 @@ impl<'a> MiniEventLoop<'a> {
     /// `unsafe-fn-narrow`: every unsafe op below derefs the caller-supplied
     /// `this`; the body cannot discharge that precondition.)
     pub unsafe fn file_polls_raw(this: *mut Self) -> *mut FilePollStore {
+        // SAFETY: outer `unsafe fn` contract — `this` points to a live `MiniEventLoop`; no live `&mut file_polls_` alias.
         unsafe {
             let slot = core::ptr::addr_of_mut!((*this).file_polls_);
             if (*slot).is_none() {

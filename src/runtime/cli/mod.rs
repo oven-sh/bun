@@ -475,11 +475,12 @@ pub fn cli_dupe(s: &[u8]) -> &'static [u8] {
 /// [`cli_dupe`]'s memcpy + transient double-peak is avoided. Thread-safe.
 pub fn cli_adopt(b: Box<[u8]>) -> &'static [u8] {
     static ADOPTED: std::sync::Mutex<Vec<Box<[u8]>>> = std::sync::Mutex::new(Vec::new());
-    // SAFETY: `ADOPTED` is never cleared/drained for the process lifetime; the
-    // `Box<[u8]>` pointee address is stable across `Vec` reallocs (only the
-    // `Box` pointer-value moves), so the returned slice stays valid `'static`.
+    // `Box<[u8]>` pointee address is stable across `Vec` reallocs; `ADOPTED` is never
+    // cleared for the process lifetime, so the returned slice is valid `'static`.
     let (ptr, len) = (b.as_ptr(), b.len());
     ADOPTED.lock().unwrap().push(b);
+    // SAFETY: `ptr` points to the stable Box<[u8]> allocation; `len` is the original
+    // slice length; the Box lives in `ADOPTED` for the process lifetime.
     unsafe { core::slice::from_raw_parts(ptr, len) }
 }
 
@@ -1128,15 +1129,11 @@ pub mod command {
     /// standalone-graph fast path in `start()` (Zig: the bare
     /// `context_data = .{...}; global_cli_ctx = &context_data;` sequence).
     fn write_context_no_parse(log: &mut bun_ast::Log) -> &'static mut ContextData {
-        // SAFETY: single-threaded CLI startup; first and only write to
-        // `CONTEXT_DATA` for the process lifetime. `log` is the `&'static mut`
-        // borrow of `Cli::LOG_` taken in `Cli::start()`, so storing its raw
-        // address is sound for the process lifetime.
-        //
-        // One `ContextData::default()` is constructed and written in place,
-        // then the two non-default fields are patched on the live storage —
-        // avoids the second `Default` temporary (and its drop) that the
-        // `..Default::default()` struct-update form would build on the stack.
+        // Single-threaded CLI startup; first and only write to `CONTEXT_DATA` for
+        // the process lifetime. Writes `ContextData::default()` in place and patches
+        // the two non-default fields to avoid a stack-temporary + drop.
+        // SAFETY: no other thread has started; `CONTEXT_DATA` is an `OnceLock`-style
+        // `UnsafeCell` written exactly once here; `log` outlives the process.
         unsafe {
             let ctx = (*CONTEXT_DATA.get()).write(ContextData::default());
             ctx.log = std::ptr::from_mut::<bun_ast::Log>(log);
@@ -1966,6 +1963,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
         }
 
         let entry = ctx.args.entry_points[0].clone();
+        // SAFETY: single-threaded CLI; no other borrow of `ctx.log` is live at this call site.
         Printer::print(unsafe { ctx.log_mut() }, &entry, PrinterFormat::Yarn)
     }
 

@@ -441,6 +441,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // (`CompressionStreamImpl::from_task`). The task field is a
         // `JsCell<WorkPoolTask>` — `#[repr(transparent)]` over the value, so
         // `offset_of!(T, task)` is the value's offset.
+        // SAFETY: `task` is a live pool-scheduled `T.task` field; container_of recovers the full T.
         let this: *mut T = unsafe { T::from_task(task) };
         Self::async_job_run(this);
     }
@@ -467,6 +468,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // `concurrent_tasks` queue (thread-safe). `this` is the heap-allocated
         // `m_ctx` payload — the matching `ref()` in `write()` keeps it alive
         // until `run_from_js_thread` runs and calls `deref()`.
+        // SAFETY: `vm.event_loop()` is a live VM event loop; enqueue is thread-safe.
         unsafe {
             (*vm.event_loop()).enqueue_task_concurrent(ConcurrentTask::create(Task::init(this)));
         }
@@ -679,6 +681,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // synchronously inside a host-fn invoked through that wrapper), so the
         // `(&T as *const T).cast_mut()` provenance is sufficient — only the
         // `Cell<u32>` refcount is touched.
+        // SAFETY: matching `ref_()` decrement; refcount > 0 while JS wrapper is live.
         unsafe { T::deref((this as *const T).cast_mut()) };
 
         Ok(JSValue::UNDEFINED)
@@ -780,6 +783,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         let msg_bytes: &[u8] = if err_.msg.is_null() {
             b""
         } else {
+            // SAFETY: `err_.msg` is non-null and NUL-terminated (static or zlib-owned).
             unsafe { bun_core::ffi::cstr(err_.msg) }.to_bytes()
         };
         let mut msg_str = BunString::create_format(format_args!("{}", bstr::BStr::new(msg_bytes)));
@@ -791,6 +795,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         let code_bytes: &[u8] = if err_.code.is_null() {
             b""
         } else {
+            // SAFETY: `err_.code` is non-null and NUL-terminated (static or zlib-owned).
             unsafe { bun_core::ffi::cstr(err_.code) }.to_bytes()
         };
         let mut code_str =

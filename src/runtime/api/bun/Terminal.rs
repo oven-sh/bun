@@ -393,6 +393,7 @@ impl Terminal {
         // last callback fires). R-2: shared borrow only — bodies take `&self`;
         // field writes go through `Cell`/`JsCell`, so re-entrant JS forming a
         // fresh `&Self` from `m_ctx` aliases soundly.
+        // SAFETY: `this` is a valid heap-stable `*mut Terminal`; see SAFETY comment above.
         unsafe { &*this }
     }
 
@@ -412,6 +413,7 @@ impl Terminal {
         // `destructor()` (→ deinit_and_destroy) iff the count hits zero.
         // Callers must treat `self` as potentially-freed on return (always
         // tail-position in this file).
+        // SAFETY: `self` is a valid heap-allocated `Terminal`; see SAFETY comment above.
         unsafe { bun_ptr::RefCount::<Terminal>::deref(self.as_ctx_ptr()) };
     }
 

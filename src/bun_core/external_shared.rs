@@ -90,6 +90,7 @@ impl<T: ExternalSharedDescriptor> core::ops::Deref for ExternalShared<T> {
         // side; any C++-side mutation goes through `UnsafeCell`/opaque-FFI
         // interior mutability on `T` itself, so `&T` carries no `noalias
         // readonly` assumption that the FFI could violate.
+        // SAFETY: `self.ptr` is a `NonNull` with a live external ref; pointee outlives `self`.
         unsafe { self.ptr.as_ref() }
     }
 }

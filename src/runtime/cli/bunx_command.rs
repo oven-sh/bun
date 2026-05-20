@@ -573,6 +573,7 @@ impl BunxCommand {
         let mut opts = Options::parse(ctx, argv)?;
 
         let mut requests_buf = update_request::Array::with_capacity(64);
+        // SAFETY: single-threaded CLI dispatch; no overlapping borrow of `ctx.log` exists at this point.
         let ctx_log = unsafe { ctx.log_mut() };
         let update_requests = UpdateRequest::parse(
             None,

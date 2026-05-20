@@ -2447,11 +2447,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     if !global.has_exception() && !throw_ssl_error_if_necessary(global) {
                         let _ = global.throw(format_args!("Failed to create HTTP server"));
                     }
+                    // SAFETY: `this` is the live boxed server; exclusively owned here
+                    // (just allocated by the caller, no references exist yet).
                     unsafe { (*this).app = None };
                     Self::deinit(this);
                     return JSValue::ZERO;
                 }
             };
+            // SAFETY: `this` is the live boxed server; `NewApp::create` succeeded
+            // and `app` is a valid handle; no other reference into `*this` is active.
             unsafe { (*this).app = Some(app) };
 
             if Self::HAS_H3 && this_ref.config.http3 {
@@ -2476,6 +2480,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
             }
 
+            // SAFETY: `app` was just stored into `(*this).app`; the prior
+            // `this_ref` borrow was not used past `NewApp::create`, so `*this`
+            // is exclusively owned here.
             route_list_value = unsafe { &mut *this }.set_routes();
 
             // add serverName to the SSL context using the default ssl options
@@ -2522,6 +2529,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
 
                 // Ensure routes are set for that domain name.
+                // SAFETY: the `server_name_raw` borrow of `config.ssl_config` was
+                // moved into locals before this point; `*this` is exclusively owned here.
                 let _ = unsafe { &mut *this }.set_routes();
             }
 
@@ -2590,6 +2599,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     Self::deinit(this);
                     return JSValue::ZERO;
                 }
+                // SAFETY: the short-lived `&this_ref` borrow of `config.sni[i]` was
+                // dropped at the end of the block above; `*this` is exclusively owned here.
                 let _ = unsafe { &mut *this }.set_routes();
             }
         } else {
@@ -2604,11 +2615,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     return JSValue::ZERO;
                 }
             };
+            // SAFETY: `this` is the live boxed server; uniquely owned here — no
+            // other reference into it is active between `NewApp::create` and `set_routes`.
             unsafe { (*this).app = Some(app) };
+            // SAFETY: `app` was just stored; `*this` is exclusively owned here.
             route_list_value = unsafe { &mut *this }.set_routes();
         }
 
         if this_ref.config.on_node_http_request.is_some() {
+            // SAFETY: routes and app are fully initialized; `this_ref` is a
+            // short-lived borrow that was dropped before this point, so forming
+            // `&mut *this` does not alias any live shared reference.
             unsafe { &mut *this }.set_using_custom_expect_handler(true);
         }
 
@@ -2722,6 +2739,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                     // UDP:N is taken — release TCP:N so the next
                                     // attempt gets a fresh kernel-chosen port.
                                     // Only retry if TCP actually succeeded.
+                                    // SAFETY: `this` is the live boxed server; the
+                                    // on_listen trampoline has returned so no other borrow
+                                    // of `*this` is active while we take the listener.
                                     if let Some(ls) = unsafe { (*this).listener.take() } {
                                         bun_opaque::opaque_deref_mut(ls).close();
                                         continue;
@@ -2747,6 +2767,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
             Addr::Unix { ptr, len } => {
                 if Self::HAS_H3 {
+                    // SAFETY: `this` is the live boxed server; no `&*this` borrow is
+                    // active at this point — the prior `this_ref` was a short-lived borrow
+                    // dropped before the Addr match.
                     if let Some(h3a) = unsafe { (*this).h3_app.take() } {
                         // QUIC over AF_UNIX is non-standard and Alt-Svc can't
                         // advertise it; drop the H3 listener instead of wiring
@@ -2779,6 +2802,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return JSValue::ZERO;
         }
 
+        // SAFETY: `this` is the live boxed server; all listen trampolines have
+        // returned and no other `&`/`&mut` borrow into it is active.
         unsafe { &mut *this }.ref_();
 
         // Starting up an HTTP server is a good time to GC.
@@ -3261,18 +3286,26 @@ macro_rules! any_server_dispatch_mut {
         // other reference into the same `NewServer` is live for this scope.
         match this.tag {
             AnyServerTag::HTTPServer => {
+                // SAFETY: ptr was produced by `AnyServer::from` for HTTPServer and is
+                // non-null while the server is alive; no other reference is live.
                 let $s = unsafe { &mut *this.ptr.cast::<HTTPServer>() };
                 $body
             }
             AnyServerTag::HTTPSServer => {
+                // SAFETY: ptr was produced by `AnyServer::from` for HTTPSServer and is
+                // non-null while the server is alive; no other reference is live.
                 let $s = unsafe { &mut *this.ptr.cast::<HTTPSServer>() };
                 $body
             }
             AnyServerTag::DebugHTTPServer => {
+                // SAFETY: ptr was produced by `AnyServer::from` for DebugHTTPServer and is
+                // non-null while the server is alive; no other reference is live.
                 let $s = unsafe { &mut *this.ptr.cast::<DebugHTTPServer>() };
                 $body
             }
             AnyServerTag::DebugHTTPSServer => {
+                // SAFETY: ptr was produced by `AnyServer::from` for DebugHTTPSServer and is
+                // non-null while the server is alive; no other reference is live.
                 let $s = unsafe { &mut *this.ptr.cast::<DebugHTTPSServer>() };
                 $body
             }

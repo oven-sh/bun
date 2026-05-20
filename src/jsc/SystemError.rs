@@ -107,6 +107,7 @@ impl SystemError {
         // whose bitwise copy is sound provided we immediately bump each ref
         // (preventing a double-free on drop). This is exactly the Zig spec
         // `var v = this.*; v.ref();`.
+        // SAFETY: `self` is a valid `#[repr(C)]` SystemError; bitwise copy is sound, ref bump prevents double-free.
         let mut v: SystemError = unsafe { core::ptr::read(self) };
         v.ref_();
         v

@@ -102,16 +102,10 @@ impl IOReader {
 
     #[inline]
     fn reader(&self) -> &mut ReaderImpl {
-        // SAFETY: single-threaded. Split into its own cell so a `&mut ReaderImpl`
-        // held by the bun_io read loop never overlaps a `&mut State` derived in a
-        // vtable callback (see struct doc comment).
-        //
-        // MUST NOT be invoked from within a `BufferedReaderParent` vtable
-        // callback (`on_read_chunk_cb`/`on_reader_done_cb`/`on_reader_error`):
-        // the read loop already holds a live `&mut ReaderImpl` on its stack
-        // while the callback runs (PipeReader.rs aliasing contract), so
-        // re-deriving here would create two simultaneous `&mut` to the same
-        // BufferedReader = Stacked-Borrows UB.
+        // SAFETY: single-threaded; `reader` is a separate `UnsafeCell` from `state`
+        // so a `&mut ReaderImpl` held by the bun_io read loop never overlaps a
+        // `&mut State` from a vtable callback. Must NOT be called from inside a
+        // vtable callback while the read loop is running (Stacked-Borrows UB).
         unsafe { &mut *self.reader.get() }
     }
 
@@ -159,13 +153,12 @@ impl IOReader {
         // PORT NOTE: set the parent backref after Arc allocation so the
         // address is stable.
         //
-        // SAFETY: `Arc::as_ptr` yields `*const IOReader`, but every field of
-        // `IOReader` is `UnsafeCell`, so all mutation flows through interior
-        // mutability (SharedReadWrite). The `*mut` cast exists solely to satisfy
-        // `set_parent`'s `*mut` signature for the vtable backref; the
-        // `BufferedReaderParent` callbacks only ever reborrow it as `&Self` to
-        // call `&self` methods — no `&mut IOReader` is materialized from it.
+        // `Arc::as_ptr` yields `*const IOReader`; all fields are `UnsafeCell` so
+        // mutation goes through interior mutability. The `*mut` cast satisfies
+        // `set_parent`'s signature — callbacks only reborrow as `&Self`.
         let parent: *const IOReader = std::sync::Arc::as_ptr(&this);
+        // SAFETY: `this.reader` cell is freshly initialized; `parent` is the stable
+        // Arc allocation address; the vtable callbacks never materialize `&mut IOReader`.
         unsafe { (*this.reader.get()).set_parent(parent.cast_mut().cast()) };
         crate::shell_log!("IOReader(0x{:x}, fd={}) create", parent as usize, fd);
         this

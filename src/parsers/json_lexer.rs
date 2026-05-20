@@ -207,6 +207,8 @@ impl<'a, 'bump> LexerLog<'a> for Lexer<'a, 'bump> {
     type Err = bun_core::Error;
     #[inline]
     fn log_mut(&mut self) -> &mut bun_ast::Log {
+        // SAFETY: `self.log` is a non-null pointer to the `Log` owned by the
+        // parser that constructed this `Lexer`; its lifetime exceeds `&mut self`.
         unsafe { &mut *self.log }
     }
     #[inline]

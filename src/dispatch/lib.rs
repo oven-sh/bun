@@ -286,6 +286,7 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
                                 clippy::macro_metavars_in_unsafe,
                                 unreachable_code,
                             )]
+                            // SAFETY: outer `unsafe fn` propagates the caller's safety contract into the macro-expanded body.
                             unsafe { #e_mv }
                         }
                     )*

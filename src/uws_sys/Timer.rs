@@ -67,6 +67,8 @@ impl Timer {
         ms: i32,
         repeat_ms: i32,
     ) {
+        // SAFETY: `self` is a live timer handle created by `create()`; ext storage is
+        // `size_of::<T>()` bytes; caller guarantees T matches the type used at creation.
         unsafe {
             us_timer_set(self, cb, ms, repeat_ms);
             let value_ptr = us_timer_ext(self);
@@ -87,6 +89,8 @@ impl Timer {
     }
 
     pub fn ext<T>(&mut self) -> Option<&mut T> {
+        // SAFETY: `us_timer_ext` returns a pointer to the ext slot allocated with `size_of::<T>()`
+        // in `create()`; caller guarantees T matches the type used at create()/set().
         unsafe {
             // SAFETY: us_timer_ext returns a pointer to the ext slot (`*?*anyopaque`);
             // deref + unwrap, then cast to *mut T. Caller guarantees T matches the
@@ -98,6 +102,8 @@ impl Timer {
 
     // PORT NOTE: Zig name is `as`, which is a Rust keyword.
     pub fn as_<T>(&mut self) -> T {
+        // SAFETY: ext slot allocated with `size_of::<T>()` in `create()` and written as `T` via `set()`;
+        // caller guarantees T matches and the value is initialized.
         unsafe {
             // SAFETY: @setRuntimeSafety(false) in Zig — reinterpret the ext slot
             // (`*?*anyopaque`) as `*?T`, deref, unwrap. The slot was allocated

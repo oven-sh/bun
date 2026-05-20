@@ -50,6 +50,7 @@ impl Chunk {
     /// The returned `Chunk` aliases `self.buffer`'s allocation; at most one may be dropped.
     #[inline]
     pub unsafe fn alias(&self) -> Chunk {
+        // SAFETY: outer `unsafe fn` contract — caller guarantees at most one of the two aliasing `Chunk`s is dropped.
         unsafe { core::ptr::read(self) }
     }
 
@@ -722,6 +723,7 @@ impl NewBuilder<VLQSourceMap> {
             // never reallocated. Same shape as Zig's cached `[]const u32`.
             self.line_offset_table_byte_offset_list =
                 unsafe { core::slice::from_raw_parts(start.as_ptr(), start.len()) };
+            // SAFETY: same invariant as above — `first_na` is a subslice of the permanent backing table.
             self.line_offset_table_first_non_ascii =
                 unsafe { core::slice::from_raw_parts(first_na.as_ptr(), first_na.len()) };
         }

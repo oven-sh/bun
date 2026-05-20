@@ -2041,7 +2041,9 @@ fn get_or_put_resolved_package_with_find_result(
         // `manager.lockfile`.
         this.to_update
             // If updating, only update packages in the current workspace
+            // SAFETY: disjoint field access — see multi-line SAFETY comment above.
             && unsafe { &*(*this_ptr).lockfile }
+                // SAFETY: same contract — `this_ptr` projections are disjoint.
                 .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id)
             // no need to do a look up if update requests are empty (`bun update` with no args)
             && (this.update_requests.is_empty()
@@ -2421,6 +2423,7 @@ fn get_or_put_resolved_package(
             let name_str = this.lockfile.str_detached(&name);
 
             let scope = bun_ptr::BackRef::new(
+                // SAFETY: `options` is disjoint from `lockfile`; see comment above.
                 unsafe { &(*this_ptr).options }.scope_for_package_name(name_str),
             );
             // SAFETY: `manifests` projected from `this_ptr`; the lookup holds
@@ -2748,6 +2751,8 @@ fn get_or_put_resolved_package(
             // set once and never freed); `get_or_put` copies `symlink_path`
             // into the lockfile string buffer before any other mutation.
             // `version.tag == Symlink`.
+            // SAFETY: see multi-line comment above; `global_link_dir_path` returns
+            // a slice into a Box<[u8]> set once and never freed before process exit.
             let link_dir =
                 unsafe { detach_lifetime(package_manager_real::global_link_dir_path(this)) };
             let symlink_path = this.lockfile.str_detached(version.symlink());

@@ -167,6 +167,7 @@ impl PatchTask {
     /// ownership must be returned here exactly once.
     pub unsafe fn destroy(this: *mut Self) {
         // TODO: how to deinit `this.callback.calc_hash.network_task` (carried over from Zig)
+        // SAFETY: outer `unsafe fn destroy`; `this` was produced by `heap::alloc`; called exactly once.
         drop(unsafe { bun_core::heap::take(this) });
     }
 
@@ -211,6 +212,7 @@ impl PatchTask {
         // event-loop wake atomics, neither of which alias data the main thread
         // holds an exclusive borrow on.
         let mgr = self.manager.as_ptr();
+        // SAFETY: `mgr` is a live BACKREF; `patch_task_queue.push` is lock-free; `wake_raw` is async-signal-safe.
         unsafe {
             (*mgr)
                 .patch_task_queue

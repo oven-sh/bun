@@ -1012,6 +1012,7 @@ pub mod bv2_impl {
                     // borrow lifetime matches the established `Path<'static>`
                     // convention used throughout `bun_resolver` (PORTING.md
                     // §Lifetimes: ARENA → `&'bump T`).
+                    // SAFETY: arena outlives this call; see comment above.
                     let dupe = |key: &[u8]| -> &'static [u8] {
                         unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(key)) }
                     };
@@ -1501,6 +1502,7 @@ pub mod bv2_impl {
             // see the watch-mode caveat above).
             let bv2 = core::ptr::NonNull::new(bv2.cast::<super::BundleV2<'static>>())
                 .expect("BundleV2 watcher: bv2 is non-null");
+            // SAFETY: `bv2` is non-null and points to a live `BundleV2`; see comment above.
             unsafe { __bun_jsc_enable_hot_module_reloading_for_bundler(bv2) }
         }
 
@@ -2326,6 +2328,8 @@ pub mod bv2_impl {
                                 .expect("oom");
 
                                 // Turn this into an invalid AST, so that incremental mode skips it when printing.
+                                // SAFETY: setting length to 0 on an `AstVec` is safe; the
+                                // backing allocation is arena-owned and no elements require Drop.
                                 unsafe {
                                     self.graph.ast.items_parts_mut()
                                         [import_record.importer_source_index as usize]
@@ -2854,6 +2858,8 @@ pub mod bv2_impl {
                             .server_components
                     );
                     if separate_ssr {
+                        // SAFETY: `this.ssr_transpiler` is a valid pointer when `separate_ssr`
+                        // is true; initialized before this assertion (see `BundleV2::init`).
                         debug_assert!(unsafe { (*this.ssr_transpiler).options.server_components });
                     }
                 }
@@ -2893,12 +2899,14 @@ pub mod bv2_impl {
             // `LinkerOptions` stores `&'static [u8]` as an arena-erased lifetime
             // (see `interned_slice` contract — these are bundle-pass-interned).
             this.linker.options.banner = unsafe { interned_slice(&this.transpiler.options.banner) };
+            // SAFETY: same `interned_slice` contract as banner above.
             this.linker.options.footer = unsafe { interned_slice(&this.transpiler.options.footer) };
             this.linker.options.css_chunking = this.transpiler.options.css_chunking;
             this.linker.options.compile_to_standalone_html =
                 this.transpiler.options.compile_to_standalone_html;
             this.linker.options.source_maps = this.transpiler.options.source_map;
             this.linker.options.tree_shaking = this.transpiler.options.tree_shaking;
+            // SAFETY: same `interned_slice` contract — transpiler outlives linker.
             this.linker.options.public_path =
                 unsafe { interned_slice(&this.transpiler.options.public_path) };
             this.linker.options.target = this.transpiler.options.target;
@@ -2906,8 +2914,10 @@ pub mod bv2_impl {
             this.linker.options.generate_bytecode_cache = this.transpiler.options.bytecode;
             this.linker.options.compile = this.transpiler.options.compile;
             this.linker.options.metafile = this.transpiler.options.metafile;
+            // SAFETY: same `interned_slice` contract — transpiler outlives linker.
             this.linker.options.metafile_json_path =
                 unsafe { interned_slice(&this.transpiler.options.metafile_json_path) };
+            // SAFETY: same `interned_slice` contract — transpiler outlives linker.
             this.linker.options.metafile_markdown_path =
                 unsafe { interned_slice(&this.transpiler.options.metafile_markdown_path) };
 
@@ -3142,10 +3152,14 @@ pub mod bv2_impl {
                                 bake::Graph::Server
                             },
                             abs_path,
+                            // SAFETY: `transpiler` is a valid pointer to a live transpiler
+                            // for `'a`; `.log` field is a raw pointer valid for the same lifetime.
                             unsafe { (*transpiler).log }.cast_const(),
                             std::ptr::from_mut(self),
                         )
                         .expect("oom");
+                        // SAFETY: `transpiler` and its `log` are both live for `'a`; reset
+                        // is called only after the error handler above has finished using the log.
                         unsafe { (*(*transpiler).log).reset() };
                         continue;
                     }
@@ -3664,6 +3678,8 @@ pub mod bv2_impl {
                 known_target,
                 ..Default::default()
             });
+            // SAFETY: `task` is a freshly arena-allocated `*mut ParseTask`; the arena
+            // outlives this bundle pass, and no other live reference to `*task` exists yet.
             unsafe {
                 // BACKREF — lifetime erased per ParseTask::ctx convention.
                 (*task).ctx = Some(bun_ptr::ParentRef::from_raw_mut(
@@ -3676,6 +3692,7 @@ pub mod bv2_impl {
             self.increment_scan_counter();
 
             // Handle onLoad plugins
+            // SAFETY: `task` was just arena-allocated above; no other references exist yet.
             if !self.enqueue_on_load_plugin_if_needed(unsafe { &mut *task }) {
                 if loader.should_copy_for_bundling() {
                     let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
@@ -3872,6 +3889,8 @@ pub mod bv2_impl {
                 // sidestep for the `&mut self` overlap (Zig stored both as raw `*Transpiler`).
                 let entry_points: *const [Box<[u8]>] =
                     &raw const *this.transpiler.options.entry_points;
+                // SAFETY: `entry_points` is a raw pointer to a valid slice that outlives
+                // this call; see comment above for the full argument.
                 this.enqueue_entry_points_normal(unsafe { &*entry_points })?;
 
                 if this.transpiler.log().has_errors() {
@@ -3908,6 +3927,7 @@ pub mod bv2_impl {
                 // `dynamic_import_entry_points`, scalar reads) via `addr_of_mut!`/place
                 // projection, so the `&mut this.linker` receiver and `*bundle_ptr` never produce
                 // overlapping `&mut`. (Zig stored all as raw ptrs — bundle_v2.zig:1939.)
+                // SAFETY: disjoint-field split-borrow; see comment above.
                 let mut chunks = unsafe {
                     let bundle_ptr: *mut BundleV2 = &raw mut *this;
                     // `Graph::entry_points: Vec<Index>` and `link()` takes `&[Index]` —
@@ -4143,15 +4163,15 @@ pub mod bv2_impl {
                 // (which needs `&mut self`) inside the loop. Zig accessed all of these
                 // as raw `.items(.field)` slices with no borrow-checking.
                 let self_ptr: *mut Self = self;
-                // SAFETY: see PORT NOTE above — disjoint MultiArrayList columns,
-                // raw-ptr sidestep for split-borrow against `transpiler_for_target`
-                // inside the loop. All six column derefs share the same invariant.
+                // SAFETY: disjoint MultiArrayList columns via raw-ptr split-borrow; see
+                // PORT NOTE above. All six column derefs share the same invariant.
                 let (
                     unique_key_for_additional_files,
                     content_hashes_for_additional_files,
                     sources,
                     targets,
                     additional_files,
+                    // SAFETY: disjoint MultiArrayList columns via raw-ptr split-borrow; see PORT NOTE above.
                     loaders,
                 ) = unsafe {
                     (
@@ -4613,7 +4633,8 @@ pub mod bv2_impl {
                     // Holding the `&mut bun_ast::Log` borrow would alias `&this.graph`
                     // below; detach the lifetime so borrowck releases `this`. The log
                     // lives in `this.transpiler`/`this.framework`, disjoint from
-                    // `graph.input_files`.
+                    // `graph.input_files`. SAFETY continues on next line.
+                    // SAFETY: log is disjoint from graph fields; both outlive this closure.
                     let log: &mut bun_ast::Log = unsafe {
                         bun_ptr::detach_lifetime_mut(this.log_for_resolution_failures(
                             &resolve.import_record.source_file,
@@ -4659,6 +4680,8 @@ pub mod bv2_impl {
                         // untracked-slice ownership). In the `found_existing`/`external`
                         // branches `path` is dead before the boxes drop, so the dangling
                         // `'static` is never observed.
+                        // SAFETY: box contents outlive all uses below; lifetime erased to
+                        // `'static` so `Fs::Path<'static>` can be passed to `ParseTask`.
                         let (result_path_static, result_ns_static): (&'static [u8], &'static [u8]) = unsafe {
                             (
                                 &*std::ptr::from_ref::<[u8]>(result.path.as_ref()),
@@ -4705,6 +4728,8 @@ pub mod bv2_impl {
                             // We need to parse this
                             let source_index =
                                 Index::init(u32::try_from(this.graph.ast.len()).expect("int cast"));
+                            // SAFETY: `value_ptr` is the newly inserted slot in the
+                            // `path_to_source_index_map`; only this task writes it, no aliasing.
                             unsafe { *value_ptr = source_index.get() };
                             out_source_index = Some(source_index);
                             let _ = this.graph.ast.append(JSAst::empty_in(this.graph.heap)); // OOM/capacity: Zig aborts; port keeps fire-and-forget
@@ -4780,6 +4805,9 @@ pub mod bv2_impl {
                                 this.graph.pool().schedule(task);
                             }
                         } else {
+                            // SAFETY: `value_ptr` is a valid pointer into the
+                            // `path_to_source_index_map` entry written by this task;
+                            // no concurrent mutation occurs on this thread.
                             out_source_index = Some(Index::init(unsafe { *value_ptr }));
                             // PORT NOTE: Zig freed result.{namespace,path} here; Rust drops below.
                             drop(result.namespace);
@@ -5384,6 +5412,7 @@ pub mod bv2_impl {
             // `dynamic_import_entry_points`) via `addr_of_mut!`, so the `&mut self.linker`
             // receiver and `*bundle_ptr` never produce overlapping `&mut`. Both Index newtypes
             // are `#[repr(transparent)]` u32 — see `generate_from_cli` for the slice cast.
+            // SAFETY: disjoint-field split-borrow via raw pointer; see comment above.
             unsafe {
                 let bundle_ptr: *mut BundleV2 = self;
                 let ep = (*bundle_ptr).graph.entry_points.as_slice();
@@ -6107,6 +6136,8 @@ pub mod bv2_impl {
                         let resolve_entry =
                             resolve_queue.get_or_put(&path_primary.text).expect("oom");
                         if resolve_entry.found_existing {
+                            // SAFETY: `resolve_entry.value_ptr` points into the arena-backed
+                            // `resolve_queue` map whose storage outlives this bundle pass.
                             import_record.path =
                                 path_as_static(unsafe { &**resolve_entry.value_ptr }.path.clone());
                             continue;
@@ -6166,6 +6197,9 @@ pub mod bv2_impl {
                             // `&mut Log` tied to `&mut self`, but it's always a raw-ptr
                             // deref (DevServer vtable or `transpiler.log`). Detach via
                             // `*mut` so later `self.*` reads don't conflict.
+                            // SAFETY: the returned log lives in `self.transpiler` or the
+                            // DevServer, both of which outlive this bundle pass; disjoint
+                            // from `self.graph` and `source`.
                             let log: &mut bun_ast::Log = unsafe {
                                 &mut *std::ptr::from_mut::<bun_ast::Log>(
                                     self.log_for_resolution_failures(&source.path.text, bake_graph),
@@ -6354,6 +6388,9 @@ pub mod bv2_impl {
                 // The Rust port returns `Option<&mut Path>`, which would lock the
                 // whole struct. Detach via raw ptr to mirror the Zig aliasing.
                 let path: &mut Fs::Path = match resolve_result.path() {
+                    // SAFETY: `resolve_result` is local to this loop iteration and lives
+                    // for the rest of the iteration; detaching the lifetime mirrors Zig's
+                    // raw-pointer access so the struct can be read again after this call.
                     Some(p) => unsafe { bun_ptr::detach_lifetime_mut::<Fs::Path>(p) },
                     None => {
                         import_record.path.is_disabled = true;
@@ -6499,6 +6536,8 @@ pub mod bv2_impl {
 
                 let resolve_entry = resolve_queue.get_or_put(&path.text).expect("oom");
                 if resolve_entry.found_existing {
+                    // SAFETY: `resolve_entry.value_ptr` points into the `resolve_queue` hash
+                    // map; its backing storage is arena-owned and outlives this bundle pass.
                     import_record.path = path_as_static(unsafe { &**resolve_entry.value_ptr }.path);
                     continue;
                 }
@@ -6826,8 +6865,12 @@ pub mod bv2_impl {
             let ast_for_html_entrypoint = JSAst::init(
                 bun_js_parser::new_lazy_export_ast(
                     heap,
+                    // SAFETY: `define_ptr` was taken from `transpiler.options.define` above;
+                    // the transpiler outlives the `ast_for_html_entrypoint` call below.
                     unsafe { &mut *define_ptr },
                     js_parser_options,
+                    // SAFETY: `log_ptr` was taken from `transpiler.log` above; same
+                    // transpiler lifetime argument as `define_ptr`.
                     unsafe { &mut *log_ptr },
                     Expr::init(
                         E::EString {

@@ -125,6 +125,7 @@ impl Scope {
         // the same arena reset that would invalidate the source/string-table.
         // This avoids one `mi_heap_malloc` per declared identifier per scope,
         // which profiling showed as the parser's hottest slow-path allocation.
+        // SAFETY: `name` slice outlives the arena (source/string-table are longer-lived).
         unsafe { self.members.get_or_put_borrowed(name) }
     }
 

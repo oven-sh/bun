@@ -1049,6 +1049,7 @@ pub fn initialize_mini_store() {
             // out (no borrow of the Cell is held), so this `&mut` is the sole live reference
             // to the allocation for its entire scope — no aliasing. Mirrors Zig's
             // `threadlocal var instance: ?*MiniStore` single-owner deref.
+            // SAFETY: thread-local `*mut MiniStore`; sole live `&mut` in this scope.
             let mini_store = unsafe { &mut *instance.get().unwrap() };
             // PORT NOTE: Zig checked `stack_allocator.fixed_buffer_allocator.end_index >=
             // buffer.len() - 1` to decide whether to recycle the heap arena. The Rust

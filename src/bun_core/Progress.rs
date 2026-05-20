@@ -615,6 +615,8 @@ impl Progress {
                 // aliasing model, so Progress.zig:313-345 holds `node: *Node`
                 // across `self.bufWrite` freely; Rust must not.)
                 let (name, unit, eti, completed_items);
+                // SAFETY: walking the `recently_updated_child` chain under `update_mutex`;
+                // nodes are caller-owned and outlive this call per API contract.
                 unsafe {
                     name = (*maybe_node).name;
                     unit = (*maybe_node).unit;

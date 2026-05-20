@@ -37,8 +37,8 @@ impl us_socket_t {
         bun_core::scoped_log!(uws, "us_socket_open({:p}, is_client: {})", self, is_client);
         if let Some(ip) = ip_addr {
             debug_assert!(ip.len() < MAX_I32);
+            // SAFETY: self is a live us_socket_t; ip.as_ptr() is valid for ip.len() bytes.
             unsafe {
-                // SAFETY: self is a live us_socket_t; ip.ptr valid for ip.len bytes
                 let _ = c::us_socket_open(
                     self,
                     is_client as i32,
@@ -47,8 +47,8 @@ impl us_socket_t {
                 );
             }
         } else {
+            // SAFETY: self is a live us_socket_t; null ip pointer is valid when ip_length is 0.
             unsafe {
-                // SAFETY: self is a live us_socket_t
                 let _ = c::us_socket_open(self, is_client as i32, ptr::null(), 0);
             }
         }
@@ -71,8 +71,8 @@ impl us_socket_t {
             self,
             <&'static str>::from(code)
         );
+        // SAFETY: self is a live us_socket_t; null reason pointer is valid (optional field).
         unsafe {
-            // SAFETY: self is a live us_socket_t
             let _ = c::us_socket_close(self, code, ptr::null_mut());
         }
     }
@@ -110,8 +110,8 @@ impl us_socket_t {
     // TODO(port): narrow error set
     pub fn local_address<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], bun_core::Error> {
         let mut length: i32 = i32::try_from(buf.len().min(MAX_I32)).expect("int cast");
+        // SAFETY: buf.as_mut_ptr() is valid for `length` bytes; length is an in/out parameter.
         unsafe {
-            // SAFETY: buf.as_mut_ptr() valid for `length` bytes; length is in/out
             c::us_socket_local_address(self, buf.as_mut_ptr(), &raw mut length);
         }
         if length < 0 {
@@ -128,8 +128,8 @@ impl us_socket_t {
     // TODO(port): narrow error set
     pub fn remote_address<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], bun_core::Error> {
         let mut length: i32 = i32::try_from(buf.len().min(MAX_I32)).expect("int cast");
+        // SAFETY: buf.as_mut_ptr() is valid for `length` bytes; length is an in/out parameter.
         unsafe {
-            // SAFETY: buf.as_mut_ptr() valid for `length` bytes; length is in/out
             c::us_socket_remote_address(self, buf.as_mut_ptr(), &raw mut length);
         }
         if length < 0 {
@@ -163,8 +163,8 @@ impl us_socket_t {
         if !self.is_tls() {
             return None;
         }
+        // SAFETY: is_tls() guarantees the native handle is a non-null SSL*; self is exclusively borrowed.
         unsafe {
-            // SAFETY: is_tls() guarantees the native handle is a non-null SSL*
             c::us_socket_get_native_handle(self)
                 .cast::<bun_boringssl_sys::SSL>()
                 .as_mut()
@@ -180,9 +180,9 @@ impl us_socket_t {
     }
 
     pub fn ext<T>(&mut self) -> &mut T {
+        // SAFETY: us_socket_ext returns LIBUS_EXT_ALIGNMENT-aligned storage sized for T
+        // at socket creation; caller is required to use the same T it stored.
         unsafe {
-            // SAFETY: us_socket_ext returns LIBUS_EXT_ALIGNMENT-aligned storage
-            // sized for T at socket creation; caller picks the same T it stored.
             &mut *c::us_socket_ext(self).cast::<T>()
         }
     }
@@ -195,8 +195,8 @@ impl us_socket_t {
     }
 
     pub fn group(&mut self) -> &mut SocketGroup {
+        // SAFETY: us_socket_group never returns null for a live socket; self is exclusively borrowed.
         unsafe {
-            // SAFETY: us_socket_group never returns null for a live socket
             &mut *c::us_socket_group(self)
         }
     }
@@ -275,8 +275,8 @@ impl us_socket_t {
     }
 
     pub fn write(&mut self, data: &[u8]) -> i32 {
+        // SAFETY: data.as_ptr() is valid for data.len() bytes; self is a live us_socket_t.
         let rc = unsafe {
-            // SAFETY: data.as_ptr() valid for data.len() bytes
             c::us_socket_write(
                 self,
                 data.as_ptr(),
@@ -289,8 +289,8 @@ impl us_socket_t {
 
     #[cfg(not(windows))]
     pub fn write_fd(&mut self, data: &[u8], file_descriptor: Fd) -> i32 {
+        // SAFETY: data.as_ptr() is valid for data.len() bytes; file_descriptor is a valid native fd.
         let rc = unsafe {
-            // SAFETY: data.as_ptr() valid for data.len() bytes; fd is a valid native descriptor
             c::us_socket_ipc_write_fd(
                 self,
                 data.as_ptr(),
@@ -318,8 +318,8 @@ impl us_socket_t {
     }
 
     pub fn write2(&mut self, first: &[u8], second: &[u8]) -> i32 {
+        // SAFETY: both slices are valid for their respective lengths; self is a live us_socket_t.
         let rc = unsafe {
-            // SAFETY: both slices valid for their respective lengths
             c::us_socket_write2(
                 self,
                 first.as_ptr(),
@@ -342,8 +342,8 @@ impl us_socket_t {
     /// Bypass TLS — raw bytes to the fd even if `is_tls()`.
     pub fn raw_write(&mut self, data: &[u8]) -> i32 {
         bun_core::scoped_log!(uws, "us_socket_raw_write({:p}, {})", self, data.len());
+        // SAFETY: data.as_ptr() valid for data.len() bytes; self is a live us_socket_t.
         unsafe {
-            // SAFETY: data.as_ptr() valid for data.len() bytes
             c::us_socket_raw_write(
                 self,
                 data.as_ptr(),
@@ -534,9 +534,9 @@ impl us_socket_stream_buffer_t {
     pub fn to_stream_buffer(&self) -> StreamBuffer {
         StreamBuffer {
             list: if !self.list_ptr.is_null() {
+                // SAFETY: list_ptr/list_len/list_cap were produced by decomposing a
+                // Vec<u8> in `update`; global allocator (mimalloc) matches.
                 unsafe {
-                    // SAFETY: list_ptr/list_len/list_cap were produced by decomposing a
-                    // Vec<u8> in `update`; global allocator (mimalloc) matches.
                     Vec::from_raw_parts(self.list_ptr, self.list_len, self.list_cap)
                 }
             } else {

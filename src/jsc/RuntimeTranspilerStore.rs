@@ -486,6 +486,8 @@ fn tls_get_or_leak<T>(
     // ever observes `p`, and every borrow returned here is scoped to one
     // `TranspilerJob::run()` activation (no `&T`/`&mut T` from a prior call
     // survives), so the `&mut` is exclusive for its actual use.
+    // SAFETY: `p` is a per-thread-local NonNull pointer to a heap-allocated T that is never freed;
+    // no prior `&mut` borrow survives into this call (one activation at a time per thread).
     unsafe { &mut *p.as_ptr() }
 }
 
@@ -653,6 +655,8 @@ impl TranspilerJob {
         let vm: *mut VirtualMachine = self.vm;
 
         if self.generation_number
+            // SAFETY: `vm` outlives the job (BACKREF — VM owns the store); leaf-field access
+            // avoids forming `&VirtualMachine` per the `vm` PORT NOTE above.
             != unsafe {
                 (*vm)
                     .transpiler_store
@@ -715,6 +719,8 @@ impl TranspilerJob {
         // outlives this stack frame; `vm.transpiler` is not concurrently mutated.
         // Zig did not `deinit` the by-value copy; `ManuallyDrop` suppresses Drop so owned
         // fields aren't double-freed against `vm.transpiler`.
+        // SAFETY: `vm.transpiler` read via `addr_of!` (no `&VirtualMachine` formed); all internal
+        // raw pointers in the copy outlive this frame; `ManuallyDrop` prevents double-free.
         let mut transpiler_storage =
             core::mem::ManuallyDrop::new(unsafe { ptr::read(ptr::addr_of!((*vm).transpiler)) });
         // SAFETY (lifetime erasure): `Transpiler<'a>`'s `'a` only constrains the
@@ -723,6 +729,8 @@ impl TranspilerJob {
         // arena above. `arena` is declared before `transpiler_storage`, so it
         // drops after; the bytewise copy is never dropped (ManuallyDrop), so no
         // borrow tied to the shortened `'a` outlives the arena.
+        // SAFETY: `transpiler_storage` holds a ManuallyDrop<Transpiler<'static>>; casting to
+        // `Transpiler<'_>` shortens the lifetime to the local `arena` which is valid — see comment above.
         let transpiler: &mut Transpiler<'_> =
             unsafe { &mut *(&raw mut *transpiler_storage).cast::<Transpiler<'_>>() };
         transpiler.set_arena(&arena);
@@ -774,6 +782,8 @@ impl TranspilerJob {
         // leaked in `enable_hot_module_reloading`, so the `ParentRef` invariant
         // holds for this transpile job's duration). Raw `(*vm)` field
         // projection avoids forming `&VirtualMachine` per the `vm` PORT NOTE.
+        // SAFETY: `bun_watcher` is a process-lifetime `ImportWatcher` (non-null when set);
+        // raw `(*vm)` field projection avoids forming `&VirtualMachine` per the `vm` PORT NOTE.
         let import_watcher: Option<bun_ptr::ParentRef<ImportWatcher>> =
             unsafe { bun_ptr::ParentRef::from_nullable_mut((*vm).bun_watcher.cast()) };
         if let Some(iw) = import_watcher {
@@ -855,6 +865,8 @@ impl TranspilerJob {
             loader,
             dirname_fd: Fd::INVALID,
             file_descriptor: fd,
+            // SAFETY: `input_file_fd` is a local on this stack frame; `addr_of_mut!` avoids forming
+            // `&mut` through an aliased place; the reference does not outlive this frame.
             file_fd_ptr: Some(unsafe { &mut *ptr::addr_of_mut!(input_file_fd) }),
             file_hash: Some(hash),
             macro_remappings,
@@ -875,6 +887,8 @@ impl TranspilerJob {
                 && is_main
                 && set_break_point_on_first_line(),
             runtime_transpiler_cache: if !JscRuntimeTranspilerCache::is_disabled() {
+                // SAFETY: `cache` is a local on this stack frame; `addr_of_mut!` never forms `&mut`
+                // on an aliased location; `parse_options` does not outlive this frame.
                 Some(unsafe { &mut *ptr::addr_of_mut!(cache) })
             } else {
                 None

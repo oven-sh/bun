@@ -626,6 +626,7 @@ pub fn host_fn_finalize<T>(this: *mut T, f: impl FnOnce(alloc::boxed::Box<T>)) {
     // For intrusively-refcounted `T` other native code may hold raw
     // pointers to the same allocation — see doc comment above re: the
     // impl's obligation to `Box::leak` before doing fallible work.
+    // SAFETY: `this` is the unique GC-owned `m_ctx` pointer from `Box::into_raw`; the GC sweep guarantees no concurrent access.
     let boxed = unsafe { alloc::boxed::Box::from_raw(this) };
     f(boxed)
 }

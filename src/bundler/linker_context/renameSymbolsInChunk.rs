@@ -90,6 +90,7 @@ pub unsafe fn rename_symbols_in_chunk(
         exports_ref_col,
         module_ref_col,
         nested_slot_counts_col,
+    // SAFETY: `split_raw()` columns valid for `ast.len()`/`meta.len()` elements; no reallocation occurs here.
     ): (_, &[js_meta::Flags], _, _, _, _, _, _, _, _) = unsafe {
         (
             &mut *ast.module_scope,

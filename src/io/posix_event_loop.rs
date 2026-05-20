@@ -1408,6 +1408,7 @@ impl Store {
             return;
         }
 
+        // SAFETY: `poll` is a valid hive slot pointer; `next_to_free` read is only for the debug assertion.
         debug_assert!(unsafe { (*poll).next_to_free }.is_null());
 
         if !self.pending_free_tail.is_null() {
@@ -1530,6 +1531,7 @@ pub extern "C" fn Bun__internal_dispatch_ready_poll(loop_: *mut Loop, tagged_poi
     // `&*loop_` only to copy the POD event onto the stack (the `BackRef`-style
     // accessor returns by value), then drop the borrow before dispatching so the
     // handler is free to form its own `&mut Loop`.
+    // SAFETY: `loop_` is the live uws loop; `&*loop_` is dropped before dispatching so no aliased `&mut` spans the re-entrant call.
     let ev = unsafe { &*loop_ }.current_ready_event();
 
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]

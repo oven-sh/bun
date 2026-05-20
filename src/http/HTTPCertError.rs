@@ -45,6 +45,7 @@ impl HTTPCertError {
             // widen to `&'static ZStr` is sound. (`Interned` itself is
             // `[u8]`-only; `ZStr` keeps the open-coded widen but the owner is
             // now named per the `Interned::assume` contract.)
+            // SAFETY: `p` points to a process-lifetime static string literal; widening to `&'static ZStr` is sound.
             unsafe { ZStr::from_c_ptr(p) }
         }
         Self {

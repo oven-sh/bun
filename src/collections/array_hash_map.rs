@@ -783,6 +783,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
                     // vecs either patches the index in place
                     // (`index_swap_remove`/`index_remove_tail`) or calls
                     // `drop_index()` first.
+                    // SAFETY: `i < hashes.len()` and `i < keys.len()` by index invariant.
                     unsafe { *hashes.add(i) == h && eq(&*keys.add(i), i) }
                 })
                 .map(|&i| i as usize);
@@ -937,6 +938,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         // `index < self.keys.len() == self.values.len()` — every caller
         // (`get_or_put*`/`put_index`) passes the index just returned by
         // `push_entry` or `find_hash`.
+        // SAFETY: `keys` and `values` are disjoint Vecs; `index` is in-bounds per caller.
         let (key_ptr, value_ptr) = unsafe {
             (
                 &mut *self.keys.as_mut_ptr().add(index),

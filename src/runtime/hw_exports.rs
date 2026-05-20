@@ -191,6 +191,8 @@ pub(crate) mod sql_hooks {
         // `All::insert` (NOT the raw `.timers` field) so the lock is taken and
         // `(*timer).state` / `in_heap` bookkeeping is updated — Zig spec is
         // `vm.timer.insert(&this.timer)`.
+        // SAFETY: outer `unsafe fn` forwards the caller's contract; `heap` is the
+        // live `runtime_state().timer` and `timer` is a valid intrusive node.
         unsafe { (*heap.cast::<crate::timer::All>()).insert(timer) };
     }
     unsafe fn timer_remove(heap: *mut c_void, timer: *mut EventLoopTimer) {
@@ -364,7 +366,10 @@ pub fn bindgen_bunobject_dispatch_braces(
     // **no** refcount bump). `bun_core::String` is `Copy` with no `Drop`, so
     // a plain deref matches that exactly; `braces` only borrows the bytes via
     // `to_utf8()` and never derefs the handle.
+    // SAFETY: `arg_input` is a valid C++ stack local (Zig call site passes a ref);
+    // `bun_core::String` is `Copy` so a plain deref is safe and correct.
     let input = unsafe { *arg_input };
+    // SAFETY: `arg_options` is a valid C++ stack local; `BracesOptions` is `Copy`.
     let opts = unsafe { *arg_options };
     bun_jsc::host_fn::to_js_host_call(global, || {
         crate::api::bun_object::braces(global, input, opts)
@@ -403,6 +408,8 @@ pub fn bindgen_fmt_jsc_dispatch_fmt_string(
     let formatter = unsafe { *arg_formatter };
     match bun_jsc::fmt_jsc::js_bindings::fmt_string(global, code.slice(), formatter) {
         Ok(s) => {
+            // SAFETY: `out` is a valid C++ stack local (same call site as `arg_code`);
+            // writing through the raw pointer is safe for the duration of this call.
             unsafe { *out = s };
             true
         }
@@ -482,9 +489,11 @@ pub extern "C" fn bindgen_Bindgen_test_dispatchRequiredAndOptionalArg1(
     let v = bun_jsc::bindgen_test::required_and_optional_arg(
         unsafe { *arg_a },
         if buf.b_set { Some(buf.b_value) } else { None },
+        // SAFETY: `arg_c` is a valid C++ stack local (same call site as `arg_a`/`buf`).
         unsafe { *arg_c },
         if buf.d_set { Some(buf.d_value) } else { None },
     );
+    // SAFETY: `out` is a valid C++ stack local; writing `v` through it is safe.
     unsafe { *out = v };
     true
 }

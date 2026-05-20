@@ -356,6 +356,7 @@ extern "C" fn on_uv_timer(timer_: *mut libuv::Timer) {
     //       `&mut uws::Loop` it produced is still live around us.
     // So: touch only `(*this).did_timeout` (a `Cell`, interior-mutable), and obtain the uv loop
     // from the timer handle itself rather than routing through `*this`.
+    // SAFETY: see the aliasing note above; only interior-mutable fields are accessed.
     unsafe {
         let this: *mut SpawnSyncEventLoop = (*timer_).data.cast::<SpawnSyncEventLoop>();
         (*this).did_timeout.set(true);

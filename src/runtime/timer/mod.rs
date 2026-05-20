@@ -689,6 +689,7 @@ impl All {
         // fresh `&mut EventLoopTimer` via `(*a).heap()` for the same
         // allocation, so we must NOT hold a `&mut *timer` across that call.
         // Read `tag` and write `state`/`in_heap` via raw deref instead.
+        // SAFETY: `timer` is a valid live EventLoopTimer (caller contract).
         let allow_fake = unsafe { (*timer).tag }.allow_fake_timers();
         if self.fake_timers.is_active() && allow_fake {
             // SAFETY: see fn contract
@@ -921,6 +922,7 @@ impl All {
             // `(*min).heap` through a fresh `&mut EventLoopTimer`, so we must
             // NOT hold a `&mut *min` across it. Read `next`/`tag` via raw
             // deref and fire via raw deref (mirroring `drain_timers`).
+            // SAFETY: `min` is a live heap node returned by `peek`; reading fields is sound.
             let (min_next_sec, min_next_nsec, min_tag) =
                 unsafe { ((*min).next.sec, (*min).next.nsec, (*min).tag) };
             let now =

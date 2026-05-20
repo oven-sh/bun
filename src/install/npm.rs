@@ -1018,6 +1018,7 @@ pub mod package_manifest {
                 // struct definition statically asserts no gap remains. Every
                 // byte of `this.pkg` is therefore initialized, so viewing it
                 // as `&[u8]` is sound.
+                // SAFETY: `NpmPackage` is `#[repr(C)]` with no implicit padding; all bytes initialized.
                 let bytes = unsafe {
                     bun_core::ffi::slice(
                         (&raw const this.pkg).cast::<u8>(),

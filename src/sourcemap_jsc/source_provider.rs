@@ -71,6 +71,8 @@ impl BakeSourceProvider {
         // outlives this `BakeSourceProvider` (the provider is created from a
         // `bundled_outputs` entry), so reborrowing as `&'self [u8]` is sound.
         if let Some(slice) = unsafe { (hooks.bake_per_thread_source_map)(pt, source_filename) } {
+            // SAFETY: `slice` is a `*const [u8]` returned by the hook pointing
+            // into `PerThread.bundled_outputs`, which outlives this provider.
             return Some(unsafe { &*slice });
         }
         Some(b"")

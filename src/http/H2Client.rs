@@ -140,6 +140,7 @@ pub(crate) mod bridge {
             // `buildRequest` (returns slices into module-static storage) and
             // lets `ClientSession::attach` re-borrow `client` while the
             // `Request` is still live. Same pattern as lib.rs `on_writable`.
+            // SAFETY: slices in the returned `Request` are `'static`; lifetime erasure is sound.
             unsafe { self.build_request(body_len).detach_lifetime() }
         }
     }

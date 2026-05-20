@@ -55,6 +55,7 @@ impl LinkerContext<'_> {
         // hold `&LinkerContext` simultaneously; the SoA buffers live behind raw
         // pointers inside `MultiArrayList`, so this borrow does not assert
         // immutability over the heap cells we write below.
+        // SAFETY: `this` is a valid `*mut LinkerContext` shared across worker threads; shared read-only ref is sound.
         let c: &LinkerContext<'_> = unsafe { &*this };
 
         let id = source_index;
@@ -101,6 +102,7 @@ impl LinkerContext<'_> {
         // shared slices are fine here.
         // SAFETY: `split_raw()` columns are valid for `meta.len()` elements;
         // no task mutates `imports_to_bind` / `probably_typescript_type`.
+        // SAFETY: `split_raw()` SoA columns are valid for `meta.len()` elements; no task writes `imports_to_bind`/`probably_typescript_type` during step 5.
         let (imports_to_bind, probably_typescript_type): (
             &[RefImportData],
             &[js_meta::ProbablyTypescriptType],
@@ -188,6 +190,7 @@ impl LinkerContext<'_> {
             // `&mut` into that slot. `create_exports_for_file` writes only via
             // this param + the three per-row cells below and never re-borrows
             // those columns through `self`.
+            // SAFETY: `resolved_exports` is the sole live `&mut` into this SoA row; the earlier iterator has ended.
             unsafe { &mut *resolved_exports },
             imports_to_bind,
             export_aliases,
@@ -228,6 +231,7 @@ impl LinkerContext<'_> {
         let (tlsp_overlay, tlsp_ast): (
             &bun_ast::ast_result::TopLevelSymbolToParts,
             &bun_ast::ast_result::TopLevelSymbolToParts,
+            // SAFETY: SoA rows are task-owned for `id`; borrow begins after `create_exports_for_file` returns; no realloc during step 5.
         ) = unsafe {
             (
                 &*(meta.top_level_symbol_to_parts_overlay
@@ -694,6 +698,7 @@ impl LinkerContext<'_> {
                     // just verified head == base+len); same-layout cast
                     // `[MaybeUninit<Stmt>]` → `[Stmt]`. The worker arena
                     // outlives the link pass.
+                    // SAFETY: slice is fully initialized (debug_assert verified); same-layout cast `[MaybeUninit<Stmt>]`→`[Stmt]`.
                     bun_ast::StoreSlice::new_mut(unsafe {
                         &mut *(init as *mut [MaybeUninit<Stmt>] as *mut [Stmt])
                     })

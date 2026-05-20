@@ -388,6 +388,8 @@ impl Queue {
         // `from_field_ptr!` is sound. S017 does not apply: that rule forbids
         // widening from a `&mut self`-derived pointer, but `ctx` is a raw
         // `*mut` carried from the original allocation.
+        // SAFETY: `ctx` was stored as `addr_of_mut!((*vm).modules)` from the VM's
+        // raw allocation; `from_field_ptr!` recovers the enclosing `VirtualMachine`.
         let vm = unsafe { &mut *bun_core::from_field_ptr!(VirtualMachine, modules, queue) };
         vm.enqueue_task_concurrent(task);
     }
@@ -1238,17 +1240,18 @@ impl AsyncModule {
         // slices into it remain valid across the `&mut self` reborrows below
         // (`self.parse_result = ...`). Detach the borrow so borrowck doesn't
         // tie `path`/`specifier` to `&self`.
+        // SAFETY: `self.specifier()` returns a slice into `self.string_buf` whose
+        // backing allocation is stable for the lifetime of `*self`; detaching the
+        // lifetime is safe because we never replace `string_buf` in this fn.
         let specifier: &[u8] = unsafe { bun_ptr::detach_lifetime(self.specifier()) };
+        // SAFETY: same as `specifier` above — `path_text()` also borrows `string_buf`.
         let path_text: &[u8] = unsafe { bun_ptr::detach_lifetime(self.path_text()) };
         let path = Fs::Path::init(path_text);
         let jsc_vm = VirtualMachine::get_mut_ptr();
-        // SAFETY: `jsc_vm` is the live per-thread VM (one VM per thread);
-        // raw-ptr aliasing matches the Zig `*VirtualMachine` field accesses
-        // (`transpiler.log`/`resolver.log`/`linker.log` are themselves raw
-        // `*mut Log` aliased deliberately — see `Transpiler::set_log`).
-        // `vm.log` is set unconditionally in `init` and never cleared, so the
-        // `expect` is infallible.
         let old_log: core::ptr::NonNull<bun_ast::Log> =
+            // SAFETY: `jsc_vm` is the live per-thread VM singleton; `vm.log` is set
+            // unconditionally in `init` and never cleared; raw-ptr field access matches
+            // the Zig `*VirtualMachine` aliasing pattern (see `Transpiler::set_log`).
             unsafe { (*jsc_vm).log }.expect("vm.log set in init");
 
         let log_nn = core::ptr::NonNull::new(log).expect("AsyncModule log is non-null");

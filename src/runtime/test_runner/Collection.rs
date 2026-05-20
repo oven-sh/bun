@@ -94,6 +94,7 @@ impl Collection {
     /// so the pointer is always valid while `self` is.
     #[inline]
     pub fn active_scope(&self) -> &DescribeScope {
+        // SAFETY: active_scope is non-null, points into root_scope tree (Box-owned), valid for lifetime of Collection (see above).
         unsafe { self.active_scope.as_ref() }
     }
 
@@ -108,6 +109,7 @@ impl Collection {
     /// `step()`), so it carries write-capable provenance.
     #[inline]
     pub fn active_scope_mut(&mut self) -> &mut DescribeScope {
+        // SAFETY: active_scope is non-null, points into root_scope tree (Box-owned, never freed while self lives), write-capable provenance (see above).
         unsafe { self.active_scope.as_mut() }
     }
 

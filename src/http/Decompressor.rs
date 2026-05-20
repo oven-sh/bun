@@ -38,14 +38,10 @@ pub enum Decompressor {
 /// overwrites `list_ptr`).
 #[inline(always)]
 unsafe fn seat<'a>(input: &'a [u8], out: &'a mut Vec<u8>) -> (&'static [u8], &'static mut Vec<u8>) {
-    // SAFETY (`Interned::assume` — Population B, holder-backed): `input` is
-    // `InternalState::compressed_body` (or the caller's body chunk), owned by
-    // the surrounding `HTTPClient` request and freed in `InternalState::deinit`
-    // strictly after the `Decompressor` is dropped/reset. NOT process-lifetime;
-    // `assume` makes the holder explicit and grep-able. The output `Vec<u8>` is
-    // a `&'static mut` forge — sibling `static-widen-mut` pattern, routed
-    // through `detach_lifetime_mut` so the unsafe stays centralised in
-    // `bun_ptr`.
+    // SAFETY: `input` is owned by the surrounding `HTTPClient` and freed in
+    // `InternalState::deinit` strictly after the `Decompressor` is dropped;
+    // `Interned::assume` marks the holder-backed lifetime explicitly. `out`
+    // is lifetime-erased via `detach_lifetime_mut` (static-widen-mut pattern).
     unsafe {
         (
             bun_ptr::Interned::assume(input).as_bytes(),

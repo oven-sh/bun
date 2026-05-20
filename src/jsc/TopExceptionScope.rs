@@ -589,6 +589,7 @@ impl ExceptionValidationScope {
     /// Prefer dropping an [`ExceptionValidationScopeGuard`] instead.
     pub unsafe fn destroy(this: *mut Self) {
         #[cfg(any(debug_assertions, bun_asan))]
+        // SAFETY: outer `unsafe fn` contract guarantees `this` was initialized via init() and not yet destroyed.
         unsafe {
             TopExceptionScope::destroy(&mut (*this).scope)
         };

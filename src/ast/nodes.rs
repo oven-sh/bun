@@ -79,6 +79,7 @@ impl<T> StoreRef<T> {
         // `@constCast` on prefill tables. The pointee is *never* written
         // through — `DerefMut` on a `StoreRef` produced here is UB and callers
         // must not do so (audited: only `Deref`/`get()` reads occur).
+        // SAFETY: `r` is a non-null `'static` reference; `new_unchecked` is valid.
         StoreRef(unsafe { NonNull::new_unchecked(core::ptr::from_ref(r).cast_mut()) })
     }
     /// Borrow the pointee (explicit form of `Deref`).

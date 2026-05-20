@@ -1178,6 +1178,8 @@ impl TranspilerStateGuard {
     /// this runs.
     #[inline]
     fn transpiler_mut(&mut self) -> &mut Transpiler::Transpiler<'static> {
+        // SAFETY: `self.transpiler` is non-null (set at construction from heap-stable JsCell);
+        // exclusive access: no other `&mut Transpiler` projection is live while the guard exists.
         unsafe { &mut *self.transpiler }
     }
 
@@ -1252,6 +1254,8 @@ impl JSTranspiler {
     /// that no `noalias &mut JSTranspiler` is live across that re-entry.
     #[inline]
     unsafe fn transpiler_mut(&self) -> &mut Transpiler::Transpiler<'static> {
+        // SAFETY: outer `unsafe fn`; JSTranspiler R-2 invariant ensures no `noalias &mut JSTranspiler`
+        // is live across potential macro re-entry — caller upholds the single-borrow contract.
         unsafe { self.transpiler.get_mut() }
     }
 
@@ -1751,6 +1755,7 @@ impl JSTranspiler {
         // `with_mut` borrow is closure-scoped; no JS re-entry inside.
         let prev_arena = self.transpiler.with_mut(|t| {
             let prev = t.arena;
+            // SAFETY: `arena` outlives `transpiler` use in this fn; `_restore` reverts before `arena` drops.
             t.set_arena(unsafe { bun_ptr::detach_lifetime_ref(&arena) });
             t.set_log(&raw mut log);
             prev

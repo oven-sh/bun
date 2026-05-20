@@ -774,6 +774,7 @@ impl ThreadPool {
                 Ok(_handle) => {
                     // Dropping JoinHandle detaches the thread (matches Zig `thread.detach()`).
                 }
+                // SAFETY: `self` is the owning pool; `unregister` with null thread ptr de-spawns the failed slot.
                 Err(_) => return unsafe { Self::unregister(self, ptr::null_mut()) },
             }
             sync = new_sync;
@@ -834,6 +835,7 @@ impl ThreadPool {
                                     // detach by dropping
                                 }
                                 Err(_) => {
+                                    // SAFETY: `self` is the owning pool; unregister with null de-spawns the failed slot.
                                     return unsafe { Self::unregister(self, ptr::null_mut()) };
                                 }
                             }
@@ -988,6 +990,7 @@ impl ThreadPool {
         // The last thread to exit must wake up the thread pool join()er
         // who will start the chain to shutdown all the threads.
         if sync.state() == SyncState::Shutdown && sync.spawned() == 1 {
+            // SAFETY: `pool` is still live — `join_event.notify()` is the last access before joiner may free it.
             unsafe { (*pool).join_event.notify() };
         }
         // ── `*pool` may be invalid past this point. ──

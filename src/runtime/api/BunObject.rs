@@ -2073,6 +2073,7 @@ pub fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResul
     // process singleton — `Graph::get()` returns the same instance the trait
     // object was built from (`vm.standalone_module_graph.is_some()` ⇔
     // `Graph::get().is_some()`).
+    // SAFETY: `Graph::get()` returns the process-lifetime singleton; `expect` guards the null case.
     let graph: &mut StandaloneModuleGraph = unsafe {
         &mut *StandaloneModuleGraph::get()
             .expect("vm.standalone_module_graph set ⇔ Graph singleton populated")

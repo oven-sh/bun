@@ -194,6 +194,7 @@ macro_rules! __mal_split_mut_impl {
             // (`Reflected::<T>::COLUMN_OFFSET_PER_CAP`); `&mut self` guarantees
             // exclusive access to the whole buffer for `'_`, so materializing
             // one `&mut [F]` per column simultaneously cannot alias.
+            // SAFETY: non-overlapping columns; `&mut self` ensures exclusive access for `'_`.
             unsafe {
                 $struct {
                     $( $field: ::core::slice::from_raw_parts_mut(
@@ -1551,6 +1552,7 @@ mod tests {
         impl SortContext for Ctx {
             fn less_than(&self, ai: usize, bi: usize) -> bool {
                 debug_assert!(ai < self.len && bi < self.len);
+                // SAFETY: `ai` and `bi` are < `self.len` (debug-asserted above); `self.a` is a valid slice base.
                 unsafe { *self.a.add(ai) < *self.a.add(bi) }
             }
         }

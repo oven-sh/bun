@@ -1068,6 +1068,7 @@ impl Cmd {
             // this point so the `&Interpreter` borrow does not alias it.
             // The caller (`ShellSubprocess::on_process_exit`) does not touch
             // its `*mut Cmd` again after this returns.
+            // SAFETY: see multi-line comment above this line.
             Yield::Next(this_id).run(unsafe { &*interp });
         }
     }

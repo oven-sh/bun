@@ -246,6 +246,7 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
         // allocation, leaving the arena bytes abandoned (they were already
         // leaked into the bump and will never be element-dropped).
         let mut v = Vec::with_capacity_in(items.len(), A::default());
+        // SAFETY: see doc-comment above; bump-arena slice is a leaked bitwise-move source.
         unsafe {
             core::ptr::copy_nonoverlapping(items.as_ptr(), v.as_mut_ptr(), items.len());
             v.set_len(items.len());
@@ -283,6 +284,8 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
         // into O(nodes) dead arena bytes (≈+11% transpile RSS on a 5.7 MB
         // input). Freeing here makes the scratch slot O(1): mimalloc recycles
         // the same size-class block on the next iteration.
+        // SAFETY: `out` has capacity `len`; `src` is a separate (scratch) allocation;
+        // bitwise-move is safe because `src.set_len(0)` relinquishes ownership below.
         unsafe {
             core::ptr::copy_nonoverlapping(src.as_ptr(), out.as_mut_ptr(), len);
             out.set_len(len);
@@ -652,10 +655,12 @@ impl ByteVecExt for Vec<u8> {
     }
     #[inline]
     unsafe fn uv_alloc_spare_u8(&mut self, suggested: usize) -> &mut [u8] {
+        // SAFETY: outer `unsafe fn` propagates the caller's safety contract; thin forward.
         unsafe { bun_core::vec::reserve_spare_bytes(self, suggested) }
     }
     #[inline]
     unsafe fn uv_commit(&mut self, nread: usize) {
+        // SAFETY: outer `unsafe fn` propagates the caller's safety contract; thin forward.
         unsafe { bun_core::vec::commit_spare(self, nread) }
     }
 }
@@ -741,6 +746,7 @@ pub fn prepend_from<T, A: Allocator, B: Allocator>(dst: &mut Vec<T, A>, src: &mu
     // We commit `dst`'s new length only *after* `src` has been logically emptied
     // so no element is ever owned by both vecs (no double-drop on unwind — and
     // none of the ptr ops below can panic anyway).
+    // SAFETY: see multi-line comment above; `reserve` guarantees capacity, elements moved safely.
     unsafe {
         let base = dst.as_mut_ptr();
         // Shift existing `dst` elements right (overlapping → memmove).

@@ -440,6 +440,7 @@ impl ShellLsTask {
         // heap-allocated; spec ls.zig `enqueue` calls `subtask.schedule()` =
         // raw `WorkPool.schedule` (no keep-alive ref) — runs on a worker
         // thread with no JS-VM thread-local.
+        // SAFETY: task_count and subtask are live heap ptrs (see above); schedule hands ownership to the thread pool.
         unsafe {
             (*self.task_count).fetch_add(1, Ordering::Relaxed);
             (*subtask).print_directory = true;
@@ -613,16 +614,22 @@ impl ShellLsTask {
 
         // SAFETY: `perms`/`time_str` are filled with ASCII (`rwx-`/digits/
         // spaces/month abbreviations) by `format_perms`/`format_time` above.
+        // SAFETY: `perms`/`time_str` are filled with ASCII (`rwx-`/digits/
+        // spaces/month abbreviations) by `format_perms`/`format_time` — valid UTF-8.
+        // SAFETY: perms contains only ASCII bytes filled by format_perms; from_utf8_unchecked is sound.
+        let perms_str = unsafe { core::str::from_utf8_unchecked(&perms) };
+        // SAFETY: time_str contains only ASCII bytes filled by format_time; from_utf8_unchecked is sound.
+        let time_str_str = unsafe { core::str::from_utf8_unchecked(&time_str) };
         let _ = write!(
             self.output,
             "{}{} {:>3} {:>5} {:>5} {:>8} {} ",
             file_type as char,
-            unsafe { core::str::from_utf8_unchecked(&perms) },
+            perms_str,
             nlink,
             uid,
             gid,
             size,
-            unsafe { core::str::from_utf8_unchecked(&time_str) },
+            time_str_str,
         );
         self.output.extend_from_slice(name);
         self.output.push(b'\n');

@@ -1124,6 +1124,7 @@ impl UpgradeCommand {
             // raw pointer, so this view's provenance stays valid across those
             // writes. Each mutation re-establishes the NUL before
             // `target_dirname` is read again.
+            // SAFETY: see multi-line SAFETY comment two lines above.
             let target_dirname = unsafe { ZStr::from_raw(buf_ptr, target_dir_len) };
             let target_dir_it = match sys::Dir::open(target_dirname.as_bytes()) {
                 Ok(d) => d,

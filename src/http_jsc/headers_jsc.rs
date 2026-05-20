@@ -69,8 +69,10 @@ pub fn from_fetch_headers(
     let sliced = headers.entries.slice();
     // SAFETY: `Name`/`Value` columns are both `StringPointer`; `Slice::items_raw`
     // contract is satisfied. Disjoint backing memory ⇒ no aliasing.
+    // SAFETY: `Name`/`Value` columns are `StringPointer`; `Slice::items_raw` contract satisfied.
     let names_ptr: *mut api::StringPointer =
         unsafe { sliced.items_raw::<"name", api::StringPointer>() };
+    // SAFETY: disjoint from `names_ptr` backing memory — no aliasing between name and value columns.
     let values_ptr: *mut api::StringPointer =
         unsafe { sliced.items_raw::<"value", api::StringPointer>() };
     if let Some(h) = h_ptr {

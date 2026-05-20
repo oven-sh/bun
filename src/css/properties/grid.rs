@@ -483,6 +483,8 @@ impl GridTemplateAreas {
             .try_parse(|i| i.expect_string().map(|s| std::ptr::from_ref::<[u8]>(s)))
             .ok()
         {
+            // SAFETY: `s` is a fat pointer into the parser's source/bump arena,
+            // which outlives this parse; `arena_str`'s caller contract is satisfied.
             let s = unsafe { crate::arena_str(s) };
             let parsed_columns = match Self::parse_string(input.arena(), s, &mut tokens) {
                 Ok(v) => v,

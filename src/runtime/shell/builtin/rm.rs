@@ -918,6 +918,7 @@ impl ShellRmTask {
         // the new owner, so this `&mut` is exclusive and race-free. The
         // reborrow is also disjoint from every other live borrow (`&self`,
         // `path`).
+        // SAFETY: dir_task is live; deleted_entries reborrow is exclusive under release/acquire ownership transfer (see above).
         let entries = unsafe { &mut (*dir_task).deleted_entries };
         if entries.is_empty() {
             // `output_count` is a `BackRef` into the boxed `Rm` ExecState.
@@ -1371,6 +1372,7 @@ impl DirTask {
         // the Rust port drops the block entirely rather than calling a
         // Windows path resolver whose only effect would be to fail the task
         // on error.
+        // SAFETY: this is a live DirTask (caller contract); worker has exclusive access to non-atomic fields (see above).
         let (tm_ptr, is_absolute): (*mut ShellRmTask, bool) = unsafe {
             let tm_ptr = (*this).task_manager;
             let abs = Platform::AUTO.is_absolute((*this).path.as_bytes());
@@ -1428,6 +1430,7 @@ impl DirTask {
         // `queue_for_write` re-derive from raw `*mut` (no overlap with `me`,
         // which is a `&` over atomics + Copy fields). Non-root `deinit`
         // reclaims `this`'s Box; `finish_concurrently` may free the root.
+        // SAFETY: this is a live DirTask (caller contract); me covers only atomics/Copy fields (see above).
         unsafe {
             let me = &*this;
             // This is true if the directory has subdirectories that need to be deleted.
@@ -1502,6 +1505,7 @@ impl DirTask {
         // and the `task_manager` read use raw place projection only.
         // `task_manager` lives in a separate allocation, so `tm: &ShellRmTask`
         // does not overlap any DirTask borrow.
+        // SAFETY: this is a live DirTask (caller contract); raw-ptr only to avoid long-lived &DirTask across reborrows (see above).
         unsafe {
             // `run_from_thread_pool_impl` has a `defer post_run` so set this to skip that.
             (*this)

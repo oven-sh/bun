@@ -637,6 +637,7 @@ pub fn schedule_barrel_deferred_imports(
                     // PORT NOTE: arena-backed key slices live for the bundler
                     // arena lifetime; raw-ptr round-trip to detach from the
                     // `&this.requested_exports` borrow before BFS mutates it.
+                    // SAFETY: key is arena-owned and valid for the bundler lifetime; detach_lifetime_ref is a pointer round-trip.
                     let alias: &[u8] = unsafe { bun_ptr::detach_lifetime_ref(&**key) };
                     queue.push(BarrelWorkItem {
                         barrel_source_index: this_source_index,

@@ -464,6 +464,7 @@ fn bufs_storage_init() -> *mut Bufs {
     // field is scratch (write-then-read within a single resolve call,
     // including `open_dirs` which is bounded by `open_dir_count`), so
     // there is no need to pay for zero-filling ~100 KiB on first use.
+    // SAFETY: `Bufs` contains only byte/integer arrays and MaybeUninit fields — every bit-pattern is valid; fields are written before being read.
     let p: *mut Bufs = Box::leak(unsafe { Box::<Bufs>::new_uninit().assume_init() });
     BUFS_PTR.with(|s| s.0.set(p));
     p
@@ -846,6 +847,7 @@ impl<'a> Resolver<'a> {
         // mutation; a Shared `&` here pushes no Unique tag and so cannot
         // alias-UB with the narrow `log_mut()` retags elsewhere (none are live
         // across a `log_ref()` call).
+        // SAFETY: `self.log` is a valid non-null backref (set in `init1`/`scoped_log`); shared borrow is safe here.
         unsafe { self.log.as_ref() }
     }
 
@@ -933,6 +935,7 @@ impl<'a> Resolver<'a> {
         // final binary; `self.log` / `self.opts.install` / `env` point at
         // process-lifetime storage (Transpiler-owned). The returned pointer
         // names the `PackageManager` singleton (`'static`).
+        // SAFETY: all args point at process-lifetime storage; function is a `#[no_mangle]` symbol linked into the final binary.
         let pm: NonNull<dyn AutoInstaller> =
             unsafe { __bun_resolver_init_package_manager(self.log, self.opts.install, env) };
         // Zig: `pm.onWake = this.onWakePackageManager;`
@@ -1602,6 +1605,7 @@ impl<'a> Resolver<'a> {
                     bun_options_types::BuiltInModule::Import(path) => {
                         // PORT NOTE: copy out `path` so the `&self.opts.framework` borrow
                         // ends before `self.resolve(&mut self, ...)`.
+                        // SAFETY: `path` is `'static` data from `self.opts.framework`; erasing the lifetime ends the borrow before `self.resolve`.
                         let path: &'static [u8] =
                             unsafe { &*std::ptr::from_ref::<[u8]>(path.as_ref()) };
                         let top = self.fs_ref().top_level_dir;
@@ -3446,6 +3450,7 @@ impl<'a> Resolver<'a> {
         let rfs: *mut Fs::file_system::RealFS = self.rfs_ptr();
         macro_rules! rfs {
             () => {
+                // SAFETY: `rfs` is derived from the raw `*mut FileSystem` field; re-borrowed per use so no `&mut` aliases overlap.
                 unsafe { &mut *rfs }
             };
         }
@@ -4240,6 +4245,7 @@ impl<'a> Resolver<'a> {
         let rfs: *mut Fs::file_system::RealFS = self.rfs_ptr();
         macro_rules! rfs {
             () => {
+                // SAFETY: `rfs` is derived from the raw `*mut FileSystem` field (process-global singleton); re-borrowed per use so no `&mut` aliases overlap.
                 unsafe { &mut *rfs }
             };
         }
@@ -5663,6 +5669,7 @@ impl<'a> Resolver<'a> {
         #[allow(unused_macros)]
         macro_rules! rfs {
             () => {
+                // SAFETY: `rfs` is derived from the raw `*mut FileSystem` field (global singleton); re-borrowed per use site.
                 unsafe { &mut *rfs }
             };
         }
@@ -6008,15 +6015,18 @@ impl<'a> Resolver<'a> {
         // outlives a `unsafe { &mut *self.fs() }` / `get_entries()` / `parse_package_json()` call.
         // TODO(port): split RealFS borrow once entries iteration is interior-mutability-backed.
         let rfs_ptr: *mut Fs::file_system::RealFS = self.rfs_ptr();
+        // SAFETY: `_entries` is a live mutable reference to a DirEntry; short-lived reborrow to call `entries_mut()`.
         let entries_ptr: *mut Fs::file_system::DirEntry = unsafe { &mut *_entries }.entries_mut();
         // PORT NOTE: re-borrow per use; see SAFETY note above.
         macro_rules! rfs {
             () => {
+                // SAFETY: `rfs_ptr` is derived from the raw `*mut FileSystem` field; re-borrowed per use so no `&mut` outlives a `self.fs()` call.
                 unsafe { &mut *rfs_ptr }
             };
         }
         macro_rules! entries {
             () => {
+                // SAFETY: `entries_ptr` is derived from the DirEntry arena singleton; re-borrowed per use so no `&mut` overlaps a `rfs!()` reborrow.
                 unsafe { &mut *entries_ptr }
             };
         }

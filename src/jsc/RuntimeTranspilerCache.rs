@@ -639,6 +639,8 @@ fn pread_box(file: &sys::File, len: usize, offset: u64) -> Result<Box<[u8]>, bun
     // `pread_all` only ever *writes* into the slice (the syscall fills it) —
     // it never reads the uninitialized bytes. Standard read-into-uninit-buffer
     // pattern; the slice is not exposed past this point until proven full.
+    // SAFETY: `buf` is a valid allocation of `len` MaybeUninit<u8>; casting
+    // to `*mut u8` and forming a slice is sound for write-only pread use.
     let dst: &mut [u8] =
         unsafe { core::slice::from_raw_parts_mut(buf.as_mut_ptr().cast::<u8>(), len) };
     let read = file.pread_all(dst, offset)?;

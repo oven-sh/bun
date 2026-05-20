@@ -162,6 +162,7 @@ impl PendingConnect {
         // Zig .monotonic == LLVM monotonic == Rust Relaxed
         let _ = super::LIVE_SESSIONS.fetch_sub(1, Ordering::Relaxed);
         // session is intrusive-refcounted; this drops the connection-alive ref.
+        // SAFETY: `session` is a valid intrusive-refcounted pointer; deref drops the connection-alive ref.
         unsafe { ClientSession::deref(session) };
     }
 }

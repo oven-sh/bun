@@ -119,12 +119,14 @@ impl ObjectRopeExt for E::Object {
 
         if !rope.next.is_null() {
             let obj = Expr::init(E::Object::default(), rope.head.loc);
-            // SAFETY: rope.next non-null and arena-owned.
+            // SAFETY: rope.next non-null (checked above) and arena-owned for the bundler lifetime.
+            // SAFETY: rope.next is non-null (checked above) and arena-owned; deref is safe for the duration of this call.
+            let rope_next_ref = unsafe { &*rope.next };
             let out = obj
                 .data
                 .e_object()
                 .unwrap()
-                .get_or_put_array(unsafe { &*rope.next }, bump)?;
+                .get_or_put_array(rope_next_ref, bump)?;
             VecExt::append(
                 &mut self.properties,
                 js_ast::G::Property {

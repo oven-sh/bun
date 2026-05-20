@@ -517,14 +517,12 @@ impl Map {
         }
 
         self.get_const(old).unwrap().link.set(new);
-        // `merge_contents_with` mutates non-Cell fields (use_count_estimate,
-        // must_not_be_renamed, original_name) on `new` while reading `old`.
-        // SAFETY: `old != new` (checked above) so the two slots are disjoint
-        // elements of the NestedList; `get()` derives `*mut` from Vec's raw
-        // `NonNull` (write provenance preserved). Neither `&mut` outlives this
-        // block (cf. split_at_mut).
+        // `merge_contents_with` mutates non-Cell fields on `new` while reading `old`.
         let old_symbol = self.get(old).unwrap();
         let new_symbol = self.get(new).unwrap();
+        // SAFETY: `old != new` (checked above) so the two slots are disjoint elements
+        // of the NestedList; `get()` yields write-provenance `*mut Symbol` from Vec's
+        // raw `NonNull`. Neither `&mut` outlives this block (cf. `split_at_mut`).
         unsafe {
             (&mut *new_symbol).merge_contents_with(&mut *old_symbol);
         }
@@ -574,10 +572,10 @@ impl Map {
         // The bundler never fabricates Refs from untrusted input.
         //
         // (Formerly a separate `get_unchecked` method — inlined: it had no
-        // external callers, so the unchecked fast path need not be public
-        // API surface. `follow()` below uses checked indexing for the same
-        // lookup; this site keeps the unchecked path for the printer's hot
-        // inner loop, narrowed to where the guard is visible.)
+        // external callers; `follow()` uses checked indexing for the same
+        // lookup; this unchecked path is kept for the printer's hot inner loop.)
+        // SAFETY: validity guards above ensure `src` < `symbols_for_source.len()`
+        // and `idx` < `symbols_for_source[src].len()` (see invariant note above).
         Some(unsafe {
             let inner = self.symbols_for_source.as_ptr().add(src);
             debug_assert!(idx < (*inner).len());

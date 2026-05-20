@@ -2450,6 +2450,7 @@ impl TestCommand {
             // Windows) its backing storage live in this never-returning frame,
             // and the underlying bytes are either in `ctx` (process-lifetime)
             // or in `filter_names_normalized_storage` above.
+            // SAFETY: bytes are process-lifetime or frame-hoisted; this never-returning frame outlives the borrow.
             scanner.filter_names =
                 unsafe { bun_ptr::detach_lifetime(&filter_names_normalized[..]) };
 
@@ -2697,6 +2698,7 @@ impl TestCommand {
             // `is_watcher_enabled()` checked it. The `c_void` type is a
             // jsc/runtime crate-cycle erasure (see field comment in VirtualMachine.rs); the
             // cast recovers the concrete type.
+            // SAFETY: `bun_watcher` non-null (checked above); cast from erased `*mut c_void` to concrete type.
             let watcher =
                 unsafe { &mut *vm.bun_watcher.cast::<jsc::hot_reloader::ImportWatcher>() };
             for path in &changed_module_graph_files {
@@ -3002,6 +3004,7 @@ impl TestCommand {
 
         if vm.hot_reload == jsc::virtual_machine::HOT_RELOAD_WATCH {
             let vm_ptr: *mut VirtualMachine = vm;
+            // SAFETY: `vm_ptr` is derived from `vm` (`&mut VirtualMachine`); the closure runs under the API lock.
             vm.run_with_api_lock(|| Self::run_event_loop_for_watch(unsafe { &mut *vm_ptr }));
         }
         let summary = reporter.summary();
@@ -3026,12 +3029,14 @@ impl TestCommand {
         // before dropping `reporter` so finalizers running inside the GC can't
         // observe a dangling `TestRunner`.
         reporter.jest.bun_test_root.deinit_for_exit();
+        // SAFETY: no other thread accesses `RUNNER` at shutdown; `write(None)` drops the previous value atomically.
         unsafe {
             jest::Jest::RUNNER.write(None);
         }
         drop(reporter);
         {
             let vm_ptr: *mut VirtualMachine = vm;
+            // SAFETY: `vm_ptr` is derived from `vm` (`&mut VirtualMachine`); lock acquired by `run_with_api_lock`.
             vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
         }
         #[allow(unreachable_code)]
@@ -3121,6 +3126,7 @@ impl TestCommand {
             vm: vm_,
             files: files_,
         };
+        // SAFETY: `vm_ptr` is derived from `vm_` (`&mut VirtualMachine`); `run_with_api_lock` acquires the JSC API lock then calls the closure.
         unsafe { (*vm_ptr).run_with_api_lock(|| ctx.begin()) };
     }
 

@@ -167,6 +167,7 @@ pub fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
     // R-2: deref as shared (`&*const`) — every field is read-only after
     // `create_unbound`, and the body re-enters JS (get_length / array_iterator /
     // bind / enqueue) which can form fresh `&ScopeFunctions` to the same object.
+    // SAFETY: non-null (from_js), heap-owned, shared-read only (see above).
     let this: &ScopeFunctions = unsafe { &*this_ptr.cast_const() };
     let line_no = jest::capture_test_line_number(frame, global);
 

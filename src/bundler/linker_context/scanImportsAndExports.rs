@@ -303,11 +303,11 @@ pub fn scan_imports_and_exports(
         // bundle time.
         {
             let _trace = perf::trace("Bundler.WrapDependencies");
-            // SAFETY: `split_raw()`-derived column ptrs carry root provenance
-            // from the `MultiArrayList` heap buffer; this block holds no other
-            // borrow into ast/meta/files and makes no `&mut this` calls, so
-            // the reborrows are exclusive for the block. All five derefs share
-            // the same invariant, so they are grouped under one `unsafe`.
+            // `split_raw()`-derived column ptrs carry root provenance from the
+            // `MultiArrayList` heap buffer; no other borrow into ast/meta/files
+            // is live in this block and no `&mut self` calls are made.
+            // SAFETY: all five derefs share the same invariant (exclusive column
+            // ptrs, no aliasing `&mut` in scope); grouped under one `unsafe`.
             let mut dependency_wrapper = unsafe {
                 DependencyWrapper {
                     flags: &mut *flags,
@@ -463,7 +463,10 @@ pub fn scan_imports_and_exports(
                         .graph
                         .symbols
                         .follow(col_ref!(module_refs)[source_index]);
+                    // SAFETY: `exports_ref` / `module_ref` are resolved refs into `this.graph`;
+                    // column ptrs are exclusive in this block — no other `&mut Symbol` is live.
                     unsafe { this.graph.symbol_mut(exports_ref) }.kind = SymbolKind::Unbound;
+                    // SAFETY: same as above for module_ref; disjoint symbol slot.
                     unsafe { this.graph.symbol_mut(module_ref) }.kind = SymbolKind::Unbound;
                 } else if flag.force_include_exports_for_entry_point
                     || export_kind != ExportsKind::Cjs
@@ -657,6 +660,8 @@ pub fn scan_imports_and_exports(
                     builder.append(ident);
                     let end = builder.len;
                     let original_name = &builder.allocated_slice()[start..end];
+                    // SAFETY: `r#ref` is a valid resolved Ref into `this.graph`; no other
+                    // `&mut Symbol` for this ref is live — column ptrs are exclusive in scope.
                     unsafe { this.graph.symbol_mut(r#ref) }.original_name =
                         bun_ast::StoreStr::new(original_name);
                 }
@@ -1694,13 +1699,11 @@ mod __css_validation {
                 // Warn about cross-file composition with the same CSS properties
                 let mut iter = property_usage.bitset.iter_set();
                 while let Some(property_tag) = iter.next() {
+                    // `PropertyBitset` is populated only via `bitset.set(tag as u16 as usize)`
+                    // where `tag: PropertyIdTag`, so every set index is a valid discriminant.
                     let property_id_tag: PropertyIdTag =
-                        // SAFETY: `PropertyBitset` is only ever populated via
-                        // `bitset.set(tag as u16 as usize)` where `tag: PropertyIdTag`
-                        // (see `bun_css::fill_property_bit_set`), so every set index is a
-                        // valid `#[repr(u16)]` discriminant. `PropertyIdTag` lives in
-                        // `bun_css` (generated) and exposes no `from_repr`; once it does,
-                        // replace this transmute with that accessor.
+                        // SAFETY: every bit-index in `PropertyBitset` was set from a valid
+                        // `PropertyIdTag` discriminant (see `bun_css::fill_property_bit_set`).
                         unsafe {
                             core::mem::transmute::<u16, PropertyIdTag>(
                                 u16::try_from(property_tag).expect("int cast"),

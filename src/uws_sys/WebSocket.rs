@@ -251,6 +251,7 @@ impl AnyWebSocket {
         // TODO(port): lifetime — returning an unbounded `&mut` is a placeholder; Phase
         // B should scope this to the callback frame or return *mut T.
         let (ssl, ws) = self.split();
+        // SAFETY: caller guarantees user data is a valid `*mut T`; uWS pointer is non-null.
         unsafe { c::uws_ws_get_user_data(ssl, ws).cast::<T>().as_mut() }
     }
 
@@ -593,6 +594,7 @@ where
             return;
         }
         // PERF(port): was @call(bun.callmod_inline, ...) — profile if hot.
+        // SAFETY: `this` is a valid non-null `*mut T` set at upgrade time; no aliasing `&mut T` is held.
         unsafe { T::on_open(this, ws) };
     }
 
@@ -672,6 +674,7 @@ where
         if ptr.is_null() {
             return;
         }
+        // SAFETY: `ptr` is the non-null `*mut Server` passed at registration; see SAFETY comment above.
         unsafe {
             Server::on_websocket_upgrade(
                 ptr.cast::<Server>(),

@@ -234,6 +234,9 @@ impl ImportRule {
         // provenance to just `layer` and make sibling-field reads UB under SB.
         // TODO(port): replace with an actual `conditions: ImportConditions` field on ImportRule
         let base = std::ptr::from_ref::<Self>(self).cast::<u8>();
+        // SAFETY: `ImportConditions` is #[repr(C)] with the same layout as the
+        // {layer, supports, media} field run of `ImportRule`; pointer derived from `self`
+        // carries full-struct provenance so all three fields are reachable.
         unsafe {
             &*base
                 .add(core::mem::offset_of!(Self, layer))

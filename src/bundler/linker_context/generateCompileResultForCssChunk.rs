@@ -35,14 +35,13 @@ pub fn generate_compile_result_for_css_chunk(task: *mut ThreadPoolLib::Task) {
         crate::linker_context_mod::crash_guard_for_part_range(c, chunk, &part_range.part_range)
     };
 
-    // SAFETY: `c_ptr` / `chunk_ptr` carry mutable provenance; the disjoint-write
+    // `c_ptr` / `chunk_ptr` carry mutable provenance; the disjoint-write
     // contract is documented on `pending_part_range_prologue`. The `&mut`
-    // borrows below are scoped to the impl call so they do not overlap the
-    // raw slot write that follows. (Peer tasks still hold their own `&mut`
-    // views into the same `LinkerContext`/`Chunk` for read-only printer use —
-    // see TODO(ub-audit) on `unsafe impl Sync for Chunk`.)
+    // borrows are scoped to the impl call and do not overlap the slot write.
     let result = {
+        // SAFETY: `c_ptr` has mutable provenance; `&mut` ends before any raw slot write.
         let c_mut: &mut LinkerContext = unsafe { &mut *c_ptr };
+        // SAFETY: `chunk_ptr` has mutable provenance; `&mut` ends before any raw slot write.
         let chunk_mut: &mut Chunk = unsafe { &mut *chunk_ptr };
         generate_compile_result_for_css_chunk_impl(&mut **worker, c_mut, chunk_mut, part_range.i)
     };
@@ -86,9 +85,10 @@ fn generate_compile_result_for_css_chunk_impl(
     let css: &BundlerStyleSheet = &css_content.asts[imports_in_chunk_index as usize];
     // const symbols: []const Symbol.List = c.graph.ast.items(.symbols);
     // `to_css_with_writer` takes `&bun_ast::symbol::Map`, but
-    // `c.graph.symbols` is `bun_ast::symbol::Map`. Both are
-    // `{ symbols_for_source: NestedList }` (`UnsafeCell<T>` is `repr(transparent)`),
-    // so layouts match — bridge by pointer cast.
+    // `c.graph.symbols` is `bun_ast::symbol::Map`. Both share the same
+    // `{ symbols_for_source: NestedList }` layout (`UnsafeCell<T>` is repr(transparent)).
+    // SAFETY: the pointer cast is valid because both types have identical layout;
+    // the resulting `&` is read-only and does not alias any `&mut` in this scope.
     let symbols: &bun_ast::symbol::Map =
         unsafe { &*(&raw const c.graph.symbols).cast::<bun_ast::symbol::Map>() };
     // `LocalsResultsMap` is the same `ArrayHashMap<Ref, Box<[u8]>>` alias as

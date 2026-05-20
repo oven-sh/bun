@@ -1815,6 +1815,7 @@ pub mod js_bundler {
                 bv2_mut(resolve.bv2).on_resolve_async(resolve);
             }
             1 => {
+                // SAFETY: which == 1 means ctx is a *mut Load placed by the plugin callback setup.
                 let load = unsafe { bun_ptr::callback_ctx::<Load>(ctx) };
                 let msg = plugin_msg_from_js(plugin, &load.path, exception);
                 load.value = LoadValue::Err(msg);

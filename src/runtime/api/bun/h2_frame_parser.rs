@@ -1878,6 +1878,8 @@ impl Stream {
             // every access — see PORT NOTE above).
             macro_rules! lf {
                 () => {
+                    // SAFETY: `last_frame` points to the unique tail slot of `data_frame_queue`;
+                    // re-laundered via `black_box` before each access to defeat alias analysis.
                     unsafe { &mut *last_frame }
                 };
             }

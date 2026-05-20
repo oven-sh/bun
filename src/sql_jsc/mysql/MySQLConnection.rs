@@ -374,7 +374,7 @@ impl MySQLConnection {
         // `adopt_tls`; ext storage was sized for
         // `Option<NonNull<JSMySQLConnection>>` above. One `&mut` reborrow
         // drives both safe inherent methods (`ext` / `start_tls_handshake`).
-        // Zig: `ext(?*JSMySQLConnection).* = this.getJSConnection()`.
+        // SAFETY: new_socket is a live us_socket_t returned by adopt_tls; one exclusive reborrow.
         let sock = unsafe { &mut *new_socket };
         *sock.ext::<Option<core::ptr::NonNull<JSMySQLConnection>>>() =
             core::ptr::NonNull::new(js_connection);
@@ -1552,6 +1552,7 @@ impl Writer {
         // caller's own `&mut self` (see the PORT NOTE on `Reader` below).
         // Callers never touch `write_buffer` through `&mut self` while a
         // `Writer` is live, so no two `&mut OffsetByteList` coexist.
+        // SAFETY: self.connection is a non-null live pointer; addr_of_mut! projects a field without forming &mut MySQLConnection.
         unsafe { &mut *core::ptr::addr_of_mut!((*self.connection).write_buffer) }
     }
 }
@@ -1599,6 +1600,7 @@ impl Reader {
         // live `&mut self` in `process_packets`. `process_packets` never touches
         // `read_buffer` through its own `&mut self` while a `Reader` is live, so
         // no two `&mut OffsetByteList` coexist.
+        // SAFETY: self.connection is a non-null live pointer; addr_of_mut! projects a field without forming &mut MySQLConnection.
         unsafe { &mut *core::ptr::addr_of_mut!((*self.connection).read_buffer) }
     }
 

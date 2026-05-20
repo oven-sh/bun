@@ -1061,7 +1061,9 @@ impl PackageJSON {
         // live in this function. Caller upholds the single-thread `Resolver`
         // aliasing contract (Zig had no borrow split here either — `r.fs`/`r.log`
         // are accessed freely throughout `parse`).
+        // SAFETY: `r.fs()` and `r.log()` return distinct raw pointers; single-threaded Resolver; see SAFETY comment above.
         let r_fs: &mut fs::FileSystem = unsafe { &mut *r.fs() };
+        // SAFETY: same as above for `r.log()`.
         let r_log: &mut bun_ast::Log = unsafe { &mut *r.log() };
 
         // TODO: remove this extra copy
@@ -1139,6 +1141,7 @@ impl PackageJSON {
         // and frees normally (Zig: `allocator.free(entry.contents)`), after
         // `json_source` is already dead. `Box<[u8]>` heap address is stable
         // across the move.
+        // SAFETY: `entry_contents` is the unique owner of the bytes and is moved into `PackageJSON` before it can be freed; see SAFETY above.
         let contents_static: &'static [u8] = unsafe { bun_ptr::detach_lifetime(&entry_contents) };
         let json_source = bun_ast::Source::init_path_string(package_json_path, contents_static);
 
@@ -2668,7 +2671,9 @@ impl<'a> ESModule<'a> {
                 // the duration of this arm. Map/Array arms below DO recurse and must not
                 // hold these — that's why acquisition is here, not at fn entry.
                 let mb = module_bufs();
+                // SAFETY: threadlocal `UnsafeCell`; `String` arm does not recurse; these are the unique live `&mut`s on this thread.
                 let resolve_target_buf: &mut PathBuffer = unsafe { &mut (*mb).resolve_target_buf };
+                // SAFETY: same threadlocal; disjoint field from `resolve_target_buf`.
                 let resolve_target_buf2: &mut PathBuffer =
                     unsafe { &mut (*mb).resolve_target_buf2 };
                 let str: &[u8] = str;
@@ -3180,8 +3185,10 @@ impl<'a> ESModule<'a> {
                 // resolve_target_reverse, so these are the unique live `&mut`s on this thread.
                 // Map/Array arms below recurse and must not hold these — see MODULE_BUFS note.
                 let mb = module_bufs();
+                // SAFETY: threadlocal `UnsafeCell`; `String` arm does not recurse; unique live `&mut`s on this thread.
                 let resolve_target_reverse_prefix_buf: &mut PathBuffer =
                     unsafe { &mut (*mb).resolve_target_reverse_prefix_buf };
+                // SAFETY: same threadlocal; disjoint field from `resolve_target_reverse_prefix_buf`.
                 let resolve_target_reverse_prefix_buf2: &mut PathBuffer =
                     unsafe { &mut (*mb).resolve_target_reverse_prefix_buf2 };
                 let str: &[u8] = str;

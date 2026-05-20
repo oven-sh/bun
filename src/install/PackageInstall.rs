@@ -560,6 +560,7 @@ impl HardLinkWindowsInstallTask {
         // process-wide `PackageManager` singleton and never changes.
         static INITIALIZED: core::sync::atomic::AtomicBool =
             core::sync::atomic::AtomicBool::new(false);
+        // SAFETY: single-threaded init path; first call writes, subsequent calls drain errors only.
         unsafe {
             if INITIALIZED.swap(true, Ordering::Relaxed) {
                 let q = (*HARDLINK_QUEUE.get()).assume_init_ref();
@@ -2062,6 +2063,7 @@ impl<'a> PackageInstall<'a> {
                 // (the caller `PackageInstaller` already holds one); `total_tasks` is
                 // main-thread-only state, `pending_tasks` is atomic. Mirrors
                 // `increment_pending_tasks`.
+                // SAFETY: `pm` is the process-wide singleton; raw field projection avoids aliasing.
                 unsafe {
                     *core::ptr::addr_of_mut!((*pm).total_tasks) += 1;
                     (*pm).pending_tasks.fetch_add(1, Ordering::Relaxed);

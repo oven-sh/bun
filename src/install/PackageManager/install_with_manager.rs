@@ -203,6 +203,9 @@ pub fn install_with_manager(
                     let mgr: *mut PackageManager = manager;
                     maybe_root.parse(
                         &mut lockfile,
+                        // SAFETY: `mgr` is the only raw-pointer alias of `manager`;
+                        // the `log_mut()` borrow was resolved to a local above so no
+                        // other `&mut *mgr` is live during this call.
                         unsafe { &mut *mgr },
                         log,
                         &source_copy,
@@ -230,15 +233,25 @@ pub fn install_with_manager(
                     // from here on; `Diff::generate` reborrows disjoint fields
                     // (`lockfile`, `update_requests`) through it. No other live
                     // `&mut` to `*mgr` exists across the call.
+                    // SAFETY: `mgr` is the sole provenance root; `(*mgr).lockfile`
+                    // is a pointer field (not a reference), so taking its raw address
+                    // does not create an aliased `&mut`.
                     let from_lockfile: *mut Lockfile = unsafe { &raw mut *(*mgr).lockfile };
                     let update_requests = if to_update {
+                        // SAFETY: `(*mgr).update_requests` is valid for the lifetime of
+                        // `mgr`; we only create a shared slice so no aliasing `&mut` exists.
                         Some(unsafe { &(&(*mgr).update_requests)[..] })
                     } else {
                         None
                     };
                     Diff::generate(
+                        // SAFETY: `mgr` is the sole live `*mut PackageManager`; `log` and
+                        // `update_requests` borrow disjoint fields, so the exclusive reborrow
+                        // of `*mgr` does not alias them.
                         unsafe { &mut *mgr },
                         log,
+                        // SAFETY: `from_lockfile` points into `(*mgr).lockfile`, a disjoint
+                        // field from the other arguments passed to `Diff::generate`.
                         unsafe { &mut *from_lockfile },
                         &mut lockfile,
                         &root,
@@ -942,6 +955,8 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
         // calls, so this `&mut PackageManager` is the unique live borrow for the
         // duration of the callback (no `&mut event_loop` straddles it). The original
         // `this: &mut` in `run_and_wait` is dead past the `let mgr = ...` line.
+        // SAFETY: `closure.manager` is the sole live raw pointer to the PackageManager;
+        // no other `&mut` to it exists during this callback invocation (see above).
         let this = unsafe { &mut *closure.manager };
         if CHECK_PEERS {
             if let Err(err) = this.process_peer_dependency_list() {
@@ -1005,6 +1020,8 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
         // raw pointer directly (no `&mut self` receiver) and `tick_raw` holds no
         // `&mut event_loop` across `is_done`, so `closure.manager`'s reborrow inside the
         // callback never invalidates a live tag.
+        // SAFETY: `mgr` is the sole access path to the PackageManager from here on;
+        // no live `&mut` to it exists outside this call (see comment above).
         unsafe { PackageManager::sleep_until(mgr, &mut closure, Self::is_done) };
 
         if let Some(err) = closure.err {
@@ -1152,10 +1169,15 @@ fn print_summary_tree(
     let writer = Output::writer_buffered();
     // Runtime bool → comptime dispatch (Zig `switch (b) { inline else => |c| ... }`).
     if Output::enable_ansi_colors_stdout() {
+        // SAFETY: `mgr` is the sole provenance root; `printer` borrows only
+        // `lockfile`/`options`/`update_requests`, which are disjoint from the
+        // fields that `Tree::print` mutates (`track_installed_bin`, etc.).
         LockfilePrinter::Tree::print::<_, true>(&printer, unsafe { &mut *mgr }, writer, log_level)?;
     } else {
         LockfilePrinter::Tree::print::<_, false>(
             &printer,
+            // SAFETY: same as the `true` arm above — `mgr` is sole provenance
+            // root and the mutable fields are disjoint from `printer`'s borrows.
             unsafe { &mut *mgr },
             writer,
             log_level,
@@ -1569,7 +1591,10 @@ fn create_new_lockfile_and_enqueue(
         // disjoint `lockfile` field through it. No other live `&mut` to
         // `*mgr` exists across the call.
         root.parse(
+            // SAFETY: `mgr` is the sole provenance root; `lockfile` and the rest of
+            // `*mgr` are disjoint fields — the exclusive reborrows do not alias.
             unsafe { &mut (*mgr).lockfile },
+            // SAFETY: `log` was resolved above; no other `&mut *mgr` is live here.
             unsafe { &mut *mgr },
             log,
             &source_copy,

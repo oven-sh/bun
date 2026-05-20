@@ -406,6 +406,7 @@ fn on_handshake(
             // field, so we MUST NOT form `&mut Option<_>` here (rules out
             // `wrapper_mut`); a debug-only `is_some()` autoref read mirrors the
             // pre-refactor inline `proxy.wrapper.?` and is never retained.
+            // SAFETY: `proxy_nn` is live (ref-guarded); transient shared discriminant read, not retained.
             debug_assert!(unsafe { (*proxy_nn.as_ptr()).wrapper.is_some() });
             let Some(ssl_ptr) = ProxyTunnel::wrapper_ssl(proxy_nn) else {
                 return;
@@ -655,6 +656,7 @@ impl ProxyTunnel {
         // Move the sole strong ref (refcount == 1 from `ProxyTunnel::default`)
         // into the client field; no bump (matches the bare `this.proxy_tunnel =
         // tunnel` in http.zig — Zig's `RefPtr.create` returns the owned ref).
+        // SAFETY: `proxy_nn` is the sole strong ref (refcount==1 from ProxyTunnel::default); adopt transfers it.
         this.proxy_tunnel = Some(unsafe { RefPtr::adopt_ref(proxy_nn.as_ptr()) });
         proxy_tunnel_ref.socket = Socket::from_generic::<IS_SSL>(socket);
         // End the named &mut borrows before calling into the SSLWrapper. start()

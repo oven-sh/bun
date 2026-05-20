@@ -391,11 +391,8 @@ impl ArrayBuffer {
             // PORT NOTE: `JSUint8Array::from_bytes` takes `Box<[u8]>`; reconstruct
             // ownership from the mimalloc-backed slice the caller hands us.
             JSType::Uint8Array => {
-                // SAFETY: caller guarantees `bytes` is exactly a `Box<[u8]>`
-                // allocation from the default (mimalloc) allocator; ownership
-                // transfers to JSC. Coerce the borrowed slice directly to its
-                // fat raw pointer — no need to round-trip through
-                // `from_raw_parts_mut(as_mut_ptr(), len)`.
+                // SAFETY: caller guarantees `bytes` is a `Box<[u8]>` allocation from
+                // the default (mimalloc) allocator; ownership transfers to JSC here.
                 let owned = unsafe { bun_core::heap::take(bytes as *mut [u8]) };
                 jsc::JSUint8Array::from_bytes(global, owned)
             }
@@ -803,11 +800,9 @@ impl BinaryType {
             | BinaryType::BigInt64Array
             | BinaryType::BigUint64Array => {
                 let buffer = ArrayBuffer::create::<{ JSType::ArrayBuffer }>(global, bytes)?;
-                // SAFETY: FFI — `global` is a live opaque ZST handle; `JSGlobalObject` is
-                // a ZST on the Rust side so the `*const` → `*mut` cast launders no
-                // provenance (see PORT NOTE on the extern block above). `buffer` is a
-                // fresh ArrayBuffer JSValue (cell pointer), so `as_object_ref` yields a
-                // valid `JSObjectRef`.
+                // SAFETY: `global` is a live ZST handle; the `*const`→`*mut` cast is
+                // provenance-safe (ZST). `buffer` is a fresh ArrayBuffer JSValue so
+                // `as_object_ref()` yields a valid `JSObjectRef`.
                 let obj = unsafe {
                     jsc_c::JSObjectMakeTypedArrayWithArrayBuffer(
                         std::ptr::from_ref::<JSGlobalObject>(global).cast_mut(),

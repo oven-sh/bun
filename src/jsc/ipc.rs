@@ -1541,6 +1541,8 @@ impl SendQueue {
         // `dangerous_implicit_autorefs` on the raw-ptr place.
         let write_len = unsafe { (&(*write_req).write_slice).len() };
         let this: *mut SendQueue = 'blk: {
+            // SAFETY: `write_req` was passed to uv_write as the data pointer;
+            // libuv hands it back exclusively here, so dereferencing is safe.
             let owner = unsafe { (*write_req).owner };
             WindowsWrite::destroy(write_req);
             match owner {
@@ -1624,12 +1626,10 @@ impl SendQueue {
         // SAFETY: pipe is the live uv handle just stored in (*this).socket.
         let stream: *mut uv::uv_stream_t = unsafe { (*pipe).as_stream() };
 
-        // SAFETY: stream points to the live uv handle; `this` is the root-raw
-        // context pointer (see fn safety contract) so storing it in
-        // `handle.data` is sound for the handle's lifetime. Routes through the
-        // `StreamReader for SendQueue` impl below (wraps the
-        // `IPCHandlers::WindowsNamedPipe` callbacks).
         let read_start_result =
+            // SAFETY: `stream` points to the live uv handle; `this` is the root-raw
+            // context pointer whose provenance covers the `SendQueue` allocation, so
+            // storing it in `handle.data` is sound for the handle's lifetime.
             unsafe { (*stream).read_start_ctx::<SendQueue>(this) }.to_error(bun_sys::Tag::listen);
         if let Some(err) = read_start_result {
             // SAFETY: caller contract — `this` is a live SendQueue.

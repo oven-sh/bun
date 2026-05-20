@@ -991,8 +991,11 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
 
                             // Buffer is read-only from here on; read via &self.walker.
                             let scratch_ptr = self.walker.path_buf.as_ptr();
+                            // SAFETY: scratch_ptr is valid for symlink_full_path_len bytes (written above);
+                            // the &mut walker borrow was dropped at the block above, so shared access is sound.
                             let symlink_full_path_z =
                                 unsafe { ZStr::from_raw(scratch_ptr, symlink_full_path_len) };
+                            // SAFETY: scratch_ptr.add(entry_start) is within the same buffer; length is bounded by symlink_full_path_len.
                             let entry_name: &[u8] = unsafe {
                                 core::slice::from_raw_parts(
                                     scratch_ptr.add(entry_start),

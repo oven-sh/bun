@@ -705,6 +705,7 @@ impl CryptoHasher {
             // is the JSC-owned writable backing store, outliving this frame. Build
             // the `&mut` directly from the raw `*mut u8` field — never via
             // `&[u8].as_ptr()` (Stacked-Borrows UB).
+            // SAFETY: `bytes_len` checked above; `output_buf.ptr` is the JSC-owned writable backing store valid for this frame.
             output_digest_slice =
                 unsafe { core::slice::from_raw_parts_mut(output_buf.ptr, bytes_len) };
         } else {
@@ -999,6 +1000,7 @@ impl CryptoHasherZig {
             // writable backing store, outliving this frame. Build the `&mut`
             // directly from the raw `*mut u8` field — never via `&[u8].as_ptr()`
             // (Stacked-Borrows UB).
+            // SAFETY: `digest_length_comptime` ≤ `output_buf` size (checked above); `output_buf.ptr` is JSC-owned writable storage.
             let out =
                 unsafe { core::slice::from_raw_parts_mut(output_buf.ptr, digest_length_comptime) };
             h.final_(out);

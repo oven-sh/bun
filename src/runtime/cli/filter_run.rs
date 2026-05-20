@@ -740,6 +740,7 @@ pub fn run_scripts_with_filter(
     // Find package.json at workspace root
     let mut root_buf = bun_paths::PathBuffer::uninit();
     let resolve_root = FilterArg::get_candidate_package_patterns(
+        // SAFETY: single-threaded CLI path; no other borrow of the process-lifetime `Log` is live.
         unsafe { ctx.log_mut() },
         &mut patterns,
         fsinstance.top_level_dir,

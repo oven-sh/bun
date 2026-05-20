@@ -931,9 +931,13 @@ impl Clone for QueryStringMap {
         // If the original `slice` did NOT point into our own buffer (the
         // nothing-needs-decoding fast path borrows the caller's query_string),
         // keep it as-is — both clones borrow the same external slice.
+        // SAFETY: `self.slice` is always either a valid pointer into `self.buffer`
+        // (set during decoding) or a borrowed external slice (fast path); both are
+        // valid for the duration of this `Clone` call.
         let slice = if !self.buffer.is_empty()
             && bun_alloc::is_slice_in_buffer(unsafe { &*self.slice }, &self.buffer)
         {
+            // SAFETY: `self.slice` is valid (confirmed by `is_slice_in_buffer`); same contract as above.
             let len = unsafe { &*self.slice }.len();
             &raw const buffer[..len]
         } else {

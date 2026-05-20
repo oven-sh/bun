@@ -355,6 +355,7 @@ impl WhyCommand {
         // up front so we never need `pm` again once `lockfile` is borrowed.
         let depth_opt = pm.options.depth;
         let log_level = pm.options.log_level;
+        // SAFETY: `ctx.log` is a non-null *mut Log set at init, outliving this call; single-threaded access.
         let log = unsafe { ctx.log_mut() };
 
         let mut lockfile_box: Box<Lockfile> = core::mem::take(&mut pm.lockfile);

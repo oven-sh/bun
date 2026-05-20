@@ -1583,6 +1583,7 @@ impl Lockfile {
                     );
                     // SAFETY: `manifests` projected from `manager_ptr`; the
                     // call holds only that disjoint field.
+                    // SAFETY: disjoint `manifests` field of `*manager_ptr`; no other live `&mut`.
                     let Some(manifest) = unsafe { &mut (*manager_ptr).manifests }.by_name_hash(
                         cache_ctx,
                         scope,
@@ -1598,6 +1599,7 @@ impl Lockfile {
                         continue;
                     };
 
+                    // SAFETY: `lockfile` is a disjoint field of `*manager_ptr`; no competing `&mut`.
                     let lockfile = unsafe { &mut *(*manager_ptr).lockfile };
                     let mut builder = string_builder!(lockfile);
 
@@ -2680,6 +2682,8 @@ impl<'a> StringBuilder<'a> {
         // `grow_default` precedent at :1578.
         string_bytes.resize(prev_len + self.cap, 0);
         self.off = prev_len;
+        // SAFETY: `string_bytes` was just resized to `prev_len + cap`; `add(prev_len)`
+        // is within bounds and the pointer is valid for `cap` bytes of writes.
         self.ptr = Some(unsafe { string_bytes.as_mut_ptr().add(prev_len) });
         self.len = 0;
         Ok(())

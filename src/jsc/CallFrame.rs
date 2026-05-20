@@ -27,6 +27,7 @@ impl CallFrame {
         // is derived from `&self` via pointer arithmetic, so it is provably
         // non-null — use bare `from_raw_parts` to avoid a dead null-branch on
         // the hottest per-JS-call path.
+        // SAFETY: JSC CallFrame layout guarantees OFFSET_FIRST_ARGUMENT..+argumentsCount() valid JSValue slots.
         unsafe {
             core::slice::from_raw_parts(
                 self.as_unsafe_js_value_array().add(OFFSET_FIRST_ARGUMENT),
@@ -127,6 +128,7 @@ impl CallFrame {
         // which in turn calls 'ALWAYS_INLINE int32_t Register::payload() const'
         // which accesses `.encodedValue.asBits.payload`
         // JSC stores and works with value as signed, but it is always 1 or more.
+        // SAFETY: `registers` points at the JSC CallFrame base; slot OFFSET_ARGUMENT_COUNT_INCLUDING_THIS is valid.
         unsafe {
             u32::try_from(
                 (*registers.add(OFFSET_ARGUMENT_COUNT_INCLUDING_THIS))

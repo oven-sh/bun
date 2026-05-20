@@ -461,6 +461,7 @@ extern "C" fn _route_tramp<T, H, const SSL: bool>(
     // duration of the call; `H` is a ZST fn item (compile-asserted in
     // `thunk::zst`). Consolidates the open-coded `&mut *cast` derefs into the
     // audited `thunk::*` primitives so the invariant is documented once (S005).
+    // SAFETY: see comment above — uWS-supplied pointers are live and disjoint.
     unsafe {
         let Some(ctx) = thunk::user_mut::<T>(ud) else {
             return;
@@ -2549,6 +2550,7 @@ where
             // `Request::clone()` (Request.rs:1627) seeds a fully-initialized
             // sentinel and calls `clone_into(.., preserve_url=false)` — same
             // observable result without taking `&mut` to uninitialized memory.
+            // SAFETY: `request_` is a live *mut Request from JsClass::from_js.
             unsafe { (*request_).clone(ctx)? }
         } else {
             // SAFETY: FFI call into JSC C API; `ctx` is a live JSGlobalObject and
@@ -3141,6 +3143,7 @@ where
         // a panic inside `create_in` (or `to_any_response`) now releases the
         // slot via `HiveSlot::drop` without running `RequestContext::drop` on
         // garbage.
+        // SAFETY: see comment above — slot pointer cast and pool ops are sound.
         let ctx_slot: *mut Ctx = unsafe {
             if Ctx::IS_H3 {
                 debug_assert!(
@@ -3718,8 +3721,10 @@ pub fn server_set_idle_timeout_(
     } else if let Some(this) = server.as_::<HTTPSServer>() {
         unsafe { &mut *this }.set_idle_timeout(value);
     } else if let Some(this) = server.as_::<DebugHTTPServer>() {
+        // SAFETY: as_ returned a non-null *mut to a live server (see comment above).
         unsafe { &mut *this }.set_idle_timeout(value);
     } else if let Some(this) = server.as_::<DebugHTTPSServer>() {
+        // SAFETY: as_ returned a non-null *mut to a live server (see comment above).
         unsafe { &mut *this }.set_idle_timeout(value);
     } else {
         return Err(global.throw(format_args!(
@@ -3808,8 +3813,10 @@ pub fn server_set_app_flags_(
     } else if let Some(this) = server.as_::<HTTPSServer>() {
         unsafe { &mut *this }.set_flags(require_host_header, use_strict_method_validation);
     } else if let Some(this) = server.as_::<DebugHTTPServer>() {
+        // SAFETY: as_ returned a non-null *mut to a live server (see comment above).
         unsafe { &mut *this }.set_flags(require_host_header, use_strict_method_validation);
     } else if let Some(this) = server.as_::<DebugHTTPSServer>() {
+        // SAFETY: as_ returned a non-null *mut to a live server (see comment above).
         unsafe { &mut *this }.set_flags(require_host_header, use_strict_method_validation);
     } else {
         return Err(global.throw(format_args!(
@@ -3836,8 +3843,10 @@ pub fn server_set_max_http_header_size_(
     } else if let Some(this) = server.as_::<HTTPSServer>() {
         unsafe { &mut *this }.set_max_http_header_size(max_header_size);
     } else if let Some(this) = server.as_::<DebugHTTPServer>() {
+        // SAFETY: as_ returned a non-null *mut to a live server (see comment above).
         unsafe { &mut *this }.set_max_http_header_size(max_header_size);
     } else if let Some(this) = server.as_::<DebugHTTPSServer>() {
+        // SAFETY: as_ returned a non-null *mut to a live server (see comment above).
         unsafe { &mut *this }.set_max_http_header_size(max_header_size);
     } else {
         return Err(global.throw(format_args!(

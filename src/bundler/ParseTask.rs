@@ -1729,6 +1729,7 @@ pub mod parse_worker {
                 // len > 0 are checked above; the plugin contract requires the buffer
                 // to remain valid for the duration of the `log` callback (the only
                 // caller of this accessor), and `append` dupes before that returns.
+                // SAFETY: ptr is non-null, len > 0 checked above; FFI buffer valid for log callback duration.
                 return unsafe {
                     core::slice::from_raw_parts(
                         self.source_line_text_ptr,
@@ -1746,6 +1747,7 @@ pub mod parse_worker {
                 // len > 0 are checked above; the plugin contract requires the buffer
                 // to remain valid for the duration of the `log` callback, and
                 // `append` dupes the bytes into the `Log` arena before that returns.
+                // SAFETY: ptr is non-null, len > 0 checked above; FFI buffer valid for log callback duration.
                 return unsafe { core::slice::from_raw_parts(self.path_ptr, self.path_len) };
             }
             b""
@@ -1758,6 +1760,7 @@ pub mod parse_worker {
                 // len > 0 are checked above; the plugin contract requires the buffer
                 // to remain valid for the duration of the `log` callback, and
                 // `append` dupes the bytes into the `Log` arena before that returns.
+                // SAFETY: ptr is non-null, len > 0 checked above; FFI buffer valid for log callback duration.
                 return unsafe { core::slice::from_raw_parts(self.message_ptr, self.message_len) };
             }
             b""
@@ -1882,6 +1885,7 @@ pub mod parse_worker {
         // `OnBeforeParseArguments` stack local vs. the `OnBeforeParsePlugin` it
         // points back to), so holding both `&mut` is sound.
         let args = unsafe { &mut *args };
+        // SAFETY: `args.context` is the `OnBeforeParsePlugin` pointer registered at call-site; disjoint from `args` (see comment above).
         let this = unsafe { &mut *args.context };
         if this.log.errors > 0
             || this.deferred_error.is_some()
@@ -1898,6 +1902,7 @@ pub mod parse_worker {
         // later offset-walk UB. The `&mut` reborrow below is scoped to end before
         // any wrapper access so no overlapping `&mut` exists.
         {
+            // SAFETY: `result_ptr` is the embedded `.result` field of a live `OnBeforeParseResultWrapper`; scoped `&mut` ends before any wrapper access.
             let result = unsafe { &mut *result_ptr };
             if !result.source_ptr.is_null() {
                 return 0;
@@ -1943,6 +1948,7 @@ pub mod parse_worker {
             // *is* `*result_ptr`, so materializing `&mut *wrapper` here would
             // overlap the live `result` borrow above (aliased-`&mut` UB).
             let wrapper = OnBeforeParseResult::get_wrapper(result_ptr);
+            // SAFETY: `wrapper` points to the enclosing `OnBeforeParseResultWrapper`; `result` borrow is scoped above and not live here.
             unsafe {
                 (*wrapper).original_source = source_ptr;
                 (*wrapper).original_source_len = source_len;
@@ -1963,6 +1969,7 @@ pub mod parse_worker {
         // would be aliased-`&mut` UB, and forming `&mut *this` first would shrink
         // provenance so `from_field_ptr!` in `get_wrapper` walks out of bounds.
         let wrapper = OnBeforeParseResult::get_wrapper(this);
+        // SAFETY: `this` and `wrapper` are valid C++-allocated pointers; raw pointer ops avoid aliased-`&mut` UB (see comment above).
         unsafe {
             (*this).loader = (*wrapper).loader;
             if !(*wrapper).original_source.is_null() {

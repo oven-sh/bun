@@ -181,6 +181,7 @@ impl uv_buf_t {
         if self.len == 0 || self.base.is_null() {
             return &mut [];
         }
+        // SAFETY: `(base, len)` is a valid writable allocation per the outer `unsafe fn` contract.
         unsafe { core::slice::from_raw_parts_mut(self.base, self.len as usize) }
     }
 }
@@ -447,10 +448,13 @@ impl Loop {
                 // callbacks, then close again (must succeed). `uv_loop_close`
                 // documents no other failure code.
                 if err == (UV_EBUSY as c_int).unsigned_abs() as u16 {
+                    // SAFETY: `loop_` is the live per-thread loop; uv_walk is safe to call with a live loop.
                     unsafe { uv_walk(loop_, Some(close_walk_cb), ptr::null_mut()) };
+                    // SAFETY: `loop_` is the live per-thread loop; runs one iteration to flush close callbacks.
                     let _ = unsafe { uv_run(loop_, RunMode::Default) };
                     // NOTE the call is unconditional (Zig `bun.debugAssert`
                     // evaluates its argument in release too).
+                    // SAFETY: `loop_` is the live per-thread loop; all handles were closed above.
                     let rc = unsafe { uv_loop_close(loop_) };
                     debug_assert_eq!(rc, ReturnCode::ZERO);
                 }
@@ -984,6 +988,7 @@ impl uv_write_t {
             // — callers commonly free the `T` allocation inside the callback,
             // so materialising `&mut T` here would leave that reference
             // dangling across the dealloc (UB).
+            // SAFETY: `data`/`reserved[0]` were set by `write` before `uv_write`; libuv invokes thunk once.
             unsafe {
                 let cb: fn(*mut T, ReturnCode) =
                     mem::transmute::<usize, fn(*mut T, ReturnCode)>((*req).reserved[0] as usize);
@@ -1991,6 +1996,7 @@ impl fs_t {
     /// SAFETY: only valid after a `uv_fs_*` call that populated the `fd` arm.
     #[inline]
     pub unsafe fn file_fd(&self) -> uv_file {
+        // SAFETY: caller upholds the outer `unsafe fn` contract: a `uv_fs_open` call populated the `fd` arm.
         unsafe { self.file.fd }
     }
 }

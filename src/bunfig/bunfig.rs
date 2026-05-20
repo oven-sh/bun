@@ -1117,6 +1117,7 @@ impl Bunfig {
         // (Parser later needs `&mut ctx` alongside `&mut log`).
         let log_ptr: *mut bun_ast::Log = ctx.log;
         debug_assert!(!log_ptr.is_null());
+        // SAFETY: `ctx.log` is populated by `create_context_data()` before any bunfig load; single-threaded CLI startup invariant.
         let log: &mut bun_ast::Log = unsafe { &mut *log_ptr };
         let log_count = log.errors + log.warnings;
 

@@ -243,6 +243,7 @@ impl NetworkTask {
                         // `*TarballStream`) because a worker may be inside
                         // `drain()` concurrently; coercing the `&mut` to a
                         // raw pointer here matches that contract.
+                        // SAFETY: `stream` is the live TarballStream; `on_chunk` is thread-safe via raw ptr contract.
                         unsafe { TarballStream::on_chunk(stream, chunk, false, None) };
                         // Hand the buffer back to the HTTP client empty so
                         // the next chunk starts at offset 0.
@@ -538,6 +539,7 @@ impl NetworkTask {
                 // outlives the request (Zig leaks it). Detach the borrow so
                 // `header_builder.content` can be read again for `headers_buf`.
                 let appended = header_builder.content.append(last_modified);
+                // SAFETY: `appended` points into `header_builder.content` buffer leaked into the HTTP client.
                 last_modified = unsafe { bun_ptr::detach_lifetime(appended) };
             }
         } else {
@@ -574,11 +576,13 @@ impl NetworkTask {
         // because the HTTP thread reads them concurrently; the Zig source
         // passes raw slices under the same ownership contract. See the
         // identical pattern in `s3/simple_request.rs`.
+        // SAFETY: `url_buf` is owned by `*self` which outlives the HTTP request; `'static` erasure is sound.
         let url = URL::parse(unsafe { bun_ptr::detach_lifetime(&self.url_buf) });
         let http_proxy = pm.http_proxy(&url);
         // `written_slice()` is the safe (ptr,len) accessor; only the `'static`
         // erasure remains unsafe — the buffer is leaked into the HTTP client
         // below (`mem::forget`), so it genuinely outlives this frame.
+        // SAFETY: `header_builder.content` buffer is intentionally leaked into the HTTP client below.
         let headers_buf: &'static [u8] =
             unsafe { bun_ptr::detach_lifetime(header_builder.content.written_slice()) };
         // PORT NOTE: Zig has no destructors — `header_builder.content` is
@@ -638,6 +642,7 @@ impl NetworkTask {
             // referenced by the `PackageManifest` we just cloned into
             // `self.callback`. Both outlive the HTTP request; Zig stores the
             // raw slice under the same contract.
+            // SAFETY: `last_modified` points into a buffer that outlives the HTTP request.
             self.http_mut().client.if_modified_since =
                 unsafe { bun_ptr::detach_lifetime(last_modified) };
         }
@@ -773,6 +778,7 @@ impl NetworkTask {
 
             // `written_slice()` is the safe (ptr,len) accessor; only the
             // `'static` erasure remains unsafe — buffer is leaked below.
+            // SAFETY: `header_builder.content` buffer is intentionally leaked into the HTTP client below.
             header_buf =
                 unsafe { bun_ptr::detach_lifetime(header_builder.content.written_slice()) };
         }
@@ -787,6 +793,7 @@ impl NetworkTask {
         // `'static` borrow because the HTTP thread reads it concurrently; the
         // Zig source passes a raw slice under the same ownership contract. See
         // the identical pattern in `for_manifest` above.
+        // SAFETY: `url_buf` is owned by `*self` which outlives the HTTP request; `'static` erasure is sound.
         let url = URL::parse(unsafe { bun_ptr::detach_lifetime(&self.url_buf) });
 
         let mut http_options = AsyncHTTPOptions {
@@ -862,6 +869,7 @@ impl NetworkTask {
             // (cleared immediately below); `put()` runs `Task::drop` on the
             // slot — the Task was fully initialized via
             // `enqueue::create_extract_task_for_streaming` so this is sound.
+            // SAFETY: `streaming_extract_task` is a live, non-aliased pool slot; `put()` is sound.
             unsafe {
                 manager
                     .preallocated_resolve_tasks
@@ -911,6 +919,7 @@ impl NetworkTask {
         apply_patch_task: Option<Box<PatchTask>>,
     ) {
         use core::ptr::addr_of_mut;
+        // SAFETY: `slot` is an uninitialized hive-array slot; addr_of_mut writes avoid reading uninit memory.
         unsafe {
             addr_of_mut!((*slot).task_id).write(task_id);
             // SAFETY: `package_manager` is the live owner of this task; write

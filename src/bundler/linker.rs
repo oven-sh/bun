@@ -157,11 +157,9 @@ mod hardcoded_module {
 /// singleton (the `OnceLock`-style exception PORTING.md carves out).
 #[inline]
 pub(crate) fn dupe(src: &[u8]) -> &'static [u8] {
-    // SAFETY: `relative_paths_list_ptr()` is Once-initialized and never freed
-    // (process-lifetime singleton). `append` takes `*mut Self`, serializes on
-    // the inner mutex, copies `src` into its owned backing buffer and returns
-    // a slice borrowing that storage; the returned borrow is `'static`-valid
-    // by construction.
+    // SAFETY: `relative_paths_list_ptr()` is Once-initialized and never freed (process-lifetime
+    // singleton). `append` serializes on an inner mutex, copies `src` into its backing buffer,
+    // and returns a `'static` slice borrowing that storage.
     unsafe { ImportPathsList::append(relative_paths_list_ptr(), src).expect("OOM") }
 }
 #[inline]
@@ -196,6 +194,7 @@ impl Linker {
             !self.options.is_null(),
             "Linker.options used before configure_linker"
         );
+        // SAFETY: self.options is set in configure_linker to &Transpiler.options; never null; shared borrow is valid.
         unsafe { &*self.options }
     }
 
@@ -207,6 +206,7 @@ impl Linker {
     #[inline]
     pub fn fs(&self) -> &Fs::FileSystem {
         debug_assert!(!self.fs.is_null());
+        // SAFETY: self.fs is the process-lifetime FileSystem singleton set in Transpiler::init; never null.
         unsafe { &*self.fs }
     }
 
@@ -220,6 +220,7 @@ impl Linker {
     #[inline]
     pub fn log_mut(&mut self) -> &mut Log {
         debug_assert!(!self.log.is_null());
+        // SAFETY: self.log is set in configure_linker to Transpiler.log; never null; exclusive via &mut self.
         unsafe { &mut *self.log }
     }
 
@@ -236,6 +237,7 @@ impl Linker {
             !self.resolve_results.is_null(),
             "Linker.resolve_results used before configure_linker"
         );
+        // SAFETY: sibling-field backref set in configure_linker; never null; exclusive via &mut self.
         unsafe { &mut *self.resolve_results }
     }
 
@@ -251,6 +253,7 @@ impl Linker {
             !self.resolve_queue.is_null(),
             "Linker.resolve_queue used before configure_linker"
         );
+        // SAFETY: sibling-field backref set in configure_linker; never null after init; exclusive via &mut self.
         unsafe { &mut *self.resolve_queue }
     }
 
@@ -521,12 +524,9 @@ impl Linker {
                     if let Some(runner) = self.plugin_runner {
                         let import_record = &mut result.ast.import_records.as_mut_slice()[record_i];
                         if PluginRunner::could_be_plugin(import_record.path.text) {
-                            // SAFETY: `plugin_runner` is `Some` only when set
-                            // by the owning `Transpiler` to a live JSC-heap
-                            // `PluginRunner`; the transpiler is single-threaded
-                            // and holds no other borrow of it for the duration
-                            // of `on_resolve`. Shared access here matches Zig
-                            // `*PluginRunner` (linker.zig:176-193).
+                            // SAFETY: `plugin_runner` is `Some` only when set by the owning
+                            // `Transpiler` to a live JSC-heap `PluginRunner`; the transpiler is
+                            // single-threaded and holds no other borrow for the duration of `on_resolve`.
                             let runner = unsafe { &*runner };
                             if let Some(path) = runner.on_resolve(
                                 import_record.path.text,

@@ -399,9 +399,13 @@ impl BlockList {
         // SAFETY: `*ptr` and `end` bound a contiguous byte buffer owned by the
         // caller (C++ SerializedScriptValue); `end >= *ptr`. `ptr` itself is a
         // non-null out-param the caller expects us to advance.
+        // SAFETY: `ptr` is a non-null out-param from the C++ caller; the exclusive
+        // reborrow is valid for the duration of this function.
         let ptr = unsafe { &mut *ptr };
         let total_length: usize = (end as usize) - (*ptr as usize);
         let mut r =
+            // SAFETY: `*ptr..end` is a contiguous byte buffer owned by the C++
+            // caller (`SerializedScriptValue`); `total_length` is the exact length.
             bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(*ptr, total_length) });
 
         let int = match r.read_int_le::<usize>() {

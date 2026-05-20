@@ -1146,6 +1146,8 @@ impl ArchiveIterator {
     /// sound. No FFI call here re-enters Rust to alias `self.archive`.
     #[inline]
     pub fn archive(&self) -> &Archive {
+        // SAFETY: `self.archive` is a non-null handle from `archive_read_new()`, valid until
+        // `ArchiveIterator::close` calls `read_free()`. See the invariant doc above.
         unsafe { &*self.archive }
     }
 

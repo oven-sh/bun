@@ -244,6 +244,7 @@ impl<'a> Coordinator<'a> {
             // victim has the largest *non-empty* range, so `v_ptr != w` and the
             // two `&mut Worker` are disjoint. find_steal_victim itself iterates
             // via raw pointers and never forms a `&mut Worker` for `w`'s slot.
+            // SAFETY: `v_ptr != w` (disjoint ranges); both point into `self.workers`; no other `&mut Worker` is live.
             let v = unsafe { &mut *v_ptr };
             if let Some(stolen) = v.range.steal_back_half() {
                 w.range = stolen;
@@ -582,6 +583,7 @@ impl<'a> Coordinator<'a> {
             if unsafe { !(*other).alive } {
                 continue;
             }
+            // SAFETY: `other` points into `self.workers[i]`; `i < spawned_count <= workers.len()`.
             if let Some(p) = unsafe { (*other).process } {
                 #[cfg(unix)]
                 {

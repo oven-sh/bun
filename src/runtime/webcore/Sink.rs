@@ -58,6 +58,8 @@ impl<'a> Sink<'a> {
         // sentinel vtable whose entries unconditionally panic — this keeps the value
         // well-formed at all times and turns any accidental dispatch (the bug Zig's
         // `undefined` would have hidden) into a loud, deterministic crash.
+        // SAFETY: sentinel ptr (0xaaaa…) is never dereferenced; `status == Closed`
+        // gates all vtable dispatch until `init_with_type` overwrites both fields.
         unsafe {
             Sink {
                 ptr: &mut *(0xaaaa_aaaa_usize as *mut ()),

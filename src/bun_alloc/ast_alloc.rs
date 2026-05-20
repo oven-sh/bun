@@ -165,6 +165,7 @@ fn bump_refill(heap: *mut mimalloc::Heap, size: usize) -> Option<*mut u8> {
     // caller's `align <= MI_MAX_ALIGN_SIZE`, so carving from the front already
     // satisfies the request's alignment. `size <= BUMP_MAX < BUMP_CHUNK`, so
     // both `add`s are in bounds.
+    // SAFETY: `size <= BUMP_MAX < BUMP_CHUNK`; `chunk.add(size)` and `chunk.add(BUMP_CHUNK)` are in-bounds.
     BUMP_CUR.set(unsafe { chunk.add(size) });
     BUMP_END.set(unsafe { chunk.add(BUMP_CHUNK) });
     BUMP_HEAP.set(heap);
@@ -375,6 +376,7 @@ unsafe impl Allocator for AstAlloc {
             // block head, the precondition `mi_expand` requires. It returns
             // `ptr` unchanged on success or null when the block cannot hold
             // `new.size()`.
+            // SAFETY: `ptr` is a live mimalloc block head (size > BUMP_MAX); `mi_expand` contract satisfied.
             if let Some(p) = NonNull::new(unsafe {
                 mimalloc::mi_expand(ptr.as_ptr().cast(), new.size()).cast::<u8>()
             }) {

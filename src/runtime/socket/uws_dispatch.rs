@@ -139,6 +139,7 @@ macro_rules! us_dispatch_shims {
         #[allow(clippy::unused_unit)]
         pub extern "C" fn $name($recv: *mut $Recv $(, $a: $t)*) -> $ret {
             match $lookup($recv).$field {
+                // SAFETY: `f` is a valid vtable fn pointer; args match the C ABI contract.
                 Some(f) => unsafe { f($($call),*) },
                 None => $default,
             }
@@ -200,9 +201,9 @@ pub extern "C" fn us_dispatch_ssl_raw_tap(
         let slice =
             unsafe { core::slice::from_raw_parts(data, usize::try_from(len).expect("len >= 0")) };
         // Zig: `raw.onData(TLSSocket.Socket.from(s), data[..])` where
-        // `Socket = uws.NewSocketHandler(ssl)`. SAFETY: `twin` holds a live +1
-        // ref to the `[raw, _]` half; dispatch is single-threaded so no aliasing
-        // `&mut` exists. `on_data` takes `*mut Self` (noalias re-entrancy fix).
+        // `Socket = uws.NewSocketHandler(ssl)`. `twin` holds a live +1 ref;
+        // dispatch is single-threaded so no aliasing `&mut` exists.
+        // SAFETY: `raw` is a live TLSSocket; `on_data` takes `*mut Self` (noalias re-entrancy).
         unsafe { TLSSocket::on_data(raw, NewSocketHandler::<true>::from(s), slice) };
     }
     s

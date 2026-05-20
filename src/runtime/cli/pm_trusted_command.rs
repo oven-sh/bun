@@ -69,6 +69,7 @@ impl UntrustedCommand {
         // writes through `manager.lockfile`, which is the same heap allocation
         // `load_lockfile` borrows but is never dereferenced via `load_lockfile`
         // here.
+        // SAFETY: see multi-line comment above; `pm_raw` is live and `load_lockfile` borrow valid.
         unsafe { update_lockfile_if_needed(&mut *pm_raw, &load_lockfile)? };
         drop(load_lockfile);
 
@@ -517,12 +518,15 @@ impl TrustCommand {
             }
 
             // SAFETY: `pm_raw` singleton.
+            // SAFETY: `pm_raw` is the process-singleton PackageManager pointer;
+            // no concurrent mutation occurs on this single-threaded event loop path.
             while unsafe {
                 (*pm_raw)
                     .pending_lifecycle_script_tasks
                     .load(Ordering::Relaxed)
             } > 0
             {
+                // SAFETY: same `pm_raw` singleton contract as the while-condition above.
                 unsafe { (*pm_raw).sleep() };
             }
         }
@@ -562,6 +566,8 @@ impl TrustCommand {
         // `pack_command`).
         let mut package_json: bun_ast::Expr = match bun_parsers::json::parse_utf8(
             &package_json_source,
+            // SAFETY: `ctx.log` is non-null after `Command::init`; no other
+            // `log_mut` result is live concurrently (single-threaded CLI path).
             unsafe { ctx.log_mut() },
             &bump,
         ) {

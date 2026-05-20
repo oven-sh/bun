@@ -2652,6 +2652,7 @@ macro_rules! impl_streaming_writer_parent {
                 // is dispatched per the `borrow` mode (`mut`/`shared`/`ptr` —
                 // see the module comment); `ptr` keeps full write/dealloc
                 // provenance through re-entrant, freeing callbacks.
+                // SAFETY: `this` is the valid BACKREF pointer set via `set_parent`; dispatched per `borrow` mode; see comment above.
                 unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_write(amount, status)) }
             }
             #[inline]

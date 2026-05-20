@@ -238,6 +238,7 @@ impl HasAutoFlusher for file_sink::FileSink {
         // single-threaded (drained on the JS thread after microtasks), so no
         // aliasing across the call. `FileSink::on_auto_flush` takes the raw ptr
         // directly (no `&mut self`).
+        // SAFETY: see comment above; `this` is a valid `*mut FileSink`, no aliasing.
         unsafe { file_sink::FileSink::on_auto_flush(this) }
     }
 }

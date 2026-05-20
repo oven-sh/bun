@@ -460,6 +460,7 @@ impl HotReloadEvent {
         // every HotReloadEvent it holds. Raw place projection (no `&DevServer`
         // intermediate) so this does not alias any live `&mut HotReloadEvent`.
         // `bun_watcher` is field-disjoint from `watcher_atomics`.
+        // SAFETY: `self.owner` is a valid `*mut DevServer` (BACKREF); DevServer outlives every HotReloadEvent.
         unsafe { (*self.owner).bun_watcher.thread_lock.assert_locked() };
     }
 
@@ -511,6 +512,7 @@ impl HotReloadEvent {
                                 bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
                                     source_file_path.slice(),
                                 ),
+                                // SAFETY: `specifier` points into the dep's owned `Box<[u8]>`; not mutated mid-resolve.
                                 unsafe { &*specifier },
                                 bun_ast::ImportKind::Stmt,
                             )
@@ -1281,11 +1283,13 @@ impl DirectoryWatchStore {
         let _g = unsafe { (*dev).graph_safety_lock.guard() };
         let owned_file_path: bun_ptr::RawSlice<u8> = match renderer {
             Graph::Client => {
+                // SAFETY: `dev` is a valid heap-allocated `*mut DevServer`; `client_graph` is disjoint from `directory_watchers`.
                 unsafe { &mut (*dev).client_graph }
                     .insert_empty(import_source, FileKind::Unknown)?
                     .key
             }
             Graph::Server | Graph::Ssr => {
+                // SAFETY: `dev` is a valid heap-allocated `*mut DevServer`; `server_graph` is disjoint from `directory_watchers`.
                 unsafe { &mut (*dev).server_graph }
                     .insert_empty(import_source, FileKind::Unknown)?
                     .key

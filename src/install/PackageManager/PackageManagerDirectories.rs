@@ -160,6 +160,8 @@ pub unsafe fn get_cache_directory_raw(this: *mut PackageManager) -> Fd {
     if let Some(d) = unsafe { (*this).cache_directory_.as_ref() } {
         return d.fd();
     }
+    // SAFETY: same contract as above — `this` is a live, uniquely-owned pointer
+    // with no overlapping borrows on the fields touched by `ensure_cache_directory`.
     let d = unsafe { ensure_cache_directory(this) };
     let fd = d.fd();
     // SAFETY: as above; single writer.

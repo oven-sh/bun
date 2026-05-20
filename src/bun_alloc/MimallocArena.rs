@@ -244,6 +244,9 @@ impl MimallocArena {
         // are freed; replacing `self.heap` with a fresh heap restores the
         // invariant.
         crate::ast_alloc::bump_invalidate_heap(self.heap_ptr());
+        // SAFETY: see multi-line comment above; `self.heap` is a live mi_heap
+        // owned exclusively by this `MimallocArena`; mi_heap_destroy frees all
+        // outstanding allocations. mi_heap_new() returns a fresh valid heap.
         unsafe { mimalloc::mi_heap_destroy(self.heap_ptr()) };
         let heap = unsafe { mimalloc::mi_heap_new() };
         self.heap = NonNull::new(heap).unwrap_or_else(|| crate::out_of_memory());

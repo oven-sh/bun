@@ -888,6 +888,7 @@ impl PackageManager {
         // `manager.options`/`manager.log` only and never re-projects
         // `manager.lockfile`. Both raw pointers below are derived from `self`,
         // so the caller's borrow stays on the Stacked-Borrows stack.
+        // SAFETY: pm is live; lockfile is Box-heap-owned (non-overlapping); raw ptrs derived from self (see above).
         unsafe {
             let lf: *mut Lockfile = &raw mut *(*pm).lockfile;
             let log: *mut bun_ast::Log = (*pm).log;
@@ -1003,6 +1004,7 @@ impl PackageManager {
     /// # Safety
     /// `this` must point to a live `PackageManager` (BACKREF).
     pub unsafe fn wake_raw(this: *mut Self) {
+        // SAFETY: outer unsafe fn propagates the caller contract; this is live (BACKREF), event_loop reached via addr_of_mut.
         unsafe {
             let on_wake = &*core::ptr::addr_of!((*this).on_wake);
             if let Some(ctx) = on_wake.context {
@@ -1111,6 +1113,7 @@ impl PackageManager {
         // that lives outside `self`, so the unbounded `'a` is sound under the
         // same single-threaded contract as `log_mut`/`scripts_node_mut`.
         // `BackRef` guarantees liveness; exclusivity is the caller's contract.
+        // SAFETY: env is process-lifetime singleton, non-null (set in init); exclusivity is caller's contract (see above).
         unsafe { &mut *self.env.expect("env initialised").as_ptr() }
     }
 }
@@ -1529,6 +1532,7 @@ pub fn init(
     // re-sliced below (the directory-walk rewrites the tail in place), and
     // borrowck cannot see that `original_package_json_path` is reassigned
     // before the next use after each mutation.
+    // SAFETY: NUL terminator written at path_len; detached borrow re-assigned before each subsequent use (see above).
     let mut original_package_json_path =
         unsafe { ZStr::from_raw(original_package_json_path_buf.as_ptr(), path_len) };
     let original_cwd =
@@ -1698,6 +1702,7 @@ pub fn init(
                     // SAFETY: `ctx.log` is a borrow of the CLI's `Log`; valid for the
                     // duration of `init()` (set by `Command::create()` before any install
                     // entry point runs).
+                    // SAFETY: ctx.log is a live *mut Log set before init() runs; single-threaded (see above).
                     let json = crate::bun_json::parse_package_json_utf8(
                         &json_source,
                         unsafe { &mut *ctx.log },
@@ -1973,6 +1978,7 @@ pub fn init(
     // a ≈443 KB memcpy into the singleton. Zig's `manager.* = .{...}` writes
     // fields directly to the heap (RLS); per-field placement mirrors that and
     // keeps the frame under 16 KB.
+    // SAFETY: manager_ptr is uninitialized heap memory from allocate_package_manager(); fully initialized field-by-field below.
     unsafe {
         let p = manager_ptr;
         macro_rules! wr {
@@ -2154,6 +2160,7 @@ pub fn init(
     // Zig: `jsc.MiniEventLoop.global = &manager.event_loop.mini` — set the
     // thread-local global to point at the embedded mini loop. The Rust port
     // stores it in `bun_event_loop::mini_event_loop::GLOBAL`.
+    // SAFETY: manager_ptr is fully initialized singleton; main thread only (see above).
     {
         let evl = unsafe { &mut (*manager_ptr).event_loop };
         if let AnyEventLoop::Mini(mini) = evl {
@@ -2330,6 +2337,7 @@ pub fn init(
     // the CLI dispatch thread; the returned `&'static mut` is the sole
     // first-class reference handed out (worker threads project fields via the
     // raw [`get`] accessor, never via this reference).
+    // SAFETY: manager_ptr fully initialized; sole &'static mut reference (init called once per process, see above).
     Ok((unsafe { &mut *manager_ptr }, original_cwd_clone))
 }
 
@@ -2425,6 +2433,7 @@ pub fn init_with_runtime_once(
     // `ptr::write`ing it materialized a ≈911 KB stack frame because of the
     // two inline `HiveArrayFallback` pools; per-field placement mirrors Zig's
     // result-location semantics and writes directly to the heap singleton.
+    // SAFETY: manager_ptr is uninitialized heap memory; fully initialized field-by-field below (see above).
     unsafe {
         let p = manager_ptr;
         macro_rules! wr {

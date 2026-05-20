@@ -200,7 +200,9 @@ impl<C: CompletionStruct> BundleThread<C> {
         // `AtomicBool` for `has_pending_wake`), so this autorefs to `&Waker` and is
         // safe to call concurrently with `wait(&self)` in `thread_main` and with
         // other `enqueue` callers.
+        // SAFETY: outer `unsafe fn`; raw field projection avoids `&mut Self` on concurrently-accessed struct.
         unsafe { (*instance).queue.push(completion) };
+        // SAFETY: same — `waker.wake()` takes `&self`, safe to call concurrently with `wait`.
         unsafe { (*instance).waker.wake() };
     }
 
@@ -356,6 +358,7 @@ impl<C: CompletionStruct> BundleThread<C> {
         // thread-local). The arena bytes themselves are bulk-freed afterwards
         // by `heap`'s `Drop` — `drop_in_place` only releases the *embedded
         // global-heap* state, so there is no double free.
+        // SAFETY: unique `&'a mut` slots from bump alloc; no other references past `init_and_run`.
         unsafe {
             core::ptr::drop_in_place(transpiler_ptr);
             core::ptr::drop_in_place(ast_memory_store as *mut bun_ast::ASTMemoryAllocator);

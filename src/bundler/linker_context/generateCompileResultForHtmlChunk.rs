@@ -51,6 +51,8 @@ pub fn generate_compile_result_for_html_chunk(task: *mut ThreadPoolLibTask) {
     // through `&PendingPartRange` / `&GenerateChunkCtx` is a plain `Copy` of
     // the pointer value and preserves the mutable provenance they were
     // constructed with — no `addr_of!` provenance dance needed.
+    // SAFETY: see multi-line comment above; `task` offsets to a live
+    // `PendingPartRange`, no aliasing `&mut PendingPartRange` is live.
     let part_range: &PendingPartRange =
         unsafe { &*bun_core::from_field_ptr!(PendingPartRange, task, task) };
     let i = part_range.i as usize;
@@ -265,6 +267,7 @@ impl<'a> HTMLLoader<'a> {
         // PERF(port): was stack-fallback (std.heap.stackFallback(256))
         // `self.chunk` is a `BackRef` (safe `Deref`); SAFETY for `chunks`:
         // raw `*mut [Chunk]` valid for the link step, sole live `&mut`.
+        // SAFETY: `self.chunks` is the sole live `&mut [Chunk]` during the link step.
         if let Some(js_chunk) = self
             .chunk
             .get_js_chunk_for_html(unsafe { &mut *self.chunks })
@@ -487,6 +490,7 @@ fn generate_compile_result_for_html_chunk_impl<'a>(
                     if html_loader.compile_to_standalone_html {
                         // `chunk` is a `BackRef` (safe `Deref`); SAFETY for `chunks`:
                         // raw `*mut [Chunk]` valid for the link step, sole live `&mut`.
+                        // SAFETY: `html_loader.chunks` is the sole live `&mut [Chunk]` during the link step.
                         if let Some(js_chunk) = html_loader
                             .chunk
                             .get_js_chunk_for_html(unsafe { &mut *html_loader.chunks })

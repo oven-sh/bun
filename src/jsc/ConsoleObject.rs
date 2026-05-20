@@ -129,6 +129,7 @@ impl ConsoleObject {
     // pointer into the buffer field, so the struct is self-referential once
     // initialized. The previous out-param shape (`&mut MaybeUninit<Self>`)
     // still let the caller move the value afterwards (e.g.
+    // SAFETY: illustrative code snippet only — not a real unsafe block.
     // `Box::new(unsafe { mu.assume_init() })`), which is exactly what
     // `VirtualMachine` needs to do — and that move would dangle both
     // adapter pointers.
@@ -162,6 +163,7 @@ impl ConsoleObject {
         // pointer because `adapt_to_new_api` would otherwise hold a unique
         // borrow of one field while we assign another.
         let p: *mut ConsoleObject = &raw mut *out;
+        // SAFETY: `p` points into the heap-allocated `out` at its final stable address; field writes only.
         unsafe {
             (*p).error_writer_backing = error_writer
                 .quiet_writer()
@@ -196,6 +198,7 @@ impl ConsoleObject {
         // `out.stdout_buffer`, which remain valid for `out`'s lifetime
         // *provided the caller never moves it* (see fn doc).
         let p: *mut ConsoleObject = out;
+        // SAFETY: `p` points to fully-initialized `ConsoleObject` at its stable final address.
         unsafe {
             (*p).error_writer_backing = error_writer
                 .quiet_writer()
@@ -511,6 +514,7 @@ fn message_with_type_and_level_(
     // `vm_console_mut`) so the resulting `writer` borrow does not pin a
     // long-lived `&mut ConsoleObject` across the re-derive in the empty-`Log`
     // arm below.
+    // SAFETY: `console` is a live JS-thread-only boxed `ConsoleObject`; deref is scoped to this block.
     let raw_writer: &mut bun_core::io::Writer = unsafe {
         if matches!(level, MessageLevel::Warning | MessageLevel::Error) {
             (*console).error_writer()

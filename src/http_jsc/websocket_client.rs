@@ -599,6 +599,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             // `adopted` raw ptr (same `heap::alloc` provenance as
             // `this_ptr`); no `&mut *this_ptr` is live here, so the nested
             // call may freely form its own exclusive reborrow.
+            // SAFETY: `initial_handler` is a live heap-allocated handler; no aliasing `&mut` is live.
             unsafe { (*initial_handler.as_ptr()).handle_without_deinit() };
 
             // handle_without_deinit is supposed to clear the handler from WebSocket*
@@ -1759,6 +1760,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             // reads `vm.uws_loop()` / `vm.event_loop_handle` and never touches
             // `vm.rare_data`, so the shared `&VirtualMachine` argument cannot
             // observe or invalidate the `&mut RareData` receiver.
+            // SAFETY: `vm_ptr` is the live VM; `rare_data` is a disjoint Box field, non-overlapping.
             unsafe { (*vm_ptr).rare_data().ws_client_group::<SSL>(&*vm_ptr) }
         };
         if !Socket::<SSL>::adopt_group(
@@ -1792,6 +1794,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             // `InitialDataHandler.deinit` frees it with `bun.default_allocator.free`.
             // The Rust global allocator is also mimalloc, so `heap::take`
             // adopts the original allocation (no copy) and `Drop` will `mi_free` it.
+            // SAFETY: `buffered_data` is a valid C++ mimalloc allocation of `buffered_data_len` bytes.
             let buffered_slice: Box<[u8]> = unsafe {
                 bun_core::heap::take(core::slice::from_raw_parts_mut(
                     buffered_data,

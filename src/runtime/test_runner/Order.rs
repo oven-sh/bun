@@ -52,6 +52,7 @@ impl Order {
             // `&T as *const T as *mut T` chain; field writes use raw deref to avoid materializing
             // a long-lived `&mut`.
             let entry: *mut ExecutionEntry = box_inner_mut(entry_box);
+            // SAFETY: `entry` is a live, uniquely-owned Box<ExecutionEntry>; raw field writes avoid aliased `&mut`.
             unsafe {
                 if bun_core::Environment::CI_ASSERT && (*entry).added_in_phase != AddedInPhase::Preload {
                     debug_assert!((*entry).next.is_none());
@@ -126,7 +127,9 @@ impl Order {
         // loop below, so we never hold a long-lived `&mut *current` across those calls — each access
         // dereferences the raw pointer locally.
         debug_assert!(unsafe { (*current).base.has_callback == (*current).callback.is_some() });
+        // SAFETY: `current` is a valid live ExecutionEntry (caller contract); reading fields is sound.
         let use_each_hooks = unsafe { (*current).base.has_callback };
+        // SAFETY: `current` is a valid live ExecutionEntry (caller contract); reading fields is sound.
         let first_parent: Option<*mut DescribeScope> = unsafe { (*current).base.parent };
 
         let mut list = EntryList::default();

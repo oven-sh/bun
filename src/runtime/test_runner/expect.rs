@@ -1404,7 +1404,8 @@ impl Expect {
                 // C++ takes the function pointer **by value** (`NativeFunctionPtr`), not a
                 // pointer-to-function-pointer — the Zig `*const jsc.JSHostFn` is itself the
                 // function-pointer type (Zig fn types aren't pointers), whereas Rust's
-                // `JSHostFn` already is, so pass it directly.
+                // `JSHostFn` already is, so pass it directly. Called on the JS thread.
+                // SAFETY: see comment above — on-JS-thread FFI call, all arguments are valid.
                 let wrapper_fn = unsafe {
                     Bun__JSWrappingFunction__create(
                         global_this,

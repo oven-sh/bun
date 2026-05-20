@@ -96,15 +96,17 @@ fn install(ctx: &mut ContextData) -> Result<(), Error> {
                     v
                 });
 
-                // SAFETY: `this.cli` / `this.ctx` were set from live stack
-                // locals in `install()` whose scope encloses the entire
-                // `BuildCommand::exec` call (and hence this callback). The
-                // bundler does not touch the global `ContextData` between
-                // dependency-scan completion and `on_fetch` invocation, so
-                // forming a fresh `&mut` here is exclusive for the duration of
-                // `install_with_cli`.
+                // `this.cli` / `this.ctx` were set from live stack locals in
+                // `install()` whose scope encloses the entire `BuildCommand::exec`
+                // call (and hence this callback). The bundler does not touch
+                // `ContextData` between dependency-scan and `on_fetch`, so each
+                // dereference is exclusive for the duration of `install_with_cli`.
+                // SAFETY: `this.cli` points to a live `cli` on the enclosing stack;
+                // no other &mut to it is live at this call site.
                 let cli = unsafe { &mut *this.cli };
                 cli.positionals = positionals.as_slice();
+                // SAFETY: `this.ctx` points to a live `ContextData` on the enclosing
+                // stack; `cli` borrow has ended before this reborrow.
                 let ctx = unsafe { &mut *this.ctx };
 
                 install_with_cli(ctx, cli.clone())?;

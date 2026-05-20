@@ -180,6 +180,7 @@ impl WTFTimer {
         // live allocation. May be called off the JS thread — `All::update`
         // takes its own lock. The `repeat` write is the only field write here;
         // no `&Self` from `t` is live across it.
+        // SAFETY: `t.vm` is valid; `this` is a live heap allocation; `repeat` write is the sole field write here.
         unsafe {
             let state = crate::jsc_hooks::runtime_state_of(t.vm.as_ptr());
             (*state)

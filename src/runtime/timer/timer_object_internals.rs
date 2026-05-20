@@ -487,6 +487,7 @@ impl TimerObjectInternals {
         // `&Self` is sound (no `noalias`; LLVM cannot cache `Cell` reads across
         // `Self::run`). Last use of `s` is the final `s.deref()` at the end of
         // the pinned block; `*this` may be freed only after that point.
+        // SAFETY: outer `unsafe fn` contract guarantees `this` is a live TimerObjectInternals; &Self is sound (fields are Cell/JsCell).
         let s = unsafe { &*this };
         let id = s.id;
         let kind: KindBig = s.flags.get().kind().into();

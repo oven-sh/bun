@@ -115,6 +115,7 @@ impl<'a> PropertyHandlerContext<'a> {
     /// lifetime erasure.
     #[inline]
     fn bump_static(&self) -> &'static Bump {
+        // SAFETY: self.arena is a bump allocator that outlives all rules built from it; erasing to 'static is sound per crate convention.
         unsafe { bun_collections::detach_ref(self.arena) }
     }
 

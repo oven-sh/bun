@@ -244,6 +244,7 @@ impl State {
     /// `s` must have been returned by [`State::new`]/[`State::init`] and not yet freed.
     pub unsafe fn destroy(s: *mut State) {
         // PORT NOTE: opaque FFI handle — kept as explicit destroy fn, not `impl Drop`.
+        // SAFETY: outer `unsafe fn` — `s` was returned by `State::new`/`init` and not yet freed.
         unsafe { tcc_delete(s) }
     }
 

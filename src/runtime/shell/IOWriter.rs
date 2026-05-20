@@ -249,6 +249,7 @@ impl IOWriter {
     /// and guards via the `Yield` trampoline).
     #[inline]
     fn state(&self) -> &mut State {
+        // SAFETY: single-threaded IOWriter; see doc-comment safety contract above.
         unsafe { &mut *self.state.get() }
     }
 
@@ -1220,6 +1221,7 @@ pub fn on_io_writer_chunk(
             // CapturedWriter) is kept alive by the `Readable::Pipe` Arc on
             // the owning ShellSubprocess until `on_close_io` runs, which only
             // happens after the writer has finished draining. Single-threaded.
+            // SAFETY: see multi-line comment above this line.
             let cw = unsafe { &mut *child.raw.cast::<crate::shell::subproc::CapturedWriter>() };
             cw.on_iowriter_chunk(written, err)
         }

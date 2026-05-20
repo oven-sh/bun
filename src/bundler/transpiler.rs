@@ -214,6 +214,7 @@ impl<'a> Transpiler<'a> {
         // never freed). Reads of `top_level_dir` (the dominant use) are sound
         // even concurrently with `fs_mut()` callers because that field is
         // `&'static [u8]` written once at init.
+        // SAFETY: `self.fs` is a valid non-null process-lifetime pointer; see SAFETY comment above.
         unsafe { &*self.fs }
     }
 
@@ -231,6 +232,7 @@ impl<'a> Transpiler<'a> {
         // `unsafe { &mut *self.fs }` — the pointee outlives any `'r` a caller
         // can name. Exclusive access is upheld by single-threaded use at each
         // call site (no two live `&mut FileSystem` overlap).
+        // SAFETY: `self.fs` is non-null process-lifetime singleton; single-threaded use; see SAFETY comment above.
         unsafe { &mut *self.fs }
     }
 
@@ -243,6 +245,7 @@ impl<'a> Transpiler<'a> {
         // here cannot conflict with the aliased raw copies in
         // `self.{resolver,linker,options}.log` (those are also reads or
         // serialized writes on the bundle thread).
+        // SAFETY: `self.log` is non-null after `init` and outlives `self`; see SAFETY comment above.
         unsafe { &*self.log }
     }
 
@@ -260,6 +263,7 @@ impl<'a> Transpiler<'a> {
         // mirrors the prior open-coded `unsafe { &mut *self.log }`; the
         // aliased raw copies in `self.{resolver,linker,options}.log` are never
         // dereferenced while a `log_mut()` result is live (caller contract).
+        // SAFETY: `self.log` is non-null after `init`; aliased raw copies never live simultaneously; see SAFETY comment above.
         unsafe { &mut *self.log }
     }
 
@@ -273,6 +277,7 @@ impl<'a> Transpiler<'a> {
         // which live for at least `'a`. Shared access cannot conflict with the
         // raw aliases in `resolver.env_loader` (those are reads or serialized
         // writes on the same thread).
+        // SAFETY: `self.env` is non-null process-lifetime pointer; read-only access; see SAFETY comment above.
         unsafe { &*self.env }
     }
 
@@ -288,6 +293,7 @@ impl<'a> Transpiler<'a> {
         // which live for at least `'a`. No other live `&mut Loader` exists at
         // any call site (single-threaded; `resolver.env_loader` aliases as a
         // raw `NonNull`, never as a held `&mut`).
+        // SAFETY: `self.env` is non-null; single-threaded; no other live `&mut Loader`; see SAFETY comment above.
         unsafe { &mut *self.env }
     }
 
@@ -1337,6 +1343,7 @@ impl<'a> Transpiler<'a> {
         // the field's `*mut Loader<'a>` (raw-pointer lifetime reinterpretation —
         // the pointee is the process-lifetime singleton or caller-supplied
         // loader, as in the original struct literal).
+        // SAFETY: `dst` is an exclusively-borrowed uninitialised `MaybeUninit<Transpiler>`; each write targets a distinct field; see SAFETY above.
         unsafe {
             core::ptr::addr_of_mut!((*p).options).write(bundle_options);
             core::ptr::addr_of_mut!((*p).log).write(log);
@@ -1488,6 +1495,7 @@ impl<'a> Transpiler<'a> {
                 // sound for the lifetime of `source.contents`' consumers, which
                 // never outlive the `ParseResult`. A real lifetime can be
                 // threaded once `bun_ast::Source.contents` becomes `Cow`.
+                // SAFETY: `source_backing` is moved into `ParseResult`; consumers never outlive it; see SAFETY comment above.
                 let contents: &'static [u8] =
                     unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(source_backing.as_slice()) };
                 break 'brk bun_ast::Source::init_path_string(path.text, contents);
@@ -1543,6 +1551,7 @@ impl<'a> Transpiler<'a> {
             // the result drops). `contents_is_recycled = true` records that
             // the bytes are externally-owned; threading `'bump` would remove
             // the erasure.
+            // SAFETY: `source_backing` is moved into `ParseResult`; parser/printer run before drop; see SAFETY above.
             let contents: &'static [u8] =
                 unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(source_backing.as_slice()) };
             match bun_ast::Source::init_recycled_file(bun_ast::PathContentsPair {
@@ -1732,6 +1741,7 @@ impl<'a> Transpiler<'a> {
                 // — neither field is dropped while a parse is in flight
                 // (Zig held `*const Define` / `*MacroContext`).
                 let define: &'a js_ast::defines::Define;
+                // SAFETY: `self.options.define`/`self.macro_context` outlive `'a`; no drop while parse is in flight; see SAFETY above.
                 unsafe {
                     define = &*(&raw const *self.options.define);
                     opts.macro_context = self
@@ -3210,6 +3220,7 @@ impl<'a> Transpiler<'a> {
         // global-heap). `'static` matches the crate-wide erasure
         // on `StyleSheet`/`ParserOptions` (see css_parser.rs
         // TODO(port): 'bump threading).
+        // SAFETY: `self.arena` is the per-transpile arena; CSS AST is dropped before this fn returns; see SAFETY above.
         let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref::<Arena>(self.arena) };
 
         let (mut sheet, extra) = match bun_css::StyleSheet::<bun_css::DefaultAtRule>::parse(

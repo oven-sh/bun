@@ -192,13 +192,11 @@ impl File {
     fn start_close(&mut self) {
         debug_assert!(self.state == FileState::Deinitialized);
         self.state = FileState::Closing;
-        // SAFETY: self is heap-allocated (Box<File>) and outlives the close callback,
-        // which frees it in on_close_complete.
-        // Derive the fs_t pointer from the whole `*mut File` (fs is the first
-        // #[repr(C)] field, offset 0) so the pointer carries full-struct
-        // provenance — `on_close_complete` recovers `*mut File` via `from_fs`
-        // and reads/frees bytes outside the `fs` field. `&mut self.fs` would
-        // narrow provenance to the field under SB/TB and make that UB.
+        // Derive fs_t from `*mut File` (offset 0 #[repr(C)] field) for full-struct
+        // provenance — `on_close_complete` recovers `*mut File` via `from_fs`.
+        // SAFETY: `self` is a heap-allocated `Box<File>` outliving the callback;
+        // full-struct provenance is required so `on_close_complete` can access
+        // fields beyond `fs` without Stacked/Tree Borrows UB.
         unsafe {
             let fs_ptr = core::ptr::from_mut::<File>(self).cast::<uv::fs_t>();
             uv::uv_fs_close(

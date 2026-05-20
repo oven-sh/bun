@@ -429,6 +429,7 @@ impl ThreadPool {
             // `self.generation` is — `deinit_soon` runs before the pool is
             // dropped, and a new pool at the same address has a fresh
             // generation, so a stale TLS entry never matches here.
+            // SAFETY: Worker is heap-pinned and live while generation matches; exclusive via TLS per-thread.
             return unsafe { &mut *worker };
         }
         self.get_worker_slow(id)
@@ -566,6 +567,7 @@ impl Worker {
         // `&'static mut Worker`; callers are task callbacks that complete
         // before `deinit_soon` tears the worker down, so the arena outlives
         // every reference handed out here.
+        // SAFETY: heap-pinned Worker; arena outlives all task-callback borrows — see comment above.
         unsafe { bun_ptr::detach_lifetime_ref(self.arena.get()) }
     }
 }
@@ -672,6 +674,7 @@ impl Worker {
         // not). Ordered before `heap = None` in case the TODO(port) in
         // `ASTMemoryAllocator::new` ever threads `arena_ref` (= `&self.heap`)
         // through.
+        // SAFETY: `ast_memory_store` is always initialized (see comment above); dropped exactly once.
         unsafe { ManuallyDrop::drop(&mut worker.ast_memory_store) };
         if worker.has_created {
             worker.heap = None;
@@ -731,6 +734,8 @@ impl Worker {
         // (Worker is heap-pinned, address stable). `'static` is sound for the
         // erased `Transpiler<'static>` slot below; the arena outlives
         // `WorkerData`. Single detach for the three uses that follow.
+        // SAFETY: `self.arena` is a BackRef to the heap-pinned `self.heap`; detaching the
+        // lifetime to `'static` is sound because `Worker` outlives all `WorkerData` borrows.
         let arena_ref: &'static ThreadLocalArena =
             unsafe { bun_ptr::detach_lifetime_ref(self.arena.get()) };
 

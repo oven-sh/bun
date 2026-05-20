@@ -80,13 +80,13 @@ impl Hardlinker {
                         )));
                     }
                 };
-                // SAFETY: `dest_cwd` is a sub-slice of `cwd_buf` by contract of
-                // `get_fd_path_w` (it returns `&mut out_buffer[off..]`).
                 // NB: capture `len`/`dest_ptr` first so NLL drops the `&mut cwd_buf`
-                // loan (held via `dest_cwd`) before `cwd_buf.as_ptr()` takes `&cwd_buf`
-                // — otherwise E0502 on x86_64-pc-windows-msvc.
+                // loan before `cwd_buf.as_ptr()` takes `&cwd_buf` (E0502 on MSVC).
                 let len = dest_cwd.len();
                 let dest_ptr = dest_cwd.as_ptr();
+                // SAFETY: `dest_cwd` is a sub-slice of `cwd_buf` by contract of
+                // `get_fd_path_w`; both pointers are into the same allocation so
+                // `offset_from` is well-defined and the result is non-negative.
                 let off = unsafe { dest_ptr.offset_from(cwd_buf.as_ptr()) } as usize;
                 (off, len)
             };

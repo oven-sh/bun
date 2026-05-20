@@ -269,6 +269,7 @@ pub extern "C" fn Bun__HTTPMethod__from(str: *const u8, len: usize) -> i16 {
     // non-null by construction). The (ptr,len) pair cannot be a `&[u8]` across
     // the C ABI, so `from_raw_parts` is irreducible here; the borrow does not
     // outlive this stack frame.
+    // SAFETY: `str` is non-null and valid for `len` bytes per the FFI contract; borrow ends within this frame.
     let slice = unsafe { core::slice::from_raw_parts(str, len) };
     let Some(method) = Method::find(slice) else {
         return -1;

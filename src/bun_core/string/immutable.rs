@@ -522,6 +522,7 @@ pub mod lexer_step {
             // `avail >= cp_len`, so `contents[current..current + cp_len]` is in-bounds.
             // `decode_wtf8_rune_t_multibyte` only dereferences `p[0..len]`; pad bytes are
             // never read.
+            // SAFETY: current + cp_len <= contents.len() (checked above); quad is a local 4-byte output buffer.
             let mut quad = [0u8; 4];
             unsafe {
                 core::ptr::copy_nonoverlapping(
@@ -1494,6 +1495,7 @@ fn eql_comptime_check_len_u8_impl(a: &[u8], b: &[u8], check_len: bool) -> bool {
     // Zig `eqlComptimeCheckLenU8` contract). LLVM cannot prove the latter, so
     // a checked slice would emit a real bounds check on this hot path
     // (lexer keyword/prefix matching) — keep the unchecked index.
+    // SAFETY: a.len() >= b.len() guaranteed by check_len early-return or caller contract (see above).
     unsafe { a.get_unchecked(..b.len()) == b }
 }
 

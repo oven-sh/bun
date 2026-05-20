@@ -66,11 +66,10 @@ impl Stream {
     }
 
     pub fn ext<T>(&mut self) -> &mut Option<NonNull<T>> {
-        // SAFETY: self is a valid us_quic_stream_t; ext slot is pointer-sized & pointer-aligned,
-        // and Option<NonNull<T>> has the same layout as Zig's `?*T` (nullable pointer).
-        // Aliasing: the ext slot is disjoint storage returned by C (not overlapping the
-        // zero-sized opaque `Stream` handle), and the returned &mut borrows from &mut self
-        // so no second &mut to the slot can be obtained while this one is live.
+        // SAFETY: `us_quic_stream_ext` returns a pointer to the per-stream extension slot,
+        // which is pointer-sized and pointer-aligned; `Option<NonNull<T>>` has the same
+        // layout as a nullable pointer. The returned &mut reborrow of &mut self ensures
+        // exclusive access — no second &mut to this slot can exist while this one is live.
         unsafe { &mut *us_quic_stream_ext(self).cast::<Option<NonNull<T>>>() }
     }
 

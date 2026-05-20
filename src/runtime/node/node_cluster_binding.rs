@@ -48,6 +48,7 @@ fn child_singleton<'a>() -> &'a mut InternalMsgHolder {
     // `'static` storage so the returned `&mut` is valid for any caller-chosen
     // `'a`. Aliasing: each of the three callers borrows for a single
     // statement/block with no nested call to this fn.
+    // SAFETY: sole mutable access on the JS thread; `'static` Option storage.
     unsafe { (*CHILD_SINGLETON.get()).get_or_insert_with(Default::default) }
 }
 

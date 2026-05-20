@@ -137,6 +137,7 @@ pub mod fs {
                     // formed). The returned slice borrows its never-freed backing storage
                     // (heap-owned by a `'static` `BSSStringList` or a leaked mi_malloc), so
                     // widening to `'static` is sound.
+                    // SAFETY: see comment above — process-lifetime singleton, mutex-serialized, 'static storage.
                     unsafe { bun_alloc::BSSStringList::append($backing(), value) }
                         .map_err(|_| bun_core::err!("OutOfMemory"))
                 }
@@ -729,6 +730,7 @@ pub mod fs {
             // unbounded `&mut EntriesOption` return type — the `RefMut` guard
             // drops immediately on return, so no live `RefCell` borrow aliases
             // the escaped reference.
+            // SAFETY: slot was just written; threadlocal outlives caller; RefMut drops immediately.
             unsafe { &mut *slot.as_mut_ptr() }
         })
     }
@@ -945,6 +947,7 @@ pub mod fs {
             // borrow is bounded by that `&mut self` — it cannot outlive the
             // field borrow nor be sent to another thread independently of it.
             // Cross-thread exclusion is provided by the mutex asserted above.
+            // SAFETY: see comment above — process-static singleton, &mut self exclusivity, mutex held.
             unsafe { &mut *entries_option_map() }
         }
         pub fn get(&mut self, key: &[u8]) -> Option<&mut EntriesOption> {
@@ -2174,6 +2177,7 @@ pub mod cache {
                 // and valid for shared reads for at least `'_`. Cannot be a
                 // `bun_ptr::RawSlice` field without breaking `src/bundler/`
                 // struct-literal constructors (out-of-shard).
+                // SAFETY: see comment above — ptr non-null, aligned, initialized, live for at least `'_`.
                 Contents::SharedBuffer { ptr, len } | Contents::External { ptr, len } => unsafe {
                     core::slice::from_raw_parts(*ptr, *len)
                 },

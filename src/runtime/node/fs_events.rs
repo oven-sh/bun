@@ -161,6 +161,7 @@ fn dlsym<T>(handle: *mut c_void, symbol: &core::ffi::CStr) -> Option<T> {
     // assert above enforces size parity, and the null check rules out the absent-symbol
     // case so the resulting fn pointer is always non-null. Not expressible via
     // bytemuck/as: fn pointers are not Pod and `as` can't cast data→fn pointers.
+    // SAFETY: dlsym address reinterpreted as matching extern "C" fn type; size parity asserted above.
     Some(unsafe { core::mem::transmute_copy::<*mut c_void, T>(&ptr) })
 }
 #[cfg(not(unix))]
@@ -952,6 +953,8 @@ impl Drop for FSEventsWatcher {
             // None here by FSEventsLoop::drop *after* draining watchers. Mutable
             // access to the watcher list is serialized by `self.mutex` inside
             // unregister_watcher.
+            // SAFETY: `loop_` is the heap-allocated global loop that outlives every watcher;
+            // watcher list mutation is serialized by `self.mutex` inside `unregister_watcher`.
             unsafe {
                 (*loop_.as_ptr()).unregister_watcher(std::ptr::from_mut(self));
             }

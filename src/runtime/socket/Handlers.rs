@@ -251,6 +251,7 @@ impl Handlers {
                 // inner `Handlers` address; `from_field_ptr!` arithmetic is
                 // unchanged. Deref as shared (`&*`) — celled fields below
                 // take `&self`.
+                // SAFETY: server-mode `this` has whole-Listener provenance; from_field_ptr offset is sound.
                 let listen_socket: &SocketListener =
                     unsafe { &*bun_core::from_field_ptr!(SocketListener, handlers, this) };
                 // allow it to be GC'd once the last connection is closed and it's not listening anymore

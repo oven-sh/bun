@@ -901,10 +901,12 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
     // stack frame and is the sole mutator of `whitespace_buf` while live.
     #[inline]
     fn parser(&self) -> &Parser<'a, Enc> {
+        // SAFETY: `self.parser` is derived from `&mut Parser` in string_builder(); builder never outlives it.
         unsafe { &*self.parser }
     }
     #[inline]
     fn parser_mut(&mut self) -> &mut Parser<'a, Enc> {
+        // SAFETY: `self.parser` is derived from `&mut Parser`; sole `&mut` reborrows via raw ptr chain.
         unsafe { &mut *self.parser }
     }
     /// Shortcut for `self.parser().input` that returns the slice with its
@@ -1332,6 +1334,7 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         let raw_parser: *mut Parser<'i, Enc> = self.parser;
         macro_rules! parser {
             () => {
+                // SAFETY: `raw_parser` is derived from `self.parser` (a `&mut Parser` lifetime); re-deriving per-access keeps borrows non-overlapping.
                 unsafe { &mut *raw_parser }
             };
         }
@@ -3834,6 +3837,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         // (Stacked Borrows: reborrowing `self` would invalidate `parser`).
         macro_rules! parser {
             () => {
+                // SAFETY: `parser` is derived from `&mut self`; single provenance chain, no aliasing reborrows.
                 unsafe { &mut *parser }
             };
         }

@@ -139,6 +139,7 @@ impl Yes {
         // PORT NOTE: `enqueue` ticks the event loop (Zig spec), which may
         // re-enter shell dispatch. We hold no `&mut` derived from `interp`
         // across the call; the parameter borrow itself is not re-used after.
+        // SAFETY: `task` is a valid `*mut YesTask` (set in `start()`); stable address in the arena Box; see SAFETY comment above.
         unsafe { YesTask::enqueue(task) };
         Yield::suspended()
     }

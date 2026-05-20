@@ -179,8 +179,9 @@ impl SecureContext {
     /// wrapper's GC. Most paths just pass `this.ctx` directly and let `SSL_new`
     /// take its own ref.
     pub fn borrow(&self) -> *mut boringssl::SSL_CTX {
+        // SAFETY: `self.ctx` is a valid `SSL_CTX*` held for the lifetime of this wrapper;
+        // `SSL_CTX_up_ref` is thread-safe per BoringSSL spec.
         unsafe {
-            // SAFETY: self.ctx is a valid SSL_CTX* held for the lifetime of this wrapper.
             let _ = boringssl::SSL_CTX_up_ref(self.ctx);
         }
         self.ctx

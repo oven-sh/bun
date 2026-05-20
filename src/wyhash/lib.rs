@@ -678,9 +678,13 @@ impl Wyhash {
                     // `read_unaligned` imposes no alignment requirement.
                     macro_rules! r8 {
                         ($o:literal) => {
-                            u64::from_le(unsafe {
-                                core::ptr::read_unaligned(p.add(i + $o) as *const u64)
-                            })
+                            u64::from_le(
+                                // SAFETY: loop invariant guarantees `p.add(i + $o)` is within
+                                // `input`; `read_unaligned` requires no alignment.
+                                unsafe {
+                                    core::ptr::read_unaligned(p.add(i + $o) as *const u64)
+                                },
+                            )
                         };
                     }
                     // u64×u64 → u128 cannot overflow; `wrapping_mul` skips

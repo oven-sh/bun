@@ -298,6 +298,7 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
         let _tracer =
             bun_perf::trace(bun_perf::PerfEvent::FolderResolverReadPackageJSONFromDiskWorkspace);
 
+        // SAFETY: `manager_ptr` is derived from `manager`; disjoint from `log` (separate allocation). See PORT NOTE above.
         let json = unsafe { &mut *manager_ptr }
             .workspace_package_json_cache
             .get_with_path(log, abs.as_bytes(), Default::default())

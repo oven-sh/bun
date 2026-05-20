@@ -1751,6 +1751,7 @@ impl Package<u64> {
         // `string_builder.append()` calls write into the *pre-reserved* tail
         // (`allocate()` ran before this fn). No realloc occurs, so the detached
         // borrow stays valid; a tracked `&[u8]` would needlessly lock the builder.
+        // SAFETY: `buf` aliases `string_builder.string_bytes`; `allocate()` pre-reserved capacity so no realloc occurs during the append calls below.
         let buf: &[u8] =
             unsafe { bun_ptr::detach_lifetime(string_builder.string_bytes.as_slice()) };
         let sliced = external_version.sliced(buf);
@@ -3277,6 +3278,7 @@ pub mod serializer {
             // with explicit padding zeroed by their `Default`/`init` paths.
             if matches!(field, PackageField::Resolution) {
                 // copy each resolution to make sure the union is zero initialized
+                // SAFETY: `sliced` covers a valid `#[repr(C)] Resolution` array; `PackageField::Resolution` selects the matching field.
                 let resolutions: &[Resolution<SemverIntType>] =
                     unsafe { sliced.items::<"resolution", Resolution<SemverIntType>>() };
                 for val in resolutions {
@@ -3499,6 +3501,7 @@ pub mod serializer {
                     // need to check if any values were created from an older version of bun
                     // (currently just `has_install_script`). If any are found, the values need
                     // to be updated before saving the lockfile.
+                    // SAFETY: `sliced` covers a valid `#[repr(C)] Meta` array; `PackageField::Meta` selects the matching field.
                     let metas: &mut [Meta] = unsafe { sliced.items_mut::<"meta", Meta>() };
                     for meta in metas {
                         if meta.needs_update() {

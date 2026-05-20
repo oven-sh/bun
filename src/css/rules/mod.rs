@@ -286,9 +286,10 @@ pub(super) mod dc {
     pub fn decl_handler_static<'a>(
         h: &'a mut crate::DeclarationHandler<'_>,
     ) -> &'a mut crate::DeclarationHandler<'static> {
-        // Inner-lifetime variance cast via raw pointer — `DeclarationHandler<'_>`
-        // and `DeclarationHandler<'static>` share layout; only the borrowck tag
-        // on the arena handle differs. See SAFETY note above.
+        // SAFETY: inner-lifetime variance cast via raw pointer —
+        // `DeclarationHandler<'_>` and `DeclarationHandler<'static>` share the
+        // same layout; only the borrowck tag on the arena handle differs. The
+        // caller guarantees `h` outlives the returned reference (see doc above).
         unsafe { &mut *core::ptr::from_mut(h).cast::<crate::DeclarationHandler<'static>>() }
     }
 

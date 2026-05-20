@@ -117,6 +117,7 @@ impl Array {
         // a `Vec<SQLDataCell>` into these fields). Genuine FFI: ptr/len/cap are
         // thin C fields read directly by C++ (SQLClient.cpp), so this cannot be
         // a `Vec` field without breaking ABI.
+        // SAFETY: `ptr` is non-null; `len` cells are initialized by producers; no aliasing `&mut` exists.
         unsafe { slice::from_raw_parts_mut(self.ptr, self.len as usize) }
     }
 
@@ -130,6 +131,7 @@ impl Array {
         // just `[..len]` — carries a valid `Tag` discriminant. Genuine FFI:
         // ptr/len/cap are thin C fields read directly by C++ (SQLClient.cpp),
         // so this cannot be a `Vec` without breaking ABI.
+        // SAFETY: `ptr` is non-null; `cap` cells are zero-initialized by producers; no aliasing `&mut` exists.
         unsafe { slice::from_raw_parts_mut(self.ptr, self.cap as usize) }
     }
 
@@ -206,6 +208,7 @@ impl SQLDataCell {
                 // reading either yields the same pointer). When non-null it
                 // points to a live WTF::StringImpl; `as_ref` folds the
                 // null-check and deref into one site.
+                // SAFETY: tag discriminant checked above; `string` union field is active and non-null when present.
                 if let Some(p) = unsafe { self.value.string.as_ref() } {
                     p.deref();
                 }
@@ -251,6 +254,7 @@ impl SQLDataCell {
                     // TODO(port): LIFETIMES.tsv marks this BORROW (free_value=0
                     // at all call sites) — this branch may be dead; preserved
                     // to match Zig.
+                    // SAFETY: `head_ptr` was allocated via the global allocator; `byte_len` is the allocation size.
                     unsafe {
                         drop(Box::<[u8]>::from_raw(ptr::slice_from_raw_parts_mut(
                             ta.head_ptr,

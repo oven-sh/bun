@@ -57,6 +57,7 @@ pub fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
     // raw slot write that follows. (Peer tasks still hold their own `&mut`
     // views into the same `LinkerContext`/`Chunk` for read-only printer use —
     // see TODO(ub-audit) on `unsafe impl Sync for Chunk`.)
+    // SAFETY: `c_ptr`/`chunk_ptr` carry mutable provenance; borrows are scoped to this block.
     let result = {
         let c_mut: &mut LinkerContext = unsafe { &mut *c_ptr };
         let chunk_mut: &mut Chunk = unsafe { &mut *chunk_ptr };
@@ -165,6 +166,7 @@ fn generate_compile_result_for_js_chunk_impl(
     let result = generate_code_for_file_in_chunk_js(
         c,
         &mut buffer_writer,
+        // SAFETY: `renamer_ptr` is addr_of_mut!(chunk.renamer); disjoint from the `chunk` borrow.
         unsafe { (*renamer_ptr).as_renamer() },
         chunk,
         part_range,

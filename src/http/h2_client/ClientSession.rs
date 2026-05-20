@@ -770,11 +770,9 @@ impl ClientSession {
     /// streams just fail and the session is destroyed.
     pub fn on_close(&mut self, err: Error) {
         let _guard = self.ref_scope();
-        // SAFETY: ctx back-ref is valid for the session's lifetime. on_close is
-        // reachable synchronously from connect() → adopt() → attach() flush
-        // failure → fail_all() while connect() still holds `&mut HTTPContext`,
-        // so route through the raw-ptr helper instead of forming a second
-        // aliased `&mut NewHTTPContext` via autoref.
+        // SAFETY: `self.ctx` is a valid back-ref for the session's lifetime;
+        // using the raw-ptr helper avoids a second aliased `&mut HTTPContext`
+        // when `on_close` is reached from within `connect()`.
         unsafe { NewHTTPContext::<true>::unregister_h2_raw(self.ctx, std::ptr::from_ref(self)) };
         for client in core::mem::take(&mut self.pending_attach) {
             pending_client_mut(client).h2_fail(err);
@@ -877,11 +875,9 @@ impl ClientSession {
         if self.registry_index.get() == u32::MAX {
             return;
         }
-        // SAFETY: ctx back-ref is valid for the session's lifetime. This path
-        // is reachable re-entrantly via HTTPContext::connect() → adopt() while
-        // connect() still holds `&mut HTTPContext<true>`, so we MUST NOT
-        // materialise a second `&mut NewHTTPContext` from the backref —
-        // unregister_h2_raw operates via raw-ptr place projection instead.
+        // SAFETY: `self.ctx` back-ref is valid for the session lifetime.
+        // Re-entrant via `connect() → adopt()` so a second `&mut HTTPContext`
+        // must not be materialized; `unregister_h2_raw` uses raw-ptr projection.
         unsafe { NewHTTPContext::<true>::unregister_h2_raw(self.ctx, self) };
         if self.can_pool() && !self.socket.is_closed_or_has_error() {
             // Pool stores the live *ClientSession so a later fetch can resume

@@ -977,6 +977,9 @@ impl HttpThread {
             // accessed here. The connecting socket's ext may still alias
             // `client`, but the loop below never ticks again (we park
             // forever after this returns).
+            // SAFETY: each `nn` is a live, uniquely-accessed `heap::release`
+            // allocation from `start_queued_task`; no other thread holds a
+            // reference to it at this shutdown point.
             unsafe {
                 // Snapshot before tearing down `client` — `release_at_shutdown`
                 // must run after the clone-only fields drop (it may park `ctx`
@@ -1050,6 +1053,8 @@ impl HttpThread {
         // shared `&HttpThread` is ever materialised; the HTTP thread itself
         // never holds a long-lived `&mut HttpThread` across the points these
         // touch (both fields are designed for cross-thread shared access).
+        // SAFETY: `HTTP_THREAD_INIT == true` (asserted above) so `HTTP_THREAD` is fully
+        // written; `get_unchecked` skips the ThreadCell owner assert for cross-thread use.
         let this = unsafe {
             bun_ptr::ParentRef::<Self>::from_raw((*crate::HTTP_THREAD.get_unchecked()).as_mut_ptr())
         };
@@ -1341,11 +1346,9 @@ pub fn shutdown_for_exit() {
     if !crate::HTTP_THREAD_INIT.load(Ordering::Acquire) {
         return;
     }
-    // SAFETY: `HTTP_THREAD_INIT == true` ⇒ `HTTP_THREAD` is fully written.
-    // `get_unchecked` so the `ThreadCell` owner assert is skipped on this
-    // cross-thread caller; `ParentRef` so only a shared `&HttpThread` is
-    // materialised — `process_events(&mut self)` is live on the HTTP thread,
-    // so a `&mut` here would alias. Same shape as `schedule()` above.
+    // SAFETY: `HTTP_THREAD_INIT == true` ⇒ `HTTP_THREAD` is fully written;
+    // `get_unchecked` skips the ThreadCell owner assert for this cross-thread
+    // caller; only a shared `&HttpThread` is materialised via `ParentRef`.
     let thread = unsafe {
         bun_ptr::ParentRef::<HttpThread>::from_raw(
             (*crate::HTTP_THREAD.get_unchecked()).as_mut_ptr(),

@@ -129,12 +129,11 @@ impl FileRoute {
     }
 
     fn deinit(this: *mut FileRoute) {
-        // SAFETY: `this` was allocated via heap::alloc in init_from_blob/from_js and the
-        // intrusive ref_count has reached 0.
         // Mirror Zig FileRoute.zig:53 `this.blob.deinit()` — `Blob` has no Drop,
         // so its raw `content_type: Cell<*const [u8]>` (when
         // `content_type_allocated`) would otherwise leak on Box auto-drop.
         // `headers` is freed by its own Drop when the Box is dropped.
+        // SAFETY: `this` was allocated via heap::alloc; ref_count has reached 0 so this is the sole owner.
         unsafe {
             (*this).blob.deinit();
             drop(bun_core::heap::take(this));

@@ -294,6 +294,7 @@ impl StringRefList {
         // `UserOptions`, so no read outlives the holder. NOT process-lifetime
         // — a real `'bump` lifetime should eventually be threaded here (see
         // file-level TODO(port)); `assume` makes the lie grep-able until then.
+        // SAFETY: `slice` is owned by `self.strings` which lives as long as `UserOptions`.
         unsafe { bun_ptr::Interned::assume(slice) }.as_bytes()
     }
 }

@@ -534,6 +534,7 @@ pub mod semver_string {
                 // (Zig: `buf[ptr.off..][0..ptr.len]`, unchecked in ReleaseFast).
                 strings::eql(
                     unsafe { this_buf.get_unchecked(a_off..a_off + a_len) },
+                    // SAFETY: same bounds contract as the line above — b_off + b_len ≤ that_buf.len().
                     unsafe { that_buf.get_unchecked(b_off..b_off + b_len) },
                 )
             }

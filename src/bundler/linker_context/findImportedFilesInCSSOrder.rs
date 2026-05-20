@@ -27,6 +27,9 @@ use bun_ast::Index as AstIndex;
 // `clear_retaining_capacity` so moved-from slots are never dropped.
 #[inline(always)]
 unsafe fn bitwise_copy<T>(src: &T) -> T {
+    // SAFETY: outer `unsafe fn` — `src` is a valid shared reference; `ptr::read`
+    // performs a bitwise copy without running `Drop` on the original, which is the
+    // intended Zig `@memcpy` / arena-copy semantics for these arena-backed values.
     unsafe { core::ptr::read(src) }
 }
 
@@ -337,6 +340,7 @@ pub fn find_imported_files_in_css_order<'a>(
             if (matches!(entry.kind, CssImportOrderKind::Layers(_)) && is_at_layer_prefix)
                 || matches!(entry.kind, CssImportOrderKind::ExternalPath(_))
             {
+                // SAFETY: arena-backed entry; bitwise copy matches Zig semantics (no Drop).
                 wip_order.push(unsafe { bitwise_copy(entry) });
             }
             if !matches!(entry.kind, CssImportOrderKind::Layers(_)) {
@@ -350,6 +354,7 @@ pub fn find_imported_files_in_css_order<'a>(
             if (!matches!(entry.kind, CssImportOrderKind::Layers(_)) || !is_at_layer_prefix)
                 && !matches!(entry.kind, CssImportOrderKind::ExternalPath(_))
             {
+                // SAFETY: arena-backed entry; bitwise copy matches Zig semantics (no Drop).
                 wip_order.push(unsafe { bitwise_copy(entry) });
             }
             if !matches!(entry.kind, CssImportOrderKind::Layers(_)) {
@@ -481,6 +486,8 @@ pub fn find_imported_files_in_css_order<'a>(
                         //   }
                         //
                         if conditions.has_anonymous_layer() {
+                            // SAFETY: `i < entry.conditions.len()` (loop enumeration); arena-backed
+                            // conditions are not dropped — truncation is safe here.
                             unsafe { entry.conditions.set_len((i as u32) as usize) };
                             layers.replace(Vec::new());
                             break;
@@ -521,6 +528,7 @@ pub fn find_imported_files_in_css_order<'a>(
                             if condition.layer.is_some() {
                                 break;
                             }
+                            // SAFETY: `i < entry.conditions.len()` (loop walks backward); arena-backed.
                             unsafe { entry.conditions.set_len((i) as usize) };
                         }
                     }
@@ -551,6 +559,8 @@ pub fn find_imported_files_in_css_order<'a>(
                 CssImportOrderKind::Layers(layers) => layers.inner().slice_const(),
                 CssImportOrderKind::ExternalPath(_) => &[][..],
             };
+            // SAFETY: `layers_key` is a raw pointer to a slice borrowed from `entry` (arena-backed,
+            // live for this iteration) or a `&[][..]` (dangling, len 0 — valid for zero-length refs).
             let layers_key: &[LayerName] = unsafe { &*layers_key };
             let mut index: usize = 0;
             while index < layer_duplicates.len() as usize {
@@ -625,6 +635,7 @@ pub fn find_imported_files_in_css_order<'a>(
                             {
                                 // Remove the previous entry and then overwrite it below
                                 duplicates = &duplicates[0..j];
+                                // SAFETY: `duplicate_index < wip_order.len()` (asserted by caller); arena-backed entries are not dropped.
                                 unsafe { wip_order.set_len((duplicate_index) as usize) };
                                 break;
                             }
@@ -632,6 +643,7 @@ pub fn find_imported_files_in_css_order<'a>(
 
                         // Non-layer entries still need to be present because they have
                         // other side effects beside inserting things in the layer order
+                        // SAFETY: arena-backed entry; bitwise copy matches Zig semantics (no Drop).
                         wip_order.push(unsafe { bitwise_copy(entry) });
                     }
 
@@ -644,6 +656,7 @@ pub fn find_imported_files_in_css_order<'a>(
                 .mut_(index)
                 .indices
                 .push(wip_order.len() as u32);
+            // SAFETY: arena-backed entry; bitwise copy matches Zig semantics (no Drop).
             wip_order.push(unsafe { bitwise_copy(entry) });
         }
 
@@ -724,6 +737,7 @@ fn deep_clone_conditions(list: &Vec<ImportConditions>, arena: &Arena) -> Vec<Imp
     // and never reallocates (callers only push one element via
     // `append_assume_capacity` and otherwise truncate), so the
     // global-allocator invariant of `Vec::from_raw_parts` is never exercised.
+    // SAFETY: slab initialized above; Vec is always mem::forget'd, never freed via global allocator.
     unsafe {
         Vec::from_raw_parts(
             slab.as_mut_ptr().cast::<ImportConditions>(),
@@ -742,6 +756,7 @@ fn shallow_clone_records(list: &Vec<ImportRecord>) -> Vec<ImportRecord> {
         // PORT NOTE: `ImportRecord` is plain-old-data in Zig (no destructor);
         // `Path<'static>` slices borrow resolver storage. Bitwise copy matches
         // the Zig `clone(arena)` semantics.
+        // SAFETY: `ImportRecord` is plain-old-data; `bitwise_copy` replicates Zig's arena clone.
         out.append_assume_capacity(unsafe { bitwise_copy(r) });
     }
     out

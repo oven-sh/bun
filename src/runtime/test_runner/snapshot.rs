@@ -559,6 +559,7 @@ impl<'a> Snapshots<'a> {
                     // block exit (or `continue 'ils`). See Parser.rs:214 for the provenance
                     // discussion.
                     let log_ptr: *mut bun_ast::Log = &raw mut *log;
+                    // SAFETY: `log_ptr` is derived from `log` and outlives `'blk`; lexer/parser dropped before next log reborrow.
                     let mut lexer = js_lexer::Lexer::init_without_reading(
                         unsafe { &mut *log_ptr },
                         &source,

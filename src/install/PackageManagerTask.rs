@@ -307,6 +307,7 @@ impl<'a> Task<'a> {
                         ..
                     } = &network.callback
                     else {
+                        // SAFETY: tag == PackageManifest guarantees this variant; the else is unreachable.
                         unsafe { core::hint::unreachable_unchecked() }
                     };
                     let loaded_manifest = loaded_manifest.clone();
@@ -565,6 +566,7 @@ impl<'a> Task<'a> {
                 // `apply_patch_task` is only ever populated with the Apply
                 // variant (see `new_apply_patch_hash`), so destructure it.
                 let crate::patch_install::Callback::Apply(apply) = &mut pt.callback else {
+                    // SAFETY: `apply_patch_task` is always the `Apply` variant; the `else` branch is unreachable.
                     unsafe { core::hint::unreachable_unchecked() }
                 };
                 if apply.logger.errors > 0 {
@@ -581,6 +583,7 @@ impl<'a> Task<'a> {
         // through); erasing to `'static` matches Zig's lifetime-less queue.
         // `UnboundedQueue::push` takes `&self` (lock-free), so reach it via a
         // shared raw deref — no `&mut PackageManager` is formed.
+        // SAFETY: lifetime erasure is sound (see above); `manager` is a live BACKREF.
         unsafe {
             (*core::ptr::addr_of!((*manager).resolve_tasks))
                 .push(std::ptr::from_mut::<Task<'a>>(this).cast::<Task<'static>>());

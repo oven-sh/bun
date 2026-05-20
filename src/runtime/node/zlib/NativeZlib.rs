@@ -303,6 +303,7 @@ impl Context {
                     c_int::try_from(mem::size_of::<c::z_stream>()).expect("int cast"),
                 );
             },
+            // SAFETY: FFI — `state` is a valid z_stream and `zlibVersion()` is a static C string.
             INFLATE | GUNZIP | UNZIP | INFLATERAW => unsafe {
                 self.err = c::inflateInit2_(
                     &raw mut self.state,
@@ -339,6 +340,7 @@ impl Context {
             DEFLATE | DEFLATERAW => unsafe {
                 self.err = c::deflateSetDictionary(&raw mut self.state, dict_ptr, dict_len);
             },
+            // SAFETY: FFI — state is initialized; dict points into a rooted ArrayBuffer.
             INFLATERAW => unsafe {
                 self.err = c::inflateSetDictionary(&raw mut self.state, dict_ptr, dict_len);
             },
@@ -397,6 +399,7 @@ impl Context {
             DEFLATE | DEFLATERAW | GZIP => unsafe {
                 self.err = c::deflateReset(&raw mut self.state);
             },
+            // SAFETY: FFI — state is an initialized stream for the given mode.
             INFLATE | INFLATERAW | GUNZIP => unsafe {
                 self.err = c::inflateReset(&raw mut self.state);
             },
@@ -579,6 +582,7 @@ impl Context {
             DEFLATE | DEFLATERAW | GZIP => unsafe {
                 status = c::deflateEnd(&raw mut self.state);
             },
+            // SAFETY: FFI — state is an initialized stream for the given mode.
             INFLATE | INFLATERAW | GUNZIP | UNZIP => unsafe {
                 status = c::inflateEnd(&raw mut self.state);
             },

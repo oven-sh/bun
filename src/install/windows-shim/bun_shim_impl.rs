@@ -640,10 +640,12 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             Buffer: buf1_u16,
         };
         if DBG {
+            // SAFETY: nt_name.Buffer = buf1_u16 which is fully initialized; Length is valid.
             debug!(
                 "NtCreateFile({})",
                 fmt16(unsafe { unicode_string_to_u16(&nt_name) })
             );
+            // SAFETY: nt_name.Buffer = buf1_u16 which is fully initialized; Length is valid.
             debug!(
                 "NtCreateFile({})",
                 fmt16(unsafe { unicode_string_to_u16(&nt_name) })
@@ -660,9 +662,11 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         // NtCreateFile will fail for absolute paths if we do not pass an OBJECT name
         // so we need the prefix here. This is an extra sanity check.
         if DBG {
+            // SAFETY: nt_name.Buffer = buf1_u16 which is fully initialized; Length is valid.
             debug_assert!(
                 unsafe { unicode_string_to_u16(&nt_name) }.starts_with(&NT_OBJECT_PREFIX)
             );
+            // SAFETY: nt_name.Buffer = buf1_u16 which is fully initialized; Length is valid.
             debug_assert!(
                 unsafe { unicode_string_to_u16(&nt_name) }.ends_with(bun_core::w!(".bunx"))
             );
@@ -787,9 +791,11 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         // SAFETY: offset is within buf1.
         let mut ptr: *mut u16 = unsafe { buf1_u16.add(NT_OBJECT_PREFIX.len() + left) };
         if DBG {
+            // SAFETY: ptr and ptr+1 are within buf1 (offset computed above stays in bounds).
             debug!(
                 "left = {}, at {}, after {}",
                 left,
+                // SAFETY: ptr and ptr+1 are within buf1 (offset computed above stays in bounds).
                 unsafe { *ptr },
                 unsafe { *ptr.add(1) }
             );
@@ -821,6 +827,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                 let _ = nt::NtClose(metadata_handle);
                 return LauncherMode::fail(MODE, FailReason::NoDirname);
             }
+            // SAFETY: ptr is within buf1 (left > 0 checked above).
             ptr = unsafe { ptr.sub(1) };
             if DBG {
                 debug_assert!((ptr as usize) >= (buf1_u16 as usize));
@@ -830,6 +837,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         // using `inline for` caused comptime issues that made the code much harder to read
         loop {
             if DBG {
+                // SAFETY: ptr is within buf1 (left > 0 invariant below).
                 debug!("2 - {}", fmt16(unsafe { bun_core::ffi::slice(ptr, 1) }));
             }
             if unsafe { *ptr } == '\\' as u16 {
@@ -841,6 +849,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                 let _ = nt::NtClose(metadata_handle);
                 return LauncherMode::fail(MODE, FailReason::NoDirname);
             }
+            // SAFETY: ptr is within buf1 (left > 0 checked above).
             ptr = unsafe { ptr.sub(1) };
             if DBG {
                 debug_assert!((ptr as usize) >= (buf1_u16 as usize));
@@ -848,6 +857,8 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         }
         // unreachable - the loop breaks this entire block
     };
+    // SAFETY: read_ptr points one past the final '\\' found in buf1; both read_ptr
+    // and read_ptr.sub(1) are within the buf1 allocation (loop invariant left > 0).
     debug_assert!(unsafe { *read_ptr } != '\\' as u16);
     debug_assert!(unsafe { *read_ptr.sub(1) } == '\\' as u16);
 
@@ -1228,6 +1239,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             let mut write_ptr: *mut u16 = buf2_u8.wrapping_add(advance).cast::<u16>();
             // The quote was already validated above, this is just a sanity check in debug mode
             if DBG {
+                // SAFETY: write_ptr points into buf2; sub(1) stays within the buffer (advance >= 2).
                 debug_assert!(unsafe { *write_ptr.sub(1) } == '"' as u16);
             }
 
@@ -1350,6 +1362,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                 unreachable!()
             }
         },
+        // SAFETY: process_parameters is valid for the process lifetime; raw read of HANDLE.
         hStdOutput: if IS_STANDALONE {
             unsafe { (*process_parameters).hStdOutput }
         } else {
@@ -1362,6 +1375,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                 unreachable!()
             }
         },
+        // SAFETY: process_parameters is valid for the process lifetime; raw read of HANDLE.
         hStdError: if IS_STANDALONE {
             unsafe { (*process_parameters).hStdError }
         } else {
@@ -1442,6 +1456,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                                     // here applies for when the binary is launched directly (user shell, double click, etc...)
                                     debug_assert!(flags.has_shebang());
                                     if DBG {
+                                        // SAFETY: spawn_command_line is NUL-terminated (written above).
                                         debug_assert!(
                                             unsafe {
                                                 bun_core::ffi::wstr_units(spawn_command_line)
@@ -1466,6 +1481,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
 
                                     // lpCommandLine: 'nbun "C:\Users\chloe\project\node_modules\my-cli\src\app.js" --flags#!!!!!!!!!!'
                                     //                  ^ increment pointer by one char
+                                    // SAFETY: spawn_command_line points into buf2; advancing by 1 unit stays within the buffer.
                                     spawn_command_line = unsafe { spawn_command_line.add(1) };
 
                                     break 'iteration; // loop back
@@ -1474,6 +1490,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                                 if flags.is_node_or_bun() {
                                     // This script calls for 'bun', but it was not found.
                                     if DBG {
+                                        // SAFETY: spawn_command_line is NUL-terminated (written above).
                                         debug_assert!(
                                             unsafe {
                                                 bun_core::ffi::wstr_units(spawn_command_line)
@@ -1491,6 +1508,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                             // if attempt_number == 1, we already tried rewriting this to bun, and will now fail for real
                             if attempt_number == 1 {
                                 if DBG {
+                                    // SAFETY: spawn_command_line is NUL-terminated (written above).
                                     debug_assert!(
                                         unsafe { bun_core::ffi::wstr_units(spawn_command_line) }
                                             .starts_with(bun_core::w!("bun "))
@@ -1632,6 +1650,7 @@ impl BunCtx for &FromBunRunContext {
         // Unique provenance. It is exclusively owned for the duration of
         // `try_startup_from_bun_js` and not aliased while `launcher` runs.
         #[cfg(not(feature = "shim_standalone"))]
+        // SAFETY: cli_context is exclusively owned for this call (see above).
         (self.direct_launch_with_bun_js)(wpath, unsafe { &mut *self.cli_context });
         #[cfg(feature = "shim_standalone")]
         {

@@ -218,6 +218,7 @@ impl MySQLQuery {
         // caller passes the raw pointer before reborrowing `self`, so this is the only
         // live mutable access path to the statement for the duration of this function
         // (matches Zig .zig:74 which takes an independent `*MySQLStatement`).
+        // SAFETY: `statement` is the sole mutable access path for this call; intrusive ref keeps the allocation alive.
         let statement = unsafe { &mut *statement };
 
         // Bind before touching the writer so a bind failure (user-triggerable via JS

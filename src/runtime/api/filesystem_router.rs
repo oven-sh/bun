@@ -409,6 +409,8 @@ impl FileSystemRouter {
                     // borrow of `*entry_ptr` is live across this block.
                     let kind = {
                         let fs_impl = &mut vm.transpiler.fs_mut().fs;
+                        // SAFETY: `entry_ptr` is a valid pointer to a live Entry; no shared borrow is live
+                        // across this block — exclusive borrow used only to update the cached stat.
                         unsafe { &mut *entry_ptr }.kind(fs_impl, false)
                     };
                     if kind == Fs::EntryKind::Dir {
@@ -594,6 +596,8 @@ impl FileSystemRouter {
         // detach the slice from `path`'s ownership here. The bytes stay valid: `path` is
         // never dropped on any path between here and `MatchedRoute::init` taking ownership
         // (early returns above this point already dropped/replaced `path`).
+        // SAFETY: `path` is moved into the same `MatchedRoute` Box that stores the borrow; bytes stay
+        // valid for the object lifetime — see comment block above.
         let path_bytes: &[u8] = unsafe { bun_ptr::detach_lifetime(path.slice()) };
         let url_path = match URLPath::parse(path_bytes) {
             Ok(v) => v,
@@ -611,6 +615,8 @@ impl FileSystemRouter {
         // `match_page_with_allocator` is pure (no JS re-entry), and the returned
         // `Match<'p>` borrows `params`/`path_bytes`, not `*router`, so the
         // exclusive borrow ends at the `;`.
+        // SAFETY: short-lived `&mut Router` for the route lookup; pure call, no JS re-entry;
+        // returned `Match` borrows `params`/`path_bytes`, not `*router`, so exclusive borrow ends at `;`.
         let Some(route) = unsafe { this.router.get_mut() }
             .routes
             .match_page_with_allocator(b"", &url_path, &mut params)
@@ -778,6 +784,7 @@ impl MatchedRoute {
         // read through it. This is the standard Rust self-referential pattern (no
         // `Pin`/ouroboros because JsClass codegen owns the Box<Self>); it does NOT extend
         // a borrow past its allocation — ownership was transferred, not leaked.
+        // SAFETY: self-referential lifetime erasure — see comment block above; backing bytes co-owned in Box.
         let match_static: RouterMatch<'static> = unsafe { match_.detach_lifetime() };
         // `route_param::List<'a>` = `Vec<Param<'a>>`; rebuild from raw parts to
         // erase the element lifetime (identical layout, no realloc).

@@ -699,6 +699,7 @@ impl Debugger {
         // wait-loop) and reuse the raw pointer for the cross-thread `wakeup()`
         // calls below. `wakeup()` takes `&self` and is the documented
         // thread-safe path (event_loop.rs:779).
+        // SAFETY: other_vm is the live parent-thread VM (process-lifetime); read before the futex wake.
         let other_loop: *mut crate::event_loop::EventLoop = unsafe { (*other_vm).event_loop() };
         let global: &JSGlobalObject = this.global();
 

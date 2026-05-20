@@ -117,7 +117,10 @@ impl PmVersionCommand {
             false, // JSON_WARN_DUPLICATE_KEYS
             false, // WAS_ORIGINALLY_MACRO
             true,  // GUESS_INDENTATION
-        >(&package_json_source, unsafe { ctx.log_mut() }, &json_bump)
+        >(&package_json_source,
+            // SAFETY: `ctx.log_mut()` returns the aliased `*mut Log` as `&mut`;
+            // no other `&mut Log` is live through the aliased fields during this call.
+            unsafe { ctx.log_mut() }, &json_bump)
         {
             Ok(r) => r,
             Err(err) => {
@@ -361,6 +364,8 @@ impl PmVersionCommand {
         let json_bump = Arena::new();
         let Ok(json) = JSON::parse_package_json_utf8(
             &package_json_source,
+            // SAFETY: `ctx.log_mut()` returns the aliased `*mut Log` as `&mut`;
+            // no other `&mut Log` from the aliased fields is live during this call.
             unsafe { ctx.log_mut() },
             &json_bump,
         ) else {

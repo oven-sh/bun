@@ -1263,6 +1263,7 @@ impl<'a> Part<'a> {
             // router drop/reset — strictly after every `Route` holding a
             // `Part<'static>` is gone. NOT process-lifetime; a `'bump`
             // parameter on `Part` would model this more precisely.
+            // SAFETY: payload slices point into `pattern_string_arena`, freed only after all Route holders drop.
             unsafe { bun_ptr::Interned::assume(s) }.as_bytes()
         }
         match self {

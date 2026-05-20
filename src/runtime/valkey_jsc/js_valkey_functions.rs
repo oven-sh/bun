@@ -19,6 +19,7 @@ type Slice = bun_jsc::ZigStringSlice;
 /// static ASCII byte-string literal, so it is always valid UTF-8.
 #[inline(always)]
 const fn bname(b: &'static [u8]) -> &'static str {
+    // SAFETY: every caller passes a static ASCII byte-string literal, which is always valid UTF-8.
     unsafe { core::str::from_utf8_unchecked(b) }
 }
 

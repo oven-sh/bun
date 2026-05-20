@@ -1337,6 +1337,7 @@ pub fn event_loop_exit(global: &JSGlobalObject) {
 /// SAFETY: vtable contract — `owner` was erased from a live `*mut EventLoop`.
 #[inline(always)]
 fn el_ref<'a>(owner: *mut ()) -> &'a mut EventLoop {
+    // SAFETY: vtable contract — `owner` is a type-erased `*mut EventLoop`; cast back is valid.
     unsafe { &mut *owner.cast::<EventLoop>() }
 }
 

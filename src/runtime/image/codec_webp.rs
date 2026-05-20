@@ -236,6 +236,7 @@ pub fn encode(
     let stride: c_int = c_int::try_from(w * 4).expect("int cast");
     // SAFETY: rgba.ptr/len describe a valid readable buffer of stride*h bytes; out is a valid out-param.
     let len = if lossless {
+        // SAFETY: rgba buffer valid (stride*h bytes), out is a null-initialized out-param.
         unsafe {
             WebPEncodeLosslessRGBA(
                 rgba.as_ptr(),
@@ -246,6 +247,7 @@ pub fn encode(
             )
         }
     } else {
+        // SAFETY: same contract — rgba buffer valid, out is a null-initialized out-param.
         unsafe {
             WebPEncodeRGBA(
                 rgba.as_ptr(),

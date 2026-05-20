@@ -635,6 +635,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             // cannot alias. `detect_and_load_other_lockfile` reads
             // `manager.options`/`manager.log` only and never re-projects
             // `manager.lockfile`.
+            // SAFETY: `lockfile` and `PackageManager` are in disjoint heap allocations.
             let mut load_lockfile = unsafe {
                 let lockfile: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
                 let log: *mut bun_ast::Log = (*pm_raw).log;
@@ -662,6 +663,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             // `format`/`migrated` fields) and never dereferences `ok.lockfile`,
             // so `&mut *lf` remains the sole live mutable view of the heap
             // lockfile. `options` is read via `pm_raw` (disjoint allocation).
+            // SAFETY: `lf` is `ok.lockfile`; `pm_raw` is disjoint; no aliased borrows active.
             unsafe {
                 (*lf).save_to_disk(&load_lockfile, &(*pm_raw).options);
             }

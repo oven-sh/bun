@@ -722,6 +722,7 @@ unsafe extern "system" {
 }
 /// SAFETY: `handle` must be a valid waitable kernel object.
 pub unsafe fn WaitForSingleObject(handle: HANDLE, ms: DWORD) -> Result<DWORD, Win32Error> {
+    // SAFETY: outer `unsafe fn` propagates the caller's contract; `handle` is a valid waitable kernel object.
     let rc = unsafe { WaitForSingleObject_raw(handle, ms) };
     if rc == WAIT_FAILED {
         Err(Win32Error::get())

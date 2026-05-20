@@ -456,16 +456,15 @@ pub type sk_GENERAL_NAME_free_func = unsafe extern "C" fn(*mut struct_stack_st_G
 
 #[inline]
 pub unsafe fn sk_X509_value(sk: *const struct_stack_st_X509, i: usize) -> *mut X509 {
-    // SAFETY: Two independent type casts, not a const→mut provenance laundering:
-    //   - `sk` is reinterpreted `*const opaque -> *const OPENSSL_STACK` (const→const).
-    //   - `sk_value` returns `*mut c_void` from the C heap; we narrow that to
-    //     `*mut X509` (mut→mut). Mutability originates from BoringSSL's ABI
-    //     (`void *sk_value(const _STACK *, size_t)`), not from `sk`.
+    // SAFETY: outer `unsafe fn` propagates the caller's contract. Two independent casts:
+    // sk is const→const opaque reinterpret; sk_value returns *mut c_void (C-heap provenance)
+    // narrowed to *mut X509 — no const→mut laundering occurs.
     unsafe { sk_value(sk.cast::<OPENSSL_STACK>(), i).cast::<X509>() }
 }
 
 #[inline]
 pub unsafe fn sk_GENERAL_NAME_num(sk: *const struct_stack_st_GENERAL_NAME) -> usize {
+    // SAFETY: outer `unsafe fn` propagates the caller's contract; cast is const→const between opaque stack types.
     unsafe { sk_num(sk.cast::<OPENSSL_STACK>()) }
 }
 
@@ -482,6 +481,7 @@ pub unsafe fn sk_GENERAL_NAME_value(
 
 #[inline]
 pub unsafe extern "C" fn sk_GENERAL_NAME_free(sk: *mut struct_stack_st_GENERAL_NAME) {
+    // SAFETY: outer `unsafe extern "C" fn` propagates the caller's contract; sk cast is mut→mut between compatible opaque stack types.
     unsafe { sk_free(sk.cast::<OPENSSL_STACK>()) }
 }
 
@@ -497,6 +497,8 @@ unsafe extern "C" fn sk_GENERAL_NAME_call_free_func(
             free_func.expect("non-null free_func"),
         )
     };
+    // SAFETY: `f` was recovered from a valid `sk_GENERAL_NAME_free_func` via transmute above;
+    // `ptr` is a live GENERAL_NAME heap pointer owned by the stack being freed.
     unsafe { f(ptr.cast::<struct_stack_st_GENERAL_NAME>()) }
 }
 
@@ -505,6 +507,8 @@ pub unsafe fn sk_GENERAL_NAME_pop_free(
     sk: *mut struct_stack_st_GENERAL_NAME,
     free_func: sk_GENERAL_NAME_free_func,
 ) {
+    // SAFETY: outer `unsafe fn` propagates the caller's safety contract; transmute is
+    // ABI-sound (both sides are `extern "C" fn(*mut _)`); sk is non-null per caller.
     unsafe {
         sk_pop_free_ex(
             sk.cast::<OPENSSL_STACK>(),

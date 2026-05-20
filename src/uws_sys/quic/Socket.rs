@@ -63,6 +63,7 @@ impl Socket {
         // never reads or writes, and every Rust access goes through this method
         // behind `&mut self`; the elided return lifetime reborrows `self`, so the
         // borrow checker forbids a second live `&mut` to the slot.
+        // SAFETY: see the comment above; the returned pointer is valid for the socket lifetime.
         unsafe { &mut *us_quic_socket_ext(self).cast::<Option<NonNull<T>>>() }
     }
 }

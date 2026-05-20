@@ -779,6 +779,8 @@ mod _async_tasks {
                         // scratch path buffer; the borrow is held only across the
                         // libuv enqueue below (which copies `path` internally) and
                         // never across a JS re-entry point.
+                        // SAFETY: `binding` is the live `JsCell`; `get_mut` is valid on
+                        // the JS thread with no concurrent borrows of `sync_error_buf`.
                         args.path
                             .slice_z(unsafe { &mut binding.node_fs.get_mut().sync_error_buf })
                     };
@@ -957,6 +959,8 @@ mod _async_tasks {
                     let args: &args::StatFS = args_as!(args::StatFS);
                     // SAFETY (R-2): single-JS-thread `JsCell` projection; held only
                     // across the libuv enqueue (copies `path` internally).
+                    // SAFETY: `binding` is the live `JsCell`; `get_mut` is valid on
+                    // the JS thread with no concurrent borrows of `sync_error_buf`.
                     let path = args
                         .path
                         .slice_z(unsafe { &mut binding.node_fs.get_mut().sync_error_buf });
@@ -1842,6 +1846,8 @@ mod _async_tasks {
                 Ok(res) => match FsReturn::fs_to_js(res, global_object) {
                     Ok(v) => v,
                     Err(e) => {
+                        // SAFETY: `promise` is a GC-rooted JS heap cell kept alive by
+                        // `promise_value.ensure_still_alive()` called below; no concurrent access.
                         return unsafe { &mut *promise }
                             .reject(global_object, Ok(global_object.take_exception(e)));
                     }
@@ -2045,6 +2051,7 @@ mod _async_tasks {
             // The raw `*mut` is threaded through (instead of `&Self`) so that the
             // `cp_task` pointers stored in subtasks retain mutable provenance for
             // `on_subtask_done`'s eventual `&mut` promotion.
+            // SAFETY: `this` is non-null and valid for shared read; no `&mut Self` exists yet.
             let this_ref = unsafe { &*this };
             // SAFETY: callers NUL-terminate at src_dir_len/dest_dir_len before calling.
             // Platform-generic — `OSPathBuffer` is `[u16;N]` on Windows, `[u8;N]` on POSIX,
@@ -2503,6 +2510,8 @@ mod _async_tasks {
                     // size-class allocation per subtask.
                     let mut entries: Vec<$T> =
                         Vec::with_capacity(8192usize / core::mem::size_of::<$T>());
+                    // SAFETY: `args_ptr` was derived from `&raw const *self.args` while
+                    // `self` is live; the callee only reads through it, never writes.
                     let res = NodeFS::readdir_with_entries_recursive_async::<$T>(
                         buf,
                         unsafe { &*args_ptr },
@@ -2704,6 +2713,8 @@ mod _async_tasks {
                 match res.to_js(global_object) {
                     Ok(v) => v,
                     Err(e) => {
+                        // SAFETY: `promise` is a GC-rooted JS heap cell kept alive by
+                        // `promise_value.ensure_still_alive()` below; no concurrent access.
                         return unsafe { &mut *promise }
                             .reject(global_object, Ok(global_object.take_exception(e)));
                     }
@@ -5663,6 +5674,8 @@ impl NodeFS {
         #[cfg(windows)]
         {
             let mut req = UvFsReq::new();
+            // SAFETY: `loop_` is the current libuv event loop; `req` is stack-allocated
+            // and outlives the call; `args.fd` is a valid open file descriptor.
             let rc = unsafe {
                 uv::uv_fs_futime(
                     uv::Loop::get(),
@@ -5925,6 +5938,8 @@ impl NodeFS {
             sync_error_buf_ptr.cast::<OSPathChar>().is_aligned(),
             "NodeFS.sync_error_buf misaligned for OSPathChar",
         );
+        // SAFETY: `sync_error_buf_ptr` is aligned for `OSPathBuffer` (asserted above);
+        // `OSPathBuffer` fits within `PathBuffer`; no other borrow of `sync_error_buf` is live.
         let working_mem: &mut OSPathBuffer =
             unsafe { &mut *sync_error_buf_ptr.cast::<OSPathBuffer>() };
         working_mem[..len as usize].copy_from_slice(&(&path[..])[..len as usize]);
@@ -5935,6 +5950,8 @@ impl NodeFS {
         while i > 0 {
             if bun_paths::is_sep_native_t::<OSPathChar>((&path[..])[i as usize]) {
                 working_mem[i as usize] = 0;
+                // SAFETY: `working_mem[i]` was just set to 0, satisfying the NUL-terminator
+                // invariant; the pointer and length are within the `working_mem` allocation.
                 let parent = unsafe { OSPathSliceZ::from_raw(working_mem.as_ptr(), i as usize) };
                 match mkdir_os_path(parent, mode) {
                     Err(err) => {
@@ -6017,6 +6034,8 @@ impl NodeFS {
         while i < len {
             if bun_paths::is_sep_native_t::<OSPathChar>((&path[..])[i as usize]) {
                 working_mem[i as usize] = 0;
+                // SAFETY: `working_mem[i]` was just set to 0, satisfying the NUL-terminator
+                // invariant; the pointer and length are within the `working_mem` allocation.
                 let parent = unsafe { OSPathSliceZ::from_raw(working_mem.as_ptr(), i as usize) };
                 match mkdir_os_path(parent, mode) {
                     Err(err) => {
@@ -6048,6 +6067,7 @@ impl NodeFS {
 
         // Our final directory will not have a trailing separator
         // so we have to create it once again
+        // SAFETY: `working_mem[len]` was just set to 0; pointer and length are within bounds.
         let final_ = unsafe { OSPathSliceZ::from_raw(working_mem.as_ptr(), len as usize) };
         match mkdir_os_path(final_, mode) {
             Err(err) => match err.get_errno() {
@@ -6089,6 +6109,8 @@ impl NodeFS {
         #[cfg(windows)]
         {
             let mut req = UvFsReq::new();
+            // SAFETY: `loop_` is the current libuv event loop; `req` is stack-allocated
+            // and outlives the call; `prefix_buf` is NUL-terminated and writable.
             let rc = unsafe {
                 uv::uv_fs_mkdtemp(
                     bun_io::Loop::get(),
@@ -6120,6 +6142,8 @@ impl NodeFS {
             // generated name back into the buffer in-place.
             let rc = unsafe { libc::mkdtemp(prefix_buf.as_mut_ptr().cast()) };
             if !rc.is_null() {
+                // SAFETY: `rc` is non-null; mkdtemp(3) returns a pointer into `prefix_buf`
+                // which is live for the duration of this expression.
                 return Ok(
                     ZigString::dupe_for_js(unsafe { bun_core::ffi::cstr(rc) }.to_bytes())
                         .expect("oom"),
@@ -7535,6 +7559,7 @@ impl NodeFS {
             // Not all files are seekable (and thus, not all files can be truncated).
             #[cfg(windows)]
             {
+                // SAFETY: `fd` is a valid open file handle owned by this write operation.
                 let _ = unsafe { windows::SetEndOfFile(fd.native()) };
             }
             #[cfg(not(windows))]
@@ -7546,6 +7571,7 @@ impl NodeFS {
         if args.flush {
             #[cfg(windows)]
             {
+                // SAFETY: `fd` is a valid open file handle owned by this write operation.
                 let _ = unsafe { windows::kernel32::FlushFileBuffers(fd.native()) };
             }
             #[cfg(not(windows))]
@@ -7631,6 +7657,8 @@ impl NodeFS {
         #[cfg(windows)]
         {
             let mut req = UvFsReq::new();
+            // SAFETY: `loop_` is the current libuv event loop; `req` is stack-allocated
+            // and outlives the call; path is NUL-terminated and valid for the duration.
             let rc = unsafe {
                 uv::uv_fs_realpath(
                     bun_io::Loop::get(),
@@ -7660,6 +7688,8 @@ impl NodeFS {
                     ..Default::default()
                 });
             }
+            // SAFETY: `ptr` is non-null and points to a NUL-terminated C string owned by
+            // `req`; `req` is live for the duration of `buf`'s use.
             let mut buf = unsafe { bun_core::ffi::cstr(ptr) }.to_bytes();
             if variant == RealpathVariant::Emulated {
                 // remove the trailing slash
@@ -8144,6 +8174,8 @@ impl NodeFS {
         #[cfg(windows)]
         {
             let mut req = UvFsReq::new();
+            // SAFETY: `loop_` is the current libuv event loop; `req` is stack-allocated
+            // and outlives the call; path is NUL-terminated and valid for the duration.
             let rc = unsafe {
                 uv::uv_fs_utime(
                     bun_io::Loop::get(),
@@ -8180,6 +8212,8 @@ impl NodeFS {
         #[cfg(windows)]
         {
             let mut req = UvFsReq::new();
+            // SAFETY: `loop_` is the current libuv event loop; `req` is stack-allocated
+            // and outlives the call; path is NUL-terminated and valid for the duration.
             let rc = unsafe {
                 uv::uv_fs_lutime(
                     bun_io::Loop::get(),
@@ -8299,6 +8333,7 @@ impl NodeFS {
 
         #[cfg(windows)]
         {
+            // SAFETY: `src` is a valid NUL-terminated wide-char path from `OSPathSliceZ`.
             let attributes = unsafe { sys::c::GetFileAttributesW(src.as_ptr()) };
             if attributes == sys::c::INVALID_FILE_ATTRIBUTES {
                 return Err(sys::Error {
@@ -9057,6 +9092,7 @@ impl NodeFS {
             let stat_ = match reuse_stat {
                 Some(a) => a,
                 None => {
+                    // SAFETY: `src` is a valid NUL-terminated wide-char path from `OSPathSliceZ`.
                     let a = unsafe { sys::c::GetFileAttributesW(src.as_ptr()) };
                     if a == sys::c::INVALID_FILE_ATTRIBUTES {
                         // `errno_sys_p(0, …)` re-reads `GetLastError()` after
@@ -9072,6 +9108,8 @@ impl NodeFS {
                 }
             };
             if stat_ & sys::c::FILE_ATTRIBUTE_REPARSE_POINT == 0 {
+                // SAFETY: `src`/`dest` are valid NUL-terminated wide-char paths
+                // derived from `OSPathSliceZ`; Windows `CopyFileW` contract.
                 if unsafe {
                     sys::c::CopyFileW(
                         src.as_ptr(),
@@ -9091,6 +9129,8 @@ impl NodeFS {
                                 &sys::Dir::cwd(),
                                 paths::dirname_w(dest.as_slice()),
                             );
+                            // SAFETY: `src`/`dest` are valid NUL-terminated wide-char paths
+                            // derived from `OSPathSliceZ`; Windows `CopyFileW` contract.
                             let second_try = unsafe {
                                 sys::c::CopyFileW(
                                     src.as_ptr(),
@@ -9119,6 +9159,8 @@ impl NodeFS {
                 };
                 let _close = scopeguard::guard(handle, |fd| fd.close());
                 let mut wbuf = paths::os_path_buffer_pool::get();
+                // SAFETY: `handle` is a valid open file handle; `wbuf` is a writable
+                // pool buffer of the correct size for a wide-character path.
                 let len = unsafe {
                     windows::GetFinalPathNameByHandleW(
                         handle.native(),

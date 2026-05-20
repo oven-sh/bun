@@ -1433,12 +1433,14 @@ impl<'a> Match<'a> {
     /// SAFETY: caller guarantees `self.params` is live and not mutably aliased.
     #[inline]
     pub unsafe fn params(&self) -> &route_param::List<'a> {
+        // SAFETY: outer `unsafe fn` — caller guarantees `self.params` is live and not mutably aliased.
         unsafe { &*self.params }
     }
 
     /// SAFETY: caller guarantees `self.params` is live and uniquely accessed.
     #[inline]
     pub unsafe fn params_mut(&mut self) -> &mut route_param::List<'a> {
+        // SAFETY: outer `unsafe fn` — caller guarantees `self.params` is live and uniquely accessed.
         unsafe { &mut *self.params }
     }
 

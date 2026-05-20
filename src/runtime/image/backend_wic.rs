@@ -473,6 +473,7 @@ impl ComPtr<IWICImagingFactory> {
     #[inline]
     fn create_stream(self) -> Option<ComPtr<IWICStream>> {
         let mut out = ptr::null_mut();
+        // SAFETY: COM vtable dispatch; see block comment above this impl block.
         let hr = unsafe { ((*(*self.as_ptr()).vt).CreateStream)(self.as_ptr(), &mut out) };
         if hr < 0 { None } else { ComPtr::new(out) }
     }
@@ -483,6 +484,7 @@ impl ComPtr<IWICImagingFactory> {
         opts: u32,
     ) -> Option<ComPtr<IWICBitmapDecoder>> {
         let mut out = ptr::null_mut();
+        // SAFETY: COM vtable dispatch; see block comment above this impl block.
         let hr = unsafe {
             ((*(*self.as_ptr()).vt).CreateDecoderFromStream)(
                 self.as_ptr(),
@@ -497,6 +499,7 @@ impl ComPtr<IWICImagingFactory> {
     #[inline]
     fn create_encoder(self, container: *const GUID) -> Option<ComPtr<IWICBitmapEncoder>> {
         let mut out = ptr::null_mut();
+        // SAFETY: COM vtable dispatch; see block comment above this impl block.
         let hr = unsafe {
             ((*(*self.as_ptr()).vt).CreateEncoder)(self.as_ptr(), container, ptr::null(), &mut out)
         };
@@ -513,6 +516,7 @@ impl ComPtr<IWICImagingFactory> {
         buf: *const u8,
     ) -> Option<ComPtr<IWICBitmapSource>> {
         let mut out = ptr::null_mut();
+        // SAFETY: COM vtable dispatch; see block comment above this impl block.
         let hr = unsafe {
             ((*(*self.as_ptr()).vt).CreateBitmapFromMemory)(
                 self.as_ptr(),
@@ -532,6 +536,7 @@ impl ComPtr<IWICImagingFactory> {
 impl ComPtr<IWICStream> {
     #[inline]
     fn initialize_from_memory(self, buf: *const u8, len: u32) -> HRESULT {
+        // SAFETY: COM vtable dispatch; see block comment above `impl ComPtr<IWICImagingFactory>`.
         unsafe { ((*(*self.as_ptr()).vt).InitializeFromMemory)(self.as_ptr(), buf, len) }
     }
 }
@@ -540,6 +545,7 @@ impl ComPtr<IWICBitmapDecoder> {
     #[inline]
     fn get_frame(self, index: u32) -> Option<ComPtr<IWICBitmapSource>> {
         let mut out = ptr::null_mut();
+        // SAFETY: COM vtable dispatch; see block comment above `impl ComPtr<IWICImagingFactory>`.
         let hr = unsafe { ((*(*self.as_ptr()).vt).GetFrame)(self.as_ptr(), index, &mut out) };
         if hr < 0 { None } else { ComPtr::new(out) }
     }
@@ -548,10 +554,12 @@ impl ComPtr<IWICBitmapDecoder> {
 impl ComPtr<IWICBitmapSource> {
     #[inline]
     fn get_size(self, w: &mut u32, h: &mut u32) -> HRESULT {
+        // SAFETY: COM vtable dispatch; see block comment above `impl ComPtr<IWICImagingFactory>`.
         unsafe { ((*(*self.as_ptr()).vt).GetSize)(self.as_ptr(), w, h) }
     }
     #[inline]
     fn copy_pixels(self, rc: *const c_void, stride: u32, size: u32, out: *mut u8) -> HRESULT {
+        // SAFETY: COM vtable dispatch; see block comment above `impl ComPtr<IWICImagingFactory>`.
         unsafe { ((*(*self.as_ptr()).vt).CopyPixels)(self.as_ptr(), rc, stride, size, out) }
     }
 }
@@ -559,12 +567,14 @@ impl ComPtr<IWICBitmapSource> {
 impl ComPtr<IWICBitmapEncoder> {
     #[inline]
     fn initialize(self, stream: *mut IUnknown, cache: u32) -> HRESULT {
+        // SAFETY: COM vtable dispatch; see block comment above `impl ComPtr<IWICImagingFactory>`.
         unsafe { ((*(*self.as_ptr()).vt).Initialize)(self.as_ptr(), stream, cache) }
     }
     #[inline]
     fn create_new_frame(self) -> Option<(ComPtr<IWICBitmapFrameEncode>, *mut IUnknown)> {
         let mut frame = ptr::null_mut();
         let mut props = ptr::null_mut();
+        // SAFETY: COM vtable dispatch; see block comment above `impl ComPtr<IWICImagingFactory>`.
         let hr = unsafe {
             ((*(*self.as_ptr()).vt).CreateNewFrame)(self.as_ptr(), &mut frame, &mut props)
         };
@@ -575,6 +585,7 @@ impl ComPtr<IWICBitmapEncoder> {
     }
     #[inline]
     fn commit(self) -> HRESULT {
+        // SAFETY: COM vtable dispatch; see block comment above `impl ComPtr<IWICImagingFactory>`.
         unsafe { ((*(*self.as_ptr()).vt).Commit)(self.as_ptr()) }
     }
 }
@@ -582,26 +593,32 @@ impl ComPtr<IWICBitmapEncoder> {
 impl ComPtr<IWICBitmapFrameEncode> {
     #[inline]
     fn initialize(self, props: *mut IUnknown) -> HRESULT {
+        // SAFETY: COM vtable dispatch; see block comment above `impl ComPtr<IWICImagingFactory>`.
         unsafe { ((*(*self.as_ptr()).vt).Initialize)(self.as_ptr(), props) }
     }
     #[inline]
     fn set_size(self, w: u32, h: u32) -> HRESULT {
+        // SAFETY: COM vtable dispatch; see block comment above `impl ComPtr<IWICImagingFactory>`.
         unsafe { ((*(*self.as_ptr()).vt).SetSize)(self.as_ptr(), w, h) }
     }
     #[inline]
     fn set_pixel_format(self, pf: &mut GUID) -> HRESULT {
+        // SAFETY: COM vtable dispatch; see block comment above `impl ComPtr<IWICImagingFactory>`.
         unsafe { ((*(*self.as_ptr()).vt).SetPixelFormat)(self.as_ptr(), pf) }
     }
     #[inline]
     fn write_pixels(self, lines: u32, stride: u32, size: u32, buf: *const u8) -> HRESULT {
+        // SAFETY: COM vtable dispatch; see block comment above `impl ComPtr<IWICImagingFactory>`.
         unsafe { ((*(*self.as_ptr()).vt).WritePixels)(self.as_ptr(), lines, stride, size, buf) }
     }
     #[inline]
     fn write_source(self, src: ComPtr<IWICBitmapSource>, rc: *const c_void) -> HRESULT {
+        // SAFETY: COM vtable dispatch; see block comment above `impl ComPtr<IWICImagingFactory>`.
         unsafe { ((*(*self.as_ptr()).vt).WriteSource)(self.as_ptr(), src.as_ptr(), rc) }
     }
     #[inline]
     fn commit(self) -> HRESULT {
+        // SAFETY: COM vtable dispatch; see block comment above `impl ComPtr<IWICImagingFactory>`.
         unsafe { ((*(*self.as_ptr()).vt).Commit)(self.as_ptr()) }
     }
 }
@@ -609,6 +626,7 @@ impl ComPtr<IWICBitmapFrameEncode> {
 impl ComPtr<IStream> {
     #[inline]
     fn seek(self, dlib_move: i64, origin: u32, new_pos: &mut u64) -> HRESULT {
+        // SAFETY: COM vtable dispatch; see block comment above `impl ComPtr<IWICImagingFactory>`.
         unsafe { ((*(*self.as_ptr()).vt).Seek)(self.as_ptr(), dlib_move, origin, new_pos) }
     }
 }

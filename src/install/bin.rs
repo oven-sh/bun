@@ -1337,6 +1337,7 @@ impl<'a> Linker<'a> {
         // a caller-owned `AbsPath` or the same buffer as `node_modules_path`;
         // both outlive `self` and are not mutated for the duration of this
         // read (mirrors Zig's aliasing `*AbsPath`).
+        // SAFETY: non-null, live AbsPath pointer set at construction (see above).
         let dest_dir_without_trailing_slash =
             strings::without_trailing_slash(unsafe { (*self.target_node_modules_path).slice() });
 

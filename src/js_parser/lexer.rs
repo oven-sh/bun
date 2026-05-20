@@ -444,6 +444,7 @@ impl<
     type Err = Error;
     #[inline]
     fn log_mut(&mut self) -> &mut Log {
+        // SAFETY: `self.log` is a NonNull<Log> pointing to caller-owned memory that outlives `'a`; `&mut self` ensures exclusive access.
         unsafe { self.log.as_mut() }
     }
     #[inline]

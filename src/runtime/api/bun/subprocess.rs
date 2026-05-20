@@ -1395,6 +1395,7 @@ impl Subprocess<'_> {
                     if let Some(cb) = js::ipc_callback_get_cached(this_jsvalue) {
                         let global_this = self.global_this();
                         let event_loop = global_this.bun_vm().as_mut().event_loop();
+                        // SAFETY: `event_loop` is the live event loop from the JS VM; `cb` is a live JS callback.
                         unsafe {
                             (*event_loop).run_callback(
                                 cb,
@@ -1435,6 +1436,7 @@ impl Subprocess<'_> {
                 js::on_disconnect_callback_take_cached(this_jsvalue, global_this)
             {
                 let event_loop = global_this.bun_vm().as_mut().event_loop();
+                // SAFETY: `event_loop` is the live event loop from the JS VM; `callback` is a live JS callback.
                 unsafe {
                     (*event_loop).run_callback(
                         callback,

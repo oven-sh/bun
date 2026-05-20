@@ -165,6 +165,8 @@ impl ReplCommand {
         // lifetime is the holdAPILock scope (globalExit() never returns so the frame never unwinds).
         // Assigned AFTER moving `arena` into `runner` — assigning from the pre-move local would
         // dangle. Model as raw ptr until VM arena ownership is decided.
+        // SAFETY: `vm` is a valid `*mut VirtualMachine` for the duration of the API lock;
+        // `runner.arena` is pinned on the stack for the same duration (globalExit() never returns).
         unsafe { (*vm).arena = NonNull::new(&raw mut runner.arena) };
 
         // PORT NOTE: jsc.OpaqueWrap(ReplRunner, ReplRunner.start) — comptime fn-ptr wrapper that

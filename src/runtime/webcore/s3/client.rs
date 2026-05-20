@@ -333,10 +333,13 @@ pub fn list_objects(
     // heap-allocated fields of `*task` which the task outlives. AsyncHTTP::init wants
     // `'static` borrows because the HTTP thread reads them concurrently; they remain valid
     // until `task` is dropped in `on_response`.
+    // SAFETY: sign_result.url is a heap field of *task; valid until task is dropped in on_response.
     let url = bun_url::URL::parse(unsafe { bun_ptr::detach_lifetime_ref(&*task.sign_result.url) });
+    // SAFETY: headers.buf is a heap field of *task; detach_lifetime extends to 'static for the HTTP thread.
     let headers_buf: &'static [u8] =
         unsafe { bun_ptr::detach_lifetime(task.headers.buf.as_slice()) };
     let http_proxy = if !task.proxy_url.is_empty() {
+        // SAFETY: proxy_url is a heap field of *task; valid until task is dropped in on_response.
         Some(bun_url::URL::parse(unsafe {
             bun_ptr::detach_lifetime_ref(&*task.proxy_url)
         }))
@@ -347,6 +350,7 @@ pub fn list_objects(
     // `VirtualMachine::get()`; `get_mut` exclusivity holds — single-threaded
     // dispatch on the JS thread, no other `&`/`&mut VirtualMachine` is live for
     // this call's duration.
+    // SAFETY: vm_ref is a live BackRef to the per-thread VM; single-threaded dispatch ensures exclusivity (see above).
     let mut vm_ref = task.vm.expect("vm set at task creation");
     let vm = unsafe { vm_ref.get_mut() };
 
@@ -1058,10 +1062,13 @@ pub fn download_stream(
 
     // SAFETY (lifetime extension): `url` / `headers_buf` / `proxy_url` borrow from heap-allocated
     // fields of `*task` which the task outlives. See `execute_simple_s3_request`.
+    // SAFETY: sign_result.url is a heap field of *task which outlives the AsyncHTTP lifetime.
     let url = bun_url::URL::parse(unsafe { bun_ptr::detach_lifetime_ref(&*task.sign_result.url) });
+    // SAFETY: headers.buf is a heap field of *task; detach_lifetime extends to 'static for the HTTP thread.
     let headers_buf: &'static [u8] =
         unsafe { bun_ptr::detach_lifetime(task.headers.buf.as_slice()) };
     let http_proxy = if !task.proxy_url.is_empty() {
+        // SAFETY: proxy_url is a heap field of *task which outlives the AsyncHTTP lifetime.
         Some(bun_url::URL::parse(unsafe {
             bun_ptr::detach_lifetime_ref(&*task.proxy_url)
         }))

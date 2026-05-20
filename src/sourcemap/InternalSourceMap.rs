@@ -456,9 +456,11 @@ impl WindowReader {
         let gen_col_len: usize =
             unsafe { u16::from_ne_bytes(*b.add(win_hdr::GEN_COL_LEN_OFF).cast::<[u8; 2]>()) }
                 as usize;
+        // SAFETY: `ORIG_LINE_LEN_OFF` is a fixed offset within the 32-byte header; `b` points to initialized header bytes.
         let orig_line_len: usize =
             unsafe { u16::from_ne_bytes(*b.add(win_hdr::ORIG_LINE_LEN_OFF).cast::<[u8; 2]>()) }
                 as usize;
+        // SAFETY: `ORIG_COL_LEN_OFF` is a fixed offset within the 32-byte header; `b` points to initialized header bytes.
         let orig_col_len: usize =
             unsafe { u16::from_ne_bytes(*b.add(win_hdr::ORIG_COL_LEN_OFF).cast::<[u8; 2]>()) }
                 as usize;
@@ -1144,6 +1146,7 @@ impl Builder {
                 // +1 byte (for the 0xFF terminator) is written after the loop.
                 unsafe { *buf_ptr.add(w_gen_line) = k as u8 };
                 w_gen_line += 1;
+                // SAFETY: `w_gen_line` stays within the gen_line sub-range (see above); pointer in-bounds.
                 w_gen_line += write_varint(unsafe { buf_ptr.add(w_gen_line) }, d_gen_line);
             }
 
@@ -1186,6 +1189,7 @@ impl Builder {
         debug_assert!(gen_col_len <= u16::MAX as usize);
         debug_assert!(orig_line_len <= u16::MAX as usize);
         debug_assert!(orig_col_len <= u16::MAX as usize);
+        // SAFETY: `GEN_COL_LEN_OFF`, `ORIG_LINE_LEN_OFF`, `ORIG_COL_LEN_OFF` are within the zeroed 32-byte header.
         unsafe {
             buf_ptr
                 .add(win_hdr::GEN_COL_LEN_OFF)

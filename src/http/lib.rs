@@ -390,7 +390,8 @@ impl HTTPClient<'_> {
         let should_continue = self.handle_response_metadata(&mut response)?;
         // handle_response_metadata may mutate `response` (e.g. the 304 rewrite
         // for force_last_modified); clone_metadata reads pending_response, so
-        // re-sync. SAFETY: same lifetime erase as above.
+        // re-sync.
+        // SAFETY: same lifetime erase as above — erased borrow is deep-copied by `clone_metadata`.
         self.state.pending_response = Some(unsafe { response.detach_lifetime() });
         // h2/h3 framing delimits the body; chunked transfer-encoding and the
         // HTTP/1.1 "no Content-Length ⇒ no keep-alive" rule don't apply.
@@ -1381,6 +1382,7 @@ impl<'a> HTTPClient<'a> {
         // same) and matches the Zig sequencing; the callback observes the
         // post-reset (empty) buffer. Do not read this comment as asserting
         // `result.body` and `state.reset()` are disjoint.
+        // SAFETY: `body_out_str` points at a caller-owned `MutableString` that outlives this client; see comment above.
         let result = unsafe { self.to_result().detach_lifetime() };
         self.state.reset();
         if clear_proxy_tunneling {
@@ -3109,6 +3111,7 @@ impl<'a> HTTPClient<'a> {
             // Rebind `response` to the detached `'static` copy so it no longer
             // borrows `to_read` (lets the `to_read` reassignment below pass
             // borrowck — `RawSlice::slice` ties output to `&to_read`).
+            // SAFETY: `response` borrows SHARED_RESPONSE_HEADERS_BUF / response_message_buffer, both of which outlive this fn.
             let response = unsafe { response.detach_lifetime() };
             self.state.pending_response = Some(response);
 
@@ -4143,6 +4146,7 @@ impl<'a> HTTPClient<'a> {
             // slice from the owning Vec instead so the write has Unique provenance.
             let base = self.state.response_message_buffer.list.as_mut_ptr();
             let off = incoming_data.as_ptr() as usize - base as usize;
+            // SAFETY: `incoming_data` is a subslice of `response_message_buffer`; derived from the owning Vec for Unique provenance.
             unsafe { bun_core::ffi::slice_mut(base.add(off), in_len) }
         } else {
             small[0..in_len].copy_from_slice(incoming_data);

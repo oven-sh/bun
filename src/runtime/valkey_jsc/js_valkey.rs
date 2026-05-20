@@ -1171,6 +1171,7 @@ impl JSValkeyClient {
         self.ref_();
         let _d = deref_guard(self);
         // Release the keep-alive ref from add_timer; remove_timer/stop_timers skip FIRED timers.
+        // SAFETY: `self.ref_()` above guarantees `self` stays alive; releasing the add_timer keep-alive ref.
         unsafe { JSValkeyClient::deref(std::ptr::from_ref(self).cast_mut()) };
         if self.client.get().flags.failed {
             return;
@@ -1227,6 +1228,7 @@ impl JSValkeyClient {
         self.ref_();
         let _d = deref_guard(self);
         // Release the keep-alive ref from add_timer; remove_timer/stop_timers skip FIRED timers.
+        // SAFETY: `self.ref_()` above guarantees `self` stays alive; releasing the add_timer keep-alive ref.
         unsafe { JSValkeyClient::deref(std::ptr::from_ref(self).cast_mut()) };
 
         // Execute reconnection logic
@@ -1743,6 +1745,7 @@ impl JSValkeyClient {
         // pointer re-derived from `&Self` (SharedReadOnly under Stacked
         // Borrows, which would make the dealloc-write UB).
         {
+            // SAFETY: `this` is the last ref (ref_count == 0); exclusive access within this scoped block.
             let this_ref = unsafe { &*this };
             debug_assert!(this_ref.client.get().socket.is_closed());
             if let Some(s) = this_ref._secure.get() {

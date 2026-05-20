@@ -497,6 +497,7 @@ mod _impl {
                         c::ZSTD_reset_session_and_parameters,
                     )
                 },
+                // SAFETY: state is a valid DCtx for ZSTD_DECOMPRESS mode.
                 NodeMode::ZSTD_DECOMPRESS => unsafe {
                     c::ZSTD_DCtx_reset(
                         self.state_ptr().cast(),

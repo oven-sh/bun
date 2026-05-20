@@ -321,6 +321,7 @@ impl BrotliCompressionStream {
         // and is freed only in `Drop`. The brotli C API does not call back
         // into Rust, so no re-entrant aliasing is possible. `&mut self`
         // guarantees no other Rust reference to the encoder is live.
+        // SAFETY: `self.brotli` is non-null (set in `init`), not freed until `Drop`, no re-entrant aliasing.
         unsafe { &mut *self.brotli }
     }
 

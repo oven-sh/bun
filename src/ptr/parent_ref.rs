@@ -274,6 +274,7 @@ impl<T: ?Sized> ParentRef<T> {
             // `DEAD` (assert fires). If the allocation was freed this is
             // technically a wild read — acceptable for a debug-only sanitizer
             // (it will read garbage that almost certainly ≠ `generation`, or fault).
+            // SAFETY: best-effort debug check; `m` is a `NonNull` into the parent's `LiveMarker`; fault risk is acceptable here.
             let live = unsafe { m.as_ref() }.load(Ordering::Relaxed);
             debug_assert_eq!(
                 live,

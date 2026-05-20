@@ -435,6 +435,7 @@ impl struct_hostent {
 
     /// FFI destroy — frees a c-ares-allocated hostent.
     pub unsafe fn destroy(this: *mut struct_hostent) {
+        // SAFETY: outer `unsafe fn` propagates the c-ares destroy contract; thin FFI forward.
         unsafe { ares_free_hostent(this) };
     }
 }
@@ -700,6 +701,7 @@ impl AddrInfo {
 
     /// FFI destroy — frees a c-ares-allocated addrinfo chain.
     pub unsafe fn destroy(this: *mut AddrInfo) {
+        // SAFETY: outer `unsafe fn` propagates the c-ares destroy contract; thin FFI forward.
         unsafe { ares_freeaddrinfo(this) };
     }
 }
@@ -836,6 +838,7 @@ impl Channel {
 
     /// FFI destroy — `ares_destroy`.
     pub unsafe fn destroy(this: *mut Channel) {
+        // SAFETY: outer `unsafe fn` propagates the c-ares destroy contract; thin FFI forward.
         unsafe { ares_destroy(this) };
     }
 
@@ -1321,6 +1324,7 @@ pub struct struct_ares_caa_reply {
 
 impl AresReply for struct_ares_caa_reply {
     unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
+        // SAFETY: outer `unsafe fn` propagates the c-ares parse contract; thin FFI forward.
         unsafe { ares_parse_caa_reply(abuf, alen, out) }
     }
 }
@@ -1336,6 +1340,7 @@ impl struct_ares_caa_reply {
         if self.property.is_null() {
             &[]
         } else {
+            // SAFETY: `property` is non-null; c-ares guarantees `plength` bytes are valid for the reply node's lifetime.
             unsafe { core::slice::from_raw_parts(self.property, self.plength) }
         }
     }
@@ -1347,6 +1352,7 @@ impl struct_ares_caa_reply {
         if self.value.is_null() {
             &[]
         } else {
+            // SAFETY: `value` is non-null; c-ares guarantees `length` bytes are valid for the reply node's lifetime.
             unsafe { core::slice::from_raw_parts(self.value, self.length) }
         }
     }
@@ -1363,6 +1369,7 @@ pub struct struct_ares_srv_reply {
 
 impl AresReply for struct_ares_srv_reply {
     unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
+        // SAFETY: outer `unsafe fn` propagates the c-ares parse contract; thin FFI forward.
         unsafe { ares_parse_srv_reply(abuf, alen, out) }
     }
 }
@@ -1376,6 +1383,7 @@ pub struct struct_ares_mx_reply {
 
 impl AresReply for struct_ares_mx_reply {
     unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
+        // SAFETY: outer `unsafe fn` propagates the c-ares parse contract; thin FFI forward.
         unsafe { ares_parse_mx_reply(abuf, alen, out) }
     }
 }
@@ -1389,6 +1397,7 @@ pub struct struct_ares_txt_reply {
 
 impl AresReply for struct_ares_txt_reply {
     unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
+        // SAFETY: outer `unsafe fn` propagates the c-ares parse contract; thin FFI forward.
         unsafe { ares_parse_txt_reply(abuf, alen, out) }
     }
 }
@@ -1402,6 +1411,7 @@ impl struct_ares_txt_reply {
         if self.txt.is_null() {
             &[]
         } else {
+            // SAFETY: `txt` is non-null; c-ares guarantees `length` bytes are valid for the reply node's lifetime.
             unsafe { core::slice::from_raw_parts(self.txt, self.length) }
         }
     }
@@ -1424,6 +1434,7 @@ impl struct_ares_txt_ext {
         if self.txt.is_null() {
             &[]
         } else {
+            // SAFETY: `txt` is non-null; c-ares guarantees `length` bytes are valid for the reply node's lifetime.
             unsafe { core::slice::from_raw_parts(self.txt, self.length) }
         }
     }
@@ -1442,6 +1453,7 @@ pub struct struct_ares_naptr_reply {
 
 impl AresReply for struct_ares_naptr_reply {
     unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
+        // SAFETY: outer `unsafe fn` propagates the c-ares parse contract; thin FFI forward.
         unsafe { ares_parse_naptr_reply(abuf, alen, out) }
     }
 }
@@ -1459,6 +1471,7 @@ pub struct struct_ares_soa_reply {
 
 impl AresReply for struct_ares_soa_reply {
     unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
+        // SAFETY: outer `unsafe fn` propagates the c-ares parse contract; thin FFI forward.
         unsafe { ares_parse_soa_reply(abuf, alen, out) }
     }
 }

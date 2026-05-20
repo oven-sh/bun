@@ -187,11 +187,8 @@ pub mod Macro {
         /// type back inside `__bun_macro_context_init`.
         #[inline]
         pub fn init<T>(transpiler: &mut T) -> Self {
-            // SAFETY: `transpiler` is a live `&mut T` (exclusive, non-null,
-            // aligned) for the duration of the call; the callee casts it back to
-            // `&mut Transpiler<'_>` and only reads/borrows fields — it does not
-            // retain the pointer past return (the boxed state it allocates owns
-            // its own data).
+            // SAFETY: `transpiler` is a live `&mut T` (exclusive, non-null, aligned); the callee
+            // does not retain the pointer past return (the boxed state it allocates owns its own data).
             unsafe { __bun_macro_context_init(transpiler as *mut T as *mut core::ffi::c_void) }
         }
         /// Free the boxed higher-tier state behind `data`. Only call when the
@@ -216,10 +213,8 @@ pub mod Macro {
                 return None;
             }
             // SAFETY: `self.data` is non-null (checked above) and was produced by
-            // `__bun_macro_context_init`, so it points at a live `Macro::Data`
-            // whose remap table the callee borrows. The table is owned by
-            // `Transpiler.options` (process-lifetime), justifying the `'static`
-            // return.
+            // `__bun_macro_context_init`; it points at a live `Macro::Data` whose
+            // remap table is owned by `Transpiler.options` (process-lifetime), justifying `'static`.
             unsafe { __bun_macro_context_get_remap(self.data, path) }
         }
     }

@@ -221,6 +221,7 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
     // Declaration order matters: `_api_lock` is bound before `pt` so LIFO drop
     // detaches `pt` (a JSC FFI call) *while the API lock is still held*, then
     // releases the lock — matching Zig's `defer api_lock.release()` ordering.
+    // SAFETY: `vm.jsc_vm` is the live JSC::VM*; deref is valid on the JS thread.
     let _api_lock = unsafe { (*vm.jsc_vm).get_api_lock() };
 
     // PORT NOTE: `PerThread` owns its data in Rust (Zig held borrowed slices

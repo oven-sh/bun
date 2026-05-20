@@ -233,6 +233,7 @@ impl<T> ExtSlot<T> {
             // unique heap owner; uWS dispatch is single-threaded and — per the
             // `Handler::Ext = ExtSlot<T>` contract — non-re-entrant on this
             // user-data, so no aliasing `&mut T` exists for `'_`.
+            // SAFETY: see multi-line comment above this arm.
             Some(mut p) => Some(unsafe { p.as_mut() }),
             None => None,
         }

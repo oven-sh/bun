@@ -383,6 +383,7 @@ impl FetchTasklet {
             // reach into the VM's HandleSet from this (HTTP) thread — not
             // thread-safe. Reclaim only the Rust-side boxes; the HandleSet is
             // freed wholesale by `destructOnExit`.
+            // SAFETY: see multi-line comment above; last ref, exclusive access on shutdown.
             unsafe { FetchTasklet::dealloc_for_shutdown(this) };
             return;
         }
@@ -415,6 +416,7 @@ impl FetchTasklet {
             // by `js_this` and the cached `ondrain` closure (+ stream graph) can
             // be collected. `detach_js` runs no JS callbacks, so it is safe even
             // though this runs during `deinit`.
+            // SAFETY: see multi-line comment above; sink came from init_exact_refs, one ref held.
             unsafe {
                 (*sink).detach_js();
                 ResumableFetchSink::deref_(sink);
@@ -1741,7 +1743,10 @@ impl FetchTasklet {
                     // doesn't tie `url`'s lifetime to the `fetch_tasklet` stack binding,
                     // which is moved into `heap::alloc` below.
                     let buf_ptr: *const [u8] = &raw const *fetch_tasklet.url_proxy_buffer;
+                    // SAFETY: see multi-line comment above; buf_ptr points into a heap-owned
+                    // Box<[u8]> that outlives the url/proxy values consumed below.
                     url = ZigURL::parse(unsafe { &(&*buf_ptr)[0..old_url_len] });
+                    // SAFETY: same buf_ptr owner; non-overlapping suffix of the same buffer.
                     proxy = Some(ZigURL::parse(unsafe { &(&*buf_ptr)[old_url_len..] }));
                     // TODO(port): self-referential borrow into url_proxy_buffer; needs raw ptr or owned URL.
                 } else {
@@ -1781,9 +1786,12 @@ impl FetchTasklet {
         // process-lifetime — these should become `RawSlice<u8>` once
         // `AsyncHTTP::init` accepts holder-lifetime slices; `assume` names the
         // owner so the widen is grep-able until then.
+        // SAFETY: see block note above — fields are heap-owned by the FetchTasklet and
+        // not reallocated for the request lifetime; tasklet is freed only after AsyncHTTP drops.
         let headers_buf: &'static [u8] =
             unsafe { bun_ptr::Interned::assume(fetch_tasklet.request_headers.buf.as_slice()) }
                 .as_bytes();
+        // SAFETY: same FetchTasklet owner as headers_buf above.
         let request_body_slice: &'static [u8] =
             unsafe { bun_ptr::Interned::assume(fetch_tasklet.request_body.slice()) }.as_bytes();
         let hostname: Option<&'static [u8]> = fetch_tasklet
@@ -2110,10 +2118,13 @@ impl FetchTasklet {
         // SAFETY: `async_http` is the HTTP-thread copy passed by `on_async_http_callback`;
         // it is alive for the duration of this call and not mutated concurrently (HTTP
         // thread is blocked in the callback).
+        // SAFETY: see multi-line comment above; `async_http` is the HTTP-thread copy,
+        // alive for this callback duration and not mutated concurrently.
         task_ref
             .http
             .as_mut()
             .unwrap()
+            // SAFETY: see multi-line comment above; `async_http` is alive for this callback.
             .sync_progress_from(unsafe { &*async_http });
 
         bun_output::scoped_log!(

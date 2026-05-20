@@ -1877,11 +1877,11 @@ fn file_kind_tag(kind: bun_core::FileKind) -> &'static str {
 /// `.buf = undefined`. `Box::new_zeroed` maps to a `calloc` (typically a free
 /// kernel zero-page for this size) and avoids the 512 KiB stack temporary.
 fn new_boxed_buffered_file_reader(file: bun_sys::File) -> Box<BufferedFileReader> {
-    // SAFETY: all-zero is a valid bit pattern for `[u8; N]`, `usize`, and
-    // `File { handle: Fd }` (`Fd` is a `#[repr(C)]` integer newtype). The
-    // `unbuffered_reader` slot is overwritten before any read. (Orphan rule
-    // blocks an `unsafe impl Zeroable` here — both trait and generic are
-    // foreign — so use the unchecked variant.)
+    // All-zero is valid for `[u8; N]`, `usize`, and `Fd` (repr(C) integer newtype).
+    // `unbuffered_reader` is overwritten before any read. Orphan rule prevents
+    // `unsafe impl Zeroable` here, so we use the unchecked variant.
+    // SAFETY: `BufferedFileReader` has no field that is invalid when zero-initialized
+    // (bytes, usize, Fd); the `unbuffered_reader` slot is patched immediately after.
     let mut b: Box<BufferedFileReader> = unsafe { bun_core::boxed_zeroed_unchecked() };
     b.unbuffered_reader = file;
     b
@@ -2659,6 +2659,8 @@ pub fn pack<const FOR_PUBLISH: bool>(
         // uses below, so call `complete_one()` explicitly at every loop-body
         // exit and `end()` once after the loops.
 
+        // SAFETY: `archive` is a valid heap-allocated `libarchive` writer; no other
+        // `&mut` to it is live at this call site.
         entry = archive_package_json(
             ctx,
             unsafe { &mut *archive },
@@ -2739,6 +2741,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
                 &item.path,
                 &mut read_buf,
                 &mut file_reader,
+                // SAFETY: `archive` is a valid heap-allocated writer; no other `&mut` is live.
                 unsafe { &mut *archive },
                 entry,
                 &mut print_buf,
@@ -2792,6 +2795,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
                 &item.path,
                 &mut read_buf,
                 &mut file_reader,
+                // SAFETY: `archive` is a valid heap-allocated writer; no other `&mut` is live.
                 unsafe { &mut *archive },
                 entry,
                 &mut print_buf,

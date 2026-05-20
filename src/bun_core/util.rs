@@ -321,11 +321,15 @@ impl<T> ArrayLike for Vec<T> {
 pub struct ZStr([u8]);
 
 impl ZStr {
+    // SAFETY: `b"\0"` is a 'static NUL byte; `from_raw` with len=0 produces a
+    // valid empty `&'static ZStr` with the NUL at index 0.
     pub const EMPTY: &'static ZStr = unsafe { Self::from_raw(b"\0".as_ptr(), 0) };
 
     /// SAFETY: `ptr[len] == 0` and `ptr[..len]` is readable for `'a`.
     #[inline]
     pub const unsafe fn from_raw<'a>(ptr: *const u8, len: usize) -> &'a ZStr {
+        // SAFETY: caller guarantees `ptr[..len]` is readable for `'a` and
+        // `ptr[len] == 0`. `ZStr` is `repr(transparent)` over `[u8]`.
         unsafe {
             &*(std::ptr::from_ref::<[u8]>(core::slice::from_raw_parts(ptr, len)) as *const ZStr)
         }
@@ -333,6 +337,8 @@ impl ZStr {
     /// SAFETY: `ptr[len] == 0` and `ptr[..=len]` is writable for `'a`.
     #[inline]
     pub unsafe fn from_raw_mut<'a>(ptr: *mut u8, len: usize) -> &'a mut ZStr {
+        // SAFETY: caller guarantees `ptr[..len]` is writable for `'a` and
+        // `ptr[len] == 0`. `ZStr` is `repr(transparent)` over `[u8]`.
         unsafe {
             &mut *(std::ptr::from_mut::<[u8]>(core::slice::from_raw_parts_mut(ptr, len))
                 as *mut ZStr)
@@ -569,6 +575,9 @@ pub fn getenv_z(key: &ZStr) -> Option<&'static [u8]> {
         let _ = key;
         return None;
     }
+    // SAFETY: `key` is NUL-terminated (ZStr invariant); `libc::getenv` reads
+    // until the NUL. The returned pointer (if non-null) is into the process env
+    // block, which lives for the process lifetime.
     #[cfg(unix)]
     unsafe {
         // SAFETY: key is NUL-terminated by ZStr invariant; getenv reads until NUL.
@@ -615,6 +624,10 @@ pub fn c_environ() -> *const *const core::ffi::c_char {
 /// CI-detection vars where casing varies across providers).
 pub fn getenv_z_any_case(key: &ZStr) -> Option<&'static [u8]> {
     #[cfg(unix)]
+    // SAFETY: `c_environ()` returns the process C env block; each entry is a
+    // NUL-terminated `KEY=VALUE` string valid for the process lifetime.
+    // Pointer arithmetic (`p.add(1)`) advances within the NULL-terminated
+    // pointer array, which is contiguous by POSIX `environ` contract.
     unsafe {
         // SAFETY: `environ` is the C env block; entries are NUL-terminated `KEY=VALUE`.
         let mut p = c_environ();
@@ -674,10 +687,14 @@ pub fn getenv_z_any_case(key: &ZStr) -> Option<&'static [u8]> {
 pub struct WStr([u16]);
 
 impl WStr {
+    // SAFETY: `[0u16]` is a 'static NUL unit; `from_raw` with len=0 produces
+    // a valid empty `&'static WStr` with the NUL at index 0.
     pub const EMPTY: &'static WStr = unsafe { Self::from_raw([0u16].as_ptr(), 0) };
     /// SAFETY: `ptr[len] == 0` and `ptr[..len]` is readable for `'a`.
     #[inline]
     pub const unsafe fn from_raw<'a>(ptr: *const u16, len: usize) -> &'a WStr {
+        // SAFETY: caller guarantees `ptr[..len]` is readable for `'a` and
+        // `ptr[len] == 0`. `WStr` is `repr(transparent)` over `[u16]`.
         unsafe {
             &*(std::ptr::from_ref::<[u16]>(core::slice::from_raw_parts(ptr, len)) as *const WStr)
         }
@@ -744,6 +761,8 @@ impl WStr {
     /// through an owned buffer.
     #[inline]
     pub unsafe fn from_raw_mut<'a>(ptr: *mut u16, len: usize) -> &'a mut WStr {
+        // SAFETY: caller guarantees `ptr[..len]` is writable for `'a` and
+        // `ptr[len] == 0`. `WStr` is `repr(transparent)` over `[u16]`.
         unsafe { &mut *(core::slice::from_raw_parts_mut(ptr, len) as *mut [u16] as *mut WStr) }
     }
     #[inline]
@@ -1000,6 +1019,7 @@ impl PathBuffer {
         // scratch buffer (length-tracked) exactly like Zig
         // `var buf: bun.PathBuffer = undefined`. No byte is read before being
         // written by the consuming syscall / encoder.
+        // SAFETY: all-bits-valid `[u8; N]` — see comment above.
         unsafe { core::mem::MaybeUninit::uninit().assume_init() }
     }
     #[inline]
@@ -1232,6 +1252,7 @@ impl Fd {
         // the `Fd` type's contract — every API taking `Fd` requires the
         // caller to keep the descriptor open for the call, and the returned
         // borrow cannot outlive `&self`.
+        // SAFETY: non-(-1) fd, open for borrow lifetime (see above).
         unsafe { std::os::fd::BorrowedFd::borrow_raw(raw) }
     }
     /// libuv c_int file number. On POSIX this equals `native()`. On Windows,
@@ -1971,10 +1992,15 @@ pub mod io {
     impl Writer {
         #[inline]
         pub fn write_all(&mut self, bytes: &[u8]) -> Result<(), crate::Error> {
+            // SAFETY: `self.write_all` is a valid fn-pointer set by the concrete
+            // adapter that owns this vtable header (`bun_sys::OutputSinkVTable`).
+            // `from_mut(self)` is the first `repr(C)` field of that adapter.
             unsafe { (self.write_all)(std::ptr::from_mut(self), bytes) }
         }
         #[inline]
         pub fn flush(&mut self) -> Result<(), crate::Error> {
+            // SAFETY: same as `write_all` — valid vtable pointer; `self` is the
+            // first `repr(C)` field of the owning concrete adapter.
             unsafe { (self.flush)(std::ptr::from_mut(self)) }
         }
         /// Alias for `print` so `write!(w, ...)` works.
@@ -2189,10 +2215,16 @@ pub mod io {
     impl Write for Writer {
         #[inline]
         fn write_all(&mut self, buf: &[u8]) -> Result<(), crate::Error> {
+            // SAFETY: `self.write_all` is a valid function pointer installed by
+            // the concrete adapter (`bun_sys::OutputSinkVTable`). `self` is
+            // `repr(C)` and is the first field of every adapter, so
+            // `from_mut(self)` passes the correct adapter pointer.
             unsafe { (self.write_all)(core::ptr::from_mut(self), buf) }
         }
         #[inline]
         fn flush(&mut self) -> Result<(), crate::Error> {
+            // SAFETY: same as `write_all` above — valid vtable pointer,
+            // `self` is the first `repr(C)` field of the concrete adapter.
             unsafe { (self.flush)(core::ptr::from_mut(self)) }
         }
     }
@@ -4587,6 +4619,10 @@ pub fn intern_argv(v: Vec<&'static ZStr>) -> &'static [&'static ZStr] {
 /// `PathBuffer` and returns the NUL-terminated slice on success.
 pub fn getcwd(buf: &mut PathBuffer) -> Result<&ZStr, crate::Error> {
     #[cfg(unix)]
+    // SAFETY: `buf.0` is a `[u8; MAX_PATH_BYTES]` writable buffer; we pass its
+    // pointer and length to `getcwd(3)` which writes a NUL-terminated path.
+    // `strlen` is called only on the non-null return value from `getcwd`, which
+    // is a pointer to the same buffer and is NUL-terminated by the kernel.
     unsafe {
         let p = libc::getcwd(buf.0.as_mut_ptr().cast(), buf.0.len());
         if p.is_null() {
@@ -4678,6 +4714,9 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
         n += bin.len();
         buf.0[n] = 0;
         #[cfg(unix)]
+        // SAFETY: `buf.0[..=n]` has been filled with a NUL-terminated path
+        // above; `buf.0.as_ptr()` is valid for a C string read of at least
+        // `n+1` bytes. `access(2)` does not retain the pointer after return.
         unsafe {
             if libc::access(buf.0.as_ptr().cast(), libc::X_OK) == 0 {
                 return Some(n);
@@ -4876,6 +4915,12 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     }
 
     #[cfg(unix)]
+    // SAFETY: `execve` replaces the current process image; all three pointer
+    // arguments are valid NUL-terminated C strings / NUL-terminated pointer
+    // arrays built from cloned `ZBox` allocations above. `c_environ()` returns
+    // the valid process env block. `on_before_reload_process_linux` has no
+    // memory-safety preconditions (it flushes file descriptors in the C layer).
+    // SAFETY: NUL-terminated argv/envp built above; exec path validated.
     unsafe {
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         {
@@ -5062,6 +5107,10 @@ pub mod spawn_ffi {
 
 pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crate::Error> {
     #[cfg(unix)]
+    // SAFETY: argv elements are NUL-terminated `ZBox`es; `c_environ()` returns
+    // the process env block (valid for process lifetime); `posix_spawn_bun`,
+    // `posix_spawnp`, `fork`/`execvp`, and `waitpid` are POSIX functions whose
+    // memory-safety preconditions are all satisfied by the local variables above.
     unsafe {
         let cargs: Vec<ZBox> = argv
             .iter()

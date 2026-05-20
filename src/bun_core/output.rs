@@ -1154,6 +1154,7 @@ pub fn flush() {
         // vtable fn pointer directly with the raw `*mut` (no `&mut Writer`
         // formed) so a re-entrant print/flush from inside the drain cannot
         // alias an outstanding exclusive borrow.
+        // SAFETY: `bs`/`bes` point to thread-local Writers; vtable fn called with raw ptr.
         unsafe {
             let _ = ((*bs).flush)(bs);
             let _ = ((*bes).flush)(bes);
@@ -1380,6 +1381,7 @@ unsafe fn write_fmt_raw(w: *mut io::Writer, args: fmt::Arguments<'_>) {
             // via raw-pointer field projection (no intermediate `&`/`&mut`
             // Writer) and call it with the raw `*mut` — any re-entrant write
             // sees only another raw pointer, never an aliased `&mut`.
+            // SAFETY: `self.0` is a valid `*mut Writer`; vtable fn called with raw ptr.
             unsafe {
                 let f = (*self.0).write_all;
                 let _ = f(self.0, s.as_bytes());

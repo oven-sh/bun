@@ -285,6 +285,7 @@ mod zig_std_debug {
                     dwLength: usize,
                 ) -> usize;
             }
+            // SAFETY: `MemoryBasicInformation` is a plain-old-data struct; zeroing is valid.
             let mut mbi: MemoryBasicInformation = unsafe { core::mem::zeroed() };
             // SAFETY: `mbi` is a valid out-param of the size we pass; VirtualQuery
             // only inspects the address-space mapping at `aligned_address`.
@@ -504,6 +505,7 @@ mod tty {
             // written, excluding NUL); not-found also returns 0; any non-empty
             // value returns >=1 (either chars written, or required size if it
             // didn't fit). So `rc != 0` ⇔ "exists and non-empty".
+            // SAFETY: `name_w` is NUL-terminated; `buf` is a valid 2-WCHAR out-param.
             let rc = unsafe {
                 GetEnvironmentVariableW(name_w.as_ptr(), buf.as_mut_ptr(), buf.len() as u32)
             };

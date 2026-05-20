@@ -387,6 +387,7 @@ impl DirInfo {
             // remaining owner at shutdown. `drop_in_place` releases its owned
             // resources in-place (storage itself is BSS/cache-owned and not freed
             // here, matching Zig `p.deinit()`).
+            // SAFETY: `p` is the sole remaining owner; `drop_in_place` releases owned resources without freeing BSS storage.
             unsafe { core::ptr::drop_in_place(p.as_ptr()) };
         }
         if let Some(t) = self.tsconfig_json.take() {
@@ -395,6 +396,7 @@ impl DirInfo {
             // `drop_in_place` releases its owned resources in-place (storage
             // itself is BSS/cache-owned and not freed here, matching Zig
             // `t.deinit()`).
+            // SAFETY: `t` is the sole remaining owner at shutdown; `drop_in_place` releases owned resources without freeing BSS storage.
             unsafe { core::ptr::drop_in_place(t.as_ptr()) };
         }
     }

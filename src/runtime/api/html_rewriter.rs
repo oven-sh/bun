@@ -857,6 +857,7 @@ impl BufferOutputSink {
         // stored in the C rewriter shares provenance with every other
         // `(*sink).field` access in this module — see the PORT NOTE on
         // `HTMLRewriterBuilder::build`.
+        // SAFETY: builder is live; sink (heap::alloc root) outlives the rewriter; shared provenance for all field accesses (see above).
         let built = unsafe {
             (*builder).build(
                 lolhtml::Encoding::UTF8,
@@ -942,6 +943,7 @@ impl BufferOutputSink {
         // `<BufferOutputSink as OutputSink>::write/done` and forms a fresh
         // `&mut *sink`. Hoist the bufferer through a raw pointer so no `&mut`
         // derived from `*sink` is live across that callback.
+        // SAFETY: sink is live; bufferer raw-ptr hoisted to avoid aliased &mut across re-entrant callback (see above).
         let buffering_result: Result<(), bun_core::Error> = unsafe {
             let bufferer: *mut webcore::body::ValueBufferer =
                 (*sink).body_value_bufferer.as_mut().unwrap();
@@ -1063,7 +1065,9 @@ impl BufferOutputSink {
         // invariant). Read fields into locals before the FFI calls so no
         // borrow of `*sink` is live across the re-entrant callback.
         let _ = unsafe { (*sink).bytes.grow_by(bytes.len()) }; // OOM/capacity: Zig aborts; port keeps fire-and-forget
+        // SAFETY: sink is live (refcount > 0); read into local before re-entrant callback (see above).
         let global = unsafe { (*sink).global };
+        // SAFETY: same — sink is live, field read into local.
         let response = unsafe { (*sink).response };
         let rewriter = unsafe { (*sink).rewriter };
 
@@ -1395,6 +1399,7 @@ where
     // duration of the rewriter. `&` (not `&mut`) — `cb.call()` below re-enters
     // JS, which may re-enter another `handler_callback` on the same handler
     // (R-2); aliased `&H` is sound, aliased `&mut H` is not.
+    // SAFETY: this is a live lol-html userdata pointer (heap Box in LOLHTMLContext); shared-ref only to allow re-entrant callbacks (see above).
     let this = unsafe { &*this };
     let global = this.global();
     // PORT NOTE: spec (html_rewriter.zig:938,954,969,972) re-derives

@@ -54,6 +54,8 @@ pub fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
     // node); the thread pool hands us exclusive access for the callback's
     // duration. We only read the two raw-pointer fields, matching Zig's
     // `*const PrepareCssAstTask`.
+    // SAFETY: `task` points to `PrepareCssAstTask.task` (intrusive node); the
+    // thread pool grants exclusive access for the callback's duration.
     let prepare_css_asts: &PrepareCssAstTask =
         unsafe { &*bun_core::from_field_ptr!(PrepareCssAstTask, task, task) };
     let linker: *mut LinkerContext = prepare_css_asts.linker;
@@ -64,6 +66,8 @@ pub fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
     // scope the shared borrow before materializing `&mut *linker` below to
     // avoid aliasing.
     let worker = {
+        // SAFETY: `linker` carries provenance over the full `BundleV2` allocation;
+        // `bundle_v2_ptr` performs the container_of offset. Shared borrow only.
         let bundle_v2: &BundleV2 = unsafe { &*LinkerContext::bundle_v2_ptr(linker) };
         ThreadPool::Worker::get(bundle_v2)
     };
@@ -74,7 +78,11 @@ pub fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
     // so `&mut *chunk` is unique. `worker.arena` was initialized in
     // `Worker::create()` and points at the worker's heap arena.
     prepare_css_asts_for_chunk_impl(
+        // SAFETY: `linker` outlives this task (owned by BundleV2); the shared borrow
+        // of `bundle_v2` was dropped above so `&mut *linker` is the unique live borrow.
         unsafe { &mut *linker },
+        // SAFETY: each CSS chunk gets exactly one `PrepareCssAstTask`, so `&mut *chunk`
+        // is unique for the duration of this call.
         unsafe { &mut *chunk },
         worker.arena(),
     );
@@ -217,11 +225,11 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                                         loc: Location::dummy(),
                                         ..Default::default()
                                     };
-                                    // SAFETY: Zig `entry.conditions.at(j).*` — shallow struct
-                                    // copy. The duplicate is never dropped (`ManuallyDrop`
-                                    // above), so the aliased heap stays singly-owned by
-                                    // `entry.conditions[j]`.
                                     *import_rule.conditions_mut() =
+                                        // SAFETY: Zig `entry.conditions.at(j).*` — shallow
+                                        // struct copy. The duplicate is wrapped in
+                                        // `ManuallyDrop` (never dropped), so the aliased
+                                        // heap stays singly-owned by `entry.conditions[j]`.
                                         unsafe { core::ptr::read(entry.conditions.at(j)) };
                                     arena_rule_list_one(bump, BundlerCssRule::Import(import_rule))
                                 },
@@ -257,10 +265,10 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                                 // `LocalsResultsMap` is the same `ArrayHashMap<Ref, Box<[u8]>>`
                                 // alias as `bun_js_printer::MangledProps`; no cast needed.
                                 Some(&c.mangled_props),
-                                // `to_css` takes `&bun_ast::symbol::Map`; `c.graph.symbols`
-                                // is `bun_ast::symbol::Map`. Both are
-                                // `{ symbols_for_source: NestedList }` (`UnsafeCell<T>` is
-                                // `repr(transparent)`), so layouts match — bridge by pointer cast.
+                                // SAFETY: `c.graph.symbols` and `bun_ast::symbol::Map` share
+                                // identical layout (`UnsafeCell<T>` is `repr(transparent)`);
+                                // the cast is valid and the shared borrow does not alias any
+                                // live `&mut`.
                                 unsafe {
                                     &*(&raw const c.graph.symbols).cast::<bun_ast::symbol::Map>()
                                 },

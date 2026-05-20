@@ -250,6 +250,7 @@ impl MacroContext {
             Runner::run(
                 unsafe { &*macro_ },
                 log,
+                // SAFETY: `bump` points into `*self`, outlives the closure, not otherwise borrowed.
                 unsafe { &*bump },
                 function_name,
                 caller,
@@ -288,6 +289,7 @@ pub fn __bun_macro_context_init(
     // was actually invoked, its lazily-created `bump` arena) leaks per
     // iteration. `bump` is `None` on init, so this fn itself never calls
     // `mi_heap_new()`.
+    // SAFETY: caller passes a `&mut Transpiler<'_>`; erasing to `'static` is layout-identical per comment above.
     let transpiler = unsafe { &mut *transpiler.cast::<Transpiler<'static>>() };
     let data = bun_core::heap::into_raw(Box::new(MacroContext::init(transpiler)));
     js_parser::Macro::MacroContext {
@@ -1121,6 +1123,7 @@ impl Runner {
         // directly — read it via raw-ptr field access (NOT the `&`-returning
         // `.global()` accessor) so the `*mut` provenance is preserved across
         // FFI.
+        // SAFETY: CALL_STATE just set; `vm.global` raw-ptr access preserves *mut provenance across FFI.
         unsafe {
             Bun__startMacro(
                 call as *const c_void,

@@ -393,6 +393,7 @@ impl PEFile {
                     .add(section_headers_offset)
                     .cast::<SectionHeader>()
             };
+            // SAFETY: sections_ptr is within the bounds-checked data buffer; num_sections sections fit.
             let sections = unsafe { slice::from_raw_parts(sections_ptr, num_sections as usize) };
 
             for section in sections {

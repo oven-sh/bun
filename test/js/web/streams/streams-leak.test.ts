@@ -50,6 +50,32 @@ test("native ReadableStream reuses the pull buffer across small reads", async ()
   for (const buf of distinctBuffers) backingBytes += buf.byteLength;
   // Pre-fix this was ~chunks.length * 256KB ≈ 25–250 MB.
   expect(backingBytes).toBeLessThan(4 * 1024 * 1024);
+
+  // #getInternalBuffer allocates the view over a pre-created ArrayBuffer
+  // of autoAllocateChunkSize so .buffer/.subarray don't have to migrate
+  // it off the fast path (slowDownAndWasteMemory). The rotate check
+  // relies on chunk.buffer.byteLength reflecting that full allocation,
+  // so any buffer shared by multiple chunks must be at least the initial
+  // autoAllocateChunkSize (256KB), and consecutive chunks within it must
+  // advance through it. (chunks[0] may be the constructor drainValue and
+  // have its own tiny buffer; skip buffers that back only one chunk.)
+  const byBuffer = new Map<ArrayBuffer, Uint8Array[]>();
+  for (const c of chunks) {
+    const arr = byBuffer.get(c.buffer) ?? [];
+    arr.push(c);
+    byBuffer.set(c.buffer, arr);
+  }
+  let sawPullBuffer = false;
+  for (const [buf, views] of byBuffer) {
+    if (views.length < 2) continue;
+    sawPullBuffer = true;
+    expect(buf.byteLength).toBeGreaterThanOrEqual(256 * 1024);
+    expect(views[0].byteOffset).toBe(0);
+    for (let i = 1; i < views.length; i++) {
+      expect(views[i].byteOffset).toBe(views[i - 1].byteOffset + views[i - 1].length);
+    }
+  }
+  expect(sawPullBuffer).toBe(true);
 });
 
 const BYTES_TO_WRITE = 500_000;

@@ -1931,10 +1931,6 @@ impl<'bump> Parser<'bump> {
             // The `with_capacity_in(1, ...)` hint above does not bound the
             // actual capacity — BabyVec::grow_to rounds up to max(2×cap, 4),
             // so the initial allocation is 4 slots regardless of the hint.
-            // A prior `debug_assert!(atoms.capacity() == 1)` here was stale
-            // from a hypothetical exact-sized allocation and fired on every
-            // single-atom command in debug builds once the path was hit with
-            // non-ASCII input.
             1 => Some(ast::Atom::new_simple(atoms.into_iter().next().unwrap())),
             _ => Some(ast::Atom::Compound(ast::CompoundAtom {
                 atoms: atoms.into_bump_slice(),

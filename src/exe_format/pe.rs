@@ -2,8 +2,8 @@
 // No special 16KB alignment needed like macOS code signing
 
 use core::mem::{offset_of, size_of};
-use core::ptr;
-use core::slice;
+
+use crate::{read_struct, write_struct};
 
 // New error types for PE manipulation
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Copy, Clone, Eq, PartialEq)]
@@ -88,11 +88,7 @@ pub struct PEFile {
     pub last_va_end: u32,
 }
 
-// PE/COFF on-disk header structs are byte-packed (no padding) per spec, and may
-// live at arbitrary byte offsets inside a `Vec<u8>` image, so `align_of` must be 1
-// for it to be sound to materialize references/pointers to them from the buffer
-// (the Zig original used `*align(1) const T`).
-#[repr(C, packed)]
+#[repr(C)]
 #[derive(Copy, Clone)]
 pub struct DOSHeader {
     pub e_magic: u16,      // Magic number
@@ -116,7 +112,7 @@ pub struct DOSHeader {
     pub e_lfanew: u32,     // File address of new exe header
 }
 
-#[repr(C, packed)]
+#[repr(C)]
 #[derive(Copy, Clone)]
 pub struct PEHeader {
     pub signature: u32,               // PE signature
@@ -129,7 +125,7 @@ pub struct PEHeader {
     pub characteristics: u16,         // Characteristics
 }
 
-#[repr(C, packed)]
+#[repr(C)]
 #[derive(Copy, Clone)]
 pub struct OptionalHeader64 {
     pub magic: u16,                            // Magic number
@@ -164,14 +160,14 @@ pub struct OptionalHeader64 {
     pub data_directories: [DataDirectory; 16], // Data directories
 }
 
-#[repr(C, packed)]
+#[repr(C)]
 #[derive(Copy, Clone)]
 pub struct DataDirectory {
     pub virtual_address: u32,
     pub size: u32,
 }
 
-#[repr(C, packed)]
+#[repr(C)]
 #[derive(Copy, Clone)]
 pub struct SectionHeader {
     pub name: [u8; 8],                // Section name
@@ -201,24 +197,30 @@ const IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY: u16 = 0x0080;
 // Section name constant for exact comparison
 const BUN_SECTION_NAME: [u8; 8] = [b'.', b'b', b'u', b'n', 0, 0, 0, 0];
 
-// Safe access helpers for unaligned views.
-// All header structs are `#[repr(C, packed)]` (align 1), so a bounds-checked byte
-// pointer into the image can be cast and dereferenced directly — equivalent to the
-// Zig original's `*align(1) const T`.
-fn view_at_const<T>(buf: &[u8], off: usize) -> Result<*const T, Error> {
-    if off + size_of::<T>() > buf.len() {
+// Bounds-checked unaligned read/write helpers, layered over `read_struct` /
+// `write_struct` (which call `ptr::read_unaligned` / `ptr::write_unaligned`).
+//
+// PE headers live at arbitrary byte offsets inside a `Vec<u8>` image and have
+// natural alignment >= 4, so the previous `view_at_const<T>(...) -> *const T`
+// + `unsafe { &*p }` pattern at every call site was a validity-invariant UB
+// (audit witness EXP-093: "constructing invalid value of type &SectionHeader:
+// encountered an unaligned reference (required 4 byte alignment but found 1)").
+// Return by value via `read_unaligned` and write via `write_unaligned` instead.
+fn read_at<T: Copy>(buf: &[u8], off: usize) -> Result<T, Error> {
+    let end = off.checked_add(size_of::<T>()).ok_or(Error::Overflow)?;
+    if end > buf.len() {
         return Err(Error::OutOfBounds);
     }
-    // SAFETY: bounds-checked above; pointer remains within `buf`
-    Ok(unsafe { buf.as_ptr().add(off).cast::<T>() })
+    Ok(read_struct(&buf[off..end]))
 }
 
-fn view_at_mut<T>(buf: &mut [u8], off: usize) -> Result<*mut T, Error> {
-    if off + size_of::<T>() > buf.len() {
+fn write_at<T: Copy>(buf: &mut [u8], off: usize, value: &T) -> Result<(), Error> {
+    let end = off.checked_add(size_of::<T>()).ok_or(Error::Overflow)?;
+    if end > buf.len() {
         return Err(Error::OutOfBounds);
     }
-    // SAFETY: bounds-checked above; pointer remains within `buf`
-    Ok(unsafe { buf.as_mut_ptr().add(off).cast::<T>() })
+    write_struct(&mut buf[off..end], value);
+    Ok(())
 }
 
 fn is_pow2(x: u32) -> bool {
@@ -254,39 +256,49 @@ fn align_up_usize(v: usize, a: usize) -> Result<usize, Error> {
 }
 
 impl PEFile {
-    // Helper methods to safely access headers using unaligned pointers
-    fn get_dos_header(&self) -> Result<*const DOSHeader, Error> {
-        view_at_const::<DOSHeader>(&self.data, self.dos_header_offset)
+    // Header accessors return values via `read_at` (unaligned read into an
+    // owned `T`); callers that need to mutate read into a local, modify,
+    // and write back via `write_at`. The previous `*const T` / `*mut T`
+    // return shape forced every caller into `unsafe { &*p }` / `&mut *p`,
+    // which is UB when the underlying byte offset isn't T-aligned (audit
+    // witness EXP-093).
+    fn get_dos_header(&self) -> Result<DOSHeader, Error> {
+        read_at::<DOSHeader>(&self.data, self.dos_header_offset)
     }
 
-    fn get_pe_header(&self) -> Result<*const PEHeader, Error> {
-        view_at_const::<PEHeader>(&self.data, self.pe_header_offset)
+    fn get_pe_header(&self) -> Result<PEHeader, Error> {
+        read_at::<PEHeader>(&self.data, self.pe_header_offset)
     }
 
-    fn get_pe_header_mut(&mut self) -> Result<*mut PEHeader, Error> {
-        view_at_mut::<PEHeader>(&mut self.data, self.pe_header_offset)
+    fn get_optional_header(&self) -> Result<OptionalHeader64, Error> {
+        read_at::<OptionalHeader64>(&self.data, self.optional_header_offset)
     }
 
-    fn get_optional_header(&self) -> Result<*const OptionalHeader64, Error> {
-        view_at_const::<OptionalHeader64>(&self.data, self.optional_header_offset)
+    fn set_pe_header(&mut self, value: &PEHeader) -> Result<(), Error> {
+        write_at::<PEHeader>(&mut self.data, self.pe_header_offset, value)
     }
 
-    fn get_optional_header_mut(&mut self) -> Result<*mut OptionalHeader64, Error> {
-        view_at_mut::<OptionalHeader64>(&mut self.data, self.optional_header_offset)
+    fn set_optional_header(&mut self, value: &OptionalHeader64) -> Result<(), Error> {
+        write_at::<OptionalHeader64>(&mut self.data, self.optional_header_offset, value)
     }
 
-    fn get_section_headers(&self) -> Result<&[SectionHeader], Error> {
-        let start = self.section_headers_offset;
-        let size = size_of::<SectionHeader>() * self.num_sections as usize;
-        if start + size > self.data.len() {
+    /// Read the section header at index `idx` (0-based). The section table is
+    /// `num_sections` `SectionHeader` structs starting at
+    /// `section_headers_offset`; each entry is read by value via
+    /// `read_unaligned` because the table lives at an arbitrary byte offset
+    /// inside the PE image (audit witness EXP-093).
+    fn read_section_header(&self, idx: usize) -> Result<SectionHeader, Error> {
+        if idx >= self.num_sections as usize {
             return Err(Error::OutOfBounds);
         }
-        // SAFETY: bounds-checked above; SectionHeader is #[repr(C, packed)] (align 1) POD.
-        let ptr = unsafe { self.data.as_ptr().add(start).cast::<SectionHeader>() };
-        // SAFETY: `[start, start + size)` lies within `self.data` per the check above; the
-        // bytes are initialized from the input PE image and SectionHeader is repr(C) Copy
-        // with no invalid bit patterns.
-        Ok(unsafe { slice::from_raw_parts(ptr, self.num_sections as usize) })
+        let off = self
+            .section_headers_offset
+            .checked_add(
+                idx.checked_mul(size_of::<SectionHeader>())
+                    .ok_or(Error::Overflow)?,
+            )
+            .ok_or(Error::Overflow)?;
+        read_at::<SectionHeader>(&self.data, off)
     }
 
     pub fn init(pe_data: &[u8]) -> Result<Box<PEFile>, Error> {
@@ -299,9 +311,7 @@ impl PEFile {
             return Err(Error::InvalidPEFile);
         }
 
-        let dos_header = view_at_const::<DOSHeader>(&data, 0)?;
-        // SAFETY: validated bounds; offset 0 in Vec<u8> backing store
-        let dos_header = unsafe { &*dos_header };
+        let dos_header: DOSHeader = read_at(&data, 0)?;
         if dos_header.e_magic != DOS_SIGNATURE {
             return Err(Error::InvalidDOSSignature);
         }
@@ -314,11 +324,9 @@ impl PEFile {
             return Err(Error::InvalidPEFile);
         }
 
-        // 3. Read PE header via viewAtMut
+        // 3. Read PE header
         let pe_off = dos_header.e_lfanew as usize;
-        let pe_header = view_at_mut::<PEHeader>(&mut data, pe_off)?;
-        // SAFETY: validated bounds above
-        let pe_header = unsafe { &mut *pe_header };
+        let pe_header: PEHeader = read_at(&data, pe_off)?;
         if pe_header.signature != PE_SIGNATURE {
             return Err(Error::InvalidPESignature);
         }
@@ -335,10 +343,7 @@ impl PEFile {
         // 5. Read optional header
         let size_of_optional_header = pe_header.size_of_optional_header;
         let number_of_sections = pe_header.number_of_sections;
-        // PORT NOTE: reshaped for borrowck — drop pe_header borrow before re-borrowing data
-        let optional_header = view_at_mut::<OptionalHeader64>(&mut data, optional_header_offset)?;
-        // SAFETY: validated bounds above
-        let optional_header = unsafe { &mut *optional_header };
+        let optional_header: OptionalHeader64 = read_at(&data, optional_header_offset)?;
         if optional_header.magic != OPTIONAL_HEADER_MAGIC_64 {
             return Err(Error::UnsupportedPEFormat);
         }
@@ -373,30 +378,27 @@ impl PEFile {
 
         let section_alignment = optional_header.section_alignment;
 
-        if num_sections > 0 {
-            for i in 0..num_sections as usize {
-                let sh_off = section_headers_offset + i * size_of::<SectionHeader>();
-                // SAFETY: `sh_off + size_of::<SectionHeader>()` is within `data` per the
-                // `section_headers_offset + section_headers_size <= data.len()` check above.
-                let section = unsafe {
-                    ptr::read_unaligned(data.as_ptr().add(sh_off).cast::<SectionHeader>())
-                };
-                if section.size_of_raw_data > 0 {
-                    if section.pointer_to_raw_data < first_raw {
-                        first_raw = section.pointer_to_raw_data;
-                    }
-                    let file_end = section.pointer_to_raw_data + section.size_of_raw_data;
-                    if file_end > last_file_end {
-                        last_file_end = file_end;
-                    }
+        // Walk the section table by index, reading each `SectionHeader` by
+        // value via `read_unaligned` (the table lives at an arbitrary byte
+        // offset; `&[SectionHeader]` over byte-aligned data is UB — audit
+        // witness EXP-093).
+        for sect_idx in 0..num_sections as usize {
+            let sect_off = section_headers_offset + sect_idx * size_of::<SectionHeader>();
+            let section: SectionHeader = read_at(&data, sect_off)?;
+            if section.size_of_raw_data > 0 {
+                if section.pointer_to_raw_data < first_raw {
+                    first_raw = section.pointer_to_raw_data;
                 }
-                // Use effective virtual size (max of virtual_size and size_of_raw_data)
-                let vs_effective = section.virtual_size.max(section.size_of_raw_data);
-                let va_end =
-                    section.virtual_address + align_up_u32(vs_effective, section_alignment)?;
-                if va_end > last_va_end {
-                    last_va_end = va_end;
+                let file_end = section.pointer_to_raw_data + section.size_of_raw_data;
+                if file_end > last_file_end {
+                    last_file_end = file_end;
                 }
+            }
+            // Use effective virtual size (max of virtual_size and size_of_raw_data)
+            let vs_effective = section.virtual_size.max(section.size_of_raw_data);
+            let va_end = section.virtual_address + align_up_u32(vs_effective, section_alignment)?;
+            if va_end > last_va_end {
+                last_va_end = va_end;
             }
         }
 
@@ -417,16 +419,12 @@ impl PEFile {
 
     /// Strip Authenticode signatures from the PE file
     pub fn strip_authenticode(&mut self, opts: StripOpts) -> Result<(), Error> {
-        let opt = view_at_mut::<OptionalHeader64>(&mut self.data, self.optional_header_offset)?;
+        let opt: OptionalHeader64 = self.get_optional_header()?;
 
         // Read Security directory (index 4)
-        // SAFETY: opt points into self.data at validated offset
-        let dd_ptr: *mut DataDirectory =
-            unsafe { ptr::addr_of_mut!((*opt).data_directories[IMAGE_DIRECTORY_ENTRY_SECURITY]) };
-        // SAFETY: dd_ptr is within the OptionalHeader64 struct
-        let sec_off_u32 = unsafe { (*dd_ptr).virtual_address }; // file offset (not RVA)
-        // SAFETY: dd_ptr is within the OptionalHeader64 struct (bounds-checked via view_at_mut)
-        let sec_size_u32 = unsafe { (*dd_ptr).size };
+        let sec_dd = opt.data_directories[IMAGE_DIRECTORY_ENTRY_SECURITY];
+        let sec_off_u32 = sec_dd.virtual_address; // file offset (not RVA)
+        let sec_size_u32 = sec_dd.size;
 
         if sec_off_u32 == 0 || sec_size_u32 == 0 {
             return Ok(()); // nothing to strip
@@ -434,8 +432,8 @@ impl PEFile {
 
         // Compute last_file_end from sections (reuse cached or recompute)
         let mut last_raw_end: u32 = 0;
-        let sections = self.get_section_headers()?;
-        for s in sections {
+        for i in 0..self.num_sections as usize {
+            let s = self.read_section_header(i)?;
             let end = s.pointer_to_raw_data + s.size_of_raw_data;
             if end > last_raw_end {
                 last_raw_end = end;
@@ -468,27 +466,17 @@ impl PEFile {
             self.data.truncate(sec_off + tail_len);
         }
 
-        // Re-get pointers after resize
-        let opt_after = self.get_optional_header_mut()?;
-        // SAFETY: opt_after points into self.data at validated offset
-        let dd_after: *mut DataDirectory = unsafe {
-            ptr::addr_of_mut!((*opt_after).data_directories[IMAGE_DIRECTORY_ENTRY_SECURITY])
-        };
-
-        // Zero Security directory entry
-        // SAFETY: dd_after is within the OptionalHeader64 struct
-        unsafe {
-            (*dd_after).virtual_address = 0;
-            (*dd_after).size = 0;
+        // Re-read after resize (file length changed; struct contents unchanged
+        // but read the current bytes to be explicit). Then zero the Security
+        // directory entry and clear FORCE_INTEGRITY in the local, and write
+        // the modified header back via `write_at` / `write_unaligned`.
+        let mut opt_after: OptionalHeader64 = self.get_optional_header()?;
+        opt_after.data_directories[IMAGE_DIRECTORY_ENTRY_SECURITY].virtual_address = 0;
+        opt_after.data_directories[IMAGE_DIRECTORY_ENTRY_SECURITY].size = 0;
+        if (opt_after.dll_characteristics & IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY) != 0 {
+            opt_after.dll_characteristics &= !IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY;
         }
-
-        // Clear FORCE_INTEGRITY bit if set
-        // SAFETY: opt_after points into self.data at validated offset
-        unsafe {
-            if ((*opt_after).dll_characteristics & IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY) != 0 {
-                (*opt_after).dll_characteristics &= !IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY;
-            }
-        }
+        self.set_optional_header(&opt_after)?;
 
         // Recompute checksum (recommended)
         if opts.recompute_checksum {
@@ -533,11 +521,9 @@ impl PEFile {
         sum = (sum & 0xffff) + (sum >> 16);
         let final_sum: u32 = u32::try_from((sum & 0xffff) + (sum >> 16)).expect("int cast");
 
-        let opt = self.get_optional_header_mut()?;
-        // SAFETY: opt points into self.data at validated offset
-        unsafe {
-            (*opt).checksum = final_sum;
-        }
+        let mut opt: OptionalHeader64 = self.get_optional_header()?;
+        opt.checksum = final_sum;
+        self.set_optional_header(&opt)?;
         Ok(())
     }
 
@@ -551,9 +537,8 @@ impl PEFile {
             })?;
         } else if strip == StripMode::StripIfSigned {
             // Read Security directory to check if signed
-            let opt = self.get_optional_header()?;
-            // SAFETY: opt points into self.data at validated offset
-            let dd = unsafe { (*opt).data_directories[IMAGE_DIRECTORY_ENTRY_SECURITY] };
+            let opt: OptionalHeader64 = self.get_optional_header()?;
+            let dd = opt.data_directories[IMAGE_DIRECTORY_ENTRY_SECURITY];
             if dd.virtual_address != 0 || dd.size != 0 {
                 self.strip_authenticode(StripOpts {
                     require_overlay: true,
@@ -562,17 +547,14 @@ impl PEFile {
             }
         }
 
-        // 2. Re-read PE/Optional (pointers may have moved due to resize in strip)
-        let opt = self.get_optional_header_mut()?;
-        // SAFETY: opt points into self.data at validated offset
-        // PORT NOTE: reshaped for borrowck — capture needed scalars from opt before re-borrowing self.data
-        let file_alignment = unsafe { (*opt).file_alignment };
-        // SAFETY: opt points into self.data at the offset validated by get_optional_header_mut
-        let section_alignment = unsafe { (*opt).section_alignment };
+        // 2. Re-read PE/Optional (offsets unchanged; values may have moved if strip ran)
+        let opt: OptionalHeader64 = self.get_optional_header()?;
+        let file_alignment = opt.file_alignment;
+        let section_alignment = opt.section_alignment;
 
         // 3. Duplicate .bun guard - compare all 8 bytes exactly
-        let section_headers = self.get_section_headers()?;
-        for section in section_headers {
+        for i in 0..self.num_sections as usize {
+            let section = self.read_section_header(i)?;
             if section.name[0..8] == BUN_SECTION_NAME {
                 return Err(Error::SectionExists);
             }
@@ -594,7 +576,8 @@ impl PEFile {
 
         // Determine first_raw (min PointerToRawData among sections with raw data, else data.len)
         let mut first_raw: u32 = u32::try_from(self.data.len()).expect("int cast");
-        for section in section_headers {
+        for i in 0..self.num_sections as usize {
+            let section = self.read_section_header(i)?;
             if section.size_of_raw_data > 0 {
                 if section.pointer_to_raw_data < first_raw {
                     first_raw = section.pointer_to_raw_data;
@@ -611,7 +594,8 @@ impl PEFile {
         // Recompute last_file_end and last_va_end after strip
         let mut last_file_end: u32 = 0;
         let mut last_va_end: u32 = 0;
-        for section in section_headers {
+        for i in 0..self.num_sections as usize {
+            let section = self.read_section_header(i)?;
             let file_end = section.pointer_to_raw_data + section.size_of_raw_data;
             if file_end > last_file_end {
                 last_file_end = file_end;
@@ -658,11 +642,9 @@ impl PEFile {
         if new_sh_off + size_of::<SectionHeader>() > first_raw as usize {
             return Err(Error::InsufficientHeaderSpace);
         }
-        // SAFETY: bounds-checked above; SectionHeader is #[repr(C)] POD
-        let sh_bytes = unsafe {
-            slice::from_raw_parts((&raw const sh).cast::<u8>(), size_of::<SectionHeader>())
-        };
-        self.data[new_sh_off..new_sh_off + size_of::<SectionHeader>()].copy_from_slice(sh_bytes);
+        // Write the new SectionHeader via `write_unaligned` (the table lives at
+        // an arbitrary byte offset; see `write_section_header`'s safety contract).
+        write_at::<SectionHeader>(&mut self.data, new_sh_off, &sh)?;
 
         // 8. Write payload
         // At data[new_raw ..]: write u64 LE length prefix, then data
@@ -672,34 +654,29 @@ impl PEFile {
         self.data[new_raw_usize + 8..new_raw_usize + 8 + data_to_embed.len()]
             .copy_from_slice(data_to_embed);
 
-        // 9. Update headers
-        // Get fresh pointers after resize
-        let pe_after = self.get_pe_header_mut()?;
-        // SAFETY: pe_after points into self.data at validated offset
-        unsafe {
-            (*pe_after).number_of_sections += 1;
-        }
+        // 9. Update headers: read-modify-write each header.
+        let mut pe_after: PEHeader = self.get_pe_header()?;
+        pe_after.number_of_sections += 1;
+        self.set_pe_header(&pe_after)?;
         self.num_sections += 1;
 
-        let opt_after = self.get_optional_header_mut()?;
-        // SAFETY: opt_after points into self.data at validated offset
-        unsafe {
+        {
+            let mut opt_after: OptionalHeader64 = self.get_optional_header()?;
             // If opt.size_of_headers < new_size_of_headers
-            if (*opt_after).size_of_headers < new_size_of_headers {
-                (*opt_after).size_of_headers = new_size_of_headers;
+            if opt_after.size_of_headers < new_size_of_headers {
+                opt_after.size_of_headers = new_size_of_headers;
             }
             // Calculate size_of_image: aligned end of last section
             let section_va_end = new_va + sh.virtual_size;
-            (*opt_after).size_of_image =
-                align_up_u32(section_va_end, (*opt_after).section_alignment)?;
+            opt_after.size_of_image = align_up_u32(section_va_end, opt_after.section_alignment)?;
 
             // Security directory must be zero (signature invalidated by change)
-            let dd_ptr: *mut DataDirectory =
-                ptr::addr_of_mut!((*opt_after).data_directories[IMAGE_DIRECTORY_ENTRY_SECURITY]);
-            if (*dd_ptr).virtual_address != 0 || (*dd_ptr).size != 0 {
-                (*dd_ptr).virtual_address = 0;
-                (*dd_ptr).size = 0;
+            let dd = &mut opt_after.data_directories[IMAGE_DIRECTORY_ENTRY_SECURITY];
+            if dd.virtual_address != 0 || dd.size != 0 {
+                dd.virtual_address = 0;
+                dd.size = 0;
             }
+            self.set_optional_header(&opt_after)?;
         }
 
         // Do not touch size_of_initialized_data (leave as is)
@@ -711,8 +688,8 @@ impl PEFile {
 
     /// Find the .bun section and return its data
     pub fn get_bun_section_data(&self) -> Result<&[u8], Error> {
-        let section_headers = self.get_section_headers()?;
-        for section in section_headers {
+        for i in 0..self.num_sections as usize {
+            let section = self.read_section_header(i)?;
             if section.name[0..8] == BUN_SECTION_NAME {
                 // Header: 8 bytes size (u64)
                 if (section.size_of_raw_data as usize) < size_of::<u64>() {
@@ -751,8 +728,8 @@ impl PEFile {
 
     /// Get the length of the Bun section data
     pub fn get_bun_section_length(&self) -> Result<u64, Error> {
-        let section_headers = self.get_section_headers()?;
-        for section in section_headers {
+        for i in 0..self.num_sections as usize {
+            let section = self.read_section_header(i)?;
             if section.name[0..8] == BUN_SECTION_NAME {
                 if (section.size_of_raw_data as usize) < size_of::<u64>() {
                     return Err(Error::InvalidBunSection);
@@ -787,22 +764,18 @@ impl PEFile {
     /// Validate the PE file structure
     pub fn validate(&self) -> Result<(), Error> {
         // Check DOS & PE signatures
-        let dos_header = self.get_dos_header()?;
-        // SAFETY: dos_header points into self.data at validated offset
-        if unsafe { (*dos_header).e_magic } != DOS_SIGNATURE {
+        let dos_header: DOSHeader = self.get_dos_header()?;
+        if dos_header.e_magic != DOS_SIGNATURE {
             return Err(Error::InvalidDOSSignature);
         }
 
-        let pe_header = self.get_pe_header()?;
-        // SAFETY: pe_header points into self.data at validated offset
-        if unsafe { (*pe_header).signature } != PE_SIGNATURE {
+        let pe_header: PEHeader = self.get_pe_header()?;
+        if pe_header.signature != PE_SIGNATURE {
             return Err(Error::InvalidPESignature);
         }
 
         // Check optional header magic is 0x20B (64-bit)
-        let optional_header = self.get_optional_header()?;
-        // SAFETY: optional_header points into self.data at validated offset
-        let optional_header = unsafe { &*optional_header };
+        let optional_header: OptionalHeader64 = self.get_optional_header()?;
         if optional_header.magic != OPTIONAL_HEADER_MAGIC_64 {
             return Err(Error::UnsupportedPEFormat);
         }
@@ -827,11 +800,16 @@ impl PEFile {
             return Err(Error::InvalidPEFile);
         }
 
-        // Validate each section
-        let section_headers = self.get_section_headers()?;
+        // Validate each section. Read the table into a Vec by value (each
+        // entry via `read_unaligned`) so we can iterate and compare without
+        // constructing an unaligned `&[SectionHeader]` (audit witness EXP-093).
+        let mut sections: Vec<SectionHeader> = Vec::with_capacity(self.num_sections as usize);
+        for i in 0..self.num_sections as usize {
+            sections.push(self.read_section_header(i)?);
+        }
         let mut max_va_end: u32 = 0;
 
-        for (i, section) in section_headers.iter().enumerate() {
+        for (i, section) in sections.iter().enumerate() {
             // If size_of_raw_data > 0, validate raw data bounds
             if section.size_of_raw_data > 0 {
                 if section.pointer_to_raw_data < optional_header.size_of_headers
@@ -842,7 +820,7 @@ impl PEFile {
                 }
 
                 // Check for overlaps with other sections using correct interval test
-                for other in &section_headers[i + 1..] {
+                for other in &sections[i + 1..] {
                     if other.size_of_raw_data > 0 {
                         let section_start = section.pointer_to_raw_data;
                         let section_end = section_start + section.size_of_raw_data;
@@ -885,12 +863,12 @@ pub mod utils {
     use super::*;
 
     pub fn is_pe(data: &[u8]) -> bool {
-        if data.len() < size_of::<DOSHeader>() {
+        // Read headers by value via `read_unaligned` — the input `data` is a
+        // byte slice with arbitrary alignment, so taking `&DOSHeader` /
+        // `&PEHeader` references would be UB (audit witness EXP-093).
+        let Ok(dos) = read_at::<DOSHeader>(data, 0) else {
             return false;
-        }
-
-        // SAFETY: bounds-checked above; DOSHeader is #[repr(C)] POD at offset 0
-        let dos = unsafe { ptr::read_unaligned(data.as_ptr().cast::<DOSHeader>()) };
+        };
         if dos.e_magic != DOS_SIGNATURE {
             return false;
         }
@@ -900,8 +878,9 @@ pub mod utils {
             return false;
         }
 
-        // SAFETY: bounds-checked above; PEHeader is #[repr(C)] POD
-        let pe = unsafe { ptr::read_unaligned(data.as_ptr().add(off).cast::<PEHeader>()) };
+        let Ok(pe) = read_at::<PEHeader>(data, off) else {
+            return false;
+        };
         pe.signature == PE_SIGNATURE
     }
 }

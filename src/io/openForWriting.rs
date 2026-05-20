@@ -1,5 +1,7 @@
 use bun_core::ZStr;
-use bun_sys::{self, Fd, FdExt, Mode};
+#[cfg(unix)]
+use bun_sys::FdExt;
+use bun_sys::{self, Fd, Mode};
 
 // PORT NOTE: Zig's `input_path: anytype` type-switches on `@TypeOf(input_path)` between
 // `bun.webcore.PathOrFileDescriptor` and `[:0]const u8` / `[:0]u8`. Rust has no type-switch,
@@ -112,7 +114,18 @@ pub fn open_for_writing_impl<P, C>(
 where
     P: OpenForWritingInput,
 {
+    #[cfg(windows)]
+    {
+        let _ = (
+            is_socket,
+            out_nonblocking,
+            ctx,
+            on_force_sync_or_isa_tty,
+            is_pollable,
+        );
+    }
     // TODO: this should be concurrent.
+    #[cfg(unix)]
     let mut isatty = false;
     let mut is_nonblocking = false;
     let result =

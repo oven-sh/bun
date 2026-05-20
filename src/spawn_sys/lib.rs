@@ -157,6 +157,7 @@ pub mod pdeathsig {
         DEFAULT_PDEATHSIG_ON_LINUX.store(enabled, Ordering::Release);
     }
 
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     #[inline]
     pub(crate) fn should_default() -> bool {
         DEFAULT_PDEATHSIG_ON_LINUX.load(Ordering::Acquire) && is_arming_thread()

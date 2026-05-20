@@ -3,14 +3,14 @@ use bstr::BStr;
 #[cfg(windows)]
 use bun_core::{WStr, w};
 use bun_core::{ZStr, strings};
+#[cfg(not(windows))]
+use bun_paths::DELIMITER;
 #[cfg(windows)]
 use bun_paths::resolve_path::PosixToWinNormalizer;
 use bun_paths::resolve_path::posix_to_platform_in_place;
 #[cfg(windows)]
 use bun_paths::w_path_buffer_pool;
-use bun_paths::{
-    DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP, WPathBuffer, is_absolute, path_buffer_pool,
-};
+use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, WPathBuffer, is_absolute, path_buffer_pool};
 
 #[allow(non_upper_case_globals)]
 mod scope {
@@ -18,6 +18,7 @@ mod scope {
 }
 use scope::which as which_log;
 
+#[cfg(not(windows))]
 fn is_valid(buf: &mut PathBuffer, segment: &[u8], bin: &[u8]) -> Option<u16> {
     let prefix_len = segment.len() + 1; // includes trailing path separator
     let len = prefix_len + bin.len();

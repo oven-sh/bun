@@ -2,12 +2,16 @@
 
 #[cfg(target_os = "macos")]
 use core::ffi::c_short;
+#[cfg(unix)]
 use core::ffi::{c_char, c_int};
+#[cfg(unix)]
 use core::ptr;
 use std::ffi::{CStr, CString};
 
 use bun_core::{Error, err};
-use bun_sys::{self as sys, Fd};
+#[cfg(unix)]
+use bun_sys as sys;
+use bun_sys::Fd;
 
 // `std.posix.system` — `bun_sys::c` only re-exports a thin slice of libc
 // (no `posix_spawn*`/`waitpid`/`wait4`). Use the `libc` crate directly here;
@@ -42,13 +46,16 @@ mod darwin_spawn_np {
 // MOVE_DOWN stub from `bun_errno`). Shim the remainder locally so this file
 // is self-contained; delete in favour of `bun_sys::posix::*` once that module
 // widens.
-use self::posix_compat::{Errno, errno, fd_t, pid_t, to_posix_path};
+#[cfg(unix)]
+use self::posix_compat::{Errno, errno};
+use self::posix_compat::{fd_t, pid_t, to_posix_path};
 #[cfg(target_os = "macos")]
 use self::posix_compat::{mode_t, unexpected_errno};
 
 #[allow(non_camel_case_types)]
 mod posix_compat {
     use bun_core::{Error, err};
+    #[cfg(unix)]
     use core::ffi::c_int;
     use std::ffi::CString;
 
@@ -69,6 +76,7 @@ mod posix_compat {
     /// `std.posix.E` — errno enum with **unprefixed** variant names. The real
     /// `bun_errno::posix::E` aliases `SystemErrno` (E-prefixed); local newtype
     /// keeps the body's `Errno::SUCCESS`/`NOMEM`/... matches intact.
+    #[cfg(unix)]
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     #[repr(transparent)]
     pub struct Errno(pub c_int);
@@ -85,32 +93,17 @@ mod posix_compat {
         pub const NAMETOOLONG: Errno = Errno(libc::ENAMETOOLONG);
         pub const INTR: Errno = Errno(libc::EINTR);
     }
-    #[cfg(not(unix))]
-    impl Errno {
-        pub const SUCCESS: Errno = Errno(0);
-        pub const NOMEM: Errno = Errno(12);
-        pub const INVAL: Errno = Errno(22);
-        pub const BADF: Errno = Errno(9);
-        pub const NAMETOOLONG: Errno = Errno(36);
-        pub const INTR: Errno = Errno(4);
-    }
-
     /// `std.posix.errno(rc)` — Zig: with libc, `rc == -1 ⇒ read __errno`,
     /// else `.SUCCESS`. The `posix_spawn*` family instead returns the errno
     /// **directly** (0 on success). This helper conflates both call
     /// conventions to match the .zig source 1:1; see TODO(port) below.
     // TODO(port): split into `errno_from_posix_spawn(rc)` (rc IS errno) vs
     // `errno_from_ret(rc)` (rc == -1 ⇒ read libc errno) and route call sites.
+    #[cfg(unix)]
     #[inline]
     pub fn errno(rc: c_int) -> Errno {
         if rc == -1 {
-            // Windows has no thread-local POSIX errno here — `posix_spawn`
-            // is unreachable on that target (the libuv path handles spawn),
-            // so just return UNKNOWN to keep the type compiling.
-            #[cfg(unix)]
             return Errno(bun_sys::posix::errno());
-            #[cfg(windows)]
-            return Errno(bun_sys::E::UNKNOWN as i32);
         }
         Errno::SUCCESS
     }
@@ -291,10 +284,13 @@ pub mod bun_spawn {
 
 // mostly taken from zig's posix_spawn.zig
 pub mod posix_spawn {
+    #[cfg(unix)]
     use super::bun_spawn;
     use super::*;
 
+    #[cfg(unix)]
     const SYSCALL_POSIX_SPAWN: sys::Tag = sys::Tag::posix_spawn;
+    #[cfg(unix)]
     const SYSCALL_WAITPID: sys::Tag = sys::Tag::waitpid;
 
     #[derive(Copy, Clone)]
@@ -900,6 +896,7 @@ pub mod posix_spawn {
     pub use crate::spawn_process::{PosixSpawnResult, Rusage};
 }
 
+#[cfg(unix)]
 use crate::spawn_process as process;
 
 // ported from: src/runtime/api/bun/spawn.zig

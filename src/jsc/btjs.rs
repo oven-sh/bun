@@ -372,14 +372,17 @@ mod zig_std_debug {
             {
                 // SAFETY: caller passes a `getcontext`-initialized ucontext; mcontext is non-null.
                 let fp = unsafe { (*(*context).uc_mcontext).__ss.__fp } as usize;
-                return Ok(Self::init(first_address, Some(fp)));
+                Ok(Self::init(first_address, Some(fp)))
             }
-            if SUPPORTS_UNWINDING {
-                // PORT NOTE: DWARF `UnwindContext::init` not ported — `SUPPORTS_UNWINDING`
-                // is `false`, so this branch is dead. Kept to mirror Zig structure.
-                return Err(err!("UnsupportedCpuArchitecture"));
+            #[cfg(not(all(target_vendor = "apple", target_arch = "aarch64")))]
+            {
+                if SUPPORTS_UNWINDING {
+                    // PORT NOTE: DWARF `UnwindContext::init` not ported — `SUPPORTS_UNWINDING`
+                    // is `false`, so this branch is dead. Kept to mirror Zig structure.
+                    return Err(err!("UnsupportedCpuArchitecture"));
+                }
+                Ok(Self::init(first_address, None))
             }
-            Ok(Self::init(first_address, None))
         }
 
         pub fn get_last_error(&mut self) -> Option<LastUnwindError> {

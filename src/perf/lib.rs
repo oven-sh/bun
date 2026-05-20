@@ -68,6 +68,7 @@ fn is_enabled_on_mac_os_once() {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn is_enabled_on_linux_once() {
     if bun_core::env_var::feature_flag::BUN_TRACE
         .get()

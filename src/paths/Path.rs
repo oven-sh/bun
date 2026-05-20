@@ -489,6 +489,7 @@ pub fn dirname_generic<U: PathUnit>(path: &[U]) -> Option<&[U]> {
     return dirname_windows(path);
 }
 
+#[cfg(not(windows))]
 #[inline]
 fn dirname_posix<U: PathUnit>(path: &[U]) -> Option<&[U]> {
     if path.is_empty() {

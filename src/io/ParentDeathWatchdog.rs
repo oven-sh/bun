@@ -35,8 +35,13 @@
 use core::ffi::c_int;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use bun_core::{ZStr, env_var};
-use bun_sys::{self, Fd, O};
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use bun_core::ZStr;
+use bun_core::env_var;
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+use bun_sys::Fd;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use bun_sys::O;
 
 use crate::posix_event_loop::EventLoopCtx;
 #[cfg(target_os = "macos")]
@@ -179,6 +184,7 @@ unsafe extern "C" {
     // safe: out-param is `&mut c_int` (non-null, valid for write); kernel only
     // writes the slot and reports failure via the return value — bad pid →
     // `ECHILD`, never UB. Async-signal-safe.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     safe fn waitpid(pid: libc::pid_t, status: &mut c_int, options: c_int) -> libc::pid_t;
 }
 
@@ -507,7 +513,7 @@ pub fn kill_subreaper_adoptees(siblings: &[libc::pid_t]) {
 /// ppid-verify + leaves-first-SIGKILL discipline as `kill_descendants()`, just
 /// not rooted at ourselves. `expected_ppid_of_root` lets the caller verify
 /// `root` itself before recursing (ppid==us for subreaper adoptees).
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn kill_tree_rooted_at(root: libc::pid_t, expected_ppid_of_root: libc::pid_t) {
     let mut to_visit: Vec<libc::pid_t> = Vec::new();
     let mut to_kill: Vec<libc::pid_t> = Vec::new();
@@ -734,7 +740,7 @@ fn list_child_pids_linux(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option
 /// Single-shot open+read+close into `buf`. Exit-handler helper — avoids
 /// allocating (so no `File.readFrom`) and swallows the `bun.sys` error info
 /// we don't need.
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn read_file_once<'a>(path: &ZStr, buf: &'a mut [u8]) -> Option<&'a [u8]> {
     let fd = match bun_sys::open(path, O::RDONLY, 0) {
         Ok(fd) => fd,

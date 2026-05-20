@@ -24,8 +24,11 @@
 //! }
 //! ```
 
-use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+#[cfg(not(any(windows, target_vendor = "apple")))]
+use core::sync::atomic::AtomicU32;
+use core::sync::atomic::{AtomicU64, Ordering};
 
+#[cfg(not(any(windows, target_vendor = "apple")))]
 use crate::Futex;
 
 #[derive(Default)]
@@ -303,11 +306,13 @@ impl DarwinImpl {
     }
 }
 
+#[cfg(not(any(windows, target_vendor = "apple")))]
 #[derive(Default)]
 pub struct FutexImpl {
     state: AtomicU32,
 }
 
+#[cfg(not(any(windows, target_vendor = "apple")))]
 impl FutexImpl {
     pub const fn new() -> Self {
         Self {

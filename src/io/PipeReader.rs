@@ -1,8 +1,6 @@
 use core::ffi::c_void;
 use core::mem;
 use core::ptr::NonNull;
-#[cfg(windows)]
-use std::sync::Arc;
 
 use bun_sys::{self as sys, Fd};
 
@@ -35,7 +33,7 @@ use bun_sys::windows::libuv as uv;
 #[cfg(windows)]
 // `close`/`set_data`/`is_closed` are default trait methods; bring traits into
 // scope so method resolution finds them on `Pipe`/`uv_tty_t`/`fs_t`.
-use bun_sys::windows::libuv::{UvHandle as _, UvReq as _, UvStream as _};
+use bun_sys::windows::libuv::UvHandle as _;
 
 // PipeReader.zig declares no `Output.scoped(.PipeReader, …)` scope; all logging
 // goes through `bun.sys.syslog` (the `SYS` scope) or `libuv::log!`.

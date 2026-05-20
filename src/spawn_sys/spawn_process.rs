@@ -14,6 +14,7 @@ use core::sync::atomic::Ordering;
 use bun_core::Output;
 use bun_sys::{self, Fd, FdExt as _};
 
+#[cfg(not(windows))]
 use crate::posix_spawn::posix_spawn;
 #[cfg(unix)]
 use posix_spawn::{Actions as PosixSpawnActions, Attr as PosixSpawnAttr};
@@ -645,41 +646,47 @@ pub unsafe fn spawn_process_posix(
     let (setsigdef, setsigmask) = (libc::POSIX_SPAWN_SETSIGDEF, libc::POSIX_SPAWN_SETSIGMASK);
     #[cfg(target_os = "android")]
     let (setsigdef, setsigmask) = (0x04_i32, 0x08_i32);
-    let mut flags: i32 = setsigdef | setsigmask;
+    let flags: i32 = {
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+        let mut f: i32 = setsigdef | setsigmask;
+        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
+        let f: i32 = setsigdef | setsigmask;
 
-    #[cfg(target_os = "macos")]
-    {
-        flags |= POSIX_SPAWN_CLOEXEC_DEFAULT;
-
-        if options.use_execve_on_macos {
-            flags |= POSIX_SPAWN_SETEXEC;
-
-            if matches!(options.stdin, PosixStdio::Buffer)
-                || matches!(options.stdout, PosixStdio::Buffer)
-                || matches!(options.stderr, PosixStdio::Buffer)
-            {
-                Output::panic(format_args!(
-                    "Internal error: stdin, stdout, and stderr cannot be buffered when use_execve_on_macos is true",
-                ));
-            }
-        }
-    }
-
-    if options.detached {
-        // TODO(port): @hasDecl check — assume present on platforms that define it.
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            // glibc/musl/bionic <spawn.h> all define POSIX_SPAWN_SETSID as 0x80;
-            // the libc crate only exposes it for `target_os = "linux"`.
-            flags |= 0x80;
-        }
         #[cfg(target_os = "macos")]
         {
-            // Darwin <spawn.h>: 0x0400 (libc crate omits the constant).
-            flags |= 0x0400;
+            f |= POSIX_SPAWN_CLOEXEC_DEFAULT;
+
+            if options.use_execve_on_macos {
+                f |= POSIX_SPAWN_SETEXEC;
+
+                if matches!(options.stdin, PosixStdio::Buffer)
+                    || matches!(options.stdout, PosixStdio::Buffer)
+                    || matches!(options.stderr, PosixStdio::Buffer)
+                {
+                    Output::panic(format_args!(
+                        "Internal error: stdin, stdout, and stderr cannot be buffered when use_execve_on_macos is true",
+                    ));
+                }
+            }
         }
-        attr.detached = true;
-    }
+
+        if options.detached {
+            // TODO(port): @hasDecl check — assume present on platforms that define it.
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            {
+                // glibc/musl/bionic <spawn.h> all define POSIX_SPAWN_SETSID as 0x80;
+                // the libc crate only exposes it for `target_os = "linux"`.
+                f |= 0x80;
+            }
+            #[cfg(target_os = "macos")]
+            {
+                // Darwin <spawn.h>: 0x0400 (libc crate omits the constant).
+                f |= 0x0400;
+            }
+            attr.detached = true;
+        }
+        f
+    };
 
     // Pass PTY slave fd to attr for controlling terminal setup
     attr.pty_slave_fd = options.pty_slave_fd;

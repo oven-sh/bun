@@ -7,7 +7,7 @@ use core::sync::atomic::Ordering;
 // (std::sync::Arc removed — Process is intrusively ref-counted via
 // bun_ptr::ThreadSafeRefCount; see SyncWindowsProcess below.)
 
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
 use bun_core::Global;
 use bun_core::Output;
 use bun_event_loop::EventLoopHandle;
@@ -24,6 +24,7 @@ use bun_sys::{self, Fd, Maybe};
 use uv::{UvHandle as _, UvStream as _};
 
 // posix_spawn(2) wrappers — owned by the `bun_spawn_sys` leaf crate.
+#[cfg(unix)]
 use bun_spawn_sys::posix_spawn::posix_spawn;
 /// `posix_spawn::WaitPidResult` — re-exported from `bun_spawn_sys`. `status`
 /// is `u32` there (Zig `c_int` reinterpreted via the `W*` macros);
@@ -1283,6 +1284,7 @@ pub mod waiter_thread_posix {
         js_process: ProcessQueue::new(),
     }));
 
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     #[inline]
     fn instance() -> *mut WaiterThreadPosix {
         INSTANCE.0.get()
@@ -1765,10 +1767,10 @@ mod spawn_process_body {
 
     /// RAII fd owner — closes the wrapped [`Fd`] on drop iff it is valid.
     /// Used by `sync::spawn_posix` (no-orphans kqueue, ppid pidfd).
-    #[cfg(unix)]
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
     struct AutoCloseFd(Fd);
 
-    #[cfg(unix)]
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
     impl AutoCloseFd {
         #[inline]
         const fn new(fd: Fd) -> Self {
@@ -1784,7 +1786,7 @@ mod spawn_process_body {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
     impl Drop for AutoCloseFd {
         fn drop(&mut self) {
             if self.0 != Fd::INVALID {
@@ -2885,6 +2887,7 @@ mod spawn_process_body {
 
         // Forward signals from parent to the child process.
         // FFI decls live in `bun_spawn_sys::ffi` (leaf -sys crate).
+        #[cfg(unix)]
         use bun_spawn_sys::ffi::{
             Bun__currentSyncPID, Bun__registerSignalsForForwarding,
             Bun__sendPendingSignalIfNecessary, Bun__unregisterSignalsForForwarding,
@@ -2944,8 +2947,10 @@ mod spawn_process_body {
             safe fn tcgetpgrp(fd: c_int) -> libc::pid_t;
             safe fn tcsetpgrp(fd: c_int, pgrp: libc::pid_t) -> c_int;
             safe fn getpgrp() -> libc::pid_t;
+            #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
             safe fn getppid() -> libc::pid_t;
             safe fn isatty(fd: c_int) -> c_int;
+            #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
             safe fn raise(sig: c_int) -> c_int;
             safe fn kill(pid: libc::pid_t, sig: c_int) -> c_int;
             /// No args; returns -1/errno on failure. macOS-only caller below.
@@ -2955,6 +2960,7 @@ mod spawn_process_body {
 
         #[cfg(unix)]
         impl JobControl {
+            #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
             pub(crate) fn is_active(&self) -> bool {
                 self.prev > 0
             }
@@ -2992,6 +2998,7 @@ mod spawn_process_body {
             /// returns, and on resume gives the terminal back to the script (only
             /// if the shell `fg`'d us — for `bg` the shell keeps foreground and
             /// the script runs as a background pgroup like any other job).
+            #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
             fn on_child_stopped(&self) {
                 if self.prev <= 0 {
                     return; // non-TTY: never asked for stop reports
@@ -3171,8 +3178,10 @@ mod spawn_process_body {
                 }
             }
             // Move `jc` into the guard so the defer closure owns it (avoids holding
-            // a mutable borrow across the wait loop below); access via `&*jc` deref.
-            let jc = scopeguard::guard(jc, move |mut jc| {
+            // a mutable borrow across the wait loop below); access via `&*_jc` deref.
+            // `_`-prefixed: on freebsd the guard is held only for its `Drop`
+            // (`restore()`); the binding is read only on linux/macos.
+            let _jc = scopeguard::guard(jc, move |mut jc| {
                 if no_orphans {
                     jc.restore();
                     // pgroup → tracked uniqueids (macOS). Do NOT call the
@@ -3249,7 +3258,7 @@ mod spawn_process_body {
                     let r: Option<Maybe<Status>> = wait_mac_kqueue(
                         process.pid,
                         ppid,
-                        &*jc,
+                        &*_jc,
                         no_orphans_kq.fd(),
                         &mut out,
                         &mut out_fds_to_wait_for,
@@ -3260,7 +3269,7 @@ mod spawn_process_body {
                         process.pid,
                         ppid,
                         no_orphans,
-                        &*jc,
+                        &*_jc,
                         &mut out,
                         &mut out_fds_to_wait_for,
                         &mut out_fds,

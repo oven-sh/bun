@@ -12,7 +12,9 @@ use core::ptr;
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::{MutableString, slice_to_nul, strings};
 use bun_core::{Output, ZStr, slice_as_bytes};
-use bun_paths::{OSPathBuffer, OSPathChar, PathBuffer, SEP, SEP_STR};
+#[cfg(unix)]
+use bun_paths::PathBuffer;
+use bun_paths::{OSPathBuffer, OSPathChar, SEP, SEP_STR};
 use bun_sys::{self, Fd, FdExt};
 use bun_wyhash::hash;
 
@@ -254,6 +256,10 @@ pub mod lib {
             can_use_pwrite: &mut bool,
             can_use_lseek: &mut bool,
         ) -> Result {
+            #[cfg(windows)]
+            {
+                *can_use_pwrite = false;
+            }
             let mut target_offset: i64 = 0; // Updated by archive.next() — where this block should be written
             let mut actual_offset: i64 = 0; // Where we've actually written to (for write() path)
             let mut final_offset: i64 = 0; // Furthest point the file must extend to
@@ -1312,6 +1318,7 @@ impl Drop for BufferReadStream {
 /// The check works by resolving the symlink target relative to the symlink's
 /// directory location using a fake root, then checking if the result stays
 /// within that fake root.
+#[cfg(unix)]
 fn is_symlink_target_safe(
     symlink_path: &[u8],
     link_target: &ZStr,
@@ -1664,6 +1671,7 @@ impl Archiver {
         // PORT NOTE: reshaped for borrowck — ctx is Option<&mut>, rebound as needed
         let mut ctx = ctx;
 
+        #[cfg(unix)]
         let mut symlink_join_buf: Option<bun_paths::path_buffer_pool::Guard> = None;
 
         #[cfg(unix)]
@@ -1966,8 +1974,6 @@ impl Archiver {
                             // then https://github.com/npm/cli/blob/feb54f7e9a39bd52519221bae4fafc8bc70f235e/node_modules/pacote/lib/fetcher.js#L402-L411
                             //
                             // we simplify and turn it into `entry.mode || 0o666` because we aren't accepting a umask or fmask option.
-                            #[cfg(windows)]
-                            let mode: bun_sys::Mode = 0;
                             #[cfg(not(windows))]
                             let mode: bun_sys::Mode = bun_sys::Mode::try_from(
                                 // SAFETY: entry valid

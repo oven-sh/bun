@@ -507,6 +507,7 @@ pub use open_for_writing_mod::{open_for_writing, open_for_writing_impl};
 
 // ════════════════════════════════════════════════════════════════════════════
 
+#[cfg(not(windows))]
 use core::ffi::c_int;
 use core::sync::atomic::Ordering;
 
@@ -550,7 +551,9 @@ mod safe_c {
     unsafe extern "C" {
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         pub(super) safe fn kqueue() -> c_int;
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         pub(super) safe fn epoll_create1(flags: c_int) -> c_int;
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         pub(super) safe fn eventfd(initval: libc::c_uint, flags: c_int) -> c_int;
         // Out-param `tp` is `&mut timespec` (non-null, valid for write); libc
         // only writes the slot and reports failure via the return value —
@@ -667,9 +670,11 @@ pub struct IoRequestLoop {
 // happens-before for init.
 static LOOP: bun_core::ThreadCell<core::mem::MaybeUninit<IoRequestLoop>> =
     bun_core::ThreadCell::new(core::mem::MaybeUninit::uninit());
+#[cfg(not(windows))]
 static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
 
 impl IoRequestLoop {
+    #[cfg(not(windows))]
     fn load() {
         // SAFETY: called exactly once via `ONCE.get_or_init`; no other access
         // until this returns. `get_unchecked` because this runs on the
@@ -1090,6 +1095,7 @@ impl IoRequestLoop {
         }
     }
 
+    #[cfg(not(windows))]
     fn update_now(&self) {
         let mut ts = self.cached_now.get();
         Self::update_timespec(&mut ts);
@@ -1328,14 +1334,18 @@ pub enum PollableTag {
 /// single `u64` (`epoll_event.data.u64` / `kevent.udata`), so we keep the
 /// packed addr:49 + tag:15 layout locally.
 /// PERF(port): was TaggedPointer pack — load-bearing (kernel-surface u64).
+#[cfg(not(windows))]
 #[derive(Clone, Copy)]
 struct Pollable {
     value: u64,
 }
 
+#[cfg(not(windows))]
 const POLLABLE_ADDR_BITS: u64 = 49;
+#[cfg(not(windows))]
 const POLLABLE_ADDR_MASK: u64 = (1u64 << POLLABLE_ADDR_BITS) - 1;
 
+#[cfg(not(windows))]
 impl Pollable {
     pub(crate) fn init(t: PollableTag, p: *mut Poll) -> Pollable {
         let addr = p as usize as u64;
@@ -1787,7 +1797,9 @@ impl Poll {
 
 pub const RETRY: E = E::EAGAIN;
 
-use crate::posix_event_loop::{Flags as PollFlags, FlagsSet as PollFlagsSet, OneShotFlag};
+#[cfg(not(windows))]
+use crate::posix_event_loop::OneShotFlag;
+use crate::posix_event_loop::{Flags as PollFlags, FlagsSet as PollFlagsSet};
 
 pub type EventLoopHandle = EventLoopCtx;
 
@@ -1993,6 +2005,7 @@ pub enum PathOrFileDescriptor {
 // Waker so `Loop::load` has no upward dep on bun_io (T3). bun_io re-exports.
 
 pub mod waker {
+    #[cfg(not(windows))]
     use bun_sys::Fd;
 
     #[cfg(target_os = "macos")]
@@ -2076,7 +2089,6 @@ pub mod waker {
     unsafe extern "C" {
         // Defined in src/io/io_darwin.cpp. `mach_port` is a by-value `u32`;
         // bad/dead ports are reported by mach return codes, not UB.
-        safe fn io_darwin_close_machport(port: bun_core::mach_port);
         fn io_darwin_create_machport(kq: i32, buf: *mut c_void, len: usize) -> bun_core::mach_port;
         safe fn io_darwin_schedule_wakeup(port: bun_core::mach_port) -> bool;
     }

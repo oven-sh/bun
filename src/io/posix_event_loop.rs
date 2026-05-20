@@ -1,7 +1,11 @@
-use core::ffi::{c_int, c_void};
+#[cfg(unix)]
+use core::ffi::c_int;
+use core::ffi::c_void;
 use core::fmt;
+#[cfg(unix)]
 use core::ptr;
 
+#[cfg(not(windows))]
 use bun_sys::{self as sys, Fd};
 use bun_uws_sys::Loop as UwsLoop;
 
@@ -23,12 +27,6 @@ fn loop_add_active(loop_: &mut Loop, value: u32) {
 fn loop_sub_active(loop_: &mut Loop, value: u32) {
     loop_.active = loop_.active.saturating_sub(value);
 }
-#[cfg(windows)]
-#[inline]
-fn loop_add_active(_loop: &mut Loop, _value: u32) {}
-#[cfg(windows)]
-#[inline]
-fn loop_sub_active(_loop: &mut Loop, _value: u32) {}
 
 bun_core::declare_scope!(KeepAlive, visible);
 
@@ -43,6 +41,7 @@ macro_rules! syslog {
 /// Local port of `Maybe(T).errnoSys` (Zig: src/runtime/node.zig). `bun_sys`
 /// does not yet expose this helper on `Result<T>`; once it does, drop this and
 /// call `sys::Result::<()>::errno_sys` directly.
+#[cfg(not(windows))]
 #[inline]
 fn errno_sys<R>(rc: R, syscall: sys::Tag) -> Option<sys::Result<()>>
 where
@@ -121,7 +120,7 @@ pub fn js_vm_ctx() -> EventLoopCtx {
 // `KQueueGenerationNumber` is `usize` on macOS-debug, else a zero-size sentinel.
 #[cfg(all(target_os = "macos", debug_assertions))]
 type KQueueGenerationNumber = usize;
-#[cfg(not(all(target_os = "macos", debug_assertions)))]
+#[cfg(all(unix, not(all(target_os = "macos", debug_assertions))))]
 type KQueueGenerationNumber = u8; // PORT NOTE: Zig uses `u0`; smallest Rust int is u8. Gated by cfg below.
 
 // PORTING.md §Global mutable state: counter → Atomic. Debug-only diagnostic;
@@ -1524,7 +1523,7 @@ pub unsafe extern "C" fn Bun__internal_dispatch_ready_poll(
     file_poll.on_epoll_event(&ev);
 }
 
-#[cfg(any(target_os = "macos", target_os = "freebsd"))]
+#[cfg(target_os = "macos")]
 static TIMEOUT: bun_sys::posix::timespec = bun_sys::posix::timespec {
     tv_sec: 0,
     tv_nsec: 0,
@@ -1538,6 +1537,7 @@ pub enum OneShotFlag {
     None,
 }
 
+#[cfg(not(windows))]
 const INVALID_FD: Fd = Fd::INVALID;
 
 // ──────────────────────────────────────────────────────────────────────────

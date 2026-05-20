@@ -1787,7 +1787,10 @@ pub fn join_abs_string_buf_znt<'a, P: PlatformT>(
     buf: &'a mut [u8],
     parts: &[&[u8]],
 ) -> &'a ZStr {
-    if (matches!(P::P, Platform::AUTO | Platform::Loose | Platform::Windows)) && cfg!(windows) {
+    // `Platform::AUTO == Platform::Windows` on the windows host, so listing it
+    // alongside `Windows` would be a duplicate arm; on non-windows hosts the
+    // whole branch is dead via `cfg!(windows)`.
+    if (matches!(P::P, Platform::Loose | Platform::Windows)) && cfg!(windows) {
         let r = _join_abs_string_buf::<true, platform::Nt>(cwd, buf, parts);
         // SAFETY: NUL written at r.len()
         return unsafe { ZStr::from_raw(r.as_ptr(), r.len()) };

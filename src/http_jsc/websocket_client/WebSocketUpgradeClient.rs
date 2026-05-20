@@ -1332,7 +1332,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                         header.name(),
                         b"Sec-WebSocket-Version",
                     ) {
-                        if !strings::eql_comptime_ignore_len(header.value(), b"13") {
+                        if !strings::eql_comptime(header.value(), b"13") {
                             // SAFETY: no `&mut Self` is live across this call.
                             unsafe { Self::terminate(this, ErrorCode::InvalidWebsocketVersion) };
                             return;

@@ -1813,11 +1813,21 @@ pub mod command {
         Ok(())
     }
 
-    /// Export `BUN_INTERNAL_SKIP_SECURITY_SCANNER=true` into the current
-    /// process's environment so every child `bun install` inherits it.
+    /// Arm the in-process `bun_install::SKIP_SECURITY_SCANNER` flag and export
+    /// the companion `BUN_INTERNAL_SKIP_SECURITY_SCANNER=true` env var.
     /// Used by `bun create` to prevent a globally-configured
     /// `install.security.scanner` from blocking scaffolding. See #31149.
+    ///
+    /// On Windows, `bun_sys::environ()` is a WTF-8 snapshot frozen at startup,
+    /// so a `SetEnvironmentVariableW` call alone isn't enough: `env_loader`
+    /// reads the snapshot and `spawn_sync` with `envp: None` passes the
+    /// snapshot pointer to the child. The static flag is what in-process
+    /// readers (and `bunx_command` when it builds an explicit `envp`) check;
+    /// setenv/SetEnvironmentVariableW is the belt-and-suspenders for Unix
+    /// fork-inherit (e.g. a grandchild `bun install` that `create-next-app`
+    /// spawned directly via `child_process.spawn("bun", …)`).
     fn set_skip_security_scanner_env() {
+        bun_install::SKIP_SECURITY_SCANNER.store(true, core::sync::atomic::Ordering::Relaxed);
         #[cfg(unix)]
         {
             // SAFETY: both pointers are 'static NUL-terminated byte string

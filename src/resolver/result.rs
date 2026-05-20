@@ -503,13 +503,6 @@ impl Default for MatchResult {
     }
 }
 
-pub enum MatchResultUnion {
-    NotFound,
-    Success(MatchResult),
-    Pending(PendingResolution),
-    Failure(bun_core::Error),
-}
-
 /// Discriminant-only return for the resolver call chain. The `MatchResult`
 /// payload (~300 bytes) is written through an `out: &mut MatchResult` parameter
 /// instead of being moved by value through every nested level. **`out` is only

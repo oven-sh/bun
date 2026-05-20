@@ -11,6 +11,8 @@ on:
       - "src/**/*.rs"
       - "src/**/*.classes.ts"
       - "src/codegen/**"
+      - "scripts/build/**"
+      - "scripts/build.ts"
       - "Cargo.toml"
       - "Cargo.lock"
       - "clippy.toml"
@@ -54,19 +56,6 @@ jobs:
           rustup override set "$RUSTUP_TOOLCHAIN"
           # rustc/clippy diagnostics → inline PR annotations
           echo "::add-matcher::.github/rust-matcher.json"
-
-      - name: Cache cargo + codegen
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-            build/debug/codegen
-          key: clippy-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'src/codegen/**') }}
-          restore-keys: |
-            clippy-${{ runner.os }}-
 
       - name: Generate codegen
         # bun_runtime/bun_jsc/bun_core `include!()` files under

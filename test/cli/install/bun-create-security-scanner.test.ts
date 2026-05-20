@@ -16,7 +16,7 @@
 
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
-import { bunEnv as env, bunExe, tmpdirSync } from "harness";
+import { bunExe, bunEnv as env, tmpdirSync } from "harness";
 import { join } from "path";
 
 let x_dir: string;

@@ -1613,7 +1613,7 @@ impl CalcValue for Angle {
     }
     #[inline]
     fn eql(&self, other: &Self) -> bool {
-        Angle::eql(self, other)
+        Angle::eql(*self, *other)
     }
 }
 
@@ -1721,7 +1721,7 @@ calc_protocol_forwarders!(Percentage {
     try_sign: forward,
     try_map: forward,
     try_op: forward,
-    try_op_to: |this, rhs, ctx, f| { Some(this.op_to(rhs, ctx, f)) },
+    try_op_to: |this, rhs, ctx, f| { Some(this.op_to(*rhs, ctx, f)) },
     partial_cmp: forward,
     is_compatible: always_true,
     parse_to_css: forward,
@@ -1744,7 +1744,7 @@ impl CalcValue for Percentage {
     }
     #[inline]
     fn eql(&self, other: &Self) -> bool {
-        Percentage::eql(self, other)
+        Percentage::eql(*self, *other)
     }
 }
 

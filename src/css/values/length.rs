@@ -288,7 +288,7 @@ impl LengthValue {
         Err(location.new_unexpected_token_error(token))
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         let (value, unit) = self.to_unit_value();
 
         // The unit can be omitted if the value is zero, except inside calc()
@@ -300,7 +300,7 @@ impl LengthValue {
         css::serializer::serialize_dimension(value, unit, dest)
     }
 
-    pub fn is_zero(&self) -> bool {
+    pub fn is_zero(self) -> bool {
         self.value() == 0.0
     }
 
@@ -313,8 +313,8 @@ impl LengthValue {
 
     /// Attempts to convert the value to pixels.
     /// Returns `None` if the conversion is not possible.
-    pub fn to_px(&self) -> Option<CSSNumber> {
-        match *self {
+    pub fn to_px(self) -> Option<CSSNumber> {
+        match self {
             Self::Px(v) => Some(v),
             Self::In(v) => Some(v * PX_PER_IN),
             Self::Cm(v) => Some(v * PX_PER_CM),
@@ -326,25 +326,25 @@ impl LengthValue {
         }
     }
 
-    pub fn is_sign_negative(&self) -> bool {
+    pub fn is_sign_negative(self) -> bool {
         let Some(s) = self.try_sign() else {
             return false;
         };
         s.is_sign_negative()
     }
 
-    pub fn is_sign_positive(&self) -> bool {
+    pub fn is_sign_positive(self) -> bool {
         let Some(s) = self.try_sign() else {
             return false;
         };
         s.is_sign_positive()
     }
 
-    pub fn try_sign(&self) -> Option<f32> {
+    pub fn try_sign(self) -> Option<f32> {
         Some(self.sign())
     }
 
-    pub fn sign(&self) -> f32 {
+    pub fn sign(self) -> f32 {
         css::signfns::sign_f32(self.value())
     }
 
@@ -360,11 +360,11 @@ impl LengthValue {
         Err(())
     }
 
-    pub fn to_unit_value(&self) -> (CSSNumber, &'static [u8]) {
+    pub fn to_unit_value(self) -> (CSSNumber, &'static [u8]) {
         (self.value(), self.unit())
     }
 
-    pub fn map(&self, map_fn: impl FnOnce(f32) -> f32) -> LengthValue {
+    pub fn map(self, map_fn: impl FnOnce(f32) -> f32) -> LengthValue {
         // PERF(port): was comptime monomorphization (`comptime map_fn: *const fn`).
         self.map_value(map_fn)
     }
@@ -377,8 +377,8 @@ impl LengthValue {
         None
     }
 
-    pub fn partial_cmp(&self, other: &LengthValue) -> Option<Ordering> {
-        if core::mem::discriminant(self) == core::mem::discriminant(other) {
+    pub fn partial_cmp(self, other: LengthValue) -> Option<Ordering> {
+        if core::mem::discriminant(&self) == core::mem::discriminant(&other) {
             let a = self.value();
             let b = other.value();
             return crate::generic::partial_cmp_f32(&a, &b);
@@ -393,12 +393,12 @@ impl LengthValue {
     }
 
     pub fn try_op(
-        &self,
-        other: &LengthValue,
+        self,
+        other: LengthValue,
         op_fn: impl Fn(f32, f32) -> f32,
     ) -> Option<LengthValue> {
         // PERF(port): Zig used `ctx: anytype` + `comptime op_fn` (manual closure) — Rust closure captures ctx
-        if let Some(v) = self.try_same_unit_op(other, &op_fn) {
+        if let Some(v) = self.try_same_unit_op(&other, &op_fn) {
             return Some(v);
         }
 
@@ -413,11 +413,11 @@ impl LengthValue {
     }
 
     pub fn try_op_to<R>(
-        &self,
-        other: &LengthValue,
+        self,
+        other: LengthValue,
         op_fn: impl FnOnce(f32, f32) -> R,
     ) -> Option<R> {
-        if core::mem::discriminant(self) == core::mem::discriminant(other) {
+        if core::mem::discriminant(&self) == core::mem::discriminant(&other) {
             let a = self.value();
             let b = other.value();
             return Some(op_fn(a, b));
@@ -433,8 +433,8 @@ impl LengthValue {
         None
     }
 
-    pub fn try_add(&self, rhs: &LengthValue) -> Option<LengthValue> {
-        if let Some(v) = self.try_same_unit_op(rhs, |a, b| a + b) {
+    pub fn try_add(self, rhs: LengthValue) -> Option<LengthValue> {
+        if let Some(v) = self.try_same_unit_op(&rhs, |a, b| a + b) {
             return Some(v);
         }
         if let Some(a) = self.to_px() {
@@ -445,7 +445,7 @@ impl LengthValue {
         None
     }
 
-    pub fn is_compatible(&self, browsers: Browsers) -> bool {
+    pub fn is_compatible(self, browsers: Browsers) -> bool {
         match self.feature() {
             Some(feature) => feature.is_compatible(browsers),
             None => true,
@@ -592,7 +592,7 @@ impl Length {
 
     fn try_add(&self, other: &Length) -> Option<Length> {
         if let (Self::Value(a), Self::Value(b)) = (self, other) {
-            if let Some(res) = a.try_add(b) {
+            if let Some(res) = a.try_add(*b) {
                 return Some(Self::Value(res));
             }
             return None;
@@ -682,7 +682,7 @@ impl Length {
 
     pub fn partial_cmp(&self, other: &Length) -> Option<Ordering> {
         if let (Self::Value(a), Self::Value(b)) = (self, other) {
-            return LengthValue::partial_cmp(a, b);
+            return LengthValue::partial_cmp(*a, *b);
         }
         None
     }
@@ -700,7 +700,7 @@ impl Length {
 
     pub fn try_op(&self, other: &Length, op_fn: impl Fn(f32, f32) -> f32) -> Option<Length> {
         if let (Self::Value(a), Self::Value(b)) = (self, other) {
-            if let Some(val) = a.try_op(b, op_fn) {
+            if let Some(val) = a.try_op(*b, op_fn) {
                 return Some(Self::Value(val));
             }
             return None;
@@ -710,7 +710,7 @@ impl Length {
 
     pub fn try_op_to<R>(&self, other: &Length, op_fn: impl FnOnce(f32, f32) -> R) -> Option<R> {
         if let (Self::Value(a), Self::Value(b)) = (self, other) {
-            return a.try_op_to(b, op_fn);
+            return a.try_op_to(*b, op_fn);
         }
         None
     }
@@ -743,7 +743,7 @@ impl protocol::Zero for LengthValue {
     }
     #[inline]
     fn is_zero(&self) -> bool {
-        LengthValue::is_zero(self)
+        LengthValue::is_zero(*self)
     }
 }
 impl protocol::MulF32 for LengthValue {
@@ -755,7 +755,7 @@ impl protocol::MulF32 for LengthValue {
 impl protocol::TryAdd for LengthValue {
     #[inline]
     fn try_add(&self, rhs: &Self) -> Option<Self> {
-        LengthValue::try_add(self, rhs)
+        LengthValue::try_add(*self, *rhs)
     }
 }
 impl protocol::TryFromAngle for LengthValue {
@@ -767,7 +767,7 @@ impl protocol::TryFromAngle for LengthValue {
 impl protocol::TrySign for LengthValue {
     #[inline]
     fn try_sign(&self) -> Option<f32> {
-        LengthValue::try_sign(self)
+        LengthValue::try_sign(*self)
     }
 }
 impl protocol::TryMap for LengthValue {
@@ -813,7 +813,7 @@ impl protocol::TryOpTo for LengthValue {
 impl protocol::PartialCmp for LengthValue {
     #[inline]
     fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> {
-        LengthValue::partial_cmp(self, rhs)
+        LengthValue::partial_cmp(*self, *rhs)
     }
 }
 impl protocol::Parse for LengthValue {
@@ -825,13 +825,13 @@ impl protocol::Parse for LengthValue {
 impl protocol::ToCss for LengthValue {
     #[inline]
     fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        LengthValue::to_css(self, dest)
+        LengthValue::to_css(*self, dest)
     }
 }
 impl protocol::IsCompatible for LengthValue {
     #[inline]
     fn is_compatible(&self, browsers: Browsers) -> bool {
-        LengthValue::is_compatible(self, browsers)
+        LengthValue::is_compatible(*self, browsers)
     }
 }
 
@@ -843,7 +843,7 @@ impl protocol::Zero for Angle {
     }
     #[inline]
     fn is_zero(&self) -> bool {
-        Angle::is_zero(self)
+        Angle::is_zero(*self)
     }
 }
 impl protocol::MulF32 for Angle {
@@ -855,7 +855,7 @@ impl protocol::MulF32 for Angle {
 impl protocol::TryAdd for Angle {
     #[inline]
     fn try_add(&self, rhs: &Self) -> Option<Self> {
-        Angle::try_add(self, rhs)
+        Angle::try_add(*self, *rhs)
     }
 }
 impl protocol::TryFromAngle for Angle {
@@ -906,7 +906,7 @@ impl protocol::TryOpTo for Angle {
 impl protocol::PartialCmp for Angle {
     #[inline]
     fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> {
-        Angle::partial_cmp(self, rhs)
+        Angle::partial_cmp(*self, *rhs)
     }
 }
 impl protocol::Parse for Angle {
@@ -918,7 +918,7 @@ impl protocol::Parse for Angle {
 impl protocol::ToCss for Angle {
     #[inline]
     fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        Angle::to_css(self, dest)
+        Angle::to_css(*self, dest)
     }
 }
 impl protocol::IsCompatible for Angle {

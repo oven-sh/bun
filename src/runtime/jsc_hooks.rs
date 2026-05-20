@@ -4575,7 +4575,7 @@ pub(crate) fn resolve_embedded_file_to_buf(
     let mut scratch = bun_paths::path_buffer_pool::get();
     if bun_sys::write_file_with_path_buffer(
         &mut scratch,
-        bun_sys::WriteFileArgs {
+        &bun_sys::WriteFileArgs {
             data: bun_sys::WriteFileData::Buffer {
                 buffer: file_contents,
             },

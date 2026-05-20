@@ -280,7 +280,7 @@ impl<'a> CopyFile<'a> {
                         }
                     }
                     bun_sys::Result::Err(errno) => {
-                        match blob::mkdir_if_not_exists(self, errno.clone(), dest, dest.as_bytes())
+                        match blob::mkdir_if_not_exists(self, &errno, dest, dest.as_bytes())
                         {
                             Retry::Continue => continue,
                             Retry::Fail => {
@@ -617,7 +617,7 @@ impl<'a> CopyFile<'a> {
             ) {
                 bun_sys::Result::Err(errno) => {
                     let err_path = self.destination_file_store.pathlike.path().slice().to_vec();
-                    match blob::mkdir_if_not_exists(self, errno.clone(), dest, &err_path) {
+                    match blob::mkdir_if_not_exists(self, &errno, dest, &err_path) {
                         Retry::Continue => continue,
                         Retry::Fail => {}
                         Retry::No => {}

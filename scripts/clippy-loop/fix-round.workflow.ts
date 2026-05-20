@@ -7,9 +7,11 @@ export const meta = {
   ],
 };
 
-// args: { round: number, files: Array<{file, count, diagPath}> }
-const round = args.round;
-const files = args.files;
+// args: Array<{file, count, diagPath}>  (or {files: [...]}, or a JSON string of either)
+const parsed = typeof args === "string" ? JSON.parse(args) : args;
+const files = Array.isArray(parsed) ? parsed : parsed.files;
+if (!Array.isArray(files)) throw new Error("args must be an array of {file,count,diagPath}");
+log(`round: ${files.length} files`);
 
 const PATCH_SCHEMA = {
   type: "object",
@@ -90,7 +92,7 @@ REJECT if ANY of:
 - The diff touches files other than the primary file for any reason OTHER than updating direct callers of a changed signature.
 - A SAFETY comment is vacuous ("SAFETY: this is safe", "SAFETY: trust me") or factually wrong about the invariant.
 - A \`disallowed_*\` replacement is applied inside the wrapper crate that legitimately implements it (\`bun_sys\`, \`bun_threading\`, \`bun_core::output\`, \`bun_collections\`).
-- Unified-diff format is malformed (missing \`--- a/\` or \`+++ b/\` headers, missing/wrong @@ line counts, <3 context lines, tabs↔spaces drift).
+- Unified-diff format is malformed: missing \`--- a/\` or \`+++ b/\` headers, hunks with <3 context lines, or context lines that don't match the file. **Do NOT reject solely on @@ line-count arithmetic** — the apply step uses \`git apply --recount\`, which recomputes counts from the body. Only reject if the hunk BODY itself is wrong (context mismatch, missing lines, tabs↔spaces drift).
 
 If you reject for a FIXABLE reason (typo, missing import, off-by-one context), provide \`revisedPatch\` with the corrected diff.
 If you reject because the change is unsound or the lint should be skipped, leave \`revisedPatch\` empty.
@@ -106,7 +108,8 @@ const results = await pipeline(
       `Fix the clippy errors in \`${f.file}\` (Bun repo at /root/bun-5).\n\n` +
         `There are ${f.count} diagnostics.\n` +
         `FIRST: Read the full diagnostic dump at \`${f.diagPath}\` — it has every rendered error with line/col.\n` +
-        `THEN: Read \`/root/bun-5/${f.file}\` and produce the diff.\n\n` +
+        `THEN: Read \`/root/bun-5/${f.file}\` and produce the diff.\n` +
+        `For \`disallowed_*\` replacements, the bun_* API conventions are documented in \`/root/bun-5/src/CLAUDE.md\` — Read it if you need the exact signature.\n\n` +
         FIXER_RULES,
       { label: `fix:${f.file}`, phase: "Fix", schema: PATCH_SCHEMA },
     ),

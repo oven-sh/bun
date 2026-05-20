@@ -826,7 +826,7 @@ impl BuildCommand {
                     // SAFETY: `env` is a process-lifetime singleton.
                     unsafe { &mut *env_ptr },
                     opt_output_format,
-                    std::mem::take(&mut ctx.bundler_options.windows),
+                    &ctx.bundler_options.windows,
                     ctx.bundler_options
                         .compile_exec_argv
                         .as_deref()
@@ -917,7 +917,7 @@ impl BuildCommand {
                             let mut pathbuf = PathBuffer::uninit();
                             match bun_sys::write_file_with_path_buffer(
                                 &mut pathbuf,
-                                bun_sys::WriteFileArgs {
+                                &bun_sys::WriteFileArgs {
                                     data: bun_sys::WriteFileData::Buffer {
                                         buffer: sourcemap_bytes,
                                     },

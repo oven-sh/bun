@@ -430,7 +430,7 @@ impl Options {
                     debug_assert_eq!(scoped.scopes.keys().len(), scoped.scopes.values().len());
                     let mut registry = registry_.clone();
                     if registry.url.is_empty() {
-                        registry.url = base.url.clone();
+                        registry.url.clone_from(&base.url);
                     }
                     self.registries.put(
                         Npm::registry::Scope::hash(name),
@@ -442,7 +442,7 @@ impl Options {
             if let Some(ca) = &config.ca {
                 match ca {
                     Api::Ca::List(ca_list) => {
-                        self.ca = ca_list.clone();
+                        self.ca.clone_from(ca_list);
                     }
                     Api::Ca::Str(ca_str) => {
                         // Zig `&.{ca_str}` — single-element slice; own it (no `Box::leak`).
@@ -974,7 +974,7 @@ impl Default for Enable {
 // so getters return by value and setters take `&mut self`.
 impl Do {
     #[inline]
-    pub fn save_lockfile(&self) -> bool {
+    pub fn save_lockfile(self) -> bool {
         self.contains(Do::SAVE_LOCKFILE)
     }
     #[inline]
@@ -982,7 +982,7 @@ impl Do {
         self.set(Do::SAVE_LOCKFILE, v);
     }
     #[inline]
-    pub fn load_lockfile(&self) -> bool {
+    pub fn load_lockfile(self) -> bool {
         self.contains(Do::LOAD_LOCKFILE)
     }
     #[inline]
@@ -990,7 +990,7 @@ impl Do {
         self.set(Do::LOAD_LOCKFILE, v);
     }
     #[inline]
-    pub fn install_packages(&self) -> bool {
+    pub fn install_packages(self) -> bool {
         self.contains(Do::INSTALL_PACKAGES)
     }
     #[inline]
@@ -998,7 +998,7 @@ impl Do {
         self.set(Do::INSTALL_PACKAGES, v);
     }
     #[inline]
-    pub fn write_package_json(&self) -> bool {
+    pub fn write_package_json(self) -> bool {
         self.contains(Do::WRITE_PACKAGE_JSON)
     }
     #[inline]
@@ -1006,7 +1006,7 @@ impl Do {
         self.set(Do::WRITE_PACKAGE_JSON, v);
     }
     #[inline]
-    pub fn run_scripts(&self) -> bool {
+    pub fn run_scripts(self) -> bool {
         self.contains(Do::RUN_SCRIPTS)
     }
     #[inline]
@@ -1014,7 +1014,7 @@ impl Do {
         self.set(Do::RUN_SCRIPTS, v);
     }
     #[inline]
-    pub fn save_yarn_lock(&self) -> bool {
+    pub fn save_yarn_lock(self) -> bool {
         self.contains(Do::SAVE_YARN_LOCK)
     }
     #[inline]
@@ -1022,7 +1022,7 @@ impl Do {
         self.set(Do::SAVE_YARN_LOCK, v);
     }
     #[inline]
-    pub fn print_meta_hash_string(&self) -> bool {
+    pub fn print_meta_hash_string(self) -> bool {
         self.contains(Do::PRINT_META_HASH_STRING)
     }
     #[inline]
@@ -1030,7 +1030,7 @@ impl Do {
         self.set(Do::PRINT_META_HASH_STRING, v);
     }
     #[inline]
-    pub fn verify_integrity(&self) -> bool {
+    pub fn verify_integrity(self) -> bool {
         self.contains(Do::VERIFY_INTEGRITY)
     }
     #[inline]
@@ -1038,7 +1038,7 @@ impl Do {
         self.set(Do::VERIFY_INTEGRITY, v);
     }
     #[inline]
-    pub fn summary(&self) -> bool {
+    pub fn summary(self) -> bool {
         self.contains(Do::SUMMARY)
     }
     #[inline]
@@ -1046,7 +1046,7 @@ impl Do {
         self.set(Do::SUMMARY, v);
     }
     #[inline]
-    pub fn trust_dependencies_from_args(&self) -> bool {
+    pub fn trust_dependencies_from_args(self) -> bool {
         self.contains(Do::TRUST_DEPENDENCIES_FROM_ARGS)
     }
     #[inline]
@@ -1054,7 +1054,7 @@ impl Do {
         self.set(Do::TRUST_DEPENDENCIES_FROM_ARGS, v);
     }
     #[inline]
-    pub fn update_to_latest(&self) -> bool {
+    pub fn update_to_latest(self) -> bool {
         self.contains(Do::UPDATE_TO_LATEST)
     }
     #[inline]
@@ -1062,7 +1062,7 @@ impl Do {
         self.set(Do::UPDATE_TO_LATEST, v);
     }
     #[inline]
-    pub fn analyze(&self) -> bool {
+    pub fn analyze(self) -> bool {
         self.contains(Do::ANALYZE)
     }
     #[inline]
@@ -1070,7 +1070,7 @@ impl Do {
         self.set(Do::ANALYZE, v);
     }
     #[inline]
-    pub fn recursive(&self) -> bool {
+    pub fn recursive(self) -> bool {
         self.contains(Do::RECURSIVE)
     }
     #[inline]
@@ -1078,7 +1078,7 @@ impl Do {
         self.set(Do::RECURSIVE, v);
     }
     #[inline]
-    pub fn prefetch_resolved_tarballs(&self) -> bool {
+    pub fn prefetch_resolved_tarballs(self) -> bool {
         self.contains(Do::PREFETCH_RESOLVED_TARBALLS)
     }
     #[inline]
@@ -1092,7 +1092,7 @@ impl Do {
 // so getters return by value and setters take `&mut self`.
 impl Enable {
     #[inline]
-    pub fn cache(&self) -> bool {
+    pub fn cache(self) -> bool {
         self.contains(Enable::CACHE)
     }
     #[inline]
@@ -1100,7 +1100,7 @@ impl Enable {
         self.set(Enable::CACHE, v);
     }
     #[inline]
-    pub fn manifest_cache(&self) -> bool {
+    pub fn manifest_cache(self) -> bool {
         self.contains(Enable::MANIFEST_CACHE)
     }
     #[inline]
@@ -1108,7 +1108,7 @@ impl Enable {
         self.set(Enable::MANIFEST_CACHE, v);
     }
     #[inline]
-    pub fn manifest_cache_control(&self) -> bool {
+    pub fn manifest_cache_control(self) -> bool {
         self.contains(Enable::MANIFEST_CACHE_CONTROL)
     }
     #[inline]
@@ -1116,31 +1116,31 @@ impl Enable {
         self.set(Enable::MANIFEST_CACHE_CONTROL, v);
     }
     #[inline]
-    pub fn fail_early(&self) -> bool {
+    pub fn fail_early(self) -> bool {
         self.contains(Enable::FAIL_EARLY)
     }
     #[inline]
-    pub fn frozen_lockfile(&self) -> bool {
+    pub fn frozen_lockfile(self) -> bool {
         self.contains(Enable::FROZEN_LOCKFILE)
     }
     #[inline]
-    pub fn force_save_lockfile(&self) -> bool {
+    pub fn force_save_lockfile(self) -> bool {
         self.contains(Enable::FORCE_SAVE_LOCKFILE)
     }
     #[inline]
-    pub fn force_install(&self) -> bool {
+    pub fn force_install(self) -> bool {
         self.contains(Enable::FORCE_INSTALL)
     }
     #[inline]
-    pub fn exact_versions(&self) -> bool {
+    pub fn exact_versions(self) -> bool {
         self.contains(Enable::EXACT_VERSIONS)
     }
     #[inline]
-    pub fn only_missing(&self) -> bool {
+    pub fn only_missing(self) -> bool {
         self.contains(Enable::ONLY_MISSING)
     }
     #[inline]
-    pub fn global_virtual_store(&self) -> bool {
+    pub fn global_virtual_store(self) -> bool {
         self.contains(Enable::GLOBAL_VIRTUAL_STORE)
     }
 }

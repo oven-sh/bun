@@ -211,7 +211,7 @@ pub fn enqueue_tarball_for_download(
         url,
         is_required,
         dependency_id,
-        package,
+        &package,
         patch_name_and_version_hash,
         crate::network_task::Authorization::NoAuthorization,
     )? {
@@ -415,7 +415,7 @@ pub fn enqueue_package_for_download(
         url,
         is_required,
         dependency_id,
-        package,
+        &package,
         patch_name_and_version_hash,
         crate::network_task::Authorization::AllowAuthorization,
     )? {
@@ -1372,7 +1372,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 &url,
                 dependency.behavior.is_required(),
                 id,
-                Package {
+                &Package {
                     name: dependency.name,
                     name_hash: dependency.name_hash,
                     resolution: res,
@@ -1622,7 +1622,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             url,
                             dependency.behavior.is_required(),
                             id,
-                            Package {
+                            &Package {
                                 name: dependency.name,
                                 name_hash: dependency.name_hash,
                                 resolution: res,
@@ -2169,7 +2169,7 @@ fn get_or_put_resolved_package_with_find_result(
                         manifest.str(&find_result.package.tarball_url),
                         behavior.is_required(),
                         dependency_id,
-                        package,
+                        &package,
                         name_and_version_hash,
                         // its npm.
                         crate::network_task::Authorization::AllowAuthorization,

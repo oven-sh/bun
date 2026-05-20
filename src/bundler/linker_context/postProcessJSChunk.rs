@@ -854,7 +854,7 @@ pub fn post_process_js_chunk(
         chunk.output_source_map = c.generate_source_map_for_chunk(
             chunk.isolated_hash,
             worker,
-            compile_results_for_source_map,
+            &compile_results_for_source_map,
             &resolver.opts.output_dir,
             can_have_shifts,
         )?;

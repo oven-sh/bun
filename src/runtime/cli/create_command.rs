@@ -789,7 +789,7 @@ impl CreateCommand {
             {
                 let _ = parent_dir.copy_file(
                     b"gitignore",
-                    &parent_dir,
+                    parent_dir,
                     b".gitignore",
                     Default::default(),
                 );

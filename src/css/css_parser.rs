@@ -168,7 +168,7 @@ pub mod todo_stuff {
 pub use crate::VendorPrefix;
 
 impl VendorPrefix {
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self.bits() {
             x if x == VendorPrefix::WEBKIT.bits() => dest.write_str("-webkit-"),
             x if x == VendorPrefix::MOZ.bits() => dest.write_str("-moz-"),
@@ -186,7 +186,7 @@ impl VendorPrefix {
 pub use crate::SourceLocation;
 
 impl SourceLocation {
-    pub fn to_logger_location(&self, file: &'static [u8]) -> bun_ast::Location {
+    pub fn to_logger_location(self, file: &'static [u8]) -> bun_ast::Location {
         bun_ast::Location {
             file: std::borrow::Cow::Borrowed(file),
             line: i32::try_from(self.line).expect("int cast"),
@@ -500,8 +500,10 @@ fn parse_custom_at_rule_prelude<T: CustomAtRuleParser>(
 
     // TODO(port): lifetime — `name` borrows the input arena. The detach is the
     // same `'static` erasure already applied to `Token`/`AtRulePrelude::Unknown`.
+    // SAFETY: `name` points into the parser's source/arena, which outlives every
+    // `AtRulePrelude`/warning produced from this parser (see `src_str`).
     let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(name) };
-    options.warn(input.new_error(BasicParseErrorKind::at_rule_invalid(name)));
+    options.warn(&input.new_error(BasicParseErrorKind::at_rule_invalid(name)));
     input.skip_whitespace();
     let tokens = TokenListFns::parse(input, options, 0)?;
     Ok(AtRulePrelude::Unknown { name, tokens })
@@ -703,10 +705,10 @@ pub trait QualifiedRuleParser {
 pub struct DefaultAtRule;
 
 impl DefaultAtRule {
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         dest.new_error(PrinterErrorKind::fmt_error, None)
     }
-    pub fn deep_clone(&self) -> Self {
+    pub fn deep_clone(self) -> Self {
         Self
     }
 }
@@ -1329,6 +1331,8 @@ mod rule_parsers {
                     }
                     // TODO(port): lifetime — arena-owned slice; same `'static` erasure
                     // as `Token` payloads.
+                    // SAFETY: the returned slice borrows `input.src`/arena, which outlives
+                    // the `AtRulePrelude` it is stored in (see `src_str`).
                     let url_str: &'static [u8] =
                         unsafe { &*std::ptr::from_ref::<[u8]>(input.expect_url_or_string()?) };
 
@@ -1364,10 +1368,16 @@ mod rule_parsers {
                     }
                     let prefix = input
                         .try_parse(|p| {
-                            p.expect_ident()
-                                .map(|s| -> &'static [u8] { unsafe { &*std::ptr::from_ref::<[u8]>(s) } })
+                            p.expect_ident().map(|s| -> &'static [u8] {
+                                // SAFETY: `s` borrows the parser's source/arena, which
+                                // outlives the `AtRulePrelude` it is stored in (see
+                                // `src_str`).
+                                unsafe { &*std::ptr::from_ref::<[u8]>(s) }
+                            })
                         })
                         .ok();
+                    // SAFETY: the returned slice borrows `input.src`/arena, which outlives
+                    // the `AtRulePrelude` it is stored in (see `src_str`).
                     let namespace: &'static [u8] =
                         unsafe { &*std::ptr::from_ref::<[u8]>(input.expect_url_or_string()?) };
                     return Ok(AtRulePrelude::Namespace { prefix, url: namespace });
@@ -1600,7 +1610,7 @@ mod rule_parsers {
                         errors.push(e);
                     } else {
                         if iter.parser.options.error_recovery {
-                            iter.parser.options.warn(e);
+                            iter.parser.options.warn(&e);
                             continue;
                         }
                         return Err(e);
@@ -1612,7 +1622,7 @@ mod rule_parsers {
                 if !errors.is_empty() {
                     if self.options.error_recovery {
                         for e in errors {
-                            self.options.warn(e);
+                            self.options.warn(&e);
                         }
                     } else {
                         return Err(errors.remove(0));
@@ -1678,6 +1688,8 @@ mod rule_parsers {
             // TODO(port): lifetime — `name` borrows the input arena. Detach to
             // `'static` to feed `BasicParseErrorKind::at_rule_invalid` (matches the
             // `Token` payload erasure throughout this file).
+            // SAFETY: `name` points into the parser's source/arena, which outlives
+            // every prelude/error produced from this parser (see `src_str`).
             let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(name) };
             let result: Self::Prelude = 'brk: {
                 // Zig `ComptimeEnumMap(PreludeEnum)` ASCII-CI dispatch.
@@ -1784,7 +1796,7 @@ mod rule_parsers {
                         break 'brk AtRulePrelude::Scope { scope_start, scope_end };
                     },
                     b"nest" => if this.is_in_style_rule {
-                        this.options.warn(input.new_custom_error(ParserError::deprecated_nest_rule));
+                        this.options.warn(&input.new_custom_error(ParserError::deprecated_nest_rule));
                         let mut selector_parser = selector_parser::SelectorParser {
                             is_nesting_allowed: true,
                             options: this.options,
@@ -2704,18 +2716,20 @@ mod stylesheet_impl {
                 // SAFETY: `'bump`-erasure — `ToCssResultInternal` carries `'static`
                 // placeholders for `CssModuleExports`/`References` until the arena
                 // lifetime threads (see field TODO at the struct def).
+                let exports = unsafe {
+                    core::mem::transmute::<CssModuleExports<'_>, CssModuleExports<'static>>(exports)
+                };
+                // SAFETY: same `'bump`-erasure as `exports` above; the backing arena
+                // outlives the returned `ToCssResultInternal`.
+                let references = unsafe {
+                    core::mem::transmute::<CssModuleReferences<'_>, CssModuleReferences<'static>>(
+                        references,
+                    )
+                };
                 return Ok(ToCssResultInternal {
                     dependencies,
-                    exports: Some(unsafe {
-                        core::mem::transmute::<CssModuleExports<'_>, CssModuleExports<'static>>(
-                            exports,
-                        )
-                    }),
-                    references: Some(unsafe {
-                        core::mem::transmute::<CssModuleReferences<'_>, CssModuleReferences<'static>>(
-                            references,
-                        )
-                    }),
+                    exports: Some(exports),
+                    references: Some(references),
                 });
             } else {
                 self.rules.to_css(printer)?;
@@ -2828,6 +2842,8 @@ mod stylesheet_impl {
                     Token::Comment(comment) => {
                         if comment.first() == Some(&b'!') {
                             // TODO(port): lifetime — arena slice; see erasure note.
+                            // SAFETY: `comment` borrows `parser.src`, which outlives
+                            // `license_comments` (consumed before `parser` drops).
                             license_comments.push(unsafe { &*std::ptr::from_ref::<[u8]>(comment) });
                         }
                     }
@@ -3037,7 +3053,7 @@ mod stylesheet_impl {
         pub fn parse(
             arena: &'static Bump,
             code: &[u8],
-            options: ParserOptions,
+            options: &ParserOptions,
             import_records: &mut Vec<ImportRecord>,
             source_index: SrcIndex,
         ) -> Maybe<StyleAttribute, Err<ParserError>> {
@@ -3064,7 +3080,7 @@ mod stylesheet_impl {
             // PERF(port): was appendAssumeCapacity
             sources.push(options.filename.into());
             Ok(StyleAttribute {
-                declarations: match DeclarationBlock::parse(&mut parser, &options) {
+                declarations: match DeclarationBlock::parse(&mut parser, options) {
                     Ok(v) => v,
                     Err(e) => return Err(Err::from_parse_error(e, b"")),
                 },
@@ -3303,7 +3319,7 @@ pub struct ParserOptions<'a> {
 }
 
 impl<'a> ParserOptions<'a> {
-    pub fn warn(&self, warning: ParseError<ParserError>) {
+    pub fn warn(&self, warning: &ParseError<ParserError>) {
         if let Some(lg) = self.logger {
             // SAFETY: `logger` was constructed from a unique `&'a mut Log` (see
             // `default`); the pointee outlives `'a` and no other borrow of the
@@ -4504,6 +4520,7 @@ const MAX_THREE_B: u32 = 0x10000;
 // is only ever stored in a `Token` reachable through that same `Parser<'a>`.
 #[inline(always)]
 pub unsafe fn src_str(s: &[u8]) -> &'static [u8] {
+    // SAFETY: caller upholds the invariant documented on this function above.
     unsafe { bun_collections::detach_lifetime(s) }
 }
 

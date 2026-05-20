@@ -225,7 +225,7 @@ impl PageRule {
         while let Some(decl) = parser.next() {
             if let Err(e) = decl {
                 if parser.parser.options.error_recovery {
-                    parser.parser.options.warn(e);
+                    parser.parser.options.warn(&e);
                     continue;
                 }
                 return Err(e);

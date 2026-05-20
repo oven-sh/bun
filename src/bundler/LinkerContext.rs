@@ -237,6 +237,7 @@ pub struct LinkerContext<'a> {
 // to disjoint SoA slots (see `compute_line_offsets`). This mirrors Zig's
 // freely-aliased `*LinkerContext`.
 unsafe impl<'a> Send for LinkerContext<'a> {}
+// SAFETY: see the `Send` impl above — same backref-lifetime / disjoint-write invariants.
 unsafe impl<'a> Sync for LinkerContext<'a> {}
 
 impl<'a> Default for LinkerContext<'a> {
@@ -759,6 +760,8 @@ impl<'a> LinkerContext<'a> {
                 };
 
                 // Make the __jsonParse in that file point to the __jsonParse in the runtime chunk.
+                // SAFETY: `original_ref`'s symbol slot is disjoint from any live borrow here
+                // (only `actual_ref` is held, a `Copy` value).
                 unsafe { self.graph.symbol_mut(original_ref) }
                     .link
                     .set(actual_ref);
@@ -1087,7 +1090,7 @@ impl<'a> LinkerContext<'a> {
         &mut self,
         isolated_hash: u64,
         _worker: &mut crate::thread_pool::Worker,
-        results: MultiArrayList<CompileResultForSourceMap>,
+        results: &MultiArrayList<CompileResultForSourceMap>,
         chunk_abs_dir: &[u8],
         can_have_shifts: bool,
     ) -> Result<SourceMapPieces, BunError> {
@@ -1426,6 +1429,8 @@ impl SourceMapDataTask {
         // UB. `Worker::get` only needs `&BundleV2` (reads `graph.pool`), and
         // that shared borrow ends before any per-slot write below.
         let bundle: *const BundleV2 = unsafe { LinkerContext::bundle_v2_ptr(ctx.as_mut_ptr()) };
+        // SAFETY: `bundle` is a valid backref into the owning `BundleV2` (see above);
+        // only a shared borrow is formed and it ends before any per-slot write.
         let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
         // SAFETY: `worker.arena` points at `worker.heap` (init by `Worker::create`).
         SourceMapData::compute_line_offsets(ctx, worker.arena(), task.source_index);
@@ -1456,6 +1461,8 @@ impl SourceMapDataTask {
         // SAFETY: see `run_line_offset` — raw-ptr container_of, no `&mut`
         // materialized over the shared `BundleV2` while peer tasks are live.
         let bundle: *const BundleV2 = unsafe { LinkerContext::bundle_v2_ptr(ctx.as_mut_ptr()) };
+        // SAFETY: `bundle` is a valid backref (see `run_line_offset`); only a shared
+        // borrow is formed for `Worker::get`, which reads `graph.pool` under a mutex.
         let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
 
         // Use the default arena when using DevServer and the file
@@ -1523,8 +1530,8 @@ impl SourceMapData {
         let approximate_line_count =
             this.graph.ast.items_approximate_newline_count()[source_index as usize];
 
-        // SAFETY: sole writer to this slot (disjoint by source_index).
         let _ = alloc;
+        // SAFETY: sole writer to this slot (disjoint by source_index).
         unsafe {
             *line_offset_table = LineOffsetTable::generate(
                 &source.contents,
@@ -1639,6 +1646,7 @@ pub struct GenerateChunkCtx<'a> {
 }
 // SAFETY: see PORT NOTE above — mirrors Zig's freely-aliased `*LinkerContext`.
 unsafe impl<'a> Send for GenerateChunkCtx<'a> {}
+// SAFETY: see the `Send` impl above — same backref-lifetime / disjoint-write invariants.
 unsafe impl<'a> Sync for GenerateChunkCtx<'a> {}
 
 impl<'a> GenerateChunkCtx<'a> {
@@ -2209,10 +2217,14 @@ impl<'a> LinkerContext<'a> {
         // the duration of this call; the printer only reads from them.
         let ts_enums: &bun_ast::ast_result::TsEnumsMap =
             unsafe { bun_ptr::detach_lifetime_ref(&self.graph.ts_enums) };
+        // SAFETY: `graph.files` SoA columns are stable heap allocations valid for this
+        // call (see above); the printer only reads from this slot.
         let line_offset_table: &bun_sourcemap::line_offset_table::List = unsafe {
             &*(&raw const self.graph.files.items_line_offset_table()[source_index.get() as usize])
         };
         let mangled_props: &MangledProps =
+            // SAFETY: `self.mangled_props` is not mutated during printing; detached borrow
+            // outlives only this call (see above).
             unsafe { bun_ptr::detach_lifetime_ref(&self.mangled_props) };
 
         let print_options = js_printer::Options {
@@ -3661,7 +3673,7 @@ impl<'a> LinkerContext<'a> {
                             .expect("infallible: checked is_some")
                             .is_valid()
                     {
-                        // `named_import` borrows `graph.ast`; the symbol slot is a
+                        // SAFETY: `named_import` borrows `graph.ast`; the symbol slot is a
                         // disjoint allocation, so no aliasing with this `&mut`.
                         let symbol = unsafe { self.graph.symbol_mut(tracker.import_ref) };
                         symbol.import_item_status = ImportItemStatus::Missing;
@@ -3700,7 +3712,7 @@ impl<'a> LinkerContext<'a> {
                 }
                 ImportTrackerStatus::NoMatch => {
                     // Report mismatched imports and exports
-                    // The mutated symbol slot is disjoint from the later borrows
+                    // SAFETY: the mutated symbol slot is disjoint from the later borrows
                     // (`named_import` from graph.ast, `get_source` from parse_graph,
                     // `log_disjoint`) — all separate allocations.
                     let symbol = unsafe { self.graph.symbol_mut(tracker.import_ref) };
@@ -3919,15 +3931,17 @@ impl<'a> LinkerContext<'a> {
         // `meta.probably_typescript_type`), so the backing `keys`/`values`
         // slices stay valid for the whole loop.
         let keys: *const [Ref] = unsafe { (*named_imports_ptr).keys() };
+        // SAFETY: same column-validity invariant as `keys` above.
         let values: *const [NamedImport] = unsafe { (*named_imports_ptr).values() };
+        // SAFETY: `keys` points into stable SoA storage (see above); read-only deref.
         let mut order: Vec<usize> = (0..unsafe { (&*keys).len() }).collect();
+        // SAFETY: `keys` points into stable SoA storage (see above); read-only deref.
         order
             .sort_by(|&a, &b| unsafe { (&*keys)[a].inner_index().cmp(&(&*keys)[b].inner_index()) });
 
         for &i in &order {
-            // SAFETY: see above.
-            let import_ref = unsafe { (*keys)[i] };
-            let named_import = unsafe { &(*values)[i] };
+            // SAFETY: `keys`/`values` point into stable SoA storage (see above); read-only deref.
+            let (import_ref, named_import) = unsafe { ((*keys)[i], &(*values)[i]) };
 
             // Re-use memory for the cycle detector
             self.cycle_detector.clear();
@@ -3959,6 +3973,8 @@ impl<'a> LinkerContext<'a> {
                         .expect("unreachable");
                 }
                 MatchImportKind::Namespace => {
+                    // SAFETY: the mutated symbol slot is disjoint from `named_import`
+                    // (graph.ast SoA) and `result` (stack local).
                     unsafe { self.graph.symbol_mut(import_ref) }.namespace_alias =
                         Some(G::NamespaceAlias {
                             namespace_ref: result.namespace_ref,
@@ -3981,8 +3997,8 @@ impl<'a> LinkerContext<'a> {
                         )
                         .expect("unreachable");
 
-                    // One-shot field store after `imports_to_bind.put` (disjoint
-                    // map) has fully returned.
+                    // SAFETY: one-shot field store after `imports_to_bind.put` (disjoint
+                    // map) has fully returned; no other live borrow aliases this symbol slot.
                     unsafe { self.graph.symbol_mut(import_ref) }.namespace_alias =
                         Some(G::NamespaceAlias {
                             namespace_ref: result.namespace_ref,
@@ -3994,7 +4010,7 @@ impl<'a> LinkerContext<'a> {
                     let source = self.get_source(source_index);
                     let r = lex::range_of_identifier(
                         source,
-                        named_import.alias_loc.unwrap_or(Loc::default()),
+                        named_import.alias_loc.unwrap_or_default(),
                     );
                     // SAFETY: arena `*const [u8]` valid for the link pass.
                     let alias = named_import
@@ -4021,12 +4037,12 @@ impl<'a> LinkerContext<'a> {
                     let source = self.get_source(source_index);
                     let r = lex::range_of_identifier(
                         source,
-                        named_import.alias_loc.unwrap_or(Loc::default()),
+                        named_import.alias_loc.unwrap_or_default(),
                     );
 
                     // TODO: log locations of the ambiguous exports
 
-                    // The mutated symbol slot is disjoint from `source`/`r`
+                    // SAFETY: the mutated symbol slot is disjoint from `source`/`r`
                     // (parse_graph), `named_import`/`alias` (arena slices), and
                     // `log_disjoint` — all separate allocations.
                     let symbol = unsafe { self.graph.symbol_mut(import_ref) };

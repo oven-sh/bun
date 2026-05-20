@@ -321,11 +321,15 @@ impl<T> ArrayLike for Vec<T> {
 pub struct ZStr([u8]);
 
 impl ZStr {
+    // SAFETY: `b"\0"` is a 'static 1-byte allocation with `ptr[0] == 0`, so
+    // `ptr[len] == 0` holds for `len = 0` and `ptr[..0]` is trivially readable.
     pub const EMPTY: &'static ZStr = unsafe { Self::from_raw(b"\0".as_ptr(), 0) };
 
     /// SAFETY: `ptr[len] == 0` and `ptr[..len]` is readable for `'a`.
     #[inline]
     pub const unsafe fn from_raw<'a>(ptr: *const u8, len: usize) -> &'a ZStr {
+        // SAFETY: caller upholds `ptr[..len]` readable for `'a`; `ZStr` is
+        // `repr(transparent)` over `[u8]` so the fat-pointer cast preserves layout.
         unsafe {
             &*(std::ptr::from_ref::<[u8]>(core::slice::from_raw_parts(ptr, len)) as *const ZStr)
         }
@@ -333,6 +337,7 @@ impl ZStr {
     /// SAFETY: `ptr[len] == 0` and `ptr[..=len]` is writable for `'a`.
     #[inline]
     pub unsafe fn from_raw_mut<'a>(ptr: *mut u8, len: usize) -> &'a mut ZStr {
+        // SAFETY: caller contract above; `repr(transparent)` over `[u8]`.
         unsafe {
             &mut *(std::ptr::from_mut::<[u8]>(core::slice::from_raw_parts_mut(ptr, len))
                 as *mut ZStr)
@@ -674,10 +679,14 @@ pub fn getenv_z_any_case(key: &ZStr) -> Option<&'static [u8]> {
 pub struct WStr([u16]);
 
 impl WStr {
+    // SAFETY: `[0u16]` is a 'static 1-unit allocation with `ptr[0] == 0`, so
+    // `ptr[len] == 0` holds for `len = 0` and `ptr[..0]` is trivially readable.
     pub const EMPTY: &'static WStr = unsafe { Self::from_raw([0u16].as_ptr(), 0) };
     /// SAFETY: `ptr[len] == 0` and `ptr[..len]` is readable for `'a`.
     #[inline]
     pub const unsafe fn from_raw<'a>(ptr: *const u16, len: usize) -> &'a WStr {
+        // SAFETY: caller upholds `ptr[..len]` readable for `'a`; `WStr` is
+        // `repr(transparent)` over `[u16]` so the fat-pointer cast preserves layout.
         unsafe {
             &*(std::ptr::from_ref::<[u16]>(core::slice::from_raw_parts(ptr, len)) as *const WStr)
         }
@@ -744,6 +753,8 @@ impl WStr {
     /// through an owned buffer.
     #[inline]
     pub unsafe fn from_raw_mut<'a>(ptr: *mut u16, len: usize) -> &'a mut WStr {
+        // SAFETY: caller upholds `ptr[..=len]` writable for `'a`; `WStr` is
+        // `repr(transparent)` over `[u16]` so the fat-pointer cast preserves layout.
         unsafe { &mut *(std::ptr::from_mut::<[u16]>(core::slice::from_raw_parts_mut(ptr, len)) as *mut WStr) }
     }
     #[inline]
@@ -1951,10 +1962,16 @@ pub mod io {
     impl Writer {
         #[inline]
         pub fn write_all(&mut self, bytes: &[u8]) -> Result<(), crate::Error> {
+            // SAFETY: `Writer` is the `repr(C)` head of every concrete adapter
+            // (see type doc); `self` was produced by upcasting `&mut Adapter`,
+            // so the vtable fn receives the same pointer it was registered with.
             unsafe { (self.write_all)(std::ptr::from_mut(self), bytes) }
         }
         #[inline]
         pub fn flush(&mut self) -> Result<(), crate::Error> {
+            // SAFETY: `Writer` is the `repr(C)` head of every concrete adapter;
+            // `self` is the same pointer the adapter registered its vtable with,
+            // so the callee's downcast back to the concrete type is sound.
             unsafe { (self.flush)(std::ptr::from_mut(self)) }
         }
         /// Alias for `print` so `write!(w, ...)` works.
@@ -2169,10 +2186,14 @@ pub mod io {
     impl Write for Writer {
         #[inline]
         fn write_all(&mut self, buf: &[u8]) -> Result<(), crate::Error> {
+            // SAFETY: `self` is the `repr(C)` adapter head; the vtable fn
+            // receives the same pointer it was registered with (see type doc).
             unsafe { (self.write_all)(core::ptr::from_mut(self), buf) }
         }
         #[inline]
         fn flush(&mut self) -> Result<(), crate::Error> {
+            // SAFETY: `self` is the `repr(C)` adapter head; the vtable fn
+            // receives the same pointer it was registered with (see type doc).
             unsafe { (self.flush)(core::ptr::from_mut(self)) }
         }
     }
@@ -2284,6 +2305,8 @@ pub struct RacyCell<T: ?Sized>(core::cell::Cell<T>);
 // `Cell<T>` purely so `read`/`write` bodies are safe code — the cross-thread
 // hazard is fully accounted for by this `unsafe impl Sync`.)
 unsafe impl<T: ?Sized> Sync for RacyCell<T> {}
+// SAFETY: `RacyCell<T>` owns a `T` by value via `Cell<T>`; sending the cell to
+// another thread is sound exactly when sending `T` itself is (`T: Send`).
 unsafe impl<T: ?Sized + Send> Send for RacyCell<T> {}
 
 impl<T> RacyCell<T> {
@@ -2529,7 +2552,7 @@ impl StackCheck {
     /// Is there enough stack space to safely recurse?
     /// Zig: `> 256K` on Windows, `> 128K` elsewhere (bun.zig:3762).
     #[inline]
-    pub fn is_safe_to_recurse(&self) -> bool {
+    pub fn is_safe_to_recurse(self) -> bool {
         // Zig uses `-|` (saturating sub): if probe < end (already past limit),
         // result saturates to 0 → "not safe". wrapping_sub would yield a huge
         // positive and incorrectly return true.
@@ -2548,7 +2571,7 @@ impl StackCheck {
     /// next check — on Windows a single stack `PathBuffer` is ~96 KB, so a
     /// chain of two or three exceeds the default 256 KB headroom.
     #[inline]
-    pub fn is_safe_to_recurse_with_extra(&self, extra: usize) -> bool {
+    pub fn is_safe_to_recurse_with_extra(self, extra: usize) -> bool {
         let remaining = Self::frame_address().saturating_sub(self.cached_stack_end);
         let threshold: usize = if cfg!(windows) {
             256 * 1024
@@ -2693,6 +2716,9 @@ pub struct Once<T, F = ()> {
 // `std::sync::OnceLock` (`T: Send` because init may happen on a different
 // thread than the reader; `T: Sync` because `&T` crosses threads).
 unsafe impl<T: Send + Sync, F: Sync> Sync for Once<T, F> {}
+// SAFETY: `Once<T, F>` owns a `T` (in `UnsafeCell<MaybeUninit<T>>`) and an
+// `F` by value; sending the whole struct to another thread is sound exactly
+// when sending its owned fields is (`T: Send`, `F: Send`).
 unsafe impl<T: Send, F: Send> Send for Once<T, F> {}
 impl<T: core::panic::RefUnwindSafe, F: core::panic::RefUnwindSafe> core::panic::RefUnwindSafe
     for Once<T, F>
@@ -2773,7 +2799,7 @@ impl<T, F> Once<T, F> {
             // SAFETY: we hold BUSY exclusively (CAS won); no other thread can
             // be reading or writing `cell` until we publish DONE below.
             unsafe { (*self.cell.get()).write(v) };
-            core::mem::forget(guard);
+            let _ = core::mem::ManuallyDrop::new(guard);
             self.state
                 .store(ONCE_DONE, core::sync::atomic::Ordering::Release);
         }
@@ -3417,7 +3443,7 @@ pub struct StringPointer {
 }
 impl StringPointer {
     #[inline]
-    pub fn slice<'a>(&self, buf: &'a [u8]) -> &'a [u8] {
+    pub fn slice<'a>(self, buf: &'a [u8]) -> &'a [u8] {
         &buf[self.offset as usize..(self.offset + self.length) as usize]
     }
     #[inline]
@@ -3748,7 +3774,7 @@ impl<I: GenericIndexInt, M> GenericIndex<I, M> {
         GenericIndexOptional(self.0, core::marker::PhantomData)
     }
     #[inline]
-    pub fn sort_fn_asc(_: &(), a: &Self, b: &Self) -> bool {
+    pub fn sort_fn_asc(_: (), a: &Self, b: &Self) -> bool {
         a.0 < b.0
     }
 }
@@ -4567,6 +4593,9 @@ pub fn intern_argv(v: Vec<&'static ZStr>) -> &'static [&'static ZStr] {
 /// `PathBuffer` and returns the NUL-terminated slice on success.
 pub fn getcwd(buf: &mut PathBuffer) -> Result<&ZStr, crate::Error> {
     #[cfg(unix)]
+    // SAFETY: `buf` provides `MAX_PATH_BYTES` writable bytes for `getcwd`; on
+    // success the returned pointer aliases `buf` and is NUL-terminated, so
+    // `strlen` reads in-bounds.
     unsafe {
         let p = libc::getcwd(buf.0.as_mut_ptr().cast(), buf.0.len());
         if p.is_null() {
@@ -4658,6 +4687,8 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
         n += bin.len();
         buf.0[n] = 0;
         #[cfg(unix)]
+        // SAFETY: `buf.0[n] == 0` was just written, so `buf.0.as_ptr()` is a
+        // valid NUL-terminated C string for `access(2)`.
         unsafe {
             if libc::access(buf.0.as_ptr().cast(), libc::X_OK) == 0 {
                 return Some(n);
@@ -4856,6 +4887,10 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     }
 
     #[cfg(unix)]
+    // SAFETY: the FFI calls below (`on_before_reload_process_linux`, `execve`)
+    // receive only locally-built NUL-terminated argv/envp arrays terminated by
+    // a null pointer; on success `execve` never returns, on failure errno is
+    // read. No borrowed Rust state is observed after the exec.
     unsafe {
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         {
@@ -4924,7 +4959,7 @@ pub struct SpawnStatus {
 }
 impl SpawnStatus {
     #[inline]
-    pub fn is_ok(&self) -> bool {
+    pub fn is_ok(self) -> bool {
         self.code == 0
     }
 }
@@ -5042,6 +5077,10 @@ pub mod spawn_ffi {
 
 pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crate::Error> {
     #[cfg(unix)]
+    // SAFETY: argv strings are owned `ZBox`es (NUL-terminated) kept alive in
+    // `cargs` for the duration of the spawn; `ptrs`/`environ` are null-
+    // terminated `*const c_char` arrays as required by `posix_spawn_bun` /
+    // `posix_spawnp`. `waitpid` is passed a valid `&mut c_int` out-param.
     unsafe {
         let cargs: Vec<ZBox> = argv
             .iter()
@@ -5528,6 +5567,8 @@ impl From<f16> for f32 {
 // `f16`, no padding, `Copy + 'static`. Enables safe `bytemuck::cast_slice`
 // from `&[u8]` for Float16Array printing (ConsoleObject).
 unsafe impl bytemuck::Zeroable for f16 {}
+// SAFETY: `#[repr(transparent)]` over `u16` — no padding, every bit pattern is
+// valid, `Copy + Zeroable + 'static`; satisfies all `bytemuck::Pod` invariants.
 unsafe impl bytemuck::Pod for f16 {}
 impl core::fmt::Display for f16 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {

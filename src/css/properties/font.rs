@@ -82,7 +82,7 @@ impl FontWeight {
 
     pub fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
         match self {
-            FontWeight::Absolute(a) => a.is_compatible(browsers),
+            FontWeight::Absolute(a) => a.is_compatible(&browsers),
             FontWeight::Bolder | FontWeight::Lighter => true,
         }
     }
@@ -131,12 +131,12 @@ impl AbsoluteFontWeight {
         }
     }
 
-    pub fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
         match self {
             // Older browsers only supported 100, 200, 300, ...900 rather than arbitrary values.
             AbsoluteFontWeight::Weight(val) => {
                 if !((*val >= 100.0 && *val <= 900.0) && (*val % 100.0) == 0.0) {
-                    Feature::FontWeightNumber.is_compatible(browsers)
+                    Feature::FontWeightNumber.is_compatible(*browsers)
                 } else {
                     true
                 }
@@ -176,7 +176,7 @@ impl FontSize {
                 }
                 _ => l.is_compatible(browsers),
             },
-            FontSize::Absolute(a) => a.is_compatible(browsers),
+            FontSize::Absolute(a) => a.is_compatible(&browsers),
             FontSize::Relative(_) => true,
         }
     }
@@ -210,9 +210,9 @@ pub enum AbsoluteFontSize {
 }
 
 impl AbsoluteFontSize {
-    pub fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+    pub fn is_compatible(self, browsers: &crate::targets::Browsers) -> bool {
         match self {
-            AbsoluteFontSize::XxxLarge => Feature::FontSizeXXXLarge.is_compatible(browsers),
+            AbsoluteFontSize::XxxLarge => Feature::FontSizeXXXLarge.is_compatible(*browsers),
             _ => true,
         }
     }
@@ -259,9 +259,9 @@ impl FontStretch {
         }
     }
 
-    pub fn into_percentage(&self) -> Percentage {
+    pub fn into_percentage(self) -> Percentage {
         match self {
-            FontStretch::Percentage(val) => *val,
+            FontStretch::Percentage(val) => val,
             FontStretch::Keyword(kw) => kw.into_percentage(),
         }
     }
@@ -314,7 +314,7 @@ impl FontStretchKeyword {
         FontStretchKeyword::Normal
     }
 
-    pub fn into_percentage(&self) -> Percentage {
+    pub fn into_percentage(self) -> Percentage {
         let val: f32 = match self {
             FontStretchKeyword::UltraCondensed => 0.5,
             FontStretchKeyword::ExtraCondensed => 0.625,
@@ -431,7 +431,7 @@ impl FontFamily {
 
     pub fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
         match self {
-            FontFamily::Generic(g) => g.is_compatible(browsers),
+            FontFamily::Generic(g) => g.is_compatible(&browsers),
             FontFamily::FamilyName(_) => true,
         }
     }
@@ -521,13 +521,13 @@ pub enum GenericFontFamily {
 }
 
 impl GenericFontFamily {
-    pub fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+    pub fn is_compatible(self, browsers: &crate::targets::Browsers) -> bool {
         match self {
-            GenericFontFamily::SystemUi => Feature::FontFamilySystemUi.is_compatible(browsers),
+            GenericFontFamily::SystemUi => Feature::FontFamilySystemUi.is_compatible(*browsers),
             GenericFontFamily::UiSerif
             | GenericFontFamily::UiSansSerif
             | GenericFontFamily::UiMonospace
-            | GenericFontFamily::UiRounded => Feature::ExtendedSystemFonts.is_compatible(browsers),
+            | GenericFontFamily::UiRounded => Feature::ExtendedSystemFonts.is_compatible(*browsers),
             _ => true,
         }
     }
@@ -558,7 +558,7 @@ impl FontStyle {
             b"oblique" => {
                 let angle = input
                     .try_parse(Angle::parse)
-                    .unwrap_or(FontStyle::default_oblique_angle());
+                    .unwrap_or_else(|_| FontStyle::default_oblique_angle());
                 Ok(FontStyle::Oblique(angle))
             },
             _ => Err(location.new_unexpected_token_error(crate::Token::Ident(ident))),
@@ -625,7 +625,7 @@ impl FontVariantCaps {
         FontVariantCaps::Normal
     }
 
-    fn is_css2(&self) -> bool {
+    fn is_css2(self) -> bool {
         matches!(self, FontVariantCaps::Normal | FontVariantCaps::SmallCaps)
     }
 

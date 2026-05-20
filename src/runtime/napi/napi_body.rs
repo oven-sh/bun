@@ -198,9 +198,11 @@ impl NapiEnv {
 pub mod napi_env_external_shared_descriptor {
     use super::*;
     pub unsafe fn ref_(env: *mut NapiEnv) {
+        // SAFETY: caller contract — `env` is a valid C++-owned napi_env.
         unsafe { NapiEnv__ref(env) }
     }
     pub unsafe fn deref(env: *mut NapiEnv) {
+        // SAFETY: caller contract — `env` is a valid C++-owned napi_env.
         unsafe { NapiEnv__deref(env) }
     }
 }
@@ -360,7 +362,7 @@ impl napi_value {
         self.0 = val.encoded() as i64;
     }
 
-    pub fn get(&self) -> JSValue {
+    pub fn get(self) -> JSValue {
         // SAFETY: napi_value stores the same 64-bit encoding as JSValue.
         unsafe { JSValue::from_encoded(self.0 as usize) }
     }
@@ -984,6 +986,7 @@ pub extern "C" fn napi_get_prototype(
 
     result.set(
         env,
+        // SAFETY: `object` was verified `.is_object()` above; FFI reads its prototype slot.
         JSValue::c(unsafe { JSObjectGetPrototype(env.to_js().as_ptr(), object.as_object_ref()) }),
     );
     env.ok()
@@ -1269,6 +1272,7 @@ pub extern "C" fn napi_make_callback(
         Err(err) => env.to_js().take_exception(err),
     };
 
+    // SAFETY: `maybe_result` is null or a valid exclusive out-param per N-API contract.
     if let Some(result) = unsafe { maybe_result.as_mut() } {
         result.set(env, res);
     }
@@ -1507,6 +1511,7 @@ pub extern "C" fn napi_get_typedarray_info(
     let Some(array_buffer) = typedarray.as_array_buffer(env.to_js()) else {
         return env.invalid_arg();
     };
+    // SAFETY: `maybe_type` is null or a valid exclusive out-param per N-API contract.
     if let Some(ty) = unsafe { maybe_type.as_mut() } {
         // Zig: `array_buffer.typed_array_type.toTypedArrayType().toNapi()`. The Rust
         // `ArrayBuffer.typed_array_type` field is already a `JSType`, so map it
@@ -1522,9 +1527,11 @@ pub extern "C" fn napi_get_typedarray_info(
     write_out(maybe_data, array_buffer.ptr);
     write_out(maybe_length, array_buffer.len);
 
+    // SAFETY: `maybe_arraybuffer` is null or a valid exclusive out-param per N-API contract.
     if let Some(arraybuffer) = unsafe { maybe_arraybuffer.as_mut() } {
         arraybuffer.set(
             env,
+            // SAFETY: `typedarray` is a live typed-array object (kept by `_keep`); FFI reads its backing buffer.
             JSValue::c(unsafe {
                 JSObjectGetTypedArrayBuffer(
                     env.to_js().as_ptr(),
@@ -1584,9 +1591,11 @@ pub extern "C" fn napi_get_dataview_info(
     };
     write_out(maybe_bytelength, array_buffer.byte_len);
     write_out(maybe_data, array_buffer.ptr);
+    // SAFETY: `maybe_arraybuffer` is null or a valid exclusive out-param per N-API contract.
     if let Some(arraybuffer) = unsafe { maybe_arraybuffer.as_mut() } {
         arraybuffer.set(
             env,
+            // SAFETY: `dataview` is a live DataView object (held in handle scope); FFI reads its backing buffer.
             JSValue::c(unsafe {
                 JSObjectGetTypedArrayBuffer(
                     env.to_js().as_ptr(),
@@ -1716,6 +1725,7 @@ pub extern "C" fn napi_create_date(
     let mut args = [JSValue::js_number(time).as_object_ref()];
     result.set(
         env,
+        // SAFETY: `args` is a stack array of one valid JSValueRef; FFI constructs a Date.
         JSValue::c(unsafe {
             JSObjectMakeDate(env.to_js().as_ptr(), 1, args.as_mut_ptr(), TODO_EXCEPTION)
         }),
@@ -2049,9 +2059,11 @@ fn napi_span(ptr: *const u8, len: usize) -> &'static [u8] {
     }
 
     if len == NAPI_AUTO_LENGTH {
+        // SAFETY: N-API contract — `ptr` is a NUL-terminated C string when `len == NAPI_AUTO_LENGTH`.
         return unsafe { bun_core::ffi::cstr(ptr.cast::<c_char>()) }.to_bytes();
     }
 
+    // SAFETY: N-API contract — `[ptr, ptr+len)` is a valid readable region for the call.
     unsafe { bun_core::ffi::slice(ptr, len) }
 }
 
@@ -2224,6 +2236,7 @@ pub extern "C" fn napi_delete_async_work(
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_delete_async_work");
     let env = get_env!(env_);
+    // SAFETY: `work_` is null or the `napi_async_work` we allocated in `napi_create_async_work`.
     let Some(work) = (unsafe { work_.as_mut() }) else {
         return env.invalid_arg();
     };
@@ -2241,6 +2254,7 @@ pub extern "C" fn napi_queue_async_work(
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_queue_async_work");
     let env = get_env!(env_);
+    // SAFETY: `work_` is null or the `napi_async_work` we allocated in `napi_create_async_work`.
     let Some(work) = (unsafe { work_.as_mut() }) else {
         return env.invalid_arg();
     };
@@ -2258,6 +2272,7 @@ pub extern "C" fn napi_cancel_async_work(
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_cancel_async_work");
     let env = get_env!(env_);
+    // SAFETY: `work_` is null or the `napi_async_work` we allocated in `napi_create_async_work`.
     let Some(work) = (unsafe { work_.as_mut() }) else {
         return env.invalid_arg();
     };
@@ -2716,6 +2731,7 @@ impl ThreadSafeFunction {
             } => {
                 let js: JSValue = cb_js.get().unwrap_or(JSValue::UNDEFINED);
 
+                // SAFETY: `env` is held alive by `self.env` (`NapiEnvRef`) for the TSF's lifetime.
                 let env_ref = unsafe { &*env };
                 let _hs = NapiHandleScope::open_scoped(env_ref);
                 napi_threadsafe_function_call_js(
@@ -2980,8 +2996,8 @@ pub extern "C" fn napi_unref_threadsafe_function(
     let env = get_env!(env_);
     // SAFETY: func is non-null per N-API contract.
     let func = unsafe { &mut *func };
-    // SAFETY: event_loop is the live JS-thread loop; `global` is set after init.
     debug_assert!(core::ptr::eq(
+        // SAFETY: event_loop is the live JS-thread loop; `global` is set after init.
         unsafe { (*func.event_loop).global.unwrap().as_ptr() },
         env.to_js()
     ));
@@ -2998,8 +3014,8 @@ pub extern "C" fn napi_ref_threadsafe_function(
     let env = get_env!(env_);
     // SAFETY: func is non-null per N-API contract.
     let func = unsafe { &mut *func };
-    // SAFETY: event_loop is the live JS-thread loop; `global` is set after init.
     debug_assert!(core::ptr::eq(
+        // SAFETY: event_loop is the live JS-thread loop; `global` is set after init.
         unsafe { (*func.event_loop).global.unwrap().as_ptr() },
         env.to_js()
     ));

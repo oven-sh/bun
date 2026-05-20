@@ -263,7 +263,7 @@ impl DeclarationBlock<'static> {
         while let Some(res) = parser.next() {
             if let Err(e) = res {
                 if options.error_recovery {
-                    options.warn(e);
+                    options.warn(&e);
                     continue;
                 }
                 // errdefer doesn't fire on `return .{ .err = ... }` — Result(T) is a tagged

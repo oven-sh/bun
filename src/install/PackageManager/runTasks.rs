@@ -173,8 +173,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
     // SAFETY: `manager_ptr`/`extract_ctx_ptr` were just derived from unique
     // `&mut` fn params; reborrowing here yields the sole live `&mut` to each
     // for the body. Dropped before the guards reborrow the same pointers.
-    let manager = unsafe { &mut *manager_ptr };
-    let extract_ctx = unsafe { &mut *extract_ctx_ptr };
+    let (manager, extract_ctx) = unsafe { (&mut *manager_ptr, &mut *extract_ctx_ptr) };
     scopeguard::defer! {
         // SAFETY: guard drops after every body borrow of `manager` has ended
         // (scope exit or `?` unwind); `manager_ptr` retains provenance because
@@ -406,7 +405,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         .status_code
                         > 499
                 {
-                    let err = task.response.fail.unwrap_or(bun_core::err!("HTTPError"));
+                    let err = task.response.fail.unwrap_or_else(|| bun_core::err!("HTTPError"));
 
                     if task.retried < manager.options.max_retry_count {
                         task.retried += 1;
@@ -431,7 +430,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                 let Some(metadata) = task.response.metadata.as_ref() else {
                     // Handle non-retry-able errors.
-                    let err = task.response.fail.unwrap_or(bun_core::err!("HTTPError"));
+                    let err = task.response.fail.unwrap_or_else(|| bun_core::err!("HTTPError"));
 
                     if C::HAS_ON_PACKAGE_MANIFEST_ERROR {
                         C::on_package_manifest_error(extract_ctx, name, err, &task.url_buf);
@@ -668,7 +667,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let err = task
                         .response
                         .fail
-                        .unwrap_or(bun_core::err!("TarballFailedToDownload"));
+                        .unwrap_or_else(|| bun_core::err!("TarballFailedToDownload"));
 
                     if task.retried < manager.options.max_retry_count {
                         task.retried += 1;
@@ -709,7 +708,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let err = task
                         .response
                         .fail
-                        .unwrap_or(bun_core::err!("TarballFailedToDownload"));
+                        .unwrap_or_else(|| bun_core::err!("TarballFailedToDownload"));
 
                     // The download will not be retried for this task_id, so
                     // drop the dedupe state before dispatching the error.
@@ -986,7 +985,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 if task.status == Task::Status::Fail {
                     let req = task.request_package_manifest();
                     let name = req.name.slice();
-                    let err = task.err.unwrap_or(bun_core::err!("Failed"));
+                    let err = task.err.unwrap_or_else(|| bun_core::err!("Failed"));
 
                     if C::HAS_ON_PACKAGE_MANIFEST_ERROR {
                         C::on_package_manifest_error(
@@ -1063,12 +1062,12 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     core::ptr::null_mut()
                 };
                 scopeguard::defer! {
-                    // SAFETY: see the put-task `defer!` above — `manager_ptr` is the
-                    // function-scope provenance root; `net_ptr` (when non-null) is
-                    // the network task owned by this resolve task.
-                    // `unsafe_http_client` is `MaybeUninit` so `put()`'s drop
-                    // skips it — drop manually so headers don't leak.
                     if !net_ptr.is_null() {
+                        // SAFETY: see the put-task `defer!` above — `manager_ptr` is the
+                        // function-scope provenance root; `net_ptr` (checked non-null) is
+                        // the network task owned by this resolve task.
+                        // `unsafe_http_client` is `MaybeUninit` so `put()`'s drop
+                        // skips it — drop manually so headers don't leak.
                         unsafe {
                             (*net_ptr).unsafe_http_client.assume_init_drop();
                             (*manager_ptr).preallocated_network_tasks.put(net_ptr);
@@ -1076,11 +1075,13 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
                 };
 
-                // SAFETY: `task.tag` selects the active union arm.
-                let tarball = match task.tag {
-                    Task::Tag::Extract => unsafe { &task.request.extract.tarball },
-                    Task::Tag::LocalTarball => unsafe { &task.request.local_tarball.tarball },
-                    _ => unreachable!(),
+                // SAFETY: `task.tag` selects the active `task.request` union arm.
+                let tarball = unsafe {
+                    match task.tag {
+                        Task::Tag::Extract => &task.request.extract.tarball,
+                        Task::Tag::LocalTarball => &task.request.local_tarball.tarball,
+                        _ => unreachable!(),
+                    }
                 };
                 let dependency_id = tarball.dependency_id;
                 let mut package_id = manager.lockfile.buffers.resolutions[dependency_id as usize];
@@ -1091,7 +1092,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 let resolution = &tarball.resolution;
 
                 if task.status == Task::Status::Fail {
-                    let err = task.err.unwrap_or(bun_core::err!("TarballFailedToExtract"));
+                    let err = task.err.unwrap_or_else(|| bun_core::err!("TarballFailedToExtract"));
 
                     // Extract-task failure (integrity check, libarchive error, etc.)
                     // is symmetric with the HTTP 4xx/5xx branch above: drop the
@@ -1104,15 +1105,15 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let _ = manager.network_dedupe_map.remove(&task.id);
 
                     if C::HAS_ON_PACKAGE_DOWNLOAD_ERROR {
-                        // SAFETY: `task.tag` selects the active union arm.
-                        let fail_url: &[u8] = match task.tag {
-                            Task::Tag::Extract => unsafe {
-                                &(*task.request.extract.network).url_buf
-                            },
-                            Task::Tag::LocalTarball => unsafe {
-                                task.request.local_tarball.tarball.url.slice()
-                            },
-                            _ => unreachable!(),
+                        // SAFETY: `task.tag` selects the active `task.request` union arm.
+                        let fail_url: &[u8] = unsafe {
+                            match task.tag {
+                                Task::Tag::Extract => &(*task.request.extract.network).url_buf,
+                                Task::Tag::LocalTarball => {
+                                    task.request.local_tarball.tarball.url.slice()
+                                }
+                                _ => unreachable!(),
+                            }
                         };
                         if C::IS_STORE_INSTALLER {
                             C::on_package_download_error_store(
@@ -1202,9 +1203,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         // `dependency_list` is a Drop type (frees on every path); only the
                         // `on_resolve` side-effect needs the guard so it fires on `?` too.
                         scopeguard::defer! {
-                            // SAFETY: `extract_ctx_ptr` is the function-scope provenance
-                            // root for `extract_ctx`.
                             if C::HAS_ON_RESOLVE && any_root.get() {
+                                // SAFETY: `extract_ctx_ptr` is the function-scope provenance
+                                // root for `extract_ctx`; the body shadow is dead at guard time.
                                 C::on_resolve(unsafe { &mut *extract_ctx_ptr });
                             }
                         };
@@ -1286,7 +1287,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 manager.git_repositories.insert(task.id, repo_fd);
 
                 if task.status == Task::Status::Fail {
-                    let err = task.err.unwrap_or(bun_core::err!("Failed"));
+                    let err = task.err.unwrap_or_else(|| bun_core::err!("Failed"));
 
                     if C::HAS_ON_PACKAGE_MANIFEST_ERROR {
                         C::on_package_manifest_error(extract_ctx, name, err, url);
@@ -1456,7 +1457,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 let mut package_id: PackageID = INVALID_PACKAGE_ID;
 
                 if task.status == Task::Status::Fail {
-                    let err = task.err.unwrap_or(bun_core::err!("Failed"));
+                    let err = task.err.unwrap_or_else(|| bun_core::err!("Failed"));
 
                     if C::HAS_ON_PACKAGE_DOWNLOAD_ERROR && C::IS_STORE_INSTALLER {
                         // SAFETY: `resolution.tag == Git` — git-checkout tasks are
@@ -1529,9 +1530,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                         // Zig: `defer { dependency_list.deinit(); if (any_root) callbacks.onResolve(extract_ctx); }`
                         scopeguard::defer! {
-                            // SAFETY: `extract_ctx_ptr` is the function-scope provenance
-                            // root for `extract_ctx`.
                             if C::HAS_ON_RESOLVE && any_root.get() {
+                                // SAFETY: `extract_ctx_ptr` is the function-scope provenance
+                                // root for `extract_ctx`; the body shadow is dead at guard time.
                                 C::on_resolve(unsafe { &mut *extract_ctx_ptr });
                             }
                         };
@@ -1781,7 +1782,7 @@ pub fn generate_network_task_for_tarball<'a>(
     url: &[u8],
     is_required: bool,
     dependency_id: DependencyID,
-    package: Package,
+    package: &Package,
     patch_name_and_version_hash: Option<u64>,
     authorization: Authorization,
 ) -> Result<Option<&'a mut NetworkTask>, ForTarballError> {
@@ -1889,6 +1890,9 @@ pub fn generate_network_task_for_tarball<'a>(
             t
         };
         let extract_task = enqueue::create_extract_task_for_streaming(this, tarball_ref, net_ptr);
+        // SAFETY: `net_ptr` is the unique handle to the freshly-vended pool slot
+        // (see `write_init` above); `TarballStream::init` returns a fresh
+        // `heap::alloc` which we reclaim ownership of exactly once here.
         unsafe {
             (*net_ptr).streaming_extract_task = extract_task;
             (*net_ptr).tarball_stream = Some(bun_core::heap::take(TarballStream::init(

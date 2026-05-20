@@ -35,7 +35,7 @@ impl Dir {
         Self { fd }
     }
     #[inline]
-    pub fn fd(&self) -> Fd {
+    pub fn fd(self) -> Fd {
         self.fd
     }
     #[inline]
@@ -49,13 +49,13 @@ impl Dir {
 
     /// `std.fs.Dir.makePath` — `mkdir -p` relative to this dir.
     #[inline]
-    pub fn make_path(&self, sub_path: &[u8]) -> core::result::Result<(), bun_core::Error> {
+    pub fn make_path(self, sub_path: &[u8]) -> core::result::Result<(), bun_core::Error> {
         mkdir_recursive_at(self.fd, sub_path).map_err(Into::into)
     }
     /// `std.fs.Dir.makeOpenPath` — try `openDir` first; on ENOENT, `makePath`
     /// then `openDir` (Zig: vendor/zig/lib/std/fs/Dir.zig `makeOpenPath`).
     pub fn make_open_path(
-        &self,
+        self,
         sub_path: &[u8],
         _opts: OpenDirOptions,
     ) -> core::result::Result<Dir, bun_core::Error> {
@@ -72,7 +72,7 @@ impl Dir {
     }
     /// `std.fs.Dir.deleteTree` — recursive `rm -rf`. Port of Zig
     /// `std.fs.Dir.deleteTree` (stack-based depth-first walk; std/fs/Dir.zig).
-    pub fn delete_tree(&self, sub_path: &[u8]) -> core::result::Result<(), bun_core::Error> {
+    pub fn delete_tree(self, sub_path: &[u8]) -> core::result::Result<(), bun_core::Error> {
         // `deleteTreeOpenInitialSubpath` — try unlinking as a file first; if
         // that yields IsDir/EPERM, open it as an iterable directory.
         let initial = match self.delete_tree_open_initial_subpath(sub_path)? {
@@ -210,7 +210,7 @@ impl Dir {
     /// directory and return the fd. Returns `None` when removal succeeded or
     /// the path doesn't exist.
     fn delete_tree_open_initial_subpath(
-        &self,
+        self,
         sub_path: &[u8],
     ) -> core::result::Result<Option<Fd>, bun_core::Error> {
         let mut treat_as_dir = false;
@@ -289,9 +289,7 @@ impl OwnedDir {
     /// Take the inner `Dir` without closing it.
     #[inline]
     pub fn into_inner(self) -> Dir {
-        let d = self.0;
-        core::mem::forget(self);
-        d
+        core::mem::ManuallyDrop::new(self).0
     }
 }
 impl Drop for OwnedDir {
@@ -321,7 +319,7 @@ impl Dir {
     /// `std.fs.Dir.makeDir` — single-level `mkdirat` (mode 0o755) relative to
     /// this dir. Unlike `make_path`, does NOT create intermediate directories
     /// and surfaces `error.PathAlreadyExists` for callers to branch on.
-    pub fn make_dir(&self, sub_path: &[u8]) -> core::result::Result<(), bun_core::Error> {
+    pub fn make_dir(self, sub_path: &[u8]) -> core::result::Result<(), bun_core::Error> {
         let mut buf = bun_paths::PathBuffer::default();
         let len = sub_path.len().min(buf.0.len() - 1);
         buf.0[..len].copy_from_slice(&sub_path[..len]);
@@ -340,7 +338,7 @@ impl Dir {
     /// `SymLinkFlags`); on Windows it selects junction vs. file-symlink and
     /// callers route through `sys_uv::symlink_uv` instead.
     pub fn sym_link(
-        &self,
+        self,
         target: &[u8],
         link_name: &[u8],
         _is_directory: bool,
@@ -366,7 +364,7 @@ impl Dir {
     /// this dir and return a `File` handle. Zig stdlib semantics: `O_CREAT`,
     /// `O_WRONLY` (or `O_RDWR` if `flags.read`), `O_TRUNC` if `flags.truncate`.
     pub fn create_file_z(
-        &self,
+        self,
         sub_path: &ZStr,
         flags: CreateFlags,
     ) -> core::result::Result<File, bun_core::Error> {
@@ -381,7 +379,7 @@ impl Dir {
 
     /// `std.fs.Dir.deleteFileZ` — `unlinkat(self.fd, sub_path, 0)`.
     #[inline]
-    pub fn delete_file_z(&self, sub_path: &ZStr) -> core::result::Result<(), bun_core::Error> {
+    pub fn delete_file_z(self, sub_path: &ZStr) -> core::result::Result<(), bun_core::Error> {
         unlinkat(self.fd, sub_path).map_err(Into::into)
     }
 
@@ -392,9 +390,9 @@ impl Dir {
     /// `AtomicFile` rename — Bun's only call site is `gitignore` → `.gitignore`
     /// where atomicity isn't required).
     pub fn copy_file(
-        &self,
+        self,
         source_path: &[u8],
-        dest_dir: &Dir,
+        dest_dir: Dir,
         dest_path: &[u8],
         options: CopyFileOptions,
     ) -> core::result::Result<(), bun_core::Error> {
@@ -431,7 +429,7 @@ impl Dir {
     /// this dir as a `Dir` handle. Zig stdlib semantics: `O_DIRECTORY |
     /// O_RDONLY | O_CLOEXEC` (handled by `open_dir_at`).
     #[inline]
-    pub fn open_dir_z(&self, sub_path: &ZStr) -> core::result::Result<Dir, bun_core::Error> {
+    pub fn open_dir_z(self, sub_path: &ZStr) -> core::result::Result<Dir, bun_core::Error> {
         open_dir_at(self.fd, sub_path.as_bytes())
             .map(Dir::from_fd)
             .map_err(Into::into)
@@ -446,7 +444,7 @@ impl Dir {
     /// children — matching `std.fs.Dir.openDir`, *not* `bun.openDir`.
     #[inline]
     pub fn open_dir(
-        &self,
+        self,
         sub_path: &[u8],
         opts: OpenDirOptions,
     ) -> core::result::Result<Dir, bun_core::Error> {

@@ -367,7 +367,7 @@ pub fn write_output_files_to_disk(
                             .copy_from_slice(BYTECODE_EXTENSION.as_bytes());
                         match write_file_with_path_buffer(
                             &mut pathbuf,
-                            WriteFileArgs {
+                            &WriteFileArgs {
                                 data: WriteFileData::Buffer { buffer: &bytecode },
                                 encoding: WriteFileEncoding::Buffer,
                                 mode: if chunk.flags.contains(ChunkFlags::IS_EXECUTABLE) {
@@ -438,7 +438,7 @@ pub fn write_output_files_to_disk(
 
         match write_file_with_path_buffer(
             &mut pathbuf,
-            WriteFileArgs {
+            &WriteFileArgs {
                 data: WriteFileData::Buffer {
                     buffer: &code_result.buffer,
                 },

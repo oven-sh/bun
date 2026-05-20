@@ -254,12 +254,14 @@ impl IdentifierArray {
     /// `identifier_array` must be a pointer previously returned by `create` and not yet destroyed.
     #[inline]
     pub unsafe fn destroy(identifier_array: *mut IdentifierArray) {
+        // SAFETY: caller contract — `identifier_array` came from `create` and has not been destroyed.
         unsafe { JSC__IdentifierArray__destroy(identifier_array) }
     }
     /// # Safety
     /// `this` must be live; `n` must be in-bounds for the array's length.
     #[inline]
     pub unsafe fn set_from_utf8(this: *mut IdentifierArray, n: usize, vm: &VM, str_: &[u8]) {
+        // SAFETY: caller contract — `this` is live, `n` is in bounds; `str_` is a valid slice for the call.
         unsafe { JSC__IdentifierArray__setFromUtf8(this, n, vm, str_.as_ptr(), str_.len()) }
     }
 }
@@ -511,6 +513,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         import_name: StringID,
         module_name: StringID,
     ) {
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
         unsafe {
             JSC_JSModuleRecord__addIndirectExport(self, ia, export_name, import_name, module_name)
         }
@@ -522,6 +525,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         export_name: StringID,
         local_name: StringID,
     ) {
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
         unsafe { JSC_JSModuleRecord__addLocalExport(self, ia, export_name, local_name) }
     }
     #[inline]
@@ -531,10 +535,12 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         export_name: StringID,
         module_name: StringID,
     ) {
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
         unsafe { JSC_JSModuleRecord__addNamespaceExport(self, ia, export_name, module_name) }
     }
     #[inline]
     fn add_star_export(self, ia: *mut IdentifierArray, module_name: StringID) {
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
         unsafe { JSC_JSModuleRecord__addStarExport(self, ia, module_name) }
     }
     #[inline]
@@ -544,6 +550,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         module_name: StringID,
         phase_defer: bool,
     ) {
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
         unsafe {
             JSC_JSModuleRecord__addRequestedModuleNullAttributesPtr(
                 self,
@@ -560,6 +567,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         module_name: StringID,
         phase_defer: bool,
     ) {
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
         unsafe {
             JSC_JSModuleRecord__addRequestedModuleJavaScript(self, ia, module_name, phase_defer)
         }
@@ -571,6 +579,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         module_name: StringID,
         phase_defer: bool,
     ) {
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
         unsafe {
             JSC_JSModuleRecord__addRequestedModuleWebAssembly(self, ia, module_name, phase_defer)
         }
@@ -582,6 +591,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         module_name: StringID,
         phase_defer: bool,
     ) {
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
         unsafe { JSC_JSModuleRecord__addRequestedModuleJSON(self, ia, module_name, phase_defer) }
     }
     #[inline]
@@ -592,6 +602,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         host_defined_import_type: StringID,
         phase_defer: bool,
     ) {
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
         unsafe {
             JSC_JSModuleRecord__addRequestedModuleHostDefined(
                 self,
@@ -610,6 +621,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         local_name: StringID,
         module_name: StringID,
     ) {
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
         unsafe {
             JSC_JSModuleRecord__addImportEntrySingle(self, ia, import_name, local_name, module_name)
         }
@@ -622,6 +634,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         local_name: StringID,
         module_name: StringID,
     ) {
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
         unsafe {
             JSC_JSModuleRecord__addImportEntrySingleTypeScript(
                 self,
@@ -640,6 +653,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         local_name: StringID,
         module_name: StringID,
     ) {
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
         unsafe {
             JSC_JSModuleRecord__addImportEntryNamespace(
                 self,
@@ -658,6 +672,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         local_name: StringID,
         module_name: StringID,
     ) {
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
         unsafe {
             JSC_JSModuleRecord__addImportEntryNamespaceDefer(
                 self,

@@ -107,7 +107,7 @@ impl FileOpener for WriteFile {
         display_path: &[u8],
     ) -> Retry {
         // Zig: `if (@hasField(This, "mkdirp_if_not_exists")) switch (mkdirIfNotExists(...)) { ... }`
-        mkdir_if_not_exists(self, err, path, display_path)
+        mkdir_if_not_exists(self, &err, path, display_path)
     }
     #[cfg(windows)]
     fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t {

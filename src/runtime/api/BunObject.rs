@@ -751,8 +751,7 @@ pub fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
     ConsoleObject::format2(
         ConsoleObject::MessageLevel::Debug,
         global_this,
-        arguments.as_ptr(),
-        1,
+        &arguments[..1],
         &mut array,
         format_options,
     )?;
@@ -787,8 +786,7 @@ pub fn bun_inspect_singleline(global_this: &JSGlobalObject, value: JSValue) -> B
     if ConsoleObject::format2(
         ConsoleObject::MessageLevel::Debug,
         global_this,
-        core::slice::from_ref(&value).as_ptr(),
-        1,
+        core::slice::from_ref(&value),
         &mut array,
         ConsoleObject::FormatOptions {
             enable_colors: false,

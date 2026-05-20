@@ -1311,7 +1311,7 @@ impl<'a> SelectorParser<'a> {
         }
         if !strings::starts_with(name, b"-") {
             self.options.warn(
-                input.new_custom_error(
+                &input.new_custom_error(
                     SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name)
                         .into_default_parser_error(),
                 ),
@@ -1374,7 +1374,7 @@ impl<'a> SelectorParser<'a> {
                 break 'pseudo_class pseudo;
             }
             if strings::starts_with_char(name, b'_') {
-                self.options.warn(loc.new_custom_error(
+                self.options.warn(&loc.new_custom_error(
                     SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name),
                 ));
             } else if (self.options.css_modules.is_some()
@@ -1428,7 +1428,7 @@ impl<'a> SelectorParser<'a> {
             _ => {
                 if !strings::starts_with_char(name, b'-') {
                     self.options.warn(
-                        parser.new_custom_error(
+                        &parser.new_custom_error(
                             SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name)
                                 .into_default_parser_error(),
                         ),
@@ -1485,7 +1485,7 @@ impl<'a> SelectorParser<'a> {
         // TODO(port): phf custom hasher — Zig used `ComptimeStringMap.getCaseInsensitiveWithEql`.
         let pseudo_element = lookup_pseudo_element(name).unwrap_or_else(|| {
             if !strings::starts_with_char(name, b'-') {
-                self.options.warn(loc.new_custom_error(
+                self.options.warn(&loc.new_custom_error(
                     SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name),
                 ));
             }

@@ -988,6 +988,7 @@ pub enum GetOrStartLoadResult<'a> {
     Err,
 }
 
+#[derive(Clone, Copy)]
 pub enum ServePluginsCallback<'a> {
     /// Raw `*mut` because the route is stored in
     /// `ServePluginsState::Pending.html_bundle_routes` and later resolved via
@@ -2044,7 +2045,11 @@ where
         // arbitrary user JS. A re-entrant server.upgrade(req) from a getter
         // would otherwise be able to deref this context out from under us.
         upgrader.ref_();
-        let _upgrader_guard = scopeguard::guard(upgrader_ptr, |p| unsafe { (*p).deref() });
+        let _upgrader_guard = scopeguard::guard(upgrader_ptr, |p| {
+            // SAFETY: `p` is the live `upgrader_ptr` whose refcount was bumped by
+            // the `ref_()` above; this guard pairs it with a single `deref()`.
+            unsafe { (*p).deref() }
+        });
 
         let mut sec_websocket_key_str = ZigString::EMPTY;
         let mut sec_websocket_protocol = ZigString::EMPTY;
@@ -2927,8 +2932,9 @@ where
         req: &mut Ctx::Req,
         resp: &mut Ctx::Resp,
     ) {
-        // SAFETY: server backref outlives user_route
         let server_ptr = user_route.server.cast_mut();
+        // SAFETY: `UserRoute.server` is a back-pointer to the owning server,
+        // which outlives every route it registered.
         let server = unsafe { &mut *server_ptr };
         let index = user_route.id;
 
@@ -3352,7 +3358,7 @@ where
         Self::handle_request(
             server_ptr,
             &should_deinit_context,
-            prepared,
+            &prepared,
             req,
             response_value,
         );
@@ -3712,14 +3718,17 @@ pub fn server_set_idle_timeout_(
         )));
     }
     let value = seconds.to_u32();
-    // SAFETY: as_ returned a non-null *mut to a live server.
     if let Some(this) = server.as_::<HTTPServer>() {
+        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
         unsafe { &mut *this }.set_idle_timeout(value);
     } else if let Some(this) = server.as_::<HTTPSServer>() {
+        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
         unsafe { &mut *this }.set_idle_timeout(value);
     } else if let Some(this) = server.as_::<DebugHTTPServer>() {
+        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
         unsafe { &mut *this }.set_idle_timeout(value);
     } else if let Some(this) = server.as_::<DebugHTTPSServer>() {
+        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
         unsafe { &mut *this }.set_idle_timeout(value);
     } else {
         return Err(global.throw(format_args!(
@@ -3768,6 +3777,8 @@ pub fn server_set_on_client_error_(
                         // uWS socket; raw_packet/raw_packet_len describe a valid (possibly empty) buffer.
                         let this = unsafe { &mut *user_data.cast::<$T>() };
                         let packet: &[u8] = if raw_packet_len > 0 {
+                            // SAFETY: uWS guarantees `raw_packet` points to `raw_packet_len`
+                            // readable bytes when `raw_packet_len > 0`.
                             unsafe { bun_core::ffi::slice(raw_packet, raw_packet_len as usize) }
                         } else {
                             &[]
@@ -3802,14 +3813,17 @@ pub fn server_set_app_flags_(
         )));
     }
 
-    // SAFETY: as_ returned a non-null *mut to a live server.
     if let Some(this) = server.as_::<HTTPServer>() {
+        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
         unsafe { &mut *this }.set_flags(require_host_header, use_strict_method_validation);
     } else if let Some(this) = server.as_::<HTTPSServer>() {
+        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
         unsafe { &mut *this }.set_flags(require_host_header, use_strict_method_validation);
     } else if let Some(this) = server.as_::<DebugHTTPServer>() {
+        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
         unsafe { &mut *this }.set_flags(require_host_header, use_strict_method_validation);
     } else if let Some(this) = server.as_::<DebugHTTPSServer>() {
+        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
         unsafe { &mut *this }.set_flags(require_host_header, use_strict_method_validation);
     } else {
         return Err(global.throw(format_args!(
@@ -3830,14 +3844,17 @@ pub fn server_set_max_http_header_size_(
         )));
     }
 
-    // SAFETY: as_ returned a non-null *mut to a live server.
     if let Some(this) = server.as_::<HTTPServer>() {
+        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
         unsafe { &mut *this }.set_max_http_header_size(max_header_size);
     } else if let Some(this) = server.as_::<HTTPSServer>() {
+        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
         unsafe { &mut *this }.set_max_http_header_size(max_header_size);
     } else if let Some(this) = server.as_::<DebugHTTPServer>() {
+        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
         unsafe { &mut *this }.set_max_http_header_size(max_header_size);
     } else if let Some(this) = server.as_::<DebugHTTPSServer>() {
+        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
         unsafe { &mut *this }.set_max_http_header_size(max_header_size);
     } else {
         return Err(global.throw(format_args!(

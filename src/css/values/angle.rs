@@ -35,7 +35,7 @@ impl Angle {
     // ~toCssImpl
 
     #[inline]
-    fn tag(&self) -> u8 {
+    fn tag(self) -> u8 {
         match self {
             Angle::Deg(_) => TAG_DEG,
             Angle::Rad(_) => TAG_RAD,
@@ -85,8 +85,8 @@ impl Angle {
         Angle::parse_internal(input, true)
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        let (value, unit): (f32, &'static str) = match *self {
+    pub fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        let (value, unit): (f32, &'static str) = match self {
             Angle::Deg(val) => (val, "deg"),
             Angle::Grad(val) => (val, "grad"),
             Angle::Rad(val) => 'brk: {
@@ -106,7 +106,7 @@ impl Angle {
     }
 
     pub fn to_css_with_unitless_zero(
-        &self,
+        self,
         dest: &mut Printer,
     ) -> core::result::Result<(), PrintErr> {
         if self.is_zero() {
@@ -137,9 +137,9 @@ impl Angle {
     }
 
     /// Returns the angle in radians.
-    pub fn to_radians(&self) -> CSSNumber {
+    pub fn to_radians(self) -> CSSNumber {
         const RAD_PER_DEG: f32 = core::f32::consts::PI / 180.0;
-        match *self {
+        match self {
             Angle::Deg(deg) => deg * RAD_PER_DEG,
             Angle::Rad(rad) => rad,
             Angle::Grad(grad) => grad * 180.0 / 200.0 * RAD_PER_DEG,
@@ -148,9 +148,9 @@ impl Angle {
     }
 
     /// Returns the angle in degrees.
-    pub fn to_degrees(&self) -> CSSNumber {
+    pub fn to_degrees(self) -> CSSNumber {
         const DEG_PER_RAD: f32 = 180.0 / core::f32::consts::PI;
-        match *self {
+        match self {
             Angle::Deg(deg) => deg,
             Angle::Rad(rad) => rad * DEG_PER_RAD,
             Angle::Grad(grad) => grad * 180.0 / 200.0,
@@ -162,8 +162,8 @@ impl Angle {
         Angle::Deg(0.0)
     }
 
-    pub fn is_zero(&self) -> bool {
-        let v = match *self {
+    pub fn is_zero(self) -> bool {
+        let v = match self {
             Angle::Deg(deg) => deg,
             Angle::Rad(rad) => rad,
             Angle::Grad(grad) => grad,
@@ -172,13 +172,13 @@ impl Angle {
         v == 0.0
     }
 
-    pub fn into_calc(&self) -> Calc<Angle> {
+    pub fn into_calc(self) -> Calc<Angle> {
         // PERF(port): was arena alloc (bun.create) — Calc<V>::Value now owns Box<V>.
-        Calc::Value(Box::new(*self))
+        Calc::Value(Box::new(self))
     }
 
-    pub fn map(&self, opfn: impl Fn(f32) -> f32) -> Angle {
-        match *self {
+    pub fn map(self, opfn: impl Fn(f32) -> f32) -> Angle {
+        match self {
             Angle::Deg(deg) => Angle::Deg(opfn(deg)),
             Angle::Rad(rad) => Angle::Rad(opfn(rad)),
             Angle::Grad(grad) => Angle::Grad(opfn(grad)),
@@ -186,7 +186,7 @@ impl Angle {
         }
     }
 
-    pub fn try_map(&self, opfn: impl Fn(f32) -> f32) -> Option<Angle> {
+    pub fn try_map(self, opfn: impl Fn(f32) -> f32) -> Option<Angle> {
         Some(self.map(opfn))
     }
 
@@ -195,14 +195,14 @@ impl Angle {
     }
 
     pub fn add(self, rhs: Angle) -> Angle {
-        Angle::op(&self, &rhs, (), |_: (), a: f32, b: f32| a + b)
+        Angle::op(self, rhs, (), |_: (), a: f32, b: f32| a + b)
     }
 
-    pub fn try_add(&self, rhs: &Angle) -> Option<Angle> {
+    pub fn try_add(self, rhs: Angle) -> Option<Angle> {
         Some(Angle::Deg(self.to_degrees() + rhs.to_degrees()))
     }
 
-    pub fn eql(&self, rhs: &Angle) -> bool {
+    pub fn eql(self, rhs: Angle) -> bool {
         self.to_degrees() == rhs.to_degrees()
     }
 
@@ -216,49 +216,49 @@ impl Angle {
         }
     }
 
-    pub fn partial_cmp(&self, other: &Angle) -> Option<Ordering> {
+    pub fn partial_cmp(self, other: Angle) -> Option<Ordering> {
         crate::generic::partial_cmp_f32(&self.to_degrees(), &other.to_degrees())
     }
 
-    pub fn try_op<C>(&self, other: &Angle, ctx: C, op_fn: fn(C, f32, f32) -> f32) -> Option<Angle> {
+    pub fn try_op<C>(self, other: Angle, ctx: C, op_fn: fn(C, f32, f32) -> f32) -> Option<Angle> {
         Some(Angle::op(self, other, ctx, op_fn))
     }
 
-    pub fn try_op_to<R, C>(&self, other: &Angle, ctx: C, op_fn: fn(C, f32, f32) -> R) -> Option<R> {
+    pub fn try_op_to<R, C>(self, other: Angle, ctx: C, op_fn: fn(C, f32, f32) -> R) -> Option<R> {
         Some(Angle::op_to(self, other, ctx, op_fn))
     }
 
-    pub fn op<C>(&self, other: &Angle, ctx: C, op_fn: fn(C, f32, f32) -> f32) -> Angle {
+    pub fn op<C>(self, other: Angle, ctx: C, op_fn: fn(C, f32, f32) -> f32) -> Angle {
         // PERF: not sure if this is faster
         // PORT NOTE: reshaped for borrowck — Zig used packed-tag bit-twiddling switch; Rust match on (tag, tag) is equivalent.
         match (self, other) {
-            (Angle::Deg(a), Angle::Deg(b)) => Angle::Deg(op_fn(ctx, *a, *b)),
-            (Angle::Rad(a), Angle::Rad(b)) => Angle::Rad(op_fn(ctx, *a, *b)),
-            (Angle::Grad(a), Angle::Grad(b)) => Angle::Grad(op_fn(ctx, *a, *b)),
-            (Angle::Turn(a), Angle::Turn(b)) => Angle::Turn(op_fn(ctx, *a, *b)),
+            (Angle::Deg(a), Angle::Deg(b)) => Angle::Deg(op_fn(ctx, a, b)),
+            (Angle::Rad(a), Angle::Rad(b)) => Angle::Rad(op_fn(ctx, a, b)),
+            (Angle::Grad(a), Angle::Grad(b)) => Angle::Grad(op_fn(ctx, a, b)),
+            (Angle::Turn(a), Angle::Turn(b)) => Angle::Turn(op_fn(ctx, a, b)),
             _ => Angle::Deg(op_fn(ctx, self.to_degrees(), other.to_degrees())),
         }
         // PERF(port): was comptime monomorphization (fn-ptr arg) — profile if it shows up on a hot path.
     }
 
-    pub fn op_to<T, C>(&self, other: &Angle, ctx: C, op_fn: fn(C, f32, f32) -> T) -> T {
+    pub fn op_to<T, C>(self, other: Angle, ctx: C, op_fn: fn(C, f32, f32) -> T) -> T {
         // PERF: not sure if this is faster
         // TODO(port): upstream bug — Zig `opTo` computes `other_tag` from `this.*`, so mixed-variant
         // inputs read `other`'s raw f32 payload via the wrong arm. This port INTENTIONALLY DIVERGES:
         // we require both operands to share a variant, otherwise fall through to to_degrees().
         // Revisit and fix upstream.
         match (self, other) {
-            (Angle::Deg(a), Angle::Deg(b)) => op_fn(ctx, *a, *b),
-            (Angle::Rad(a), Angle::Rad(b)) => op_fn(ctx, *a, *b),
-            (Angle::Grad(a), Angle::Grad(b)) => op_fn(ctx, *a, *b),
-            (Angle::Turn(a), Angle::Turn(b)) => op_fn(ctx, *a, *b),
+            (Angle::Deg(a), Angle::Deg(b)) => op_fn(ctx, a, b),
+            (Angle::Rad(a), Angle::Rad(b)) => op_fn(ctx, a, b),
+            (Angle::Grad(a), Angle::Grad(b)) => op_fn(ctx, a, b),
+            (Angle::Turn(a), Angle::Turn(b)) => op_fn(ctx, a, b),
             _ => op_fn(ctx, self.to_degrees(), other.to_degrees()),
         }
         // PERF(port): was comptime monomorphization (fn-ptr arg) — profile if it shows up on a hot path.
     }
 
-    pub fn sign(&self) -> f32 {
-        match *self {
+    pub fn sign(self) -> f32 {
+        match self {
             Angle::Deg(v) | Angle::Rad(v) | Angle::Grad(v) | Angle::Turn(v) => {
                 CSSNumberFns::sign(&v)
             }

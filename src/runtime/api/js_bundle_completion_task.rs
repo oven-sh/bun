@@ -419,7 +419,7 @@ impl JSBundleCompletionTask {
             outfile_for_executable,
             env,
             self.config.format,
-            WindowsOptions {
+            &WindowsOptions {
                 hide_console: compile_options.windows_hide_console,
                 icon: opt_box(&compile_options.windows_icon_path.list),
                 title: opt_box(&compile_options.windows_title.list),

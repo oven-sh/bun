@@ -63,7 +63,7 @@ impl Percentage {
     }
 
     #[inline]
-    pub fn eql(&self, other: &Percentage) -> bool {
+    pub fn eql(self, other: Percentage) -> bool {
         self.v == other.v
     }
 
@@ -84,11 +84,11 @@ impl Percentage {
         Percentage { v: self.v * other }
     }
 
-    pub fn is_zero(&self) -> bool {
+    pub fn is_zero(self) -> bool {
         self.v == 0.0
     }
 
-    pub fn sign(&self) -> f32 {
+    pub fn sign(self) -> f32 {
         css::signfns::sign_f32(self.v)
     }
 
@@ -112,8 +112,8 @@ impl Percentage {
     }
 
     pub fn op<C>(
-        &self,
-        other: &Percentage,
+        self,
+        other: Percentage,
         ctx: C,
         op_fn: impl Fn(C, f32, f32) -> f32,
     ) -> Percentage {
@@ -122,7 +122,7 @@ impl Percentage {
         }
     }
 
-    pub fn op_to<R, C>(&self, other: &Percentage, ctx: C, op_fn: impl Fn(C, f32, f32) -> R) -> R {
+    pub fn op_to<R, C>(self, other: Percentage, ctx: C, op_fn: impl Fn(C, f32, f32) -> R) -> R {
         op_fn(ctx, self.v, other.v)
     }
 
@@ -164,7 +164,7 @@ impl<D: PartialEq + Clone> PartialEq for DimensionPercentage<D> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Dimension(a), Self::Dimension(b)) => a == b,
-            (Self::Percentage(a), Self::Percentage(b)) => a.eql(b),
+            (Self::Percentage(a), Self::Percentage(b)) => a.eql(*b),
             (Self::Calc(a), Self::Calc(b)) => **a == **b,
             _ => false,
         }

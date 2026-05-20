@@ -187,6 +187,7 @@ impl StandaloneModuleGraph {
 // synchronization; mirror that here so the `Send + Sync` supertrait on
 // `bun_resolver::StandaloneModuleGraph` is satisfied.
 unsafe impl Send for StandaloneModuleGraph {}
+// SAFETY: see `Send` impl — post-init mutation is confined to per-`File` lazy caches on the JS thread.
 unsafe impl Sync for StandaloneModuleGraph {}
 
 /// Resolver-facing trait object impl. The resolver and VM hold the graph as
@@ -316,6 +317,7 @@ mod pe {
         if length == 0 {
             return None;
         }
+        // SAFETY: FFI call returning a process-lifetime section pointer (or null).
         let data_ptr = unsafe { Bun__getStandaloneModuleGraphPEData() };
         if data_ptr.is_null() {
             return None;
@@ -438,7 +440,7 @@ impl LazySourceMap {
 
         match self {
             LazySourceMap::None => None,
-            LazySourceMap::Parsed(map) => Some(map.clone()),
+            LazySourceMap::Parsed(map) => Some(Arc::clone(map)),
             LazySourceMap::Serialized(serialized) => {
                 let Some(blob) = serialized.mapping_blob() else {
                     *self = LazySourceMap::None;
@@ -496,7 +498,7 @@ impl LazySourceMap {
 
                 let parsed = Arc::new(stored);
                 // PERF(port): Zig did parsed.ref() (intrusive) to never free; Arc clone held in self.
-                *self = LazySourceMap::Parsed(parsed.clone());
+                *self = LazySourceMap::Parsed(Arc::clone(&parsed));
                 Some(parsed)
             }
         }
@@ -562,9 +564,7 @@ impl StandaloneModuleGraph {
         // → 4-byte). We instead iterate by index and `read_unaligned` each fixed-size record into a
         // local (`CompiledModuleGraphFile` is `Copy`/POD), so no `&T` ever points at unaligned memory.
         let modules_list_count = modules_list_bytes.len() / size_of::<CompiledModuleGraphFile>();
-        let modules_list_base = modules_list_bytes
-            .as_ptr()
-            .cast::<CompiledModuleGraphFile>();
+        let modules_list_base = modules_list_bytes.as_ptr();
 
         if offsets.entry_point_id as usize > modules_list_count {
             return Err(err!(
@@ -576,23 +576,36 @@ impl StandaloneModuleGraph {
         modules.reserve(modules_list_count);
         for i in 0..modules_list_count {
             // SAFETY: index < count derived from byte length above; bytes live for 'static.
-            let module: CompiledModuleGraphFile =
-                unsafe { core::ptr::read_unaligned(modules_list_base.add(i)) };
+            let module: CompiledModuleGraphFile = unsafe {
+                core::ptr::read_unaligned(
+                    modules_list_base
+                        .add(i * size_of::<CompiledModuleGraphFile>())
+                        .cast::<CompiledModuleGraphFile>(),
+                )
+            };
             let module = &module;
             // SAFETY: each name/contents/sourcemap/bytecode_origin_path subrange is in-bounds
             // (serialized by `to_bytes`) and disjoint from the writable bytecode/module_info
             // subranges; section bytes are a live 'static allocation.
+            let (name, contents, sourcemap_bytes, bytecode_origin) = unsafe {
+                (
+                    slice_to_z(raw_const, raw_len, module.name),
+                    slice_to_z(raw_const, raw_len, module.contents),
+                    slice_to(raw_const, raw_len, module.sourcemap),
+                    slice_to_z(raw_const, raw_len, module.bytecode_origin_path),
+                )
+            };
             // PERF(port): was putAssumeCapacity
             let _ = modules.put(
-                unsafe { slice_to_z(raw_const, raw_len, module.name) }.as_bytes(),
+                name.as_bytes(),
                 File {
-                    name: unsafe { slice_to_z(raw_const, raw_len, module.name) }.as_bytes(),
+                    name: name.as_bytes(),
                     loader: module.loader,
-                    contents: unsafe { slice_to_z(raw_const, raw_len, module.contents) },
+                    contents,
                     sourcemap: if module.sourcemap.length > 0 {
                         LazySourceMap::Serialized(SerializedSourceMap {
                             // TODO(port): @alignCast — alignment of source map bytes
-                            bytes: unsafe { slice_to(raw_const, raw_len, module.sourcemap) },
+                            bytes: sourcemap_bytes,
                         })
                     } else {
                         LazySourceMap::None
@@ -613,8 +626,7 @@ impl StandaloneModuleGraph {
                         std::ptr::from_mut::<[u8]>(&mut [])
                     },
                     bytecode_origin_path: if module.bytecode_origin_path.length > 0 {
-                        unsafe { slice_to_z(raw_const, raw_len, module.bytecode_origin_path) }
-                            .as_bytes()
+                        bytecode_origin.as_bytes()
                     } else {
                         b""
                     },
@@ -660,6 +672,7 @@ unsafe fn slice_to(base: *const u8, len: usize, ptr: StringPointer) -> &'static 
     let n = ptr.length as usize;
     debug_assert!(off.checked_add(n).is_some_and(|end| end <= len));
     let _ = len;
+    // SAFETY: caller contract — `[off, off+n)` lies within a live 'static read-only allocation.
     unsafe { core::slice::from_raw_parts(base.add(off), n) }
 }
 
@@ -674,6 +687,7 @@ unsafe fn slice_to_mut(base: *mut u8, len: usize, ptr: StringPointer) -> *mut [u
     let n = ptr.length as usize;
     debug_assert!(off.checked_add(n).is_some_and(|end| end <= len));
     let _ = len;
+    // SAFETY: caller contract — `off` is in-bounds of the writable allocation at `base`.
     core::ptr::slice_from_raw_parts_mut(unsafe { base.add(off) }, n)
 }
 
@@ -687,6 +701,7 @@ unsafe fn slice_to_z(base: *const u8, len: usize, ptr: StringPointer) -> &'stati
     let n = ptr.length as usize;
     debug_assert!(off.checked_add(n).is_some_and(|end| end < len));
     let _ = len;
+    // SAFETY: caller contract — `[off, off+n]` is in-bounds with a NUL terminator at `base[off+n]`.
     unsafe { ZStr::from_raw(base.add(off), n) }
 }
 
@@ -1835,7 +1850,7 @@ pub fn to_executable(
     outfile: &[u8],
     env: &mut bun_dotenv::Loader,
     output_format: Format,
-    windows_options: WindowsOptions,
+    windows_options: &WindowsOptions,
     compile_exec_argv: &[u8],
     self_exe_path: Option<&[u8]>,
     flags: Flags,
@@ -1925,7 +1940,7 @@ pub fn to_executable(
         bun_core::ZBox::from_vec_with_nul(dest_z.as_bytes().to_vec())
     };
 
-    let mut fd = inject(&bytes, &self_exe, &windows_options, target);
+    let mut fd = inject(&bytes, &self_exe, windows_options, target);
     // PORT NOTE: Zig's `defer if (fd != invalid) fd.close()` reads `fd` at scope exit
     // after later reassignments. A scopeguard closure capturing `fd` by value would not
     // observe those writes; capturing by `&mut` conflicts with later uses. Explicit
@@ -2197,6 +2212,7 @@ impl StandaloneModuleGraph {
             // read-only; build short-lived views via raw `read_unaligned` so no `&[u8]`
             // ever spans the writable bytecode region carried in `base`'s provenance.
             let offsets_ptr = unsafe { base.add(len - size_of::<Offsets>() - TRAILER.len()) };
+            // SAFETY: `[len - TRAILER.len(), len)` is in-bounds (length checked above) and read-only.
             let trailer_bytes = unsafe {
                 core::slice::from_raw_parts(base.add(len - TRAILER.len()), TRAILER.len())
             };
@@ -2446,19 +2462,19 @@ pub fn serialize_json_source_map_for_standalone(
     let json = bun_parsers::json::parse::<false>(&json_src, &mut log, &arena)
         .map_err(|_| err!("InvalidSourceMap"))?;
 
-    let mappings_str = json.get(b"mappings").ok_or(err!("InvalidSourceMap"))?;
+    let mappings_str = json.get(b"mappings").ok_or_else(|| err!("InvalidSourceMap"))?;
     if !matches!(mappings_str.data, AstData::EString(_)) {
         return Err(err!("InvalidSourceMap"));
     }
     let sources_content = match json
         .get(b"sourcesContent")
-        .ok_or(err!("InvalidSourceMap"))?
+        .ok_or_else(|| err!("InvalidSourceMap"))?
         .data
     {
         AstData::EArray(arr) => arr,
         _ => return Err(err!("InvalidSourceMap")),
     };
-    let sources_paths = match json.get(b"sources").ok_or(err!("InvalidSourceMap"))?.data {
+    let sources_paths = match json.get(b"sources").ok_or_else(|| err!("InvalidSourceMap"))?.data {
         AstData::EArray(arr) => arr,
         _ => return Err(err!("InvalidSourceMap")),
     };

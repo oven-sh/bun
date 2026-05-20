@@ -1478,8 +1478,7 @@ fn on_unhandled_rejection(
     let format_result = jsc::console_object::format2(
         jsc::console_object::MessageLevel::Debug,
         global_object,
-        [error_instance].as_ptr(),
-        1,
+        &[error_instance],
         &mut array,
         jsc::console_object::FormatOptions {
             enable_colors: false,

@@ -346,7 +346,7 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     match StyleAttribute::parse(
         alloc,
         source.slice(),
-        parser_options,
+        &parser_options,
         &mut import_records,
         bun_ast::Index::INVALID,
     ) {

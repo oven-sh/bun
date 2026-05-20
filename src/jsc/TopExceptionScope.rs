@@ -30,6 +30,7 @@ pub struct SourceLocation {
 // for the rest of the process and are never written through. Sharing across threads is
 // therefore sound.
 unsafe impl Send for SourceLocation {}
+// SAFETY: same invariant as `Send` above — both pointers reference immutable `'static` data.
 unsafe impl Sync for SourceLocation {}
 
 impl SourceLocation {
@@ -69,13 +70,11 @@ impl SourceLocation {
 /// section is a single `HashMap::get`, and this never runs on a release path.
 #[cfg(any(debug_assertions, bun_asan))]
 fn intern_location_file(file: &'static str) -> *const c_char {
-    use std::collections::HashMap;
+    use bun_collections::HashMap;
+    use bun_threading::Guarded;
     use std::ffi::{CStr, CString};
-    use std::sync::Mutex;
-    static CACHE: Mutex<Option<HashMap<usize, Box<CStr>>>> = Mutex::new(None);
-    let mut guard = CACHE
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    static CACHE: Guarded<Option<HashMap<usize, Box<CStr>>>> = Guarded::new(None);
+    let mut guard = CACHE.lock();
     guard
         .get_or_insert_with(HashMap::new)
         .entry(file.as_ptr() as usize)
@@ -266,7 +265,7 @@ impl TopExceptionScope {
     fn assertion_failure(&mut self, proof: NonNull<Exception>) -> ! {
         let _ = proof;
         #[cfg(any(debug_assertions, bun_asan))]
-        debug_assert!(core::ptr::eq(self.location, &self.bytes[0]));
+        debug_assert!(core::ptr::eq(self.location, &raw const self.bytes[0]));
         TopExceptionScope__assertNoException(&mut self.bytes);
         unreachable!("assertionFailure called without a pending exception");
     }
@@ -278,20 +277,20 @@ impl TopExceptionScope {
     /// Get the thrown exception if it exists (like scope.exception() in C++)
     pub fn exception(&mut self) -> Option<NonNull<Exception>> {
         #[cfg(any(debug_assertions, bun_asan))]
-        debug_assert!(core::ptr::eq(self.location, &self.bytes[0]));
+        debug_assert!(core::ptr::eq(self.location, &raw const self.bytes[0]));
         NonNull::new(TopExceptionScope__pureException(&mut self.bytes))
     }
 
     pub fn clear_exception(&mut self) {
         #[cfg(any(debug_assertions, bun_asan))]
-        debug_assert!(core::ptr::eq(self.location, &self.bytes[0]));
+        debug_assert!(core::ptr::eq(self.location, &raw const self.bytes[0]));
         TopExceptionScope__clearException(&mut self.bytes)
     }
 
     /// Get the thrown exception if it exists, or if an unhandled trap causes an exception to be thrown
     pub fn exception_including_traps(&mut self) -> Option<NonNull<Exception>> {
         #[cfg(any(debug_assertions, bun_asan))]
-        debug_assert!(core::ptr::eq(self.location, &self.bytes[0]));
+        debug_assert!(core::ptr::eq(self.location, &raw const self.bytes[0]));
         NonNull::new(TopExceptionScope__exceptionIncludingTraps(&mut self.bytes))
     }
 
@@ -366,7 +365,7 @@ impl TopExceptionScope {
         // SAFETY: caller contract.
         let this = unsafe { &mut *this };
         #[cfg(any(debug_assertions, bun_asan))]
-        debug_assert!(core::ptr::eq(this.location, &this.bytes[0]));
+        debug_assert!(core::ptr::eq(this.location, &raw const this.bytes[0]));
         // SAFETY: bytes was initialized by init().
         unsafe { TopExceptionScope__destruct(&raw mut this.bytes) };
         // this.bytes = undefined; — no-op in Rust
@@ -508,8 +507,8 @@ impl ExceptionValidationScope {
             );
             // SAFETY: layout assertion above; `MaybeUninit<T>` is `repr(transparent)`.
             let inner = unsafe {
-                &mut *(storage as *mut core::mem::MaybeUninit<Self>
-                    as *mut core::mem::MaybeUninit<TopExceptionScope>)
+                &mut *core::ptr::from_mut(storage)
+                    .cast::<core::mem::MaybeUninit<TopExceptionScope>>()
             };
             TopExceptionScope::init_at(inner, global, src);
             // SAFETY: `init_at` fully initialized the sole field.
@@ -589,8 +588,10 @@ impl ExceptionValidationScope {
     /// Prefer dropping an [`ExceptionValidationScopeGuard`] instead.
     pub unsafe fn destroy(this: *mut Self) {
         #[cfg(any(debug_assertions, bun_asan))]
+        // SAFETY: caller contract — `this` points to a scope initialized via `init()` and not
+        // yet destroyed; under this cfg the wrapper's sole field is the inner scope.
         unsafe {
-            TopExceptionScope::destroy(&mut (*this).scope)
+            TopExceptionScope::destroy(&raw mut (*this).scope)
         };
         #[cfg(not(any(debug_assertions, bun_asan)))]
         let _ = this;

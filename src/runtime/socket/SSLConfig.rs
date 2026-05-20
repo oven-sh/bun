@@ -272,7 +272,9 @@ fn handle_path(
     if bun_sys::access(&name, bun_sys::posix::F_OK).is_err() {
         // errdefer: free_sensitive(name) — zero before drop. Route through
         // the canonical helper so the secure-zero core stays single-sourced.
-        bun_core::free_sensitive(zbox_into_raw(name));
+        // SAFETY: `zbox_into_raw` yields a `default_alloc::malloc`-backed,
+        // NUL-terminated buffer whose ownership we now hold exclusively.
+        unsafe { bun_core::free_sensitive(zbox_into_raw(name)) };
         return Err(global.throw_invalid_arguments(format_args!("Unable to access {} path", field)));
     }
     Ok(zbox_into_raw(name))
@@ -338,7 +340,9 @@ fn handle_file_array(
     // errdefer { free_sensitive each; drop result } — need zeroing on error:
     let mut guard = scopeguard::guard(&mut result, |r| {
         for p in r.drain(..) {
-            bun_core::free_sensitive(p);
+            // SAFETY: every pushed `p` came from `handle_single_file` →
+            // `zbox_into_raw`, a `default_alloc::malloc`-backed NUL-terminated buffer.
+            unsafe { bun_core::free_sensitive(p) };
         }
     });
     for elem in elements {

@@ -1676,8 +1676,7 @@ impl<'a> Repl<'a> {
         jsc::ConsoleObject::format2(
             jsc::ConsoleObject::MessageLevel::Log,
             global,
-            &raw const value,
-            1,
+            core::slice::from_ref(&value),
             &mut array,
             jsc::ConsoleObject::FormatOptions {
                 enable_colors: false,
@@ -1910,8 +1909,7 @@ impl<'a> Repl<'a> {
         if jsc::ConsoleObject::format2(
             jsc::ConsoleObject::MessageLevel::Error,
             global,
-            &raw const error_value,
-            1,
+            core::slice::from_ref(&error_value),
             &mut buf,
             jsc::ConsoleObject::FormatOptions {
                 enable_colors,
@@ -1945,8 +1943,7 @@ impl<'a> Repl<'a> {
         if let Err(err) = jsc::ConsoleObject::format2(
             jsc::ConsoleObject::MessageLevel::Log,
             global,
-            &raw const value,
-            1,
+            core::slice::from_ref(&value),
             &mut buf,
             jsc::ConsoleObject::FormatOptions {
                 enable_colors: self.use_colors,

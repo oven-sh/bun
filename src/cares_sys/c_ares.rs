@@ -435,6 +435,7 @@ impl struct_hostent {
 
     /// FFI destroy — frees a c-ares-allocated hostent.
     pub unsafe fn destroy(this: *mut struct_hostent) {
+        // SAFETY: caller guarantees `this` was allocated by c-ares (or is null).
         unsafe { ares_free_hostent(this) };
     }
 }
@@ -700,6 +701,7 @@ impl AddrInfo {
 
     /// FFI destroy — frees a c-ares-allocated addrinfo chain.
     pub unsafe fn destroy(this: *mut AddrInfo) {
+        // SAFETY: caller guarantees `this` was allocated by c-ares (or is null).
         unsafe { ares_freeaddrinfo(this) };
     }
 }
@@ -821,9 +823,8 @@ impl Channel {
             ARES_OPT_FLAGS | ARES_OPT_TIMEOUTMS | ARES_OPT_SOCK_STATE_CB | ARES_OPT_TRIES;
 
         // SAFETY: c-ares FFI; opts/channel are valid stack pointers.
-        if let Some(err) =
-            Error::get(unsafe { ares_init_options(&raw mut channel, &raw mut opts, optmask) })
-        {
+        let rc = unsafe { ares_init_options(&raw mut channel, &raw mut opts, optmask) };
+        if let Some(err) = Error::get(rc) {
             // SAFETY: init failed before any channel was registered; we hold the
             // library_init reference taken above and no other thread is in c-ares.
             unsafe { ares_library_cleanup() };
@@ -836,6 +837,7 @@ impl Channel {
 
     /// FFI destroy — `ares_destroy`.
     pub unsafe fn destroy(this: *mut Channel) {
+        // SAFETY: caller guarantees `this` is a live channel returned by `ares_init_options`.
         unsafe { ares_destroy(this) };
     }
 
@@ -1321,6 +1323,7 @@ pub struct struct_ares_caa_reply {
 
 impl AresReply for struct_ares_caa_reply {
     unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
+        // SAFETY: caller upholds the `AresReply::parse` contract; thin FFI forward.
         unsafe { ares_parse_caa_reply(abuf, alen, out) }
     }
 }
@@ -1329,24 +1332,24 @@ impl struct_ares_caa_reply {
     /// Safe view of the c-ares-owned property tag bytes.
     #[inline]
     pub fn property_bytes(&self) -> &[u8] {
-        // SAFETY: c-ares allocates `property` as a contiguous buffer of
-        // `plength` bytes that lives until `ares_free_data` is called on the
-        // list head; the `&self` borrow is shorter than that. c-ares never
-        // sets a non-zero length with a null pointer.
         if self.property.is_null() {
             &[]
         } else {
+            // SAFETY: c-ares allocates `property` as a contiguous buffer of
+            // `plength` bytes that lives until `ares_free_data` is called on the
+            // list head; the `&self` borrow is shorter than that. c-ares never
+            // sets a non-zero length with a null pointer.
             unsafe { core::slice::from_raw_parts(self.property, self.plength) }
         }
     }
     /// Safe view of the c-ares-owned value bytes.
     #[inline]
     pub fn value_bytes(&self) -> &[u8] {
-        // SAFETY: same invariant as `property_bytes` — `value` points to
-        // `length` bytes owned by the reply node for `&self`'s lifetime.
         if self.value.is_null() {
             &[]
         } else {
+            // SAFETY: same invariant as `property_bytes` — `value` points to
+            // `length` bytes owned by the reply node for `&self`'s lifetime.
             unsafe { core::slice::from_raw_parts(self.value, self.length) }
         }
     }
@@ -1363,6 +1366,7 @@ pub struct struct_ares_srv_reply {
 
 impl AresReply for struct_ares_srv_reply {
     unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
+        // SAFETY: caller upholds the `AresReply::parse` contract; thin FFI forward.
         unsafe { ares_parse_srv_reply(abuf, alen, out) }
     }
 }
@@ -1376,6 +1380,7 @@ pub struct struct_ares_mx_reply {
 
 impl AresReply for struct_ares_mx_reply {
     unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
+        // SAFETY: caller upholds the `AresReply::parse` contract; thin FFI forward.
         unsafe { ares_parse_mx_reply(abuf, alen, out) }
     }
 }
@@ -1389,6 +1394,7 @@ pub struct struct_ares_txt_reply {
 
 impl AresReply for struct_ares_txt_reply {
     unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
+        // SAFETY: caller upholds the `AresReply::parse` contract; thin FFI forward.
         unsafe { ares_parse_txt_reply(abuf, alen, out) }
     }
 }
@@ -1397,11 +1403,11 @@ impl struct_ares_txt_reply {
     /// Safe view of the c-ares-owned TXT record bytes.
     #[inline]
     pub fn txt_bytes(&self) -> &[u8] {
-        // SAFETY: c-ares allocates `txt` as `length` bytes that live until
-        // `ares_free_data` on the list head; `&self` is the shorter borrow.
         if self.txt.is_null() {
             &[]
         } else {
+            // SAFETY: c-ares allocates `txt` as `length` bytes that live until
+            // `ares_free_data` on the list head; `&self` is the shorter borrow.
             unsafe { core::slice::from_raw_parts(self.txt, self.length) }
         }
     }
@@ -1419,11 +1425,11 @@ impl struct_ares_txt_ext {
     /// Safe view of the c-ares-owned TXT record bytes.
     #[inline]
     pub fn txt_bytes(&self) -> &[u8] {
-        // SAFETY: c-ares allocates `txt` as `length` bytes that live until
-        // `ares_free_data` on the list head; `&self` is the shorter borrow.
         if self.txt.is_null() {
             &[]
         } else {
+            // SAFETY: c-ares allocates `txt` as `length` bytes that live until
+            // `ares_free_data` on the list head; `&self` is the shorter borrow.
             unsafe { core::slice::from_raw_parts(self.txt, self.length) }
         }
     }
@@ -1442,6 +1448,7 @@ pub struct struct_ares_naptr_reply {
 
 impl AresReply for struct_ares_naptr_reply {
     unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
+        // SAFETY: caller upholds the `AresReply::parse` contract; thin FFI forward.
         unsafe { ares_parse_naptr_reply(abuf, alen, out) }
     }
 }
@@ -1459,6 +1466,7 @@ pub struct struct_ares_soa_reply {
 
 impl AresReply for struct_ares_soa_reply {
     unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
+        // SAFETY: caller upholds the `AresReply::parse` contract; thin FFI forward.
         unsafe { ares_parse_soa_reply(abuf, alen, out) }
     }
 }
@@ -2175,6 +2183,7 @@ pub fn get_sockaddr(addr: &[u8], port: u16, sa: &mut sockaddr) -> c_int {
         // SAFETY: caller-provided sockaddr storage; reinterpreting as sockaddr_in.
         let in_: &mut sockaddr_in =
             unsafe { &mut *std::ptr::from_mut::<sockaddr>(sa).cast::<sockaddr_in>() };
+        // SAFETY: c-ares FFI; `addr_ptr` is a NUL-terminated stack buffer, dst is `sin_addr` storage.
         if unsafe { ares_inet_pton(AF::INET, addr_ptr, (&raw mut in_.sin_addr).cast::<c_void>()) }
             == 1
         {
@@ -2187,6 +2196,7 @@ pub fn get_sockaddr(addr: &[u8], port: u16, sa: &mut sockaddr) -> c_int {
         // SAFETY: caller-provided sockaddr storage; reinterpreting as sockaddr_in6.
         let in6: &mut sockaddr_in6 =
             unsafe { &mut *std::ptr::from_mut::<sockaddr>(sa).cast::<sockaddr_in6>() };
+        // SAFETY: c-ares FFI; `addr_ptr` is a NUL-terminated stack buffer, dst is `sin6_addr` storage.
         if unsafe {
             ares_inet_pton(
                 AF::INET6,

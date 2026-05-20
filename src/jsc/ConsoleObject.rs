@@ -156,12 +156,12 @@ impl ConsoleObject {
             counts: Counter::default(),
             _pin: core::marker::PhantomPinned,
         });
+        let p: *mut ConsoleObject = &raw mut *out;
         // SAFETY: `out` is heap-allocated at its final address; the adapters
         // store raw pointers into `out.{stderr,stdout}_buffer`, which remain
         // valid for the box's lifetime. We split the borrow through a raw
         // pointer because `adapt_to_new_api` would otherwise hold a unique
         // borrow of one field while we assign another.
-        let p: *mut ConsoleObject = &raw mut *out;
         unsafe {
             (*p).error_writer_backing = error_writer
                 .quiet_writer()
@@ -191,11 +191,11 @@ impl ConsoleObject {
             counts: Counter::default(),
             _pin: core::marker::PhantomPinned,
         });
+        let p: *mut ConsoleObject = out;
         // SAFETY: `out` is now fully initialized at its final address; the
         // adapters store raw pointers into `out.stderr_buffer` /
         // `out.stdout_buffer`, which remain valid for `out`'s lifetime
         // *provided the caller never moves it* (see fn doc).
-        let p: *mut ConsoleObject = out;
         unsafe {
             (*p).error_writer_backing = error_writer
                 .quiet_writer()
@@ -324,7 +324,7 @@ fn vm_console(global: &JSGlobalObject) -> *mut ConsoleObject {
 /// to interleave borrows across a deferred guard (`message_with_type_and_level_`)
 /// keep using the raw [`vm_console`] pointer instead.
 #[inline]
-fn vm_console_mut(global: &JSGlobalObject) -> &mut ConsoleObject {
+unsafe fn vm_console_mut(global: &JSGlobalObject) -> &mut ConsoleObject {
     // SAFETY: see [`vm_console`] — `VirtualMachine.console` is initialized once
     // at VM construction to a boxed `ConsoleObject` that lives for the VM's
     // lifetime; the C++ side never calls into `Bun__ConsoleObject__*` before
@@ -460,10 +460,10 @@ fn message_with_type_and_level_(
     }
 
     if message_type == MessageType::EndGroup {
-        // Safe accessor (set-once `VirtualMachine.console` box) — no other
+        // SAFETY: set-once `VirtualMachine.console` box — no other
         // borrow of the console is live yet; the deferred `_indent_guard`
         // captured only the raw pointer.
-        let c = vm_console_mut(global);
+        let c = unsafe { vm_console_mut(global) };
         c.default_indent = c.default_indent.saturating_sub(1);
         return Ok(());
     }
@@ -485,10 +485,10 @@ fn message_with_type_and_level_(
         } else {
             "Assertion failed\n"
         };
-        // Safe accessor — no other borrow of the console is live in this
+        // SAFETY: no other borrow of the console is live in this
         // early-return arm (the deferred `_indent_guard` only holds the raw
         // pointer, not a reference).
-        let ew = vm_console_mut(global).error_writer();
+        let ew = unsafe { vm_console_mut(global) }.error_writer();
         let _ = ew.write_all(text.as_bytes());
         let _ = ew.flush();
         return Ok(());
@@ -504,7 +504,8 @@ fn message_with_type_and_level_(
     // again until the deferred `_indent_guard` runs on scope exit, so the two
     // later reads (FormatOptions / TablePrinter) can use this cached copy
     // instead of re-dereferencing the raw `console` pointer.
-    let default_indent = vm_console_mut(global).default_indent;
+    // SAFETY: see [`vm_console`] — single-JS-thread; no other `&mut` is live.
+    let default_indent = unsafe { vm_console_mut(global) }.default_indent;
 
     // SAFETY: see [`vm_console`] — `console` points at the live boxed
     // `ConsoleObject` for this VM; JS-thread-only. Kept as a raw deref (not
@@ -596,7 +597,7 @@ fn message_with_type_and_level_(
     }
 
     if print_length > 0 {
-        format2(level, global, vals, print_length, writer, print_options)?;
+        format2(level, global, &vals_slice[..print_length], writer, print_options)?;
     } else if message_type == MessageType::Log {
         // SAFETY: see [`vm_console`]. `writer` (above) is dead in this arm —
         // the only later uses are in the mutually-exclusive `Trace` block, and
@@ -730,7 +731,7 @@ impl<'a> TablePrinter<'a> {
     fn update_columns_for_row(
         &mut self,
         columns: &mut Vec<Column>,
-        row_key: RowKey,
+        row_key: &RowKey,
         row_value: JSValue,
     ) -> JsResult<()> {
         // update size of "(index)" column
@@ -836,7 +837,7 @@ impl<'a> TablePrinter<'a> {
         &mut self,
         writer: &mut dyn bun_io::Write,
         columns: &mut Vec<Column>,
-        row_key: RowKey,
+        row_key: &RowKey,
         row_value: JSValue,
     ) -> JsResult<()> {
         writer.write_all("│".as_bytes()).ok();
@@ -1004,7 +1005,7 @@ impl<'a> TablePrinter<'a> {
                     let ctx = unsafe { bun_ptr::callback_ctx::<Ctx<'_, '_>>(ctx) };
                     if ctx
                         .this
-                        .update_columns_for_row(ctx.columns, RowKey::Num(ctx.idx), value)
+                        .update_columns_for_row(ctx.columns, &RowKey::Num(ctx.idx), value)
                         .is_err()
                     {
                         ctx.err = true;
@@ -1033,7 +1034,7 @@ impl<'a> TablePrinter<'a> {
                 while let Some(row_key) = rows_iter.next()? {
                     self.update_columns_for_row(
                         columns,
-                        RowKey::Str(BunString::init(row_key)),
+                        &RowKey::Str(BunString::init(row_key)),
                         rows_iter.value,
                     )?;
                 }
@@ -1135,7 +1136,7 @@ impl<'a> TablePrinter<'a> {
                     let ctx = unsafe { bun_ptr::callback_ctx::<Ctx<'_, '_>>(ctx) };
                     if ctx
                         .this
-                        .print_row::<C>(ctx.writer, ctx.columns, RowKey::Num(ctx.idx), value)
+                        .print_row::<C>(ctx.writer, ctx.columns, &RowKey::Num(ctx.idx), value)
                         .is_err()
                     {
                         ctx.err = true;
@@ -1172,7 +1173,7 @@ impl<'a> TablePrinter<'a> {
                     self.print_row::<ENABLE_ANSI_COLORS>(
                         writer,
                         columns,
-                        RowKey::Str(BunString::init(row_key)),
+                        &RowKey::Str(BunString::init(row_key)),
                         rows_iter.value,
                     )?;
                 }
@@ -1474,14 +1475,11 @@ impl FormatOptions {
 pub fn format2(
     level: MessageLevel,
     global: &JSGlobalObject,
-    vals: *const JSValue,
-    len: usize,
+    vals: &[JSValue],
     writer: &mut dyn bun_io::Write,
     options: FormatOptions,
 ) -> JsResult<()> {
-    // SAFETY: caller guarantees `vals` points at `len` valid JSValues on the
-    // stack (conservative GC scan covers them).
-    let vals = unsafe { bun_core::ffi::slice(vals, len) };
+    let len = vals.len();
 
     if len == 1 {
         // initialized later in this function.
@@ -2622,9 +2620,6 @@ pub mod formatter {
                         const MIN_BEFORE_E_NOTATION: f64 = 0.000001;
                         match token {
                             PercentTag::S => {
-                                // PORT NOTE: reshaped for borrowck — drop `writer` borrow before
-                                // recursing into `print_as` which takes `&mut self`.
-                                drop(writer);
                                 self.print_as::<ENABLE_ANSI_COLORS>(
                                     Tag::String,
                                     writer_,
@@ -2777,7 +2772,6 @@ pub mod formatter {
                                     // > representation of an object judged to be maximally useful
                                     // > and informative.
                                 }
-                                drop(writer);
                                 self.format::<ENABLE_ANSI_COLORS>(
                                     Tag::get(next_value, global)?,
                                     writer_,
@@ -3230,18 +3224,10 @@ pub mod formatter {
         ) {
             if !is_symbol {
                 // TODO: make this one pass?
-                if !key.is_16_bit()
-                    && (!quote_keys && JSLexer::is_latin1_identifier_u8(key.slice()))
-                {
-                    writer.add_for_new_line(key.len + 1);
-                    writer.print(format_args!(
-                        concat!("{}", "{}", "{}"),
-                        pfmt!("<r>", C),
-                        key,
-                        pfmt!("<d>:<r> ", C),
-                    ));
-                } else if key.is_16_bit()
-                    && (!quote_keys && JSLexer::is_latin1_identifier_u16(key.utf16_slice_aligned()))
+                if (!key.is_16_bit()
+                    && (!quote_keys && JSLexer::is_latin1_identifier_u8(key.slice())))
+                    || (key.is_16_bit()
+                        && (!quote_keys && JSLexer::is_latin1_identifier_u16(key.utf16_slice_aligned())))
                 {
                     writer.add_for_new_line(key.len + 1);
                     writer.print(format_args!(
@@ -3391,7 +3377,6 @@ pub mod formatter {
             );
 
             let writer_failed = writer.failed;
-            drop(writer);
             if writer_failed {
                 ctx.formatter.failed = true;
             }
@@ -3818,7 +3803,6 @@ pub mod formatter {
                     if writer.failed {
                         self.failed = true;
                     }
-                    drop(writer);
                     self.print_as::<C>(Tag::JSON, writer_, value, jsc::JSType::StringObject)?;
                     if C {
                         let _ = writer_.write_all(pfmt!("<r>", true).as_bytes());
@@ -3848,7 +3832,6 @@ pub mod formatter {
                     if writer.failed {
                         self.failed = true;
                     }
-                    drop(writer);
                     self.print_as::<C>(Tag::JSON, writer_, value, jsc::JSType::StringObject)?;
                     writer = WrappedWriter {
                         ctx: writer_,
@@ -4576,7 +4559,6 @@ pub mod formatter {
                         break 'first;
                     }
 
-                    drop(writer);
                     self.format::<C>(tag, writer_, element, self.global_this)?;
                     writer = WrappedWriter {
                         ctx: writer_,
@@ -4667,7 +4649,6 @@ pub mod formatter {
 
                     let tag = Tag::get_advanced(element, self.global_this, tag_opts)?;
 
-                    drop(writer);
                     self.format::<C>(tag, writer_, element, self.global_this)?;
                     writer = WrappedWriter {
                         ctx: writer_,
@@ -4717,7 +4698,6 @@ pub mod formatter {
                 }
 
                 if !js_type.is_arguments() {
-                    drop(writer);
                     // Hoist field reads before `formatter: self` reborrows the
                     // whole `*self` (struct-literal field order is not eval
                     // order in the borrow checker's eyes once `self` is moved).
@@ -5336,7 +5316,6 @@ pub mod formatter {
                     if writer.failed {
                         self.failed = true;
                     }
-                    drop(writer);
                     self.format::<C>(
                         Tag::get_advanced(key_value, self.global_this, self.tag_opts())?,
                         writer_,
@@ -5416,7 +5395,6 @@ pub mod formatter {
                             if writer.failed {
                                 self.failed = true;
                             }
-                            drop(writer);
                             self.format::<C>(tag, writer_, property_value, self.global_this)?;
                             writer = WrappedWriter {
                                 ctx: writer_,
@@ -5493,7 +5471,6 @@ pub mod formatter {
                                             if writer.failed {
                                                 self.failed = true;
                                             }
-                                            drop(writer);
                                             self.format::<C>(
                                                 Tag::get(children, self.global_this)?,
                                                 writer_,
@@ -5538,7 +5515,6 @@ pub mod formatter {
                                                 if writer.failed {
                                                     self.failed = true;
                                                 }
-                                                drop(writer);
                                                 self.format::<C>(
                                                     Tag::get_advanced(
                                                         child,
@@ -5974,7 +5950,9 @@ pub extern "C" fn Bun__ConsoleObject__count(
     ptr: *const u8,
     len: usize,
 ) {
-    let this = vm_console_mut(global_this);
+    // SAFETY: top-level JS-thread host call ⇒ exclusive access to the
+    // set-once `VirtualMachine.console` box.
+    let this = unsafe { vm_console_mut(global_this) };
     // SAFETY: caller passes a valid (ptr, len) pair.
     let slice = unsafe { bun_core::ffi::slice(ptr, len) };
     let hash = bun_wyhash::hash(slice);
@@ -6014,7 +5992,9 @@ pub extern "C" fn Bun__ConsoleObject__countReset(
     ptr: *const u8,
     len: usize,
 ) {
-    let this = vm_console_mut(global_this);
+    // SAFETY: top-level JS-thread host call ⇒ exclusive access to the
+    // set-once `VirtualMachine.console` box.
+    let this = unsafe { vm_console_mut(global_this) };
     // SAFETY: caller passes a valid (ptr, len) pair.
     let slice = unsafe { bun_core::ffi::slice(ptr, len) };
     let hash = bun_wyhash::hash(slice);
@@ -6126,7 +6106,9 @@ pub extern "C" fn Bun__ConsoleObject__timeLog(
         .unwrap_or(DEFAULT_CONSOLE_LOG_DEPTH);
     fmt.stack_check = StackCheck::init();
     fmt.can_throw_stack_overflow = true;
-    let console = vm_console_mut(global);
+    // SAFETY: top-level JS-thread host call ⇒ exclusive access to the
+    // set-once `VirtualMachine.console` box.
+    let console = unsafe { vm_console_mut(global) };
     let mut writer = console.error_writer();
     // SAFETY: caller passes a valid (args, args_len) pair.
     for &arg in unsafe { bun_core::ffi::slice(args, args_len) } {

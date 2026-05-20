@@ -728,7 +728,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// slot holds the unique heap allocation); JS-thread only.
     pub unsafe fn on_writable(this: *mut Self, _socket: SocketHandler<SSL>) {
         jsc::mark_binding!();
-        // SAFETY (whole body): per fn contract; R-2 — every field is
+        // SAFETY: per fn contract; R-2 — every field is
         // `Cell`/`JsCell`, so a single shared reborrow is sufficient and no
         // borrow spans `callback.call`.
         let this: &Self = unsafe { &*this };
@@ -782,7 +782,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// `this` points at a live `NewSocket`; JS-thread only.
     pub unsafe fn on_timeout(this: *mut Self, _socket: SocketHandler<SSL>) {
         jsc::mark_binding!();
-        // SAFETY (whole body): per fn contract; R-2 shared reborrow.
+        // SAFETY: per fn contract; R-2 shared reborrow.
         let this: &Self = unsafe { &*this };
         if this.socket.get().is_detached() {
             return;
@@ -852,7 +852,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// # Safety
     /// `this` points at a live `NewSocket`; JS-thread only.
     pub unsafe fn handle_connect_error(this: *mut Self, errno: c_int) -> JsResult<()> {
-        // SAFETY (whole body): per fn contract; R-2 — shared reborrow, all
+        // SAFETY: per fn contract; R-2 — shared reborrow, all
         // mutated fields are `Cell`/`JsCell`.
         let this: &Self = unsafe { &*this };
         let handlers = this.get_handlers();
@@ -1181,9 +1181,9 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// # Safety
     /// `this` points at a live `NewSocket`; JS-thread only.
     pub unsafe fn on_open(this: *mut Self, socket: SocketHandler<SSL>) {
-        // SAFETY (whole body): per fn contract; R-2 — shared reborrow, all
-        // mutated fields are `Cell`/`JsCell`.
         let this_ptr = this;
+        // SAFETY: per fn contract; R-2 — shared reborrow, all
+        // mutated fields are `Cell`/`JsCell`.
         let this: &Self = unsafe { &*this };
         log!(
             "onOpen {} {:p} {} {}",
@@ -1352,7 +1352,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// `this` points at a live `NewSocket`; JS-thread only.
     pub unsafe fn on_end(this: *mut Self, _socket: SocketHandler<SSL>) {
         jsc::mark_binding!();
-        // SAFETY (whole body): per fn contract; R-2 shared reborrow.
+        // SAFETY: per fn contract; R-2 shared reborrow.
         let this: &Self = unsafe { &*this };
         if this.socket.get().is_detached() {
             return;
@@ -1406,7 +1406,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         ssl_error: uws::us_bun_verify_error_t,
     ) -> JsResult<()> {
         jsc::mark_binding!();
-        // SAFETY (whole body): per fn contract; R-2 shared reborrow.
+        // SAFETY: per fn contract; R-2 shared reborrow.
         let this: &Self = unsafe { &*this };
         this.update_flags(|f| f.insert(Flags::HANDSHAKE_COMPLETE));
         this.socket.set(s);
@@ -1520,7 +1520,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         reason: Option<*mut c_void>,
     ) -> JsResult<()> {
         jsc::mark_binding!();
-        // SAFETY (whole body): per fn contract; R-2 shared reborrow.
+        // SAFETY: per fn contract; R-2 shared reborrow.
         let this: &Self = unsafe { &*this };
         let handlers = this.get_handlers();
         log!(
@@ -1538,11 +1538,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         // here, then retire it. `raw.twin == None` so this doesn't
         // recurse, and `onClose` derefs the +1 we took at creation.
         if let Some(raw) = this.twin.with_mut(|t| t.take()) {
+            let raw = IntrusiveRc::into_raw(raw);
             // SAFETY: twin holds a +1 intrusive ref; uniquely accessed here.
             // `on_close` itself runs `this.deref()` (via the cleanup guard),
             // which releases that +1 — so hand it the raw pointer instead of
             // letting `IntrusiveRc::drop` release a *second* time.
-            let raw = IntrusiveRc::into_raw(raw);
             unsafe { Self::on_close(raw, socket, err, reason).ok() };
         }
         // PORT NOTE: reshaped for borrowck — `defer this.deref()` + `defer markInactive()`.
@@ -1651,7 +1651,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// `this` points at a live `NewSocket`; JS-thread only.
     pub unsafe fn on_data(this: *mut Self, s: SocketHandler<SSL>, data: &[u8]) {
         jsc::mark_binding!();
-        // SAFETY (whole body): per fn contract; R-2 shared reborrow.
+        // SAFETY: per fn contract; R-2 shared reborrow.
         let this: &Self = unsafe { &*this };
         this.socket.set(s);
         if this.socket.get().is_detached() {
@@ -2634,6 +2634,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// intrusive refcount + `finalize()`.
     // SAFETY: `this` was allocated via `heap::alloc` and refcount == 0.
     unsafe fn deinit_and_destroy(this: *mut Self) {
+        // SAFETY: per fn contract — sole owner of the live `heap::alloc` allocation.
         let this_ref: &Self = unsafe { &*this };
         this_ref.mark_inactive();
         if this_ref.flags.get().contains(Flags::OWNS_HANDLERS) {
@@ -3719,9 +3720,9 @@ impl DuplexUpgradeContext {
                     unsafe { Self::deinit(this) };
                     return;
                 }
-                // SAFETY: `this` is live; this `&mut` is scoped to the block
-                // and ends before any `Self::deinit` call below.
                 let started: Result<(), bun_core::Error> = {
+                    // SAFETY: `this` is live; this `&mut` is scoped to the block
+                    // and ends before any `Self::deinit` call below.
                     let this_ref = unsafe { &mut *this };
                     log!(
                         "DuplexUpgradeContext.startTLS mode={}",
@@ -4031,27 +4032,35 @@ pub fn js_upgrade_duplex_to_tls(
             global,
             duplex,
             UpgradedDuplexHandlers {
+                // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_open: |c: *mut ()| unsafe {
                     bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_open()
                 },
+                // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_data: |c: *mut (), d| unsafe {
                     bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_data(d)
                 },
+                // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_handshake: |c: *mut (), ok, err| unsafe {
                     bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_handshake(ok, err)
                 },
+                // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_close: |c: *mut ()| unsafe {
                     bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_close()
                 },
+                // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_end: |c: *mut ()| unsafe {
                     bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_end()
                 },
+                // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_writable: |c: *mut ()| unsafe {
                     bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_writable()
                 },
+                // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_error: |c: *mut (), e| unsafe {
                     bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_error(e)
                 },
+                // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_timeout: |c: *mut ()| unsafe {
                     bun_ptr::callback_ctx::<DuplexUpgradeContext>(c.cast()).on_timeout()
                 },

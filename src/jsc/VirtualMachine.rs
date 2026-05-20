@@ -627,6 +627,9 @@ impl Drop for MacroModeGuard {
 // hands out a `&VirtualMachine`. Fields mutated post-init are wrapped in
 // [`JsCell`] for interior mutability.
 unsafe impl Sync for VirtualMachine {}
+// SAFETY: see the `Sync` impl above — the VM is only ever accessed from its
+// owning JS thread; `Send` lets the boxed VM be moved into the worker thread
+// that will own it during `Worker` startup.
 unsafe impl Send for VirtualMachine {}
 
 impl VirtualMachine {
@@ -820,7 +823,7 @@ impl VirtualMachine {
     /// a single mutex-guarded `Watcher` operation.
     #[inline]
     pub fn bun_watcher_ptr(&self) -> *mut crate::hot_reloader::ImportWatcher {
-        self.bun_watcher as *mut crate::hot_reloader::ImportWatcher
+        self.bun_watcher.cast::<crate::hot_reloader::ImportWatcher>()
     }
 
     /// `event_loop().enter()` now, `.exit()` on drop. Safe wrapper over
@@ -2662,6 +2665,8 @@ impl<'a> SourceMapHandlerGetter<'a> {
     /// Borrows). Only the worker-safe `debugger` bytes are retagged here.
     #[inline]
     fn vm_debugger(&self) -> Option<&crate::debugger::Debugger> {
+        // SAFETY: see fn doc — `self.vm` is non-null; raw place projection to
+        // the worker-safe `debugger` leaf avoids a whole-VM retag.
         unsafe { (*self.vm).debugger.as_deref() }
     }
 
@@ -2677,6 +2682,8 @@ impl<'a> SourceMapHandlerGetter<'a> {
     /// touches none of those bytes.
     #[inline]
     fn vm_source_mappings_mut(&mut self) -> &mut SavedSourceMap {
+        // SAFETY: see fn doc — `self.vm` is non-null; raw place projection to
+        // the `source_mappings` leaf avoids aliasing the caller's borrows.
         unsafe { &mut (*self.vm).source_mappings }
     }
 
@@ -2778,6 +2785,8 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
                     temp_json_buffer.list.as_slice(),
                 )
             };
+            // SAFETY: `wrote <= encode_len` bytes were just initialized in the
+            // spare capacity reserved by `grow_if_needed` above.
             unsafe { bun_core::vec::commit_spare(buf, wrote) };
         }
         printer
@@ -2800,6 +2809,7 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
 
 /// Spec VirtualMachine.zig:1204 `Options`. `allocator` dropped per
 /// §Allocators (global mimalloc).
+#[derive(Default)]
 pub struct Options {
     pub args: bun_options_types::schema::api::TransformOptions,
     pub log: Option<NonNull<bun_ast::Log>>,
@@ -2821,23 +2831,6 @@ pub struct Options {
     // `runtime/jsc_hooks.rs` for the spec :1321 `configureDebugger` call site.
     pub is_main_thread: bool,
     pub destruct_main_thread_on_exit: bool,
-}
-
-impl Default for Options {
-    fn default() -> Self {
-        Self {
-            args: Default::default(),
-            log: None,
-            env_loader: None,
-            store_fd: false,
-            smol: false,
-            dns_result_order: 0,
-            eval: false,
-            graph: None,
-            is_main_thread: false,
-            destruct_main_thread_on_exit: false,
-        }
-    }
 }
 
 /// Spec VirtualMachine.zig:3899 `IPCInstanceUnion`.
@@ -2875,9 +2868,12 @@ impl IPCInstance {
         Some(self.global_this)
     }
     /// Only reached from the `get_ipc_instance` error path.
-    pub fn deinit(this: *mut IPCInstance) {
-        // SAFETY: `this` was produced by `IPCInstance::new` (heap::alloc).
-        // `SendQueue` cleans itself up via `Drop`.
+    ///
+    /// # Safety
+    /// `this` must have been produced by `IPCInstance::new` (heap::alloc) and
+    /// not yet freed or aliased.
+    pub unsafe fn deinit(this: *mut IPCInstance) {
+        // SAFETY: caller contract — `this` is a live heap::alloc'd box.
         drop(unsafe { bun_core::heap::take(this) });
     }
 
@@ -3627,11 +3623,13 @@ impl VirtualMachine {
         // `self` again via `VirtualMachine::get()`. Launder `self` so each
         // access goes through an opaque address.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-        // SAFETY: `this` is the unique live VM; each deref is a momentary
-        // access only (no borrow held across the re-entrant call).
         while !cond.get() {
+            // SAFETY: `this` is the unique live VM; each deref is a momentary
+            // access only (no borrow held across the re-entrant call).
             unsafe { (*this).event_loop_mut().tick() };
             if !cond.get() {
+                // SAFETY: as above — momentary deref of the unique live VM,
+                // no borrow held across the re-entrant call.
                 unsafe { (*this).auto_tick() };
             }
         }
@@ -3922,9 +3920,13 @@ impl VirtualMachine {
 
         let global_ptr = std::ptr::from_ref::<JSGlobalObject>(global_object).cast_mut();
         let mut ret = ErrorableResolvedSource::ok(ResolvedSource::default());
-        match ModuleLoader::fetch_builtin_module(
-            jsc_vm, global_ptr, &specifier, &referrer, &mut ret,
-        ) {
+        // SAFETY: `global_ptr` is derived from the live `&JSGlobalObject` above.
+        let builtin = unsafe {
+            ModuleLoader::fetch_builtin_module(
+                jsc_vm, global_ptr, &specifier, &referrer, &mut ret,
+            )
+        };
+        match builtin {
             ModuleLoader::FetchBuiltinResult::Found | ModuleLoader::FetchBuiltinResult::Errored => {
                 return ret.unwrap();
             }
@@ -4295,8 +4297,8 @@ impl VirtualMachine {
         }
 
         let mut result = ResolveFunctionResult::default();
-        // SAFETY: per-thread VM is live (caller is on the JS thread).
         let jsc_vm_ptr = global.bun_vm_ptr();
+        // SAFETY: per-thread VM is live (caller is on the JS thread).
         let jsc_vm = unsafe { &mut *jsc_vm_ptr };
         let specifier_utf8 = specifier.to_utf8();
         let source_utf8 = source.to_utf8();
@@ -4842,21 +4844,25 @@ impl VirtualMachine {
                 let ctx = unsafe { bun_ptr::callback_ctx::<AggCtx<'_>>(ctx) };
                 // SAFETY: per-thread VM.
                 let vm = VirtualMachine::get().as_mut();
-                // SAFETY: `formatter`/`writer`/`exception_list` borrow the
-                // caller's stack locals, live across the synchronous
-                // `for_each` call; reborrow the raw pointers for the
-                // recursive call.
                 let exception_list = if ctx.exception_list.is_null() {
                     None
                 } else {
+                    // SAFETY: non-null branch; borrows the caller's stack
+                    // `ExceptionList`, live for the synchronous `for_each`.
                     Some(unsafe { &mut *ctx.exception_list })
                 };
+                // SAFETY: `ctx.formatter` borrows the caller's stack local,
+                // live across the synchronous `for_each` call.
+                let formatter = unsafe { &mut *ctx.formatter };
+                // SAFETY: `ctx.writer` borrows the caller's stack local,
+                // live across the synchronous `for_each` call.
+                let writer = unsafe { &mut *ctx.writer };
                 vm.print_errorlike_object(
                     next_value,
                     None,
                     exception_list,
-                    unsafe { &mut *ctx.formatter },
-                    unsafe { &mut *ctx.writer },
+                    formatter,
+                    writer,
                     ctx.allow_ansi_color,
                     ctx.allow_side_effects,
                 );
@@ -5088,7 +5094,10 @@ impl VirtualMachine {
     }
 
     /// Spec VirtualMachine.zig:2904 `remapStackFramePositions`.
-    pub fn remap_stack_frame_positions(
+    ///
+    /// # Safety
+    /// `frames` must point to `frames_count` initialized `ZigStackFrame`s.
+    pub unsafe fn remap_stack_frame_positions(
         &mut self,
         frames: *mut crate::ZigStackFrame,
         frames_count: usize,
@@ -5199,6 +5208,8 @@ impl VirtualMachine {
                 // SAFETY: `this`/`exception` are stack-local raw ptrs taken
                 // before the body below reborrows them; no overlap at drop.
                 let this = unsafe { &mut *self.this };
+                // SAFETY: `self.exception` is the caller's stack
+                // `ZigException`, live for the guard scope; no overlap at drop.
                 let exception = unsafe { &mut *self.exception };
                 #[cfg(debug_assertions)]
                 {
@@ -5243,6 +5254,8 @@ impl VirtualMachine {
         // SAFETY: re-borrow through the guard's raw ptrs; `_tail` does not
         // touch them until Drop, so no aliasing during the body.
         let exception: &mut ZigException = unsafe { &mut *_tail.exception };
+        // SAFETY: as above — re-borrow through the guard's raw ptr; `_tail`
+        // does not touch `source_code_slice` until Drop.
         let source_code_slice: &mut Option<bun_core::ZigStringSlice> =
             unsafe { &mut *_tail.source_code_slice.cast_mut() };
 
@@ -5261,9 +5274,9 @@ impl VirtualMachine {
             url.is_empty() || url.eql_comptime("[unknown]") || url.has_prefix_comptime(b"[source:")
         }
 
+        let mut frames_len = exception.stack.frames_len as usize;
         // SAFETY: `frames_ptr[..frames_len]` is the caller-owned `Holder`
         // backing buffer (ZigStackTrace contract).
-        let mut frames_len = exception.stack.frames_len as usize;
         let frames_buf =
             unsafe { bun_core::ffi::slice_mut(exception.stack.frames_ptr, frames_len) };
 
@@ -5462,6 +5475,7 @@ impl VirtualMachine {
                 // SAFETY: `Holder` backs both arrays with `[_; SOURCE_LINES_COUNT]`.
                 let source_lines =
                     unsafe { bun_core::ffi::slice_mut(exception.stack.source_lines_ptr, N) };
+                // SAFETY: `Holder` backs `source_lines_numbers` with `[i32; SOURCE_LINES_COUNT]`.
                 let source_line_numbers =
                     unsafe { bun_core::ffi::slice_mut(exception.stack.source_lines_numbers, N) };
                 for s in source_lines.iter_mut() {
@@ -6511,7 +6525,9 @@ impl VirtualMachine {
                 )
             };
             let Some(socket) = socket else {
-                IPCInstance::deinit(instance);
+                // SAFETY: `instance` was produced by `IPCInstance::new`
+                // (heap::alloc) above and is not yet aliased.
+                unsafe { IPCInstance::deinit(instance) };
                 self.ipc = None;
                 bun_core::output::warn("Unable to start IPC socket");
                 return None;
@@ -6560,7 +6576,9 @@ impl VirtualMachine {
             // stored inline in `*instance`; no other live `&mut` aliases it.
             if let Err(_) = unsafe { crate::ipc::SendQueue::windows_configure_client(data_ptr, fd) }
             {
-                IPCInstance::deinit(instance);
+                // SAFETY: `instance` was produced by `IPCInstance::new`
+                // (heap::alloc) above and is not yet aliased.
+                unsafe { IPCInstance::deinit(instance) };
                 self.ipc = None;
                 bun_core::output::warn(&format_args!("Unable to start IPC pipe '{:?}'", fd));
                 return None;

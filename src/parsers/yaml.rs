@@ -2900,6 +2900,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         // body's result and pop on EVERY exit (including `?` paths).
         let result: Result<Expr, ParseError> = (|| {
             let mut props = MappingProps::init();
+            let mut first_entry_end_line = mapping_line;
 
             {
                 // get the first value
@@ -2915,6 +2916,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         Expr::init(E::Null {}, mapping_value_start.loc())
                     }
                     TokenData::MappingValue => 'value: {
+                        first_entry_end_line = mapping_value_line;
                         // [191] explicit `:` is on a new line at mapping_indent;
                         // a same-line `- ` after it is a compact sequence whose
                         // indent is column-based, not line-based.
@@ -2988,7 +2990,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             // PORT NOTE: Zig `defer self.context.unset(.block_in)` — same
             // capture-then-unset pattern, nested.
             let inner: Result<Expr, ParseError> = (|| {
-                let mut previous_line = mapping_line;
+                let mut previous_line = first_entry_end_line;
 
                 while !matches!(
                     self.token.data,
@@ -3679,7 +3681,16 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                     self.block_indents.push(mapping_indent)?;
 
-                    self.scan(ScanOptions::default())?;
+                    let parent_indent =
+                        if matches!(self.context.get(), Context::FlowIn | Context::FlowKey) {
+                            None
+                        } else {
+                            Some(mapping_indent.add(1))
+                        };
+                    self.scan(ScanOptions {
+                        additional_parent_indent: parent_indent,
+                        ..Default::default()
+                    })?;
 
                     let key = self.parse_node(ParseNodeOptions {
                         explicit_mapping_key: true,
@@ -5428,7 +5439,15 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     continue;
                 }
                 0x09 /* '\t' */ => {
-                    if count_indentation && self.context.get() == Context::BlockIn {
+                    // Tab is invalid as block indentation, but valid as
+                    // s-separate-in-line on the same line as a `- `/`?`/`:` —
+                    // distinguish via additional_parent_indent (cleared on
+                    // newline, so this only allows the same-line case).
+                    if count_indentation
+                        && additional_parent_indent.is_none()
+                        && self.block_indents.get().is_some()
+                        && !matches!(self.context.get(), Context::FlowIn | Context::FlowKey)
+                    {
                         return Err(ParseError::UnexpectedCharacter);
                     }
                     count_indentation = false;

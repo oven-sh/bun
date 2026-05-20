@@ -4261,7 +4261,7 @@ test("yaml-test-suite/M29M", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/M2N8/00", () => {
+test("yaml-test-suite/M2N8/00", () => {
   // Question mark edge cases (using test.event for expected values)
   const input: string = `- ? : x
 `;
@@ -4302,7 +4302,7 @@ folded:
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/M5DY", () => {
+test("yaml-test-suite/M5DY", () => {
   // Spec Example 2.11. Mapping between Sequences (using test.event for expected values)
   const input: string = `? - Detroit Tigers
   - Chicago cubs
@@ -5863,7 +5863,7 @@ test("yaml-test-suite/V55R", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/V9D5", () => {
+test("yaml-test-suite/V9D5", () => {
   // Spec Example 8.19. Compact Block Mappings (using test.event for expected values)
   const input: string = `- sun: yellow
 - ? earth: blue

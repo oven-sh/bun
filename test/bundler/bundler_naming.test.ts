@@ -302,4 +302,24 @@ describe("bundler", () => {
       },
     ],
   });
+  // A non-ASCII basename char must collapse to a single "_" in the generated
+  // CommonJS wrapper symbol, not one "_" per UTF-8 byte. Regressed in the
+  // Rust port; Zig's identifier formatter already decodes multi-byte codepoints.
+  itBundled("naming/NonAsciiSourceFilenameSymbol", {
+    files: {
+      "/entry.js": /* js */ `
+        const u = require("./café-utils.js");
+        console.log(u.hi);
+      `,
+      "/café-utils.js": /* js */ `
+        module.exports = { hi: 1 };
+      `,
+    },
+    target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("require_caf_utils");
+      api.expectFile("/out.js").not.toContain("require_caf__utils");
+    },
+    run: { stdout: "1" },
+  });
 });

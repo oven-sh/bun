@@ -1,5 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
 
 describe("$.braces", () => {
   test("no-op", () => {
@@ -75,5 +76,31 @@ describe("$.braces", () => {
   test("unicode", () => {
     const result = $.braces(`lol {😂,🫵,🤣}`);
     expect(result).toEqual(["lol 😂", "lol 🫵", "lol 🤣"]);
+  });
+});
+
+describe("brace + glob composition", () => {
+  test("src/*.{ts,tsx} globs after brace expansion", async () => {
+    using dir = tempDir("shell-brace-glob", {
+      "src/app.ts": "",
+      "src/util.tsx": "",
+    });
+    const out = (await $`echo src/*.{ts,tsx}`.cwd(String(dir)).text()).trim().replaceAll("\\", "/");
+    const words = out.split(" ");
+    expect(words).toContain("src/app.ts");
+    expect(words).toContain("src/util.tsx");
+    expect(words).toContain("src/*.ts");
+    expect(words).toContain("src/*.tsx");
+  });
+
+  test("{src,lib}/*.ts composes a brace prefix with a glob", async () => {
+    using dir = tempDir("shell-brace-glob2", {
+      "src/a.ts": "",
+      "lib/b.ts": "",
+    });
+    const out = (await $`echo {src,lib}/*.ts`.cwd(String(dir)).text()).trim().replaceAll("\\", "/");
+    const words = out.split(" ");
+    expect(words).toContain("src/a.ts");
+    expect(words).toContain("lib/b.ts");
   });
 });

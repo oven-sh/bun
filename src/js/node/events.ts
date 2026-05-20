@@ -436,7 +436,9 @@ EventEmitterPrototype.eventNames = function eventNames() {
 
 EventEmitterPrototype[kCapture] = false;
 
-function once(emitter, type, options = kEmptyObject) {
+// `async` so validation/already-aborted `throw`s surface as rejected
+// promise instead of synchronous throw — matches Node's `events.once`.
+async function once(emitter, type, options = kEmptyObject) {
   validateObject(options, "options");
   var signal = options?.signal;
   validateAbortSignal(signal, "options.signal");

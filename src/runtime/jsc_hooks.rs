@@ -1931,6 +1931,50 @@ fn create_if_different(s: &bun_core::String, other: &[u8]) -> bun_core::String {
     bun_core::String::clone_utf8(other)
 }
 
+/// Takes the per-VM arena, binds `AST_HEAP` to it; `Drop` clears `AST_HEAP`
+/// and parks the Box back. `ModuleLoader::reset_arena` owns the reset.
+struct ActiveTranspilerArena {
+    vm: *mut VirtualMachine,
+    arena: Option<Box<bun_alloc::Arena>>,
+}
+
+impl ActiveTranspilerArena {
+    fn take(vm: *mut VirtualMachine) -> Self {
+        // SAFETY: `vm` is the live per-thread VM.
+        let arena = unsafe { (*vm).module_loader.transpile_source_code_arena.take() }
+            .unwrap_or_else(|| Box::new(bun_alloc::Arena::new()));
+        bun_alloc::ast_alloc::set_thread_heap(arena.heap_ptr());
+        Self {
+            vm,
+            arena: Some(arena),
+        }
+    }
+
+    #[inline]
+    fn arena(&self) -> &bun_alloc::Arena {
+        self.arena.as_deref().unwrap()
+    }
+
+    fn into_arena_for_async_module(mut self) -> Box<bun_alloc::Arena> {
+        bun_alloc::ast_alloc::set_thread_heap(core::ptr::null_mut());
+        self.arena.take().unwrap()
+    }
+}
+
+impl Drop for ActiveTranspilerArena {
+    fn drop(&mut self) {
+        let Some(arena) = self.arena.take() else {
+            return;
+        };
+        bun_alloc::ast_alloc::set_thread_heap(core::ptr::null_mut());
+        // SAFETY: `self.vm` is the live per-thread VM.
+        let slot = unsafe { &mut (*self.vm).module_loader.transpile_source_code_arena };
+        if slot.is_none() {
+            *slot = Some(arena);
+        }
+    }
+}
+
 /// `ModuleLoader.transpileSourceCode(...)` — the runtime-transpiler path.
 /// Port of `src/jsc/ModuleLoader.zig:85-826`: read file → `Transpiler::parse`
 /// → `js_printer::print` → `ResolvedSource`.
@@ -2067,113 +2111,8 @@ fn transpile_source_code_inner(
             let (main, main_hash) = unsafe { ((*jsc_vm).main(), (*jsc_vm).main_hash) };
             let is_main = main.len() == path.text.len() && main_hash == hash && main == path.text;
 
-            // ── Arena take/give-back ────────────────────────────────────────
-            // Spec :128-165. Reuse the per-VM arena when free; allocate a
-            // fresh boxed one otherwise. `give_back_arena` is cleared on the
-            // ParseError / AsyncModule paths (which hand the arena to the
-            // async queue or leak it intentionally for the caller to inspect).
-            // SAFETY: per fn contract.
-            let mut arena: Box<bun_alloc::Arena> =
-                unsafe { (*jsc_vm).module_loader.transpile_source_code_arena.take() }
-                    .unwrap_or_else(|| Box::new(bun_alloc::Arena::new()));
-            // Stable heap address (Box interior); survives the move into
-            // `arena_guard` and into the VM slot on give-back.
-            let arena_ptr: *const bun_alloc::Arena = &raw const *arena;
-            // Route `AstAlloc` to `arena`'s `mi_heap_t*` (see the
-            // `reset_store` note above). `_ast_scope.enter()` already nulled
-            // `AST_HEAP`; this rebinds it to the heap that the parser scratch
-            // and printer arena allocations also use.
-            bun_alloc::ast_alloc::set_thread_heap(arena.heap_ptr());
-            let mut give_back_arena = true;
-            // PORT NOTE: reshaped for borrowck — Zig's `defer` block becomes a
-            // scopeguard so `?`-early-returns still run it.
-            let mut arena_guard = scopeguard::guard(
-                (jsc_vm, arena, give_back_arena, args.flags),
-                |(jsc_vm, mut arena, give_back, flags)| {
-                    // `AST_HEAP` was bound to `arena.heap_ptr()` for this
-                    // transpile; clear it before `reset()` (which is
-                    // `mi_heap_destroy` + `mi_heap_new`) so it never dangles.
-                    // `_ast_scope.exit()` (drops after this guard) restores
-                    // the surrounding scope's heap regardless.
-                    bun_alloc::ast_alloc::set_thread_heap(core::ptr::null_mut());
-                    // SAFETY: `jsc_vm` is the live per-thread VM (closure runs
-                    // on the same thread, before the hook returns).
-                    let slot = unsafe { &mut (*jsc_vm).module_loader.transpile_source_code_arena };
-                    if !give_back {
-                        // Spec :146-165 — when `give_back_arena == false` the
-                        // Zig `defer` is a no-op because ownership was already
-                        // transferred (to the AsyncModule queue, or held past
-                        // `processFetchLog` so log spans pointing into it stay
-                        // valid). The ParseError path that flips
-                        // `give_back=false` is LIVE (not gated): the caller
-                        // (`transpile_file` → `process_fetch_log`, spec
-                        // :1112-1114) reads `log` entries whose spans point
-                        // into arena-owned source bytes. Freeing here would be
-                        // a use-after-free.
-                        //
-                        // PORT NOTE: we can't widen `TranspileExtra` (lower
-                        // tier) to carry the `Box<Arena>` back, so park it in
-                        // the per-VM slot UN-reset. `transpile_file`'s
-                        // `_reset_arena` guard (`ModuleLoader::reset_arena`,
-                        // spec :1083) runs after `process_fetch_log` and
-                        // resets/reclaims it then — matching the spec lifetime.
-                        // TODO(b2-cycle): once AsyncModule un-gates, the
-                        // enqueue site must `ScopeGuard::into_inner` and hand
-                        // the `Box<Arena>` to the queue instead of reaching
-                        // here.
-                        *slot = Some(arena);
-                        return;
-                    }
-                    if slot.is_none() {
-                        if flags != FetchFlags::PrintSource {
-                            // SAFETY: per fn contract — `jsc_vm` is the live
-                            // per-thread VM (closure runs on the same thread,
-                            // before the hook returns).
-                            if unsafe { (*jsc_vm).smol } {
-                                arena.reset();
-                            } else {
-                                // Spec ModuleLoader.zig:155
-                                // `.reset(.{.retain_with_limit = 8M})`.
-                                // See `MimallocArena::reset_retain_with_limit`
-                                // for why this is a no-op-until-limit rather
-                                // than a bump-pointer reset (each fresh
-                                // `mi_heap`'s first alloc pays
-                                // `mi_arena_pages_alloc` → bitmap memset).
-                                //
-                                // PERF NOTE: the over-limit branch of this is
-                                // `MimallocArena::reset()` = `mi_heap_destroy`
-                                // + `mi_heap_new`, and `mi_heap_destroy` is
-                                // the costly half (per-page free-list/bitmap
-                                // teardown, plus `_mi_stats_merge_from`'s
-                                // `mi_stats_t` walk when stats are compiled in).
-                                // Because `AstAlloc::deallocate` is a no-op (the
-                                // AST graph is abandoned, not freed — see the
-                                // `Expr::Data::clone_in` aliasing invariant in
-                                // `ast_alloc.rs`), this heap's footprint only
-                                // *grows* across retained modules, so a tight
-                                // cap means a `mi_heap_destroy` every few
-                                // modules — and `next lint` transpiles a few
-                                // hundred. `mi_heap_collect` can't substitute:
-                                // it only returns *empty* pages, and there are
-                                // none while the dead AST blocks pin them. So
-                                // the lever is the cap: raise it to the spec's
-                                // 8 MB (matching every other
-                                // `reset_retain_with_limit` call site) so the
-                                // common case retains the warm heap and the
-                                // destroy fires ~4× less often. This re-adds the
-                                // ~6 MB anon-rw mid-run footprint that commit
-                                // bfe6056b1e8e shaved off by going to 2 MB —
-                                // accepted: the lint/create-next RSS budget has
-                                // headroom vs the Zig baseline, and the
-                                // per-destroy CPU is the bigger lever.
-                                arena.reset_retain_with_limit(8 * 1024 * 1024);
-                            }
-                        }
-                        *slot = Some(arena);
-                    }
-                    // else: drop the fresh Box (spec :161-163).
-                },
-            );
+            let arena_guard = ActiveTranspilerArena::take(jsc_vm);
+            let arena_ptr: *const bun_alloc::Arena = &raw const *arena_guard.arena();
             // ── Watcher fd / package_json lookup ────────────────────────────
             // Spec :170-176.
             let mut fd: Option<bun_sys::Fd> = None;
@@ -2304,8 +2243,8 @@ fn transpile_source_code_inner(
             let mut input_file_fd = bun_sys::Fd::INVALID;
             // Spec :251-256 `defer { if (should_close_input_file_fd and
             // input_file_fd != .invalid) input_file_fd.close(); }` — this
-            // `defer` is unconditional in Zig (independent of `give_back_arena`)
-            // and must fire on every exit path: parse failure, JSON early
+            // `defer` is unconditional in Zig and must fire on every exit
+            // path: parse failure, JSON early
             // return, `disable_transpilying`, already_bundled, empty `.cjs`,
             // cache-hit, AsyncModule, the wasm recurse, and the print error.
             // PORT NOTE: reshaped for borrowck — capture raw pointers so the
@@ -2533,7 +2472,6 @@ fn transpile_source_code_inner(
                             package_json,
                         );
                     }
-                    arena_guard.2 = false; // give_back_arena = false
                     return Err(bun_core::err!("ParseError"));
                 };
 
@@ -2583,7 +2521,6 @@ fn transpile_source_code_inner(
 
                 // Spec :338-341.
                 if unsafe { (*(*jsc_vm).transpiler.log).errors > 0 } {
-                    arena_guard.2 = false;
                     return Err(bun_core::err!("ParseError"));
                 }
 
@@ -2852,8 +2789,8 @@ fn transpile_source_code_inner(
                         core::mem::forget(fs_cache.reset_shared_buffer(buf));
                     }
 
-                    // Hand `arena` ownership to the queue (defuse the give-back guard).
-                    let (_, arena, _, _) = scopeguard::ScopeGuard::into_inner(arena_guard);
+                    // Hand `arena` ownership to the queue.
+                    let arena = arena_guard.into_arena_for_async_module();
                     // SAFETY: per fn contract — `jsc_vm` / `global_object` are the live
                     // per-thread VM / global; `package_json` is the opaque watcher
                     // forward-decl of `bun_resolver::package_json::PackageJSON`.
@@ -2940,7 +2877,7 @@ fn transpile_source_code_inner(
                             // built `parse_result.ast` from — the printer's
                             // rope-flattening scratch belongs in it, not in
                             // the per-VM `transpiler_arena`.
-                            &arena_guard.1,
+                            arena_guard.arena(),
                             parse_result,
                             &mut *(*extra).source_code_printer,
                             bun_js_printer::Format::EsmAscii,

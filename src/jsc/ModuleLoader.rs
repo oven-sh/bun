@@ -57,14 +57,14 @@ impl ModuleLoader {
     /// `VirtualMachine`, so passing both would alias (PORTING.md §Forbidden).
     /// Access `module_loader` through `jsc_vm` instead.
     pub fn reset_arena(jsc_vm: &mut VirtualMachine) {
-        // Spec ModuleLoader.zig:24-29: `if (smol) reset() else
-        // reset(.{.retain_with_limit = 8M})`. The port collapses both arms to
-        // `reset()` — `MimallocArena` is not a bump allocator, so there is no
-        // capacity to retain (see `MimallocArena::reset_retain_with_limit`
-        // PORT NOTE); mimalloc's per-thread segment cache already provides the
-        // warm-page reuse Zig's `.retain_with_limit` was after.
+        // Single owner of the reset — `transpile_source_code` only parks the Box.
+        let smol = jsc_vm.smol;
         if let Some(arena) = jsc_vm.module_loader.transpile_source_code_arena.as_mut() {
-            arena.reset();
+            if smol {
+                arena.reset();
+            } else {
+                arena.reset_retain_with_limit(8 * 1024 * 1024);
+            }
         }
     }
 }

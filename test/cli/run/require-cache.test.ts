@@ -335,4 +335,47 @@ describe.concurrent("require.cache", () => {
       isWindows ? 60000 : 30000,
     );
   });
+
+  test("synchronous transpile arena retain across many distinct modules", async () => {
+    const N = 200;
+    const files: Record<string, string> = {
+      "entry.cjs": `
+        const N = ${N};
+        let mismatches = 0;
+        for (let i = 0; i < N; i++) {
+          const m = require("./mod" + i + ".cjs");
+          if (m.id !== i) mismatches++;
+          if (m.tag !== "module-number-" + i) mismatches++;
+          if (m.values.length !== 8 || m.values[7] !== i * 7) mismatches++;
+          if (m.padded.length !== 4096 + String(i).length) mismatches++;
+        }
+        for (let i = 0; i < N; i++) {
+          const m = require("./mod" + i + ".cjs");
+          if (m.tag !== "module-number-" + i) mismatches++;
+        }
+        console.log(JSON.stringify({ mismatches, rss: process.memoryUsage.rss() }));
+      `,
+    };
+    for (let i = 0; i < N; i++) {
+      files[`mod${i}.cjs`] =
+        `// ${Buffer.alloc(2048, 120).toString()}\n` +
+        `exports.id = ${i};\n` +
+        `exports.tag = "module-number-" + ${i};\n` +
+        `exports.values = [${Array.from({ length: 8 }, (_, k) => i * k).join(", ")}];\n` +
+        `exports.padded = ${JSON.stringify(Buffer.alloc(4096, 46).toString() + i)};\n`;
+    }
+    const dir = tempDirWithFiles("transpile-arena-retain", files);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", join(dir, "entry.cjs")],
+      env: { ...bunEnv, BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const out = JSON.parse(stdout.trim());
+    expect(out.mismatches).toBe(0);
+    expect(exitCode).toBe(0);
+  });
 });

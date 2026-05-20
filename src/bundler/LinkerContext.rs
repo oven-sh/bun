@@ -921,11 +921,10 @@ impl<'a> LinkerContext<'a> {
         {
             let loaders = self.parse_graph().input_files.items_loader();
             let parts_col = self.graph.ast.items_parts();
-            let mut parts_live: Vec<bun_collections::DynamicBitSetUnmanaged> =
+            let mut parts_live: Vec<bun_collections::AutoBitSet> =
                 Vec::with_capacity(parts_col.len());
             for (i, parts) in parts_col.iter().enumerate() {
-                let mut bits =
-                    bun_collections::DynamicBitSetUnmanaged::init_empty(parts.len())?;
+                let mut bits = bun_collections::AutoBitSet::init_empty(parts.len())?;
                 // The HTML loader's `ParseTask` builds its synthetic part 1 already
                 // live (so the JS-chunk visitor follows every embedded import record).
                 // `mark_file_live_for_tree_shaking` short-circuits for HTML and never
@@ -948,7 +947,7 @@ impl<'a> LinkerContext<'a> {
         // and the underlying slabs don't reallocate during tree-shaking, so we
         // cache raw column base pointers and reborrow at each recursive call.
         let parts: *mut [bun_ast::PartList<'a>] = self.graph.ast.items_parts_mut();
-        let parts_live: *mut [bun_collections::DynamicBitSetUnmanaged] =
+        let parts_live: *mut [bun_collections::AutoBitSet] =
             self.graph.parts_live.as_mut_slice();
         let import_records: *const [bun_ast::import_record::List<'a>] =
             self.graph.ast.items_import_records();
@@ -2663,7 +2662,7 @@ impl<'a> js_printer::RequireOrImportMetaSource for LinkerContext<'a> {
 pub struct TreeShakeCtx<'a, 'r> {
     pub side_effects: &'r [SideEffects],
     pub parts: &'r [bun_ast::PartList<'a>],
-    pub parts_live: &'r mut [bun_collections::DynamicBitSetUnmanaged],
+    pub parts_live: &'r mut [bun_collections::AutoBitSet],
     pub import_records: &'r [bun_ast::import_record::List<'a>],
     pub entry_point_kinds: &'r [EntryPoint::Kind],
     pub css_reprs: &'r [crate::bundled_ast::CssCol],

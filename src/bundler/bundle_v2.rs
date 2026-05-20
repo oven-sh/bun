@@ -5392,10 +5392,10 @@ pub mod bv2_impl {
             // here: every part of every JS file is considered live.
             {
                 let parts_col = self.linker.graph.ast.items_parts();
-                let mut parts_live: Vec<DynamicBitSetUnmanaged> =
+                let mut parts_live: Vec<bun_collections::AutoBitSet> =
                     Vec::with_capacity(parts_col.len());
                 for parts in parts_col {
-                    parts_live.push(DynamicBitSetUnmanaged::init_empty(parts.len())?);
+                    parts_live.push(bun_collections::AutoBitSet::init_empty(parts.len())?);
                 }
                 for &idx in js_reachable_files {
                     parts_live[idx.get() as usize].set_all(true);

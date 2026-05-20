@@ -39,7 +39,7 @@ pub struct LinkerGraph<'a> {
     /// read-only thereafter. Replaces the former `Part::is_live: bool` so the
     /// tree-shaking visited-check doesn't pull a full 272-byte `Part` into
     /// cache for a 1-bit answer.
-    pub parts_live: Vec<BitSet>,
+    pub parts_live: Vec<AutoBitSet>,
     pub entry_points: entry_point::List,
     pub symbols: symbol::Map,
 

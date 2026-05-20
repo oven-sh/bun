@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
@@ -240,4 +240,52 @@ test("Valid unicode escapes in identifiers should work", async () => {
     expect(exitCode).toBe(0);
     expect(stdout.toString()).toBe("2\n");
   }
+});
+
+// https://github.com/oven-sh/bun/issues/31134
+// Out-of-range `\u{...}` inside a template/string literal reported a caret
+// location two columns left of the backslash (one column when the escape
+// immediately followed the opening quote, because the computation clamped).
+// `hex_start` over-subtracted by the width of `{`, and the string-path caller
+// passed the opening-quote offset where the decoder expects the content-start
+// offset. Pin the caret to the `\` byte in each quote style.
+describe("out-of-range \\u{...} caret points at the backslash (#31134)", () => {
+  const cases = [
+    { name: "backtick with prefix", source: "`aaaaa\\u{110000}`", expectCol: 7 },
+    { name: "backtick without prefix", source: "`\\u{110000}`", expectCol: 2 },
+    { name: "double-quote with prefix", source: 'var a = "aaaaa\\u{110000}";', expectCol: 15 },
+    { name: "double-quote without prefix", source: 'var a = "\\u{110000}";', expectCol: 10 },
+    { name: "single-quote with prefix", source: "var a = 'aaaaa\\u{110000}';", expectCol: 15 },
+    { name: "identifier with prefix", source: "var ab\\u{110000} = 1;", expectCol: 7 },
+  ];
+
+  test.each(cases)("$name → column $expectCol", ({ source, expectCol }) => {
+    using dir = tempDir("caret-pos", { "test.js": source });
+    const { stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), join(dir, "test.js")],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+      cwd: String(dir),
+    });
+
+    expect(exitCode).toBe(1);
+    const err = stderr.toString();
+    expect(err).toContain("Unicode escape sequence is out of range");
+    // Reported error location: `:1:<col>` — 1-indexed byte column of the `\`.
+    expect(err).toContain(`:1:${expectCol}`);
+    // The caret line (second printed line) should place `^` directly under
+    // the backslash in the source line above it.
+    const lines = err.split("\n");
+    const sourceLineIdx = lines.findIndex(l => l.includes(source));
+    expect(sourceLineIdx).toBeGreaterThanOrEqual(0);
+    const sourceLine = lines[sourceLineIdx];
+    const caretLine = lines[sourceLineIdx + 1];
+    // `1 | ` (or similar) prefix is identical on both lines, so column
+    // alignment carries through. The backslash in `sourceLine` must sit
+    // above the `^` in `caretLine`.
+    const backslashIdx = sourceLine.indexOf("\\u{110000}");
+    expect(backslashIdx).toBeGreaterThanOrEqual(0);
+    expect(caretLine[backslashIdx]).toBe("^");
+  });
 });

@@ -841,10 +841,13 @@ lexer_impl_header! {
                                     self.syntax_error()?;
                                 }
 
+                                // `iter.i` is the byte offset of `{` inside `text`;
+                                // back up past `\` and `u` only. `width3` is the
+                                // width of `{` itself, which `iter.i` already points
+                                // at — subtracting it lands one character too early.
                                 let hex_start = (iter.i as usize)
                                     .saturating_sub(width as usize)
-                                    .saturating_sub(width2 as usize)
-                                    .saturating_sub(width3 as usize);
+                                    .saturating_sub(width2 as usize);
                                 let mut is_first = true;
                                 let mut is_out_of_range = false;
                                 'variable_length: loop {
@@ -2783,8 +2786,12 @@ lexer_impl_header! {
                 debug_assert!(self.temp_buffer_u16.is_empty());
                 let mut tmp = core::mem::take(&mut self.temp_buffer_u16);
                 tmp.reserve(self.string_literal_raw_content.len());
+                // `string_literal_raw_content` starts one byte after the opening
+                // quote/backtick (see `base` in `parse_string_literal`); pass the
+                // content-start offset so `start + iter.i` inside the decoder
+                // lines up with absolute positions in the source.
                 let res = self.decode_escape_sequences(
-                    self.string_literal_start,
+                    self.string_literal_start + 1,
                     self.string_literal_raw_content,
                     &mut tmp,
                 );

@@ -3,7 +3,7 @@
 // hard errors. Opaque-pointer round-trips (C++ stores `void*`, never derefs)
 // are individually `#[allow]`ed at the extern block with a justification.
 #![deny(improper_ctypes, improper_ctypes_definitions)]
-#![feature(adt_const_params, allocator_api)]
+#![feature(adt_const_params)]
 
 // PORTING.md crate map says `bun.String`/`bun.strings` → `bun_str`, but the
 // workspace crate is named `bun_string`. Alias once here so draft modules that

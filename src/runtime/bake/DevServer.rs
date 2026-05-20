@@ -2101,13 +2101,16 @@ impl DevServer {
         req: ReqOrSaved,
         resp: AnyResponse,
     ) -> Result<(), bun_core::Error> {
-        let deferred_ptr = self.deferred_request_pool.get();
-        // SAFETY: HiveArrayFallback::get returns an exclusively-owned, live node ptr
-        // (heap-allocates on overflow; never null).
-        let deferred = unsafe { &mut *deferred_ptr };
+        let deferred_slot = self.deferred_request_pool.claim();
+        let deferred_node_ptr: *mut deferred_request::Node = deferred_slot.addr().as_ptr();
         // Precompute the data slot pointer (used inside the initializer for
-        // abort-callback registration) before borrowing `deferred.data` for `.write()`.
-        let deferred_data_ptr: *mut c_void = deferred.data.as_mut_ptr().cast::<c_void>();
+        // abort-callback registration) without forming a reference to the
+        // still-uninitialized slot.
+        // SAFETY: `deferred_node_ptr` is a valid (allocated, aligned) hive-pool
+        // slot; `addr_of_mut!` projects to the field without a reference, so
+        // the uninit `data` is never read.
+        let deferred_data_ptr: *mut c_void =
+            unsafe { ::core::ptr::addr_of_mut!((*deferred_node_ptr).data) }.cast::<c_void>();
         debug_log!("DeferredRequest(0x{:x}).init", deferred_data_ptr as usize);
 
         let method = match &req {
@@ -2120,7 +2123,7 @@ impl DevServer {
             _ => unreachable!(),
         };
 
-        deferred.data.write(DeferredRequest {
+        let mut deferred_data = DeferredRequest {
             route_bundle_index,
             dev: std::ptr::from_ref(self),
             referenced_by_devserver: true,
@@ -2158,18 +2161,9 @@ impl DevServer {
                                 )? {
                                 Some(saved) => saved,
                                 // Zig: `catch return` — abort the deferral on failure.
-                                None => {
-                                    // SAFETY: `deferred_ptr` is a hive slot from
-                                    // `get()` above; `deferred.data.write()` has
-                                    // not run on this branch (we're still inside
-                                    // the struct-literal initializer), so the slot
-                                    // does not satisfy `put()`'s "fully-initialized
-                                    // T" contract. `put_raw` recycles/frees without
-                                    // `drop_in_place`, matching Zig's `pool.put`
-                                    // (no destructor).
-                                    unsafe { self.deferred_request_pool.put_raw(deferred_ptr) };
-                                    return Ok(());
-                                }
+                                // `deferred_slot` drops here, releasing the
+                                // still-uninitialized slot without `drop_in_place`.
+                                None => return Ok(()),
                             }
                         }
                         ReqOrSaved::Saved(saved) => saved,
@@ -2200,16 +2194,21 @@ impl DevServer {
                     break 'brk Handler::ServerHandler(server_handler);
                 }
             },
-        });
+        };
 
-        // SAFETY: `deferred.data` was just initialized above.
-        let deferred_data = unsafe { deferred.data.assume_init_mut() };
         if matches!(deferred_data.handler, Handler::ServerHandler(_)) {
             deferred_data.weak_ref();
         }
 
-        // SAFETY: `deferred_ptr` is a live, exclusively-owned hive slot just
-        // obtained from `deferred_request_pool.get()` and initialized above.
+        // `next` is a placeholder: `prepend` overwrites it before any read.
+        let deferred_ptr = deferred_slot
+            .write(deferred_request::Node {
+                next: ::core::ptr::null_mut(),
+                data: ::core::mem::MaybeUninit::new(deferred_data),
+            })
+            .as_ptr();
+
+        // SAFETY: `deferred_ptr` was just initialized via `deferred_slot.write()`.
         unsafe { requests_array.prepend(&mut *deferred_ptr) };
         Ok(())
     }

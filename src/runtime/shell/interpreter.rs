@@ -496,6 +496,10 @@ impl Interpreter {
     /// `ctx` is stored for `bun run` argv access from builtins (Zig
     /// `command_ctx`); held as a raw pointer because the interpreter outlives
     /// any single `&mut ContextData` borrow.
+    // `ShellErr` is the shared shell-wide error type defined in `shell_body.rs`;
+    // boxing it here would change `pub fn` signatures across every
+    // `?`-propagating shell caller.
+    #[allow(clippy::result_large_err)]
     pub fn init(
         ctx: *mut bun_options_types::context::ContextData,
         event_loop: EventLoopHandle,

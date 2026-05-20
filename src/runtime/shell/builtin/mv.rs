@@ -35,7 +35,7 @@ pub enum MvState {
         task_count: usize,
         tasks_done: usize,
         error_signal: AtomicBool,
-        tasks: Vec<Box<ShellMvBatchedTask>>,
+        tasks: Vec<ShellMvBatchedTask>,
         err: Option<bun_sys::Error>,
     },
     Done,
@@ -220,7 +220,7 @@ impl Mv {
                 };
                 let target = Builtin::of(interp, cmd).arg_bytes(target_idx);
 
-                let mut tasks: Vec<Box<ShellMvBatchedTask>> = Vec::with_capacity(task_count);
+                let mut tasks: Vec<ShellMvBatchedTask> = Vec::with_capacity(task_count);
                 for i in 0..task_count {
                     let start = sources_start + i * BATCH;
                     let end = (start + BATCH).min(target_idx);
@@ -228,7 +228,7 @@ impl Mv {
                     for j in start..end {
                         srcs.push(ZBox::from_bytes(Builtin::of(interp, cmd).arg_bytes(j)));
                     }
-                    tasks.push(Box::new(ShellMvBatchedTask {
+                    tasks.push(ShellMvBatchedTask {
                         cmd,
                         idx: i,
                         sources: srcs,
@@ -238,7 +238,7 @@ impl Mv {
                         error_signal: None,
                         err: None,
                         task: ShellTask::new(evtloop),
-                    }));
+                    });
                 }
 
                 Self::state_mut(interp, cmd).state = MvState::Executing {
@@ -261,9 +261,11 @@ impl Mv {
                     for t in tasks.iter_mut() {
                         t.error_signal = Some(sig);
                         t.task.interp = interp_ptr;
-                        // SAFETY: `t` is a `Box<ShellMvBatchedTask>` held by
-                        // `MvState::Executing` for the worker call's lifetime.
-                        unsafe { ShellTask::schedule(&raw mut **t) };
+                        // SAFETY: `t` lives in `MvState::Executing::tasks`,
+                        // which is fully populated before any task is scheduled
+                        // and never grown afterward, so its address is stable
+                        // for the worker call's lifetime.
+                        unsafe { ShellTask::schedule(&raw mut *t) };
                     }
                 }
                 Yield::suspended()

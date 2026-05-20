@@ -288,6 +288,7 @@ upper_case_acronyms = "allow"
 wrong_self_convention = "allow"
 should_implement_trait = "allow"
 new_without_default = "allow"
+self_named_constructors = "allow"  # Zig-port `Type::init()` constructor convention
 single_match = "allow"
 manual_range_contains = "allow"
 needless_lifetimes = "allow"

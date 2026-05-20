@@ -155,7 +155,7 @@ impl CryptoHasher {
     pub unsafe extern "C" fn Bun__CryptoHasherExtern__destroy(handle: *mut CryptoHasher) {
         // SAFETY: caller transfers ownership of a valid `Box<CryptoHasher>` raw
         // pointer previously returned to C++ (see `# Safety` above).
-        CryptoHasher::finalize(unsafe { Box::from_raw(handle) });
+        drop(unsafe { Box::from_raw(handle) });
     }
 
     #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__update")]
@@ -775,22 +775,11 @@ impl CryptoHasher {
         }
     }
 
-    /// `.classes.ts` finalize — runs on mutator thread during lazy sweep.
-    pub fn finalize(self: Box<Self>) {
-        match *self {
-            CryptoHasher::Evp(_inner) => {
-                // https://github.com/oven-sh/bun/issues/3250
-                // `inner.deinit()` — handled by Drop on EVP.
-            }
-            CryptoHasher::Zig(_inner) => {
-                // `inner.deinit()` — handled by Drop on CryptoHasherZig.
-            }
-            CryptoHasher::Hmac(_inner) => {
-                // `if (inner) |hmac| hmac.deinit();` — handled by Drop on Option<Box<HMAC>>.
-            }
-        }
-        // `bun.destroy(this)` — handled by Drop on Box at scope end.
-    }
+    // `.classes.ts` finalize — runs on mutator thread during lazy sweep. Each
+    // variant's cleanup (`inner.deinit()` in the Zig original, see
+    // https://github.com/oven-sh/bun/issues/3250) is handled by `Drop` on the
+    // variant payloads, so the `JsFinalize` trait default (`drop(self)`) is
+    // exactly what's needed; no inherent override.
 }
 
 // ───────────────────────────────────────────────────────────────────────────

@@ -3240,7 +3240,12 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
                             buf_offset = buf_size;
                             let first_part_len = first_part_end - first_part_start;
                             buf_size += first_part_len;
-                            assert!(buf_size <= tmp_buf.len());
+                            if buf_size > tmp_buf.len() {
+                                return Err(bun_sys::Error::from_code(
+                                    bun_sys::E::ENAMETOOLONG,
+                                    bun_sys::Tag::TODO,
+                                ));
+                            }
                             // SAFETY: src/dst within live buffers; ptr::copy handles overlap.
                             unsafe {
                                 core::ptr::copy(
@@ -3255,7 +3260,12 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
                             let slice_len = j - last;
                             buf_offset = buf_size;
                             buf_size += slice_len;
-                            assert!(buf_size <= tmp_buf.len());
+                            if buf_size > tmp_buf.len() {
+                                return Err(bun_sys::Error::from_code(
+                                    bun_sys::E::ENAMETOOLONG,
+                                    bun_sys::Tag::TODO,
+                                ));
+                            }
                             // SAFETY: src/dst within live buffers; ptr::copy handles overlap.
                             unsafe {
                                 core::ptr::copy(

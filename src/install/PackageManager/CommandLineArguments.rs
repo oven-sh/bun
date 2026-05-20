@@ -165,6 +165,9 @@ pub static UPDATE_PARAMS: &[ParamType] = concat_params![
             "--filter <STR>...                     Update packages for the matching workspaces"
         ),
         clap::param!("-r, --recursive                       Update packages in all workspaces"),
+        clap::param!(
+            "-t, --transitive                      Re-resolve transitive dependencies to the highest in-range versions (does not modify package.json)"
+        ),
         clap::param!("<POS> ...                             \"name\" of packages to update"),
     ]
 ];
@@ -391,6 +394,7 @@ pub struct CommandLineArguments {
     pub interactive: bool,
     pub json_output: bool,
     pub recursive: bool,
+    pub transitive: bool,
     pub filters: &'static [&'static [u8]],
 
     pub pack_destination: &'static [u8],
@@ -478,6 +482,7 @@ impl Default for CommandLineArguments {
             interactive: false,
             json_output: false,
             recursive: false,
+            transitive: false,
             filters: &[],
 
             pack_destination: b"",
@@ -1360,6 +1365,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
             cli.latest = args.flag(b"--latest");
             cli.interactive = args.flag(b"--interactive");
             cli.recursive = args.flag(b"--recursive");
+            cli.transitive = args.flag(b"--transitive");
         }
 
         let specified_backend: Option<package_install::Method> = 'brk: {

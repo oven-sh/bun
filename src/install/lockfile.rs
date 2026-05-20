@@ -1398,6 +1398,19 @@ impl<'a> Cloner<'a> {
             self.lockfile.buffers.resolutions[to_clone.resolve_id as usize] = new_id;
         }
 
+        // `bun update --transitive` pass: after the breadth-first clone settles,
+        // walk every dependency edge and repoint it to the highest in-range
+        // npm version that landed in the new lockfile's `package_index` during
+        // resolution. This is the lockfile-side half of transitive CVE
+        // remediation; the resolution side (see
+        // `install_with_manager::install_with_manager`) ensures newer in-range
+        // versions actually get fetched and appended to the new lockfile.
+        if self.manager.subcommand == crate::Subcommand::Update
+            && self.manager.options.do_.transitive()
+        {
+            self.transitive_re_resolve();
+        }
+
         // cloning finished, items in lockfile buffer might have a different order, meaning
         // package ids and dependency ids have changed
         self.manager
@@ -1417,6 +1430,93 @@ impl<'a> Cloner<'a> {
                 .shrink_and_free(self.lockfile.packages.len());
         }
         Ok(())
+    }
+
+    /// Returns the highest-versioned npm package in the new lockfile's
+    /// `package_index` for `name_hash` that satisfies `version`, or `None` if
+    /// the current resolution is already best. Honors the parent range — we
+    /// never upgrade beyond what the consumer declared. Non-npm tags ignored.
+    fn pick_better_resolution(
+        &self,
+        name_hash: PackageNameHash,
+        version: &DependencyVersion,
+        current_id: PackageID,
+    ) -> Option<PackageID> {
+        if version.tag != dependency::Tag::Npm {
+            return None;
+        }
+        let entry = self.lockfile.package_index.get(&name_hash)?;
+        let resolutions = self.lockfile.packages.items_resolution();
+        if (current_id as usize) >= resolutions.len() {
+            return None;
+        }
+        let buf = self.lockfile.buffers.string_bytes.as_slice();
+        let want = &version.npm().version;
+        let current_res = &resolutions[current_id as usize];
+        if current_res.tag != ResolutionTag::Npm {
+            return None;
+        }
+
+        let mut best_id = current_id;
+        let mut best_ver = current_res.npm().version;
+
+        let mut consider = |id: PackageID| {
+            if (id as usize) >= resolutions.len() {
+                return;
+            }
+            let r = &resolutions[id as usize];
+            if r.tag != ResolutionTag::Npm {
+                return;
+            }
+            if !want.satisfies(r.npm().version, buf, buf) {
+                return;
+            }
+            if r.npm().version.order(best_ver, buf, buf) == core::cmp::Ordering::Greater {
+                best_id = id;
+                best_ver = r.npm().version;
+            }
+        };
+
+        match entry {
+            PackageIndexEntry::Id(id) => consider(*id),
+            PackageIndexEntry::Ids(ids) => {
+                for &id in ids.iter() {
+                    consider(id);
+                }
+            }
+        }
+
+        if best_id == current_id {
+            None
+        } else {
+            Some(best_id)
+        }
+    }
+
+    fn transitive_re_resolve(&mut self) {
+        // Snapshot lengths up front; `pick_better_resolution` only reads.
+        let dep_count = self.lockfile.buffers.dependencies.len();
+        let res_count = self.lockfile.buffers.resolutions.len();
+        let pkg_count = self.lockfile.packages.len();
+        let limit = dep_count.min(res_count);
+        for dep_id in 0..limit {
+            let current_id = self.lockfile.buffers.resolutions[dep_id];
+            if current_id == invalid_package_id {
+                continue;
+            }
+            if (current_id as usize) >= pkg_count {
+                continue;
+            }
+            // Clone the small Dependency struct so we don't hold a buffer borrow
+            // across the `&self` immutable borrow inside `pick_better_resolution`.
+            let dep = self.lockfile.buffers.dependencies[dep_id].clone();
+            let name_hash = self.lockfile.packages.items_name_hash()[current_id as usize];
+            if let Some(better) =
+                self.pick_better_resolution(name_hash, &dep.version, current_id)
+            {
+                self.lockfile.buffers.resolutions[dep_id] = better;
+            }
+        }
     }
 }
 

@@ -73,6 +73,7 @@ pub const update_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("-i, --interactive                     Show an interactive list of outdated packages to select for update") catch unreachable,
     clap.parseParam("--filter <STR>...                     Update packages for the matching workspaces") catch unreachable,
     clap.parseParam("-r, --recursive                       Update packages in all workspaces") catch unreachable,
+    clap.parseParam("-t, --transitive                      Re-resolve transitive dependencies to the highest in-range versions (does not modify package.json)") catch unreachable,
     clap.parseParam("<POS> ...                             \"name\" of packages to update") catch unreachable,
 });
 

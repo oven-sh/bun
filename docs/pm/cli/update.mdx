@@ -110,6 +110,61 @@ bun update -i -r
 
 This displays an additional "Workspace" column showing which workspace each dependency belongs to.
 
+## `--transitive`
+
+Use the `--transitive` flag to re-resolve **transitive** (nested) dependencies to the highest version that still satisfies each parent package's declared range. This is the recommended way to remediate vulnerabilities in transitive dependencies without changing your `package.json`.
+
+```sh terminal icon="terminal"
+bun update --transitive
+bun update -t
+```
+
+You can also target a specific direct dependency and re-resolve its subtree:
+
+```sh terminal icon="terminal"
+bun update <package> --transitive
+```
+
+### When to use it
+
+Consider this scenario:
+
+```json package.json icon="file-json"
+{
+  "dependencies": {
+    "parent": "^1.0.0"
+  }
+}
+```
+
+`parent@1.1.0` declares `"dep": "^1.0.0"` and at install time you ended up with `dep@1.0.0`. Later, `dep@1.5.0` is published with a CVE fix.
+
+- `bun update dep` would add `dep` to your top-level `dependencies` — usually not what you want.
+- `bun update parent` re-resolves `parent` but leaves `dep@1.0.0` pinned in the lockfile.
+- `bun update parent --transitive` (or `bun update --transitive`) refreshes manifests for every dependency, re-resolves transitives in-place, and writes `dep@1.5.0` to `bun.lock` — your `package.json` is untouched.
+
+### What it does
+
+- Refreshes the manifest cache so the resolver sees fresh registry data.
+- Re-resolves every transitive dependency edge to the highest version that satisfies the parent's declared range.
+- Does **not** modify `package.json` — declared ranges are preserved exactly.
+- Does **not** widen ranges. If `parent` declares `"dep": "^1.0.0"` and `dep@2.0.0` exists, `dep@1.5.0` is the highest in-range pick. For across-major upgrades, update the direct dependency that owns the range.
+
+### Naming
+
+Other package managers solve this in different ways:
+
+- `yarn up --recursive` (Yarn's `--recursive` means transitive recursion — what Bun's `--transitive` does)
+- `npm update <pkg>` (npm handles transitives by default)
+- `pnpm update <pkg>` (pnpm handles transitives by default; pnpm's `--recursive` is workspace iteration)
+
+Bun uses `--transitive` to keep the meaning of `--recursive` consistent across `bun update`, `bun outdated`, and `bun remove` (workspace iteration).
+
+### Compatibility
+
+- Composes with `--force` (bypasses lockfile entirely).
+- `--latest` currently applies only to direct dependencies; combining `--latest --transitive` is reserved for a follow-up.
+
 ## `--latest`
 
 By default, `bun update` will update to the latest version of a dependency that satisfies the version range specified in your `package.json`.

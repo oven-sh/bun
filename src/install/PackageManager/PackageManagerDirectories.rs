@@ -47,10 +47,25 @@ impl PackageManager {
     /// `options.enable.manifest_cache` is set (the only branch that reads it),
     /// matching the Zig `byNameHashAllowExpired` gating.
     pub fn manifest_disk_cache_ctx(&mut self) -> crate::package_manifest_map::DiskCacheCtx {
+        self.manifest_disk_cache_ctx_for(None)
+    }
+
+    /// Like [`manifest_disk_cache_ctx`] but adjusts the `enable_manifest_cache_control`
+    /// flag based on the per-name refresh-target set populated by
+    /// `bun update --transitive`. When `name_hash` is `None`, returns the global
+    /// default (used by callers that resolve unrelated workspace tooling).
+    pub fn manifest_disk_cache_ctx_for(
+        &mut self,
+        name_hash: Option<crate::PackageNameHash>,
+    ) -> crate::package_manifest_map::DiskCacheCtx {
         let enable_manifest_cache = self.options.enable.manifest_cache();
+        let enable_manifest_cache_control = match name_hash {
+            Some(h) => self.should_use_manifest_cache(h),
+            None => self.options.enable.manifest_cache_control(),
+        };
         crate::package_manifest_map::DiskCacheCtx {
             enable_manifest_cache,
-            enable_manifest_cache_control: self.options.enable.manifest_cache_control(),
+            enable_manifest_cache_control,
             cache_directory: enable_manifest_cache.then(|| get_cache_directory(self)),
             timestamp_for_manifest_cache_control: self.timestamp_for_manifest_cache_control,
         }

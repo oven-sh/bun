@@ -570,6 +570,49 @@ pub fn install_with_manager(
         _ => {}
     }
 
+    // `bun update --transitive`: even when package.json had no diffs, walk
+    // every dependency edge and re-enqueue resolution so the resolver consults
+    // the freshly-refreshed manifests for every (or targeted) name. This is
+    // what lets transitives get bumped to newer in-range versions without
+    // touching package.json. See `lockfile::Cloner::flush` for the post-clone
+    // repointing pass that follows.
+    if !needs_new_lockfile
+        && manager.subcommand == Subcommand::Update
+        && manager.options.do_.transitive()
+    {
+        let _ = manager.get_cache_directory();
+        let _ = manager.get_temporary_directory();
+        let dependencies_len = manager.lockfile.buffers.dependencies.len();
+        for _dep_id in 0..dependencies_len {
+            let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
+            let dep = manager.lockfile.buffers.dependencies[dep_id as usize].clone();
+            // Only npm-range and dist-tag deps participate in re-resolution.
+            if dep.version.tag != DependencyVersionTag::Npm
+                && dep.version.tag != DependencyVersionTag::DistTag
+            {
+                continue;
+            }
+            // If the target set is populated (positional args), only re-resolve
+            // names the user asked about; otherwise re-resolve everything.
+            if !manager.manifest_refresh_all
+                && !manager.manifest_refresh_targets.is_empty()
+                && !manager.manifest_refresh_targets.contains_key(&dep.name_hash)
+            {
+                continue;
+            }
+            manager.lockfile.buffers.resolutions[dep_id as usize] = invalid_package_id;
+            if let Err(err) = enqueue_dependency_with_main(
+                manager,
+                dep_id,
+                &dep,
+                invalid_package_id,
+                false,
+            ) {
+                add_dependency_error(manager, &dep, err);
+            }
+        }
+    }
+
     if needs_new_lockfile {
         root = create_new_lockfile_and_enqueue(
             manager,

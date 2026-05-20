@@ -807,6 +807,7 @@ impl Options {
 
             self.do_.set(Do::UPDATE_TO_LATEST, cli.latest);
             self.do_.set(Do::RECURSIVE, cli.recursive);
+            self.do_.set(Do::TRANSITIVE, cli.transitive);
 
             if !cli.positionals.is_empty() {
                 self.positionals = cli.positionals;
@@ -919,7 +920,8 @@ bitflags::bitflags! {
         const ANALYZE                      = 1 << 11;
         const RECURSIVE                    = 1 << 12;
         const PREFETCH_RESOLVED_TARBALLS   = 1 << 13;
-        // _: u2 padding
+        const TRANSITIVE                   = 1 << 14;
+        // _: u1 padding
     }
 }
 
@@ -1076,6 +1078,14 @@ impl Do {
     #[inline]
     pub fn set_recursive(&mut self, v: bool) {
         self.set(Do::RECURSIVE, v);
+    }
+    #[inline]
+    pub fn transitive(&self) -> bool {
+        self.contains(Do::TRANSITIVE)
+    }
+    #[inline]
+    pub fn set_transitive(&mut self, v: bool) {
+        self.set(Do::TRANSITIVE, v);
     }
     #[inline]
     pub fn prefetch_resolved_tarballs(&self) -> bool {

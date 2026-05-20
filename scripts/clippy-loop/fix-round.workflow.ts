@@ -51,7 +51,7 @@ const FIXER_RULES = `
 HARD CONSTRAINTS — violating any of these means your output is discarded:
 - You may use ONLY the Read and Grep tools. You are FORBIDDEN from using Bash, Edit, Write, git, cargo, or any tool that mutates state. Do not build, do not run tests.
 - Return your change ONLY as a unified diff in the structured output. Do not apply it.
-- The diff MUST apply cleanly with \`git apply --unidiff-zero\` from repo root: headers \`--- a/<path>\` / \`+++ b/<path>\`, @@ hunks with ≥3 context lines per hunk, exact whitespace, LF line endings.
+- The diff MUST apply cleanly with \`git apply\` (strict, then \`--recount\` fallback) from repo root: headers \`--- a/<path>\` / \`+++ b/<path>\`, @@ hunks with ≥3 context lines per hunk, exact whitespace, LF line endings.
 - The PRIMARY file is the one you were assigned. You MAY include hunks for OTHER files **only** when a signature you changed in the primary file has callers there (found via Grep). Never refactor unrelated code in other files.
 - **NEVER add \`#[allow(...)]\`, \`#[expect(...)]\`, or any lint-silencing attribute. Fix the underlying code.** If a lint genuinely cannot be fixed without breaking semantics, return it in \`skipped\` with a one-sentence reason — the loop driver will escalate it; do not silence it.
 - NEVER weaken behavior to satisfy a lint (no dropping a \`mem::forget\` without an equivalent ownership transfer; no deleting a \`drop()\` that has side effects; no changing eager→lazy eval where the eager value has observable side effects).

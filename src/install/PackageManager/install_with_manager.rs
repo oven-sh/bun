@@ -1661,6 +1661,13 @@ fn run_security_scanner(manager: &mut PackageManager, ctx: Command::Context, ori
         return;
     }
 
+    // `bun create` / `bunx` set this when the scanner is configured globally
+    // and the scaffolded project has no way to list it as a dependency yet.
+    // See oven-sh/bun#31149.
+    if bun_core::env_var::feature_flag::BUN_INTERNAL_SKIP_SECURITY_SCANNER.get() == Some(true) {
+        return;
+    }
+
     match security_scanner::perform_security_scan_after_resolution(manager, ctx, original_cwd) {
         Err(err) => {
             match err {

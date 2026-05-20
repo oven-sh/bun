@@ -1813,6 +1813,46 @@ pub mod command {
         Ok(())
     }
 
+    /// Export `BUN_INTERNAL_SKIP_SECURITY_SCANNER=true` into the current
+    /// process's environment so every child `bun install` inherits it.
+    /// Used by `bun create` to prevent a globally-configured
+    /// `install.security.scanner` from blocking scaffolding. See #31149.
+    fn set_skip_security_scanner_env() {
+        #[cfg(unix)]
+        {
+            // SAFETY: both pointers are 'static NUL-terminated byte string
+            // literals; `setenv` copies into libc's environ block.
+            unsafe {
+                libc::setenv(
+                    c"BUN_INTERNAL_SKIP_SECURITY_SCANNER".as_ptr(),
+                    c"true".as_ptr(),
+                    1,
+                );
+            }
+        }
+        #[cfg(windows)]
+        {
+            unsafe extern "C" {
+                fn SetEnvironmentVariableW(name: *const u16, value: *const u16) -> i32;
+            }
+            // `bun_core::w!` is NOT NUL-terminated — SetEnvironmentVariableW
+            // needs one, so park both in small stack buffers with a trailing 0.
+            let name_w = bun_core::w!("BUN_INTERNAL_SKIP_SECURITY_SCANNER");
+            let value_w = bun_core::w!("true");
+            let mut name_buf = [0u16; 64];
+            let mut value_buf = [0u16; 8];
+            debug_assert!(name_w.len() < name_buf.len());
+            debug_assert!(value_w.len() < value_buf.len());
+            name_buf[..name_w.len()].copy_from_slice(name_w);
+            value_buf[..value_w.len()].copy_from_slice(value_w);
+            // SAFETY: both buffers hold a NUL-terminated wide string; Win32
+            // copies the bytes into its env block and does not retain the pointer.
+            unsafe {
+                let _ = SetEnvironmentVariableW(name_buf.as_ptr(), value_buf.as_ptr());
+            }
+        }
+    }
+
     #[cold]
     #[inline(never)]
     fn bun_create(log: &mut bun_ast::Log) -> Result<(), bun_core::Error> {
@@ -1825,6 +1865,14 @@ pub mod command {
         static HARDCODED_NON_BUN_X_LIST: phf::Set<&'static [u8]> = phf::phf_set! {
             b"elysia", b"elysia-buchta", b"stric",
         };
+
+        // A security scanner configured in the global `~/.bunfig.toml` has no
+        // way to be listed as a dependency of a project that does not yet
+        // exist — `bun create` (and the create-* packages it drives) would
+        // fail at the first `bun install` with `SecurityScannerNotInDependencies`.
+        // Export a flag for every child bun process inherited from this one.
+        // See oven-sh/bun#31149.
+        set_skip_security_scanner_env();
 
         // Create command wraps bunx
         let ctx = init(Tag::CreateCommand, log)?;

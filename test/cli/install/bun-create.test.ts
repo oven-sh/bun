@@ -184,3 +184,60 @@ it("should not crash with --no-install and bun-create.postinstall starting with 
   expect(err).not.toContain("error:");
   expect(exitCode).toBe(0);
 });
+
+// https://github.com/oven-sh/bun/issues/31149
+// Scanner configured in the global bunfig must not block `bun create` —
+// a scaffolded project has no way to list the scanner as a dependency,
+// and the pre-fix child `bun install` would die with
+// `SecurityScannerNotInDependencies`.
+it("should not fail when install.security.scanner is set in global bunfig", async () => {
+  const fakeHome = join(x_dir, "fake-home");
+  const bunCreateDir = join(x_dir, "bun-create");
+  const testTemplate = "scanner-test";
+
+  await Bun.write(
+    join(fakeHome, ".bunfig.toml"),
+    `[install.security]\nscanner = "@socketsecurity/bun-security-scanner"\n`,
+  );
+
+  // Template with a trivial dependency so `bun install` is actually invoked
+  // by `bun create` (skipped when there are no deps at all).
+  await Bun.write(
+    join(bunCreateDir, testTemplate, "package.json"),
+    JSON.stringify({
+      name: "scanner-template",
+      version: "0.0.1",
+      dependencies: { "is-number": "7.0.0" },
+    }),
+  );
+
+  const destination = join(x_dir, "dest-scanner");
+  const { exited, stderr, stdout } = spawn({
+    cmd: [bunExe(), "create", testTemplate, destination, "--no-git"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    // `env -i`-style isolation so the host's real `~/.bunfig.toml` can't
+    // interfere. `HOME` is what bunfig loading looks at.
+    env: {
+      ...env,
+      HOME: fakeHome,
+      XDG_CONFIG_HOME: fakeHome,
+      BUN_CREATE_DIR: bunCreateDir,
+    },
+  });
+
+  const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+
+  // The bug: pre-fix, `bun install` spawned by `bun create` errored with
+  // `SecurityScannerNotInDependencies` before scaffolding completed. Post-fix
+  // that specific error must not appear — the scanner is skipped for the
+  // child install. Network/registry errors fetching `is-number` are fine;
+  // we only care that the scanner did not trip.
+  expect(out + err).not.toContain("SecurityScannerNotInDependencies");
+  expect(out + err).not.toContain("is configured in bunfig.toml but is not installed");
+  // Scaffolding should complete regardless of whether the dep resolved.
+  expect(out).toContain(`Created ${testTemplate} project successfully`);
+  expect(exitCode).toBe(0);
+}, 20_000);

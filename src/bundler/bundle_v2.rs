@@ -287,6 +287,43 @@ impl<'a> BundleV2<'a> {
 
     // PORT NOTE: draft `on_parse_task_complete` / `deinit_without_freeing_arena`
     // removed — canonical bodies live in the later impl blocks below.
+
+    /// If the resolved file belongs to a package listed in `optimizeImports`
+    /// and that package did not declare its own `sideEffects`, treat it as if
+    /// the package had `"sideEffects": false`. This makes the linker-level
+    /// tree-shaking fire for packages whose barrel index mixes local exports
+    /// with re-exports (where the parse-skip optimization alone bails out).
+    /// Mirrors the documented equivalence: a package in `optimizeImports` is
+    /// "also enabled automatically for any package with sideEffects: false".
+    pub(crate) fn apply_optimize_imports_side_effects_override(
+        &self,
+        result: &mut bun_resolver::Result,
+    ) {
+        if result.primary_side_effects_data != bun_ast::SideEffects::HasSideEffects {
+            return;
+        }
+        let Some(oi) = self.transpiler().options.optimize_imports else {
+            return;
+        };
+        let Some(pj) = result.package_json_ref() else {
+            return;
+        };
+        if pj.name.is_empty() {
+            return;
+        }
+        // Only override when the package hasn't declared its own sideEffects.
+        // An explicit `sideEffects: ["..."]` listing was a deliberate choice;
+        // optimizeImports is the fallback for packages that didn't set it.
+        if !matches!(
+            pj.side_effects,
+            bun_resolver::package_json::SideEffects::Unspecified
+        ) {
+            return;
+        }
+        if oi.map.contains(&pj.name[..]) {
+            result.primary_side_effects_data = bun_ast::SideEffects::NoSideEffectsPackageJson;
+        }
+    }
 }
 // ══════════════════════════════════════════════════════════════════════════
 // `BundleV2` method bodies + supporting types.
@@ -2578,6 +2615,7 @@ pub mod bv2_impl {
                 Ok(r) => r,
                 Err(_) => return Ok(()),
             };
+            self.apply_optimize_imports_side_effects_override(&mut result);
             let mut path = result.path_pair.primary;
             self.increment_scan_counter();
             let source_index = Index::source(self.graph.input_files.len() as u32);
@@ -2648,6 +2686,7 @@ pub mod bv2_impl {
             is_entry_point: bool,
             target: options::Target,
         ) -> Result<Option<IndexInt>, Error> {
+            self.apply_optimize_imports_side_effects_override(resolve);
             let result = &mut *resolve;
             // PORT NOTE(borrowck): clone the active path out so we don't hold a `&mut`
             // into `result` across the `&mut self` calls below.
@@ -6336,6 +6375,7 @@ pub mod bv2_impl {
                     }
                 };
                 let mut resolve_result = resolve_result;
+                self.apply_optimize_imports_side_effects_override(&mut resolve_result);
                 // if there were errors, lets go ahead and collect them all
                 if last_error.is_some() {
                     continue;

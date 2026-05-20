@@ -175,6 +175,52 @@ describe("bundler", () => {
     },
   });
 
+  // Regression test for #31146.
+  //
+  // `optimizeImports` is documented as being equivalent to a package having
+  // `"sideEffects": false` in its package.json. That equivalence held for
+  // *pure* barrels (the parse-skip path). For *mixed* barrels (a local
+  // export alongside re-exports — common in real-world packages like
+  // cheerio) the parse-skip path bails, and before this fix `optimizeImports`
+  // gave zero bundle-size benefit. `"sideEffects": false` kept working
+  // because the linker tree-shakes unused re-export targets independently.
+  // The fix propagates `optimizeImports` through to the resolver's
+  // `primary_side_effects_data` so the linker does the same work here.
+  //
+  // The long string-concat expressions are intentional: short literal values
+  // get inlined and DCE'd regardless of `optimizeImports`, so the assertion
+  // needs a payload the bundler can't constant-fold away.
+  itBundled("barrel/OptimizeImportsMixedBarrel", {
+    files: {
+      "/entry.js": /* js */ `
+        import { Alpha } from 'mixedopt';
+        console.log(Alpha);
+      `,
+      "/node_modules/mixedopt/package.json": JSON.stringify({
+        name: "mixedopt",
+        main: "./index.js",
+        // No sideEffects field — optimization relies on optimizeImports.
+      }),
+      "/node_modules/mixedopt/index.js": /* js */ `
+        export { Alpha } from './Alpha.js';
+        export { Beta } from './Beta.js';
+        export const VERSION = "1.0.0";
+      `,
+      "/node_modules/mixedopt/Alpha.js": /* js */ `
+        export const Alpha = "ALPHA_MARKER_" + "aaaaaaaa".repeat(10);
+      `,
+      "/node_modules/mixedopt/Beta.js": /* js */ `
+        export const Beta = "BETA_MARKER_" + "bbbbbbbb".repeat(10);
+      `,
+    },
+    optimizeImports: ["mixedopt"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toContain("ALPHA_MARKER_");
+      api.expectFile("/out/entry.js").not.toContain("BETA_MARKER_");
+    },
+  });
+
   // --- import * (namespace import) must load all submodules ---
 
   itBundled("barrel/NamespaceImportLoadsAll", {

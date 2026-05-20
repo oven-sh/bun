@@ -92,14 +92,14 @@ impl EventType {
         b"open" => EventType::OpenEvent,
     };
 
-    pub fn label(self) -> &'static [u8] {
+    pub const fn label(self) -> &'static str {
         match self {
-            Self::Event => b"event",
-            Self::MessageEvent => b"message",
-            Self::CloseEvent => b"close",
-            Self::ErrorEvent => b"error",
-            Self::OpenEvent => b"open",
-            _ => b"event",
+            Self::Event => "event",
+            Self::MessageEvent => "message",
+            Self::CloseEvent => "close",
+            Self::ErrorEvent => "error",
+            Self::OpenEvent => "open",
+            _ => "event",
         }
     }
 }
@@ -2074,7 +2074,7 @@ impl<'a> Formatter<'a> {
                             "{}type: {}\"{}\"{}{},{}\n",
                             pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                             pretty_fmt_const::<ENABLE_ANSI_COLORS>("<green>"),
-                            bstr::BStr::new(event_type.label()),
+                            event_type.label(),
                             pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                             pretty_fmt_const::<ENABLE_ANSI_COLORS>("<d>"),
                             pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
@@ -2619,9 +2619,13 @@ impl<'a> Formatter<'a> {
 
                             return Ok(());
                         }
-                        writer.write_all(array_buffer.typed_array_type.typed_array_name());
+                        writer.write_all(
+                            array_buffer.typed_array_type.typed_array_name().as_bytes(),
+                        );
                     } else {
-                        writer.write_all(array_buffer.typed_array_type.typed_array_name());
+                        writer.write_all(
+                            array_buffer.typed_array_type.typed_array_name().as_bytes(),
+                        );
                     }
 
                     writer.write_all(b" [");

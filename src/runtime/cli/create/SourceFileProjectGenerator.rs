@@ -980,11 +980,11 @@ impl Tag {
         }
     }
 
-    pub fn label(self) -> &'static [u8] {
+    pub const fn label(self) -> &'static str {
         match self {
-            Tag::ReactTailwindSpa => b"React + Tailwind",
-            Tag::ReactSpa => b"React",
-            Tag::ReactShadcnSpa => b"React + shadcn/ui + Tailwind",
+            Tag::ReactTailwindSpa => "React + Tailwind",
+            Tag::ReactSpa => "React",
+            Tag::ReactShadcnSpa => "React + shadcn/ui + Tailwind",
         }
     }
 
@@ -1047,7 +1047,7 @@ impl Logger {
              \x20 <green><b>bun run build<r>\n\
              \n\
              <blue>Happy bunning! 🐇<r>",
-            bstr::BStr::new(self.template.label())
+            self.template.label()
         ));
     }
 }

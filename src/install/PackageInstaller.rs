@@ -1986,7 +1986,7 @@ impl<'a> PackageInstaller<'a> {
                             cause.err,
                             "failed {} for package <b>{}<r>",
                             (
-                                bstr::BStr::new(cause.step.name()),
+                                cause.step.name(),
                                 bstr::BStr::new(
                                     self.names[package_id as usize].slice(string_buf!()),
                                 ),

@@ -333,9 +333,9 @@ impl S3Credentials {
             Some(&self.session_token)
         };
 
-        let acl: Option<&'static [u8]> = sign_options.acl.map(|a| a.to_string());
+        let acl: Option<&'static [u8]> = sign_options.acl.map(|a| a.to_string().as_bytes());
         let storage_class: Option<&'static [u8]> =
-            sign_options.storage_class.map(|s| s.to_string());
+            sign_options.storage_class.map(|s| s.to_string().as_bytes());
 
         if self.access_key_id.is_empty() || self.secret_access_key.is_empty() {
             return Err(SignError::MissingCredentials);

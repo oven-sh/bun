@@ -334,16 +334,16 @@ impl PackageField {
         PackageField::Scripts,
     ];
 
-    pub fn name(self) -> &'static [u8] {
+    pub const fn name(self) -> &'static str {
         match self {
-            PackageField::Name => b"name",
-            PackageField::NameHash => b"name_hash",
-            PackageField::Resolution => b"resolution",
-            PackageField::Dependencies => b"dependencies",
-            PackageField::Resolutions => b"resolutions",
-            PackageField::Meta => b"meta",
-            PackageField::Bin => b"bin",
-            PackageField::Scripts => b"scripts",
+            PackageField::Name => "name",
+            PackageField::NameHash => "name_hash",
+            PackageField::Resolution => "resolution",
+            PackageField::Dependencies => "dependencies",
+            PackageField::Resolutions => "resolutions",
+            PackageField::Meta => "meta",
+            PackageField::Bin => "bin",
+            PackageField::Scripts => "scripts",
         }
     }
 }
@@ -3268,7 +3268,7 @@ pub mod serializer {
                 bun_output::scoped_log!(
                     Lockfile,
                     "save(\"{}\") = {} bytes",
-                    bstr::BStr::new(field.name()),
+                    field.name(),
                     bytes.len(),
                 );
             }

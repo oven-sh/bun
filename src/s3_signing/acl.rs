@@ -20,16 +20,16 @@ pub enum ACL {
 }
 
 impl ACL {
-    pub fn to_string(self) -> &'static [u8] {
+    pub const fn to_string(self) -> &'static str {
         match self {
-            ACL::Private => b"private",
-            ACL::PublicRead => b"public-read",
-            ACL::PublicReadWrite => b"public-read-write",
-            ACL::AwsExecRead => b"aws-exec-read",
-            ACL::AuthenticatedRead => b"authenticated-read",
-            ACL::BucketOwnerRead => b"bucket-owner-read",
-            ACL::BucketOwnerFullControl => b"bucket-owner-full-control",
-            ACL::LogDeliveryWrite => b"log-delivery-write",
+            ACL::Private => "private",
+            ACL::PublicRead => "public-read",
+            ACL::PublicReadWrite => "public-read-write",
+            ACL::AwsExecRead => "aws-exec-read",
+            ACL::AuthenticatedRead => "authenticated-read",
+            ACL::BucketOwnerRead => "bucket-owner-read",
+            ACL::BucketOwnerFullControl => "bucket-owner-full-control",
+            ACL::LogDeliveryWrite => "log-delivery-write",
         }
     }
 

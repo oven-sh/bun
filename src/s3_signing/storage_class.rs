@@ -15,19 +15,19 @@ pub enum StorageClass {
 }
 
 impl StorageClass {
-    pub fn to_string(self) -> &'static [u8] {
+    pub const fn to_string(self) -> &'static str {
         match self {
-            Self::STANDARD => b"STANDARD",
-            Self::STANDARD_IA => b"STANDARD_IA",
-            Self::INTELLIGENT_TIERING => b"INTELLIGENT_TIERING",
-            Self::EXPRESS_ONEZONE => b"EXPRESS_ONEZONE",
-            Self::ONEZONE_IA => b"ONEZONE_IA",
-            Self::GLACIER => b"GLACIER",
-            Self::GLACIER_IR => b"GLACIER_IR",
-            Self::REDUCED_REDUNDANCY => b"REDUCED_REDUNDANCY",
-            Self::OUTPOSTS => b"OUTPOSTS",
-            Self::DEEP_ARCHIVE => b"DEEP_ARCHIVE",
-            Self::SNOW => b"SNOW",
+            Self::STANDARD => "STANDARD",
+            Self::STANDARD_IA => "STANDARD_IA",
+            Self::INTELLIGENT_TIERING => "INTELLIGENT_TIERING",
+            Self::EXPRESS_ONEZONE => "EXPRESS_ONEZONE",
+            Self::ONEZONE_IA => "ONEZONE_IA",
+            Self::GLACIER => "GLACIER",
+            Self::GLACIER_IR => "GLACIER_IR",
+            Self::REDUCED_REDUNDANCY => "REDUCED_REDUNDANCY",
+            Self::OUTPOSTS => "OUTPOSTS",
+            Self::DEEP_ARCHIVE => "DEEP_ARCHIVE",
+            Self::SNOW => "SNOW",
         }
     }
 

@@ -77,6 +77,8 @@ impl PathWatcherManager {
 
     /// unregister is always called from main thread
     fn unregister_watcher(&mut self, watcher: *mut PathWatcher, path: &ZStr) {
+        #[cfg(not(debug_assertions))]
+        let _ = path;
         if let Some(index) = self.watchers.values().iter().position(|&w| w == watcher) {
             #[cfg(debug_assertions)]
             {

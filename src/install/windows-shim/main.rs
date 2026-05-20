@@ -30,7 +30,12 @@
 // with `panic_immediate_abort` so the panic/fmt machinery is dead code.
 #![no_std]
 #![no_main]
-#![allow(nonstandard_style, ambiguous_glob_reexports, incomplete_features, dead_code)]
+#![allow(
+    nonstandard_style,
+    ambiguous_glob_reexports,
+    incomplete_features,
+    dead_code
+)]
 #![feature(adt_const_params)]
 
 #[cfg(windows)]

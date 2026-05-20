@@ -1,10 +1,10 @@
 //! Port of src/runtime/server/server.zig
 //!
-//! cycle-5: un-gated `NewServer` struct + lifecycle skeleton (start/stop/listen),
-//! `AnyServer` dispatch, `AnyRoute`, and the per-file submodules. JS callback
+//! `NewServer` struct + lifecycle skeleton (start/stop/listen), `AnyServer`
+//! dispatch, `AnyRoute`, and the per-file submodules are wired. JS callback
 //! bodies (`on_request`, `on_upgrade`, `from_js`, …) and methods that need
 //! `bun_uws` write/close surface stay ``-gated inside each file.
-//! The full Phase-A draft of every gated body is preserved in `server_body.rs`.
+//! The full draft of every gated body is preserved in `server_body.rs`.
 
 use bun_collections::{ByteVecExt, VecExt};
 use core::ffi::{c_char, c_int, c_void};
@@ -700,24 +700,26 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             );
         }
 
-        // SAFETY: `request_pool` points at a process-static (or
-        // server-owned) `HiveArray::Fallback`; valid for the server's lifetime.
-        let ctx_slot = unsafe { (*server.request_pool).try_get() };
-        // SAFETY: `try_get` hands out an uninitialized slot; `create()` fully
-        // initializes it via `MaybeUninit::write`.
-        let ctx_uninit = unsafe {
-            &mut *ctx_slot.cast::<core::mem::MaybeUninit<ServerRequestContext<SSL, DEBUG>>>()
+        // `request_pool`'s element is layout-identical to `ServerRequestContext`
+        // across the `H3` const; `<*mut _>::cast()` is safe. Construction is the
+        // safe `Fallback::get_init` (claim + `MaybeUninit::write`); only the
+        // server-owned-pool deref is unsafe.
+        let pool: *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false> =
+            server.request_pool.cast();
+        // SAFETY: `pool` points at a process-static (or server-owned) Fallback
+        // valid for the server's lifetime.
+        let ctx: *mut ServerRequestContext<SSL, DEBUG> = unsafe {
+            (*pool)
+                .get_init(ServerRequestContext::<SSL, DEBUG>::new(
+                    core::ptr::NonNull::from(&*server),
+                    std::ptr::from_mut::<uws_sys::Request>(req).cast::<c_void>(),
+                    any_response_from::<SSL>(resp),
+                    should_deinit_context,
+                    method,
+                ))
+                .as_ptr()
         };
-        ServerRequestContext::<SSL, DEBUG>::create(
-            ctx_uninit,
-            this,
-            std::ptr::from_mut::<uws_sys::Request>(req).cast::<c_void>(),
-            any_response_from::<SSL>(resp),
-            should_deinit_context,
-            method,
-        );
-        // SAFETY: fully initialized by `create()`.
-        let ctx: *mut ServerRequestContext<SSL, DEBUG> = ctx_slot;
+        bun_output::scoped_log!(server_body::RequestContext, "create<d> ({:p})<r>", ctx);
         let ctx_mut = unsafe { &mut *ctx };
 
         // Don't report extra GC memory here: ctx lives in a recycled pool

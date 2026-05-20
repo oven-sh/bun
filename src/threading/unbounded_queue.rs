@@ -167,6 +167,30 @@ impl<T: Node> BatchIterator<T> {
         self.batch.count -= 1;
         front
     }
+
+    /// Like [`next`](Self::next), but re-seals the node into a pool-owned
+    /// [`HiveOwned`](bun_collections::HiveOwned) handle. Pairs with
+    /// [`UnboundedQueue::push_owned`] on the producer side.
+    ///
+    /// # Safety
+    /// Every node in this batch's queue must be the exclusive owner of a
+    /// claimed pool slot whose [`HiveOwned`](bun_collections::HiveOwned) token
+    /// was relinquished at push time — i.e. the queue is only ever fed via
+    /// [`UnboundedQueue::push_owned`] (or pointers carrying the equivalent
+    /// ownership claim, e.g. a callback handed an `as_ptr()` of a relinquished
+    /// `HiveOwned`). The caller takes ownership: the returned handle is the
+    /// sole live `HiveOwned` for that slot.
+    #[inline]
+    pub unsafe fn next_owned(&mut self) -> Option<bun_collections::HiveOwned<T>> {
+        let node = self.next();
+        if node.is_null() {
+            return None;
+        }
+        // SAFETY: `node` came from this batch, which was populated by the
+        // queue's push path. Caller contract (above) guarantees every such node
+        // is a claimed pool slot with no other live `HiveOwned`.
+        Some(unsafe { bun_collections::HiveOwned::from_raw_for_queue(node) })
+    }
 }
 
 impl<T: Node> Batch<T> {
@@ -238,6 +262,19 @@ impl<T: Node> UnboundedQueue<T> {
 
     pub fn push(&self, item: *mut T) {
         self.push_batch(item, item);
+    }
+
+    /// Push a pool-owned slot. The queue takes ownership while in transit —
+    /// the seal is re-opened by [`BatchIterator::next_owned`] on drain.
+    ///
+    /// Zero-cost: `as_ptr()` + `forget()` + intrusive [`push`](Self::push).
+    /// `HiveOwned` has no `Drop`, so `forget` is purely documentation that the
+    /// queue, not the caller, is the owner from here on.
+    #[inline]
+    pub fn push_owned(&self, item: bun_collections::HiveOwned<T>) {
+        let ptr = item.as_ptr();
+        core::mem::forget(item);
+        self.push(ptr);
     }
 
     pub fn push_batch(&self, first: *mut T, last: *mut T) {

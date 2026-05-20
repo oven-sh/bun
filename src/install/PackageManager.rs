@@ -317,9 +317,9 @@ pub type TaskCallbackList = Vec<TaskCallbackContext>;
 pub type TaskDependencyQueue =
     HashMap<Task::Id, TaskCallbackList /* , IdentityContext<Task::Id>, 80 */>;
 
-type PreallocatedTaskStore = HiveArrayFallback<Task::Task<'static>, 64>;
+type PreallocatedTaskStore = HiveArrayFallback<Task::Task, 64>;
 type PreallocatedNetworkTasks = HiveArrayFallback<NetworkTask, 128>;
-type ResolveTaskQueue = UnboundedQueue<Task::Task<'static> /* , .next */>;
+type ResolveTaskQueue = UnboundedQueue<Task::Task /* , .next */>;
 
 type RepositoryMap = HashMap<Task::Id, Fd /* , IdentityContext<Task::Id>, 80 */>;
 /// Zig: `FolderResolution.Map` (resolvers/folder_resolver.zig) =

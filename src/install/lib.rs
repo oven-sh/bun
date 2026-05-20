@@ -350,7 +350,7 @@ pub type PackageManagerEnableStub = package_manager_real::package_manager_option
 pub type PublishConfigStub = package_manager_real::package_manager_options::PublishConfig;
 pub type AsyncNetworkTaskQueueStub = package_manager_real::AsyncNetworkTaskQueue;
 pub type PreallocatedResolveTasksStub =
-    bun_collections::HiveArrayFallback<package_manager_task::Task<'static>, 64>;
+    bun_collections::HiveArrayFallback<package_manager_task::Task, 64>;
 pub use package_manager_real::package_manager_options::{Access, AuthType};
 
 /// Port of the anonymous `comptime callbacks: anytype` struct passed to

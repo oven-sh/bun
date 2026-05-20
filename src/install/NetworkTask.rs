@@ -48,7 +48,7 @@ pub struct NetworkTask {
     //
     // PORT NOTE: `MaybeUninit` because the slot comes from `HiveArrayFallback`
     // as *uninitialized* memory (often zero-page on first mmap, but not
-    // guaranteed — `get()`'s heap fallback is `Box::new_uninit()`) and is
+    // guaranteed — `claim()`'s heap fallback is `Box::new_uninit()`) and is
     // overwritten by plain `=` in `for_manifest`/`for_tarball`. Zig has no
     // destructors so the `= undefined` field was simply overwritten;
     // `MaybeUninit<T>` is the spec-correct mapping for that semantic — unlike
@@ -87,10 +87,9 @@ pub struct NetworkTask {
     pub tarball_stream: Option<Box<TarballStream>>,
     /// Extract `Task` pre-created on the main thread so the HTTP thread can
     /// schedule it on the worker pool as soon as the first body chunk arrives.
-    // PORT NOTE: `'static` matches `PreallocatedTaskStore =
-    // HiveArrayFallback<Task<'static>, 64>` which this slot is borrowed from
-    // and returned to (`discard_unused_streaming_state`).
-    pub streaming_extract_task: *mut Task<'static>,
+    /// Pool slot borrowed from `PreallocatedTaskStore` and returned to it
+    /// (`discard_unused_streaming_state`).
+    pub streaming_extract_task: *mut Task,
     /// Set by the HTTP thread the first time it commits this request to
     /// the streaming path. Once true, `notify` never pushes this task to
     /// `async_network_task_queue` — the extract Task published by
@@ -858,9 +857,9 @@ impl NetworkTask {
         if !self.streaming_extract_task.is_null() {
             // ARENA: returned to `preallocated_resolve_tasks` pool, not freed.
             // SAFETY: `streaming_extract_task` was obtained from this same
-            // `preallocated_resolve_tasks` pool via `get()` and is not aliased
-            // (cleared immediately below); `put()` runs `Task::drop` on the
-            // slot — the Task was fully initialized via
+            // `preallocated_resolve_tasks` pool via `get_init()` and is not
+            // aliased (cleared immediately below); `put()` runs `Task::drop` on
+            // the slot — the Task was fully initialized via
             // `enqueue::create_extract_task_for_streaming` so this is sound.
             unsafe {
                 manager
@@ -886,11 +885,11 @@ impl NetworkTask {
     /// `network_task.* = .{ .task_id = …, .callback = undefined, .allocator = …,
     /// .package_manager = …, .apply_patch_task = … }` — a full struct overwrite
     /// that resets every other field to its struct default. The slot may be
-    /// uninitialized heap memory (from `HiveArrayFallback::get()`'s
-    /// `Box::new_uninit()` fallback) or stale (reused hive slot whose prior
-    /// contents ARE now dropped on `put` since 1e76047), so each field is
-    /// written via `addr_of_mut!().write()` without dropping the previous
-    /// value — the slot is freshly poisoned/uninit from `get()`.
+    /// uninitialized heap memory (`HiveArrayFallback::claim()` spills to a
+    /// `Box::new_uninit()` allocation when the inline hive is full) or stale
+    /// (reused hive slot whose prior contents ARE now dropped on `put` since
+    /// 1e76047), so each field is written via `addr_of_mut!().write()` without
+    /// dropping the previous value — the slot is freshly poisoned/uninit.
     ///
     /// Fields that are `= undefined` in Zig (`unsafe_http_client`, `callback`,
     /// `request_buffer`, `response_buffer`) are written here with drop-safe
@@ -902,8 +901,9 @@ impl NetworkTask {
     ///
     /// # Safety
     /// `slot` must be the unique handle to a `HiveArrayFallback<NetworkTask>`
-    /// slot returned by `get()`; its prior contents are treated as garbage
-    /// (matches Zig — no destructors run).
+    /// slot freshly vended by `claim()` (typically wrapped in a `HiveOwned`);
+    /// its prior contents are treated as garbage (matches Zig — no destructors
+    /// run).
     pub unsafe fn write_init(
         slot: *mut NetworkTask,
         task_id: crate::package_manager_task::Id,

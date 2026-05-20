@@ -37,9 +37,7 @@ use crate::integrity::{self, Integrity};
 use crate::package_manager_real::PackageManager;
 
 // `crate::Task` is a `()` stub; the real Task lives in `package_manager_task`.
-// `'static` is sound here because we only ever hold raw `*mut Task` and never
-// materialise a `&'static` borrow of the inner `Request` lifetime.
-type Task = crate::package_manager_task::Task<'static>;
+type Task = crate::package_manager_task::Task;
 
 bun_output::declare_scope!(TarballStream, hidden);
 
@@ -968,7 +966,8 @@ impl TarballStream {
             // leaves `tarball_stream = None` so `HiveArray::put`'s
             // `drop_in_place<NetworkTask>` (1e76047) does not double-free a
             // dangling Box. Before 1e76047 the dangling `Some` was harmless
-            // (overwritten on next `get()`); now it use-after-frees.
+            // (overwritten the next time the slot was vended from the pool);
+            // now it use-after-frees.
             debug_assert!(
                 (*network).tarball_stream.as_deref().map(|s| s as *const _)
                     == Some(this as *const _),

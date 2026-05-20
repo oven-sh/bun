@@ -88,20 +88,16 @@ impl FilePoll {
         flags: FlagsStruct,
         owner: Owner,
     ) -> *mut FilePoll {
+        // Build the value, then claim+init the slot in one shot — no
+        // uninitialized-slot window (mirrors the posix `Store::get_init` path).
+        let value = FilePoll {
+            fd,
+            flags,
+            owner,
+            next_to_free: ptr::null_mut(),
+        };
         // Crate-private backref-deref accessor — single live `&mut Store` borrow.
-        let poll = vm.file_polls_mut().get();
-        // SAFETY: `get()` returns a valid, uniquely-owned, *uninitialized* slot from the
-        // HiveArray pool. We must not materialize `&mut FilePoll` (validity invariant
-        // requires initialized memory); write the whole value through the raw pointer.
-        unsafe {
-            poll.write(FilePoll {
-                fd,
-                flags,
-                owner,
-                next_to_free: ptr::null_mut(),
-            });
-        }
-        poll
+        vm.file_polls_mut().get_init(value).as_ptr()
     }
 
     // PORT NOTE: not `impl Drop` — FilePoll lives in a HiveArray pool slot, not a Box;
@@ -290,8 +286,8 @@ impl Store {
         }
     }
 
-    pub fn get(&mut self) -> *mut FilePoll {
-        self.hive.get()
+    pub fn get_init(&mut self, value: FilePoll) -> ptr::NonNull<FilePoll> {
+        self.hive.get_init(value)
     }
 
     pub fn process_deferred_frees(&mut self) {

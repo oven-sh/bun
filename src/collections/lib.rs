@@ -41,7 +41,7 @@ pub use static_hash_map::StaticHashMap;
 
 pub use bounded_array::BoundedArray;
 pub use hive_array::{
-    Fallback as HiveArrayFallback, HiveArray, HiveBox, HiveRef, HiveRefHandle, HiveSlot,
+    Fallback as HiveArrayFallback, HiveArray, HiveBox, HiveOwned, HiveRef, HiveRefHandle, HiveSlot,
 };
 pub use linear_fifo::{LinearFifo, LinearFifoBufferType};
 pub use multi_array_list::MultiArrayList;

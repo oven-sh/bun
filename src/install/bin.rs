@@ -740,11 +740,18 @@ pub type Context = PriorityQueueContext;
 
 // https://github.com/npm/npm-normalize-package-bin/blob/574e6d7cd21b2f3dee28a216ec2053c2551f7af9/lib/index.js#L38
 pub fn normalized_bin_name(name: &[u8]) -> &[u8] {
-    if let Some(i) = name
+    let name = match name
         .iter()
         .rposition(|&b| b == b'/' || b == b'\\' || b == b':')
     {
-        return &name[i + 1..];
+        Some(i) => &name[i + 1..],
+        None => name,
+    };
+
+    // npm's `join('/', key).slice(1)` collapses `.`/`..` to empty; do the same
+    // so the `.bin/<name>` destination cannot resolve outside `.bin/`.
+    if name == b"." || name == b".." {
+        return b"";
     }
 
     name

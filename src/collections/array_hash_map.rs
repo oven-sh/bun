@@ -362,8 +362,10 @@ fn rebuild_index_from_hashes<A: MapAllocator>(
     hashes: &[u32],
     capacity: usize,
 ) -> Box<hashbrown::HashTable<u32, IndexAlloc<A>>, A> {
-    let mut table =
-        hashbrown::HashTable::with_capacity_in(capacity.max(hashes.len()), IndexAlloc(A::default()));
+    let mut table = hashbrown::HashTable::with_capacity_in(
+        capacity.max(hashes.len()),
+        IndexAlloc(A::default()),
+    );
     for (i, &h) in hashes.iter().enumerate() {
         table.insert_unique(spread_hash(h), i as u32, index_rehasher(hashes));
     }

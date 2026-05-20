@@ -930,11 +930,7 @@ impl<'a> LinkerContext<'a> {
                 // `mark_file_live_for_tree_shaking` short-circuits for HTML and never
                 // walks its parts, so seed the bit here to preserve the old
                 // `Part::is_live = true` initializer.
-                if loaders
-                    .get(i)
-                    .is_some_and(|l| *l == Loader::Html)
-                    && parts.len() > 1
-                {
+                if loaders.get(i).is_some_and(|l| *l == Loader::Html) && parts.len() > 1 {
                     bits.set(1);
                 }
                 parts_live.push(bits);
@@ -947,8 +943,7 @@ impl<'a> LinkerContext<'a> {
         // and the underlying slabs don't reallocate during tree-shaking, so we
         // cache raw column base pointers and reborrow at each recursive call.
         let parts: *mut [bun_ast::PartList<'a>] = self.graph.ast.items_parts_mut();
-        let parts_live: *mut [bun_collections::AutoBitSet] =
-            self.graph.parts_live.as_mut_slice();
+        let parts_live: *mut [bun_collections::AutoBitSet] = self.graph.parts_live.as_mut_slice();
         let import_records: *const [bun_ast::import_record::List<'a>] =
             self.graph.ast.items_import_records();
         let css_reprs: *const [crate::bundled_ast::CssCol] = self.graph.ast.items_css();
@@ -2759,10 +2754,11 @@ impl<'a> LinkerContext<'a> {
 
         let part_count = ctx.parts[source_index as usize].len();
         for pi in 0..part_count {
-            let deps_len = ctx.parts[source_index as usize].as_slice()[pi].dependencies.len();
+            let deps_len = ctx.parts[source_index as usize].as_slice()[pi]
+                .dependencies
+                .len();
             for di in 0..deps_len {
-                let dependency =
-                    ctx.parts[source_index as usize].as_slice()[pi].dependencies[di];
+                let dependency = ctx.parts[source_index as usize].as_slice()[pi].dependencies[di];
                 if dependency.source_index.get() != source_index {
                     self.mark_file_reachable_for_code_splitting(
                         ctx,
@@ -2935,8 +2931,7 @@ impl<'a> LinkerContext<'a> {
 
         #[cfg(debug_assertions)]
         {
-            let part: &Part =
-                &ctx.parts[source_index as usize].as_slice()[part_index as usize];
+            let part: &Part = &ctx.parts[source_index as usize].as_slice()[part_index as usize];
             let parse_graph = self.parse_graph();
             let stmts: &[Stmt] = part.stmts.slice();
             debug_tree_shake!(
@@ -2976,8 +2971,9 @@ impl<'a> LinkerContext<'a> {
         // resizes any part's `dependencies`, so the slice's len/ptr are stable.
         // Iterate by index and re-borrow per iteration to satisfy borrowck without
         // the per-call `Vec` clone the original port did.
-        let dependencies_len =
-            ctx.parts[source_index as usize].as_slice()[part_index as usize].dependencies.len();
+        let dependencies_len = ctx.parts[source_index as usize].as_slice()[part_index as usize]
+            .dependencies
+            .len();
 
         #[cfg(feature = "debug_logs")]
         if dependencies_len == 0 {

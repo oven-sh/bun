@@ -334,9 +334,7 @@ pub use detach_lifetime_ref as detach_ref;
 /// outside the bundler SoA-column read-only fan-out it was written for.
 #[doc(hidden)]
 #[inline(always)]
-pub unsafe fn boxed_slices_as_borrowed<T, A: core::alloc::Allocator>(
-    s: &[Box<[T], A>],
-) -> &[&[T]] {
+pub unsafe fn boxed_slices_as_borrowed<T, A: core::alloc::Allocator>(s: &[Box<[T], A>]) -> &[&[T]] {
     const {
         assert!(core::mem::size_of::<Box<[T], A>>() == core::mem::size_of::<&[T]>());
         assert!(core::mem::align_of::<Box<[T], A>>() == core::mem::align_of::<&[T]>());

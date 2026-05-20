@@ -309,8 +309,8 @@ use crate::options;
 use crate::result::{
     DebugLogs, DebugMeta, DirEntryResolveQueueItem, FlushMode, LoadResult, MatchResult,
     MatchResultUnion, MatchStatus, PathPair, PathPairIter, PendingResolution,
-    PendingResolutionList, PendingResolutionTag, Result, ResultFlags, ResultUnion,
-    SideEffectsData, SuggestionRange,
+    PendingResolutionList, PendingResolutionTag, Result, ResultFlags, ResultUnion, SideEffectsData,
+    SuggestionRange,
 };
 use crate::standalone_module_graph::StandaloneModuleGraph;
 use bun_alloc as allocators;
@@ -2205,9 +2205,7 @@ impl<'a> Resolver<'a> {
                         {
                             let mut flags = ResultFlags::default();
                             flags.set_is_external(match_result.is_external);
-                            flags.set_is_external_and_rewrite_import_path(
-                                match_result.is_external,
-                            );
+                            flags.set_is_external_and_rewrite_import_path(match_result.is_external);
                             return ResultUnion::Success(Result {
                                 path_pair: match_result.path_pair,
                                 diff_case: match_result.diff_case,
@@ -2367,7 +2365,13 @@ impl<'a> Resolver<'a> {
         }
 
         let mut res = MatchResult::default();
-        match self.resolve_without_remapping(source_dir_info, import_path, kind, global_cache, &mut res) {
+        match self.resolve_without_remapping(
+            source_dir_info,
+            import_path,
+            kind,
+            global_cache,
+            &mut res,
+        ) {
             MatchStatus::Success => {
                 let mut result = Result {
                     path_pair: PathPair {
@@ -2933,7 +2937,10 @@ impl<'a> Resolver<'a> {
                     }
                 }
 
-                if self.load_as_file_or_directory(abs_path, kind, out).is_success() {
+                if self
+                    .load_as_file_or_directory(abs_path, kind, out)
+                    .is_success()
+                {
                     self.extension_order = prev_extension_order;
                     if let Some(d) = self.debug_logs.as_mut() {
                         d.decrease_indent();
@@ -2970,7 +2977,10 @@ impl<'a> Resolver<'a> {
                         bstr::BStr::new(abs_path)
                     ));
                 }
-                if self.load_as_file_or_directory(abs_path, kind, out).is_success() {
+                if self
+                    .load_as_file_or_directory(abs_path, kind, out)
+                    .is_success()
+                {
                     if let Some(d) = self.debug_logs.as_mut() {
                         d.decrease_indent();
                     }
@@ -3380,7 +3390,10 @@ impl<'a> Resolver<'a> {
                                 ));
                             }
 
-                            if self.load_as_file_or_directory(abs_path, kind, out).is_success() {
+                            if self
+                                .load_as_file_or_directory(abs_path, kind, out)
+                                .is_success()
+                            {
                                 out.is_node_module = true;
                                 if let Some(d) = self.debug_logs.as_mut() {
                                     d.decrease_indent();
@@ -3897,9 +3910,7 @@ impl<'a> Resolver<'a> {
                     .is_success()
                 {
                     out.is_node_module = true;
-                    out.package_json = out
-                        .package_json
-                        .or(Some(std::ptr::from_ref(package_json)));
+                    out.package_json = out.package_json.or(Some(std::ptr::from_ref(package_json)));
                     return MatchStatus::Success;
                 }
                 esm_resolution.status = Status::ModuleNotFound;
@@ -4358,9 +4369,7 @@ impl<'a> Resolver<'a> {
         // Start at the top.
         while queue_slice_len > 0 {
             // SAFETY: every slot in `0..queue_slice_len` was `.write()`-initialised above.
-            let mut queue_top =
-                unsafe { queue[queue_slice_len - 1].assume_init_ref() }
-                    .clone();
+            let mut queue_top = unsafe { queue[queue_slice_len - 1].assume_init_ref() }.clone();
             // `unsafe_path` was set to a slice of the threadlocal
             // `dir_info_uncached_path` buffer earlier in this fn; valid for the
             // remainder of the fn body. `safe_path` is either empty or a
@@ -5188,7 +5197,10 @@ impl<'a> Resolver<'a> {
             // body can take `&mut self`. Backing `Box<[u8]>` is owned by
             // `self.opts` and never mutated while the resolver runs.
             let ext = bun_ptr::RawSlice::new(&*self.opts.ext_order_slice(extension_order)[i]);
-            if self.load_index_with_extension(dir_info, &ext, out).is_success() {
+            if self
+                .load_index_with_extension(dir_info, &ext, out)
+                .is_success()
+            {
                 return MatchStatus::Success;
             }
         }
@@ -5200,7 +5212,10 @@ impl<'a> Resolver<'a> {
             // BACKREF: see `RawSlice` note above — backing `Box<[u8]>` in
             // `extra_cjs_extensions` is heap-stable for the resolver's life.
             let ext = bun_ptr::RawSlice::new(&*self.opts.extra_cjs_extensions[i]);
-            if self.load_index_with_extension(dir_info, &ext, out).is_success() {
+            if self
+                .load_index_with_extension(dir_info, &ext, out)
+                .is_success()
+            {
                 return MatchStatus::Success;
             }
         }
@@ -5361,7 +5376,10 @@ impl<'a> Resolver<'a> {
 
                         // Is it a directory with an index?
                         if let Ok(Some(new_dir)) = self.dir_info_cached(remapped_abs) {
-                            if self.load_as_index(new_dir, extension_order, out).is_success() {
+                            if self
+                                .load_as_index(new_dir, extension_order, out)
+                                .is_success()
+                            {
                                 return MatchStatus::Success;
                             }
                         }

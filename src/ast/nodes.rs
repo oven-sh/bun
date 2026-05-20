@@ -1132,7 +1132,6 @@ pub struct Part {
     // Liveness moved out to a sidecar `LinkerGraph::parts_live` bitset so the
     // tree-shaking recursion's hot "already visited?" check touches a few KB
     // of bitset words instead of striding across every 272-byte `Part`.
-
     pub tag: PartTag,
 }
 
@@ -1156,8 +1155,12 @@ pub enum PartTag {
 // Zig: std.ArrayHashMapUnmanaged(Ref, Symbol.Use, RefHashCtx, false)
 // TODO(port): bun_collections::ArrayHashMap must accept a custom hasher ctx (RefHashCtx).
 pub type PartSymbolUseMap = ArrayHashMap<Ref, symbol::Use, AutoContext, bun_alloc::AstAlloc>;
-pub type PartSymbolPropertyUseMap =
-    ArrayHashMap<Ref, StringHashMap<symbol::Use, bun_alloc::AstAlloc>, AutoContext, bun_alloc::AstAlloc>;
+pub type PartSymbolPropertyUseMap = ArrayHashMap<
+    Ref,
+    StringHashMap<symbol::Use, bun_alloc::AstAlloc>,
+    AutoContext,
+    bun_alloc::AstAlloc,
+>;
 
 impl Default for Part {
     fn default() -> Self {

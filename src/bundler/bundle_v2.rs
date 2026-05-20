@@ -4440,8 +4440,9 @@ pub mod bv2_impl {
                     // SAFETY: `free_list` is append-only until
                     // `deinit_without_freeing_arena`; the boxed slice is
                     // heap-stable.
-                    let source_code: &'static [u8] =
-                        unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(this.free_list.last().unwrap()) };
+                    let source_code: &'static [u8] = unsafe {
+                        bun_ptr::detach_lifetime_ref::<[u8]>(this.free_list.last().unwrap())
+                    };
                     this.graph.input_files.items_source_mut()[load.source_index.get() as usize]
                         .contents = std::borrow::Cow::Borrowed(source_code);
                     this.graph.input_files.items_flags_mut()[load.source_index.get() as usize]
@@ -4765,9 +4766,10 @@ pub mod bv2_impl {
 
                             if !this.enqueue_on_load_plugin_if_needed(task) {
                                 if loader.should_copy_for_bundling() {
-                                    let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
-                                        &mut this.graph.input_files.items_additional_files_mut()
-                                            [source_index.get() as usize];
+                                    let additional_files: &mut bun_alloc::AstVec<
+                                        crate::AdditionalFile,
+                                    > = &mut this.graph.input_files.items_additional_files_mut()
+                                        [source_index.get() as usize];
                                     additional_files.push(crate::AdditionalFile::SourceIndex(
                                         task.source_index.get(),
                                     ));

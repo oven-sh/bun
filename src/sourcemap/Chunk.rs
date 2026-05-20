@@ -4,8 +4,7 @@ use bun_paths::{PathBuffer, fs::FileSystem};
 
 use crate::{
     InternalSourceMap, LineOffsetTable, SourceMapState, append_mapping_to_buffer,
-    internal_source_map, line_offset_table,
-    line_offset_table::LineOffsetTableColumns as _,
+    internal_source_map, line_offset_table, line_offset_table::LineOffsetTableColumns as _,
 };
 
 #[derive(Clone)]

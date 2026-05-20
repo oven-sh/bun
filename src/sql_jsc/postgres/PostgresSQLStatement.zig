@@ -162,8 +162,8 @@ pub fn structure(this: *PostgresSQLStatement, owner: JSValue, globalObject: *jsc
 
 const debug = bun.Output.scoped(.Postgres, .visible);
 
-const PostgresCachedStructure = @import("../../sql_jsc/shared/CachedStructure.zig");
-const Signature = @import("../../sql_jsc/postgres/Signature.zig");
+const PostgresCachedStructure = @import("../shared/CachedStructure.zig");
+const Signature = @import("./Signature.zig");
 const protocol = @import("../../sql/postgres/PostgresProtocol.zig");
 const std = @import("std");
 const DataCell = @import("./DataCell.zig").SQLDataCell;

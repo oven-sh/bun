@@ -3,6 +3,8 @@ import { define } from "../../codegen/class-definitions";
 export default [
   define({
     name: "Request",
+    // R-2 Phase 2: user impls take `&self`; emit `this: &T` shims.
+    sharedThis: true,
     construct: true,
     constructNeedsThis: true,
     finalize: true,
@@ -69,6 +71,8 @@ export default [
   }),
   define({
     name: "Response",
+    // R-2 Phase 2: user impls take `&self`; emit `this: &T` shims.
+    sharedThis: true,
     construct: true,
     constructNeedsThis: true,
     finalize: true,
@@ -132,6 +136,8 @@ export default [
   }),
   define({
     name: "Blob",
+    // R-2 Phase 2: user impls take `&self`; emit `this: &T` shims.
+    sharedThis: true,
     final: false,
     construct: true,
     finalize: true,

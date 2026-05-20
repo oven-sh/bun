@@ -3,7 +3,7 @@
  *
  * Ninja rules reference this file via `cfg.bun <this-file> <kind> <args...>`.
  * This is BUILD-time code (runs under ninja), not CONFIGURE-time. The
- * configure-time modules (source.ts, zig.ts) emit ninja rules that call
+ * configure-time modules (source.ts, deps/*.ts) emit ninja rules that call
  * into here but don't execute any of it themselves.
  *
  * ## Adding a new fetch kind
@@ -28,7 +28,6 @@ import { basename, join } from "node:path";
 import { downloadWithRetry, extractTarGz, fetchPrebuilt } from "./download.ts";
 import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
-import { fetchZig } from "./zig.ts";
 
 /**
  * Absolute path to this file. Ninja rules use this in their command strings.
@@ -86,13 +85,6 @@ async function main(): Promise<void> {
       return fetchPrebuilt(name, url, dest, identity, rmPaths);
     }
 
-    case "zig": {
-      // fetch-cli.ts zig <url> <dest> <commit>
-      const [url, dest, commit] = args;
-      assert(url !== undefined && dest !== undefined && commit !== undefined, "zig: missing url/dest/commit");
-      return fetchZig(url, dest, commit);
-    }
-
     case undefined:
     case "--help":
     case "-h":
@@ -112,7 +104,6 @@ Kinds:
   dep      <name> <repo> <commit> <dest> <cache> [...patches]
   prebuilt <name> <url> <dest> <identity> [...rm_paths]
   subst    <in> <out> [<from> <to>]...
-  zig      <url> <dest> <commit>
 
 This is invoked by ninja build rules. You shouldn't need to call it
 directly — run ninja targets instead.
@@ -276,7 +267,7 @@ function applyPatch(dest: string, patchPath: string, patchBody: string): void {
 }
 
 // Only run if this file is the entry point (not imported as a module).
-// fetch-cli.ts is ALSO imported by source.ts/zig.ts to get fetchCliPath —
+// fetch-cli.ts is ALSO imported by source.ts to get fetchCliPath —
 // that import should NOT execute main(). No top-level await: it would mark
 // this module HasTLA and force every importer (and the {config,webkit,flags,
 // source} cycle) onto the async-evaluation path for code that's dead on

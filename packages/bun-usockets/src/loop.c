@@ -610,6 +610,24 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                             }
                         }
                         #undef LOOP_ISNT_VERY_BUSY_THRESHOLD
+                        #else
+                        /* Windows AFD_POLL_ABORT is not level-triggered the way
+                         * epoll's EPOLLHUP|EPOLLERR are: a peer RST that lands
+                         * while this poll_cb is on the stack — typically when an
+                         * on_data JS handler drainMicrotasks() into a same-process
+                         * fetch().abort() so the http-client thread RSTs over
+                         * loopback before we return — falls between the completed
+                         * AFD ioctl and its re-submission, and the next AFD poll
+                         * never reports it. recv() does: the socket is already in
+                         * a reset state, so a single non-blocking probe yields
+                         * WSAECONNRESET (→ close below) or 0 (→ eof) instead of
+                         * relying on the re-armed poll. The common case is
+                         * WSAEWOULDBLOCK → break, costing one extra syscall per
+                         * readable event. Skip if on_data paused/closed us so we
+                         * don't pull bytes the caller asked to defer. */
+                        if (s && !us_socket_is_closed(s) && !s->flags.is_paused && repeat_recv_count++ == 0) {
+                            continue;
+                        }
                         #endif
                     } else if (!length) {
                         eof = 1; // lets handle EOF in the same place

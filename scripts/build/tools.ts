@@ -7,7 +7,7 @@
  */
 
 import { execSync, spawnSync } from "node:child_process";
-import { accessSync, constants, existsSync, readdirSync, statSync } from "node:fs";
+import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import type { Arch, OS, Toolchain } from "./config.ts";
@@ -167,7 +167,7 @@ function getToolVersion(exe: string, versionArg: string): { version: string } | 
   if (result.error) {
     return { reason: `spawn failed: ${result.error.message}` };
   }
-  // Some tools print version to stderr (e.g. some zig builds). Check both.
+  // Some tools print their version to stderr instead of stdout. Check both.
   const version = parseVersion(result.stdout ?? "") ?? parseVersion(result.stderr ?? "");
   if (version !== undefined) return { version };
   // Parse failed — include what we saw (truncated) so the error is
@@ -374,7 +374,22 @@ export function resolveLlvmToolchain(
   arch: Arch,
 ): Pick<
   Toolchain,
-  "cc" | "cxx" | "ar" | "ranlib" | "ld" | "strip" | "dsymutil" | "ccache" | "rc" | "mt" | "nasm" | "clangVersion"
+  | "cc"
+  | "cxx"
+  | "ar"
+  | "ranlib"
+  | "ld"
+  | "rustLld"
+  | "rustLlvmVersion"
+  | "rustSysroot"
+  | "rustHostTriple"
+  | "strip"
+  | "dsymutil"
+  | "ccache"
+  | "rc"
+  | "mt"
+  | "nasm"
+  | "clangVersion"
 > {
   // Compute search paths ONCE. Contains a brew spawn on macOS (~100ms)
   // so calling it per-tool would burn ~600ms. Every tool below gets
@@ -469,6 +484,10 @@ export function resolveLlvmToolchain(
     })?.path;
   }
 
+  // rust-lld: optional alternative linker for cross-language LTO when
+  // rustc's bundled LLVM is newer than clang's. See findRustLld().
+  const { rustLld, rustLlvmVersion, rustSysroot, rustHostTriple } = findRustLld(os);
+
   // ccache: optional. If found, used as compiler launcher.
   const ccache = findTool({ names: ["ccache"], required: false })?.path;
 
@@ -488,6 +507,10 @@ export function resolveLlvmToolchain(
     ar,
     ranlib,
     ld,
+    rustLld,
+    rustLlvmVersion,
+    rustSysroot,
+    rustHostTriple,
     strip,
     dsymutil,
     ccache,
@@ -518,6 +541,106 @@ export interface CargoToolchain {
   cargo: string;
   cargoHome: string;
   rustupHome: string;
+}
+
+/**
+ * Locate rustc's bundled lld and its LLVM version.
+ *
+ * rustc ships its own copy of lld (built against the same LLVM rustc emits
+ * bitcode with). When `-Clinker-plugin-lto` is on and rustc's LLVM is newer
+ * than clang's, clang's `ld.lld` can't read the rust bitcode ("Unknown
+ * attribute kind"). LLVM bitcode is forward-compatible only — a newer lld
+ * reads older bitcode, never the reverse — so the fix is to link with
+ * rust-lld instead, which reads both clang's (older) and rustc's (same)
+ * bitcode.
+ *
+ * The path under `gcc-ld/` is a wrapper that invokes the sibling
+ * `rust-lld` binary in the right "flavor" (ld.lld / ld64.lld / lld-link),
+ * matching what `--ld-path=` expects on each platform. On Windows we use
+ * `rust-lld.exe` directly since lld-link mode is selected by argv[0] there.
+ *
+ * Returns undefined for both fields if rustc isn't installed or its sysroot
+ * doesn't have the expected layout (e.g. distro-packaged rustc without the
+ * `rust-lld` component).
+ */
+export function findRustLld(os: OS): {
+  rustLld: string | undefined;
+  rustLlvmVersion: string | undefined;
+  /** `rustc --print sysroot` — needed for bundled `llvm-nm` even when rust-lld itself isn't used. */
+  rustSysroot: string | undefined;
+  /** `host:` line from `rustc -vV` — the rustlib subdirectory name. */
+  rustHostTriple: string | undefined;
+} {
+  const none = { rustLld: undefined, rustLlvmVersion: undefined, rustSysroot: undefined, rustHostTriple: undefined };
+  // Look up rustc the same way findCargo does cargo: $CARGO_HOME/bin first.
+  const cargoHome = process.env.CARGO_HOME ?? join(homedir(), ".cargo");
+  const rustc = findTool({ names: ["rustc"], paths: [join(cargoHome, "bin")], required: false })?.path;
+  if (rustc === undefined) return none;
+
+  // The link-only CI mode runs `findRustLld()` on an agent that downloads
+  // `libbun_rust.a` rather than building it, so the pinned nightly may not be
+  // installed there yet. `rustc --print sysroot` (a rustup proxy invocation)
+  // would auto-install — but the download blows past a short spawnSync timeout
+  // and the silent failure leaves `rustLld` undefined, which falls back to the
+  // system lld. With cross-language LTO that means lld 21 reading rust-emitted
+  // LLVM 22 bitcode → `Invalid record`. Pre-flight a `rustup toolchain
+  // install` so the proxy resolves instantly: idempotent ~70ms when already
+  // installed, downloads on a stale agent. Skip when there's no pinned channel
+  // or no rustup — the `rustc` queries below will just use whatever's there.
+  const rustup = findTool({ names: ["rustup"], paths: [join(cargoHome, "bin")], required: false })?.path;
+  const channel = readRustToolchainChannel();
+  if (rustup !== undefined && channel !== undefined) {
+    spawnSync(rustup, ["toolchain", "install", channel, "--force", "--profile", "minimal", "--component", "rust-src"], {
+      encoding: "utf8",
+      timeout: 300_000,
+      stdio: ["ignore", "ignore", "inherit"], // surface download/error output
+    });
+  }
+
+  // One spawn for both sysroot and host triple / LLVM version. `-vV` prints
+  // `host: <triple>` and `LLVM version: X.Y.Z`; sysroot needs its own query.
+  // Generous timeout: if the toolchain install above was skipped (no rustup),
+  // this proxy invocation may still be the one that auto-installs.
+  const sysroot = spawnSync(rustc, ["--print", "sysroot"], {
+    encoding: "utf8",
+    timeout: 300_000,
+    stdio: ["ignore", "pipe", "pipe"],
+  }).stdout?.trim();
+  const vv = spawnSync(rustc, ["-vV"], {
+    encoding: "utf8",
+    timeout: 30_000,
+    stdio: ["ignore", "pipe", "pipe"],
+  }).stdout;
+  if (!sysroot || !vv) return none;
+
+  const rustHostTriple = vv.match(/^host:\s*(\S+)/m)?.[1];
+  const rustLlvmVersion = vv.match(/^LLVM version:\s*(\d+\.\d+\.\d+)/m)?.[1];
+  if (rustHostTriple === undefined) return { ...none, rustSysroot: sysroot, rustLlvmVersion };
+
+  const bin = join(sysroot, "lib", "rustlib", rustHostTriple, "bin");
+  const candidate =
+    os === "windows"
+      ? join(bin, "rust-lld.exe")
+      : os === "darwin"
+        ? join(bin, "gcc-ld", "ld64.lld")
+        : join(bin, "gcc-ld", "ld.lld");
+  const rustLld = isExecutable(candidate) ? candidate : undefined;
+  return { rustLld, rustLlvmVersion, rustSysroot: sysroot, rustHostTriple };
+}
+
+/**
+ * Read the pinned channel from `rust-toolchain.toml` at the repo root.
+ * Mirrors `readRustToolchainChannel()` in config.ts but stays in `tools.ts`
+ * because `findRustLld()` runs during `resolveToolchain()` — *before*
+ * `resolveConfig()` reads the channel into `cfg.rustToolchain`. Both walk the
+ * same file; keeping the parse local avoids an import cycle.
+ */
+function readRustToolchainChannel(): string | undefined {
+  // tools.ts lives at `scripts/build/`; the toolchain file is two levels up.
+  const path = join(import.meta.dirname, "..", "..", "rust-toolchain.toml");
+  if (!existsSync(path)) return undefined;
+  const m = /^\s*channel\s*=\s*"([^"]+)"/m.exec(readFileSync(path, "utf8"));
+  return m?.[1];
 }
 
 /**

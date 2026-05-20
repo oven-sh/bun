@@ -271,28 +271,21 @@ extern "C" unsigned getJSCBytecodeCacheVersion()
 extern "C" void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject*);
 #endif
 
-extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode)
+extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup)
 {
     static std::once_flag jsc_init_flag;
     // NOLINTBEGIN
-    std::call_once(jsc_init_flag, [evalMode, envp, envc, onCrash]() {
+    std::call_once(jsc_init_flag, [evalMode, oneShotStartup, envp, envc, onCrash]() {
         JSC::Config::enableRestrictedOptions();
 
         std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
         WTF::initializeMainThread();
 
-#if ASAN_ENABLED && OS(LINUX)
-        {
-            JSC::Options::AllowUnfinalizedAccessScope scope;
-
-            // ASAN interferes with JSC's signal handlers
-            JSC::Options::useWasmFaultSignalHandler() = false;
-            JSC::Options::useWasmFastMemory() = false;
-        }
-#endif
-
         // Use JSC::initialize with a callback to set Options during initialization.
         // The callback runs BEFORE IPInt::initialize() so we can configure WASM options early.
+        // Under ASAN+Linux, JSC's notifyOptionsChanged() already disables
+        // useWasmFaultSignalHandler/FastMemory when ASAN_OPTIONS lacks
+        // allow_user_segv_handler=1, so we don't force it off here.
         JSC::initialize([&] {
             JSC::Options::useWasm() = true;
             JSC::Options::useJIT() = true;
@@ -314,11 +307,27 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::heapGrowthMaxIncrease() = 2.0;
             JSC::Options::useAsyncStackTrace() = true;
             JSC::Options::useExplicitResourceManagement() = true;
+            JSC::Options::useImportDefer() = true;
             JSC::dangerouslyOverrideJSCBytecodeCacheVersion(getWebKitBytecodeCacheVersion());
 
 #ifdef BUN_DEBUG
             JSC::Options::showPrivateScriptsInStackTraces() = true;
 #endif
+
+            if (oneShotStartup) {
+                // One-shot invocations (`bun -e ...` / `bun --print ...`) run a
+                // trivial amount of JavaScript and then exit; they never reach a
+                // long-running event loop. Creating the JSC worker threads that
+                // VM construction otherwise spawns eagerly — the concurrent JIT
+                // worklist thread and the Heap parallel-marking helpers — is pure
+                // overhead here (clone3 + faulting fresh thread stacks) and none
+                // of those threads do useful work before the process exits. Run
+                // the DFG/FTL on the executing thread and use a single GC marker.
+                // A `BUN_JSC_<option>` environment override below can still flip
+                // either knob back on for debugging.
+                JSC::Options::useConcurrentJIT() = false;
+                JSC::Options::numberOfGCMarkers() = 1;
+            }
 
             if (envc > 0) [[likely]] {
                 auto envc_copy = envc;
@@ -1609,6 +1618,9 @@ JSC_DECLARE_HOST_FUNCTION(makeDOMExceptionForBuiltins);
 JSC_DECLARE_HOST_FUNCTION(createWritableStreamFromInternal);
 JSC_DECLARE_HOST_FUNCTION(getInternalWritableStream);
 JSC_DECLARE_HOST_FUNCTION(isAbortSignal);
+JSC_DECLARE_HOST_FUNCTION(jsBunPeekPromiseStatus);
+JSC_DECLARE_HOST_FUNCTION(jsBunPeekPromiseSettledValue);
+JSC_DECLARE_HOST_FUNCTION(jsBunPokePromiseAsHandled);
 
 JSC_DEFINE_HOST_FUNCTION(makeGetterTypeErrorForBuiltins, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
@@ -1708,6 +1720,43 @@ JSC_DEFINE_HOST_FUNCTION(isAbortSignal, (JSGlobalObject*, CallFrame* callFrame))
 {
     ASSERT(callFrame->argumentCount() == 1);
     return JSValue::encode(jsBoolean(callFrame->uncheckedArgument(0).inherits<JSAbortSignal>()));
+}
+
+// JSPromise lost its JSInternalFieldObjectImpl<2> layout in WebKit, so the
+// @getPromiseInternalField/@putPromiseInternalField bytecode intrinsics that
+// our builtins relied on no longer exist. These helpers expose the equivalent
+// reads/writes through the new CompactPointerTuple/m_slot representation.
+
+static inline JSC::JSPromise* peekPromiseArgument(CallFrame* callFrame)
+{
+    ASSERT(callFrame->argumentCount() == 1);
+    JSValue arg = callFrame->uncheckedArgument(0);
+    if (!arg.inherits<JSC::JSPromise>()) [[unlikely]]
+        return nullptr;
+    return static_cast<JSC::JSPromise*>(arg.asCell());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsBunPeekPromiseStatus, (JSGlobalObject*, CallFrame* callFrame))
+{
+    auto* promise = peekPromiseArgument(callFrame);
+    if (!promise) [[unlikely]]
+        return JSValue::encode(jsNumber(0));
+    return JSValue::encode(jsNumber(static_cast<unsigned>(promise->status())));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsBunPeekPromiseSettledValue, (JSGlobalObject*, CallFrame* callFrame))
+{
+    auto* promise = peekPromiseArgument(callFrame);
+    if (!promise || promise->status() == JSC::JSPromise::Status::Pending) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+    return JSValue::encode(promise->result());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsBunPokePromiseAsHandled, (JSGlobalObject*, CallFrame* callFrame))
+{
+    if (auto* promise = peekPromiseArgument(callFrame))
+        promise->markAsHandled();
+    return JSValue::encode(jsUndefined());
 }
 
 extern "C" JSC::EncodedJSValue Bun__Jest__createTestModuleObject(JSC::JSGlobalObject*);
@@ -2509,16 +2558,6 @@ void GlobalObject::finishCreation(VM& vm)
             init.setConstructor(constructor);
         });
 
-    m_JSFileSinkClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::FileSink);
-            auto* structure = JSFileSink::createStructure(init.vm, init.global, prototype);
-            auto* constructor = JSFileSinkConstructor::create(init.vm, init.global, JSFileSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-            init.setPrototype(prototype);
-            init.setStructure(structure);
-            init.setConstructor(constructor);
-        });
-
     m_JSBufferListClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             auto* prototype = JSBufferListPrototype::create(
@@ -2647,6 +2686,31 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleStderr, (JSGlobalObject * globalObject, Encod
     console->putDirect(vm, property, stderrValue, PropertyAttribute::DontEnum | 0);
     return JSValue::encode(stderrValue);
 }
+
+// The CommonJS `require()` machinery (`@requireESM`, `@loadEsmIntoCjs`,
+// `@internalRequire`) is only ever reached from inside CommonJS modules. A
+// process whose entry point is ESM (the common case for short scripts) never
+// touches it, so parsing/compiling these builtins during global object setup is
+// pure startup overhead. Register lazy custom-value getters instead: the first
+// `@`-reference from builtin code materializes the function and replaces the
+// accessor with the plain builtin function for subsequent fast access.
+//
+// Note: these private names are only consumed via `op_get_from_scope` from
+// builtin JS (`$requireESM`, `$loadEsmIntoCjs`, `$internalRequire`), never via
+// `getDirect`, so a custom accessor is a transparent substitute. (`@create*ReadableStream`
+// next to these *do* have `getDirect` callers and must stay eager.)
+#define BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getterName, codeGenerator, attributes)                                           \
+    JSC_DEFINE_CUSTOM_GETTER(getterName, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue, PropertyName name))            \
+    {                                                                                                                          \
+        auto& vm = JSC::getVM(lexicalGlobalObject);                                                                            \
+        auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);                                        \
+        JSC::JSFunction* fn = globalObject->putDirectBuiltinFunction(vm, globalObject, name, codeGenerator(vm), (attributes)); \
+        return JSValue::encode(fn);                                                                                            \
+    }
+BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getRequireESMBuiltin, commonJSRequireESMCodeGenerator, PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly)
+BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getLoadEsmIntoCjsBuiltin, commonJSLoadEsmIntoCjsCodeGenerator, PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly)
+BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getInternalRequireBuiltin, commonJSInternalRequireCodeGenerator, PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly)
+#undef BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionToClass, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -2837,6 +2901,9 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         GlobalPropertyInfo(builtinNames.cloneArrayBufferPrivateName(), JSFunction::create(vm, this, 3, String(), cloneArrayBuffer, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.structuredCloneForStreamPrivateName(), JSFunction::create(vm, this, 1, String(), structuredCloneForStream, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.isAbortSignalPrivateName(), JSFunction::create(vm, this, 1, String(), isAbortSignal, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
+        GlobalPropertyInfo(builtinNames.peekPromiseStatusPrivateName(), JSFunction::create(vm, this, 1, String(), jsBunPeekPromiseStatus, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
+        GlobalPropertyInfo(builtinNames.peekPromiseSettledValuePrivateName(), JSFunction::create(vm, this, 1, String(), jsBunPeekPromiseSettledValue, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
+        GlobalPropertyInfo(builtinNames.pokePromiseAsHandledPrivateName(), JSFunction::create(vm, this, 1, String(), jsBunPokePromiseAsHandled, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.getInternalWritableStreamPrivateName(), JSFunction::create(vm, this, 1, String(), getInternalWritableStream, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.createWritableStreamFromInternalPrivateName(), JSFunction::create(vm, this, 1, String(), createWritableStreamFromInternal, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.fulfillModuleSyncPrivateName(), JSFunction::create(vm, this, 1, String(), functionFulfillModuleSync, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
@@ -2864,9 +2931,12 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectBuiltinFunction(vm, this, builtinNames.createEmptyReadableStreamPrivateName(), readableStreamCreateEmptyReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.createUsedReadableStreamPrivateName(), readableStreamCreateUsedReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.createNativeReadableStreamPrivateName(), readableStreamCreateNativeReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-    putDirectBuiltinFunction(vm, this, builtinNames.requireESMPrivateName(), commonJSRequireESMCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-    putDirectBuiltinFunction(vm, this, builtinNames.loadEsmIntoCjsPrivateName(), commonJSLoadEsmIntoCjsCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-    putDirectBuiltinFunction(vm, this, builtinNames.internalRequirePrivateName(), commonJSInternalRequireCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    // These three are CommonJS-only and never reached on an ESM startup path; install
+    // lazy getters so their source isn't parsed during global object construction.
+    // (See getRequireESMBuiltin / getLoadEsmIntoCjsBuiltin / getInternalRequireBuiltin above.)
+    putDirectCustomAccessor(vm, builtinNames.requireESMPrivateName(), JSC::CustomGetterSetter::create(vm, getRequireESMBuiltin, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
+    putDirectCustomAccessor(vm, builtinNames.loadEsmIntoCjsPrivateName(), JSC::CustomGetterSetter::create(vm, getLoadEsmIntoCjsBuiltin, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
+    putDirectCustomAccessor(vm, builtinNames.internalRequirePrivateName(), JSC::CustomGetterSetter::create(vm, getInternalRequireBuiltin, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
 
     putDirectBuiltinFunction(vm, this, builtinNames.overridableRequirePrivateName(), commonJSOverridableRequireCodeGenerator(vm), 0);
 
@@ -3128,6 +3198,14 @@ extern "C" void Bun__queueTaskConcurrently(JSC::JSGlobalObject*, WebCore::EventL
 extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__performTask(Zig::GlobalObject* globalObject, WebCore::EventLoopTask* task)
 {
     task->performTask(*globalObject->scriptExecutionContext());
+}
+
+extern "C" void Bun__deleteEventLoopTask(WebCore::EventLoopTask* task)
+{
+    // Free without running. Destroys the captured WTF::Function (and any
+    // Ref<> it holds) so queued cross-thread tasks don't pin their owner
+    // past VM teardown.
+    delete task;
 }
 
 RefPtr<Performance> GlobalObject::performance()
@@ -3629,32 +3707,39 @@ extern "C" void JSC__Wasm__StreamingCompiler__addBytes(JSC::Wasm::StreamingCompi
     compiler->addBytes(std::span(spanPtr, spanSize));
 }
 
-static JSC::JSPromise* handleResponseOnStreamingAction(JSGlobalObject* lexicalGlobalObject, JSC::JSValue source, JSC::Wasm::CompilerMode mode, JSC::JSObject* importObject, std::optional<JSC::WebAssemblyCompileOptions>&& compileOptions)
+static void handleResponseOnStreamingAction(JSGlobalObject* lexicalGlobalObject, JSC::JSPromise* promise, JSC::JSValue source, JSC::Wasm::CompilerMode mode, JSC::JSObject* importObject, std::optional<JSC::WebAssemblyCompileOptions>&& compileOptions)
 {
     auto globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSLockHolder locker(vm);
 
-    auto promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
     auto sourceCode = makeSource("[wasm code]"_s, SourceOrigin(), SourceTaintedOrigin::Untainted);
     auto compiler = JSC::Wasm::StreamingCompiler::create(vm, mode, globalObject, promise, importObject, WTF::move(compileOptions), sourceCode);
 
-    // getBodyStreamOrBytesForWasmStreaming throws the proper exception. Since this is being
-    // executed in a .then(...) callback, throwing is perfectly fine.
+    // The streaming hook used to return a freshly created promise; the caller
+    // (webAssemblyCompileStreamingFunc) was a host function that propagated
+    // any pending exception into a rejected promise. Now the caller passes the
+    // already-allocated outer promise in and is itself an internal microtask
+    // (webAssemblyCompileStreaming in JSMicrotask.cpp) that does NOT catch the
+    // exception. If this callback throws, the outer promise is never settled
+    // and the awaiting test hangs. Convert any thrown exception into a
+    // rejection here.
 
     auto readableStreamMaybe = JSC::JSValue::decode(Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming(
         globalObject, JSC::JSValue::encode(source), compiler.ptr()));
 
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (scope.exception()) [[unlikely]] {
+        promise->rejectWithCaughtException(globalObject, scope);
+        return;
+    }
 
     // We were able to get the slice synchronously.
     if (readableStreamMaybe.isNull()) {
         compiler->finalize(globalObject);
-
-        // Apparently rejecting a Promise (done in JSC::Wasm::StreamingCompiler#fail) can throw
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        return promise;
+        if (scope.exception()) [[unlikely]]
+            promise->rejectWithCaughtException(globalObject, scope);
+        return;
     }
 
     auto wrapper = WebCore::toJSNewlyCreated(globalObject, globalObject, WTF::move(compiler));
@@ -3664,18 +3749,18 @@ static JSC::JSPromise* handleResponseOnStreamingAction(JSGlobalObject* lexicalGl
 
     arguments.append(readableStreamMaybe);
     JSC::call(globalObject, builtin, callData, wrapper, arguments);
-    scope.assertNoException();
-    return promise;
+    if (scope.exception()) [[unlikely]]
+        promise->rejectWithCaughtException(globalObject, scope);
 }
 
-JSC::JSPromise* GlobalObject::compileStreaming(JSGlobalObject* globalObject, JSC::JSValue source, std::optional<JSC::WebAssemblyCompileOptions>&& compileOptions)
+void GlobalObject::compileStreaming(JSGlobalObject* globalObject, JSC::JSPromise* promise, JSC::JSValue source, std::optional<JSC::WebAssemblyCompileOptions>&& compileOptions)
 {
-    return handleResponseOnStreamingAction(globalObject, source, JSC::Wasm::CompilerMode::Validation, nullptr, WTF::move(compileOptions));
+    handleResponseOnStreamingAction(globalObject, promise, source, JSC::Wasm::CompilerMode::Validation, nullptr, WTF::move(compileOptions));
 }
 
-JSC::JSPromise* GlobalObject::instantiateStreaming(JSGlobalObject* globalObject, JSC::JSValue source, JSC::JSObject* importObject, std::optional<JSC::WebAssemblyCompileOptions>&& compileOptions)
+void GlobalObject::instantiateStreaming(JSGlobalObject* globalObject, JSC::JSPromise* promise, JSC::JSValue source, JSC::JSObject* importObject, std::optional<JSC::WebAssemblyCompileOptions>&& compileOptions)
 {
-    return handleResponseOnStreamingAction(globalObject, source, JSC::Wasm::CompilerMode::FullCompile, importObject, WTF::move(compileOptions));
+    handleResponseOnStreamingAction(globalObject, promise, source, JSC::Wasm::CompilerMode::FullCompile, importObject, WTF::move(compileOptions));
 }
 
 GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction handler)
@@ -3829,19 +3914,36 @@ void GlobalObject::adoptNapiEnvsForTestIsolation(GlobalObject* oldGlobal)
 
 void GlobalObject::setNodeWorkerEnvironmentData(JSMap* data) { m_nodeWorkerEnvironmentData.set(vm(), this, data); }
 
+extern "C" void Bun__InspectorConnection__disconnectAllOnExit(Zig::GlobalObject*);
+
 extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     if (vm.entryScope) {
-        // Exiting while running JavaScript code (e.g. `process.exit()`), so we can't destroy it
-        // just now. Perhaps later in this case we can defer destruction to run later.
-        return;
+        vm.entryScope = nullptr;
+    }
+    Bun__InspectorConnection__disconnectAllOnExit(globalObject);
+    // Hold a Ref so the RunLoop is guaranteed to outlive the VM teardown below.
+    Ref<WTF::RunLoop> runLoop = vm.runLoop();
+    {
+        // Drop the module loader's registry and the require() cache before
+        // collecting, so module-level bindings become unreachable. Without
+        // this, every value stored in a module top-level binding (e.g. the
+        // `tmpdirs[]` array in test/harness.ts that keeps mkdtempSync paths)
+        // is rooted through the registry and survives collectNow(), so the
+        // ExternalStringImpl deallocators never run and LSan reports the
+        // backing buffers as leaked. Mirrors WebWorker__teardownJSCVM.
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        globalObject->moduleLoader()->clearAll();
+        globalObject->requireMap()->clear(globalObject);
+        scope.exception(); // mirror WebWorker__teardownJSCVM — leave any pending exception in place
     }
     gcUnprotect(globalObject);
     globalObject = nullptr;
     vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
     vm.derefSuppressingSaferCPPChecking();
     vm.derefSuppressingSaferCPPChecking();
+    runLoop->threadWillExit();
 }
 
 #include "ZigGeneratedClasses+lazyStructureImpl.h"

@@ -40,6 +40,16 @@ export const libuv: Dependency = {
     commit: LIBUV_COMMIT,
   }),
 
+  // Re-arm the AFD ioctl before poll_cb (matching wepoll's
+  // port__update_events_if_polling-before-return). AFD is level-triggered
+  // (ReactOS AfdSelect: `Events & FCB->PollState` checked on IRP arrival),
+  // so a peer RST that lands during poll_cb is caught by the freshly-
+  // submitted req. Upstream libuv re-arms *after* poll_cb, leaving a gap
+  // an in-process loopback fetch().abort() can fall into. To upstream:
+  // send to libuv/libuv with the wepoll/ReactOS references in the patch
+  // comment as the rationale.
+  patches: ["patches/libuv/win-poll-rearm-before-callback.patch"],
+
   build: () => ({
     kind: "direct",
     sources: [...SHARED.map(s => `src/${s}.c`), ...WIN.map(s => `src/win/${s}.c`)],

@@ -28,11 +28,7 @@
 
 export function markPromiseAsHandled(promise: Promise<unknown>) {
   $assert($isPromise(promise));
-  $putPromiseInternalField(
-    promise,
-    $promiseFieldFlags,
-    $getPromiseInternalField(promise, $promiseFieldFlags) | $promiseFlagsIsHandled,
-  );
+  $pokePromiseAsHandled(promise);
 }
 
 export function shieldingPromiseResolve(result) {

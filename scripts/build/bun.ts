@@ -3,8 +3,8 @@
  *
  * This is where all the phases come together:
  *   - resolve all deps → lib paths + include dirs
- *   - emit codegen → generated .cpp/.h/.zig
- *   - emit zig build → bun-zig.o
+ *   - emit codegen → generated .cpp/.h/.rs
+ *   - emit cargo build → libbun_rust.a
  *   - build PCH from root-pch.h (implicit deps: WebKit libs + all codegen)
  *   - compile all C/C++ with the PCH
  *   - link everything → bun-debug (or bun-profile, bun-asan, etc.)
@@ -14,32 +14,33 @@
  *
  * `cfg.mode` controls what we actually produce:
  *   - "full": everything (default, local dev)
- *   - "cpp-only": compile to libbun.a, skip zig/link (CI upstream) — TODO(ci-split)
- *   - "link-only": link pre-built artifacts (CI downstream) — TODO(ci-split)
+ *   - "cpp-only": compile to libbun.a, skip rust/link (CI upstream)
+ *   - "rust-only": codegen + cargo → libbun_rust.a (CI upstream)
+ *   - "link-only": link pre-built artifacts (CI downstream)
  *
- * cpp-only/link-only are for the CI split where C++ and zig build in
- * parallel on separate machines then meet for linking.
+ * cpp-only/rust-only/link-only are for the CI split where C++ and Rust
+ * build in parallel on separate machines then meet for linking.
  */
 
-import { readFileSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
+import { relative, resolve, sep } from "node:path";
 import type { Sources } from "../glob-sources.ts";
-import { emitCodegen, zigFilesGeneratedIntoSrc, type CodegenOutputs } from "./codegen.ts";
+import { emitCodegen, type CodegenOutputs } from "./codegen.ts";
 import { ar, cc, cxx, link, pch } from "./compile.ts";
 import { bunExeName, shouldStrip, type Config } from "./config.ts";
 import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
 import { allDeps } from "./deps/index.ts";
-import { zstd } from "./deps/zstd.ts";
+import { lolhtml } from "./deps/lolhtml.ts";
 import { assert } from "./error.ts";
 import { bunIncludes, computeFlags, extraFlagsFor, linkDepends } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
+import { emitRust, linkerMapPath, rustLibPath } from "./rust.ts";
 import { quote, slash } from "./shell.ts";
 import { emitShims } from "./shims.ts";
-import { computeDepLibs, depSourceStamp, resolveDep, type ResolvedDep } from "./source.ts";
+import { computeDepLibs, resolveDep, type ResolvedDep } from "./source.ts";
 import { streamPath } from "./stream.ts";
 import { generateUnifiedSources } from "./unified.ts";
-import { emitZig, emitZigCheck, zigObjectPaths } from "./zig.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Executable naming
@@ -123,9 +124,9 @@ function systemLibs(cfg: Config): string[] {
  * by ci.ts for artifact upload.
  *
  * Optional fields are present only when the mode produces them:
- *   full:      exe, strippedExe?, dsym?, zigObjects, objects, deps, codegen
+ *   full:      exe, strippedExe?, dsym?, rustObjects, objects, deps, codegen
  *   cpp-only:  archive, objects, deps, codegen
- *   zig-only:  zigObjects, deps (zstd), codegen
+ *   rust-only: rustObjects, deps (lolhtml), codegen
  *   link-only: exe, strippedExe?, dsym?
  */
 export interface BunOutput {
@@ -141,9 +142,9 @@ export interface BunOutput {
   deps: ResolvedDep[];
   /** All codegen outputs. Not present in link-only. */
   codegen?: CodegenOutputs;
-  /** The zig object file(s). Empty in cpp-only. */
-  zigObjects: string[];
-  /** All compiled .o files. Empty in link-only/zig-only. */
+  /** The Rust staticlib path(s). Empty in cpp-only. */
+  rustObjects: string[];
+  /** All compiled .o files. Empty in link-only/rust-only. */
   objects: string[];
 }
 
@@ -155,8 +156,8 @@ export interface BunOutput {
  */
 export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // Split modes get minimal graphs — separate functions.
-  if (cfg.mode === "zig-only") {
-    return emitZigOnly(n, cfg, sources);
+  if (cfg.mode === "rust-only") {
+    return emitRustOnly(n, cfg, sources);
   }
   if (cfg.mode === "link-only") {
     return emitLinkOnly(n, cfg);
@@ -208,33 +209,26 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // ─── Step 2: codegen ───
   const codegen = emitCodegen(n, cfg, sources);
 
-  // ─── Step 3: zig ───
-  // zstd source must be FETCHED (not built) before zig runs — build.zig
-  // @cImports zstd headers. The fetch stamp is the order-only dep.
+  // ─── Step 3: rust ───
+  // One cargo invocation produces a single staticlib that occupies the
+  // same slot in the link as the C++ archive. Rust `include!`s codegen
+  // `.rs` outputs (written as side effects of the generate-classes /
+  // bundle-modules / generate-jssink edges), so the codegen output set
+  // is forwarded as implicit inputs to order it first.
   //
-  // Filter codegen-into-src .zig files from the glob result — they're
-  // OUTPUTS of steps above, not inputs to zig build. Leaving them in
-  // would create a cycle (or a fresh-build error: file doesn't exist yet).
-  //
-  // cpp-only: skip zig entirely (runs on a separate CI machine).
-  let zigObjects: string[] = [];
+  // cpp-only: skip rust entirely (runs on a separate CI machine).
+  let rustObjects: string[] = [];
   if (cfg.mode !== "cpp-only") {
-    const codegenZigSet = new Set(zigFilesGeneratedIntoSrc.map(p => resolve(cfg.cwd, p)));
-    const zigSources = sources.zig.filter(f => !codegenZigSet.has(f));
-    const zigInputs = {
-      codegenInputs: codegen.zigInputs,
-      codegenOrderOnly: codegen.zigOrderOnly,
-      zigSources,
-      zstdStamp: depSourceStamp(cfg, "zstd"),
-    };
-    zigObjects = emitZig(n, cfg, zigInputs);
-    // `zig build check[-*]` targets share the same inputs as the obj
-    // build. Not default — invoked explicitly via `--target=zig-check`.
-    // Skipped in CI (ci-* profiles do obj or cpp separately) to avoid
-    // accidentally firing.
-    if (!cfg.ci) {
-      emitZigCheck(n, cfg, zigInputs);
-    }
+    rustObjects = emitRust(n, cfg, {
+      codegenInputs: codegen.rustInputs,
+      codegenOrderOnly: codegen.rustOrderOnly,
+      rustSources: sources.rust,
+      // lol-html is consumed as a path dep of `bun_lolhtml_sys`, not built
+      // into a separate archive — cargo needs `vendor/lolhtml/` on disk
+      // before it resolves the manifest. The `.ref` stamp's content is the
+      // pinned commit, so a bump re-invokes cargo.
+      vendorStamps: depsByName.get("lolhtml")?.outputs ?? [],
+    });
   }
 
   // ─── Step 4: configure-time generated header + assemble flags ───
@@ -272,8 +266,8 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     // changed → PCH rebuilds → one-build convergence. See the pch() docstring.
     //
     // Codegen stays order-only: those outputs only change if inputs change,
-    // and inputs don't change mid-build. cppAll (not all) — bake/.zig outputs
-    // are zig-only; pulling them here would run bake-codegen in cpp-only CI
+    // and inputs don't change mid-build. cppAll (not all) — bake/.rs outputs
+    // are rust-only; pulling them here would run bake-codegen in cpp-only CI
     // mode where it fails on the pinned bun version (see cppAll docstring).
     // Scripts that emit undeclared .h also emit a .cpp/.h in cppAll, so they
     // still run. cxx transitively waits: cxx → PCH → deps+cppAll.
@@ -406,9 +400,9 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
 
   // ─── Step 7: cpp-only → archive and return ───
   // CI's build-cpp step: archive all .o into libbun.a, stop. The sibling
-  // build-zig step produces bun-zig.o independently; build-bun downloads
-  // both artifacts and links them. Archive name uses the exe name (not
-  // just "libbun") so asan/debug variants are distinguishable in artifacts.
+  // build-rust step produces libbun_rust.a independently; build-bun
+  // downloads both artifacts and links them. Archive name uses the exe
+  // name (not just "libbun") so asan/debug variants are distinguishable.
   if (cfg.mode === "cpp-only") {
     n.comment("─── Archive (cpp-only) ───");
     n.blank();
@@ -450,7 +444,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     // transitively — but link-only still needs them uploaded.
     n.phony("bun", [archive, ...depLibs, ...(depUploadStamp ? [depUploadStamp] : [])]);
     n.default(["bun"]);
-    return { archive, deps, codegen, zigObjects, objects: allObjects };
+    return { archive, deps, codegen, rustObjects, objects: allObjects };
   }
 
   // ─── Step 7: link ───
@@ -464,11 +458,25 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const windowsRes = cfg.windows ? [emitWindowsResources(n, cfg)] : [];
 
   // Full link.
+  // The Rust staticlib goes into `$in` between bun's own objects and the
+  // dependency archives so symbol resolution order is preserved: C++
+  // objects create the `Bun__*` undefined refs, the Rust archive satisfies
+  // them (and `main`, via crt1.o) and in turn references JSC/WTF, depLibs
+  // satisfies those. Every `#[no_mangle]` export the C++ side touches is
+  // reached transitively from those roots, so no `--whole-archive` wrapping
+  // is needed; if a member ever isn't, `rustLinkFlags()` in rust.ts is the
+  // wrapping helper.
   const shims = emitShims(n, cfg);
-  const exe = link(n, cfg, exeName, [...allObjects, ...zigObjects, ...windowsRes], {
+  const linkObjects = [...allObjects, ...rustObjects, ...windowsRes];
+  const ldflags = [...flags.ldflags, ...systemLibs(cfg), ...manifestLinkFlags(cfg), ...shims.ldflags];
+  const exe = link(n, cfg, exeName, linkObjects, {
     libs: depLibs,
-    flags: [...flags.ldflags, ...systemLibs(cfg), ...manifestLinkFlags(cfg), ...shims.ldflags],
+    flags: ldflags,
     implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
+    // Declare the `-Wl,-Map=` side-product so `perf` symbolication picks it
+    // up. Linux release only — the map flag itself is gated identically in
+    // flags.ts.
+    linkerMapOutput: cfg.linux && cfg.release && !cfg.asan && !cfg.valgrind ? linkerMapPath(cfg) : undefined,
   });
 
   // ─── Step 8: post-link (strip + dsymutil) ───
@@ -506,52 +514,53 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // fall back to direct invocation.
   emitSmokeTest(n, cfg, exe, exeName);
 
-  return { exe, strippedExe, dsym, deps, codegen, zigObjects, objects: allObjects };
+  return { exe, strippedExe, dsym, deps, codegen, rustObjects, objects: allObjects };
 }
 
 /**
- * zig-only mode: emit just the zig build graph. CI's build-zig step uses
- * this to cross-compile bun-zig.o on a linux box for all target platforms
- * (zig cross-compiles cleanly; target set via --os/--arch overrides).
+ * rust-only mode: emit just the cargo build graph. CI's build-rust step
+ * uses this to compile libbun_rust.a in parallel with build-cpp; target
+ * set via --os/--arch overrides (cargo `--target <triple>`).
  *
  * Needs:
- *   - zstd FETCHED (build.zig @cImports its headers) — not built
- *   - codegen (zig subset: embedFiles, generated .zig modules)
- *   - zig compiler downloaded + zig build
+ *   - lolhtml FETCHED (path dep of `bun_lolhtml_sys`) — not built separately
+ *   - codegen (Rust `include!`s/`include_bytes!`s the same generated set)
+ *   - cargo build → libbun_rust.a
  *
- * Does NOT need: any dep built, any cxx, PCH, link. ninja only pulls
- * what's depended on — zstd's configure/build rules are emitted but
- * unused (its .ref stamp is the only dependency from emitZig).
+ * Does NOT need: any C dep built, any cxx, PCH, link. ninja only pulls
+ * what's depended on — lolhtml's configure/build rules are emitted but
+ * unused (only its `.ref` fetch stamp is depended on by emitRust).
+ *
+ * Cross-compilation: see `rustCanCrossFromLinux()` in rust.ts for which
+ * targets share a linux runner vs need a native agent.
  */
-function emitZigOnly(n: Ninja, cfg: Config, sources: Sources): BunOutput {
+function emitRustOnly(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   n.comment("════════════════════════════════════════════════════════════════");
-  n.comment(`  Building bun-zig.o (zig-only, target: ${cfg.os}-${cfg.arch})`);
+  n.comment(`  Building libbun_rust.a (rust-only, target: ${cfg.os}-${cfg.arch})`);
   n.comment("════════════════════════════════════════════════════════════════");
   n.blank();
 
-  // Only dep: zstd, for @cImport headers. resolveDep emits its
-  // fetch/configure/build; emitZig only depends on the fetch stamp.
-  const zstdDep = resolveDep(n, cfg, zstd, new Map());
-  assert(zstdDep !== null, "zstd resolveDep returned null — should never be skipped");
+  // Only dep: lolhtml, fetched as a cargo path dependency. resolveDep
+  // emits its fetch; emitRust depends on the fetch stamp via vendorStamps.
+  const lolhtmlDep = resolveDep(n, cfg, lolhtml, new Map());
+  assert(lolhtmlDep !== null, "lolhtml resolveDep returned null — should never be skipped");
 
-  // Codegen: emitted fully, but only zigInputs/zigOrderOnly are pulled.
+  // Codegen: emitted fully, but only the embed-input subset is pulled.
   // The cpp-related outputs (cppSources, bindgenV2Cpp) have no consumer
   // in this graph — ninja skips them.
   const codegen = emitCodegen(n, cfg, sources);
 
-  const codegenZigSet = new Set(zigFilesGeneratedIntoSrc.map(p => resolve(cfg.cwd, p)));
-  const zigSources = sources.zig.filter(f => !codegenZigSet.has(f));
-  const zigObjects = emitZig(n, cfg, {
-    codegenInputs: codegen.zigInputs,
-    codegenOrderOnly: codegen.zigOrderOnly,
-    zigSources,
-    zstdStamp: depSourceStamp(cfg, "zstd"),
+  const rustObjects = emitRust(n, cfg, {
+    codegenInputs: codegen.rustInputs,
+    codegenOrderOnly: codegen.rustOrderOnly,
+    rustSources: sources.rust,
+    vendorStamps: lolhtmlDep.outputs,
   });
 
-  n.phony("bun", zigObjects);
+  n.phony("bun", rustObjects);
   n.default(["bun"]);
 
-  return { deps: [zstdDep], codegen, zigObjects, objects: [] };
+  return { deps: [lolhtmlDep], codegen, rustObjects, objects: [] };
 }
 
 /**
@@ -560,9 +569,9 @@ function emitZigOnly(n: Ninja, cfg: Config, sources: Sources): BunOutput {
  * ninja sees the files as source inputs (no build rule — errors cleanly
  * if download failed or paths drift).
  *
- * Expected artifacts (same paths cpp-only/zig-only produced):
+ * Expected artifacts (same paths cpp-only/rust-only produced):
  *   - libbun-profile.a            — from cpp-only's ar()
- *   - bun-zig.o (or bun-zig.{i}.o for ASAN — see zigObjectPaths)
+ *   - libbun_rust.a / bun_rust.lib — from rust-only's cargo (rustLibPath)
  *   - deps/<name>/lib<name>.a     — from cpp-only's dep builds
  *   - cache/webkit-<hash>/lib/... — WebKit prebuilt (same cache path)
  */
@@ -587,10 +596,10 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
   // prefix/suffix, e.g. libbun-profile.a).
   const archive = resolve(cfg.buildDir, `${cfg.libPrefix}${exeName}${cfg.libSuffix}`);
 
-  // bun-zig*.o from zig-only: same paths emitZig writes to. Shared
-  // helper so both sides of the CI split agree (single file at cg<=1,
-  // N shards for asan at cg=CI_ASAN_CODEGEN_THREADS).
-  const zigObjects = zigObjectPaths(cfg);
+  // libbun_rust.a from rust-only: same path emitRust writes to. Shared
+  // helper so both sides of the CI split agree (cargo's
+  // `<target-dir>/<triple>/<profile>/` layout).
+  const rustObjects = [rustLibPath(cfg)];
 
   // Only need ldflags + stripflags (no cflags/cxxflags — no compile).
   const flags = computeFlags(cfg);
@@ -604,10 +613,13 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
   const windowsRes = cfg.windows ? [emitWindowsResources(n, cfg)] : [];
 
   const shims = emitShims(n, cfg);
-  const exe = link(n, cfg, exeName, [archive, ...zigObjects, ...windowsRes], {
+  const linkObjects = [archive, ...rustObjects, ...windowsRes];
+  const ldflags = [...flags.ldflags, ...systemLibs(cfg), ...manifestLinkFlags(cfg), ...shims.ldflags];
+  const exe = link(n, cfg, exeName, linkObjects, {
     libs: depLibs,
-    flags: [...flags.ldflags, ...systemLibs(cfg), ...manifestLinkFlags(cfg), ...shims.ldflags],
+    flags: ldflags,
     implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
+    linkerMapOutput: cfg.linux && cfg.release && !cfg.asan && !cfg.valgrind ? linkerMapPath(cfg) : undefined,
   });
 
   // Strip + smoke test — same as full mode.
@@ -625,7 +637,7 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
     strippedExe,
     dsym,
     deps: [], // no ResolvedDep — we only computed lib paths
-    zigObjects,
+    rustObjects,
     objects: [],
   };
 }
@@ -859,7 +871,69 @@ function linkImplicitInputs(cfg: Config): string[] {
  * time instead of cryptic build failures later.
  */
 export function validateBunConfig(cfg: Config): void {
-  // All modes now implemented. Kept as a hook for future validation
-  // (e.g. incompatible option combos).
-  void cfg;
+  // build.ninja encodes both absolute -I/-D paths derived from cfg.cwd and
+  // buildDir-relative source paths (../../src/...). If buildDir is reached
+  // through a symlink that escapes this checkout — e.g. a sibling worktree
+  // symlinking its build/ at ours to "share" artifacts — a configure from
+  // that worktree overwrites our build.ninja with its own absolute paths
+  // while the relative ones still resolve against whichever cwd ninja is
+  // launched from. The result is the same header included via two distinct
+  // realpaths, defeating #pragma once and producing redefinition errors (or
+  // PCH macro mismatches) the next time the rightful owner builds. Refuse
+  // up front so the misconfigured worktree fails loudly instead of poisoning
+  // a neighbour. An explicit --build-dir pointing outside the repo is still
+  // permitted; only a symlink masquerading as a path under cwd is rejected.
+  if (existsSync(cfg.buildDir)) {
+    const realCwd = realpathSync(cfg.cwd);
+    const realBuild = realpathSync(cfg.buildDir);
+    const rel = relative(realCwd, realBuild);
+    const escapes = rel.startsWith("..") || rel === "";
+    const claimedRel = relative(cfg.cwd, cfg.buildDir);
+    const claimsInside = !claimedRel.startsWith("..") && claimedRel !== "";
+    assert(
+      !(claimsInside && escapes),
+      `buildDir '${cfg.buildDir}' resolves to '${realBuild}', outside the source tree '${realCwd}'.\n` +
+        `A symlinked build/ shared between worktrees corrupts build.ninja for both. ` +
+        `Remove the symlink and let this worktree own its build directory ` +
+        `(ccache already shares object files across checkouts).`,
+    );
+  }
+  // Also reject the common shape directly: <cwd>/build as a symlink. This
+  // catches the race before the first configure ever creates buildDir.
+  const buildParent = resolve(cfg.cwd, "build");
+  if (cfg.buildDir.startsWith(buildParent + sep) && existsSync(buildParent)) {
+    assert(
+      !lstatSync(buildParent).isSymbolicLink(),
+      `'${buildParent}' is a symlink (→ ${realpathSync(buildParent)}). ` +
+        `Sharing build/ between worktrees corrupts build.ninja for both — ` +
+        `remove the symlink; ccache already shares compiled objects.`,
+    );
+  }
+
+  // Cross-language LTO needs an lld at least as new as the LLVM that emitted
+  // the rust bitcode. `resolveConfig()` swaps `cfg.ld` to `cfg.rustLld` when
+  // rustc's LLVM is newer than clang's; if `rustLld` couldn't be discovered
+  // (rustc/rustup missing, pinned toolchain not installed, agent provisioned
+  // without it), the build would proceed with the stale lld and fail at link
+  // time with an opaque `error: ... .rcgu.o: Invalid record`. Fail at
+  // configure time instead with a hint that points at the real problem.
+  if (
+    cfg.crossLangLto &&
+    cfg.rustToolchain !== undefined &&
+    cfg.rustLlvmVersion !== undefined &&
+    cfg.clangVersion !== undefined
+  ) {
+    const rustMajor = Number.parseInt(cfg.rustLlvmVersion.split(".")[0] ?? "", 10);
+    const clangMajor = Number.parseInt(cfg.clangVersion.split(".")[0] ?? "", 10);
+    if (Number.isFinite(rustMajor) && Number.isFinite(clangMajor) && rustMajor > clangMajor) {
+      assert(
+        cfg.ld === cfg.rustLld,
+        `Cross-language LTO is on and rustc's LLVM (${cfg.rustLlvmVersion}) is newer than clang's ` +
+          `(${cfg.clangVersion}), but rustc's bundled lld wasn't found — the link would fail with ` +
+          `"Invalid record" reading libbun_rust.a's bitcode. Install the pinned toolchain on this ` +
+          `host (\`rustup toolchain install ${cfg.rustToolchain}\`), upgrade clang/lld to LLVM ` +
+          `${rustMajor}+, or disable LTO with \`--lto=off\`.`,
+      );
+    }
+  }
 }

@@ -61,6 +61,15 @@ export const mimalloc: Dependency = {
     // memory cost isn't worth it. The cmake option only applies on Linux.
     if (cfg.linux) defines.MI_DEFAULT_ALLOW_THP = 0;
 
+    // Skip prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, ...) after each mmap.
+    // It needs CONFIG_ANON_VMA_NAME (5.17+); on kernels without it every
+    // call returns EINVAL — pure syscall overhead on the startup path.
+    // Whether the call is even compiled depends on whether the build
+    // toolchain's <sys/prctl.h> defines PR_SET_VMA, which made strace
+    // output diverge between toolchains. Disable it outright; the VMA
+    // label is debugging sugar we don't rely on.
+    if (cfg.linux) defines.MI_NO_SET_VMA_NAME = 1;
+
     if (cfg.abi === "musl") defines.MI_LIBC_MUSL = 1;
     if (override) defines.MI_MALLOC_OVERRIDE = true;
 

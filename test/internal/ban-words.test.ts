@@ -137,7 +137,7 @@ describe("banned words", () => {
 });
 
 describe("required words", () => {
-  const expectDir = "src/test_runner/expect";
+  const expectDir = path.join(root, "src/runtime/test_runner/expect");
   const files = readdirSync(expectDir);
   for (const file of files) {
     if (!file.endsWith(".zig") || file.startsWith(".") || file === "toHaveReturnedTimes.zig") continue;

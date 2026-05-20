@@ -1,6 +1,7 @@
 src/bun.js/WebKit
 vendor
 test/snapshots
+src/**/*.generated.rs
 test/js/deno
 test/node.js
 src/react-refresh.js
@@ -12,3 +13,9 @@ bun.lock
 
 # the output codeblocks need to stay minified
 docs/bundler/minifier.mdx
+
+# generated working notes for the Rust port — dense markdown with inline code
+# refs that prettier doesn't reformat to a fixed point (it keeps re-escaping
+# `_`/`*` differently every pass), so autofix.ci ping-pongs commits forever.
+# Not authored by hand; no value in normalizing it.
+docs/.rust-rewrite-verified-claims.md

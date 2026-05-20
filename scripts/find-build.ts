@@ -347,9 +347,16 @@ async function saveLogs(build: number) {
   await $`mkdir -p ${dir}`.quiet();
   console.log(`saving ${failed.length} log(s) to ${dir}/`);
 
+  // Multiple failed jobs can share a display name (sharded test-bun lanes);
+  // suffix duplicates with the job-id tail so later shards don't overwrite
+  // earlier ones.
+  const seen = new Map<string, number>();
   await Promise.all(
     failed.map(async j => {
-      const name = j.name.replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "");
+      let name = j.name.replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "");
+      const n = (seen.get(name) ?? 0) + 1;
+      seen.set(name, n);
+      if (n > 1) name += `-${j.id.slice(-8)}`;
       const path = `${dir}/${name}.log`;
       const { exitCode, stdout, stderr } = await $`bk job log ${j.id} -b ${String(build)}`.quiet().nothrow();
       if (exitCode !== 0) return console.error(`  ${j.name}: ${stderr.toString().trim()}`);

@@ -344,8 +344,8 @@ describe("iterator", () => {
     expect([...cookies.entries()].map(([key, value]) => `${key}=${value}`).join("\n")).toMatchInlineSnapshot(`
     "e=f
     g=h
-    c=d
-    a=b"
+    a=b
+    c=d"
   `);
   });
 });

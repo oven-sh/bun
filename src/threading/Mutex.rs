@@ -28,6 +28,7 @@
 use core::sync::atomic::AtomicU32;
 #[cfg(debug_assertions)]
 use core::sync::atomic::AtomicU64;
+#[cfg(any(debug_assertions, not(any(windows, target_vendor = "apple"))))]
 use core::sync::atomic::Ordering;
 
 #[cfg(not(any(windows, target_vendor = "apple")))]

@@ -424,11 +424,22 @@ fn signal_process_tree(
     let mut to_visit: Vec<libc::pid_t> = Vec::new();
     let mut to_kill: Vec<libc::pid_t> = Vec::new();
 
+    // Whether to send SIGCONT after `signal`. SIGKILL terminates a stopped
+    // process directly. For the stop-class signals, generating SIGCONT
+    // *discards* all pending stop signals (POSIX XSH 2.4.1 / Linux
+    // `prepare_signal()` flushes SIG_KERNEL_STOP_MASK), so waking would
+    // undo the caller's intent — leave the tree stopped, which is the
+    // requested end state.
+    let needs_cont = !matches!(
+        signal,
+        libc::SIGKILL | libc::SIGSTOP | libc::SIGTSTP | libc::SIGTTIN | libc::SIGTTOU
+    );
+
     // Deliver `signal` to a STOPped+verified pid we couldn't record (OOM).
     // Runs immediately so we don't leave it frozen.
     let signal_now = |pid: libc::pid_t| {
         let _ = kill(pid, signal);
-        if signal != libc::SIGKILL && signal != libc::SIGSTOP {
+        if needs_cont {
             let _ = kill(pid, libc::SIGCONT);
         }
     };
@@ -490,9 +501,8 @@ fn signal_process_tree(
         let _ = kill(to_kill[i], signal);
     }
     // Catchable signals are queued while stopped — wake each so it delivers.
-    // SIGKILL/SIGSTOP bypass this (the former already terminated them; the
-    // latter is what the caller asked for).
-    if signal != libc::SIGKILL && signal != libc::SIGSTOP {
+    // SIGKILL and stop-class signals are excluded (see `needs_cont` above).
+    if needs_cont {
         for &pid in &to_kill {
             let _ = kill(pid, libc::SIGCONT);
         }

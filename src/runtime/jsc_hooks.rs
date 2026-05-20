@@ -1931,6 +1931,29 @@ fn create_if_different(s: &bun_core::String, other: &[u8]) -> bun_core::String {
     bun_core::String::clone_utf8(other)
 }
 
+/// Hand the runtime-transpiler raw source bytes to JSC. When the backing is a
+/// heap-owned `Vec` that spans the whole `contents` slice and is pure ASCII
+/// (Latin-1 == UTF-8), move it into a `WTF::ExternalStringImpl` (zero copy —
+/// JSC frees it via the global allocator). Otherwise clone: `Arena` backings
+/// are recycled with the per-call arena right after this hook returns,
+/// `SharedBuffer`/`External` bytes are borrowed, and non-ASCII UTF-8 must be
+/// transcoded (an external Latin-1 string cannot).
+fn source_code_from_backing(
+    backing: bun_resolver::cache::Contents,
+    contents: &[u8],
+) -> bun_core::String {
+    if let bun_resolver::cache::Contents::Owned(bytes) = backing {
+        if bytes.len() == contents.len()
+            && core::ptr::eq(bytes.as_ptr(), contents.as_ptr())
+            && bun_core::strings::first_non_ascii(&bytes).is_none()
+        {
+            return bun_core::String::create_external_globally_allocated_latin1(bytes);
+        }
+        return bun_core::String::clone_utf8(contents);
+    }
+    bun_core::String::clone_utf8(contents)
+}
+
 /// `ModuleLoader.transpileSourceCode(...)` — the runtime-transpiler path.
 /// Port of `src/jsc/ModuleLoader.zig:85-826`: read file → `Transpiler::parse`
 /// → `js_printer::print` → `ResolvedSource`.
@@ -2590,7 +2613,10 @@ fn transpile_source_code_inner(
                 // Spec :343-351 — raw JSON: hand the source bytes straight to JSC.
                 if loader == L::Json {
                     return Ok(OwnedResolvedSource::new(ResolvedSource {
-                        source_code: bun_core::String::clone_utf8(&source.contents),
+                        source_code: source_code_from_backing(
+                            core::mem::take(&mut parse_result.source_contents_backing),
+                            &source.contents,
+                        ),
                         specifier: input_specifier.dupe_ref(),
                         source_url: create_if_different(input_specifier, path.text),
                         tag: ResolvedSourceTag::JsonForObjectLoader,
@@ -2600,24 +2626,17 @@ fn transpile_source_code_inner(
 
                 // Spec :353-364 — disable_transpiling: return raw source.
                 if disable_transpilying {
-                    let source_code = match args.flags {
-                        FetchFlags::PrintSourceAndClone => {
-                            bun_core::String::clone_utf8(&source.contents)
-                        }
-                        FetchFlags::PrintSource => {
-                            // PORT NOTE: spec ModuleLoader.zig:358 borrows
-                            // (`bun.String.init`) because the bytes live in the
-                            // per-call arena, which is intentionally not reset
-                            // for `.print_source` (ModuleLoader.zig:151). The
-                            // Rust port stores file contents in a Drop-carrying
-                            // `source_contents_backing` on `parse_result`, so a
-                            // borrow would dangle once `parse_result` drops on
-                            // return. Clone instead — matches the
-                            // `PrintSourceAndClone` arm.
-                            bun_core::String::clone_utf8(&source.contents)
-                        }
-                        FetchFlags::Transpile => unreachable!(),
-                    };
+                    debug_assert!(!matches!(args.flags, FetchFlags::Transpile));
+                    // Spec ModuleLoader.zig:358 borrows the per-call-arena bytes
+                    // for `.print_source`; the Rust port owns the backing in
+                    // `source_contents_backing`. Move a heap-owned `Vec` into a
+                    // JSC external string (zero copy) and clone the recycled
+                    // arena / borrowed shared-buffer backings (see
+                    // `source_code_from_backing`).
+                    let source_code = source_code_from_backing(
+                        core::mem::take(&mut parse_result.source_contents_backing),
+                        &source.contents,
+                    );
                     return Ok(OwnedResolvedSource::new(ResolvedSource {
                         source_code,
                         specifier: input_specifier.dupe_ref(),

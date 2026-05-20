@@ -391,7 +391,7 @@ impl TimerObjectInternals {
         let Some(timer) = s.this_value.get().try_get() else {
             #[cfg(debug_assertions)]
             panic!("TimerObjectInternals.runImmediateTask: this_object is null");
-                        {
+            {
                 s.set_enable_keeping_event_loop_alive(vm, false);
                 s.deref();
                 return false;
@@ -509,7 +509,7 @@ impl TimerObjectInternals {
             return;
         };
 
-                let (callback, arguments, mut idle_timeout, mut repeat): (
+        let (callback, arguments, mut idle_timeout, mut repeat): (
             JSValue,
             JSValue,
             JSValue,

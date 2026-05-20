@@ -789,14 +789,13 @@ impl Number {
         {
             let mut buf = [0u8; 124];
             let s = bun_core::fmt::FormatDouble::dtoa(&mut buf, value);
-            return Some(Str::new(bump.alloc_slice_copy(s)));
+            Some(Str::new(bump.alloc_slice_copy(s)))
         }
         #[cfg(target_arch = "wasm32")]
         {
             // do not attempt to implement the spec here, it would be error prone.
+            None
         }
-
-                None
     }
 
     #[inline]

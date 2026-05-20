@@ -3067,7 +3067,7 @@ impl TestCommand {
             // diverges, so the closure is the sole mutator.
             vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
         }
-                Ok(())
+        Ok(())
     }
 
     fn run_event_loop_for_watch(vm: &mut VirtualMachine) {

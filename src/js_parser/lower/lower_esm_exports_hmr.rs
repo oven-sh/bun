@@ -354,7 +354,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
 
                 return Ok(()); // do not emit a statement here
             }
-            js_ast::StmtData::SExportFrom(mut st) => {
+            js_ast::StmtData::SExportFrom(st) => {
                 let deduped = self.deduplicated_import(
                     p,
                     st.import_record_index,
@@ -392,9 +392,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     // the parser but since everything uses these
                     // assumptions, this hack is simpler than making it
                     // proper
-                    let alias = item.alias;
-                    item.alias = item.original_name;
-                    item.original_name = alias;
+                    core::mem::swap(&mut item.alias, &mut item.original_name);
                 }
                 return Ok(());
             }

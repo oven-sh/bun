@@ -6,13 +6,13 @@
 // on top and uses `bun_sys` for I/O.
 // ──────────────────────────────────────────────────────────────────────────
 #![warn(unreachable_pub)]
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_int, c_void};
 use core::ptr;
 
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
-use bun_core::{self as bun_str, MutableString, slice_to_nul, strings};
+use bun_core::{MutableString, slice_to_nul, strings};
 use bun_core::{Output, ZStr, slice_as_bytes};
-use bun_paths::{self as path, OSPathBuffer, OSPathChar, PathBuffer, SEP, SEP_STR};
+use bun_paths::{OSPathBuffer, OSPathChar, PathBuffer, SEP, SEP_STR};
 use bun_sys::{self, Fd, FdExt};
 use bun_wyhash::hash;
 
@@ -123,6 +123,7 @@ pub mod lib {
         fn archive_entry_clear(e: *mut Entry) -> *mut Entry;
         fn archive_entry_pathname(e: *mut Entry) -> *const c_char;
         fn archive_entry_pathname_utf8(e: *mut Entry) -> *const c_char;
+        #[cfg(windows)]
         fn archive_entry_pathname_w(e: *mut Entry) -> *const u16;
         fn archive_entry_symlink(e: *mut Entry) -> *const c_char;
         fn archive_entry_perm(e: *mut Entry) -> bun_sys::Mode;
@@ -334,8 +335,10 @@ pub mod lib {
             Result::Ok
         }
 
-        pub fn error_string(this: *mut Archive) -> &'static [u8] {
-            // SAFETY: `this` came from archive_{read,write}_new().
+        /// # Safety
+        /// `this` must be a live archive handle from `archive_{read,write}_new()`.
+        pub unsafe fn error_string(this: *mut Archive) -> &'static [u8] {
+            // SAFETY: see fn contract.
             let p = unsafe { archive_error_string(this) };
             if p.is_null() {
                 return b"";
@@ -451,8 +454,10 @@ pub mod lib {
         /// `archive_entry_new2(archive)` — ties the entry to the archive's
         /// charset-conversion context (preferred over `new()` when an archive
         /// is available).
-        pub fn new2(archive: *mut Archive) -> *mut Entry {
-            // SAFETY: `archive` came from `Archive::read_new()`/`write_new()`.
+        /// # Safety
+        /// `archive` must be a live handle from `Archive::read_new()`/`write_new()`.
+        pub unsafe fn new2(archive: *mut Archive) -> *mut Entry {
+            // SAFETY: see fn contract.
             unsafe { archive_entry_new2(archive) }
         }
         pub fn free(&self) {
@@ -569,10 +574,13 @@ pub mod lib {
         pub fn new() -> Self {
             Self(core::ptr::NonNull::new(Entry::new()).expect("archive_entry_new returned null"))
         }
+        /// # Safety
+        /// `archive` must be a live handle from `Archive::read_new()`/`write_new()`.
         #[inline]
-        pub fn new2(archive: *mut Archive) -> Self {
+        pub unsafe fn new2(archive: *mut Archive) -> Self {
             Self(
-                core::ptr::NonNull::new(Entry::new2(archive))
+                // SAFETY: see fn contract.
+                core::ptr::NonNull::new(unsafe { Entry::new2(archive) })
                     .expect("archive_entry_new2 returned null"),
             )
         }
@@ -749,7 +757,10 @@ pub mod lib {
 
     impl NextEntry {
         /// Port of `Iterator.NextEntry.readEntryData`.
-        pub fn read_entry_data(
+        ///
+        /// # Safety
+        /// `archive` must be the live handle this `NextEntry` was yielded from.
+        pub unsafe fn read_entry_data(
             &self,
             archive: *mut Archive,
         ) -> core::result::Result<IteratorResult<Box<[u8]>>, bun_core::OOM> {
@@ -784,7 +795,10 @@ pub mod lib {
     pub type archive_close_callback = unsafe extern "C" fn(*mut Archive, *mut c_void) -> c_int;
     pub type archive_free_callback = unsafe extern "C" fn(*mut Archive, *mut c_void) -> c_int;
 
-    pub fn archive_write_open2(
+    /// # Safety
+    /// `a` must be a live handle from `archive_write_new()`; `client_data`'s
+    /// lifetime must outlast the registered callbacks.
+    pub unsafe fn archive_write_open2(
         a: *mut Archive,
         client_data: *mut c_void,
         open: Option<archive_open_callback>,
@@ -792,8 +806,7 @@ pub mod lib {
         close: Option<archive_close_callback>,
         free: Option<archive_free_callback>,
     ) -> c_int {
-        // SAFETY: `a` came from archive_write_new(); callbacks have correct
-        // ABI; client_data lifetime is caller's responsibility.
+        // SAFETY: see fn contract.
         unsafe { archive_write_open2_raw(a, client_data, open, write, close, free) }
     }
 
@@ -871,7 +884,9 @@ pub mod lib {
     impl IteratorError {
         #[inline]
         pub fn error_string(&self) -> &[u8] {
-            Archive::error_string(self.archive)
+            // SAFETY: `self.archive` is the live `read_new()` handle this
+            // iterator's error was yielded from.
+            unsafe { Archive::error_string(self.archive) }
         }
     }
     /// `Iterator.Result(T)` for the std-`Result`-shaped iterator below. Named
@@ -894,7 +909,10 @@ pub mod lib {
         }
         /// Port of `NextEntry.readEntryData` (bindings.zig). Allocates `size`
         /// bytes and reads the current entry's data into it.
-        pub fn read_entry_data(
+        ///
+        /// # Safety
+        /// `archive` must be the live handle this entry was yielded from.
+        pub unsafe fn read_entry_data(
             &self,
             archive: *mut Archive,
         ) -> core::result::Result<IterResult<Vec<u8>>, bun_core::OOM> {
@@ -1162,7 +1180,10 @@ impl BufferReadStream {
         0
     }
 
-    pub extern "C" fn archive_read_callback(
+    /// # Safety
+    /// libarchive C callback: `ctx_` is the `*mut BufferReadStream` registered
+    /// via `archive_read_set_callback_data`; `buffer` is a non-null out-param.
+    pub unsafe extern "C" fn archive_read_callback(
         _: *mut Archive,
         ctx_: *mut c_void,
         buffer: *mut *const c_void,
@@ -1181,7 +1202,10 @@ impl BufferReadStream {
         isize::try_from(diff).expect("int cast")
     }
 
-    pub extern "C" fn archive_skip_callback(
+    /// # Safety
+    /// libarchive C callback: `ctx_` is the `*mut BufferReadStream` registered
+    /// via `archive_read_set_callback_data`.
+    pub unsafe extern "C" fn archive_skip_callback(
         _: *mut Archive,
         ctx_: *mut c_void,
         offset: lib::la_int64_t,
@@ -1198,7 +1222,10 @@ impl BufferReadStream {
         (new_pos - pos) as lib::la_int64_t
     }
 
-    pub extern "C" fn archive_seek_callback(
+    /// # Safety
+    /// libarchive C callback: `ctx_` is the `*mut BufferReadStream` registered
+    /// via `archive_read_set_callback_data`.
+    pub unsafe extern "C" fn archive_seek_callback(
         _: *mut Archive,
         ctx_: *mut c_void,
         offset: lib::la_int64_t,
@@ -2124,8 +2151,12 @@ impl Archiver {
                                         }
                                         _ => {
                                             if options.log {
-                                                let archive_error =
-                                                    slice_to_nul(Archive::error_string(archive));
+                                                // SAFETY: `archive` is the live
+                                                // `read_new()` handle this
+                                                // extraction loop is iterating.
+                                                let archive_error = slice_to_nul(unsafe {
+                                                    Archive::error_string(archive)
+                                                });
                                                 Output::err(
                                                     "libarchive error",
                                                     "extracting {}: {}",

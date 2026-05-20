@@ -8,7 +8,7 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
+use std::rc::Rc;
 
 use crate::node::fs as node_fs;
 use crate::node::types::PathOrFileDescriptorSerializeTag;
@@ -50,7 +50,7 @@ pub trait StoreExt {
     fn init_s3_with_referenced_credentials(
         pathlike: PathLike,
         mime_type: Option<MimeType>,
-        credentials: Arc<S3Credentials>,
+        credentials: Rc<S3Credentials>,
     ) -> Result<Box<Store>, bun_core::Error>
     where
         Self: Sized;
@@ -144,7 +144,7 @@ impl StoreExt for Store {
     fn init_s3_with_referenced_credentials(
         pathlike: PathLike,
         mime_type: Option<MimeType>,
-        credentials: Arc<S3Credentials>,
+        credentials: Rc<S3Credentials>,
     ) -> Result<Box<Store>, bun_core::Error> {
         let mut path = pathlike;
         // this actually protects/refs the pathlike

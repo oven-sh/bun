@@ -106,7 +106,7 @@ pub mod debug {
     // crash handler (lower-tier crate) gets real symbol names in debug builds
     // and `btjs` re-exports from this module.
     use bun_core::{Error, err};
-        use core::ffi::{c_int, c_void};
+    use core::ffi::{c_int, c_void};
     use std::collections::HashMap;
 
     pub use bun_core::debug::{SourceLocation, SymbolInfo};
@@ -153,7 +153,7 @@ pub mod debug {
                     address_map: HashMap::new(),
                 });
             }
-                        Err(err!("UnsupportedOperatingSystem"))
+            Err(err!("UnsupportedOperatingSystem"))
         }
 
         /// Port of `SelfInfo.getModuleForAddress`.
@@ -2106,7 +2106,7 @@ mod draft {
                     };
                     let kernel_version =
                         bun_analytics::GenerateHeader::generate_platform::kernel_version();
-                    if platform.os == bun_analytics::schema::analytics::OperatingSystem::wsl {
+                    if platform.os == bun_analytics::schema::analytics::OperatingSystem::Wsl {
                         write!(
                             writer,
                             "WSL Kernel v{}.{}.{} | glibc v{}\n",

@@ -18,6 +18,10 @@
 //! See WebKit r312153 (UnbarrieredMonotonicTime) for the original design and
 //! drift/monotonicity measurements on Darwin/arm64.
 
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "macos", target_os = "freebsd")
+))]
 use core::ffi::{c_char, c_int, c_void};
 
 /// True on every target Bun ships. Kept for callers that want to gate on it.

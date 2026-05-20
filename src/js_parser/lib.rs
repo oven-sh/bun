@@ -974,7 +974,7 @@ pub mod renamer {
     use bun_ast::SlotCounts;
     use bun_ast::base::Ref;
     use bun_ast::scope::Scope;
-    use bun_ast::symbol::{self, INVALID_NESTED_SCOPE_SLOT, SlotNamespace, Symbol};
+    use bun_ast::symbol::{INVALID_NESTED_SCOPE_SLOT, SlotNamespace, Symbol};
     use bun_collections::VecExt;
 
     // Round-C alias kept for P.rs/Parser.rs callers.
@@ -1072,14 +1072,14 @@ pub mod renamer {
         }
 
         // Assign slots for the symbols of child scopes
-        let mut slot_counts = slot.clone();
+        let mut slot_counts = slot;
         for child in scope.children.slice() {
             // `StoreRef<Scope>: Deref<Target = Scope>` — safe arena-backed deref.
             slot_counts.union_max(assign_nested_scope_slots_helper(
                 sorted_members,
                 child,
                 symbols,
-                slot.clone(),
+                slot,
             ));
         }
 
@@ -1115,7 +1115,6 @@ pub mod renamer {
 
     // The remaining renamer types are only consumed by the printer and bundler
     // — they live in `bun_js_printer`.
-        use symbol as _;
 }
 
 // ported from: src/js_parser/js_parser.zig

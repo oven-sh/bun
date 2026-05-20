@@ -1001,7 +1001,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-        fn has_eq_sign(&self, str_: &[u8]) -> Option<u32> {
+    fn has_eq_sign(&self, str_: &[u8]) -> Option<u32> {
         has_eq_sign(str_)
     }
 
@@ -1020,7 +1020,7 @@ impl<'a> Parser<'a> {
         matches!(self.peek(), Token::Eof)
     }
 
-        fn expect(&mut self, toktag: TokenTag) -> Token {
+    fn expect(&mut self, toktag: TokenTag) -> Token {
         debug_assert!(toktag == self.peek().tag());
         if self.check(toktag) {
             return self.advance();
@@ -1037,7 +1037,7 @@ impl<'a> Parser<'a> {
         false
     }
 
-        fn match_any2(&mut self, toktags: &[TokenTag]) -> Option<Token> {
+    fn match_any2(&mut self, toktags: &[TokenTag]) -> Option<Token> {
         let peeked = self.peek().clone();
         // PERF(port): was `inline for` — profile if hot.
         for &tag in toktags {
@@ -1069,7 +1069,7 @@ impl<'a> Parser<'a> {
         &self.tokens[self.current]
     }
 
-        fn peek_n(&self, n: u32) -> &Token {
+    fn peek_n(&self, n: u32) -> &Token {
         if self.current + n as usize >= self.tokens.len() {
             return &self.tokens[self.tokens.len() - 1];
         }
@@ -1080,7 +1080,7 @@ impl<'a> Parser<'a> {
         self.tokens[self.current - 1].clone()
     }
 
-        fn add_error(&mut self, args: core::fmt::Arguments<'_>) -> Result<(), ParserError> {
+    fn add_error(&mut self, args: core::fmt::Arguments<'_>) -> Result<(), ParserError> {
         use std::io::Write;
         let mut error_msg: Vec<u8> = Vec::new();
         write!(&mut error_msg, "{}", args).map_err(|_| ParserError::OutOfMemory)?;
@@ -1439,7 +1439,7 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
         self.chars.eat()
     }
 
-        fn read_char(&mut self) -> Option<<Chars<ENCODING> as CharIter>::InputChar> {
+    fn read_char(&mut self) -> Option<<Chars<ENCODING> as CharIter>::InputChar> {
         self.chars.read_char()
     }
 }

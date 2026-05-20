@@ -5,8 +5,7 @@
 //! needs no high-tier deps) and reports disabled on macOS, so callers above T0
 //! should use `bun_perf::trace` to keep os_signpost coverage.
 #![warn(unreachable_pub)]
-use core::ffi::{c_char, c_int};
-use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Once;
 
 pub mod generated_perf_trace_events;
@@ -58,6 +57,7 @@ impl Drop for Ctx {
 static IS_ENABLED_ONCE: Once = Once::new();
 static IS_ENABLED: AtomicBool = AtomicBool::new(false);
 
+#[cfg(target_os = "macos")]
 fn is_enabled_on_mac_os_once() {
     if bun_core::env_var::DYLD_ROOT_PATH.platform_get().is_some()
         || bun_core::env_var::feature_flag::BUN_INSTRUMENTS
@@ -127,7 +127,7 @@ pub fn trace(event: PerfEvent) -> Ctx {
     {
         return Ctx::Enabled(Linux::init(event));
     }
-        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
     {
         let _ = event;
         return Ctx::Disabled(Disabled);
@@ -141,6 +141,7 @@ pub use darwin_impl::Darwin;
 mod darwin_impl {
     use super::*;
     use bun_sys::darwin::OSLog;
+    use core::sync::atomic::AtomicPtr;
     // TODO(port): verify Rust path for `OSLog.Signpost.Interval` and `.PointsOfInterest` category
     use bun_sys::darwin::os_log::signpost::{
         Category as SignpostCategory, Interval as SignpostInterval,

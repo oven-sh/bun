@@ -16,7 +16,6 @@
 
 use bun_collections::VecExt;
 
-use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_ast::{ImportKind, ImportRecord};
@@ -81,7 +80,7 @@ pub type MangledProps = bun_collections::ArrayHashMap<Ref, Box<[u8]>>;
 /// js_printer is the sole producer of ModuleInfo records; the bundler/runtime
 /// only consume the serialized form.
 pub mod analyze_transpiled_module {
-    use bun_collections::{ArrayHashMap, HashMap, VecExt};
+    use bun_collections::HashMap;
     use bun_core::slice_as_bytes;
 
     #[repr(u8)]
@@ -313,7 +312,7 @@ pub mod analyze_transpiled_module {
     /// Owns a duplicated byte buffer and exposes a `ModuleInfoDeserialized` view into it.
     /// Replaces Zig's `.owner = .allocated_slice` arm.
     pub struct ModuleInfoDeserializedOwned {
-                backing: AlignedBytes,
+        backing: AlignedBytes,
         // `RecordKind` is a `#[repr(u8)]` enum (not all bit patterns valid), so
         // the validated discriminants are decoded once in `create()` and owned
         // here instead of being reinterpreted from `backing` on every `as_ref()`.
@@ -448,21 +447,12 @@ pub mod analyze_transpiled_module {
     /// which appends one entry per unique pair — so the same specifier can be
     /// requested at both Evaluation and Defer phase.
     // PERF(port): three allocations + a side HashMap; revisit with a real IndexMap.
+    #[derive(Default)]
     struct RequestedModules {
         keys: Vec<StringID>,
         values: Vec<FetchParameters>,
         phases: Vec<ModulePhase>,
         index: HashMap<(StringID, ModulePhase), usize>,
-    }
-    impl Default for RequestedModules {
-        fn default() -> Self {
-            Self {
-                keys: Vec::new(),
-                values: Vec::new(),
-                phases: Vec::new(),
-                index: HashMap::default(),
-            }
-        }
     }
     impl RequestedModules {
         fn keys(&self) -> &[StringID] {
@@ -1086,7 +1076,6 @@ where
                         i += clamped_width + j;
                     } else {
                         writer.write_all(&text[i..])?;
-                        i = n;
                         break;
                     }
                 }
@@ -1700,7 +1689,7 @@ pub mod __gated_printer {
     use bun_ast::ImportRecordTag;
     use bun_ptr::BackRef;
     use js_ast::Symbol;
-    use js_ast::binding::{Binding, Data as BindingData, Tag as BindingTag};
+    use js_ast::binding::{Binding, Data as BindingData};
     use js_ast::expr::{Data as ExprData, Expr};
     use js_ast::op::{Level, Op as OpInfo};
     use js_ast::stmt::{Data as StmtData, Stmt, Tag as StmtTag};
@@ -2019,15 +2008,6 @@ pub mod __gated_printer {
 
         pub fn print_buffer(&mut self, str: &[u8]) {
             self.writer.print_slice(str);
-        }
-
-        /// Fixed-size raw write into pre-reserved space (mirrors Zig's
-        /// `p.writer.reserve(N) ...; p.writer.advance(N)` open-code on the
-        /// number/identifier hot path). Skips the short-write/error bookkeeping
-        /// in `print_slice`.
-        #[inline(always)]
-        fn print_reserved_n<const N: usize>(&mut self, bytes: &[u8; N]) {
-            self.writer.write_reserved(bytes).expect("unreachable");
         }
 
         /// Polymorphic print: bytes or single char.
@@ -3242,7 +3222,7 @@ pub mod __gated_printer {
             //
             let mut ascii_start: usize = 0;
             let mut is_ascii = false;
-            let mut iter = CodepointIterator::init(bytes);
+            let iter = CodepointIterator::init(bytes);
             let mut cursor = strings::Cursor::default();
 
             while iter.next(&mut cursor) {
@@ -3250,7 +3230,7 @@ pub mod __gated_printer {
                     // unlike other versions, we only want to mutate > 0x7F
                     0..=LAST_ASCII => {
                         if !is_ascii {
-                            ascii_start = (cursor.i as usize);
+                            ascii_start = cursor.i as usize;
                             is_ascii = true;
                         }
                     }
@@ -3587,7 +3567,7 @@ pub mod __gated_printer {
                         }
                     }
                     // We only want to generate an unbound eval() in CommonJS
-                    self.call_target = Some(e.target.data.clone());
+                    self.call_target = Some(e.target.data);
 
                     let is_unbound_eval = !e.is_direct_eval
                         && self.is_unbound_eval_identifier(e.target)
@@ -4631,13 +4611,13 @@ pub mod __gated_printer {
                 // Translate any non-ASCII to unicode escape sequences
                 let mut ascii_start: usize = 0;
                 let mut is_ascii = false;
-                let mut iter = CodepointIterator::init(&e.value);
+                let iter = CodepointIterator::init(&e.value);
                 let mut cursor = strings::Cursor::default();
                 while iter.next(&mut cursor) {
                     match cursor.c as u32 {
                         FIRST_ASCII..=LAST_ASCII => {
                             if !is_ascii {
-                                ascii_start = (cursor.i as usize);
+                                ascii_start = cursor.i as usize;
                                 is_ascii = true;
                             }
                         }
@@ -6918,13 +6898,13 @@ pub mod __gated_printer {
 
             let mut ascii_start: usize = 0;
             let mut is_ascii = false;
-            let mut iter = CodepointIterator::init(identifier);
+            let iter = CodepointIterator::init(identifier);
             let mut cursor = strings::Cursor::default();
             while iter.next(&mut cursor) {
                 match cursor.c as u32 {
                     FIRST_ASCII..=LAST_ASCII => {
                         if !is_ascii {
-                            ascii_start = (cursor.i as usize);
+                            ascii_start = cursor.i as usize;
                             is_ascii = true;
                         }
                     }
@@ -7078,7 +7058,7 @@ pub mod __gated_printer {
             renamer: rename::Renamer<'a, 'a>,
             source_map_builder: SourceMap::chunk::Builder,
         ) -> Self {
-            let mut printer = Self {
+            let printer = Self {
                 bump,
                 import_records,
                 needs_semicolon: false,

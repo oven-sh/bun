@@ -780,7 +780,7 @@ pub mod dir_iterator {
         // ignored (kernel readdir has no name filter; callers post-filter).
         // PORT NOTE: stored on `State` on Windows so `next()` can pass it.
         #[cfg(not(windows))]
-                name_filter: Option<Vec<u16>>,
+        name_filter: Option<Vec<u16>>,
         state: State,
     }
     impl WrappedIterator {

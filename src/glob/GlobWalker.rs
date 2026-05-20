@@ -169,7 +169,7 @@ pub trait AccessorDirIter {
     type Entry: AccessorDirEntry;
     fn next(&mut self) -> Maybe<Option<Self::Entry>>;
     fn iterate(dir: Self::Handle) -> Self;
-        fn set_name_filter(&mut self, filter: Option<&[u16]>) {
+    fn set_name_filter(&mut self, filter: Option<&[u16]>) {
         // default: no-op (only SyscallAccessor on Windows uses this)
     }
 }
@@ -902,7 +902,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
     }
 
     #[cfg(not(windows))]
-        fn compute_nt_filter(&mut self, _component_idx: u32) -> Option<&[u16]> {
+    fn compute_nt_filter(&mut self, _component_idx: u32) -> Option<&[u16]> {
         None
     }
 

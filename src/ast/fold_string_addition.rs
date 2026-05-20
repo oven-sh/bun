@@ -1,5 +1,5 @@
 use crate::expr::{Data, PrimitiveType, data};
-use crate::{self as js_ast, E, Expr, StoreRef, e};
+use crate::{E, Expr, StoreRef, e};
 use bun_alloc::Arena; // bumpalo::Bump re-export
 
 // ── local rope helpers ─────────────────────────────────────────────────────
@@ -323,8 +323,5 @@ pub fn fold_string_addition(
 
     None
 }
-
-// silence unused-import warning when only some helpers fire
-use js_ast as _;
 
 // ported from: src/js_parser/ast/foldStringAddition.zig

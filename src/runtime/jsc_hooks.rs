@@ -3121,9 +3121,7 @@ fn transpile_source_code_inner(
                 }));
             }
             // (parse→link→print arm always `return`s; no fallthrough.)
-                        {
-                unreachable!()
-            }
+            { unreachable!() }
         }
 
         // Spec :595 — `provideFetch()` should be called.
@@ -3156,7 +3154,7 @@ fn transpile_source_code_inner(
                 // NOT fall through to the `.file` recursion below. Fail closed
                 // until the gated ctor above un-gates (PORTING.md §Forbidden:
                 // no silent-no-op fall-through).
-                                return Err(bun_core::err!("NotSupported"));
+                return Err(bun_core::err!("NotSupported"));
             }
             // Spec :661-675 — recurse as `.file`.
             // SAFETY: per fn contract — `extra` is live for the call.

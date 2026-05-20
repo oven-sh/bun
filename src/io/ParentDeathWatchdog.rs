@@ -38,7 +38,9 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use bun_core::{ZStr, env_var};
 use bun_sys::{self, Fd, O};
 
-use crate::posix_event_loop::{EventLoopCtx, FilePoll, Owner, poll_tag};
+use crate::posix_event_loop::EventLoopCtx;
+#[cfg(target_os = "macos")]
+use crate::posix_event_loop::{FilePoll, Owner, poll_tag};
 
 /// Unit struct — `FilePoll.Owner` needs a real pointer, but we have no
 /// per-instance state.
@@ -159,6 +161,7 @@ fn kill_sync_pgroups_and_descendants() {
 }
 
 // TODO(port): move to <aio>_sys
+#[cfg(target_os = "macos")]
 unsafe extern "C" {
     // safe: no args; no preconditions.
     safe fn Bun__noOrphans_killTracked();
@@ -168,6 +171,7 @@ unsafe extern "C" {
 unsafe extern "C" {
     // safe: no args; read process IDs — no preconditions, never fail.
     safe fn getpid() -> libc::pid_t;
+    #[cfg(target_os = "macos")]
     safe fn getppid() -> libc::pid_t;
     // safe: by-value `pid_t`/`c_int` only; bad pid → `ESRCH`, bad sig →
     // `EINVAL`, never UB. Async-signal-safe.
@@ -183,9 +187,11 @@ unsafe extern "C" {
 // — `PR_SET_PDEATHSIG` fires on the *thread*'s exit, so defaulting it from a
 // JS Worker would kill children on `worker.terminate()` — is documented there.
 
+#[cfg(target_os = "macos")]
 static EVENT_LOOP_INSTALLED: AtomicBool = AtomicBool::new(false);
 /// Singleton instance — `FilePoll.Owner` needs a real pointer, but we have no
 /// per-instance state.
+#[cfg(target_os = "macos")]
 static INSTANCE: bun_core::RacyCell<ParentDeathWatchdog> =
     bun_core::RacyCell::new(ParentDeathWatchdog);
 

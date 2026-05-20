@@ -17,14 +17,14 @@ use bun_wyhash::Wyhash11 as Wyhash;
 mod sock {
     pub use libc::{
         AF_INET, AF_INET6, AF_UNIX, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM, addrinfo,
-        freeaddrinfo, in6_addr, sockaddr_in, sockaddr_in6, sockaddr_un,
+        freeaddrinfo, sockaddr_un,
     };
 }
 #[cfg(windows)]
 mod sock {
     pub use bun_windows_sys::ws2_32::{
         AF_INET, AF_INET6, AF_UNIX, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM, addrinfo,
-        freeaddrinfo, in6_addr, sockaddr_in, sockaddr_in6,
+        freeaddrinfo,
     };
     // Windows SDK ships <afunix.h> (SOCKADDR_UN) since win10_rs4 but neither
     // windows-sys nor bun_windows_sys export it. Mirror the on-the-wire layout
@@ -449,20 +449,15 @@ pub fn addr_info_count(addrinfo: &sock::addrinfo) -> u32 {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
+#[derive(Copy, Clone, Default, Eq, PartialEq, strum::IntoStaticStr)]
 pub enum Order {
     #[strum(serialize = "verbatim")]
+    #[default]
     Verbatim = 0,
     #[strum(serialize = "ipv4first")]
     Ipv4first = 4,
     #[strum(serialize = "ipv6first")]
     Ipv6first = 6,
-}
-
-impl Default for Order {
-    fn default() -> Self {
-        Order::Verbatim
-    }
 }
 
 pub static ORDER_MAP: phf::Map<&'static [u8], Order> = phf::phf_map! {

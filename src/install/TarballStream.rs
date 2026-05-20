@@ -520,12 +520,14 @@ impl TarballStream {
                                 (*this).begin_entry(&mut *entry)?;
                             }
                             lib::Result::Failed | lib::Result::Fatal => {
+                                // SAFETY: `(*this).archive` is the live `read_new()` handle
+                                // opened in `init` and held until `finish` frees it.
+                                let msg =
+                                    unsafe { lib::Archive::error_string((*this).archive.unwrap()) };
                                 bun_output::scoped_log!(
                                     TarballStream,
                                     "readNextHeader: {}",
-                                    bstr::BStr::new(lib::Archive::error_string(
-                                        (*this).archive.unwrap()
-                                    ))
+                                    bstr::BStr::new(msg)
                                 );
                                 return Err(bun_core::err!("Fail"));
                             }
@@ -547,12 +549,14 @@ impl TarballStream {
                                 }
                             }
                             _ => {
+                                // SAFETY: `(*this).archive` is the live `read_new()` handle
+                                // opened in `init` and held until `finish` frees it.
+                                let msg =
+                                    unsafe { lib::Archive::error_string((*this).archive.unwrap()) };
                                 bun_output::scoped_log!(
                                     TarballStream,
                                     "read_data_block: {}",
-                                    bstr::BStr::new(lib::Archive::error_string(
-                                        (*this).archive.unwrap()
-                                    ))
+                                    bstr::BStr::new(msg)
                                 );
                                 return Err(bun_core::err!("Fail"));
                             }
@@ -631,7 +635,7 @@ impl TarballStream {
                     TarballStream,
                     "archive_read_open: {}",
                     // SAFETY: archive is a valid handle (guard not yet dropped).
-                    bstr::BStr::new(lib::Archive::error_string(archive))
+                    bstr::BStr::new(unsafe { lib::Archive::error_string(archive) })
                 );
                 return Err(bun_core::err!("Fail"));
             }

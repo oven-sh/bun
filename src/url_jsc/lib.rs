@@ -3,7 +3,7 @@
 #![warn(unused_must_use)]
 
 use bun_core::{String as BunString, Tag};
-use bun_url::{OwnedURL, URL};
+use bun_url::OwnedURL;
 
 // ── bun_jsc surface ──────────────────────────────────────────────────────
 // bun_jsc is green now; re-export the real opaque handles so downstream

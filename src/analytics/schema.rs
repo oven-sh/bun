@@ -129,30 +129,30 @@ pub mod analytics {
     #[repr(u8)]
     #[derive(Copy, Clone, PartialEq, Eq, Debug)]
     pub enum OperatingSystem {
-        _none = 0,
+        None = 0,
         /// linux
-        linux,
+        Linux,
         /// macos
-        macos,
+        Macos,
         /// windows
-        windows,
+        Windows,
         /// wsl
-        wsl,
+        Wsl,
         /// android
-        android,
+        Android,
         /// freebsd
-        freebsd,
+        Freebsd,
     }
 
     /// Zig: `pub const Architecture = enum(u8) { _none, x64, arm, _ }`
     #[repr(u8)]
     #[derive(Copy, Clone, PartialEq, Eq, Debug)]
     pub enum Architecture {
-        _none = 0,
+        None = 0,
         /// x64
-        x64,
+        X64,
         /// arm
-        arm,
+        Arm,
     }
 
     /// Zig: `pub const Platform = struct { os, arch, version: []const u8 }`

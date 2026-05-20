@@ -1,6 +1,8 @@
 #![warn(unused_must_use)]
 
-use core::ffi::{c_char, c_int, c_short};
+#[cfg(target_os = "macos")]
+use core::ffi::c_short;
+use core::ffi::{c_char, c_int};
 use core::ptr;
 use std::ffi::{CStr, CString};
 
@@ -40,7 +42,9 @@ mod darwin_spawn_np {
 // MOVE_DOWN stub from `bun_errno`). Shim the remainder locally so this file
 // is self-contained; delete in favour of `bun_sys::posix::*` once that module
 // widens.
-use self::posix_compat::{Errno, errno, fd_t, mode_t, pid_t, to_posix_path, unexpected_errno};
+use self::posix_compat::{Errno, errno, fd_t, pid_t, to_posix_path};
+#[cfg(target_os = "macos")]
+use self::posix_compat::{mode_t, unexpected_errno};
 
 #[allow(non_camel_case_types)]
 mod posix_compat {
@@ -59,6 +63,7 @@ mod posix_compat {
     pub type pid_t = libc::pid_t;
     #[cfg(not(unix))]
     pub type pid_t = i32;
+    #[cfg(target_os = "macos")]
     pub use bun_sys::posix::mode_t;
 
     /// `std.posix.E` — errno enum with **unprefixed** variant names. The real
@@ -70,9 +75,13 @@ mod posix_compat {
     #[cfg(unix)]
     impl Errno {
         pub const SUCCESS: Errno = Errno(0);
+        #[cfg(target_os = "macos")]
         pub const NOMEM: Errno = Errno(libc::ENOMEM);
+        #[cfg(target_os = "macos")]
         pub const INVAL: Errno = Errno(libc::EINVAL);
+        #[cfg(target_os = "macos")]
         pub const BADF: Errno = Errno(libc::EBADF);
+        #[cfg(target_os = "macos")]
         pub const NAMETOOLONG: Errno = Errno(libc::ENAMETOOLONG);
         pub const INTR: Errno = Errno(libc::EINTR);
     }
@@ -112,6 +121,7 @@ mod posix_compat {
     }
 
     /// `std.posix.unexpectedErrno` — Zig logs + returns `error.Unexpected`.
+    #[cfg(target_os = "macos")]
     pub fn unexpected_errno(_e: Errno) -> Error {
         err!("Unexpected")
     }
@@ -179,7 +189,7 @@ pub mod bun_spawn {
                 kind: FileActionType::Open,
                 path: path_ptr,
                 flags: i32::try_from(flags).expect("int cast"),
-                mode: i32::try_from(mode).expect("int cast"),
+                mode,
                 fds: [fd_int(fd), 0],
             });
             Ok(())
@@ -767,7 +777,7 @@ pub mod posix_spawn {
         // early return always fires; rustc can't prove that from the runtime
         // bool. macOS falls through to the system-posix_spawn block above.
         #[cfg(all(unix, not(target_os = "macos")))]
-                {
+        {
             unreachable!("posix_spawn_bun handles all unix-non-darwin spawns");
         }
 
@@ -775,7 +785,7 @@ pub mod posix_spawn {
         // Gated not(unix) because `actions`/`attr` here are PosixSpawnActions/PosixSpawnAttr
         // fields; on unix the Actions/Attr aliases resolve to bun_spawn::* which lack `.attr`.
         #[cfg(not(unix))]
-                {
+        {
             let mut pid: pid_t = 0;
             // SAFETY: all pointers valid; argv/envp NULL-terminated
             let rc = unsafe {

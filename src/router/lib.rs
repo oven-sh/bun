@@ -9,8 +9,7 @@ use core::cmp::Ordering;
 use core::ptr::NonNull;
 use std::cell::RefCell;
 
-use bun_collections::{ArrayHashMap, MultiArrayList, StringHashMap};
-use bun_core::Output;
+use bun_collections::{ArrayHashMap, StringHashMap};
 use bun_core::strings;
 use bun_paths::{self, PathBuffer, SEP, SEP_STR};
 use bun_sys::Fd;
@@ -67,10 +66,6 @@ unsafe fn arena_slice(ps: PathString) -> &'static [u8] {
     // artificially-short reborrow.
     unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) }
 }
-
-// `load_routes` takes the real `bun_ast::Log`. Kept as a re-export so
-// out-of-crate callers don't need a direct `bun_logger` import for the type.
-use bun_ast::Log as RouteLoaderLog;
 
 // ──────────────────────────────────────────────────────────────────────────
 // cross-tier decoupling
@@ -388,7 +383,7 @@ impl RouteIndexList {
         self.hash.reserve_exact(cap);
         Ok(())
     }
-    pub fn push(&mut self, item: RouteIndex) {
+    pub(crate) fn push(&mut self, item: RouteIndex) {
         self.route.push(item.route);
         self.name.push(item.name);
         self.match_name.push(item.match_name);
@@ -763,7 +758,7 @@ impl<'a> RouteLoader<'a> {
         }
 
         this.all_routes
-            .sort_unstable_by(|a, b| Sorter::sort_by_name_cmp(a, b));
+            .sort_unstable_by(|a, b| sorter::sort_by_name_cmp(a, b));
 
         let mut route_list = RouteIndexList::default();
         route_list
@@ -837,7 +832,7 @@ impl<'a> RouteLoader<'a> {
         let fs = self.fs;
 
         if let Some(entries) = root_dir_info.get_entries_const() {
-            let mut iter = entries.iter();
+            let iter = entries.iter();
             'outer: for entry_ptr in iter {
                 // PORT NOTE: `iter()` yields raw `*mut Entry` (matching Zig's
                 // `*Entry` map value type, fs.zig:117). Reborrow locally for
@@ -1074,7 +1069,7 @@ impl Route {
         // the name we actually store will often be this one
         ROUTE_BUFS.with_borrow_mut(|bufs| {
             let route_file_buf = &mut bufs.route_file_buf;
-            let mut public_path: &[u8] = 'brk: {
+            let public_path: &[u8] = 'brk: {
                 if base.is_empty() {
                     break 'brk public_dir;
                 }
@@ -1319,7 +1314,7 @@ impl Route {
     }
 }
 
-pub mod Sorter {
+pub mod sorter {
     use super::*;
 
     const fn build_sort_table() -> [u8; 256] {
@@ -1393,7 +1388,7 @@ pub mod Sorter {
 }
 
 // PORT NOTE: Zig nested `Sorter` under `Route`; Rust has no `impl Route { pub use Sorter }`
-// equivalent, so callers use `crate::Sorter` directly.
+// equivalent, so callers use `crate::sorter` directly.
 
 struct RouteBufs {
     route_file_buf: PathBuffer,
@@ -1816,7 +1811,6 @@ pub mod pattern {
 
             let mut i: RoutePathInt = offset;
 
-            let mut tag = Tag::Static;
             let end: RoutePathInt = u16::try_from(input.len() - 1).expect("route path fits in u16");
 
             if offset == end {
@@ -1846,7 +1840,7 @@ pub mod pattern {
                             });
                         }
 
-                        tag = Tag::Dynamic;
+                        let mut tag = Tag::Dynamic;
 
                         let mut param = TinyPtr::default();
 

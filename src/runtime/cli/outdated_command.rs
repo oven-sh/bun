@@ -33,7 +33,7 @@ struct GroupedOutdatedInfo {
     package_id: PackageID,
     dep_id: DependencyID,
     workspace_pkg_id: PackageID,
-        is_catalog: bool,
+    is_catalog: bool,
     grouped_workspace_names: Option<Box<[u8]>>,
 }
 
@@ -41,7 +41,7 @@ struct GroupedOutdatedInfo {
 enum FilterType<'a> {
     All,
     Name(&'a [u8]),
-        Path(&'a [u8]),
+    Path(&'a [u8]),
 }
 
 impl<'a> FilterType<'a> {

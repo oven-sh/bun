@@ -95,16 +95,12 @@ const PROCESS_POLL_ONE_SHOT: bool = !cfg!(any(target_os = "linux", target_os = "
 
 pub use crate::{ProcessExit, ProcessExitHandler, ProcessExitKind};
 
-#[cfg(windows)]
-type SyncProcess = sync::SyncWindowsProcess;
 // `opaque_ffi!` emits an inherent `impl` that doesn't carry inner `#[cfg]`
 // attrs, so gate the whole macro invocation rather than the struct alone.
 #[cfg(not(windows))]
 bun_opaque::opaque_ffi! {
     pub struct SyncProcessPosix;
 }
-#[cfg(not(windows))]
-type SyncProcess = SyncProcessPosix;
 
 #[inline]
 pub(crate) fn call_exit_handler(
@@ -344,7 +340,10 @@ impl Process {
     fn on_wait_pid(&mut self, waitpid_result: &bun_sys::Result<WaitPidResult>, rusage: &Rusage) {
         let pid = self.pid;
         // Mutated only on the macOS ESRCH retry path below.
-                let mut rusage_result = *rusage;
+        #[cfg(target_os = "macos")]
+        let mut rusage_result = *rusage;
+        #[cfg(not(target_os = "macos"))]
+        let rusage_result = *rusage;
 
         let status: Option<Status> = Status::from(pid, waitpid_result).or_else(|| 'brk: {
             match self.rewatch_posix() {
@@ -1409,7 +1408,7 @@ pub mod waiter_thread_posix {
         // (aliased-&mut). A shared `&'static` is fine — see `instance_ref()`.
         let this: &'static WaiterThreadPosix = instance_ref();
 
-                'outer: loop {
+        'outer: loop {
             // `loop_` takes `&self`; coexists soundly with producer `&NewQueue`
             // in `append()` (interior mutability via `active: UnsafeCell`).
             this.js_process.loop_();
@@ -2653,6 +2652,7 @@ mod spawn_process_body {
             }
         }
 
+        #[cfg(windows)]
         fn flatten_owned_chunks(chunks: Vec<Box<[u8]>>) -> Vec<u8> {
             let mut total_size: usize = 0;
             for chunk in &chunks {
@@ -2885,10 +2885,14 @@ mod spawn_process_body {
 
         // Forward signals from parent to the child process.
         // FFI decls live in `bun_spawn_sys::ffi` (leaf -sys crate).
-                use bun_spawn_sys::ffi::{
-            Bun__currentSyncPID, Bun__noOrphans_begin, Bun__noOrphans_onExit,
-            Bun__noOrphans_onFork, Bun__noOrphans_releaseKq, Bun__registerSignalsForForwarding,
+        use bun_spawn_sys::ffi::{
+            Bun__currentSyncPID, Bun__registerSignalsForForwarding,
             Bun__sendPendingSignalIfNecessary, Bun__unregisterSignalsForForwarding,
+        };
+        #[cfg(target_os = "macos")]
+        use bun_spawn_sys::ffi::{
+            Bun__noOrphans_begin, Bun__noOrphans_onExit, Bun__noOrphans_onFork,
+            Bun__noOrphans_releaseKq,
         };
 
         /// RAII guard around `Bun__registerSignalsForForwarding`: registers on
@@ -3105,7 +3109,8 @@ mod spawn_process_body {
             // scan root after spawn.
             // LIFO: `no_orphans_kq` drops (closes) LAST — after killSyncScriptTree()
             // (which scans via m_kq) and the releaseKq() defer below.
-                        let mut no_orphans_kq = AutoCloseFd::invalid();
+            #[cfg(target_os = "macos")]
+            let mut no_orphans_kq = AutoCloseFd::invalid();
             #[cfg(target_os = "macos")]
             if no_orphans {
                 let kq = kqueue();

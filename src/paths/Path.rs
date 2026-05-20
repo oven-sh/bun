@@ -13,7 +13,6 @@ use crate::{
     MAX_PATH_BYTES, PATH_MAX_WIDE, PathBuffer, SEP, SEP_POSIX, SEP_WINDOWS, WPathBuffer,
     resolve_path as path,
 };
-use bun_core::Environment;
 use bun_core::{Fd, WStr, ZStr, strings};
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -137,7 +136,7 @@ pub mod options {
     }
 
     impl From<Error> for bun_core::Error {
-        fn from(e: Error) -> Self {
+        fn from(_e: Error) -> Self {
             bun_core::err!("MaxPathExceeded")
         }
     }
@@ -193,7 +192,7 @@ pub mod options {
     // parameter already names `C` directly, so this helper disappears.
 }
 
-use options::{BufType, CheckLength, Error as PathError, Kind, PathSeparators, Unit};
+use options::{CheckLength, Error as PathError, Kind, PathSeparators};
 
 // Runtime → type-param dispatch for `resolve_path`'s `<P: PlatformT>` fns,
 // keyed on `SEP_OPT`. PERF: SEP_OPT is a const generic so the optimizer
@@ -466,10 +465,6 @@ impl<U: PathUnit, const SEP_OPT: u8> Buf<U, SEP_OPT> {
         }
         self.len += converted_len;
     }
-
-        fn convert_append(&mut self, _characters: &[U::Other]) {
-        // Intentionally empty — Zig body is fully commented out.
-    }
 }
 
 /// Width-generic `bun.strings.basename` (Zig: `src/string/immutable/paths.zig:413`).
@@ -520,6 +515,7 @@ fn dirname_posix<U: PathUnit>(path: &[U]) -> Option<&[U]> {
     Some(&path[..end_index])
 }
 
+#[cfg(windows)]
 #[inline]
 fn dirname_windows<U: PathUnit>(path: &[U]) -> Option<&[U]> {
     if path.is_empty() {

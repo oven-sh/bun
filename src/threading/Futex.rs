@@ -13,10 +13,7 @@
 
 #![warn(unused_must_use)]
 
-use core::ffi::{c_int, c_ulong, c_void};
 use core::sync::atomic::{AtomicU32, Ordering};
-
-use bun_core::time::{NS_PER_S, NS_PER_US};
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum TimeoutError {
@@ -99,6 +96,14 @@ use windows_impl as imp;
 
 /// We can't do @compileError() in the `Impl` switch statement above as its eagerly evaluated.
 /// So instead, we @compileError() on the methods themselves for platforms which don't support futex.
+#[cfg(not(any(
+    windows,
+    target_vendor = "apple",
+    target_os = "linux",
+    target_os = "android",
+    target_os = "freebsd",
+    target_arch = "wasm32",
+)))]
 mod unsupported_impl {
     use super::*;
 
@@ -127,6 +132,7 @@ mod unsupported_impl {
 mod windows_impl {
     use super::*;
     use bun_sys::windows;
+    use core::ffi::c_void;
 
     pub(super) fn wait(
         ptr: &AtomicU32,
@@ -182,7 +188,9 @@ mod windows_impl {
 #[cfg(target_vendor = "apple")]
 mod darwin_impl {
     use super::*;
+    use bun_core::time::NS_PER_US;
     use bun_sys::darwin as c;
+    use core::ffi::c_void;
 
     pub(super) fn wait(
         ptr: &AtomicU32,
@@ -295,6 +303,7 @@ mod darwin_impl {
 #[cfg(any(target_os = "linux", target_os = "android"))]
 mod linux_impl {
     use super::*;
+    use bun_core::time::NS_PER_S;
 
     pub(super) fn wait(
         ptr: &AtomicU32,
@@ -380,7 +389,9 @@ mod linux_impl {
 #[cfg(target_os = "freebsd")]
 mod freebsd_impl {
     use super::*;
+    use bun_core::time::NS_PER_S;
     use bun_sys::E;
+    use core::ffi::{c_int, c_ulong, c_void};
 
     pub fn wait(ptr: &AtomicU32, expect: u32, timeout: Option<u64>) -> Result<(), TimeoutError> {
         let mut tm_size: usize = 0;

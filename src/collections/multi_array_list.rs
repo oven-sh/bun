@@ -416,6 +416,7 @@ impl<T> Reflected<T> {
     };
 
     /// Field index for `NAME`; const-panics if no such field.
+    #[cfg(test)]
     const fn index_of<const NAME: &'static str>() -> usize {
         let fields = fields_of::<T>();
         let mut i = 0;

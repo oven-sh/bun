@@ -1,14 +1,9 @@
 use core::ffi::{c_int, c_void};
 use core::fmt;
 use core::ptr;
-use core::sync::atomic::{AtomicBool, Ordering};
 
-use bun_collections::HiveArray;
-use bun_core::Output;
-use bun_sys::{self as sys, Fd, FdExt};
+use bun_sys::{self as sys, Fd};
 use bun_uws_sys::Loop as UwsLoop;
-
-use bun_threading::work_pool::{self, WorkPool};
 
 pub type Loop = UwsLoop;
 
@@ -411,8 +406,9 @@ impl FilePoll {
         // `file_polls_mut()` is the per-thread set-once `Store` back-pointer
         // (`BackRef`-shaped); `&mut self` has been retired to `this` above so
         // the `&mut Store` it produces is the sole unique borrow into the hive.
-        // `Store::put` itself touches `this` only via raw-pointer ops.
-        vm.file_polls_mut().put(this, vm, was_ever_registered);
+        // SAFETY: `this` is the live hive slot derived from `&mut self` above;
+        // `Store::put` touches it only via raw-pointer ops (see its Safety doc).
+        unsafe { vm.file_polls_mut().put(this, vm, was_ever_registered) };
     }
 
     pub fn deinit_with_vm(&mut self, vm: EventLoopCtx) {
@@ -558,24 +554,6 @@ impl FilePoll {
         let poll = vm.alloc_file_poll(value).as_ptr();
         syslog!(
             "FilePoll.init(0x{:x}, generation_number={}, fd={})",
-            poll as usize,
-            generation_number,
-            fd
-        );
-        poll
-    }
-
-    // PORT NOTE: Zig `initWithOwner` picks `allocator_type` from comptime
-    // `@TypeOf(vm_) == *jsc.VirtualMachine`; here we derive it from the runtime
-    // `EventLoopCtx` tag. The two agree only when `vm` is built from the
-    // concrete VM/MiniEventLoop (the sole Zig call path, via `init`). Kept
-    // non-`pub` so callers can't pass a re-wrapped handle and diverge.
-        fn init_with_owner(vm: EventLoopCtx, fd: Fd, flags: FlagsSet, owner: Owner) -> *mut FilePoll {
-        let value = Self::new_value(vm, fd, flags, owner);
-        let generation_number = value.generation_number;
-        let poll = vm.alloc_file_poll(value).as_ptr();
-        syslog!(
-            "FilePoll.initWithOwner(0x{:x}, generation_number={}, fd={})",
             poll as usize,
             generation_number,
             fd
@@ -1394,12 +1372,14 @@ impl Store {
         self.pending_free_tail = ptr::null_mut();
     }
 
-    pub fn put(&mut self, poll: *mut FilePoll, vm: EventLoopCtx, ever_registered: bool) {
-        // SAFETY: `poll` may point *inside* `self.hive`'s inline `[FilePoll; 128]`
-        // buffer, so accepting it as `&mut FilePoll` while `&mut self` is live
-        // would retag overlapping storage under Stacked Borrows (UB). Mirror Zig's
-        // alias-tolerant `poll: *FilePoll` and touch fields only through raw
-        // pointer ops — same rationale as `process_deferred_frees` above.
+    /// # Safety
+    /// `poll` must be a live, fully-initialized slot in `self.hive`. It may
+    /// point *inside* `self.hive`'s inline `[FilePoll; 128]` buffer, so
+    /// accepting it as `&mut FilePoll` while `&mut self` is live would retag
+    /// overlapping storage under Stacked Borrows (UB). Mirror Zig's
+    /// alias-tolerant `poll: *FilePoll` and touch fields only through raw
+    /// pointer ops — same rationale as `process_deferred_frees` above.
+    pub unsafe fn put(&mut self, poll: *mut FilePoll, vm: EventLoopCtx, ever_registered: bool) {
         if !ever_registered {
             // SAFETY: `poll` is a fully-initialized hive slot; FilePoll has no
             // drop glue, so `put` is a no-op drop + recycle.
@@ -1436,7 +1416,7 @@ impl Store {
         );
         vm.set_after_event_loop_callback(
             Some(callback),
-            std::ptr::from_mut::<Store>(self).cast::<c_void>(),
+            core::ptr::NonNull::new(std::ptr::from_mut::<Store>(self).cast::<c_void>()),
         );
     }
 
@@ -1510,7 +1490,13 @@ impl Pollable {
     target_os = "freebsd"
 ))]
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__internal_dispatch_ready_poll(loop_: *mut Loop, tagged_pointer: *mut c_void) {
+/// # Safety
+/// uWS C callback: `loop_` is the live per-thread `us_loop_t`; `tagged_pointer`
+/// was registered via `Pollable::init` in `register_with_fd`.
+pub unsafe extern "C" fn Bun__internal_dispatch_ready_poll(
+    loop_: *mut Loop,
+    tagged_pointer: *mut c_void,
+) {
     let tag = Pollable::from(tagged_pointer);
 
     if tag.tag() != Pollable::FILE_POLL_TAG {

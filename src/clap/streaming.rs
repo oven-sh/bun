@@ -3,7 +3,6 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use bun_core::Output;
 
 use crate as clap;
-use crate::args;
 use crate::args::ArgIter;
 
 // Disabled because not all CLI arguments are parsed with Clap.
@@ -349,6 +348,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::args;
 
     fn test_no_err(
         params: &[clap::Param<u8>],

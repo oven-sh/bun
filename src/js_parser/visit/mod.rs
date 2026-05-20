@@ -10,12 +10,12 @@ use crate::lexer as js_lexer;
 use crate::p::{LowerUsingDeclarationsContext, P};
 use crate::parser::{
     ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap, PrependTempRefsOpts,
-    Ref, RelocateVarsMode, RuntimeFeatures, ScopeOrder, StmtsKind, StrictModeFeature,
-    StringVoidMap, TempRef, VisitArgsOpts, is_eval_or_arguments,
+    Ref, RelocateVarsMode, ScopeOrder, StmtsKind, StrictModeFeature, StringVoidMap, TempRef,
+    VisitArgsOpts, is_eval_or_arguments,
 };
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast as js_ast;
-use bun_ast::G::{Arg, Decl, Property, PropertyKind};
+use bun_ast::G::{Decl, PropertyKind};
 use bun_ast::OpCode;
 use bun_ast::b::B as BData;
 use bun_ast::flags;
@@ -24,7 +24,7 @@ use bun_ast::scope::{Kind as ScopeKind, Member as ScopeMember};
 use bun_ast::symbol::Kind as SymbolKind;
 use bun_ast::{
     AssignTarget, B, Binding, BindingNodeIndex, E, Expr, ExprData, ExprNodeList, G, LocRef, S,
-    Scope, Stmt, StmtData, StmtNodeIndex, Symbol,
+    Stmt, StmtData, Symbol,
 };
 use bun_collections::VecExt;
 // PORT NOTE: `parser::SideEffects` is a stub enum without the assoc fns; the real

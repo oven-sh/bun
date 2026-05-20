@@ -1,5 +1,3 @@
-use core::fmt;
-
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_alloc::ArenaVecExt as _;
 use bun_ast as js_ast;
@@ -132,13 +130,6 @@ impl<'a> Lexer<'a> {
     #[inline]
     pub fn loc(&self) -> bun_ast::Loc {
         bun_ast::usize2loc(self.start)
-    }
-
-    /// Look ahead at the next n codepoints without advancing the iterator.
-    /// If fewer than n codepoints are available, then return the remainder of the string.
-    #[inline]
-    fn peek(&self, n: usize) -> &[u8] {
-        strings::peek_n_codepoints_wtf8(&self.source.contents, self.current, n)
     }
 
     #[inline(always)]

@@ -3872,7 +3872,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return None;
             }
         }
-                None
     }
 
     // TODO(port): heavy body, depends on parse_*/visit_*/ImportScanner/full E surface
@@ -7770,14 +7769,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.record_usage(r#ref);
 
         res
-    }
-
-    // Zig: `@compileError("not implemented")` — the body is a compile-time error
-    // there, i.e. provably uncalled (Zig would refuse to build if any caller
-    // existed). Port as `unreachable!()` per the @compileError convention used
-    // elsewhere in this file (see `wrap_identifier` arm).
-        fn keep_stmt_symbol_name(&mut self, _loc: bun_ast::Loc, _ref: Ref, _name: &[u8]) -> Stmt {
-        unreachable!("not implemented")
     }
 
     // runtime_identifier_ref / runtime_identifier / call_runtime: moved to ungated impl (round-G).

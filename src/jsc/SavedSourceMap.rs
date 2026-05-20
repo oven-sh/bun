@@ -181,14 +181,14 @@ impl SavedSourceMap {
         };
         let old_value = Value::from(Some(ptr));
         if let Some(prov) = old_value.get::<DevServerSourceProvider>() {
-            if (prov as usize) == (opaque_source_provider as usize) {
+            if core::ptr::eq(prov.cast::<c_void>(), opaque_source_provider) {
                 // there is nothing to unref or deinit
                 map.remove(&key);
             }
         } else if let Some(parsed) = old_value.get::<ParsedSourceMap>() {
             // SAFETY: `parsed` was stored by us and is live while in the table.
             if let Some(prov) = unsafe { (*parsed).underlying_provider }.provider() {
-                if (prov.ptr() as usize) == (opaque_source_provider as usize) {
+                if core::ptr::eq(prov.ptr(), opaque_source_provider) {
                     map.remove(&key);
                     // SAFETY: we held a strong ref while in the table; release it.
                     unsafe { ParsedSourceMap::deref(parsed) };
@@ -217,14 +217,14 @@ impl SavedSourceMap {
         };
         let old_value = Value::from(Some(ptr));
         if let Some(prov) = old_value.get::<SourceProviderMap>() {
-            if (prov as usize) == (opaque_source_provider as usize) {
+            if core::ptr::eq(prov.cast::<c_void>(), opaque_source_provider) {
                 // there is nothing to unref or deinit
                 map.remove(&key);
             }
         } else if let Some(parsed) = old_value.get::<ParsedSourceMap>() {
             // SAFETY: `parsed` was stored by us and is live while in the table.
             if let Some(prov) = unsafe { (*parsed).underlying_provider }.provider() {
-                if (prov.ptr() as usize) == (opaque_source_provider as usize) {
+                if core::ptr::eq(prov.ptr(), opaque_source_provider) {
                     map.remove(&key);
                     // SAFETY: we held a strong ref while in the table; release it.
                     unsafe { ParsedSourceMap::deref(parsed) };

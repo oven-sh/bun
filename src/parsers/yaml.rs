@@ -15,7 +15,7 @@ use core::fmt;
 
 use bun_alloc::AllocError;
 use bun_ast::{self, E, Expr, G};
-use bun_ast::{self as ast, Loc, Log, Source};
+use bun_ast::{self as ast, Loc};
 use bun_collections::{StringHashMap, VecExt};
 use bun_core::{self, StackCheck};
 
@@ -1495,7 +1495,6 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
                 }
 
                 0x2C | 0x5D | 0x7D /* , ] } */ => {
-                    first = false;
                     match parser!().context.get() {
                         // it's valid for ',' ']' '}' to end the scalar
                         // in flow context
@@ -1613,7 +1612,6 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
                     continue;
                 }
                 _ => {
-                    first = false;
                     break 'end (parser!().pos, false);
                 }
             }
@@ -2396,19 +2394,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
     fn remain_starts_with(&self, cs: impl AsRef<[Enc::Unit]>) -> bool {
         self.remain().starts_with(cs.as_ref())
-    }
-
-    fn remain_starts_with_char(&self, ch: Enc::Unit) -> bool {
-        let r = self.remain();
-        !r.is_empty() && r[0] == ch
-    }
-
-    fn remain_starts_with_any(&self, cs: &[Enc::Unit]) -> bool {
-        let r = self.remain();
-        if r.is_empty() {
-            return false;
-        }
-        cs.iter().any(|c| *c == r[0])
     }
 
     // ── parseDirective ──────────────────────────────────────────────────────
@@ -4792,7 +4777,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     }
                 }
                 0x22 /* '"' */ => {
-                    nl = false;
                     self.inc(1);
                     return Ok(Token::scalar(ScalarInit {
                         start,
@@ -5525,14 +5509,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         false
     }
 
-    fn is_any_at(&self, values: &[Enc::Unit], n: usize) -> bool {
-        let pos = self.pos.add(n);
-        if pos.is_less_than(self.input.len()) {
-            return values.contains(&self.input[pos.cast()]);
-        }
-        false
-    }
-
     fn is_any_or_eof_at(&self, values: impl AsRef<[Enc::Unit]>, n: usize) -> bool {
         let pos = self.pos.add(n);
         if pos.is_less_than(self.input.len()) {
@@ -5544,10 +5520,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
     fn is_eof(&self) -> bool {
         !self.pos.is_less_than(self.input.len())
-    }
-
-    fn is_eof_at(&self, n: usize) -> bool {
-        !self.pos.add(n).is_less_than(self.input.len())
     }
 
     fn is_b_char(&self) -> bool {
@@ -5562,15 +5534,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let pos = self.pos;
         if pos.is_less_than(self.input.len()) {
             return chars::is_b_char::<Enc>(self.input[pos.cast()]);
-        }
-        true
-    }
-
-    fn is_s_white_or_b_char_or_eof(&self) -> bool {
-        let pos = self.pos;
-        if pos.is_less_than(self.input.len()) {
-            let c = self.input[pos.cast()];
-            return chars::is_s_white::<Enc>(c) || chars::is_b_char::<Enc>(c);
         }
         true
     }
@@ -5605,14 +5568,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             self.inc(1);
         }
         Ok(())
-    }
-
-    fn is_ns_hex_digit(&self) -> bool {
-        let pos = self.pos;
-        if pos.is_less_than(self.input.len()) {
-            return chars::is_ns_hex_digit::<Enc>(self.input[pos.cast()]);
-        }
-        false
     }
 
     fn is_ns_dec_digit(&self) -> bool {
@@ -5661,39 +5616,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         }
     }
 
-    fn try_skip_ns_uri_chars(&mut self) -> Result<(), ParseError> {
-        if !self.is_ns_uri_char() {
-            return Err(ParseError::UnexpectedCharacter);
-        }
-        self.skip_ns_uri_chars();
-        Ok(())
-    }
-
     fn string_range(&self) -> StringRangeStart {
         StringRangeStart { off: self.pos }
-    }
-
-    fn string_builder(&mut self) -> StringBuilder<'i, Enc> {
-        StringBuilder {
-            parser: std::ptr::from_mut::<Parser<'i, Enc>>(self),
-            str: YamlString::Range(StringRange {
-                off: Pos::ZERO,
-                end: Pos::ZERO,
-            }),
-        }
-    }
-
-    // SAFETY: caller guarantees the returned builder does not outlive `*self`
-    // and that no other &mut borrow of `*self` overlaps with builder method
-    // calls that touch `whitespace_buf`/`input`. Used by scan_plain_scalar.
-    unsafe fn string_builder_raw(&mut self) -> StringBuilder<'i, Enc> {
-        StringBuilder {
-            parser: std::ptr::from_mut::<Parser<'i, Enc>>(self),
-            str: YamlString::Range(StringRange {
-                off: Pos::ZERO,
-                end: Pos::ZERO,
-            }),
-        }
     }
 }
 

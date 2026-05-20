@@ -3,8 +3,7 @@
 
 #![warn(unused_must_use)]
 #![warn(unreachable_pub)]
-use core::ffi::CStr;
-use core::ffi::{c_char, c_int, c_uint, c_void};
+use core::ffi::{c_int, c_void};
 use core::ptr;
 use std::cell::Cell;
 

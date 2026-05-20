@@ -194,7 +194,7 @@ macro_rules! parse_params {
 }
 
 /// The names a `Param` can have.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct Names {
     /// '-' prefix
     pub short: Option<u8>,
@@ -204,16 +204,6 @@ pub struct Names {
 
     /// Additional '--' prefixed aliases (e.g., --grep as alias for --test-name-pattern)
     pub long_aliases: &'static [&'static [u8]],
-}
-
-impl Default for Names {
-    fn default() -> Self {
-        Self {
-            short: None,
-            long: None,
-            long_aliases: &[],
-        }
-    }
 }
 
 impl Names {
@@ -442,20 +432,12 @@ impl Default for Help {
 }
 
 /// Options that can be set to customize the behavior of parsing.
+#[derive(Default)]
 pub struct ParseOptions<'a> {
     // PORT NOTE: `mem.Allocator param` field deleted — non-AST crate uses
     // the global mimalloc.
     pub diagnostic: Option<&'a mut Diagnostic>,
     pub stop_after_positional_at: usize,
-}
-
-impl<'a> Default for ParseOptions<'a> {
-    fn default() -> Self {
-        Self {
-            diagnostic: None,
-            stop_after_positional_at: 0,
-        }
-    }
 }
 
 // Help/usage/error rendering — none of this is on the cold-start hot chain

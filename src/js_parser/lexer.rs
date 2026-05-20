@@ -472,17 +472,6 @@ impl<
 }
 
 lexer_impl_header! {
-        const JSON: JSONOptions = JSONOptions {
-        is_json: IS_JSON,
-        allow_comments: ALLOW_COMMENTS,
-        allow_trailing_commas: ALLOW_TRAILING_COMMAS,
-        ignore_leading_escape_sequences: IGNORE_LEADING_ESCAPE_SEQUENCES,
-        ignore_trailing_escape_sequences: IGNORE_TRAILING_ESCAPE_SEQUENCES,
-        json_warn_duplicate_keys: JSON_WARN_DUPLICATE_KEYS,
-        was_originally_macro: WAS_ORIGINALLY_MACRO,
-        guess_indentation: GUESS_INDENTATION,
-    };
-
     /// Reborrow the shared `Log`. The `&self` receiver lets call sites pass
     /// other `self.*` fields as arguments without a borrow-checker conflict;
     /// callers must not hold two results of `log()` (or a result alongside the
@@ -800,7 +789,7 @@ lexer_impl_header! {
                             c3 = iter.c;
                             width3 = iter.width;
                             match hex_digit_value_u32(c3 as u32) {
-                                Some(d) => value = value * 16 | d as CodePoint,
+                                Some(d) => value = (value * 16) | d as CodePoint,
                                 None => {
                                     self.end = (start + iter.i as usize)
                                         .saturating_sub(width3 as usize);
@@ -814,7 +803,7 @@ lexer_impl_header! {
                             c3 = iter.c;
                             width3 = iter.width;
                             match hex_digit_value_u32(c3 as u32) {
-                                Some(d) => value = value * 16 | d as CodePoint,
+                                Some(d) => value = (value * 16) | d as CodePoint,
                                 None => {
                                     self.end = (start + iter.i as usize)
                                         .saturating_sub(width3 as usize);
@@ -864,7 +853,7 @@ lexer_impl_header! {
                                         break 'variable_length;
                                     }
                                     match hex_digit_value_u32(c3 as u32) {
-                                        Some(d) => value = value * 16 | d as i64,
+                                        Some(d) => value = (value * 16) | d as i64,
                                         None => {
                                             self.end = (start + iter.i as usize)
                                                 .saturating_sub(width3 as usize);
@@ -907,7 +896,7 @@ lexer_impl_header! {
                                 let mut j: usize = 0;
                                 while j < 4 {
                                     match hex_digit_value_u32(c3 as u32) {
-                                        Some(d) => value = value * 16 | d as i64,
+                                        Some(d) => value = (value * 16) | d as i64,
                                         None => {
                                             self.end = (start + iter.i as usize)
                                                 .saturating_sub(width3 as usize);

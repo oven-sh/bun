@@ -1091,8 +1091,8 @@ impl<'a> SecurityScanSubprocess<'a> {
         // `Argv` interleaves discriminant words and EFAULTs in the kernel.
         let mut argv: [*const core::ffi::c_char; 5] = [
             argv0_buf.as_ptr().cast(),
-            b"--no-install\0".as_ptr().cast(),
-            b"-e\0".as_ptr().cast(),
+            c"--no-install".as_ptr(),
+            c"-e".as_ptr(),
             argv3_buf.as_ptr().cast(),
             core::ptr::null(),
         ];

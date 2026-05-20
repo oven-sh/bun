@@ -1578,17 +1578,10 @@ impl Drop for AutoBitSet {
 // TODO(port): in Rust the managed/unmanaged split disappears (global
 // allocator). This wrapper is kept for diff parity; Phase B may collapse it
 // into `DynamicBitSetUnmanaged` and re-export under both names.
+#[derive(Default)]
 pub struct DynamicBitSet {
     /// The number of valid items in this bit set
     pub unmanaged: DynamicBitSetUnmanaged,
-}
-
-impl Default for DynamicBitSet {
-    fn default() -> Self {
-        Self {
-            unmanaged: DynamicBitSetUnmanaged::default(),
-        }
-    }
 }
 
 impl DynamicBitSet {

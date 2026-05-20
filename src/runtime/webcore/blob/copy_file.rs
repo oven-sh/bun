@@ -339,7 +339,7 @@ impl<'a> CopyFile<'a> {
         // TODO(refactor): defer captures &mut to disjoint field via raw ptr;
         // reshape to set read_len at each return site instead.
 
-                let mut has_unset_append = false;
+        let mut has_unset_append = false;
 
         // If they can't use copy_file_range, they probably also can't
         // use sendfile() or splice()

@@ -609,14 +609,14 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             let mut argv: [*const c_char; 4] = if (*this).shell_bin.is_some() && !cfg!(windows) {
                 [
                     (*this).shell_bin.unwrap().as_ptr().cast::<c_char>(),
-                    b"-c\0".as_ptr().cast::<c_char>(),
+                    c"-c".as_ptr(),
                     combined_script.as_ptr().cast::<c_char>(),
                     core::ptr::null(),
                 ]
             } else {
                 [
                     bun_core::self_exe_path()?.as_ptr().cast::<c_char>(),
-                    b"exec\0".as_ptr().cast::<c_char>(),
+                    c"exec".as_ptr(),
                     combined_script.as_ptr().cast::<c_char>(),
                     core::ptr::null(),
                 ]
@@ -640,7 +640,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             // `spawned.stdout/stderr` after spawn — see the `#[cfg(windows)]`
             // block below and `filter_run.rs` for the canonical pattern.
             // `mut` only for the Windows error-path `.deinit()` below.
-                        let mut spawn_options = SpawnOptions {
+            let mut spawn_options = SpawnOptions {
                 stdin: if (*this).foreground {
                     bun_spawn::Stdio::Inherit
                 } else {

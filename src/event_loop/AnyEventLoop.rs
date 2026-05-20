@@ -552,9 +552,14 @@ impl EventLoopHandle {
             // from `file_polls_` — safe to hold both across `Store::put`.
             EventLoopHandle::Mini(mini) => {
                 let ctx = MiniEventLoop::as_event_loop_ctx(mini.as_ptr());
-                mini_mut(mini)
-                    .file_polls()
-                    .put(poll, ctx, was_ever_registered);
+                // SAFETY: `poll` is a live hive slot whose `&mut` was retired
+                // to a raw pointer above; `Store::put` touches it only via
+                // raw-pointer ops (see its Safety doc).
+                unsafe {
+                    mini_mut(mini)
+                        .file_polls()
+                        .put(poll, ctx, was_ever_registered);
+                }
             }
         }
     }

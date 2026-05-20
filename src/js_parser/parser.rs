@@ -5,7 +5,6 @@
 
 use bun_ast::ImportRecord;
 use bun_collections::{ArrayHashMap, HashMap, StringArrayHashMap, StringHashMap};
-use bun_core::Output;
 // Zig `std.hash.Wyhash` (final4 variant) — used by `hash_for_runtime_transpiler`
 // (runtime.zig:272) and `ReactRefresh.HookContext` (parser.zig:1140). NOT
 // interchangeable with `bun_wyhash::Wyhash11`.
@@ -1411,11 +1410,6 @@ pub enum StmtsKind {
     FnBody,
 }
 
-#[cold]
-fn notimpl() -> ! {
-    Output::panic(format_args!("Not implemented yet!!"));
-}
-
 #[derive(Default)]
 pub struct ExprBindingTuple {
     pub expr: Option<ExprNodeIndex>,
@@ -1964,7 +1958,6 @@ pub mod prefill {
     use super::*;
 
     pub mod hot_module_reloading {
-                use super::*;
         // TODO(port): mutable static Expr arrays — need `static mut` or `LazyLock`.
         // pub static DEBUG_ENABLED_ARGS: [Expr; 1] = [...];
         // pub static DEBUG_DISABLED: [Expr; 1] = [...];
@@ -2017,12 +2010,6 @@ pub mod prefill {
         pub const THIS: js_ast::ExprData = js_ast::ExprData::EThis(E::This {});
         pub const ZERO: js_ast::ExprData = js_ast::ExprData::ENumber(value::ZERO);
     }
-}
-
-#[derive(Default)]
-struct ReactJSX {
-    // TODO(port): ArrayHashMap with bun.ArrayIdentityContext (identity hash on Ref)
-    hoisted_elements: ArrayHashMap<Ref, G::Decl>,
 }
 
 pub struct ImportOrRequireScanResults {

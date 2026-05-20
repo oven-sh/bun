@@ -167,7 +167,7 @@ impl Method {
         {
             return Self::windows()[self];
         }
-                false
+        false
     }
 }
 
@@ -298,7 +298,7 @@ struct InstallDirState {
 }
 
 impl InstallDirState {
-        #[inline]
+    #[inline]
     fn walker(&mut self) -> &mut Walker {
         // SAFETY: `init_install_dir` always populates `walker` before any backend calls `copy()`.
         self.walker.as_mut().unwrap()
@@ -1805,7 +1805,7 @@ impl<'a> PackageInstall<'a> {
         }
 
         let mut buf2 = PathBuffer::uninit();
-                let mut to_copy_buf2_offset: usize = 0;
+        let mut to_copy_buf2_offset: usize = 0;
         #[cfg(unix)]
         {
             let cache_dir_path = sys::get_fd_path(state.cached_package_dir.fd(), &mut buf2)?;

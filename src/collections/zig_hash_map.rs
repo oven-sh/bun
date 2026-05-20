@@ -12,7 +12,7 @@
 //! Spec: vendor/zig/lib/std/hash_map.zig
 
 use core::borrow::Borrow;
-use core::hash::{Hash, Hasher};
+use core::hash::Hash;
 use core::marker::PhantomData;
 
 use crate::identity_context::{IdentityContext, IdentityHash};

@@ -134,7 +134,10 @@ bun_dispatch::link_interface! {
         fn ref_concurrently();
         fn unref_concurrently();
         fn after_event_loop_callback() -> Option<OpaqueCallback>;
-        fn set_after_event_loop_callback(cb: Option<OpaqueCallback>, ctx: *mut core::ffi::c_void);
+        fn set_after_event_loop_callback(
+            cb: Option<OpaqueCallback>,
+            ctx: Option<core::ptr::NonNull<core::ffi::c_void>>,
+        );
         fn pipe_read_buffer() -> *mut [u8];
     }
 }
@@ -145,7 +148,7 @@ impl EventLoopCtx {
     /// SAFETY: caller must not hold another live `&mut` to the same loop
     /// across this borrow (resolver-style accessor; the loop is per-thread).
     #[inline]
-    pub unsafe fn platform_event_loop(&self) -> &mut bun_uws_sys::Loop {
+    pub unsafe fn platform_event_loop(&self) -> &'static mut bun_uws_sys::Loop {
         // Route through the single nonnull-asref accessor below; the `unsafe`
         // on this fn's signature is the caller-side aliasing contract — the
         // body itself needs no extra `unsafe`.
@@ -153,7 +156,7 @@ impl EventLoopCtx {
     }
     /// SAFETY: same aliasing hazard as [`platform_event_loop`].
     #[inline]
-    pub unsafe fn file_polls(&self) -> &mut Store {
+    pub unsafe fn file_polls(&self) -> &'static mut Store {
         self.file_polls_mut()
     }
 
@@ -175,7 +178,7 @@ impl EventLoopCtx {
     // `posix_event_loop`/`windows_event_loop` route their N identical
     // `ctx.platform_event_loop()` derefs through this single accessor.
     #[inline]
-    pub(crate) fn loop_mut(&self) -> &mut bun_uws_sys::Loop {
+    pub(crate) fn loop_mut(&self) -> &'static mut bun_uws_sys::Loop {
         // SAFETY: per-thread set-once pointer (the uws loop singleton); the
         // event loop is single-threaded so no concurrent `&mut` exists, and
         // every crate-internal caller is a leaf op that drops the borrow
@@ -190,7 +193,7 @@ impl EventLoopCtx {
     /// (`deinit_possibly_defer`) or holds none (`init_with_owner`,
     /// `alloc_file_poll`), so no two `&mut Store` ever coexist.
     #[inline]
-    pub(crate) fn file_polls_mut(&self) -> &mut Store {
+    pub(crate) fn file_polls_mut(&self) -> &'static mut Store {
         // SAFETY: per-thread set-once pointer (`BackRef`-shaped); the event
         // loop is single-threaded so no concurrent `&mut Store` exists, and
         // every crate-internal caller upholds the leaf-op / decayed-slot
@@ -318,7 +321,6 @@ pub use write::{
     AsFmt, BufWriter, DiscardingWriter, FixedBufferStream, FmtAdapter, IntBe, IntLe, Result, Write,
 };
 
-#[allow(non_snake_case)]
 pub use max_buf as MaxBuf;
 pub use pipes::{FileType, ReadState};
 
@@ -505,14 +507,12 @@ pub use open_for_writing_mod::{open_for_writing, open_for_writing_impl};
 
 // ════════════════════════════════════════════════════════════════════════════
 
-use core::ffi::{c_int, c_void};
-use core::mem::offset_of;
-use core::ptr::{self, NonNull};
-use core::sync::atomic::{AtomicPtr, Ordering};
+use core::ffi::c_int;
+use core::sync::atomic::Ordering;
 
 pub use crate::closer::Closer;
 pub use crate::waker::Waker;
-use bun_sys::{self as sys, E, Fd, FdExt};
+use bun_sys::{self as sys, E, Fd};
 
 // Zig scope name is `.loop` (io.zig:11). `loop` is a Rust keyword, so the static is
 // named `io_loop` but the runtime tagname is `"loop"` so `BUN_DEBUG_loop=1` works.
@@ -548,6 +548,7 @@ mod windows_ffi {
 mod safe_c {
     use core::ffi::c_int;
     unsafe extern "C" {
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         pub(super) safe fn kqueue() -> c_int;
         pub(super) safe fn epoll_create1(flags: c_int) -> c_int;
         pub(super) safe fn eventfd(initval: libc::c_uint, flags: c_int) -> c_int;
@@ -951,7 +952,9 @@ impl IoRequestLoop {
                         continue;
                     }
                 }
-                Poll::on_update_epoll(pollable.poll(), pollable.tag(), *event);
+                // SAFETY: `pollable.poll()` is the `io_poll` field pointer this
+                // loop registered via `register_for_epoll`; the owner is live.
+                unsafe { Poll::on_update_epoll(pollable.poll(), pollable.tag(), *event) };
             }
         }
     }
@@ -1372,8 +1375,6 @@ impl Pollable {
 
 #[cfg(all(target_os = "macos", debug_assertions))]
 type GenerationNumberInt = u64;
-#[cfg(not(all(target_os = "macos", debug_assertions)))]
-type GenerationNumberInt = (); // Zig: u0
 
 // PORTING.md §Global mutable state: counter → Atomic. Only the IO thread
 // touches this, so `Relaxed` matches the Zig non-atomic `+= 1`.
@@ -1667,7 +1668,7 @@ impl Poll {
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub fn on_update_epoll(poll: *mut Poll, tag: PollableTag, event: linux::epoll_event) {
+    pub unsafe fn on_update_epoll(poll: *mut Poll, tag: PollableTag, event: linux::epoll_event) {
         // ignore empty tags. This case should be unreachable in practice
         if tag == PollableTag::Empty {
             return;

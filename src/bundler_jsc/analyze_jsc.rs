@@ -404,12 +404,12 @@ impl JSModuleRecord {
             )
         }
     }
-        #[inline]
+    #[inline]
     pub fn declared_variables(this: *mut JSModuleRecord) -> *mut VariableEnvironment {
         // SAFETY: `this` is a valid JSModuleRecord*.
         unsafe { JSC_JSModuleRecord__declaredVariables(this) }
     }
-        #[inline]
+    #[inline]
     pub fn lexical_variables(this: *mut JSModuleRecord) -> *mut VariableEnvironment {
         // SAFETY: `this` is a valid JSModuleRecord*.
         unsafe { JSC_JSModuleRecord__lexicalVariables(this) }

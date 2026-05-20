@@ -1195,7 +1195,7 @@ impl Thread {
                     counter_buf[len] = 0;
                     bun_core::ZStr::from_raw(counter_buf.as_ptr(), len)
                 } else {
-                    bun_core::ZStr::from_raw(b"Bun Pool\0".as_ptr(), 8)
+                    bun_core::ZStr::from_raw(c"Bun Pool".as_ptr().cast(), 8)
                 }
             };
             // Pools whose tasks never consult `StackCheck` (install, HTTP) opt

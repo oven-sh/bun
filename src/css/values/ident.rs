@@ -342,7 +342,7 @@ impl IdentOrRef {
 
     pub fn from_ref(r: Ref, debug_ident: DebugIdent<'_>) -> Self {
         let len: u64 = r.to_raw_bits();
-                let mut this = Self::pack(0, true, len);
+        let mut this = Self::pack(0, true, len);
 
         #[cfg(debug_assertions)]
         {

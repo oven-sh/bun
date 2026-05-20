@@ -681,7 +681,7 @@ impl TranspilerJob {
         let mut ast_memory_store = ASTMemoryAllocator::new(&arena);
         let _ast_scope = ast_memory_store.enter();
 
-        let path = self.path.clone();
+        let path = self.path;
         let specifier = self.path.text;
         let loader = self.loader;
         let this_tag = self.resolved_source.get().tag;
@@ -854,7 +854,7 @@ impl TranspilerJob {
 
         let mut parse_options = ParseOptions {
             arena: &arena,
-            path: path.clone(),
+            path,
             loader,
             dirname_fd: Fd::INVALID,
             file_descriptor: fd,

@@ -151,7 +151,8 @@ impl FilePoll {
         // `file_polls_mut()` is the per-thread set-once `Store` back-pointer
         // (`BackRef`-shaped); `&mut self` has been retired to `this` above so
         // the `&mut Store` it produces is the sole unique borrow into the hive.
-        vm.file_polls_mut().put(this, vm, was_ever_registered);
+        // SAFETY: `this` is the live hive slot derived from `&mut self` above.
+        unsafe { vm.file_polls_mut().put(this, vm, was_ever_registered) };
     }
 
     pub fn is_readable(&mut self) -> bool {
@@ -314,7 +315,9 @@ impl Store {
         self.pending_free_tail = ptr::null_mut();
     }
 
-    pub fn put(&mut self, poll: *mut FilePoll, vm: EventLoopCtx, ever_registered: bool) {
+    /// # Safety
+    /// `poll` must be a live, fully-initialized slot in `self.hive`.
+    pub unsafe fn put(&mut self, poll: *mut FilePoll, vm: EventLoopCtx, ever_registered: bool) {
         if !ever_registered {
             // SAFETY: `poll` is a fully-initialized hive slot; FilePoll has no
             // drop glue, so `put` is a no-op drop + recycle.
@@ -350,7 +353,10 @@ impl Store {
             vm.after_event_loop_callback().is_none()
                 || vm.after_event_loop_callback().map(|f| f as usize) == Some(callback as usize)
         );
-        vm.set_after_event_loop_callback(Some(callback), self as *mut Store as *mut c_void);
+        vm.set_after_event_loop_callback(
+            Some(callback),
+            core::ptr::NonNull::new(core::ptr::from_mut::<Store>(self).cast::<c_void>()),
+        );
     }
 
     // Safe fn item: module-private thunk, only coerced to the C-ABI
@@ -401,12 +407,12 @@ impl Waker {
     }
 
     // TODO(port): Zig used @compileError here; on Windows these must never be linked.
-        pub fn get_fd(&self) -> Fd {
+    pub fn get_fd(&self) -> Fd {
         unreachable!("Waker.getFd is unsupported on Windows");
     }
 
     // TODO(port): Zig used @compileError here; on Windows these must never be linked.
-        pub fn init_with_file_descriptor(_fd: Fd) -> Waker {
+    pub fn init_with_file_descriptor(_fd: Fd) -> Waker {
         unreachable!("Waker.initWithFileDescriptor is unsupported on Windows");
     }
 

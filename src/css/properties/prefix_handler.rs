@@ -22,7 +22,7 @@ pub struct FallbackHandler {
 
 impl FallbackHandler {
     // TODO(port): Zig computed this via @typeInfo(FallbackHandler).Struct.fields.len.
-        const FIELD_COUNT: usize = 2;
+    const FIELD_COUNT: usize = 2;
 
     pub fn handle_property(
         &mut self,

@@ -12,7 +12,6 @@
 //! We also make `IOWriter` reference counted (via `Arc` in the Rust port),
 //! this simplifies management of the file descriptor.
 
-
 use bun_collections::{ByteVecExt, VecExt};
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
@@ -500,7 +499,7 @@ impl IOWriter {
                 }
                 return WriteOutcome::Suspended;
             }
-                        return WriteOutcome::Suspended;
+            return WriteOutcome::Suspended;
         }
 
         #[cfg(windows)]
@@ -608,7 +607,7 @@ impl IOWriter {
             // the `'self` lifetime the signature wants — no raw-parts needed.
             return s.winbuf.as_slice();
         }
-                result
+        result
     }
 
     fn get_buffer_impl(&self) -> &[u8] {

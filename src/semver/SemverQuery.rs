@@ -755,7 +755,6 @@ impl Token {
     }
 }
 
-// prev_token is dead in upstream Zig too
 pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
     let mut i: usize = 0;
     let mut list = Group {
@@ -766,7 +765,6 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
     };
 
     let mut token = Token::default();
-    let mut prev_token = Token::default();
 
     let mut count: u32 = 0;
     let mut skip_round;
@@ -1013,7 +1011,6 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                 if token.tag == TokenTag::None {
                     is_or = false;
                     token.wildcard = Wildcard::None;
-                    prev_token.tag = TokenTag::None;
                     continue;
                 }
                 list.and_range(&token.to_range(&parse_result.version))?;
@@ -1026,7 +1023,6 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
             is_or = false;
             count += 1;
             token.wildcard = Wildcard::None;
-            prev_token.tag = token.tag;
         }
     }
 

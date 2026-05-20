@@ -527,7 +527,8 @@ impl fmt::Display for StatusCodeFormatter {
 
 #[derive(Debug, strum::IntoStaticStr)]
 pub enum ParseResponseError {
-    Malformed_HTTP_Response,
+    #[strum(serialize = "Malformed_HTTP_Response")]
+    MalformedHttpResponse,
     ShortRead,
 }
 bun_core::impl_tag_error!(ParseResponseError);
@@ -633,7 +634,7 @@ impl<'a> Response<'a> {
                 // `concat!(...)` into `pretty_errorln!` whose matcher is `$fmt:literal`).
                 // Use the function-form `output::debug` until the macro is fixed.
                 Output::debug(format_args!("Malformed HTTP response:\n{}", BStr::new(buf)));
-                Err(ParseResponseError::Malformed_HTTP_Response)
+                Err(ParseResponseError::MalformedHttpResponse)
             }
             -2 => {
                 *offset += buf.len();

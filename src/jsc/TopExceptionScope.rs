@@ -389,7 +389,7 @@ macro_rules! top_scope {
     ($scope:ident, $global:expr) => {
         let mut __bun_top_scope_storage =
             ::core::mem::MaybeUninit::<$crate::TopExceptionScope>::uninit();
-                let mut $scope = $crate::TopExceptionScope::init_guard_at(
+        let mut $scope = $crate::TopExceptionScope::init_guard_at(
             &mut __bun_top_scope_storage,
             $global,
             $crate::src!(),
@@ -414,7 +414,7 @@ macro_rules! validation_scope {
     ($scope:ident, $global:expr) => {
         let mut __bun_validation_scope_storage =
             ::core::mem::MaybeUninit::<$crate::ExceptionValidationScope>::uninit();
-                let mut $scope = $crate::ExceptionValidationScope::init_guard_at(
+        let mut $scope = $crate::ExceptionValidationScope::init_guard_at(
             &mut __bun_validation_scope_storage,
             $global,
             $crate::src!(),

@@ -1,7 +1,7 @@
 use core::ffi::c_void;
 use core::mem;
 
-use bun_collections::{ByteVecExt, VecExt};
+use bun_collections::ByteVecExt;
 use bun_core::OOM;
 use bun_ptr::LaunderedSelf; // brings `Self::r` into scope for all 4 writers
 #[cfg(windows)]
@@ -543,9 +543,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     }
 
     pub fn set_parent(&mut self, parent: *mut Parent) {
-        // SAFETY: caller passes the owning `Parent` (BACKREF); the writer is an
-        // intrusive field of `*parent`, so the parent strictly outlives it.
-        self.parent = unsafe { bun_ptr::ParentRef::from_nullable_mut(parent) };
+        self.parent = core::ptr::NonNull::new(parent).map(bun_ptr::ParentRef::from);
         // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
         let owner = std::ptr::from_mut(self).cast::<c_void>();
         self.handle

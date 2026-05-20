@@ -1,11 +1,7 @@
 use core::cell::UnsafeCell;
 
 use crate::fs as Fs;
-use crate::{
-    MAX_PATH_BYTES, PathBuffer, SEP, SEP_POSIX, SEP_WINDOWS, disk_designator_windows,
-    is_absolute_posix, is_absolute_windows, is_absolute_windows_t,
-};
-use bun_alloc::{is_slice_in_buffer, is_slice_in_buffer_t};
+use crate::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_POSIX, SEP_WINDOWS};
 use bun_core::{WStr, ZStr, strings};
 
 // PORT NOTE: Zig `threadlocal var` buffers. Stored in `UnsafeCell` (not `RefCell`)
@@ -71,19 +67,9 @@ type IsSeparatorFunc = fn(char: u8) -> bool;
 type LastSeparatorFunction = fn(slice: &[u8]) -> Option<usize>;
 
 #[inline(always)]
-fn is_dotdot(slice: &[u8]) -> bool {
-    slice.len() >= 2 && u16::from_le_bytes([slice[0], slice[1]]) == u16::from_le_bytes(*b"..")
-}
-
-#[inline(always)]
 fn is_dotdot_with_type<T: PathChar>(slice: &[T]) -> bool {
     // TODO(port): specialization for T==u8 used @bitCast; generic path checks bytewise
     slice.len() >= 2 && slice[0] == T::from_u8(b'.') && slice[1] == T::from_u8(b'.')
-}
-
-#[inline(always)]
-fn is_dotdot_slash(slice: &[u8]) -> bool {
-    slice.starts_with(b"../")
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -120,7 +106,6 @@ pub fn get_if_exists_longest_common_path_generic<'a, P: PlatformT>(
     input: &[&'a [u8]],
 ) -> Option<&'a [u8]> {
     // TODO(port): return lifetime — borrows from `input` strings; caller must ensure outlives
-    let separator = P::P.separator();
     let is_path_separator = P::P.get_separator_func();
 
     let nql_at_index_fn: fn(usize, usize, &[&[u8]]) -> bool = match P::P {
@@ -240,7 +225,6 @@ fn nql_at_index_case_insensitive_dyn(string_count: usize, index: usize, input: &
 // or as an extra step at the end?
 // only boether to check if this function appears in benchmarking
 pub fn longest_common_path_generic<'a, P: PlatformT>(input: &[&'a [u8]]) -> &'a [u8] {
-    let separator = P::P.separator();
     let is_path_separator = P::P.get_separator_func();
 
     let nql_at_index_fn: fn(usize, usize, &[&[u8]]) -> bool = match P::P {
@@ -1404,7 +1388,9 @@ pub fn normalize_string<const ALLOW_ABOVE_ROOT: bool, P: PlatformT>(str: &[u8]) 
     PARSER_BUFFER.with(|b| normalize_string_buf::<ALLOW_ABOVE_ROOT, P, false>(str, tl_buf_mut(b)))
 }
 
-pub fn normalize_string_z<const ALLOW_ABOVE_ROOT: bool, P: PlatformT>(str: &[u8]) -> &mut ZStr {
+pub fn normalize_string_z<const ALLOW_ABOVE_ROOT: bool, P: PlatformT>(
+    str: &[u8],
+) -> &'static mut ZStr {
     PARSER_BUFFER.with(|b| {
         let buf = tl_buf_mut(b);
         let normalized = normalize_string_buf::<ALLOW_ABOVE_ROOT, P, false>(str, buf);
@@ -1881,7 +1867,6 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
         return &buf[0..1];
     }
 
-    let mut out: usize = 0;
     let mut cwd = if cfg!(windows) && _cwd.len() >= 3 && _cwd[1] == b':' {
         &_cwd[2..]
     } else {
@@ -1909,7 +1894,7 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
     let temp_buf = scratch.buf();
 
     temp_buf[..cwd.len()].copy_from_slice(cwd);
-    out = cwd.len();
+    let mut out: usize = cwd.len();
 
     for &_part in parts {
         if _part.is_empty() {
@@ -2382,6 +2367,7 @@ pub fn next_dirname(path_: &[u8]) -> Option<&[u8]> {
 /// ```
 ///
 /// This API does nothing on Linux (it has a size of zero)
+#[derive(Default)]
 pub struct PosixToWinNormalizer {
     #[cfg(windows)]
     _raw_bytes: PathBuffer,
@@ -2393,21 +2379,6 @@ pub struct PosixToWinNormalizer {
 type PosixToWinBuf = PathBuffer;
 #[cfg(not(windows))]
 type PosixToWinBuf = ();
-
-impl Default for PosixToWinNormalizer {
-    fn default() -> Self {
-        #[cfg(windows)]
-        {
-            Self {
-                _raw_bytes: PathBuffer::uninit(),
-            }
-        }
-        #[cfg(not(windows))]
-        {
-            Self { _raw_bytes: () }
-        }
-    }
-}
 
 impl PosixToWinNormalizer {
     // methods on PosixToWinNormalizer, to be minimal yet stack allocate the PathBuffer

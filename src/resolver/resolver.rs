@@ -5665,11 +5665,6 @@ impl<'a> Resolver<'a> {
         // `load_extension` / `dirname_store.append_slice` don't invalidate `rfs`
         // under Stacked Borrows. We re-borrow `&mut *rfs` at each use site.
         let rfs: *mut Fs::file_system::RealFS = self.rfs_ptr();
-                macro_rules! rfs {
-            () => {
-                unsafe { &mut *rfs }
-            };
-        }
 
         if let Some(debug) = self.debug_logs.as_mut() {
             debug.add_note_fmt(format_args!(

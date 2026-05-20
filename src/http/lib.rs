@@ -120,7 +120,7 @@ pub use header_value_iterator::HeaderValueIterator;
 pub use init_error::InitError;
 
 /// Zig: `pub const extremely_verbose = false;` — compile-time switch.
-pub const extremely_verbose: bool = false;
+pub const EXTREMELY_VERBOSE: bool = false;
 
 /// Cloned response metadata (headers + url + status). Ownership transfers to
 /// the user once the headers phase completes.
@@ -294,8 +294,6 @@ pub const END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY: &[u8] = b"0\r\n\r\n";
 
 /// HTTP-thread-only scratch buffer for building NUL-terminated hostnames.
 pub static TEMP_HOSTNAME: bun_core::RacyCell<[u8; 8192]> = bun_core::RacyCell::new([0; 8192]);
-
-const DEFAULT_REDIRECT_COUNT: i8 = 127;
 
 const MAX_TLS_RECORD_SIZE: usize = 16 * 1024;
 
@@ -767,8 +765,7 @@ pub static SOCKET_ASYNC_HTTP_ABORT_TRACKER: bun_core::RacyCell<
 // blocks so the state machine compiles standalone.
 // ═══════════════════════════════════════════════════════════════════════
 
-use core::ffi::{c_int, c_uint, c_void};
-use core::mem::offset_of;
+use core::ffi::c_uint;
 
 use bstr::BStr;
 use bun_boringssl as boringssl;
@@ -784,9 +781,8 @@ use bun_uws as uws;
 use bun_http_types::ETag::StringPointer;
 use bun_wyhash::Wyhash11 as Wyhash;
 
-use crate::headers::api;
 use crate::http_context::HTTPSocket as HttpSocket;
-use crate::internal_state::{HTTPStage, RequestStage, ResponseStage, Stage};
+use crate::internal_state::{RequestStage, ResponseStage, Stage};
 
 bun_core::declare_scope!(fetch, visible);
 
@@ -1329,16 +1325,8 @@ impl<'a> HTTPClient<'a> {
         self.state.request_body.slice()
     }
     #[inline]
-    fn set_request_body(&mut self, slice: &[u8]) {
-        self.state.request_body = bun_ptr::RawSlice::new(slice);
-    }
-    #[inline]
     fn body_out_str(&self) -> Option<&MutableString> {
         body_out::opt_mut(self.state.body_out_str).map(|b| &*b)
-    }
-    #[inline]
-    fn body_out_str_mut(&mut self) -> Option<&mut MutableString> {
-        body_out::opt_mut(self.state.body_out_str)
     }
     #[inline]
     fn proxy_tunnel_mut(&mut self) -> Option<&mut ProxyTunnel> {
@@ -2429,7 +2417,7 @@ impl<'a> HTTPClient<'a> {
             // the cache for the new origin.
             if !self.flags.force_http3 && self.can_try_h3_alt_svc() {
                 if let Some(alt_port) =
-                    h3::AltSvc::lookup(self.url.hostname, self.url.get_port_auto())
+                    h3::alt_svc::lookup(self.url.hostname, self.url.get_port_auto())
                 {
                     // SAFETY: runs on the HTTP thread after `HTTPThread::init`
                     // set `uws_loop` to its live `us_loop_t`.
@@ -4329,7 +4317,7 @@ impl<'a> HTTPClient<'a> {
                         && self.unix_socket_path.slice().len() == 0
                         && h3_alt_svc_enabled()
                     {
-                        h3::AltSvc::record(
+                        h3::alt_svc::record(
                             self.url.hostname,
                             self.url.get_port_auto(),
                             header.value(),
@@ -4422,7 +4410,7 @@ impl<'a> HTTPClient<'a> {
                         {
                             return Err(err!(RequestBodyNotReusable));
                         }
-                        let mut is_same_origin = true;
+                        let is_same_origin;
 
                         {
                             // PERF(port): was ArenaAllocator + stackFallback(4096) — profile if hot.

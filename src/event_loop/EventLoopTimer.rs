@@ -235,7 +235,7 @@ struct UnreachableTimer {
     event_loop_timer: EventLoopTimer,
 }
 impl UnreachableTimer {
-        fn callback(_: &mut UnreachableTimer, _: &mut UnreachableTimer) {
+    fn callback(_: &mut UnreachableTimer, _: &mut UnreachableTimer) {
         // Zig: `bun.Environment.ci_assert` (audit assertion).
         unreachable!();
     }

@@ -25,7 +25,6 @@
 //!   `${T}Prototype__${name}SetCachedValue(JSValue, *JSGlobalObject, JSValue)`
 //!   `${T}__fromJS` / `${T}__fromJSDirect` / `${T}__create` / `${T}__getConstructor`
 
-
 use core::ffi::c_uint;
 use core::mem::MaybeUninit;
 

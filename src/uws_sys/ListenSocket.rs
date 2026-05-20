@@ -127,7 +127,7 @@ unsafe extern "C" {
     safe fn us_listen_socket_group(ls: &mut ListenSocket) -> *mut SocketGroup;
     safe fn us_listen_socket_ext(ls: &mut ListenSocket) -> *mut c_void;
     safe fn us_listen_socket_get_fd(ls: &mut ListenSocket) -> LIBUS_SOCKET_DESCRIPTOR;
-        safe fn us_listen_socket_port(ls: &mut ListenSocket) -> c_int;
+    safe fn us_listen_socket_port(ls: &mut ListenSocket) -> c_int;
     fn us_listen_socket_add_server_name(
         ls: *mut ListenSocket,
         hostname: *const c_char,

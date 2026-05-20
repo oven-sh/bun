@@ -695,10 +695,10 @@ pub fn exit(code: u32) -> ! {
     {
         if env::ENABLE_ASAN {
             libc_exit(code as i32);
-                        libc_abort();
+            libc_abort();
         }
         quick_exit(code as c_int);
-                libc_abort();
+        libc_abort();
     }
 }
 

@@ -928,7 +928,9 @@ impl<'a> TablePrinter<'a> {
                         } else {
                             data.clear();
                         }
-                        formatter::visited::Pool::release(node.as_ptr());
+                        // SAFETY: `node` was obtained from `Pool::get_node()` and is
+                        // exclusively owned by this formatter; ownership returns to the pool.
+                        unsafe { formatter::visited::Pool::release(node.as_ptr()) };
                     }
                     result?;
                 }
@@ -1877,7 +1879,9 @@ pub mod formatter {
                 } else {
                     data.clear();
                 }
-                visited::Pool::release(node.as_ptr());
+                // SAFETY: `node` was obtained from `Pool::get_node()` and is
+                // exclusively owned by this formatter; ownership returns to the pool.
+                unsafe { visited::Pool::release(node.as_ptr()) };
             }
         }
     }
@@ -2524,7 +2528,7 @@ pub mod formatter {
     }
 
     /// Mirrors Zig's `jsc.C.CellType` — same enum as `JSType` in this codebase.
-        type CellType = jsc::JSType;
+    type CellType = jsc::JSType;
 
     /// <https://console.spec.whatwg.org/#formatter>
     #[derive(Copy, Clone, Eq, PartialEq)]
@@ -6055,8 +6059,7 @@ pub extern "C" fn Bun__ConsoleObject__timeEnd(
     let slice = unsafe { bun_core::ffi::slice(chars, len) };
     let id = bun_wyhash::hash(slice);
     // Zig `fetchPut(id, null)` — replace with `None`, returning the previous.
-    let Some(prev) = PENDING_TIME_LOGS
-        .with_borrow_mut(|m| m.get_mut(&id).map(|slot| core::mem::replace(slot, None)))
+    let Some(prev) = PENDING_TIME_LOGS.with_borrow_mut(|m| m.get_mut(&id).map(|slot| slot.take()))
     else {
         return;
     };

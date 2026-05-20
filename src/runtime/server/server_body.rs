@@ -546,21 +546,21 @@ pub mod BunInfo {
 
     fn os_tag_name(os: OperatingSystem) -> &'static [u8] {
         match os {
-            OperatingSystem::_none => b"_none",
-            OperatingSystem::linux => b"linux",
-            OperatingSystem::macos => b"macos",
-            OperatingSystem::windows => b"windows",
-            OperatingSystem::wsl => b"wsl",
-            OperatingSystem::android => b"android",
-            OperatingSystem::freebsd => b"freebsd",
+            OperatingSystem::None => b"_none",
+            OperatingSystem::Linux => b"linux",
+            OperatingSystem::Macos => b"macos",
+            OperatingSystem::Windows => b"windows",
+            OperatingSystem::Wsl => b"wsl",
+            OperatingSystem::Android => b"android",
+            OperatingSystem::Freebsd => b"freebsd",
         }
     }
 
     fn arch_tag_name(arch: Architecture) -> &'static [u8] {
         match arch {
-            Architecture::_none => b"_none",
-            Architecture::x64 => b"x64",
-            Architecture::arm => b"arm",
+            Architecture::None => b"_none",
+            Architecture::X64 => b"x64",
+            Architecture::Arm => b"arm",
         }
     }
 

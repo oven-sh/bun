@@ -132,7 +132,7 @@ where
                 dest.write_str(b" ")?;
             }
             self.color.to_css(dest)?;
-                        {
+            {
                 needs_space = true;
             }
         }

@@ -588,14 +588,14 @@ pub fn assign_nested_scope_slots_helper(
     }
 
     // Assign slots for the symbols of child scopes
-    let mut slot_counts = slot.clone();
+    let mut slot_counts = slot;
     for child in scope.children.slice() {
         // `StoreRef<Scope>: Deref<Target = Scope>` — safe arena-backed deref.
         slot_counts.union_max(assign_nested_scope_slots_helper(
             sorted_members,
             child,
             symbols,
-            slot.clone(),
+            slot,
         ));
     }
 
@@ -639,8 +639,6 @@ struct SlotAndCount {
     slot: u32,
     count: u32,
 }
-
-type SlotAndCountArray = Vec<SlotAndCount>;
 
 impl SlotAndCount {
     fn less_than(a: SlotAndCount, b: SlotAndCount) -> Ordering {
@@ -798,14 +796,7 @@ impl NumberRenamer {
             sorted.sort_unstable();
 
             for &inner_index in sorted.iter() {
-                self.assign_name(
-                    s,
-                    Ref::init(
-                        u32::try_from(inner_index).expect("int cast"),
-                        source_index,
-                        false,
-                    ),
-                );
+                self.assign_name(s, Ref::init(inner_index, source_index, false));
             }
         }
 

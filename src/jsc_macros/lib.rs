@@ -974,21 +974,3 @@ fn classify_uws_arg(ty: &syn::Type) -> UwsArg {
     }
     UwsArg::PassThrough(ty.clone())
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// Compile-time sanity: a `#[host_fn]` body must take refs, not raw pointers.
-// (Best-effort lint; the real type-check happens when the shim calls the fn.)
-// ──────────────────────────────────────────────────────────────────────────
-fn assert_ref_args(func: &ItemFn) -> syn::Result<()> {
-    for arg in &func.sig.inputs {
-        if let FnArg::Typed(pt) = arg {
-            if let syn::Type::Ptr(_) = &*pt.ty {
-                return Err(syn::Error::new(
-                    pt.ty.span(),
-                    "#[host_fn] body takes references; the macro emits the raw-pointer shim",
-                ));
-            }
-        }
-    }
-    Ok(())
-}

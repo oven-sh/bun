@@ -8,7 +8,7 @@ use bun_ast::{Data, Level, Location, Log, Metadata, Msg};
 use bun_core::ZigString;
 
 use bun_jsc::{
-    self as jsc, BuildMessage, JSGlobalObject, JSValue, JsError, JsResult, ResolveMessage,
+    self as jsc, BuildMessage, JSGlobalObject, JSValue, JsResult, ResolveMessage,
     comptime_string_map_jsc,
 };
 

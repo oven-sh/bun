@@ -6,12 +6,10 @@
 // markers pointing at the missing lower-tier symbol.
 // ──────────────────────────────────────────────────────────────────────────
 #![warn(unreachable_pub)]
-use bun_collections::VecExt;
 use core::fmt;
 
-use bun_alloc::{AllocError, Arena, ArenaVec, ArenaVecExt as _};
+use bun_alloc::AllocError;
 use bun_ast::{Loc, Log, Source};
-use bun_core::ZStr;
 
 type OOM<T> = Result<T, AllocError>;
 
@@ -241,12 +239,11 @@ mod draft {
 
     use core::fmt;
     use core::ptr;
-    use std::io::Write as _;
 
     use bun_alloc::{AllocError, Arena, ArenaVec, ArenaVecExt as _};
-    use bun_api::{self, BunInstall, Ca, NpmRegistry, NpmRegistryMap, npm_registry};
+    use bun_api::{self, BunInstall, NpmRegistry, NpmRegistryMap, npm_registry};
     use bun_ast::E::Rope;
-    use bun_ast::{self as js_ast, E, Expr, ExprData};
+    use bun_ast::{E, Expr, ExprData};
     use bun_ast::{IntoStr, Loc, Log, Source};
     use bun_collections::{ArrayHashMap, VecExt};
     use bun_core::ZStr;
@@ -255,8 +252,8 @@ mod draft {
     use bun_url::URL;
 
     use super::{
-        ConfigItem, ConfigOpt, IniOption, NODE_LINKER_MAP, NodeLinker, Options, ScopeError,
-        is_quoted, next_dot, should_skip_line,
+        ConfigItem, ConfigOpt, IniOption, NODE_LINKER_MAP, NodeLinker, Options, is_quoted,
+        next_dot, should_skip_line,
     };
 
     type OOM<T> = Result<T, AllocError>;
@@ -600,7 +597,7 @@ mod draft {
                     // Try to parse it and if it fails will just treat it as a string
                     let json_val: Expr =
                         match bun_parsers::json::parse_utf8_impl::<true>(&src, &mut log, bump) {
-                            Ok(v) => Expr::from(v),
+                            Ok(v) => v,
                             Err(_) => {
                                 // JSON parse failed (e.g., single-quoted string like '${VAR}')
                                 // Still need to expand env vars in the content
@@ -1632,7 +1629,7 @@ mod draft {
 "#;
             // The line that sets the auth token should only apply to the @myorg scope
             // The line that sets the username would apply to both @myorg and @another
-            let mut url_map = {
+            let url_map = {
                 // PERF(port): was StringArrayHashMap<URL> on parser.arena. `URL<'a>`
                 // borrows `v.url` (inside `registry_map.scopes`), which would alias the
                 // `values_mut()` iteration below. Store the owned URL bytes instead and

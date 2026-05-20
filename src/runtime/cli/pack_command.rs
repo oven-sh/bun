@@ -1813,7 +1813,10 @@ impl ArchivePtrExt for *mut Archive {
     }
     #[inline]
     fn error_string(self) -> &'static [u8] {
-        Archive::error_string(self)
+        // SAFETY: every `ArchivePtrExt` call site holds a live `*mut Archive`
+        // from `archive_{read,write}_new()` (the trait exists precisely so those
+        // sites avoid per-call `unsafe { &* }`).
+        unsafe { Archive::error_string(self) }
     }
     #[inline]
     fn read_support_format_tar(self) -> ArchiveResult {
@@ -2645,7 +2648,8 @@ pub fn pack<const FOR_PUBLISH: bool>(
     let mut file_reader: Box<BufferedFileReader> =
         new_boxed_buffered_file_reader(File::from_fd(Fd::invalid()));
 
-    let mut entry = ArchiveEntry::new2(archive);
+    // SAFETY: `archive` is the live `archive_write_new()` handle opened above.
+    let mut entry = unsafe { ArchiveEntry::new2(archive) };
 
     {
         let mut progress = Progress::Progress::default();
@@ -3249,9 +3253,7 @@ fn archive_package_json(
                 "failed to write tarball header: {}",
                 format_args!(
                     "{}",
-                    bstr::BStr::new(Archive::error_string(std::ptr::from_mut::<Archive>(
-                        archive
-                    )))
+                    bstr::BStr::new(std::ptr::from_mut::<Archive>(archive).error_string())
                 ),
             );
             Global::crash();
@@ -3317,9 +3319,7 @@ fn add_archive_entry(
                 "failed to write tarball header: {}",
                 format_args!(
                     "{}",
-                    bstr::BStr::new(Archive::error_string(std::ptr::from_mut::<Archive>(
-                        archive
-                    )))
+                    bstr::BStr::new(std::ptr::from_mut::<Archive>(archive).error_string())
                 ),
             );
             Global::crash();
@@ -3802,7 +3802,7 @@ impl IgnorePatterns {
         line
     }
 
-        fn maybe_trim_leading_spaces(line: &[u8]) -> &[u8] {
+    fn maybe_trim_leading_spaces(line: &[u8]) -> &[u8] {
         // npm will trim, git will not
         line
     }

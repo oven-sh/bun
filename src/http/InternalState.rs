@@ -4,8 +4,8 @@ use bun_core::MutableString;
 use bun_core::{Error, Output};
 
 use crate::{
-    CertificateInfo, Decompressor, Encoding, HTTPRequestBody, HTTPResponseMetadata,
-    extremely_verbose,
+    CertificateInfo, Decompressor, EXTREMELY_VERBOSE, Encoding, HTTPRequestBody,
+    HTTPResponseMetadata,
 };
 
 bun_core::define_scoped_log!(log, HTTPInternalState, hidden);
@@ -231,7 +231,7 @@ impl<'a> InternalState<'a> {
         // so each early-return below calls `self.compressed_body.reset()` explicitly.
         let mut gzip_timer: Option<std::time::Instant> = None;
 
-        if extremely_verbose {
+        if EXTREMELY_VERBOSE {
             gzip_timer = Some(std::time::Instant::now());
         }
 
@@ -362,7 +362,7 @@ impl<'a> InternalState<'a> {
             }
         }
 
-        if extremely_verbose {
+        if EXTREMELY_VERBOSE {
             // TODO(port): `gzip_elapsed` is not a field on InternalState in the Zig source either —
             // this looks like dead code referencing a removed field. Preserved as a no-op read.
             let _ = gzip_timer.map(|t| t.elapsed());

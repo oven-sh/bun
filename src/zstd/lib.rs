@@ -1,6 +1,6 @@
 #![warn(unused_must_use)]
 #![warn(unreachable_pub)]
-use core::ffi::{c_char, c_int, c_uint, c_ulonglong, c_void};
+use core::ffi::{c_ulonglong, c_void};
 
 use bun_core::ZStr;
 
@@ -9,14 +9,12 @@ use bun_core::ZStr;
 // "If your file has externs and isn't already *_sys, leave them in place".
 #[allow(non_camel_case_types, non_snake_case, non_upper_case_globals)]
 pub mod c {
-    use core::cell::UnsafeCell;
     use core::ffi::{c_char, c_int, c_uint, c_ulonglong, c_void};
-    use core::marker::{PhantomData, PhantomPinned};
 
-    /// `ZSTD_DStream` — opaque streaming-decompression context (Nomicon FFI pattern).
-    ///
-    /// `UnsafeCell` makes the type `!Freeze` so a `&ZSTD_DStream` does not assert
-    /// immutability of the C-owned state (zstd mutates internally on every call).
+    // `ZSTD_DStream` — opaque streaming-decompression context (Nomicon FFI pattern).
+    //
+    // `UnsafeCell` makes the type `!Freeze` so a `&ZSTD_DStream` does not assert
+    // immutability of the C-owned state (zstd mutates internally on every call).
     bun_opaque::opaque_ffi! {
         pub struct ZSTD_DStream;
         /// `ZSTD_CCtx` — opaque streaming-compression context.

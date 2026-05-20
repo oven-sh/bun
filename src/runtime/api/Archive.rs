@@ -312,15 +312,20 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
         )));
     }
 
-    if lib::archive_write_open2(
-        archive.as_ptr(),
-        (&raw mut growing_buffer).cast(),
-        Some(lib::GrowingBuffer::open_callback),
-        Some(lib::GrowingBuffer::write_callback),
-        Some(lib::GrowingBuffer::close_callback),
-        None,
-    ) != 0
-    {
+    // SAFETY: `archive` is a live `archive_write_new()` handle (see `Archive::write_new`
+    // above); `growing_buffer` is stack-local and outlives all callback invocations
+    // (the archive is closed before this fn returns).
+    let open_rc = unsafe {
+        lib::archive_write_open2(
+            archive.as_ptr(),
+            (&raw mut growing_buffer).cast(),
+            Some(lib::GrowingBuffer::open_callback),
+            Some(lib::GrowingBuffer::write_callback),
+            Some(lib::GrowingBuffer::close_callback),
+            None,
+        )
+    };
+    if open_rc != 0 {
         return Err(global
             .throw_invalid_arguments(format_args!("Failed to create tarball: ArchiveOpenError")));
     }
@@ -1131,8 +1136,11 @@ pub struct FilesContext {
 }
 
 impl FilesContext {
-    fn clone_error_string(archive: *mut libarchive::lib::Archive) -> Option<CString> {
-        let err_str = libarchive::lib::Archive::error_string(archive);
+    /// # Safety
+    /// `archive` must be a live archive handle from `archive_{read,write}_new()`.
+    unsafe fn clone_error_string(archive: *mut libarchive::lib::Archive) -> Option<CString> {
+        // SAFETY: see fn contract.
+        let err_str = unsafe { libarchive::lib::Archive::error_string(archive) };
         if err_str.is_empty() {
             return None;
         }
@@ -1145,8 +1153,9 @@ impl FilesContext {
         configure_archive_reader(&archive);
 
         if archive.read_open_memory(self.store.shared_view()) != lib::Result::Ok {
+            // SAFETY: `archive` is the live `read_new()` handle opened above.
             return Ok(
-                if let Some(err) = Self::clone_error_string(archive.as_ptr()) {
+                if let Some(err) = unsafe { Self::clone_error_string(archive.as_ptr()) } {
                     FilesResult::LibarchiveErr(err)
                 } else {
                     FilesResult::Err(FilesError::ReadError)
@@ -1188,8 +1197,10 @@ impl FilesContext {
                         // errdefer above won't fire. Free the current buffer and all previously
                         // collected entries manually to avoid leaking them.
                         // PORT NOTE: in Rust both `data` and `entries` drop automatically here.
+                        // SAFETY: `archive` is the live `read_new()` handle opened above.
                         return Ok(
-                            if let Some(err) = Self::clone_error_string(archive.as_ptr()) {
+                            if let Some(err) = unsafe { Self::clone_error_string(archive.as_ptr()) }
+                            {
                                 FilesResult::LibarchiveErr(err)
                             } else {
                                 FilesResult::Err(FilesError::ReadError)

@@ -958,11 +958,9 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
     macro_rules! timer_arm {
         ($Ty:ty, $field:ident, |$c:ident, $now:ident, $vm:ident| $body:expr) => {{
             let $c: *mut $Ty = owner!($Ty, $field);
-                        let ($now, $vm) = (now, vm);
+            let ($now, $vm) = (now, vm);
             // SAFETY: per fn contract; container derived from a live `$Ty`.
-                        unsafe {
-                $body
-            };
+            unsafe { $body };
         }};
     }
     match tag {

@@ -1369,7 +1369,7 @@ impl FrameworkRouter {
         Ok(RouteIndex::init(u32::try_from(i).expect("int cast")))
     }
 
-        fn new_edge(&mut self, edge_data: RouteEdge) -> Result<RouteEdgeIndex, AllocError> {
+    fn new_edge(&mut self, edge_data: RouteEdge) -> Result<RouteEdgeIndex, AllocError> {
         if let Some(i) = self.freed_edges.pop() {
             self.edges[i.get_usize()] = edge_data;
             Ok(i)

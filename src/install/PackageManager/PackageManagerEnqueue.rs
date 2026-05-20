@@ -1212,7 +1212,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     return Ok(());
                 }
             }
-                        return Ok(());
+            return Ok(());
         }
         dependency::version::Tag::Git => {
             let dep: Repository = *version.git();

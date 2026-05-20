@@ -325,7 +325,7 @@ impl ThreadPool {
             return bun_core::get_thread_count() > 3;
         }
 
-                false
+        false
     }
 
     /// Shut down the IO pool, if and only if no `ThreadPool`s exist right now.

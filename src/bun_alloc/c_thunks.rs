@@ -62,7 +62,7 @@ pub unsafe extern "C" fn mi_free_bytes(bytes: *mut c_void, _ctx: *mut c_void) {
 #[macro_export]
 macro_rules! c_thunks_for_zone {
     ($name:literal) => {
-                pub extern "C" fn malloc_size(
+        pub extern "C" fn malloc_size(
             _: *mut ::core::ffi::c_void,
             len: usize,
         ) -> *mut ::core::ffi::c_void {
@@ -79,7 +79,7 @@ macro_rules! c_thunks_for_zone {
             p
         }
 
-                pub extern "C" fn calloc_items(
+        pub extern "C" fn calloc_items(
             _: *mut ::core::ffi::c_void,
             items: ::core::ffi::c_uint,
             len: ::core::ffi::c_uint,

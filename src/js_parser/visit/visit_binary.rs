@@ -7,7 +7,7 @@ use crate::parser::{ExprIn, float_to_int32, prefill};
 use crate::scan::scan_side_effects::SideEffects;
 use bun_ast::fold_string_addition::{FoldStringAdditionKind, fold_string_addition};
 use bun_ast::{
-    self as js_ast, E, Expr, ExprData, ExprTag, Op, StoreRef, Symbol,
+    self as js_ast, E, Expr, ExprData, Op, StoreRef, Symbol,
     expr::{Equality, LooseEql, StrictEql},
 };
 

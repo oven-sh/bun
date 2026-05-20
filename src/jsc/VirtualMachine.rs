@@ -1901,7 +1901,7 @@ bun_io::link_impl_EventLoopCtx! {
         set_after_event_loop_callback(cb, ctx) => {
             let vm = vm_from_owner(this.cast());
             vm.after_event_loop_callback = cb;
-            vm.after_event_loop_callback_ctx = (!ctx.is_null()).then_some(ctx);
+            vm.after_event_loop_callback_ctx = ctx.map(|p| p.as_ptr());
         },
         pipe_read_buffer() => {
             core::ptr::from_mut::<[u8]>(vm_from_owner(this.cast()).rare_data().pipe_read_buffer())
@@ -2700,7 +2700,7 @@ impl<'a> SourceMapHandlerGetter<'a> {
     /// pointer once the writer's last byte has been emitted (i.e. inside
     /// `on_source_map_chunk`, which the printer invokes from its tail).
     #[inline]
-        pub(crate) fn printer_ptr(&self) -> *mut bun_js_printer::BufferPrinter {
+    pub(crate) fn printer_ptr(&self) -> *mut bun_js_printer::BufferPrinter {
         self.printer
     }
 
@@ -5151,7 +5151,6 @@ impl VirtualMachine {
         // PORT NOTE: Zig `defer unlock()`.
 
         self.source_mappings.lock();
-        let mut table_locked = true;
 
         // PORT NOTE: the Zig body caches the last `(hash → InternalSourceMap)`
         // pair across the loop and falls back to `resolve_source_mapping` on a
@@ -5172,13 +5171,8 @@ impl VirtualMachine {
             }
             // PERF(port): Zig cached `(hash → ism)` across iterations.
             // Slow path: drops and re-acquires the source_mappings lock around
-            // resolve_source_mapping(). The `false` write is dead today (the
-            // loop body always re-locks before loop-end) but keeps the
-            // lock-state invariant explicit per the Zig spec.
+            // resolve_source_mapping().
             self.source_mappings.unlock();
-                        {
-                table_locked = false;
-            }
             if let Some(lookup) = self.resolve_source_mapping(
                 path,
                 frame.position.line,
@@ -5199,12 +5193,9 @@ impl VirtualMachine {
                 frame.remapped = true;
             }
             self.source_mappings.lock();
-            table_locked = true;
         }
 
-        if table_locked {
-            self.source_mappings.unlock();
-        }
+        self.source_mappings.unlock();
         self.remap_stack_frames_mutex.unlock();
     }
 

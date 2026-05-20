@@ -4942,7 +4942,7 @@ impl NodeFS {
             // `from_libuv` is `#[cfg(windows)]`-only on `bun_sys::Error`; build the
             // base value first and set it conditionally so this body compiles on all
             // targets (`uv_close` is reached via the cross-platform UVFSRequest path).
-                        let mut e = sys::Error {
+            let mut e = sys::Error {
                 errno: (-rc) as _,
                 syscall: sys::Tag::close,
                 fd: args.fd,
@@ -5548,9 +5548,7 @@ impl NodeFS {
             return Ok(());
         }
 
-                {
-            unreachable!()
-        }
+        { unreachable!() }
     }
 
     pub fn exists(&mut self, args: &args::Exists, _: Flavor) -> Maybe<ret::Exists> {
@@ -9181,7 +9179,7 @@ impl NodeFS {
             target_os = "freebsd",
             windows
         )))]
-                {
+        {
             let _ = (src, dest, mode, reuse_stat);
             Maybe::<ret::CopyFile>::todo()
         }
@@ -10326,7 +10324,7 @@ impl NodeFSFunctionEnum {
 struct i52;
 impl i52 {
     const MIN: i64 = -(1i64 << 51);
-        const MAX: i64 = (1i64 << 51) - 1;
+    const MAX: i64 = (1i64 << 51) - 1;
     /// `JSValue.to(i52)` — `@truncate(@intCast(toInt64()))`. Truncate to the low
     /// 52 bits and sign-extend bit 51 (matches Zig `@truncate` semantics).
     #[inline]

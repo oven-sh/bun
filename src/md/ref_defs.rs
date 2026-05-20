@@ -173,7 +173,7 @@ impl Parser<'_> {
 
         // Parse optional title
         let mut title: &[u8] = b"";
-                let mut had_whitespace_before_title = false;
+        let mut had_whitespace_before_title = false;
         if p < text.len() && (text[p] == b'"' || text[p] == b'\'' || text[p] == b'(') {
             // Check that there was actual whitespace between dest and title
             had_whitespace_before_title = p > pos_after_dest;

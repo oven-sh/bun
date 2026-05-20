@@ -2512,7 +2512,7 @@ impl<'a> ValueBufferer<'a> {
         }
     }
 
-        fn create_js_sink(&mut self, stream: ReadableStream) -> Result<(), bun_core::Error> {
+    fn create_js_sink(&mut self, stream: ReadableStream) -> Result<(), bun_core::Error> {
         // PORT NOTE: The Zig caller has this path commented out ("this is broken
         // right now" — see buffer_locked_body_value below). Ported faithfully so
         // un-commenting that call site needs no further work.

@@ -235,6 +235,4 @@ pub trait AsMimallocArenaAllocator {
 
 pub const ENABLED: bool = cfg!(debug_assertions);
 
-const TRACES_ENABLED: bool = cfg!(debug_assertions);
-
 // ported from: src/safety/alloc.zig

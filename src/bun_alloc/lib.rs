@@ -760,18 +760,21 @@ impl Mutex {
         // `<'static, ()>` have identical layout. Every `bun_alloc::Mutex` lives
         // in a `'static` BSS singleton, so the inner `&Mutex` the guard holds
         // is in fact valid for `'static`.
-        MutexGuard(unsafe {
+        let _guard = unsafe {
             core::mem::transmute::<std::sync::MutexGuard<'_, ()>, std::sync::MutexGuard<'static, ()>>(
                 g,
             )
-        })
+        };
+        MutexGuard { _guard }
     }
 }
 
 /// Unlocks the paired [`Mutex`] on drop. See the type-level comment on
 /// [`Mutex`] for why this erases the guard lifetime rather than borrowing.
 #[must_use = "if unused the Mutex will immediately unlock"]
-pub struct MutexGuard(std::sync::MutexGuard<'static, ()>);
+pub struct MutexGuard {
+    _guard: std::sync::MutexGuard<'static, ()>,
+}
 impl Default for Mutex {
     fn default() -> Self {
         Self::new()

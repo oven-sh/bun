@@ -372,7 +372,7 @@ impl FileSystemRouter {
         // `&mut` per use site so the recursive call (which does the same) doesn't pop our
         // SB tag mid-loop.
         let vm = global_this.bun_vm();
-                let mut path = input_path;
+        let mut path = input_path;
         #[cfg(windows)]
         let normalized: Vec<u8>;
         #[cfg(windows)]

@@ -437,7 +437,6 @@ pub struct PathContentsPair {
     pub contents: &'static [u8],
 }
 // TODO(port): bun_schema::api — `to_api` methods gated behind .
-use bun_core::strings;
 
 // In Zig: `const string = []const u8;`
 type Str = &'static [u8];

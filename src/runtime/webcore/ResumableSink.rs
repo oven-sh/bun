@@ -121,7 +121,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
     fn set_stream(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
         Js::stream_set_cached(this_value, global, value);
     }
-        #[inline]
+    #[inline]
     fn get_stream(this_value: JSValue) -> Option<JSValue> {
         Js::stream_get_cached(this_value)
     }

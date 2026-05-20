@@ -43,7 +43,7 @@ struct ByName<'a> {
 }
 
 impl<'a> ByName<'a> {
-        pub fn is_less_than(ctx: &ByName<'a>, lhs: DependencyID, rhs: DependencyID) -> bool {
+    pub fn is_less_than(ctx: &ByName<'a>, lhs: DependencyID, rhs: DependencyID) -> bool {
         strings::cmp_strings_asc(
             (),
             ctx.dependencies[lhs as usize].name.slice(ctx.buf),

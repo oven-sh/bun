@@ -188,7 +188,7 @@ impl ContextData {
     // — Rust cannot re-export an associated fn; TODO(port): add a thin
     // delegating `pub fn create(...)` here once `bun_cli` exists, or invert the
     // alias direction (cli re-exports this type).
-        pub const CREATE_SEE_CLI: () = ();
+    pub const CREATE_SEE_CLI: () = ();
 }
 
 pub struct BundlerOptions {

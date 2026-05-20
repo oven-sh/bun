@@ -13,7 +13,7 @@ use crate::async_http::{ACTIVE_REQUESTS_COUNT, MAX_SIMULTANEOUS_REQUESTS};
 use crate::http_context::ActiveSocketExt;
 use crate::proxy_tunnel::ProxyTunnel;
 use crate::ssl_config::{self, SSLConfig};
-use crate::{AsyncHttp, HTTPContext, HttpClient, InitError, NewHttpContext, h2, h3};
+use crate::{AsyncHttp, HTTPContext, HttpClient, InitError, NewHttpContext, h3};
 
 bun_core::declare_scope!(HTTPThread, hidden); // threadlog
 bun_core::declare_scope!(HTTPThread_log, visible); // log
@@ -29,7 +29,7 @@ struct SslContextCacheEntry {
     ctx: NonNull<NewHttpContext<true>>,
     last_used_ns: u64,
     /// Strong ref held by the cache entry (released on eviction).
-    config_ref: ssl_config::SharedPtr,
+    _config_ref: ssl_config::SharedPtr,
 }
 
 impl SslContextCacheEntry {
@@ -568,7 +568,7 @@ impl HttpThread {
                         ctx: ctx_nn,
                         last_used_ns: now,
                         // Strong ref for the cache entry; client.tls_props keeps its own.
-                        config_ref: tls,
+                        _config_ref: tls,
                     },
                 );
 
@@ -1128,7 +1128,6 @@ use core::cell::Cell;
 
 mod _event_loop_draft {
     use super::*;
-    use bun_core::Global;
     use std::sync::Once;
 
     static INIT_ONCE: Once = Once::new();
@@ -1229,7 +1228,7 @@ mod _event_loop_draft {
                     "The %SystemRoot% environment variable is not set. Bun needs this set in order for network requests to work.",
                     (),
                 );
-                Global::crash();
+                bun_core::Global::crash();
             }
         }
 

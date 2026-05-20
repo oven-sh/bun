@@ -1146,9 +1146,7 @@ impl Task {
                             #[cfg(not(windows))]
                             {
                                 if let Ok(st) = sys::lstat(local.slice_z()) {
-                                    sys::posix::s_islnk(
-                                        u32::try_from(st.st_mode).expect("int cast"),
-                                    )
+                                    sys::posix::s_islnk(st.st_mode as u32)
                                 } else {
                                     false
                                 }
@@ -2554,7 +2552,7 @@ impl<'a> Installer<'a> {
                         #[cfg(not(windows))]
                         {
                             if let Ok(st) = sys::lstat(dest.slice_z()) {
-                                sys::posix::s_islnk(u32::try_from(st.st_mode).expect("int cast"))
+                                sys::posix::s_islnk(st.st_mode as u32)
                             } else {
                                 true
                             }

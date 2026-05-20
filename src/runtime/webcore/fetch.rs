@@ -421,7 +421,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // PORT NOTE: in Rust, owned locals (Box/Vec/BunString/etc.) Drop on early return,
     // so most of the Zig `defer { ... }` block below is implicit. `is_error` is
     // retained to mirror control flow but no longer gates cleanup.
-        let mut is_error = false;
+    let mut is_error = false;
     let mut upgraded_connection = false;
     let mut force_http2 = false;
     let mut force_http3 = false;
@@ -1430,7 +1430,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 return Err(global_this.throw_error(err.into(), "Failed to decode file url"));
             }
         };
-                let mut url_path_decoded = &path_buf2[0..decoded_len as usize];
+        let mut url_path_decoded = &path_buf2[0..decoded_len as usize];
 
         let mut url_string: BunString = BunString::empty();
         // PORT NOTE: `defer url_string.deref()` → Drop.

@@ -464,7 +464,7 @@ impl Win32ErrorUnwrap for Win32Error {
 #[cfg(any())]
 mod _win32error_full_table {
     use super::Win32Error;
-        impl Win32Error {
+    impl Win32Error {
         /// The operation completed successfully.
         pub const SUCCESS: Win32Error = Win32Error(0);
         /// Incorrect function.

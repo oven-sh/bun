@@ -1419,7 +1419,6 @@ pub fn parse_with_tag(
             // Find owner in dependency string
             let owner_idx = strings::index_of(dependency, owner_str);
             let owner = if let Some(idx) = owner_idx {
-                let idx = idx;
                 sliced.sub(&dependency[idx..idx + owner_str.len()]).value()
             } else {
                 String::from(b"")
@@ -1428,7 +1427,6 @@ pub fn parse_with_tag(
             // Find repo in dependency string
             let repo_idx = strings::index_of(dependency, repo_str);
             let repo = if let Some(idx) = repo_idx {
-                let idx = idx;
                 sliced.sub(&dependency[idx..idx + repo_str.len()]).value()
             } else {
                 String::from(b"")
@@ -1438,7 +1436,6 @@ pub fn parse_with_tag(
             let committish = if !committish_str.is_empty() {
                 let committish_idx = strings::index_of(dependency, committish_str);
                 if let Some(idx) = committish_idx {
-                    let idx = idx;
                     sliced
                         .sub(&dependency[idx..idx + committish_str.len()])
                         .value()

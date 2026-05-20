@@ -242,10 +242,10 @@ impl<T: VersionInt> VersionType<T> {
     ///    from package.json)
     ///
     /// The goal of this function is to avoid a complete parse of semver that's unused
-        pub fn which_version_is_pinned(input: &[u8]) -> PinnedVersion {
+    pub fn which_version_is_pinned(input: &[u8]) -> PinnedVersion {
         let version = strings::trim(input, &strings::WHITESPACE_CHARS);
 
-        let mut i: usize = 0;
+        let mut i: usize;
 
         let pinned: PinnedVersion = 'pinned: {
             for j in 0..version.len() {
@@ -470,12 +470,12 @@ impl<T: VersionInt> VersionType<T> {
         self.tag.order_without_build(rhs.tag, lhs_buf, rhs_buf)
     }
 
-        pub fn parse(sliced_string: SlicedString) -> ParseResult<T> {
+    pub fn parse(sliced_string: SlicedString) -> ParseResult<T> {
         let input = sliced_string.slice;
         let mut result = ParseResult::<T>::default();
 
         let mut part_i: u8 = 0;
-        let mut part_start_i: usize = 0;
+        let mut part_start_i: usize;
         let mut last_char_i: usize = 0;
 
         if input.is_empty() {
@@ -589,7 +589,6 @@ impl<T: VersionInt> VersionType<T> {
                     break;
                 }
                 b'x' | b'*' | b'X' => {
-                    part_start_i = i;
                     i += 1;
 
                     while i < input.len() && matches!(input[i], b'x' | b'*' | b'X') {
@@ -987,9 +986,6 @@ pub struct Tag {
     pub build: ExternalString,
 }
 
-// PORT NOTE: unused module-level static in Zig (`var multi_tag_warn = false;`).
-// Kept as a note; remove if confirmed dead.
-static MULTI_TAG_WARN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 // TODO: support multiple tags
 
 impl Tag {

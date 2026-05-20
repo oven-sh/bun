@@ -559,12 +559,6 @@ impl PosixBufferedReader {
         false
     }
 
-    fn wrap_read_fn(
-        func: fn(Fd, &mut [u8]) -> sys::Result<usize>,
-    ) -> impl Fn(Fd, &mut [u8], usize) -> sys::Result<usize> {
-        move |fd, buf, _offset| func(fd, buf)
-    }
-
     fn read_file(parent: &mut PosixBufferedReader, fd: Fd, size_hint: isize, received_hup: bool) {
         fn pread_fn(fd1: Fd, buf: &mut [u8], offset: usize) -> sys::Result<usize> {
             sys::pread(fd1, buf, i64::try_from(offset).expect("int cast"))

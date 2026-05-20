@@ -1275,7 +1275,6 @@ impl<K, V: Default, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, 
         // branch above without NLL gymnastics; recompute via index.
         let i = gop.index;
         let found = gop.found_existing;
-        drop(gop);
         Ok(self.gop_at(i, found))
     }
 }

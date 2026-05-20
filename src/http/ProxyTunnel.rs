@@ -1,20 +1,17 @@
 use core::cell::Cell;
-use core::ffi::CStr;
 use core::ptr::{NonNull, addr_of, addr_of_mut};
 use core::sync::atomic::Ordering;
 
 use bun_core::scoped_log;
-use bun_core::{Error, ZStr, err};
+use bun_core::{Error, err};
 use bun_uws as uws;
 
 use crate::http_cert_error::HTTPCertError;
 use crate::http_context::HTTPSocket;
 use crate::internal_state::{HTTPStage, Stage};
 use crate::ssl_config::SSLConfig;
-use crate::ssl_wrapper::{
-    self, Handlers as SSLWrapperHandlers, InitError, SSLWrapper, WriteDataError,
-};
-use crate::{AlpnOffer, GenHttpContext, HTTPClient};
+use crate::ssl_wrapper::{Handlers as SSLWrapperHandlers, InitError, SSLWrapper, WriteDataError};
+use crate::{AlpnOffer, HTTPClient};
 
 bun_core::declare_scope!(http_proxy_tunnel, visible);
 

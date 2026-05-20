@@ -1960,7 +1960,9 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             self.pooled_buffer = None;
             // PORT NOTE: Zig `pooled.release()` → Rust `ObjectPool::release(node)`
             // (the Node `Parent` back-ref was dropped in the port; see pool.rs).
-            ByteListPool::release(pooled.as_ptr());
+            // SAFETY: `pooled` was obtained from `ByteListPool::get_node` and is
+            // exclusively owned by this stream; ownership returns to the pool.
+            unsafe { ByteListPool::release(pooled.as_ptr()) };
         } else if self.buffer.capacity() == 0 {
             //
         } else if FeatureFlags::HTTP_BUFFER_POOLING && !ByteListPool::full() {

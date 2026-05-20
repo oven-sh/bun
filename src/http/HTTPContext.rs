@@ -4,8 +4,7 @@ use core::ptr::NonNull;
 
 use crate::http_thread::InitOpts as HTTPThreadInitOpts;
 use crate::{
-    self as http, AlpnOffer, HTTPCertError, HTTPClient, InitError, ProxyTunnel,
-    get_cert_error_from_no, h2,
+    self as http, AlpnOffer, HTTPCertError, HTTPClient, InitError, get_cert_error_from_no, h2,
 };
 use bun_boringssl::ssl_ctx_setup;
 use bun_boringssl_sys::SSL_CTX;

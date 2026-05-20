@@ -15,7 +15,6 @@
 //!     Rust `bcrypt` crate has no PHC codec). `silently_truncate_password` is
 //!     asserted `true` (Bun's only caller never sets `false`).
 
-
 use bun_core::Error;
 
 /// PHC / modular-crypt strings are 7-bit ASCII by spec; the third-party

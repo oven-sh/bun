@@ -14,7 +14,7 @@ use bun_core::{self, Error, err};
 // through to fp-walking exactly as Zig does on targets without DWARF support.
 #[cfg(debug_assertions)]
 mod zig_std_debug {
-        use core::ffi::{c_int, c_void};
+    use core::ffi::{c_int, c_void};
     #[cfg(any(target_os = "linux", target_os = "android"))]
     use core::sync::atomic::{AtomicI32, Ordering};
 
@@ -374,7 +374,7 @@ mod zig_std_debug {
                 let fp = unsafe { (*(*context).uc_mcontext).__ss.__fp } as usize;
                 return Ok(Self::init(first_address, Some(fp)));
             }
-                        if SUPPORTS_UNWINDING {
+            if SUPPORTS_UNWINDING {
                 // PORT NOTE: DWARF `UnwindContext::init` not ported — `SUPPORTS_UNWINDING`
                 // is `false`, so this branch is dead. Kept to mirror Zig structure.
                 return Err(err!("UnsupportedCpuArchitecture"));
@@ -590,7 +590,7 @@ fn dump_btjs_trace_debug_impl() -> *const c_char {
             )
             .is_err()
             {
-                return b"<oom>\0".as_ptr().cast::<c_char>();
+                return c"<oom>".as_ptr();
             }
             // leak intentionally — caller is lldb and never frees
             return bun_core::heap::into_raw(result_writer.into_boxed_slice())
@@ -608,7 +608,7 @@ fn dump_btjs_trace_debug_impl() -> *const c_char {
     let mut context: ThreadContext = unsafe { bun_core::ffi::zeroed_unchecked() };
     let has_context = get_context(&mut context);
 
-        let mut it: StackIterator = (if has_context && !cfg!(windows) {
+    let mut it: StackIterator = (if has_context && !cfg!(windows) {
         stack_iterator_init_with_context(None, debug_info, &mut context).ok()
     } else {
         None

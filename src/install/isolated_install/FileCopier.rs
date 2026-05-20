@@ -76,7 +76,7 @@ impl FileCopier {
             Ok(d) => d,
             Err(e) => {
                 // TODO: remove the need for this and implement openDir makePath makeOpenPath in bun
-                                let mut errno: E = {
+                let mut errno: E = {
                     // `@as(anyerror, err)` → match against interned bun_core::Error tags.
                     let e: Error = e;
                     if e == err!("AccessDenied") {

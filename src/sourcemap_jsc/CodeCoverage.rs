@@ -272,7 +272,7 @@ pub mod text {
 
         if prev_line != start_of_line_range {
             if is_first {
-                                {
+                {
                     is_first = false;
                 }
             } else {

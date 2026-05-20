@@ -21,7 +21,7 @@
 use core::cell::Cell;
 use core::ptr::NonNull;
 // (atomic refcounting now via `bun_ptr::ThreadSafeRefCount`)
-use std::sync::Arc;
+use std::rc::Rc;
 
 use bun_core::{PathString, immutable::AsciiStatus};
 use bun_http_types::MimeType::MimeType;
@@ -840,7 +840,7 @@ pub mod store {
     pub struct S3 {
         pub pathlike: PathLike,
         pub mime_type: MimeType,
-        pub credentials: Option<Arc<bun_s3_signing::S3Credentials>>,
+        pub credentials: Option<Rc<bun_s3_signing::S3Credentials>>,
         pub options: bun_s3_signing::MultiPartUploadOptions,
         pub acl: Option<bun_s3_signing::ACL>,
         pub storage_class: Option<bun_s3_signing::StorageClass>,
@@ -853,7 +853,7 @@ pub mod store {
             Some(true)
         }
 
-        pub fn get_credentials(&self) -> &Arc<bun_s3_signing::S3Credentials> {
+        pub fn get_credentials(&self) -> &Rc<bun_s3_signing::S3Credentials> {
             debug_assert!(self.credentials.is_some());
             self.credentials.as_ref().unwrap()
         }
@@ -884,7 +884,7 @@ pub mod store {
         pub fn init_with_referenced_credentials(
             pathlike: PathLike,
             mime_type: Option<MimeType>,
-            credentials: Arc<bun_s3_signing::S3Credentials>,
+            credentials: Rc<bun_s3_signing::S3Credentials>,
         ) -> S3 {
             S3 {
                 credentials: Some(credentials),
@@ -904,7 +904,7 @@ pub mod store {
         ) -> S3 {
             S3 {
                 // Zig: `credentials.dupe()` — heap-allocate a fresh refcounted copy.
-                credentials: Some(Arc::new(credentials)),
+                credentials: Some(Rc::new(credentials)),
                 pathlike,
                 mime_type: mime_type.unwrap_or(bun_http_types::MimeType::OTHER),
                 options: bun_s3_signing::MultiPartUploadOptions::default(),

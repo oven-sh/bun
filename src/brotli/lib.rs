@@ -4,7 +4,7 @@ use core::ptr;
 pub use bun_brotli_sys::brotli_c as c;
 use c::{BrotliDecoder, BrotliEncoder};
 
-use bun_core::{self as bun, Error, err};
+use bun_core::{Error, err};
 
 // ──────────────────────────────────────────────────────────────────────────
 // BrotliAllocator

@@ -2830,7 +2830,7 @@ pub mod JSZstd {
     use bun_jsc::virtual_machine::VirtualMachine;
 
     // `no_mangle` dropped: 0 C++ refs, 0 Rust refs (kept for parity with Zig export).
-        pub use bun_alloc::c_thunks::mi_free_ctx as deallocator;
+    pub use bun_alloc::c_thunks::mi_free_ctx as deallocator;
 
     fn get_level(global_this: &JSGlobalObject, options_val: Option<JSValue>) -> JsResult<i32> {
         if let Some(option_obj) = options_val {

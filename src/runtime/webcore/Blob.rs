@@ -591,7 +591,7 @@ impl BlobExt for Blob {
                     .expect("infallible: store present")
                     .data
                     .as_s3();
-                cred = std::sync::Arc::clone(s3.get_credentials());
+                cred = std::rc::Rc::clone(s3.get_credentials());
                 path = std::ptr::from_ref::<[u8]>(s3.path());
                 payer = s3.request_payer;
             }
@@ -4043,7 +4043,7 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
                     ));
                 }
             }
-                        return Ok(JSValue::ZERO);
+            return Ok(JSValue::ZERO);
         }
         store::SerializeTag::Empty => Blob::new(Blob::init_empty(global_this)),
     };
@@ -6904,7 +6904,7 @@ pub trait FileOpener: Sized {
     /// `CopyFile`) override this to call [`mkdir_if_not_exists`]; everyone else
     /// (e.g. `ReadFile`) keeps the default `Retry::No`, so the open path falls
     /// straight through to the error branch as in the Zig spec.
-        fn try_mkdirp(
+    fn try_mkdirp(
         &mut self,
         err: bun_sys::Error,
         path: &bun_core::ZStr,

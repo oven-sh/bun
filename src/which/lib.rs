@@ -1,10 +1,15 @@
 #![warn(unused_must_use, unreachable_pub)]
 use bstr::BStr;
-use bun_core::{WStr, ZStr, strings, w};
-use bun_paths::resolve_path::{PosixToWinNormalizer, posix_to_platform_in_place};
+#[cfg(windows)]
+use bun_core::{WStr, w};
+use bun_core::{ZStr, strings};
+#[cfg(windows)]
+use bun_paths::resolve_path::PosixToWinNormalizer;
+use bun_paths::resolve_path::posix_to_platform_in_place;
+#[cfg(windows)]
+use bun_paths::w_path_buffer_pool;
 use bun_paths::{
-    DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR, WPathBuffer, is_absolute,
-    path_buffer_pool, w_path_buffer_pool,
+    DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP, WPathBuffer, is_absolute, path_buffer_pool,
 };
 
 #[allow(non_upper_case_globals)]
@@ -112,6 +117,7 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
     }
 }
 
+#[cfg(windows)]
 static WIN_EXTENSIONS_W: [&[u16]; 3] = [w!("exe"), w!("cmd"), w!("bat")];
 const WIN_EXTENSIONS: [&[u8]; 3] = [b"exe", b"cmd", b"bat"];
 

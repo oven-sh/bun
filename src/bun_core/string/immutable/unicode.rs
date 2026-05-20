@@ -1505,10 +1505,8 @@ pub(super) use crate::strings::{push_codepoint_utf16, u16_lead, u16_trail};
 // `unreachable_pub`: these are re-exported externally via the parent's
 // `pub use unicode_draft::{… u16_is_lead, u16_is_trail …}`; the lint does not
 // trace that multi-hop re-export, so the `pub` is required here.
-pub use crate::strings::{
-    U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
-    u16_get_supplementary, u16_is_lead, u16_is_surrogate, u16_is_trail,
-};
+use crate::strings::u16_get_supplementary;
+pub use crate::strings::{u16_is_lead, u16_is_trail};
 
 pub(super) use crate::strings_impl::utf8_byte_sequence_length;
 

@@ -19,7 +19,6 @@
 //! `bun_js_parser::js_lexer` remains the canonical lexer; this module is a
 //! sliced re-port and is NOT re-exported outside `bun_interchange`.
 
-
 use bun_alloc::Arena as Bump;
 
 use bun_ast as js_ast;
@@ -130,7 +129,6 @@ impl T {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum StringLiteralFormat {
     Ascii,
-    Utf16,
     NeedsDecode,
 }
 
@@ -570,9 +568,6 @@ where
             StringLiteralFormat::Ascii => {
                 Ok(js_ast::E::String::init(self.string_literal_raw_content))
             }
-            StringLiteralFormat::Utf16 => {
-                unreachable!("JSON path never sets Utf16 — only the JSX rescan does")
-            }
             StringLiteralFormat::NeedsDecode => {
                 // Escape parsing may surface a syntax error.
                 let mut buf: Vec<u16> = Vec::with_capacity(self.string_literal_raw_content.len());
@@ -763,7 +758,6 @@ where
                             self.syntax_error()?;
                         }
                         last_underscore_end = self.end;
-                        underscore_count += 1;
                     }
                     cp if cp == '0' as CodePoint || cp == '1' as CodePoint => {
                         self.number = self.number * base + (cp - '0' as CodePoint) as f64;

@@ -37,6 +37,20 @@ describeWithContainer(
               GRANT ALL PRIVILEGES ON bun_sql_test.* TO caching@'%';
             FLUSH PRIVILEGES;`.simple();
       }
+      {
+        // Negative case: default (allowPublicKeyRetrieval unset) must refuse to fetch the server key.
+        // Must run before the successful login below so caching_sha2_password hasn't cached credentials yet.
+        await using denied = new SQL({
+          url: `mysql://caching:bunbun@${container.host}:${container.port}/bun_sql_test`,
+          max: 1,
+        });
+        const err = await denied`select 1 as x`.then(
+          () => null,
+          e => e,
+        );
+        expect(err).not.toBeNull();
+        expect(err?.code).toBe("ERR_MYSQL_PUBLIC_KEY_RETRIEVAL_NOT_ALLOWED");
+      }
       await using sql = new SQL({
         url: `mysql://caching:bunbun@${container.host}:${container.port}/bun_sql_test`,
         allowPublicKeyRetrieval: true,

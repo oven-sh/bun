@@ -2632,6 +2632,12 @@ pub mod parse_worker {
         // SAFETY: task.ctx backref valid for the bundle pass (outlives `'r`).
         let task_ctx = unsafe { task.ctx() };
         let module_type = opts.module_type;
+        // Hoist the `source_map` flag before the tombstone: we need it
+        // below after `get_ast` runs, but reading `topts.source_map` there
+        // would touch the invalidated shared borrow (get_ast reborrows
+        // `(*transpiler).options` mutably via raw pointer, which pops
+        // `topts`'s tag under Stacked Borrows). Copy it out now.
+        let source_map_option = topts.source_map;
         // `topts` (a `&BundleOptions`) is dead past this point; the callees take
         // raw `*mut Transpiler` and reborrow `(*transpiler).options` mutably.
         let _ = topts;
@@ -2702,7 +2708,7 @@ pub mod parse_worker {
         //   - loader can have source maps (js/ts/jsx/tsx; skip binary/asset)
         //   - non-empty contents (the scanner would find nothing)
         // Malformed payloads return `None` and fall back cleanly.
-        let input_source_map: Option<Box<bun_sourcemap::InputSourceMap>> = if topts.source_map
+        let input_source_map: Option<Box<bun_sourcemap::InputSourceMap>> = if source_map_option
             != options::SourceMapOption::None
             && loader.can_have_source_map()
             && !source.contents.is_empty()

@@ -4426,25 +4426,23 @@ pub mod bv2_impl {
                     }
                     this.graph.input_files.items_loader_mut()[load.source_index.get() as usize] =
                         code.loader;
-                    // Park the plugin bytes in `free_list` (drained at the very
-                    // end of `deinit_without_freeing_arena`, after every
-                    // consumer — `process_files_to_copy`,
-                    // `dev.put_or_overwrite_asset` in `on_parse_task_complete`
-                    // — has run) and borrow them into `source.contents`. This
-                    // keeps `input_files.source.contents` always `Cow::Borrowed`
-                    // so the per-file teardown loop is unnecessary. Spec
-                    // bundle_v2.zig:1970 owned them via `InputFile.arena`; the
-                    // Rust port dropped that column.
-                    let _ = should_copy_for_bundling;
-                    this.free_list.push(code.source_code);
-                    // SAFETY: `free_list` is append-only until
-                    // `deinit_without_freeing_arena`; the boxed slice is
-                    // heap-stable.
-                    let source_code: &'static [u8] = unsafe {
-                        bun_ptr::detach_lifetime_ref::<[u8]>(this.free_list.last().unwrap())
-                    };
+                    // For copied assets keep the bytes Owned in `source.contents`
+                    // so `process_files_to_copy` can `mem::take` them zero-copy
+                    // (it would otherwise clone the whole asset). For everything
+                    // else, park them in `free_list` (drained at the very end of
+                    // `deinit_without_freeing_arena`) and borrow, so the per-file
+                    // teardown loop is a no-op for the common no-plugin path.
+                    // SAFETY: the boxed slice is heap-stable under either owner
+                    // for as long as the parser holds the borrow.
+                    let source_code: &'static [u8] =
+                        unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(&*code.source_code) };
                     this.graph.input_files.items_source_mut()[load.source_index.get() as usize]
-                        .contents = std::borrow::Cow::Borrowed(source_code);
+                        .contents = if should_copy_for_bundling {
+                        std::borrow::Cow::Owned(code.source_code.into_vec())
+                    } else {
+                        this.free_list.push(code.source_code);
+                        std::borrow::Cow::Borrowed(source_code)
+                    };
                     this.graph.input_files.items_flags_mut()[load.source_index.get() as usize]
                         .insert(crate::Graph::InputFileFlags::IS_PLUGIN_FILE);
                     let parse_task = load.parse_task_mut();
@@ -4857,15 +4855,24 @@ pub mod bv2_impl {
                 drop(on_parse_finalizers);
             }
 
+            // Plugin file/asset-loader bytes that `process_files_to_copy` will
+            // `mem::take` are stored as `Cow::Owned` so that handoff is zero-copy.
+            // Everything else is `Cow::Borrowed` (file reads land in the worker
+            // arena; non-asset plugin bytes are owned by `free_list`), so this loop
+            // is N×branch with no work for plugin-free bundles.
+            for s in self.graph.input_files.items_source_mut() {
+                if matches!(s.contents, std::borrow::Cow::Owned(_)) {
+                    s.contents = std::borrow::Cow::Borrowed(b"");
+                }
+            }
+
             // Zig spec (bundle_v2.zig:2229): `defer { this.graph.{ast,input_files,
             // entry_points,entry_point_original_names}.deinit(this.allocator()) }`.
             // In Zig those `MultiArrayList`s only free their slab — every per-element
             // payload (file contents, quoted source-map JSON, line-offset tables, …)
             // lives in `this.graph.heap` / a per-worker `mi_heap_t`, so the caller's
             // `defer heap.deinit()` bulk-frees them. The Rust port now matches that:
-            // `InputFile.source.contents` is always `Cow::Borrowed` (file reads land
-            // in the worker arena via `read_file_with_allocator`; plugin `on_load`
-            // bytes are owned by `free_list`), `LinkerGraph.File.line_offset_table`
+            // `LinkerGraph.File.line_offset_table`
             // is `List<AstAlloc>` (slab + `columns_for_non_ascii` payloads in the
             // worker AST heap, see `compute_line_offsets`), and every
             // `MultiArrayList<BundledAst>` / `JSMeta` / `InputFile` column —

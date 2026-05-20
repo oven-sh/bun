@@ -122,10 +122,6 @@ pub struct BakeExtra {
 pub type Index = bun_core::GenericIndex<u32, OutputFile>;
 pub type IndexOptional = bun_core::GenericIndexOptional<u32, OutputFile>;
 
-// Zig `deinit` only freed owned fields (value / src_path.text / dest_path /
-// referenced_css_chunks); all are now owned types that drop automatically, so no
-// explicit `impl Drop` is needed (and an empty one would block field moves).
-
 // Depending on:
 // - The target
 // - The number of open file handles
@@ -228,9 +224,6 @@ impl Clone for Value {
 }
 
 impl Value {
-    // Zig `deinit` only freed `.buffer.bytes`; `Box<[u8]>` drops automatically, so no
-    // explicit `Drop` impl is needed.
-
     pub fn as_slice(&self) -> &[u8] {
         match self {
             Value::Buffer { bytes } => bytes,
@@ -468,9 +461,8 @@ impl OutputFile {
                     // Zig: `std.fs.path.dirname` returns `null` when there's no
                     // separator; the Rust port returns `b""` instead.
                     let parent = resolve_path::dirname::<platform::Auto>(rel_path);
-                    if !parent.is_empty() && parent.len() > root_dir_path.len() {
-                        // Zig `root_dir.makePath(parent)` (std.fs.Dir).
-                        bun_sys::make_path(bun_sys::Dir::from_fd(root_dir), parent)?;
+                    if !parent.is_empty() {
+                        bun_sys::Dir::borrow(&root_dir).make_path(parent)?;
                     }
                 }
 

@@ -1245,7 +1245,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 let resolved = Repository::find_commit(
                     this.env_mut(),
                     this.log_mut(),
-                    bun_sys::Dir::from_fd(repo_fd),
+                    repo_fd,
                     alias,
                     this.lockfile.str(&dep.committish),
                     clone_id,
@@ -1934,8 +1934,11 @@ fn enqueue_local_tarball(
                     )
                     .expect("unreachable"),
                     resolution,
+                    // `ExtractTarball::{cache_dir,temp_dir}` are borrowed views — the
+                    // descriptors are owned by the `PackageManager` singleton and the
+                    // `TemporaryDirectory` once-cell. They must be `Fd`, not owning `Dir`.
                     cache_dir: get_cache_directory(this),
-                    temp_dir: get_temporary_directory(this).handle,
+                    temp_dir: get_temporary_directory(this).handle.fd(),
                     dependency_id,
                     integrity,
                     url: StringOrTinyString::init_append_if_needed(

@@ -727,11 +727,6 @@ pub fn migrate_yarn_lockfile<'a>(
         else {
             return Err(bun_core::err!("InvalidPackageJSON"));
         };
-        // Zig: `defer package_json_fd.close()` — guard so every early-return
-        // below (read_to_end / get_fd_path failure) still closes the fd.
-        let package_json_fd = scopeguard::guard(package_json_fd, |f| {
-            let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
-        });
         let Ok(package_json_contents) = package_json_fd.read_to_end() else {
             return Err(bun_core::err!("InvalidPackageJSON"));
         };

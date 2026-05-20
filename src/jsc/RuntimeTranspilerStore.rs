@@ -108,26 +108,24 @@ pub fn dump_source_string_failiable(
 
     let mut path_buf = bun_paths::PathBuffer::default();
 
-    let dir = match *holder {
-        Some(d) => d,
-        None => {
-            let base_name: &[u8] = if cfg!(windows) {
-                // Spec: bun.fs.FileSystem.RealFS.platformTempDir() ++ "\\bun-debug-src"
-                let temp = Fs::RealFS::platform_temp_dir();
-                let suffix = b"\\bun-debug-src";
-                path_buf.0[..temp.len()].copy_from_slice(temp);
-                path_buf.0[temp.len()..temp.len() + suffix.len()].copy_from_slice(suffix);
-                &path_buf.0[..temp.len() + suffix.len()]
-            } else if bun_core::env::IS_ANDROID {
-                b"/data/local/tmp/bun-debug-src/"
-            } else {
-                b"/tmp/bun-debug-src/"
-            };
-            let d = Dir::cwd().make_open_path(base_name, OpenDirOptions::default())?;
-            *holder = Some(d);
-            d
-        }
-    };
+    if holder.is_none() {
+        let base_name: &[u8] = if cfg!(windows) {
+            // Spec: bun.fs.FileSystem.RealFS.platformTempDir() ++ "\\bun-debug-src"
+            let temp = Fs::RealFS::platform_temp_dir();
+            let suffix = b"\\bun-debug-src";
+            path_buf.0[..temp.len()].copy_from_slice(temp);
+            path_buf.0[temp.len()..temp.len() + suffix.len()].copy_from_slice(suffix);
+            &path_buf.0[..temp.len() + suffix.len()]
+        } else if bun_core::env::IS_ANDROID {
+            b"/data/local/tmp/bun-debug-src/"
+        } else {
+            b"/tmp/bun-debug-src/"
+        };
+        *holder = Some(Dir::cwd().make_open_path(base_name, OpenDirOptions::default())?);
+    }
+    // `Dir` is `!Copy`; the singleton stays owned by `BUN_DEBUG_HOLDER` for
+    // process lifetime — borrow it for the duration of this dump.
+    let dir = holder.as_ref().expect("just initialized above");
 
     if let Some(dir_path) = bun_paths::dirname(specifier) {
         let root_len = if cfg!(windows) {
@@ -136,7 +134,6 @@ pub fn dump_source_string_failiable(
             b"/".len()
         };
         let parent = dir.make_open_path(&dir_path[root_len..], OpenDirOptions::default())?;
-        let _close_parent = scopeguard::guard(parent, |p| p.close());
 
         let base = bun_paths::basename(specifier);
         let base_z = bun_paths::resolve_path::z(base, &mut path_buf);
@@ -164,9 +161,6 @@ pub fn dump_source_string_failiable(
                     read: false,
                 },
             )?;
-            let _close_file = scopeguard::guard(file.handle, |fd| {
-                let _ = bun_sys::close(fd);
-            });
 
             // `parent.readFileAlloc(allocator, specifier, maxInt) catch ""`
             let source_file = File::read_from(parent.fd, specifier).unwrap_or_default();

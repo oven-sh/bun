@@ -33,7 +33,7 @@ or don't match the cross-platform behavior the runtime needs.
 
 | Instead of                              | Use                                                                                  |
 | --------------------------------------- | ------------------------------------------------------------------------------------ |
-| `std::fs::File`                         | `bun_sys::File` (Copy, no `Drop`-close)                                              |
+| `std::fs::File`                         | `bun_sys::File` (owns the fd; closes on `Drop`)                                      |
 | `std::fs::read` / `write`               | `bun_sys::File::read_from` / `File::create` + `write_all`                            |
 | `std::path::Path::join`                 | `bun_paths::resolve_path::join` / `join_string_buf`                                  |
 | `std::path::Path::parent`/`file_name`   | `bun_paths::dirname` / `bun_paths::basename`                                         |
@@ -54,7 +54,7 @@ use bun_sys::{File, Fd, O};
 let file = File::openat(Fd::cwd(), b"path/to/file", O::RDONLY, 0)?;
 let mut buf = vec![0u8; 4096];
 let n = file.read_all(&mut buf)?;     // loops until EOF or full
-file.close();                          // File is Copy — no Drop close
+// `file` closes on Drop.
 ```
 
 Key types and functions:
@@ -327,7 +327,7 @@ canonical example of this bug class and its fix.
 ```rust
 // Read a file, return JS error on failure
 let contents = match bun_sys::File::openat(Fd::cwd(), path, O::RDONLY, 0)
-    .and_then(|f| { let r = f.read_to_end(); f.close(); r })
+    .and_then(|f| f.read_to_end())
 {
     Ok(bytes) => bytes,
     Err(err) => return Ok(err.to_js(global)?),

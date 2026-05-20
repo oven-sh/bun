@@ -353,19 +353,17 @@ impl TrustCommand {
             let nm_saved = node_modules_path.len();
             let _ = node_modules_path.append(node_modules.relative_path.as_bytes());
 
-            let node_modules_dir =
-                match bun_sys::open_dir(bun_sys::Dir::cwd(), node_modules.relative_path.as_bytes())
-                {
-                    Ok(d) => d,
-                    Err(e) if e == bun_core::err!(ENOENT) => {
-                        node_modules_path.set_length(nm_saved);
-                        continue;
-                    }
-                    Err(e) => return Err(e),
-                };
-            // PORT NOTE: `defer node_modules_dir.close()` — `Dir` has no `Drop`;
-            // closed explicitly at end of iteration. The Zig only opened it to
-            // detect ENOENT; nothing reads from it.
+            let node_modules_dir = match bun_sys::Dir::cwd()
+                .open_at(node_modules.relative_path.as_bytes())
+                .map_err(bun_core::Error::from)
+            {
+                Ok(d) => d,
+                Err(e) if e == bun_core::err!(ENOENT) => {
+                    node_modules_path.set_length(nm_saved);
+                    continue;
+                }
+                Err(e) => return Err(e),
+            };
 
             for &dep_id in node_modules.dependencies {
                 if !untrusted_dep_ids.contains(&dep_id) {
@@ -398,10 +396,7 @@ impl TrustCommand {
                 let maybe_scripts_list = match result {
                     Ok(v) => v,
                     Err(e) if e == bun_core::err!(ENOENT) => continue,
-                    Err(e) => {
-                        node_modules_dir.close();
-                        return Err(e);
-                    }
+                    Err(e) => return Err(e),
                 };
 
                 if let Some(scripts_list) = maybe_scripts_list {
@@ -440,7 +435,6 @@ impl TrustCommand {
                 }
             }
 
-            node_modules_dir.close();
             node_modules_path.set_length(nm_saved);
         }
 
@@ -542,11 +536,14 @@ impl TrustCommand {
             }
         }
 
-        // SAFETY: `pm_raw` singleton; `root_package_json_file` owned by `pm`.
-        // `File` is `#[repr(transparent)]` over `Fd` (Copy) but not itself
-        // `Copy`; rebuild a local handle so `close()` (which takes `self`) can
-        // consume it after the final write — matches Zig's by-value `File`.
-        let root_file = unsafe { bun_sys::File::from_fd((*pm_raw).root_package_json_file.handle) };
+        // SAFETY: `pm_raw` singleton; this scope takes over the descriptor
+        // (the original `pm.root_package_json_file` is replaced with INVALID so
+        // its eventual drop is a no-op). Matches Zig's by-value `File` move.
+        let root_file = unsafe {
+            let fd = (*pm_raw).root_package_json_file.handle;
+            (*pm_raw).root_package_json_file.handle = bun_core::Fd::INVALID;
+            bun_sys::File::from_fd(fd)
+        };
         let package_json_contents = root_file.read_to_end().map_err(bun_core::Error::from)?;
 
         // SAFETY: `ROOT_PACKAGE_JSON_PATH` is set during `PackageManager::init`

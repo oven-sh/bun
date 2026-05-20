@@ -128,6 +128,7 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
 
             match manager
                 .global_dir
+                .as_ref()
                 .unwrap()
                 .make_open_path(b"node_modules", Default::default())
             {

@@ -743,7 +743,7 @@ impl TokenList {
     pub fn get_fallbacks(
         &mut self,
         bump: &Arena,
-        targets: css::targets::Targets,
+        targets: &css::targets::Targets,
     ) -> css::SmallList<Fallbacks, 2> {
         // Get the full list of possible fallbacks, and remove the lowest one, which will replace
         // the original declaration. The remaining fallbacks need to be added as @supports rules.
@@ -795,12 +795,12 @@ impl TokenList {
         res
     }
 
-    pub fn get_necessary_fallbacks(&self, targets: css::targets::Targets) -> ColorFallbackKind {
+    pub fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
         let mut fallbacks = ColorFallbackKind::empty();
         for token_or_value in self.v.iter() {
             match token_or_value {
                 TokenOrValue::Color(color) => {
-                    fallbacks.insert(color.get_possible_fallbacks(targets));
+                    fallbacks.insert(color.get_possible_fallbacks(*targets));
                 }
                 TokenOrValue::Function(f) => {
                     fallbacks.insert(f.arguments.get_necessary_fallbacks(targets));
@@ -1229,12 +1229,12 @@ pub enum UAEnvironmentVariable {
 // hash — via `#[derive(CssHash)]` (the derive emits UFCS, so no inherent shim needed).
 impl UAEnvironmentVariable {
     #[inline]
-    pub fn eql(&self, other: &Self) -> bool {
-        *self == *other
+    pub fn eql(self, other: Self) -> bool {
+        self == other
     }
     #[inline]
-    pub fn deep_clone(&self, _bump: &Arena) -> Self {
-        *self
+    pub fn deep_clone(self, _bump: &Arena) -> Self {
+        self
     }
 }
 
@@ -1460,7 +1460,7 @@ impl UnparsedProperty {
     pub fn get_prefixed(
         &self,
         bump: &Arena,
-        targets: css::targets::Targets,
+        targets: &css::targets::Targets,
         feature: css::prefixes::Feature,
     ) -> UnparsedProperty {
         let mut clone = self.deep_clone(bump);

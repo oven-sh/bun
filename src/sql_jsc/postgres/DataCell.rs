@@ -723,11 +723,10 @@ fn parse_array(
     }
 
     // disarm errdefer
-    let mut array = scopeguard::ScopeGuard::into_inner(array);
+    let mut array = core::mem::ManuallyDrop::new(scopeguard::ScopeGuard::into_inner(array));
     let len = array.len() as u32;
     let cap = array.capacity() as u32;
     let ptr = array.as_mut_ptr();
-    core::mem::forget(array);
     Ok(SQLDataCell {
         tag: Tag::Array,
         value: Value {

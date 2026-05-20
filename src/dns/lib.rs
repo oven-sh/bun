@@ -130,7 +130,7 @@ impl Default for Options {
 }
 
 impl Options {
-    pub fn to_libc(&self) -> Option<sock::addrinfo> {
+    pub fn to_libc(self) -> Option<sock::addrinfo> {
         if self.family == Family::Unspecified
             && self.socktype == SocketType::Unspecified
             && self.protocol == Protocol::Unspecified
@@ -149,7 +149,7 @@ impl Options {
     }
 
     /// Reconstructs the Zig `packed struct(u64)` byte layout for hashing.
-    fn to_packed_bytes(&self) -> [u8; 8] {
+    fn to_packed_bytes(self) -> [u8; 8] {
         let low: u8 = (self.family as u8 & 0b11)
             | ((self.socktype as u8 & 0b11) << 2)
             | ((self.protocol as u8 & 0b11) << 4)

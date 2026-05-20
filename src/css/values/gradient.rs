@@ -76,7 +76,7 @@ impl GradientSideKeyword for HorizontalPositionKeyword {
     }
     #[inline]
     fn into_length_percentage(&self) -> LengthPercentage {
-        HorizontalPositionKeyword::into_length_percentage(self)
+        HorizontalPositionKeyword::into_length_percentage(*self)
     }
 }
 impl GradientSideKeyword for VerticalPositionKeyword {
@@ -90,7 +90,7 @@ impl GradientSideKeyword for VerticalPositionKeyword {
     }
     #[inline]
     fn into_length_percentage(&self) -> LengthPercentage {
-        VerticalPositionKeyword::into_length_percentage(self)
+        VerticalPositionKeyword::into_length_percentage(*self)
     }
 }
 
@@ -203,8 +203,8 @@ impl Gradient {
     }
 
     /// Returns the vendor prefixes needed for the given browser targets.
-    pub fn get_necessary_prefixes(&self, targets: css::targets::Targets) -> VendorPrefix {
-        let get_prefixes = |tgts: css::targets::Targets,
+    pub fn get_necessary_prefixes(&self, targets: &css::targets::Targets) -> VendorPrefix {
+        let get_prefixes = |tgts: &css::targets::Targets,
                             feature: css::prefixes::Feature,
                             prefix: VendorPrefix|
          -> VendorPrefix { tgts.prefixes(prefix, feature) };
@@ -275,7 +275,7 @@ impl Gradient {
     }
 
     /// Returns the color fallback types needed for the given browser targets.
-    pub fn get_necessary_fallbacks(&self, targets: css::targets::Targets) -> ColorFallbackKind {
+    pub fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
         let mut fallbacks = ColorFallbackKind::empty();
         match self {
             Gradient::Linear(linear) | Gradient::RepeatingLinear(linear) => {
@@ -424,7 +424,7 @@ impl LinearGradient {
         Ok(())
     }
 
-    pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         for item in self.items.iter() {
             if !item.is_compatible(browsers) {
                 return false;
@@ -518,7 +518,7 @@ impl RadialGradient {
         serialize_items::<LengthPercentage>(&self.items, dest)
     }
 
-    pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         for item in self.items.iter() {
             if !item.is_compatible(browsers) {
                 return false;
@@ -588,7 +588,7 @@ impl ConicGradient {
         let items = parse_items::<AnglePercentage>(input)?;
         Ok(ConicGradient {
             angle: angle.unwrap_or(Angle::Deg(0.0)),
-            position: position.unwrap_or(Position::center()),
+            position: position.unwrap_or_else(|_| Position::center()),
             items,
         })
     }
@@ -614,7 +614,7 @@ impl ConicGradient {
         serialize_items::<AnglePercentage>(&self.items, dest)
     }
 
-    pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         for item in self.items.iter() {
             if !item.is_compatible(browsers) {
                 return false;
@@ -915,7 +915,7 @@ impl WebKitGradient {
 }
 
 /// The corner payload for [`LineDirection::Corner`].
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub struct LineDirectionCorner {
     /// A horizontal position keyword, e.g. `left` or `right`.
     pub horizontal: HorizontalPositionKeyword,
@@ -924,8 +924,8 @@ pub struct LineDirectionCorner {
 }
 
 impl LineDirectionCorner {
-    pub fn deep_clone(&self, _bump: &Arena) -> Self {
-        self.clone()
+    pub fn deep_clone(self, _bump: &Arena) -> Self {
+        self
     }
 }
 
@@ -1053,11 +1053,11 @@ impl<D: GradientPosition> GradientItem<D> {
         self.clone()
     }
 
-    pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         match self {
-            GradientItem::ColorStop(c) => c.color.is_compatible(browsers),
+            GradientItem::ColorStop(c) => c.color.is_compatible(*browsers),
             GradientItem::Hint(_) => {
-                css::compat::Feature::GradientInterpolationHints.is_compatible(browsers)
+                css::compat::Feature::GradientInterpolationHints.is_compatible(*browsers)
             }
         }
     }
@@ -1074,9 +1074,9 @@ impl<D: GradientPosition> GradientItem<D> {
     }
 
     /// Returns the color fallback types needed for the given browser targets.
-    pub fn get_necessary_fallbacks(&self, targets: css::targets::Targets) -> ColorFallbackKind {
+    pub fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
         match self {
-            GradientItem::ColorStop(stop) => stop.color.get_necessary_fallbacks(targets),
+            GradientItem::ColorStop(stop) => stop.color.get_necessary_fallbacks(*targets),
             GradientItem::Hint(_) => ColorFallbackKind::empty(),
         }
     }
@@ -1412,8 +1412,8 @@ pub enum ShapeExtent {
 }
 
 impl ShapeExtent {
-    pub fn deep_clone(&self, _bump: &Arena) -> Self {
-        *self
+    pub fn deep_clone(self, _bump: &Arena) -> Self {
+        self
     }
 }
 

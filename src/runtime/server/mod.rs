@@ -2446,7 +2446,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 return JSValue::ZERO;
             };
 
-            app = match uws_sys::NewApp::<SSL>::create(ssl_options) {
+            app = match uws_sys::NewApp::<SSL>::create(&ssl_options) {
                 Some(a) => a,
                 None => {
                     if !global.has_exception() && !throw_ssl_error_if_necessary(global) {
@@ -2463,7 +2463,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
             if Self::HAS_H3 && this_ref.config.http3 {
                 let idle_timeout = this_ref.config.idle_timeout as u32;
-                let h3 = match uws_sys::h3::App::create(ssl_options, idle_timeout) {
+                let h3 = match uws_sys::h3::App::create(&ssl_options, idle_timeout) {
                     Some(a) => Some(a),
                     None => {
                         if !global.has_exception() {
@@ -2503,7 +2503,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 let server_name = unsafe { bun_core::ffi::cstr(name_ptr) };
                 // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                 if bun_opaque::opaque_deref_mut(app)
-                    .add_server_name_with_options(server_name, ssl_options)
+                    .add_server_name_with_options(server_name, &ssl_options)
                     .is_err()
                 {
                     if !global.has_exception() && !throw_ssl_error_if_necessary(global) {
@@ -2565,7 +2565,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     if let Some(h3_app) = this_ref.h3_app {
                         // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
                         if bun_opaque::opaque_deref_mut(h3_app)
-                            .add_server_name_with_options(z, sni_opts)
+                            .add_server_name_with_options(z, &sni_opts)
                             .is_err()
                         {
                             if !global.has_exception() {
@@ -2581,7 +2581,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
                 // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                 if bun_opaque::opaque_deref_mut(app)
-                    .add_server_name_with_options(sni_name, sni_opts)
+                    .add_server_name_with_options(sni_name, &sni_opts)
                     .is_err()
                 {
                     if !global.has_exception() && !throw_ssl_error_if_necessary(global) {
@@ -2603,7 +2603,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 let _ = unsafe { &mut *this }.set_routes();
             }
         } else {
-            app = match uws_sys::NewApp::<SSL>::create(uws_sys::BunSocketContextOptions::default())
+            app = match uws_sys::NewApp::<SSL>::create(&uws_sys::BunSocketContextOptions::default())
             {
                 Some(a) => a,
                 None => {
@@ -2723,7 +2723,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 |s: &mut Self, ls: Option<&mut uws_sys::h3::ListenSocket>| {
                                     s.on_h3_listen(ls.map(|l| std::ptr::from_mut(l)));
                                 },
-                                uws_sys::h3::ListenConfig {
+                                &uws_sys::h3::ListenConfig {
                                     port: h3_port,
                                     host,
                                     options,

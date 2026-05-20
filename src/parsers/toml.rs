@@ -68,10 +68,11 @@ impl ObjectRopeExt for E::Object {
         if !rope.next.is_null() {
             let obj = Expr::init(E::Object::default(), rope.head.loc);
             // SAFETY: rope.next non-null and arena-owned.
+            let next = unsafe { &*rope.next };
             obj.data
                 .e_object()
                 .unwrap()
-                .set_rope(unsafe { &*rope.next }, bump, value)?;
+                .set_rope(next, bump, value)?;
             value_ = obj;
         }
 
@@ -183,8 +184,8 @@ mod hash_map_pool {
     pub(super) fn get() -> *mut Node {
         let popped = LIST.with_borrow_mut(|list| {
             if let Some(first) = list {
-                // SAFETY: `first` was produced by heap::alloc below and is non-null.
                 let node = *first;
+                // SAFETY: `first` was produced by heap::alloc below and is non-null.
                 unsafe {
                     *list = if (*node).next.is_null() {
                         None

@@ -68,7 +68,7 @@ fn headers_from(fetch_headers: Option<&FetchHeaders>, blob: &Blob) -> Headers {
 }
 
 #[inline]
-fn sp_slice<'a>(ptr: &StringPointer, buf: &'a [u8]) -> &'a [u8] {
+fn sp_slice<'a>(ptr: StringPointer, buf: &'a [u8]) -> &'a [u8] {
     &buf[ptr.offset as usize..][..ptr.length as usize]
 }
 
@@ -113,7 +113,7 @@ impl FileRoute {
         Ok(None)
     }
 
-    pub fn init_from_blob(blob: Blob, opts: InitOptions<'_>) -> *mut FileRoute {
+    pub fn init_from_blob(blob: Blob, opts: &InitOptions<'_>) -> *mut FileRoute {
         let headers = headers_from(opts.headers, &blob);
         bun_core::heap::into_raw(Box::new(FileRoute {
             ref_count: Cell::new(1),
@@ -229,7 +229,7 @@ impl FileRoute {
             AnyResponse::SSL(s) => {
                 let s = bun_opaque::opaque_deref_mut(s);
                 for (name, value) in names.iter().zip(values) {
-                    s.write_header(sp_slice(name, buf), sp_slice(value, buf));
+                    s.write_header(sp_slice(*name, buf), sp_slice(*value, buf));
                 }
                 if let Some(srv) = self.server.get() {
                     if let Some(alt) = srv.h3_alt_svc() {
@@ -240,7 +240,7 @@ impl FileRoute {
             AnyResponse::TCP(s) => {
                 let s = bun_opaque::opaque_deref_mut(s);
                 for (name, value) in names.iter().zip(values) {
-                    s.write_header(sp_slice(name, buf), sp_slice(value, buf));
+                    s.write_header(sp_slice(*name, buf), sp_slice(*value, buf));
                 }
                 if let Some(srv) = self.server.get() {
                     if let Some(alt) = srv.h3_alt_svc() {
@@ -251,7 +251,7 @@ impl FileRoute {
             AnyResponse::H3(s) => {
                 let s = bun_opaque::opaque_deref_mut(s);
                 for (name, value) in names.iter().zip(values) {
-                    s.write_header(sp_slice(name, buf), sp_slice(value, buf));
+                    s.write_header(sp_slice(*name, buf), sp_slice(*value, buf));
                 }
                 // tag == .H3 → no alt-svc header
             }
@@ -547,7 +547,7 @@ impl FileRoute {
         // Hand ownership of the fd to FileResponseStream; disable the defer close.
         // The route ref taken at the top of on() is released in on_stream_complete.
         *fd_guard = false;
-        FileResponseStream::start(FileResponseStreamOptions {
+        FileResponseStream::start(&FileResponseStreamOptions {
             fd,
             auto_close: true,
             resp,

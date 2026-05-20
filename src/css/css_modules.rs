@@ -115,7 +115,7 @@ impl<'a> CssModule<'a> {
         &mut self,
         bump: &'a Bump,
         name: &'a [u8],
-        from: &Option<css::css_properties::css_modules::Specifier>,
+        from: Option<css::css_properties::css_modules::Specifier>,
         specifier_path: Option<&'a [u8]>,
         source_index: u32,
     ) -> Option<&'a [u8]> {

@@ -352,11 +352,12 @@ impl<'a> Loader<'a> {
         // by returning `[]const u8` borrowing the loader's map. Encapsulating
         // the extension here keeps every caller (PackageManager, fetch,
         // upgrade, create) free of `transmute` (PORTING.md §Forbidden).
-        //
-        // SAFETY: see above — `s` points into a `Box<[u8]>` owned by
-        // `*self.map`, which outlives `'a`.
-        let extend =
-            |s: &[u8]| -> &'a [u8] { unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) } };
+        let extend = |s: &[u8]| -> &'a [u8] {
+            // SAFETY: `s` points into a `Box<[u8]>` owned by `*self.map`, which is
+            // borrowed for `'a`; the boxed allocation is address-stable and never
+            // removed for the proxy env vars (see lifetime note above).
+            unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) }
+        };
 
         let mut http_proxy: Option<URL<'a>> = None;
 

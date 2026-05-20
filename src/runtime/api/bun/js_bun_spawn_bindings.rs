@@ -87,7 +87,7 @@ fn signal_code_from_js(val: JSValue, global: &JSGlobalObject) -> JsResult<Signal
 
 /// Convert a `bun_sys::SystemError` (T1 stub shape) into the C-ABI
 /// `bun_jsc::SystemError` and materialize a JS Error instance.
-fn sys_system_error_to_js(err: bun_sys::SystemError, global: &JSGlobalObject) -> JSValue {
+fn sys_system_error_to_js(err: &bun_sys::SystemError, global: &JSGlobalObject) -> JSValue {
     let jsc_err = SystemError {
         errno: err.errno,
         code: err.code,
@@ -134,7 +134,7 @@ impl IPC::SendQueueOwner for SubprocessT<'static> {
         SubprocessT::handle_ipc_close(self)
     }
     fn handle_ipc_message(&mut self, msg: IPC::DecodedIPCMessage, handle: JSValue) {
-        SubprocessT::handle_ipc_message(self, msg, handle)
+        SubprocessT::handle_ipc_message(self, &msg, handle)
     }
     fn this_jsvalue(&self) -> JSValue {
         self.this_value.get().try_get().unwrap_or(JSValue::ZERO)
@@ -1114,8 +1114,11 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         ..Default::default()
     };
 
-    let mut spawned = match spawn::spawn_process(&spawn_options, argv.as_ptr(), env_array.as_ptr())
-    {
+    // SAFETY: `argv`/`env_array` are local null-terminated C-string arrays
+    // with argv[0] non-null; valid for this call.
+    let mut spawned = match unsafe {
+        spawn::spawn_process(&spawn_options, argv.as_ptr(), env_array.as_ptr())
+    } {
         Err(err) if err == bun_core::err!("EMFILE") || err == bun_core::err!("ENFILE") => {
             // Windows: close+free the heap `uv::Pipe` handles that
             // `as_spawn_option` allocated and `spawn_process_windows` may have
@@ -1146,7 +1149,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             } else {
                 -UV_E::NFILE
             };
-            return Err(global_this.throw_value(sys_system_error_to_js(systemerror, global_this)));
+            return Err(global_this.throw_value(sys_system_error_to_js(&systemerror, global_this)));
         }
         Err(err) => {
             // See EMFILE arm above — Zig spec js_bun_spawn_bindings.zig:637.
@@ -1177,7 +1180,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                                 systemerror.errno = -UV_E::NOENT;
                             }
                             return Err(global_this
-                                .throw_value(sys_system_error_to_js(systemerror, global_this)));
+                                .throw_value(sys_system_error_to_js(&systemerror, global_this)));
                         }
                     }
                     _ => {}
@@ -1715,8 +1718,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     if !IS_SYNC {
         if !subprocess.has_exited() {
-            // SAFETY: jsc_vm_ptr points to the live thread VM.
-            unsafe { &mut *jsc_vm_ptr }.on_subprocess_spawn(subprocess.process.as_ptr());
+            // SAFETY: jsc_vm_ptr points to the live thread VM; `subprocess.process`
+            // is a `BackRef` (wraps `NonNull`), so its pointer is non-null.
+            unsafe { (*jsc_vm_ptr).on_subprocess_spawn(NonNull::new_unchecked(subprocess.process.as_ptr())) };
         }
         return Ok(out);
     }
@@ -1758,8 +1762,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
 
     if !subprocess.has_exited() {
-        // SAFETY: jsc_vm_ptr points to the live thread VM.
-        unsafe { &mut *jsc_vm_ptr }.on_subprocess_spawn(subprocess.process.as_ptr());
+        // SAFETY: jsc_vm_ptr points to the live thread VM; `subprocess.process`
+        // is a `BackRef` (wraps `NonNull`), so its pointer is non-null.
+        unsafe { (*jsc_vm_ptr).on_subprocess_spawn(NonNull::new_unchecked(subprocess.process.as_ptr())) };
     }
 
     let mut did_timeout = false;

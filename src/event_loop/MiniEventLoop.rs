@@ -251,7 +251,7 @@ impl<'a> MiniEventLoop<'a> {
         self
     }
 
-    pub fn throw_error(&mut self, err: sys::Error) {
+    pub fn throw_error(&mut self, err: &sys::Error) {
         bun_core::pretty_errorln!("{}", err);
         Output::flush();
     }
@@ -299,6 +299,8 @@ impl<'a> MiniEventLoop<'a> {
     /// `unsafe-fn-narrow`: every unsafe op below derefs the caller-supplied
     /// `this`; the body cannot discharge that precondition.)
     pub unsafe fn file_polls_raw(this: *mut Self) -> *mut FilePollStore {
+        // SAFETY: caller guarantees `this` points to a live `MiniEventLoop` (see fn `# Safety`);
+        // `addr_of_mut!` projects to `file_polls_` without forming `&mut Self`.
         unsafe {
             let slot = core::ptr::addr_of_mut!((*this).file_polls_);
             if (*slot).is_none() {
@@ -442,11 +444,7 @@ impl<'a> MiniEventLoop<'a> {
     ) {
         // SAFETY: caller contract — `field_offset == offset_of!(C, <field>)` where
         // `<field>: AnyTaskWithExtraContext`, and `ctx` is live for the task's duration.
-        let task = unsafe {
-            ctx.cast::<u8>()
-                .add(field_offset)
-                .cast::<AnyTaskWithExtraContext>()
-        };
+        let task = unsafe { ctx.byte_add(field_offset).cast::<AnyTaskWithExtraContext>() };
         // Zig: `@field(ctx, name) = TaskType.init(ctx);`
         // SAFETY: `task` points at a properly aligned `AnyTaskWithExtraContext` field of `*ctx`.
         unsafe { task.write(New::<C, ()>::init(ctx, callback)) };
@@ -455,7 +453,8 @@ impl<'a> MiniEventLoop<'a> {
     }
 
     pub fn enqueue_task_concurrent(&mut self, task: *mut AnyTaskWithExtraContext) {
-        self.concurrent_tasks.push(task);
+        // SAFETY: caller contract — `task` is a valid live intrusive node.
+        unsafe { self.concurrent_tasks.push(task) };
         // SAFETY: see `loop_ptr()` invariant.
         unsafe { (*self.loop_ptr()).wakeup() };
     }
@@ -476,16 +475,13 @@ impl<'a> MiniEventLoop<'a> {
         // SAFETY: caller contract — `field_offset == offset_of!(C, <field>)` where
         // `<field>: AnyTaskWithExtraContext`, and `ctx` outlives the queued task
         // (intrusive node; ownership stays with caller).
-        let task = unsafe {
-            ctx.cast::<u8>()
-                .add(field_offset)
-                .cast::<AnyTaskWithExtraContext>()
-        };
+        let task = unsafe { ctx.byte_add(field_offset).cast::<AnyTaskWithExtraContext>() };
         // Zig: `@field(ctx, name) = TaskType.init(ctx);`
         // SAFETY: `task` points at a properly aligned `AnyTaskWithExtraContext` field of `*ctx`.
         unsafe { task.write(New::<C, P>::init(ctx, callback)) };
 
-        self.concurrent_tasks.push(task);
+        // SAFETY: `task` was just initialized above; `*ctx` outlives the queued task.
+        unsafe { self.concurrent_tasks.push(task) };
 
         // SAFETY: see `loop_ptr()` invariant.
         unsafe { (*self.loop_ptr()).wakeup() };

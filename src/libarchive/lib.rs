@@ -2050,7 +2050,7 @@ impl Archiver {
                                     if A::HAS_APPEND_MUTABLE {
                                         let result = ctx_
                                             .all_files
-                                            .get_or_put_adapted(h, archiver::U64Context)
+                                            .get_or_put_adapted(&h, &archiver::U64Context)
                                             .expect("unreachable");
                                         if !result.found_existing {
                                             *result.value_ptr = appender

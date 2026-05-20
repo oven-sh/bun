@@ -162,7 +162,7 @@ pub(crate) fn dupe(src: &[u8]) -> &'static [u8] {
     // the inner mutex, copies `src` into its owned backing buffer and returns
     // a slice borrowing that storage; the returned borrow is `'static`-valid
     // by construction.
-    unsafe { ImportPathsList::append(relative_paths_list_ptr(), src).expect("OOM") }
+    unsafe { ImportPathsList::append(relative_paths_list_ptr(), &src).expect("OOM") }
 }
 #[inline]
 fn intern(buf: Vec<u8>) -> &'static [u8] {

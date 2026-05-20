@@ -408,7 +408,7 @@ fn parse_line_names(input: &mut Parser) -> css::Result<CustomIdentList> {
 ///
 /// See [TrackRepeat](TrackRepeat).
 // TODO(port): css.DeriveParse / css.DeriveToCss → #[derive(Parse, ToCss)] proc-macro
-#[derive(PartialEq)]
+#[derive(PartialEq, Eq)]
 pub enum RepeatCount {
     /// The number of times to repeat.
     Number(CSSInteger),
@@ -483,6 +483,8 @@ impl GridTemplateAreas {
             .try_parse(|i| i.expect_string().map(|s| std::ptr::from_ref::<[u8]>(s)))
             .ok()
         {
+            // SAFETY: `s` points to a slice returned by `expect_string`, which is backed by the
+            // parser's input arena and remains valid for the duration of this parse.
             let s = unsafe { crate::arena_str(s) };
             let parsed_columns = match Self::parse_string(input.arena(), s, &mut tokens) {
                 Ok(v) => v,

@@ -745,7 +745,7 @@ impl Number {
     /// by calling out to the APIs in WebKit which are responsible for this operation.
     ///
     /// This can return `None` in wasm builds to avoid linking JSC
-    pub fn to_string(&self, bump: &Bump) -> Option<Str> {
+    pub fn to_string(self, bump: &Bump) -> Option<Str> {
         Self::to_string_from_f64(self.value, bump)
     }
 
@@ -801,33 +801,33 @@ impl Number {
     }
 
     #[inline]
-    pub fn to_u64(&self) -> u64 {
+    pub fn to_u64(self) -> u64 {
         self.to::<u64>()
     }
 
     #[inline]
-    pub fn to_usize(&self) -> usize {
+    pub fn to_usize(self) -> usize {
         self.to::<usize>()
     }
 
     #[inline]
-    pub fn to_u32(&self) -> u32 {
+    pub fn to_u32(self) -> u32 {
         self.to::<u32>()
     }
 
     #[inline]
-    pub fn to_u16(&self) -> u16 {
+    pub fn to_u16(self) -> u16 {
         self.to::<u16>()
     }
 
-    pub fn to<T: NumberCast>(&self) -> T {
+    pub fn to<T: NumberCast>(self) -> T {
         // @as(T, @intFromFloat(@min(@max(@trunc(self.value), 0), comptime @min(floatMax(f64), maxInt(T)))))
         let clamped = self.value.trunc().max(0.0).min(T::MAX_AS_F64);
         T::from_f64(clamped)
     }
 
     pub fn json_stringify<W: crate::JsonWriter>(
-        &self,
+        self,
         writer: &mut W,
     ) -> Result<(), bun_core::Error> {
         writer.write(&self.value)
@@ -1421,7 +1421,12 @@ impl EString {
         // `len/2` u16s; the lying-length encoding is load-bearing for `len()`/
         // `javascript_length()`/`has_prefix_comptime()` and changing it is a
         // cross-crate refactor (see TODO above).
-        unsafe { core::slice::from_raw_parts(self.data.as_ptr().cast::<u16>(), self.data.len()) }
+        unsafe {
+            core::slice::from_raw_parts(
+                self.data.as_ptr().cast::<core::ffi::c_void>().cast::<u16>(),
+                self.data.len(),
+            )
+        }
     }
     /// Const constructor for `'static` literals (Prefill globals).
     pub const fn from_static(data: &'static [u8]) -> Self {

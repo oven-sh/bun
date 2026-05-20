@@ -227,7 +227,9 @@ impl ReadableStream {
         match self.ptr {
             // SAFETY: ptrs came from ReadableStreamTag__tagged; valid while stream alive.
             Source::Blob(source) => unsafe { (*(*source).parent()).cancel() },
+            // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
             Source::File(source) => unsafe { (*(*source).parent()).cancel() },
+            // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
             Source::Bytes(source) => unsafe { (*(*source).parent()).cancel() },
             _ => {}
         }
@@ -1209,6 +1211,7 @@ impl<C: SourceContext> NewSource<C> {
         unsafe { (*this).this_jsvalue = JSValue::ZERO };
         // SAFETY: `this` is live; the JS-wrapper ref below still pins the count.
         if unsafe { (*this).context.finalize_detach() } {
+            // SAFETY: `this` is live; the JS-wrapper +1 (released below) keeps ref_count > 0.
             let _ = unsafe { Self::decrement_count(this) };
         }
         // SAFETY: `this` came from `Box::into_raw`; not accessed after.
@@ -1228,7 +1231,7 @@ impl<C: SourceContext> NewSource<C> {
             // `Vec::Drop` so the same allocation isn't freed twice (once
             // here on scope exit, once by the GC). Mirrors `streams::Start::to_js`.
             let ab = jsc::ArrayBuffer::from_bytes(list.slice_mut(), jsc::JSType::Uint8Array);
-            core::mem::forget(list);
+            let _ = core::mem::ManuallyDrop::new(list);
             return ab.to_js(global_this);
         }
         Ok(JSValue::UNDEFINED)

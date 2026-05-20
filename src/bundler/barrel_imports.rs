@@ -634,7 +634,7 @@ pub fn schedule_barrel_deferred_imports(
             }),
             RequestedExports::Partial(partial) => {
                 for key in partial.keys() {
-                    // PORT NOTE: arena-backed key slices live for the bundler
+                    // SAFETY: arena-backed key slices live for the bundler
                     // arena lifetime; raw-ptr round-trip to detach from the
                     // `&this.requested_exports` borrow before BFS mutates it.
                     let alias: &[u8] = unsafe { bun_ptr::detach_lifetime_ref(&**key) };

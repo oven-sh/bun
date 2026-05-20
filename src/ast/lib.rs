@@ -434,6 +434,7 @@ impl fmt::Debug for Ref {
 #[allow(dead_code)]
 /// A [`Source`]'s path paired with its raw bytes (used by virtual-module
 /// injection: `BundleV2`'s `additional_files`, `Bun.build` inputs).
+#[derive(Clone, Copy)]
 pub struct PathContentsPair {
     pub path: bun_paths::fs::Path<'static>,
     pub contents: &'static [u8],
@@ -698,12 +699,12 @@ impl Loc {
 
     // Zig: `pub const toUsize = i;`
     #[inline]
-    pub fn to_usize(&self) -> usize {
+    pub fn to_usize(self) -> usize {
         self.i()
     }
 
     #[inline]
-    pub fn i(&self) -> usize {
+    pub fn i(self) -> usize {
         usize::try_from(self.start.max(0)).expect("int cast")
     }
 
@@ -717,7 +718,7 @@ impl Loc {
         self.eql(Self::EMPTY)
     }
 
-    pub fn json_stringify(&self, writer: &mut impl JsonWriter) -> Result<(), bun_core::Error> {
+    pub fn json_stringify(self, writer: &mut impl JsonWriter) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         writer.write_i32(self.start)
     }
@@ -1507,22 +1508,22 @@ impl Range {
         k >= self.loc.start && k < self.loc.start + self.len
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub fn is_empty(self) -> bool {
         self.len == 0 && self.loc.start == Loc::EMPTY.start
     }
 
-    pub fn end(&self) -> Loc {
+    pub fn end(self) -> Loc {
         Loc {
             start: self.loc.start + self.len,
         }
     }
 
-    pub fn end_i(&self) -> usize {
+    pub fn end_i(self) -> usize {
         // std.math.lossyCast(usize, ...) — saturates negatives to 0.
         (self.loc.start + self.len).max(0) as usize
     }
 
-    pub fn json_stringify(&self, writer: &mut impl JsonWriter) -> Result<(), bun_core::Error> {
+    pub fn json_stringify(self, writer: &mut impl JsonWriter) -> Result<(), bun_core::Error> {
         writer.write_i32_pair([self.loc.start, self.len + self.loc.start])
     }
 }
@@ -2492,7 +2493,7 @@ impl Log {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 pub struct AddErrorOptions<'a> {
     pub source: Option<&'a Source>,
     pub loc: Loc,
@@ -3257,7 +3258,7 @@ pub mod store_ast_alloc_heap {
     }
 
     pub fn enter() {
-        if std::env::var_os("BUN_DISABLE_STORE_AST_HEAP").is_some() {
+        if bun_core::getenv_z(bun_core::zstr!("BUN_DISABLE_STORE_AST_HEAP")).is_some() {
             return;
         }
         let arena = match arena_mut() {

@@ -183,7 +183,7 @@ impl DependencyExt for Dependency {
 
         let lhs_name = lhs.name.slice(string_buf);
         let rhs_name = rhs.name.slice(string_buf);
-        strings::cmp_strings_asc(&(), lhs_name, rhs_name)
+        strings::cmp_strings_asc((), lhs_name, rhs_name)
     }
 
     /// Total-order comparator for `slice::sort_by` (Zig's `std.sort.pdq`
@@ -645,7 +645,7 @@ impl VersionExt for Version {
     fn is_less_than(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool {
         debug_assert!(lhs.tag == rhs.tag);
         strings::cmp_strings_asc(
-            &(),
+            (),
             lhs.literal.slice(string_buf),
             rhs.literal.slice(string_buf),
         )
@@ -658,7 +658,7 @@ impl VersionExt for Version {
         }
 
         strings::cmp_strings_asc(
-            &(),
+            (),
             lhs.literal.slice(string_buf),
             rhs.literal.slice(string_buf),
         )
@@ -1172,10 +1172,13 @@ impl ValueExt for Value {
         _builder: &mut SB,
     ) -> Result<Value, bun_core::Error> {
         Ok(match tag {
-            // SAFETY: `tag == Npm` selects the `npm` union arm.
-            Tag::Npm => Value {
-                npm: ManuallyDrop::new(unsafe { (*self.npm).clone() }),
-            },
+            Tag::Npm => {
+                // SAFETY: `tag == Npm` selects the `npm` union arm.
+                let npm = unsafe { (*self.npm).clone() };
+                Value {
+                    npm: ManuallyDrop::new(npm),
+                }
+            }
             // SAFETY: every other arm is `Copy` (no heap), so a bitwise read is a true clone.
             _ => unsafe { core::ptr::read(self) },
         })

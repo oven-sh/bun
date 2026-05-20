@@ -1648,7 +1648,7 @@ impl<'a> Transpiler<'a> {
                 opts.features.trim_unused_imports = self
                     .options
                     .trim_unused_imports
-                    .unwrap_or(loader.is_typescript());
+                    .unwrap_or_else(|| loader.is_typescript());
                 opts.features.no_macros = self.options.no_macros;
                 // `bun_ast::RuntimeTranspilerCache` is the single nominal
                 // type on both sides; thread the pointer directly.
@@ -1725,13 +1725,13 @@ impl<'a> Transpiler<'a> {
                 // `crate::defines::Define` IS
                 // `bun_js_parser::defines::Define`. Hand the parser the real
                 // table so user `--define` values apply at parse time.
+                let define: &'a js_ast::defines::Define;
                 // SAFETY: `self.options.define` / `self.macro_context` are
                 // owned by the long-lived `Transpiler`; the parser borrows
                 // them for `'a` (arena lifetime). Erase to `'a` so the
                 // returned `Ast<'a>` is not pinned to the `&mut self` borrow
                 // — neither field is dropped while a parse is in flight
                 // (Zig held `*const Define` / `*MacroContext`).
-                let define: &'a js_ast::defines::Define;
                 unsafe {
                     define = &*(&raw const *self.options.define);
                     opts.macro_context = self
@@ -2453,7 +2453,7 @@ impl<'a> Transpiler<'a> {
                     self.print_ast_esm_ascii::<ENABLE_SOURCE_MAP, true>(
                         print_arena,
                         writer,
-                        ast,
+                        &ast,
                         symbols,
                         source,
                         source_map_context,
@@ -2465,7 +2465,7 @@ impl<'a> Transpiler<'a> {
                     self.print_ast_esm_ascii_not_bun_cold::<ENABLE_SOURCE_MAP>(
                         print_arena,
                         writer,
-                        ast,
+                        &ast,
                         symbols,
                         source,
                         source_map_context,
@@ -2581,7 +2581,7 @@ impl<'a> Transpiler<'a> {
         &mut self,
         print_arena: &Arena,
         writer: &mut js_printer::BufferPrinter,
-        ast: bun_ast::Ast,
+        ast: &bun_ast::Ast,
         symbols: bun_ast::symbol::Map,
         source: &bun_ast::Source,
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
@@ -2610,7 +2610,7 @@ impl<'a> Transpiler<'a> {
         &mut self,
         print_arena: &Arena,
         writer: &mut js_printer::BufferPrinter,
-        ast: bun_ast::Ast,
+        ast: &bun_ast::Ast,
         symbols: bun_ast::symbol::Map,
         source: &bun_ast::Source,
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
@@ -2660,7 +2660,7 @@ impl<'a> Transpiler<'a> {
             writer,
             // Per-call scratch arena (rope flattening) — same as the Cjs arm.
             print_arena,
-            &ast,
+            ast,
             symbols,
             source,
             opts,
@@ -2953,9 +2953,9 @@ impl<'a> Transpiler<'a> {
             bun_ast::store_ast_alloc_heap::reset();
 
             let output_file = match self.build_with_resolve_result_eager(
-                item,
+                &item,
                 import_path_format,
-                &outstream,
+                outstream,
                 None,
             ) {
                 Ok(Some(f)) => f,
@@ -2969,9 +2969,9 @@ impl<'a> Transpiler<'a> {
     /// Port of `transpiler.zig:380 buildWithResolveResultEager`.
     fn build_with_resolve_result_eager(
         &mut self,
-        resolve_result: resolver::Result,
+        resolve_result: &resolver::Result,
         import_path_format: options::ImportPathFormat,
-        _outstream: &TransformOutstream,
+        _outstream: TransformOutstream,
         client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint>,
     ) -> Result<Option<options::OutputFile>, bun_core::Error> {
         if resolve_result.flags.is_external() {

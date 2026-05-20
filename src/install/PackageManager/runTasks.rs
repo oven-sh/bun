@@ -1233,7 +1233,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                         _ => {}
                                     }
                                     manager.process_dependency_list_item(
-                                        dep,
+                                        &dep,
                                         Some(&any_root),
                                         install_peer,
                                     )?;
@@ -1554,7 +1554,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                     repo.resolved = pkg.resolution.git().resolved;
                                     repo.package_name = pkg.name;
                                     manager.process_dependency_list_item(
-                                        dep,
+                                        &dep,
                                         Some(&any_root),
                                         install_peer,
                                     )?;

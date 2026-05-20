@@ -129,16 +129,15 @@ impl Yes {
             return Self::write_failing_error(interp, cmd, &buf, 1);
         }
         // Bounce back via the event loop so we don't block the main thread.
-        // SAFETY: `task` was set in `start()`; `Yes` lives in a `Box` inside
-        // the interpreter arena, so the address is stable across the enqueue
-        // and the later main-thread callback.
         let task: *mut YesTask = Self::state_mut(interp, cmd)
             .task
             .as_mut()
             .expect("YesTask set in start()");
-        // PORT NOTE: `enqueue` ticks the event loop (Zig spec), which may
-        // re-enter shell dispatch. We hold no `&mut` derived from `interp`
-        // across the call; the parameter borrow itself is not re-used after.
+        // SAFETY: `task` was set in `start()`; `Yes` lives in a `Box` inside
+        // the interpreter arena, so the address is stable across the enqueue
+        // and the later main-thread callback. `enqueue` ticks the event loop
+        // and may re-enter shell dispatch — we hold no `&mut` derived from
+        // `interp` across the call.
         unsafe { YesTask::enqueue(task) };
         Yield::suspended()
     }

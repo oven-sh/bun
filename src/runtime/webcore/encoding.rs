@@ -478,8 +478,9 @@ pub fn write_u8<const ENCODING: u8>(
     // if (comptime encoding.isBinaryToText()) {}
 
     // SAFETY: caller guarantees `input[..len]` and `to_ptr[..to_len]` are valid; len/to_len > 0.
-    let input_slice = unsafe { bun_core::ffi::slice(input, len) };
-    let to_slice = unsafe { slice::from_raw_parts_mut(to_ptr, to_len) };
+    let (input_slice, to_slice) = unsafe {
+        (bun_core::ffi::slice(input, len), slice::from_raw_parts_mut(to_ptr, to_len))
+    };
 
     match encoding_from_u8(ENCODING) {
         Encoding::Buffer | Encoding::Latin1 => {
@@ -527,10 +528,8 @@ pub fn write_u8<const ENCODING: u8>(
                 // loop with `write_unaligned` for the misaligned-dest case — matches
                 // `copyLatin1IntoUTF16` body 1:1 (each Latin-1 byte → one u16).
                 let written = buf.len().min(out_units);
-                let output_ptr = to_slice.as_mut_ptr().cast::<u16>();
-                // SAFETY: `to_slice` is valid for `written * 2` bytes; unaligned stores.
                 for i in 0..written {
-                    unsafe { output_ptr.add(i).write_unaligned(buf[i] as u16) };
+                    to_slice[i * 2..i * 2 + 2].copy_from_slice(&(buf[i] as u16).to_ne_bytes());
                 }
                 Ok(written * 2)
             }
@@ -609,8 +608,9 @@ pub fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
         Encoding::Utf8 => {
             // SAFETY: caller guarantees `input[..len]` and `to[..to_len]` are valid and
             // non-overlapping for this encoding.
-            let input_slice = unsafe { bun_core::ffi::slice(input, len) };
-            let to_slice = unsafe { slice::from_raw_parts_mut(to, to_len) };
+            let (input_slice, to_slice) = unsafe {
+                (bun_core::ffi::slice(input, len), slice::from_raw_parts_mut(to, to_len))
+            };
             Ok(
                 strings::copy_utf16_into_utf8_impl::<ALLOW_PARTIAL_WRITE>(to_slice, input_slice)
                     .written as usize,
@@ -620,8 +620,9 @@ pub fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
             let out = len.min(to_len);
             // SAFETY: caller guarantees `input[..len]` and `to[..to_len]` are valid and
             // non-overlapping for this encoding.
-            let input_slice = unsafe { bun_core::ffi::slice(input, out) };
-            let to_slice = unsafe { slice::from_raw_parts_mut(to, to_len) };
+            let (input_slice, to_slice) = unsafe {
+                (bun_core::ffi::slice(input, out), slice::from_raw_parts_mut(to, to_len))
+            };
             strings::copy_u16_into_u8(to_slice, input_slice);
             Ok(out)
         }
@@ -655,8 +656,9 @@ pub fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
         Encoding::Hex => {
             // SAFETY: caller guarantees `input[..len]` and `to[..to_len]` are valid and
             // non-overlapping for this encoding.
-            let input_slice = unsafe { bun_core::ffi::slice(input, len) };
-            let to_slice = unsafe { slice::from_raw_parts_mut(to, to_len) };
+            let (input_slice, to_slice) = unsafe {
+                (bun_core::ffi::slice(input, len), slice::from_raw_parts_mut(to, to_len))
+            };
             Ok(strings::decode_hex_to_bytes_truncate(to_slice, input_slice))
         }
 

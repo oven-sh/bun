@@ -124,17 +124,21 @@ pub fn to_fetch_headers(
     }
     let names: &[StringPointer] = this.entries.items_name();
     let values: &[StringPointer] = this.entries.items_value();
-    FetchHeaders::create(
-        global,
-        // PORT NOTE: C++ side reads only; cast_mut() is safe (no mutation).
-        names.as_ptr().cast_mut(),
-        values.as_ptr().cast_mut(),
-        // Spec headers_jsc.zig:12 uses `ZigString.fromBytes` (scans for
-        // non-ASCII and tags UTF-8); `init` would leave the buffer Latin-1
-        // and mojibake any UTF-8 header value bytes ≥0x80.
-        &ZigString::from_bytes(this.buf.as_slice()),
-        this.entries.len() as u32,
-    )
+    // SAFETY: `names`/`values` point into live slices of `this.entries.len()`
+    // entries; C++ reads exactly `count_` of each and does not retain the pointers.
+    unsafe {
+        FetchHeaders::create(
+            global,
+            // PORT NOTE: C++ side reads only; cast_mut() is safe (no mutation).
+            names.as_ptr().cast_mut(),
+            values.as_ptr().cast_mut(),
+            // Spec headers_jsc.zig:12 uses `ZigString.fromBytes` (scans for
+            // non-ASCII and tags UTF-8); `init` would leave the buffer Latin-1
+            // and mojibake any UTF-8 header value bytes ≥0x80.
+            &ZigString::from_bytes(this.buf.as_slice()),
+            this.entries.len() as u32,
+        )
+    }
     .ok_or(JsError::Thrown)
 }
 

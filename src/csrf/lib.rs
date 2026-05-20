@@ -85,7 +85,7 @@ impl TokenFormat {
 ///
 /// Returns: A slice into `out_buffer` containing the raw token
 pub fn generate<'a>(
-    options: GenerateOptions<'_>,
+    options: &GenerateOptions<'_>,
     out_buffer: &'a mut [u8; 512],
 ) -> Result<&'a mut [u8], Error> {
     // Generate nonce from entropy
@@ -136,7 +136,7 @@ pub fn generate<'a>(
 /// - options: Configuration for token validation
 ///
 /// Returns: true if valid, false if invalid
-pub fn verify(options: VerifyOptions<'_>) -> bool {
+pub fn verify(options: &VerifyOptions<'_>) -> bool {
     // Detect the encoding format
     let encoding: TokenFormat = options.encoding;
 

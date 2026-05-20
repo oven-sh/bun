@@ -176,9 +176,14 @@ impl AsyncModule {
         // passed to FFI below is dead by the time the guard runs.
         let sp: *mut BunString = &raw mut specifier;
         let rp: *mut BunString = &raw mut referrer;
-        let _strings_guard = scopeguard::guard((), move |()| unsafe {
-            (*sp).deref();
-            (*rp).deref();
+        let _strings_guard = scopeguard::guard((), move |()| {
+            // SAFETY: `sp`/`rp` point at `specifier`/`referrer` declared above
+            // this guard; locals drop in reverse order so they outlive it, and
+            // the `&mut` reborrows passed to FFI are dead by the time this runs.
+            unsafe {
+                (*sp).deref();
+                (*rp).deref();
+            }
         });
 
         let mut errorable: ErrorableResolvedSource;
@@ -322,7 +327,10 @@ impl Queue {
         self.vm().package_manager().drain_dependency_list();
     }
 
-    pub fn on_dependency_error(
+    /// # Safety
+    /// `ctx` must point to a live [`Queue`] (the `WakeHandler::context`
+    /// registered in `runtime::jsc_hooks`).
+    pub unsafe fn on_dependency_error(
         ctx: *mut c_void,
         dependency: &Dependency,
         root_dependency_id: DependencyID,
@@ -362,7 +370,7 @@ impl Queue {
                     .resolve_error(
                         vm,
                         import_record_id,
-                        PackageResolveError {
+                        &PackageResolveError {
                             name: name.slice(),
                             err,
                             url: b"",
@@ -380,7 +388,7 @@ impl Queue {
         bun_core::scoped_log!(AsyncModule, "onWake");
         let queue = ctx.cast::<Queue>();
         let task = ConcurrentTaskItem::create_from(queue);
-        // Runs on thread-pool / HTTP-callback threads (PackageManager::wake_raw)
+        // SAFETY: runs on thread-pool / HTTP-callback threads (PackageManager::wake_raw)
         // where the per-thread `VirtualMachine::get()` singleton is NOT
         // installed — using it here would panic. `ctx` was registered as
         // `addr_of_mut!((*vm).modules)` from a raw `*mut VirtualMachine`
@@ -450,7 +458,7 @@ impl Queue {
                         .resolve_error(
                             vm,
                             import_record_id,
-                            PackageResolveError {
+                            &PackageResolveError {
                                 name,
                                 err,
                                 url,
@@ -510,7 +518,7 @@ impl Queue {
                     .download_error(
                         vm,
                         import_record_id,
-                        PackageDownloadError {
+                        &PackageDownloadError {
                             name,
                             resolution: *resolution,
                             err,
@@ -711,7 +719,9 @@ impl AsyncModule {
             (*clone).any_task = AnyTask::AnyTask {
                 ctx: Some(core::ptr::NonNull::new_unchecked(clone).cast()),
                 callback: |p| {
-                    Self::on_done(p.cast());
+                    // SAFETY: `p` is the `clone` heap allocation registered as
+                    // `ctx` above; `on_done` reclaims it via `heap::take`.
+                    unsafe { Self::on_done(p.cast()) };
                     Ok(())
                 },
             };
@@ -719,7 +729,10 @@ impl AsyncModule {
         }
     }
 
-    pub fn on_done(this: *mut AsyncModule) {
+    /// # Safety
+    /// `this` must be the heap allocation produced by [`AsyncModule::done`]
+    /// (via `bun_core::heap::into_raw`); this fn reclaims and drops it.
+    pub unsafe fn on_done(this: *mut AsyncModule) {
         jsc::mark_binding();
         // SAFETY: `this` was heap-allocated in `done`; reclaimed at end of this fn.
         let this = unsafe { &mut *this };
@@ -788,7 +801,7 @@ impl AsyncModule {
         &mut self,
         vm: &mut VirtualMachine,
         import_record_id: u32,
-        result: PackageResolveError<'_>,
+        result: &PackageResolveError<'_>,
     ) -> Result<(), bun_core::Error> {
         // Copy the `GlobalRef` out so the borrow of `self` ends before
         // `&mut self` reborrows below; `GlobalRef::deref` is the safe
@@ -1001,7 +1014,7 @@ impl AsyncModule {
         &mut self,
         vm: &mut VirtualMachine,
         import_record_id: u32,
-        result: PackageDownloadError<'_>,
+        result: &PackageDownloadError<'_>,
     ) -> Result<(), bun_core::Error> {
         // Copy the `GlobalRef` out so the borrow of `self` ends before
         // `&mut vm` / `&mut self` reborrows below; `GlobalRef::deref` is the
@@ -1239,6 +1252,8 @@ impl AsyncModule {
         // (`self.parse_result = ...`). Detach the borrow so borrowck doesn't
         // tie `path`/`specifier` to `&self`.
         let specifier: &[u8] = unsafe { bun_ptr::detach_lifetime(self.specifier()) };
+        // SAFETY: same `string_buf` stability invariant as `specifier` above —
+        // the backing `Box<[u8]>` is never replaced in this fn.
         let path_text: &[u8] = unsafe { bun_ptr::detach_lifetime(self.path_text()) };
         let path = Fs::Path::init(path_text);
         let jsc_vm = VirtualMachine::get_mut_ptr();
@@ -1352,7 +1367,8 @@ impl AsyncModule {
         }
 
         #[cfg(feature = "dump_source")]
-        {
+        // SAFETY: `jsc_vm` is the live per-thread `VirtualMachine` (BACKREF).
+        unsafe {
             crate::runtime_transpiler_store::dump_source_string(
                 jsc_vm as *mut VirtualMachine,
                 specifier,

@@ -46,7 +46,7 @@ impl<'a> ByName<'a> {
     #[allow(dead_code)]
     pub fn is_less_than(ctx: &ByName<'a>, lhs: DependencyID, rhs: DependencyID) -> bool {
         strings::cmp_strings_asc(
-            &(),
+            (),
             ctx.dependencies[lhs as usize].name.slice(ctx.buf),
             ctx.dependencies[rhs as usize].name.slice(ctx.buf),
         )
@@ -88,7 +88,7 @@ impl PackageManagerCommand {
     }
 
     #[cold]
-    pub fn print_hash(ctx: Command::Context, file: File) -> Result<(), bun_core::Error> {
+    pub fn print_hash(ctx: Command::Context, file: &File) -> Result<(), bun_core::Error> {
         let cli = CommandLineArguments::parse(Subcommand::Pm)?;
         let (pm, _cwd) = PackageManager::init(ctx, cli, Subcommand::Pm)?;
         // PORT NOTE: `defer ctx.allocator.free(cwd)` dropped — `_cwd: Box<[u8]>` drops at scope exit.

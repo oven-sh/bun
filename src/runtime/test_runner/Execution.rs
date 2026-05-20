@@ -1028,7 +1028,7 @@ fn step_sequence_one(
         group_log::log(format_args!("runSequence queued callback: {}", callback_data));
 
         if BunTest::run_test_callback(
-            buntest_strong.clone(),
+            buntest_strong,
             global_this,
             cb.get(),
             next_item.has_done_parameter,

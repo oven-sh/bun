@@ -208,7 +208,7 @@ pub fn emit_handle_ipc_message(
         };
         // SAFETY: `from_js_direct` returned a non-null `*mut Subprocess`; the JS
         // wrapper holds it alive for the call.
-        unsafe { (*subprocess).handle_ipc_message(DecodedIPCMessage::Data(message), handle) };
+        unsafe { (*subprocess).handle_ipc_message(&DecodedIPCMessage::Data(message), handle) };
     }
     Ok(JSValue::UNDEFINED)
 }

@@ -44,6 +44,8 @@ pub struct RecordKind(pub u8);
 // `bytemuck::{cast_slice,try_cast_slice}` reinterpret byte buffers and the
 // printer-crate `#[repr(u8)]` enum into `&[RecordKind]` without `unsafe`.
 unsafe impl bytemuck::Zeroable for RecordKind {}
+// SAFETY: see above — `#[repr(transparent)]` over `u8`, so no padding and every
+// bit pattern is valid; `RecordKind` is `Copy + 'static` with no interior refs.
 unsafe impl bytemuck::Pod for RecordKind {}
 
 impl RecordKind {
@@ -269,7 +271,12 @@ impl ModuleInfoDeserialized {
         // properly aligned for `&[T]` materialisation.
         let duped_raw: *mut [u8] = dupe_aligned(source);
         // On error, reclaim the allocation.
-        let guard = scopeguard::guard(duped_raw, |p| unsafe { free_aligned_dup(p) });
+        let guard = scopeguard::guard(duped_raw, |p| {
+            // SAFETY: `p` is the `dupe_aligned` result captured above and has
+            // not been freed — this guard only fires on the error path, before
+            // `ScopeGuard::into_inner` transfers ownership into `owner`.
+            unsafe { free_aligned_dup(p) }
+        });
 
         // SAFETY: `duped_raw` is a valid, exclusively-owned allocation.
         let mut rem: &[u8] = unsafe { &*duped_raw };

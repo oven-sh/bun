@@ -1963,7 +1963,11 @@ pub trait ZigStringJsc: Sized {
     fn to_json_object(&self, global: &JSGlobalObject) -> JSValue;
     /// `ZigString.external` — like `to_external_value` but with a caller-supplied
     /// `ctx` + finalizer callback (used to keep a `Blob::Store` ref alive).
-    fn external(
+    ///
+    /// # Safety
+    /// `ctx` and the string's backing buffer must satisfy `callback`'s contract;
+    /// ownership of both transfers to JSC, which invokes `callback` exactly once.
+    unsafe fn external(
         &self,
         global: &JSGlobalObject,
         ctx: *mut core::ffi::c_void,
@@ -2039,7 +2043,7 @@ impl ZigStringJsc for bun_core::ZigString {
         ZigString__toJSONObject(self, global)
     }
     #[inline]
-    fn external(
+    unsafe fn external(
         &self,
         global: &JSGlobalObject,
         ctx: *mut core::ffi::c_void,
@@ -2079,9 +2083,13 @@ impl ZigStringJsc for bun_core::ZigString {
 
 /// Free-function form of `ZigString.toExternalU16` for callers that import
 /// `bun_core::ZigString`. Forwards to the canonical impl in [`zig_string`].
+///
+/// # Safety
+/// See [`zig_string::to_external_u16`].
 #[inline]
-pub fn zig_string_to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObject) -> JSValue {
-    crate::zig_string::to_external_u16(ptr, len, global)
+pub unsafe fn zig_string_to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObject) -> JSValue {
+    // SAFETY: caller upholds `to_external_u16`'s contract.
+    unsafe { crate::zig_string::to_external_u16(ptr, len, global) }
 }
 
 /// Extension trait providing JSC-aware methods on `bun_sys::Error` (`bun.sys.Error`).

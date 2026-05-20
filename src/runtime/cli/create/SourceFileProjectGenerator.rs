@@ -114,7 +114,7 @@ pub fn generate(
         entry_point,
         result.dependencies.keys(),
         dev_dependencies,
-        template,
+        &template,
         react_component_export,
     )?;
 
@@ -249,7 +249,7 @@ pub fn generate_files(
     entry_point: &[u8],
     dependencies: &[Box<[u8]>],
     dev_dependencies: &[&[u8]],
-    template: Template,
+    template: &Template,
     react_component_export: &[u8],
 ) -> Result<(), bun_core::Error> {
     let mut log = template.logger();

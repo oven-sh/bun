@@ -351,9 +351,10 @@ impl Parser<'_> {
                 break;
             }
 
-            // SAFETY: off is aligned to BlockHeader and within bounds; block_bytes
-            // stores BlockHeader-prefixed records written by the block parser.
-            let hdr: &mut BlockHeader = unsafe { &mut *bytes_ptr.add(off).cast::<BlockHeader>() };
+            // SAFETY: off + size_of::<BlockHeader>() <= bytes_len (checked above) and the
+            // block parser wrote a valid BlockHeader at this offset.
+            let mut hdr: BlockHeader =
+                unsafe { bytes_ptr.add(off).cast::<BlockHeader>().read_unaligned() };
             let hdr_off = off;
             off += size_of::<BlockHeader>();
 
@@ -363,10 +364,7 @@ impl Parser<'_> {
                 break;
             }
 
-            // SAFETY: VerbatimLine array immediately follows the header in block_bytes.
-            let line_ptr: *mut VerbatimLine = unsafe { bytes_ptr.add(off).cast::<VerbatimLine>() };
-            let block_lines: &[VerbatimLine] =
-                unsafe { core::slice::from_raw_parts(line_ptr, n_lines) };
+            let lines_off = off;
             off += lines_size;
 
             // Only process paragraph blocks (not container openers/closers)
@@ -383,7 +381,16 @@ impl Parser<'_> {
 
             // Merge lines into buffer to parse ref defs
             self.buffer.clear();
-            for vline in block_lines {
+            for li in 0..n_lines {
+                // SAFETY: li < n_lines so lines_off + li*size_of::<VerbatimLine>() is within
+                // the [lines_off, lines_off + lines_size) range bounds-checked above;
+                // end_current_block wrote n_lines contiguous VerbatimLine entries there.
+                let vline: VerbatimLine = unsafe {
+                    bytes_ptr
+                        .add(lines_off + li * size_of::<VerbatimLine>())
+                        .cast::<VerbatimLine>()
+                        .read_unaligned()
+                };
                 if vline.beg > vline.end || vline.end > self.size {
                     continue;
                 }
@@ -449,20 +456,32 @@ impl Parser<'_> {
                 if lines_consumed as usize >= n_lines {
                     // Entire paragraph is ref defs — flag to skip during rendering
                     hdr.flags |= types::BLOCK_REF_DEF_ONLY;
+                    // SAFETY: hdr_off + size_of::<BlockHeader>() <= bytes_len (checked above);
+                    // writes back the header read at the top of this iteration.
+                    unsafe {
+                        bytes_ptr
+                            .add(hdr_off)
+                            .cast::<BlockHeader>()
+                            .write_unaligned(hdr);
+                    }
                 } else {
                     // Mark consumed lines as invalid (beg > end triggers skip in processLeafBlock)
-                    // SAFETY: same VerbatimLine array as above; hdr_off + sizeof(header) is its start.
-                    let line_base: *mut VerbatimLine = unsafe {
-                        bytes_ptr
-                            .add(hdr_off + size_of::<BlockHeader>())
-                            .cast::<VerbatimLine>()
-                    };
                     let mut i: u32 = 0;
                     while i < lines_consumed {
-                        // SAFETY: i < lines_consumed < n_lines, in-bounds of the line array.
+                        let line_off = lines_off + (i as usize) * size_of::<VerbatimLine>();
+                        // SAFETY: i < lines_consumed < n_lines so line_off is in-bounds of the
+                        // VerbatimLine array written by end_current_block after this header.
                         unsafe {
-                            (*line_base.add(i as usize)).beg = 1;
-                            (*line_base.add(i as usize)).end = 0;
+                            let mut vl = bytes_ptr
+                                .add(line_off)
+                                .cast::<VerbatimLine>()
+                                .read_unaligned();
+                            vl.beg = 1;
+                            vl.end = 0;
+                            bytes_ptr
+                                .add(line_off)
+                                .cast::<VerbatimLine>()
+                                .write_unaligned(vl);
                         }
                         i += 1;
                     }

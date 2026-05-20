@@ -77,8 +77,8 @@ pub enum GeometryBox {
 }
 
 impl GeometryBox {
-    pub fn into_mask_clip(&self) -> MaskClip {
-        MaskClip::GeometryBox(*self)
+    pub fn into_mask_clip(self) -> MaskClip {
+        MaskClip::GeometryBox(self)
     }
 }
 

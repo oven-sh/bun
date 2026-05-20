@@ -29,6 +29,8 @@ const EVENTLIST_BYTES_SIZE: usize = (Event::LARGEST_SIZE / 2) * max_count;
 #[repr(C, align(4))]
 pub struct EventListBytes(pub [u8; EVENTLIST_BYTES_SIZE]);
 const _: () = assert!(align_of::<Event>() == 4);
+// SAFETY: EventListBytes is a `[u8; N]` newtype; the all-zero bit pattern is valid.
+unsafe impl bun_core::Zeroable for EventListBytes {}
 
 #[derive(Clone, Copy)]
 struct ReadPtr {
@@ -65,7 +67,7 @@ impl Default for INotifyWatcher {
             loaded: false,
             // PERF(port): Zig left these `undefined` until init(); Box::default() zero-allocates eagerly.
             // TODO(port): consider MaybeUninit<Box<EventListBytes>> to defer allocation to init().
-            eventlist_bytes: Box::new(EventListBytes([0; EVENTLIST_BYTES_SIZE])),
+            eventlist_bytes: bun_core::boxed_zeroed(),
             eventlist_ptrs: [core::ptr::null(); max_count],
             read_ptr: None,
             watch_count: AtomicU32::new(0),
@@ -343,19 +345,15 @@ impl INotifyWatcher {
             }
         };
 
-        let read_eventlist_bytes = &self.eventlist_bytes.0[..read_len];
+        let base: *const Event = core::ptr::from_ref(&*self.eventlist_bytes).cast::<Event>();
 
         let mut count: u32 = 0;
-        while (i as usize) < read_eventlist_bytes.len() {
-            // It is NOT aligned naturally. It is align 1!!!
-            // SAFETY: i is within bounds; the bytes at this offset form a valid
-            // inotify_event header written by the kernel. See TODO on Event re: alignment.
-            let event: *const Event = unsafe {
-                read_eventlist_bytes
-                    .as_ptr()
-                    .add(i as usize)
-                    .cast::<Event>()
-            };
+        while (i as usize) < read_len {
+            // SAFETY: `base` is the start of the align(4) `EventListBytes` buffer and the
+            // kernel pads each inotify_event so the next header stays 4-byte aligned, so
+            // `base + i` is an aligned, in-bounds (`i < read_len <= EVENTLIST_BYTES_SIZE`)
+            // header written by the kernel.
+            let event: *const Event = unsafe { base.byte_add(i as usize) };
             self.eventlist_ptrs[count as usize] = event;
             // SAFETY: event points to a valid header; size() reads name_len which the kernel set.
             i += unsafe { (*event).size() };
@@ -366,7 +364,7 @@ impl INotifyWatcher {
             if count as usize == max_count {
                 self.read_ptr = Some(ReadPtr {
                     i,
-                    len: u32::try_from(read_eventlist_bytes.len()).expect("int cast"),
+                    len: u32::try_from(read_len).expect("int cast"),
                 });
                 bun_core::scoped_log!(watcher, "{} read buffer filled up", self.fd);
                 return Ok(&self.eventlist_ptrs[..]);
@@ -519,7 +517,7 @@ fn process_inotify_event_batch(
     let mut name_off: u8 = 0;
     let watch_events = &mut this.watch_events[..event_count];
     // std.sort.pdq → slice::sort_unstable_by (pdqsort under the hood)
-    watch_events.sort_unstable_by(WatchEvent::sort_by_index);
+    watch_events.sort_unstable_by(|a, b| WatchEvent::sort_by_index(*a, *b));
 
     let mut last_event_index: usize = 0;
     let mut last_event_id: WatchItemIndex = WatchItemIndex::MAX;

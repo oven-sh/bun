@@ -131,6 +131,10 @@ impl Default for Content {
 // so the per-chunk renamer is reborrowed mutably from each part-range task;
 // the printer never writes through it, but the borrow should become `&'r`.
 unsafe impl Send for Chunk {}
+// SAFETY: shared `&Chunk` access during the worker fan-out touches only
+// `compile_results_for_chunk` (UnsafeCell-per-slot, disjoint indices) and
+// `files_with_parts_in_chunk` atomic counters; every other field is frozen
+// before fan-out and read single-threaded after the pool join.
 unsafe impl Sync for Chunk {}
 
 /// Disjoint-slot output buffer for [`Chunk::compile_results_for_chunk`].
@@ -439,7 +443,7 @@ type DynAlloc = ();
 /// `n >= 512KiB`; mimalloc handles large allocations via mmap already so this
 /// is a behavior match in practice.
 #[inline]
-fn alloc_buf(_arena: &DynAlloc, n: usize) -> Result<Box<[u8]>, AllocError> {
+fn alloc_buf(_arena: DynAlloc, n: usize) -> Result<Box<[u8]>, AllocError> {
     // Zero-fill is required for soundness: `set_len` over uninit bytes violates
     // `Vec`'s safety contract, and `into_boxed_slice` may shrink-realloc (memcpy
     // of uninit). The memset cost is negligible next to the subsequent memcpy
@@ -802,7 +806,7 @@ impl IntermediateOutput {
                 };
 
                 let arena = allocator_to_use.unwrap_or_else(|| Self::allocator_for_size(count));
-                let mut total_buf = alloc_buf(arena, count + debug_id_len)?;
+                let mut total_buf = alloc_buf(*arena, count + debug_id_len)?;
                 let mut remain: &mut [u8] = &mut total_buf;
 
                 for piece in pieces.slice() {
@@ -1350,7 +1354,7 @@ impl Drop for CssImportOrder {
         // `findImportedFilesInCSSOrder` (`bitwise_copy(wrapping_conditions)`);
         // freeing here would double-free. The slab is allocated from the
         // `LinkerGraph` arena and is bulk-freed with it.
-        core::mem::forget(core::mem::take(&mut self.conditions));
+        let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.conditions));
         // `condition_import_records`: every populated value is uniquely owned
         // (moved `all_import_records`) or an empty-Vec bitwise copy (cap == 0,
         // drop is a no-op). Normal drop frees the owned buffers; no

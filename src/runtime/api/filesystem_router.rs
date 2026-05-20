@@ -409,6 +409,8 @@ impl FileSystemRouter {
                     // borrow of `*entry_ptr` is live across this block.
                     let kind = {
                         let fs_impl = &mut vm.transpiler.fs_mut().fs;
+                        // SAFETY: `entry_ptr` is a live `*mut Entry` in the process-static
+                        // EntryStore (checked non-null above); no shared `&Entry` is live here.
                         unsafe { &mut *entry_ptr }.kind(fs_impl, false)
                     };
                     if kind == Fs::EntryKind::Dir {
@@ -588,7 +590,7 @@ impl FileSystemRouter {
             };
         }
 
-        // SAFETY (self-ref construction prelude): `route` below borrows these bytes via
+        // SAFETY: self-ref construction prelude — `route` below borrows these bytes via
         // `URLPath`, and `path` is then MOVED into the same `MatchedRoute` Box that stores
         // `route`. Borrowck can't see that the allocation travels with the borrow, so we
         // detach the slice from `path`'s ownership here. The bytes stay valid: `path` is
@@ -607,7 +609,7 @@ impl FileSystemRouter {
         };
         let mut params = route_param::List::default();
         // `defer params.deinit(allocator)` → Drop
-        // SAFETY (R-2): short-lived `&mut Router` for the route lookup;
+        // SAFETY: R-2 — short-lived `&mut Router` for the route lookup;
         // `match_page_with_allocator` is pure (no JS re-entry), and the returned
         // `Match<'p>` borrows `params`/`path_bytes`, not `*router`, so the
         // exclusive borrow ends at the `;`.
@@ -765,7 +767,7 @@ impl MatchedRoute {
         // live for this call. Clone its contents into our own holder before re-pointing.
         let params_list = unsafe { (*match_.params).clone() };
 
-        // SAFETY (self-referential lifetime erasure): `RouterMatch<'_>` borrows two
+        // SAFETY: self-referential lifetime erasure — `RouterMatch<'_>` borrows two
         // backing stores —
         //   (a) `name`/`file_path`/`basename`/`path` slice the resolver's DirnameStore
         //       (process-lifetime arena, see `bun_router::PathString::slice`), so are

@@ -1089,7 +1089,7 @@ impl Lockfile {
         }
 
         // Step 1. Recreate the lockfile with only the packages that are still alive
-        let root = old.root_package().ok_or(err!("NoPackage"))?;
+        let root = old.root_package().ok_or_else(|| err!("NoPackage"))?;
 
         let mut package_id_mapping = vec![invalid_package_id; old.packages.len()];
         let clone_queue_ = PendingResolutions::new();
@@ -1263,7 +1263,7 @@ impl Lockfile {
         }
 
         if log_level.is_verbose() {
-            clean_verbose_report_cold(old, &new, timer);
+            clean_verbose_report_cold(old, &new, timer.as_ref());
         }
 
         Ok(new)
@@ -1296,13 +1296,13 @@ fn clean_verbose_timer_start() -> Result<Timer, BunError> {
 
 #[cold]
 #[inline(never)]
-fn clean_verbose_report_cold(old: &Lockfile, new: &Lockfile, timer: Option<Timer>) {
+fn clean_verbose_report_cold(old: &Lockfile, new: &Lockfile, timer: Option<&Timer>) {
     Output::pretty_errorln(format_args!(
         "Clean lockfile: {} packages -> {} packages in {}\n",
         old.packages.len(),
         new.packages.len(),
         // SAFETY: only entered when `log_level.is_verbose()`, which set `timer = Some(..)`.
-        bun_core::fmt::fmt_duration_one_decimal(timer.as_ref().unwrap().read()),
+        bun_core::fmt::fmt_duration_one_decimal(timer.unwrap().read()),
     ));
 }
 
@@ -1598,6 +1598,9 @@ impl Lockfile {
                         continue;
                     };
 
+                    // SAFETY: `manager_ptr` is derived from the `&mut PackageManager`
+                    // arg; this reborrow touches only `lockfile.{buffers,string_pool}`,
+                    // disjoint from the live `manifests` and `self.packages` borrows.
                     let lockfile = unsafe { &mut *(*manager_ptr).lockfile };
                     let mut builder = string_builder!(lockfile);
 
@@ -2163,7 +2166,7 @@ impl Lockfile {
         name_hash: u64,
         // If non-null, attempt to use an existing package
         // that satisfies this version range.
-        version: Option<DependencyVersion>,
+        version: Option<&DependencyVersion>,
         resolution: &Resolution,
     ) -> Option<PackageID> {
         let entry = self.package_index.get(&name_hash)?;
@@ -2171,7 +2174,7 @@ impl Lockfile {
         // Borrow the `npm` arm's `Semver::Group` (not `Copy` — owns a linked
         // list head). `version` is held by-value for the whole fn body so the
         // borrow is sound; Zig's by-value copy is replaced with a `&Group`.
-        let npm_version = match &version {
+        let npm_version = match version {
             Some(v) if v.tag == dependency::Tag::Npm => Some(&v.npm().version),
             _ => None,
         };
@@ -2680,6 +2683,8 @@ impl<'a> StringBuilder<'a> {
         // `grow_default` precedent at :1578.
         string_bytes.resize(prev_len + self.cap, 0);
         self.off = prev_len;
+        // SAFETY: `string_bytes` was just resized to `prev_len + self.cap`, so
+        // offsetting its base pointer by `prev_len` stays within the allocation.
         self.ptr = Some(unsafe { string_bytes.as_mut_ptr().add(prev_len) });
         self.len = 0;
         Ok(())
@@ -2894,11 +2899,6 @@ impl Lockfile {
         }
 
         let mut sort_buf: Vec<PathToId> = Vec::with_capacity(l_len + r_len);
-        // SAFETY: capacity reserved; we fill via indexed writes below up to i.
-        unsafe { sort_buf.set_len(l_len + r_len) };
-        let (l_buf_full, r_buf_full) = sort_buf.split_at_mut(l_len);
-        let mut l_buf = &mut l_buf_full[..];
-        let mut r_buf = &mut r_buf_full[..];
 
         let mut path_buf = PathBuffer::uninit();
         // Zig: `var depth_buf: Tree.DepthBuf = undefined;`
@@ -2907,7 +2907,6 @@ impl Lockfile {
         // Track owned tree-path allocations so they outlive the sort and are freed at scope end.
         let mut tree_paths: Vec<Box<[u8]>> = Vec::new();
 
-        let mut i: usize = 0;
         for l_tree in l.buffers.trees.iter() {
             let (rel_path, _) = tree::relative_path_and_depth::<{ tree::IteratorPathStyle::PkgPath }>(
                 l.buffers.trees.as_slice(),
@@ -2928,16 +2927,14 @@ impl Lockfile {
                 if l_pkg_id == invalid_package_id || l_pkg_id as usize >= cut_off_pkg_id {
                     continue;
                 }
-                l_buf[i] = PathToId {
+                sort_buf.push(PathToId {
                     pkg_id: l_pkg_id,
                     tree_path: tree_path_ptr,
-                };
-                i += 1;
+                });
             }
         }
-        l_buf = &mut l_buf[..i];
+        let l_count = sort_buf.len();
 
-        i = 0;
         for r_tree in r.buffers.trees.iter() {
             let (rel_path, _) = tree::relative_path_and_depth::<{ tree::IteratorPathStyle::PkgPath }>(
                 r.buffers.trees.as_slice(),
@@ -2958,14 +2955,13 @@ impl Lockfile {
                 if r_pkg_id == invalid_package_id || r_pkg_id as usize >= cut_off_pkg_id {
                     continue;
                 }
-                r_buf[i] = PathToId {
+                sort_buf.push(PathToId {
                     pkg_id: r_pkg_id,
                     tree_path: tree_path_ptr,
-                };
-                i += 1;
+                });
             }
         }
-        r_buf = &mut r_buf[..i];
+        let (l_buf, r_buf) = sort_buf.split_at_mut(l_count);
 
         if l_buf.len() != r_buf.len() {
             return Ok(false);
@@ -3197,7 +3193,7 @@ impl Lockfile {
     pub fn resolve_package_from_name_and_version(
         &self,
         package_name: &[u8],
-        version: DependencyVersion,
+        version: &DependencyVersion,
     ) -> Option<PackageID> {
         let name_hash = SemverStringBuilder::string_hash(package_name);
         let entry = self.package_index.get(&name_hash)?;

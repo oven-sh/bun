@@ -1134,7 +1134,7 @@ pub fn migrate_pnpm_lockfile<'a>(
             write!(
                 &mut res_buf,
                 "{}@{}",
-                bstr::BStr::new(has_alias.unwrap_or(dep.name.slice(string_buf))),
+                bstr::BStr::new(has_alias.unwrap_or_else(|| dep.name.slice(string_buf))),
                 bstr::BStr::new(version_without_suffix)
             )
             .map_err(|_| AllocError)?;

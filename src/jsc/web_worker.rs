@@ -475,7 +475,7 @@ impl WebWorker {
     /// set and nothing to clean up (no keep-alive held, no allocation
     /// outstanding).
     #[unsafe(export_name = "WebWorker__create")]
-    pub extern "C" fn create(
+    pub unsafe extern "C" fn create(
         cpp_worker: *mut c_void,
         parent: *mut VirtualMachine,
         name_str: BunString,
@@ -620,7 +620,9 @@ impl WebWorker {
                 live_workers::unregister(worker);
                 // `worker` not yet shared (spawn failed); parent thread.
                 worker_ref.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
-                Self::destroy(worker);
+                // SAFETY: `worker` is the heap allocation from `heap::into_raw`
+                // above; spawn failed so it was never shared with another thread.
+                unsafe { Self::destroy(worker) };
                 *error_message = BunString::static_(b"Failed to spawn worker thread");
                 core::ptr::null_mut()
             }
@@ -632,7 +634,7 @@ impl WebWorker {
     /// allocator is mimalloc (thread-safe), so the caller's thread doesn't
     /// matter.
     #[unsafe(export_name = "WebWorker__destroy")]
-    pub extern "C" fn destroy(this: *mut WebWorker) {
+    pub unsafe extern "C" fn destroy(this: *mut WebWorker) {
         // SAFETY: this was heap-allocated in create(); C++ owns it and calls
         // destroy exactly once.
         let this = unsafe { bun_core::heap::take(this) };
@@ -870,7 +872,10 @@ impl WebWorker {
             // only honours `--no-addons`; the hook owns the temporary UTF-8
             // alloc + clap parse + `args.deinit()` (the full `defer` chain in
             // the .zig). `None` ↔ Zig's `catch break :parse_new_args` arm.
-            // SAFETY: hook contract.
+
+            // SAFETY: `exec_argv` borrows C++ `WorkerOptions` kept alive by the
+            // owning `WebCore::Worker` for `self`'s lifetime; the hook only
+            // reads the slice and owns its own temporary allocations.
             if let Some(allow_addons) =
                 unsafe { (hooks.parse_worker_exec_argv_allow_addons)(exec_argv) }
             {
@@ -1060,7 +1065,7 @@ impl WebWorker {
         // `preloads` is owned by `self` (heap `WebWorker` outlives the VM).
         // PORT NOTE: Zig's slice-copy assignment; here `preload: Vec<Box<[u8]>>`
         // so clone the boxes (cheap, ≤handful).
-        vm.as_mut().preload = self.preloads.clone();
+        vm.as_mut().preload.clone_from(&self.preloads);
 
         // Resolve the entry point on the worker thread (the parent only stored
         // the raw specifier). The returned slice is BORROWED — every exit from
@@ -1271,6 +1276,10 @@ impl WebWorker {
                 // PORT NOTE: reshaped for borrowck — `close_all_socket_groups`
                 // wants `&VirtualMachine` while `rare` is `&mut` borrowed from
                 // `vm`. Re-derive `vm` through the raw ptr (sole owner).
+
+                // SAFETY: `vm_ptr` was unpublished under `vm_lock` above, so this
+                // thread is the sole owner; the JSC VM is still alive (teardown
+                // is step 3 below).
                 rare.close_all_socket_groups(unsafe { &*vm_ptr });
             }
             exit_code = i32::from(vm.exit_handler.exit_code);
@@ -1663,6 +1672,8 @@ unsafe fn resolve_entry_point_specifier<'s>(
     // satisfy that. The cross-thread readers under `vm_lock` never touch
     // `transpiler`.
     let global = unsafe { (*parent).global };
+    // SAFETY: same as above — `parent`'s `transpiler` is mutated only on its
+    // owning thread (the caller's thread per fn contract).
     let resolved_entry_point = match unsafe { (*parent).transpiler.resolve_entry_point(str) } {
         Ok(r) => r,
         Err(_) => {

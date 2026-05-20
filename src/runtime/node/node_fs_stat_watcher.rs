@@ -211,7 +211,8 @@ impl StatWatcherScheduler {
         StatWatcher::ref_(watcher);
         // BACKREF — `this` is live (caller holds a ref).
         let this_ref = ParentRef::from(NonNull::new(this).expect("append: scheduler"));
-        this_ref.watchers.push(watcher);
+        // SAFETY: `watcher` is non-null (checked above) and ref'd; live until deref.
+        unsafe { this_ref.watchers.push(watcher) };
         log!("push watcher {:x}", watcher as usize);
         let current = this_ref.get_interval();
         if current == 0 || current > w.interval {
@@ -396,7 +397,8 @@ impl StatWatcherScheduler {
                 closest_next_check = (interval - time_since).min(closest_next_check);
             }
             min_interval = min_interval.min(w.interval);
-            this_ref.watchers.push(watcher);
+            // SAFETY: `watcher` was just popped from this queue; still live and ref'd.
+            unsafe { this_ref.watchers.push(watcher) };
             log!("reinsert watcher {:x}", watcher as usize);
         }
 
@@ -933,7 +935,7 @@ impl StatWatcher {
         Ok(())
     }
 
-    pub fn init(args: Arguments) -> Result<*mut StatWatcher, bun_core::Error> {
+    pub fn init(args: &Arguments) -> Result<*mut StatWatcher, bun_core::Error> {
         log!("init");
 
         let mut buf = bun_paths::path_buffer_pool::get();
@@ -1115,7 +1117,7 @@ impl Arguments {
         // BACKREF — `init` returns the live heap watcher (refcount==1);
         // `ParentRef` Deref gives safe field access for the `this_value` read.
         let obj = ParentRef::from(
-            NonNull::new(StatWatcher::init(self)?).expect("create_stat_watcher: init"),
+            NonNull::new(StatWatcher::init(&self)?).expect("create_stat_watcher: init"),
         );
         Ok(obj.this_value.get().try_get().unwrap_or(JSValue::UNDEFINED))
     }

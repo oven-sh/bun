@@ -64,12 +64,11 @@ pub extern "C" fn Bun__queueJSCDeferredWorkTaskConcurrently(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__tickWhilePaused(paused: *mut bool) {
+pub extern "C" fn Bun__tickWhilePaused(paused: &mut bool) {
     crate::mark_binding!();
-    // SAFETY: `paused` points to a live bool for the duration of the call.
     VirtualMachine::get()
         .event_loop_mut()
-        .tick_while_paused(unsafe { &mut *paused });
+        .tick_while_paused(paused);
 }
 
 // Zig `comptime { _ = Bun__... }` force-reference block dropped — Rust links what's `pub`.

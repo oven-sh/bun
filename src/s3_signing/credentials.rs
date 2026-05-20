@@ -297,7 +297,7 @@ impl S3Credentials {
 
     pub fn sign_request<const ALLOW_EMPTY_PATH: bool>(
         &self,
-        sign_options: SignOptions<'_>,
+        sign_options: &SignOptions<'_>,
         sign_query_option: Option<SignQueryOptions>,
     ) -> Result<SignResult, SignError> {
         let method = sign_options.method;

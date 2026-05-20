@@ -50,6 +50,8 @@ impl Chunk {
     /// The returned `Chunk` aliases `self.buffer`'s allocation; at most one may be dropped.
     #[inline]
     pub unsafe fn alias(&self) -> Chunk {
+        // SAFETY: `self` is a valid aligned reference; caller upholds the at-most-one-drop
+        // contract above so the bitwise copy never causes a double free of `buffer`.
         unsafe { core::ptr::read(self) }
     }
 
@@ -525,11 +527,11 @@ impl NewBuilder<VLQSourceMap> {
         let mut c: i32;
         while i < n {
             let len = strings::wtf8_byte_sequence_length_with_invalid(slice[i]);
-            // SAFETY: `decode_wtf8_rune_t` reads at most `len` bytes; the Zig
-            // passes `.ptr[0..4]` (unchecked 4-byte view) and the decoder only
-            // dereferences bytes covered by `len`.
+            let mut cp_bytes = [0u8; 4];
+            let take = (len as usize).min(n - i);
+            cp_bytes[..take].copy_from_slice(&slice[i..i + take]);
             c = strings::decode_wtf8_rune_t::<i32>(
-                unsafe { &*slice.as_ptr().add(i).cast::<[u8; 4]>() },
+                cp_bytes,
                 len,
                 strings::UNICODE_REPLACEMENT as i32,
             );

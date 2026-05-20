@@ -111,9 +111,7 @@ impl OwnedResolvedSource {
     /// strings.
     #[inline]
     pub fn into_ffi(self) -> ResolvedSource {
-        let rs = self.0;
-        core::mem::forget(self);
-        rs
+        core::mem::ManuallyDrop::new(self).0
     }
 
     /// Borrow the inner value for in-place mutation while keeping RAII

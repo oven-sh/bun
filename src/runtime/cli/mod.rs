@@ -475,11 +475,11 @@ pub fn cli_dupe(s: &[u8]) -> &'static [u8] {
 /// [`cli_dupe`]'s memcpy + transient double-peak is avoided. Thread-safe.
 pub fn cli_adopt(b: Box<[u8]>) -> &'static [u8] {
     static ADOPTED: std::sync::Mutex<Vec<Box<[u8]>>> = std::sync::Mutex::new(Vec::new());
+    let (ptr, len) = (b.as_ptr(), b.len());
+    ADOPTED.lock().unwrap().push(b);
     // SAFETY: `ADOPTED` is never cleared/drained for the process lifetime; the
     // `Box<[u8]>` pointee address is stable across `Vec` reallocs (only the
     // `Box` pointer-value moves), so the returned slice stays valid `'static`.
-    let (ptr, len) = (b.as_ptr(), b.len());
-    ADOPTED.lock().unwrap().push(b);
     unsafe { core::slice::from_raw_parts(ptr, len) }
 }
 
@@ -1960,12 +1960,15 @@ To create a project with the official Next.js scaffolding tool, run\n\
                     }
                 };
                 return super::package_manager_command::PackageManagerCommand::print_hash(
-                    ctx, file,
+                    ctx, &file,
                 );
             }
         }
 
         let entry = ctx.args.entry_points[0].clone();
+        // SAFETY: single-threaded CLI dispatch; `ctx.log` was populated by
+        // `create_context_data` and no other `&mut Log` borrow is live for the
+        // duration of this `Printer::print` call.
         Printer::print(unsafe { ctx.log_mut() }, &entry, PrinterFormat::Yarn)
     }
 

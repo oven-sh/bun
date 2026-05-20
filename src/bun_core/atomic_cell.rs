@@ -63,6 +63,8 @@ pub struct AtomicCell<T: Copy> {
 // unconditionally). What the receiving thread *does* with a loaded pointer is
 // on the caller, same as `AtomicPtr`.
 unsafe impl<T: Copy> Sync for AtomicCell<T> {}
+// SAFETY: see the `Sync` justification above — the same invariants apply to
+// moving the cell itself across threads; `T: Copy` has no drop glue to race.
 unsafe impl<T: Copy> Send for AtomicCell<T> {}
 
 impl<T: Copy> AtomicCell<T> {
@@ -291,24 +293,32 @@ macro_rules! size_dispatch {
             1 => {
                 type $A = AtomicU8;
                 type $I = u8;
+                // SAFETY: caller passes an 8-aligned live `*mut $T`; this arm
+                // is taken only when `size_of::<$T>()` matches `$A`'s width.
                 let $a = unsafe { &*($p as *const $A) };
                 $body
             }
             2 => {
                 type $A = AtomicU16;
                 type $I = u16;
+                // SAFETY: caller passes an 8-aligned live `*mut $T`; this arm
+                // is taken only when `size_of::<$T>()` matches `$A`'s width.
                 let $a = unsafe { &*($p as *const $A) };
                 $body
             }
             4 => {
                 type $A = AtomicU32;
                 type $I = u32;
+                // SAFETY: caller passes an 8-aligned live `*mut $T`; this arm
+                // is taken only when `size_of::<$T>()` matches `$A`'s width.
                 let $a = unsafe { &*($p as *const $A) };
                 $body
             }
             8 => {
                 type $A = AtomicU64;
                 type $I = u64;
+                // SAFETY: caller passes an 8-aligned live `*mut $T`; this arm
+                // is taken only when `size_of::<$T>()` matches `$A`'s width.
                 let $a = unsafe { &*($p as *const $A) };
                 $body
             }
@@ -322,18 +332,29 @@ macro_rules! size_dispatch {
 #[doc(hidden)]
 #[inline(always)]
 pub unsafe fn _dispatch_load<T: Copy>(p: *mut T, ord: Ordering) -> T {
-    size_dispatch!(T, p, |a: A, I| unsafe { xmute::<I, T>(a.load(ord)) })
+    size_dispatch!(T, p, |a: A, I| {
+        // SAFETY: this arm has `size_of::<I>() == size_of::<T>()`; the loaded
+        // `I` was stored from a valid `T` so the `Atom` round-trip holds.
+        unsafe { xmute::<I, T>(a.load(ord)) }
+    })
 }
 #[doc(hidden)]
 #[inline(always)]
 pub unsafe fn _dispatch_store<T: Copy>(p: *mut T, v: T, ord: Ordering) {
-    size_dispatch!(T, p, |a: A, I| a.store(unsafe { xmute::<T, I>(v) }, ord))
+    size_dispatch!(T, p, |a: A, I| a.store(
+        // SAFETY: this arm has `size_of::<I>() == size_of::<T>()`; `T: Atom`
+        // guarantees no padding so every byte of `v` is initialized.
+        unsafe { xmute::<T, I>(v) },
+        ord,
+    ))
 }
 #[doc(hidden)]
 #[inline(always)]
 pub unsafe fn _dispatch_swap<T: Copy>(p: *mut T, v: T, ord: Ordering) -> T {
-    size_dispatch!(T, p, |a: A, I| unsafe {
-        xmute::<I, T>(a.swap(xmute::<T, I>(v), ord))
+    size_dispatch!(T, p, |a: A, I| {
+        // SAFETY: this arm has `size_of::<I>() == size_of::<T>()`; `T: Atom`
+        // guarantees no padding and that the round-trip yields a valid `T`.
+        unsafe { xmute::<I, T>(a.swap(xmute::<T, I>(v), ord)) }
     })
 }
 #[doc(hidden)]
@@ -347,12 +368,17 @@ pub unsafe fn _dispatch_cas<T: Copy>(
 ) -> Result<T, T> {
     size_dispatch!(T, p, |a: A, I| {
         match a.compare_exchange(
+            // SAFETY: this arm has `size_of::<I>() == size_of::<T>()`;
+            // `T: Atom` guarantees no padding bytes.
             unsafe { xmute::<T, I>(cur) },
+            // SAFETY: as above.
             unsafe { xmute::<T, I>(new) },
             s,
             f,
         ) {
+            // SAFETY: `x` was stored from a valid `T`; `Atom` round-trip holds.
             Ok(x) => Ok(unsafe { xmute::<I, T>(x) }),
+            // SAFETY: as above.
             Err(x) => Err(unsafe { xmute::<I, T>(x) }),
         }
     })
@@ -372,14 +398,20 @@ unsafe_impl_atom!(
 unsafe impl<U> Atom for *mut U {
     #[inline]
     unsafe fn _atomic_load(p: *mut Self, ord: Ordering) -> Self {
+        // SAFETY: `p` is `AtomicCell<*mut U>::inner.get()`, 8-aligned via
+        // `_align`; `*mut U` and `AtomicPtr<U>` have identical layout.
         unsafe { (*(p as *const AtomicPtr<U>)).load(ord) }
     }
     #[inline]
     unsafe fn _atomic_store(p: *mut Self, v: Self, ord: Ordering) {
+        // SAFETY: `p` is 8-aligned and live; `*mut U` and `AtomicPtr<U>` have
+        // identical layout (see `_atomic_load`).
         unsafe { (*(p as *const AtomicPtr<U>)).store(v, ord) }
     }
     #[inline]
     unsafe fn _atomic_swap(p: *mut Self, v: Self, ord: Ordering) -> Self {
+        // SAFETY: `p` is 8-aligned and live; `*mut U` and `AtomicPtr<U>` have
+        // identical layout (see `_atomic_load`).
         unsafe { (*(p as *const AtomicPtr<U>)).swap(v, ord) }
     }
     #[inline]
@@ -390,6 +422,8 @@ unsafe impl<U> Atom for *mut U {
         s: Ordering,
         f: Ordering,
     ) -> Result<Self, Self> {
+        // SAFETY: `p` is 8-aligned and live; `*mut U` and `AtomicPtr<U>` have
+        // identical layout (see `_atomic_load`).
         unsafe { (*(p as *const AtomicPtr<U>)).compare_exchange(cur, new, s, f) }
     }
 }
@@ -398,14 +432,20 @@ unsafe impl<U> Atom for *mut U {
 unsafe impl<U> Atom for *const U {
     #[inline]
     unsafe fn _atomic_load(p: *mut Self, ord: Ordering) -> Self {
+        // SAFETY: `p` is `AtomicCell<*const U>::inner.get()`, 8-aligned via
+        // `_align`; `*const U` and `AtomicPtr<U>` have identical layout.
         unsafe { (*(p as *const AtomicPtr<U>)).load(ord).cast_const() }
     }
     #[inline]
     unsafe fn _atomic_store(p: *mut Self, v: Self, ord: Ordering) {
+        // SAFETY: `p` is 8-aligned and live; `*const U` and `AtomicPtr<U>`
+        // have identical layout (see `_atomic_load`).
         unsafe { (*(p as *const AtomicPtr<U>)).store(v.cast_mut(), ord) }
     }
     #[inline]
     unsafe fn _atomic_swap(p: *mut Self, v: Self, ord: Ordering) -> Self {
+        // SAFETY: `p` is 8-aligned and live; `*const U` and `AtomicPtr<U>`
+        // have identical layout (see `_atomic_load`).
         unsafe { (*(p as *const AtomicPtr<U>)).swap(v.cast_mut(), ord).cast_const() }
     }
     #[inline]
@@ -416,6 +456,8 @@ unsafe impl<U> Atom for *const U {
         s: Ordering,
         f: Ordering,
     ) -> Result<Self, Self> {
+        // SAFETY: `p` is 8-aligned and live; `*const U` and `AtomicPtr<U>`
+        // have identical layout (see `_atomic_load`).
         unsafe {
             match (*(p as *const AtomicPtr<U>)).compare_exchange(cur.cast_mut(), new.cast_mut(), s, f)
             {
@@ -437,14 +479,20 @@ fn nn_to_raw<U>(v: Option<NonNull<U>>) -> *mut U {
 unsafe impl<U> Atom for Option<NonNull<U>> {
     #[inline]
     unsafe fn _atomic_load(p: *mut Self, ord: Ordering) -> Self {
+        // SAFETY: `p` is 8-aligned and live; `Option<NonNull<U>>` has the same
+        // layout as `*mut U` (null-pointer niche), hence as `AtomicPtr<U>`.
         NonNull::new(unsafe { (*(p as *const AtomicPtr<U>)).load(ord) })
     }
     #[inline]
     unsafe fn _atomic_store(p: *mut Self, v: Self, ord: Ordering) {
+        // SAFETY: `p` is 8-aligned and live; `Option<NonNull<U>>` and
+        // `AtomicPtr<U>` have identical layout (see `_atomic_load`).
         unsafe { (*(p as *const AtomicPtr<U>)).store(nn_to_raw(v), ord) }
     }
     #[inline]
     unsafe fn _atomic_swap(p: *mut Self, v: Self, ord: Ordering) -> Self {
+        // SAFETY: `p` is 8-aligned and live; `Option<NonNull<U>>` and
+        // `AtomicPtr<U>` have identical layout (see `_atomic_load`).
         NonNull::new(unsafe { (*(p as *const AtomicPtr<U>)).swap(nn_to_raw(v), ord) })
     }
     #[inline]
@@ -455,6 +503,8 @@ unsafe impl<U> Atom for Option<NonNull<U>> {
         s: Ordering,
         f: Ordering,
     ) -> Result<Self, Self> {
+        // SAFETY: `p` is 8-aligned and live; `Option<NonNull<U>>` and
+        // `AtomicPtr<U>` have identical layout (see `_atomic_load`).
         unsafe {
             match (*(p as *const AtomicPtr<U>)).compare_exchange(
                 nn_to_raw(cur),
@@ -501,6 +551,8 @@ pub struct ThreadCell<T: ?Sized> {
 // SAFETY: same lie as `RacyCell` (caller promises thread-affinity), now
 // *checked* in debug via `owner`.
 unsafe impl<T: ?Sized> Sync for ThreadCell<T> {}
+// SAFETY: `UnsafeCell<T>: Send` when `T: Send`, and `owner: AtomicU64` is
+// `Send`; sending the cell just moves the (still thread-affine) `T`.
 unsafe impl<T: ?Sized + Send> Send for ThreadCell<T> {}
 
 #[cfg(debug_assertions)]

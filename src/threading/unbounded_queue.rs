@@ -236,11 +236,18 @@ impl<T: Node> UnboundedQueue<T> {
         }
     }
 
-    pub fn push(&self, item: *mut T) {
-        self.push_batch(item, item);
+    /// # Safety
+    /// `item` must be a valid, properly aligned pointer to a live `T` whose
+    /// intrusive link is not concurrently accessed outside this queue.
+    pub unsafe fn push(&self, item: *mut T) {
+        // SAFETY: forwarded from this fn's contract — `item` is a valid live node.
+        unsafe { self.push_batch(item, item) };
     }
 
-    pub fn push_batch(&self, first: *mut T, last: *mut T) {
+    /// # Safety
+    /// `first` and `last` must be valid, properly aligned pointers to live `T`
+    /// nodes, with `last` reachable from `first` via the intrusive link chain.
+    pub unsafe fn push_batch(&self, first: *mut T, last: *mut T) {
         // SAFETY: caller guarantees `last` is a valid live node (Zig `*T` is non-null).
         unsafe { T::set_next(last, ptr::null_mut()) };
         if cfg!(debug_assertions) {

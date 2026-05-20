@@ -1342,8 +1342,10 @@ fn compress_gzip(data: &[u8], level: u8) -> Result<Vec<u8>, CompressError> {
         return Err(CompressError::GzipInitFailed);
     }
     // defer compressor.deinit();
-    let _guard = scopeguard::guard(compressor_ptr, |p| unsafe {
-        libdeflate::Compressor::destroy(p)
+    let _guard = scopeguard::guard(compressor_ptr, |p| {
+        // SAFETY: `p` is the non-null pointer returned by `Compressor::alloc` above;
+        // this is the matching free, run once when `_guard` drops on scope exit.
+        unsafe { libdeflate::Compressor::destroy(p) }
     });
     // SAFETY: alloc returned non-null; freed by `_guard` on scope exit.
     let compressor: &mut libdeflate::Compressor = unsafe { &mut *compressor_ptr };

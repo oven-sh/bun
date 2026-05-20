@@ -238,6 +238,8 @@ impl WTFTimer {
         // `event_loop_timer.state` precedes the `ThisPtr` borrow; subsequent
         // field reads via `t` create fresh short-lived `&Self`.
         unsafe { (*this).event_loop_timer.state = EventLoopTimerState::FIRED };
+        // SAFETY: per fn contract — `this` is live; `ThisPtr` vends only fresh
+        // short-lived `&Self` per Deref.
         let t = unsafe { bun_ptr::ThisPtr::new(this) };
         // Only clear imminent if this timer was the one that set it.
         let self_opaque = this.cast::<()>();

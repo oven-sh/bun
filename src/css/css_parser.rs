@@ -2592,7 +2592,7 @@ mod stylesheet_impl {
         where
             AtRule: for<'b> generic::DeepClone<'b>,
         {
-            let ctx = PropertyHandlerContext::new(arena, options.targets, &options.unused_symbols);
+            let ctx = PropertyHandlerContext::new(arena, &options.targets, &options.unused_symbols);
             let mut handler = DeclarationHandler::new(arena);
             let mut important_handler = DeclarationHandler::new(arena);
 
@@ -2654,7 +2654,7 @@ mod stylesheet_impl {
                 arena,
                 bun_alloc::ArenaVec::new_in(arena),
                 writer,
-                options,
+                &options,
                 import_info,
                 local_names,
                 symbols,
@@ -3108,7 +3108,7 @@ mod stylesheet_impl {
                 arena,
                 bun_alloc::ArenaVec::new_in(arena),
                 &mut dest,
-                options,
+                &options,
                 import_info,
                 None,
                 &symbols,
@@ -5541,7 +5541,7 @@ impl<'a> Tokenizer<'a> {
         let mut p = [0u8; 4];
         let avail = (self.src.len() - self.position).min(4);
         p[..avail].copy_from_slice(&self.src[self.position..self.position + avail]);
-        strings::decode_wtf8_rune_t::<u32>(&p, len, strings::UNICODE_REPLACEMENT as u32)
+        strings::decode_wtf8_rune_t::<u32>(p, len, strings::UNICODE_REPLACEMENT as u32)
     }
 
     #[inline]
@@ -6545,7 +6545,7 @@ pub mod to_css {
             arena,
             bun_alloc::ArenaVec::new_in(arena),
             &mut s,
-            options,
+            &options,
             import_info,
             local_names,
             symbols,

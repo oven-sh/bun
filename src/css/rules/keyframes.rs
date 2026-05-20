@@ -70,9 +70,9 @@ impl KeyframesName {
 
         match self {
             KeyframesName::Ident(ident) => {
-                // SAFETY: CustomIdent.v points into the parser arena which outlives the AST.
                 write_ident(
                     dest,
+                    // SAFETY: CustomIdent.v points into the parser arena which outlives the AST.
                     unsafe { crate::arena_str(ident.v) },
                     css_module_animation_enabled,
                 )?;

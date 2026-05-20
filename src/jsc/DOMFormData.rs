@@ -81,8 +81,9 @@ impl DOMFormData {
         F: FnMut(ZigString),
     {
         extern "C" fn run<F: FnMut(ZigString)>(c: *mut c_void, str_: *mut ZigString) {
-            // SAFETY: `c` is the `&mut F` passed below; `str_` is valid for this call.
+            // SAFETY: `c` is the `&mut F` passed below.
             let cb = unsafe { bun_ptr::callback_ctx::<F>(c) };
+            // SAFETY: `str_` is a valid non-null *ZigString for the synchronous callback scope.
             cb(unsafe { *str_ });
         }
 

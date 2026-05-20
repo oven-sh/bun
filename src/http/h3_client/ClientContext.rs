@@ -70,7 +70,9 @@ impl ClientContext {
         unsafe { &mut *this.as_ptr() }
     }
 
-    pub fn get_or_create(loop_: *mut UwsLoop) -> Option<NonNull<ClientContext>> {
+    /// # Safety
+    /// `loop_` must point to the live HTTP-thread `us_loop_t`.
+    pub unsafe fn get_or_create(loop_: *mut UwsLoop) -> Option<NonNull<ClientContext>> {
         if let Some(i) = INSTANCE.load() {
             return Some(i);
         }

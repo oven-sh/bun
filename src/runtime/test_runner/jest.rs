@@ -559,10 +559,10 @@ pub mod on_unhandled_rejection {
                 global_object,
                 Some(rejection),
                 true,
-                current_state_data.clone(),
+                &current_state_data,
             );
             buntest.add_result(current_state_data);
-            if let Err(e) = bun_test::BunTest::run(buntest_strong, global_object) {
+            if let Err(e) = bun_test::BunTest::run(&buntest_strong, global_object) {
                 // TODO(blocked_on: bun_jsc::JSGlobalObject::report_uncaught_exception_from_error):
                 // the inherent method lives in the cfg-gated JSGlobalObject.rs impl.
                 let _ = e;
@@ -586,7 +586,7 @@ fn consume_arg(
     str_idx: &mut usize,
     args_idx: &mut usize,
     array_list: &mut Vec<u8>,
-    arg: &JSValue,
+    arg: JSValue,
     fallback: &[u8],
 ) -> JsResult<()> {
     // TODO(port): narrow error set
@@ -687,7 +687,7 @@ pub fn format_label(
                         &mut idx,
                         &mut args_idx,
                         &mut list,
-                        &current_arg,
+                        current_arg,
                         b"%s",
                     )?;
                 }
@@ -698,7 +698,7 @@ pub fn format_label(
                         &mut idx,
                         &mut args_idx,
                         &mut list,
-                        &current_arg,
+                        current_arg,
                         b"%i",
                     )?;
                 }
@@ -709,7 +709,7 @@ pub fn format_label(
                         &mut idx,
                         &mut args_idx,
                         &mut list,
-                        &current_arg,
+                        current_arg,
                         b"%d",
                     )?;
                 }
@@ -720,7 +720,7 @@ pub fn format_label(
                         &mut idx,
                         &mut args_idx,
                         &mut list,
-                        &current_arg,
+                        current_arg,
                         b"%f",
                     )?;
                 }

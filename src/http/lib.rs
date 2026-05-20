@@ -2419,7 +2419,9 @@ impl<'a> HTTPClient<'a> {
                 if let Some(alt_port) =
                     h3::AltSvc::lookup(self.url.hostname, self.url.get_port_auto())
                 {
-                    if let Some(ctx) = h3::ClientContext::get_or_create(http_thread().uws_loop) {
+                    // SAFETY: runs on the HTTP thread after `HTTPThread::init`
+                    // set `uws_loop` to its live `us_loop_t`.
+                    if let Some(ctx) = unsafe { h3::ClientContext::get_or_create(http_thread().uws_loop) } {
                         if !h3::ClientContext::as_mut(ctx).connect(
                             self,
                             self.url.hostname,
@@ -2446,7 +2448,9 @@ impl<'a> HTTPClient<'a> {
                 self.complete_connecting_process();
                 return;
             }
-            let Some(ctx) = h3::ClientContext::get_or_create(http_thread().uws_loop) else {
+            // SAFETY: runs on the HTTP thread after `HTTPThread::init` set
+            // `uws_loop` to its live `us_loop_t`.
+            let Some(ctx) = (unsafe { h3::ClientContext::get_or_create(http_thread().uws_loop) }) else {
                 self.fail(err!(HTTP3Unsupported));
                 self.complete_connecting_process();
                 return;
@@ -3019,7 +3023,7 @@ impl<'a> HTTPClient<'a> {
         } else {
             crate::ssl_config::SSLConfig::ZERO
         };
-        ProxyTunnel::start::<IS_SSL>(self, socket, ssl_options, start_payload);
+        ProxyTunnel::start::<IS_SSL>(self, socket, &ssl_options, start_payload);
     }
 
     #[inline]

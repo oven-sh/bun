@@ -58,12 +58,12 @@ pub fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
         unsafe { &*bun_core::from_field_ptr!(PrepareCssAstTask, task, task) };
     let linker: *mut LinkerContext = prepare_css_asts.linker;
     let chunk: *mut Chunk = prepare_css_asts.chunk;
-    // SAFETY: `linker` is a raw `*mut` to `BundleV2.linker` (embedded by value),
-    // carrying provenance over the full `BundleV2` allocation. Recover the
-    // parent via container_of. `Worker::get` only needs `&BundleV2`, so we
-    // scope the shared borrow before materializing `&mut *linker` below to
-    // avoid aliasing.
     let worker = {
+        // SAFETY: `linker` is a raw `*mut` to `BundleV2.linker` (embedded by value),
+        // carrying provenance over the full `BundleV2` allocation. Recover the
+        // parent via container_of. `Worker::get` only needs `&BundleV2`, so we
+        // scope the shared borrow before materializing `&mut *linker` below to
+        // avoid aliasing.
         let bundle_v2: &BundleV2 = unsafe { &*LinkerContext::bundle_v2_ptr(linker) };
         ThreadPool::Worker::get(bundle_v2)
     };
@@ -257,7 +257,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                                 // `LocalsResultsMap` is the same `ArrayHashMap<Ref, Box<[u8]>>`
                                 // alias as `bun_js_printer::MangledProps`; no cast needed.
                                 Some(&c.mangled_props),
-                                // `to_css` takes `&bun_ast::symbol::Map`; `c.graph.symbols`
+                                // SAFETY: `to_css` takes `&bun_ast::symbol::Map`; `c.graph.symbols`
                                 // is `bun_ast::symbol::Map`. Both are
                                 // `{ symbols_for_source: NestedList }` (`UnsafeCell<T>` is
                                 // `repr(transparent)`), so layouts match — bridge by pointer cast.
@@ -418,7 +418,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                             // free the shared backing array. Leak the header (Zig
                             // semantics: bitwise overwrite) before installing the
                             // freshly-allocated list.
-                            core::mem::forget(core::mem::replace(
+                            let _ = core::mem::ManuallyDrop::new(core::mem::replace(
                                 &mut ast.rules,
                                 arena_rule_list(new_rules),
                             ));
@@ -494,7 +494,7 @@ fn wrap_rules_with_conditions(
                     // `ptr::read` / `Vec::from_raw_parts` above) — dropping it
                     // would free into another allocation. Zig's `= .{}` is a
                     // bitwise overwrite; mirror that by leaking the header.
-                    core::mem::forget(core::mem::take(&mut ast.rules.v));
+                    let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut ast.rules.v));
                     do_block_rule = false;
                 }
             }

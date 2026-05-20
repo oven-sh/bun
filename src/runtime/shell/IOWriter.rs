@@ -241,6 +241,8 @@ pub struct IOWriter {
 // SAFETY: shell is single-threaded; `Arc` is used purely for refcounting (Zig
 // used `bun.ptr.RefCount`). No cross-thread access.
 unsafe impl Send for IOWriter {}
+// SAFETY: see `Send` — single-threaded, `Arc` is used only for refcounting; no
+// concurrent `&IOWriter` access occurs.
 unsafe impl Sync for IOWriter {}
 
 impl IOWriter {
@@ -249,6 +251,8 @@ impl IOWriter {
     /// and guards via the `Yield` trampoline).
     #[inline]
     fn state(&self) -> &mut State {
+        // SAFETY: single-threaded; callers uphold the no-overlapping-`&mut State`
+        // invariant documented on this fn (re-derive across re-entrant calls).
         unsafe { &mut *self.state.get() }
     }
 
@@ -297,7 +301,7 @@ impl IOWriter {
                 is_writing: false,
                 started: false,
                 flags,
-                self_weak: w.clone(),
+                self_weak: std::sync::Weak::clone(w),
                 interp: None,
             }),
         });

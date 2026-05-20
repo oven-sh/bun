@@ -11,6 +11,7 @@
 //! `bun_bundler::cache` and are stored here type-erased as `*mut ()`).
 
 use crate::{ExportsKind, Source};
+use core::ptr::NonNull;
 
 pub struct RuntimeTranspilerCache {
     pub input_hash: Option<u64>,
@@ -50,7 +51,7 @@ impl Default for RuntimeTranspilerCache {
 // edge here; the jsc impl casts it back.
 bun_dispatch::link_interface! {
     pub TranspilerCacheImpl[Jsc] {
-        fn get(source: *const Source, parser_options: *const (), used_jsx: bool) -> bool;
+        fn get(source: &Source, parser_options: NonNull<()>, used_jsx: bool) -> bool;
         fn put(output_code: &[u8], sourcemap: &[u8], esm_record: &[u8]);
         fn is_disabled() -> bool;
     }
@@ -75,10 +76,10 @@ impl RuntimeTranspilerCache {
     }
 
     #[inline]
-    pub fn get(&mut self, source: &Source, parser_options: *const (), used_jsx: bool) -> bool {
+    pub fn get(&mut self, source: &Source, parser_options: NonNull<()>, used_jsx: bool) -> bool {
         match self.r#impl {
             Some(k) => {
-                Self::handle(k, self).get(core::ptr::from_ref(source), parser_options, used_jsx)
+                Self::handle(k, self).get(source, parser_options, used_jsx)
             }
             None => false,
         }

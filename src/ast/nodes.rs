@@ -37,6 +37,8 @@ pub struct StoreRef<T>(NonNull<T>);
 // `T: Sync` to share), and a `Send`-moved `StoreRef` yields `&mut T` via
 // `DerefMut` (needs `T: Send`).
 unsafe impl<T: Send> Send for StoreRef<T> {}
+// SAFETY: see the `Send` impl above — same single-threaded bump-arena contract;
+// bounded on `T: Sync` so the `Deref`-yielded `&T` is sound to share.
 unsafe impl<T: Sync> Sync for StoreRef<T> {}
 
 impl<T> StoreRef<T> {
@@ -165,6 +167,8 @@ pub struct StoreStr {
 // `static` Prefill tables; callers must not actually share a Store across
 // threads (unchanged contract).
 unsafe impl Send for StoreStr {}
+// SAFETY: see the `Send` impl above — `StoreStr` is a raw `(ptr, len)` into a
+// single-threaded bump arena; never actually shared across threads.
 unsafe impl Sync for StoreStr {}
 
 impl StoreStr {
@@ -337,6 +341,8 @@ impl<T> Clone for StoreSlice<T> {
 // arena. Asserted Send/Sync so payload types can sit in `static` Prefill
 // tables; callers must not actually share a Store across threads.
 unsafe impl<T> Send for StoreSlice<T> {}
+// SAFETY: see the `Send` impl above — `StoreSlice` is a raw `(ptr, len)` into a
+// single-threaded bump arena; never actually shared across threads.
 unsafe impl<T> Sync for StoreSlice<T> {}
 
 impl<T> StoreSlice<T> {
@@ -562,10 +568,10 @@ pub enum AssignTarget {
 impl AssignTarget {
     // TODO(port): narrow error set
     pub fn json_stringify(
-        &self,
+        self,
         writer: &mut impl JsonWriter,
     ) -> core::result::Result<(), bun_core::Error> {
-        writer.write(<&'static str>::from(*self))
+        writer.write(<&'static str>::from(self))
     }
 }
 
@@ -626,7 +632,7 @@ impl Default for ClauseItem {
     }
 }
 
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 pub struct SlotCounts {
     pub slots: symbol::SlotNamespaceCountsArray,
 }
@@ -981,11 +987,11 @@ impl DeclaredSymbolList {
         other: DeclaredSymbolList,
     ) -> core::result::Result<(), bun_alloc::AllocError> {
         self.ensure_unused_capacity(other.len())?;
-        self.append_list_assume_capacity(other);
+        self.append_list_assume_capacity(&other);
         Ok(())
     }
 
-    pub fn append_list_assume_capacity(&mut self, other: DeclaredSymbolList) {
+    pub fn append_list_assume_capacity(&mut self, other: &DeclaredSymbolList) {
         // PERF(port): was assume_capacity
         self.entries.append_list_assume_capacity(&other.entries);
     }

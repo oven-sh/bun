@@ -283,7 +283,7 @@ impl PostgresSQLQuery {
 
     pub fn on_error(
         &self,
-        err: super::postgres_sql_statement::Error,
+        err: &super::postgres_sql_statement::Error,
         global_object: &JSGlobalObject,
     ) {
         let Ok(e) = err.to_js(global_object) else {

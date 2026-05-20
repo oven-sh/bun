@@ -299,6 +299,8 @@ impl PathUnit for u8 {
 
     #[inline]
     unsafe fn zslice_from_raw<'a>(ptr: *const u8, len: usize) -> &'a ZStr {
+        // SAFETY: caller of this `unsafe fn` upholds the trait contract that
+        // `ptr[..=len]` is valid for reads for `'a` and `ptr[len] == 0`.
         unsafe { ZStr::from_raw(ptr, len) }
     }
     fn pool_get() -> Box<PathBuffer> {
@@ -346,6 +348,8 @@ impl PathUnit for u16 {
 
     #[inline]
     unsafe fn zslice_from_raw<'a>(ptr: *const u16, len: usize) -> &'a WStr {
+        // SAFETY: caller of this `unsafe fn` upholds the trait contract that
+        // `ptr[..=len]` is valid for reads for `'a` and `ptr[len] == 0`.
         unsafe { WStr::from_raw(ptr, len) }
     }
     fn pool_get() -> Box<WPathBuffer> {

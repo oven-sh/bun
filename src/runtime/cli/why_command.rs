@@ -355,6 +355,10 @@ impl WhyCommand {
         // up front so we never need `pm` again once `lockfile` is borrowed.
         let depth_opt = pm.options.depth;
         let log_level = pm.options.log_level;
+        // SAFETY: CLI dispatch is single-threaded and `log`'s last use is the
+        // `load_from_cwd` call below, which receives it as the sole `&mut Log`;
+        // no other path (`pm`, `ctx`) reborrows the process-static `Log` while
+        // this reference is live.
         let log = unsafe { ctx.log_mut() };
 
         let mut lockfile_box: Box<Lockfile> = core::mem::take(&mut pm.lockfile);

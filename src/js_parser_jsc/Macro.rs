@@ -349,9 +349,12 @@ pub fn __bun_macro_context_get_remap(
     // the `'static` borrow is sound for callers that drop it before the
     // `Transpiler` does (matches the Zig by-value copy of the map header).
     let inner = unsafe { &*data.cast::<MacroContext>() };
-    inner
-        .get_remap(path)
-        .map(|e| unsafe { &*std::ptr::from_ref::<js_parser::Macro::MacroRemapEntry>(e) })
+    inner.get_remap(path).map(|e| {
+        // SAFETY: `e` borrows an entry in the remap table owned by
+        // `Transpiler.options`, which outlives every parse that calls this fn,
+        // so extending the borrow to `'static` upholds the function-level contract.
+        unsafe { &*std::ptr::from_ref::<js_parser::Macro::MacroRemapEntry>(e) }
+    })
 }
 
 // ══════════════════════════════════════════════════════════════════════════

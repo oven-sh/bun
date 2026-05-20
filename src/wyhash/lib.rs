@@ -672,14 +672,14 @@ impl Wyhash {
                 let bound = input.len() - 48;
                 let p = input.as_ptr();
                 while i < bound {
-                    // SAFETY: loop invariant `i < len - 48` ⇒ `i + 48 ≤ len`,
-                    // so every `p.add(i + off)` for off ∈ {0,8,16,24,32,40}
-                    // addresses an 8-byte window wholly inside `input`.
-                    // `read_unaligned` imposes no alignment requirement.
                     macro_rules! r8 {
                         ($o:literal) => {
+                            // SAFETY: loop invariant `i < len - 48` ⇒ `i + 48 ≤ len`,
+                            // so every `p.add(i + off)` for off ∈ {0,8,16,24,32,40}
+                            // addresses an 8-byte window wholly inside `input`.
+                            // `read_unaligned` imposes no alignment requirement.
                             u64::from_le(unsafe {
-                                core::ptr::read_unaligned(p.add(i + $o) as *const u64)
+                                core::ptr::read_unaligned(p.add(i + $o).cast::<u64>())
                             })
                         };
                     }

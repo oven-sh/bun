@@ -168,6 +168,7 @@ impl Header {
         // outer `clone` keeps the builder (or its moved-out buffer) alive for
         // the lifetime of the cloned `Header` (see PORT NOTE on `StringBuilder`).
         let name = unsafe { builder.append_raw(self.name()) };
+        // SAFETY: same buffer-lifetime invariant as `name` above.
         let value = unsafe { builder.append_raw(self.value()) };
         Header {
             name_ptr: name.as_ptr(),
@@ -322,6 +323,7 @@ impl<'a> Request<'a> {
         Request {
             // SAFETY: see `Header::clone` — caller keeps `builder` alive.
             method: unsafe { builder.append_raw(self.method) },
+            // SAFETY: see `Header::clone` — caller keeps `builder` alive.
             path: unsafe { builder.append_raw(self.path) },
             minor_version: self.minor_version,
             headers,
@@ -343,8 +345,10 @@ impl<'a> Request<'a> {
         Request {
             // SAFETY: caller contract.
             method: unsafe { &*core::ptr::from_ref::<[u8]>(self.method) },
+            // SAFETY: caller contract.
             path: unsafe { &*core::ptr::from_ref::<[u8]>(self.path) },
             minor_version: self.minor_version,
+            // SAFETY: caller contract.
             headers: unsafe { &*core::ptr::from_ref::<[Header]>(self.headers) },
             bytes_read: self.bytes_read,
         }
@@ -389,6 +393,7 @@ impl<'a> Request<'a> {
             _ => Ok(Request {
                 // SAFETY: on success, ptr/len point into `buf`.
                 method: unsafe { bun_core::ffi::slice(method_ptr, method_len) },
+                // SAFETY: on success, ptr/len point into `buf`.
                 path: unsafe { bun_core::ffi::slice(path_ptr, path_len) },
                 minor_version: usize::try_from(minor_version).expect("int cast"),
                 headers: &src[0..num_headers],
@@ -565,6 +570,7 @@ impl<'a> Response<'a> {
             // SAFETY: caller contract.
             status: unsafe { &*core::ptr::from_ref::<[u8]>(self.status) },
             headers: HeaderList {
+                // SAFETY: caller contract.
                 list: unsafe { &*core::ptr::from_ref::<[Header]>(self.headers.list) },
             },
             bytes_read: self.bytes_read,

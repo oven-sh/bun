@@ -552,7 +552,7 @@ pub enum MediaFeatureId {
 
 impl MediaFeatureId {
     // Zig: `pub const valueType = css.DeriveValueType(@This(), ValueTypeMap).valueType;`
-    pub fn value_type(&self) -> MediaFeatureType {
+    pub fn value_type(self) -> MediaFeatureType {
         use MediaFeatureId::*;
         use MediaFeatureType as T;
         match self {
@@ -596,7 +596,7 @@ impl MediaFeatureId {
 
 impl FeatureIdTrait for MediaFeatureId {
     fn value_type(&self) -> MediaFeatureType {
-        MediaFeatureId::value_type(self)
+        MediaFeatureId::value_type(*self)
     }
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         // Zig: `css.DefineEnumProperty(@This()).toCss` — emits the lowercase
@@ -1046,7 +1046,7 @@ impl<FeatureId: FeatureIdTrait> MediaFeatureName<FeatureId> {
 }
 
 impl MediaFeatureComparison {
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             // PORT NOTE(suspect): Zig emits '-' for `Equal` (media_query.zig:1156),
             // diverging from the spec `=` and from this enum's strum tag. Ported

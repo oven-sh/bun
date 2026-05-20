@@ -42,7 +42,12 @@ pub fn generate_compile_result_for_css_chunk(task: *mut ThreadPoolLib::Task) {
     // views into the same `LinkerContext`/`Chunk` for read-only printer use —
     // see TODO(ub-audit) on `unsafe impl Sync for Chunk`.)
     let result = {
+        // SAFETY: `c_ptr` is the live `LinkerContext` returned by
+        // `pending_part_range_prologue` with mutable provenance; see the
+        // disjoint-write contract above.
         let c_mut: &mut LinkerContext = unsafe { &mut *c_ptr };
+        // SAFETY: `chunk_ptr` is the live `Chunk` from the same prologue; this
+        // `&mut` is scoped so it does not overlap the raw slot write below.
         let chunk_mut: &mut Chunk = unsafe { &mut *chunk_ptr };
         generate_compile_result_for_css_chunk_impl(&mut **worker, c_mut, chunk_mut, part_range.i)
     };
@@ -85,7 +90,7 @@ fn generate_compile_result_for_css_chunk_impl(
         .at(imports_in_chunk_index as usize);
     let css: &BundlerStyleSheet = &css_content.asts[imports_in_chunk_index as usize];
     // const symbols: []const Symbol.List = c.graph.ast.items(.symbols);
-    // `to_css_with_writer` takes `&bun_ast::symbol::Map`, but
+    // SAFETY: `to_css_with_writer` takes `&bun_ast::symbol::Map`, but
     // `c.graph.symbols` is `bun_ast::symbol::Map`. Both are
     // `{ symbols_for_source: NestedList }` (`UnsafeCell<T>` is `repr(transparent)`),
     // so layouts match — bridge by pointer cast.

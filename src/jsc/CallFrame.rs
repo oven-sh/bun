@@ -127,6 +127,8 @@ impl CallFrame {
         // which in turn calls 'ALWAYS_INLINE int32_t Register::payload() const'
         // which accesses `.encodedValue.asBits.payload`
         // JSC stores and works with value as signed, but it is always 1 or more.
+        // SAFETY: `registers` is the JSC register-file base derived from `&self`;
+        // OFFSET_ARGUMENT_COUNT_INCLUDING_THIS is a valid in-bounds Register slot.
         unsafe {
             u32::try_from(
                 (*registers.add(OFFSET_ARGUMENT_COUNT_INCLUDING_THIS))
@@ -153,7 +155,7 @@ impl CallFrame {
                 len: 0,
             }
         } else {
-            Arguments::<MAX>::init(count.min(MAX), slice.as_ptr())
+            Arguments::<MAX>::init(count.min(MAX), slice)
         }
     }
 
@@ -170,7 +172,7 @@ impl CallFrame {
                 len: 0,
             }
         } else {
-            Arguments::<MAX>::init_undef(count.min(MAX), slice.as_ptr())
+            Arguments::<MAX>::init_undef(count.min(MAX), slice)
         }
     }
 
@@ -237,18 +239,16 @@ pub struct Arguments<const MAX: usize> {
 
 impl<const MAX: usize> Arguments<MAX> {
     #[inline]
-    pub fn init(i: usize, ptr: *const JSValue) -> Self {
+    pub fn init(i: usize, src: &[JSValue]) -> Self {
         let mut args: [JSValue; MAX] = [JSValue::ZERO; MAX];
-        // SAFETY: caller guarantees `ptr[0..i]` is valid; i <= MAX.
-        args[0..i].copy_from_slice(unsafe { bun_core::ffi::slice(ptr, i) });
+        args[0..i].copy_from_slice(&src[0..i]);
         Self { ptr: args, len: i }
     }
 
     #[inline]
-    pub fn init_undef(i: usize, ptr: *const JSValue) -> Self {
+    pub fn init_undef(i: usize, src: &[JSValue]) -> Self {
         let mut args: [JSValue; MAX] = [JSValue::UNDEFINED; MAX];
-        // SAFETY: caller guarantees `ptr[0..i]` is valid; i <= MAX.
-        args[0..i].copy_from_slice(unsafe { bun_core::ffi::slice(ptr, i) });
+        args[0..i].copy_from_slice(&src[0..i]);
         Self { ptr: args, len: i }
     }
 

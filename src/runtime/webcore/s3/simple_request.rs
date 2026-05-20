@@ -551,7 +551,7 @@ pub fn execute_simple_s3_request(
     callback_context: *mut c_void,
 ) -> JsTerminatedResult<()> {
     let mut result = match this.sign_request::<false>(
-        SignOptions {
+        &SignOptions {
             path: options.path,
             method: options.method,
             search_params: options.search_params,
@@ -627,15 +627,17 @@ pub fn execute_simple_s3_request(
     } else {
         Box::default()
     };
-    // SAFETY (lifetime extension): `url`, `headers_buf`, and `proxy_url` borrow from
+    // SAFETY: lifetime extension — `url`, `headers_buf`, and `proxy_url` borrow from
     // heap-allocated fields of `*task` (sign_result.url / headers.buf / proxy_url) which the task
     // outlives. AsyncHTTP::init wants `'static` borrows because the HTTP thread reads them
     // concurrently; they remain valid until `task` is dropped in `on_response`. The Zig source
     // passed raw slices with the same ownership contract.
     let url = URL::parse(unsafe { bun_ptr::detach_lifetime_ref(&*task.sign_result.url) });
+    // SAFETY: same lifetime-extension invariant as `url` above — `task.headers.buf` is heap-owned
+    // by `*task` and outlives the AsyncHTTP request.
     let headers_buf: &'static [u8] =
         unsafe { bun_ptr::detach_lifetime(task.headers.buf.as_slice()) };
-    // SAFETY (lifetime extension): unlike the borrows above, `body` is NOT stored in the task —
+    // SAFETY: lifetime extension — unlike the borrows above, `body` is NOT stored in the task —
     // it is caller-owned (e.g. multipart upload part data / multipart_upload_list). The Zig source
     // (.zig:431) passes the caller's slice directly with the same implicit contract: every call
     // site keeps `body` alive until the request completes. This is the PORTING.md-forbidden
@@ -644,6 +646,8 @@ pub fn execute_simple_s3_request(
     // task) to drop the `'static` pretence.
     let body: &'static [u8] = unsafe { bun_ptr::detach_lifetime(options.body) };
     let http_proxy = if !task.proxy_url.is_empty() {
+        // SAFETY: same lifetime-extension invariant as `url` above — `task.proxy_url` is a
+        // heap-owned `Box<[u8]>` field of `*task` and outlives the AsyncHTTP request.
         Some(URL::parse(unsafe {
             bun_ptr::detach_lifetime_ref(&*task.proxy_url)
         }))

@@ -2846,14 +2846,14 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
     /// allowed.
     pub unsafe fn append_mutable<'a, A: BSSAppendable>(
         this: *mut Self,
-        value: A,
+        value: &A,
     ) -> core::result::Result<&'a mut [u8], AllocError> {
         // SAFETY: `this` is live; `Mutex: Sync` so concurrent `&Mutex` formation
         // is sound. `MutexGuard` stores a raw pointer (see its doc), so the
         // `&mut *this` formed below does not alias a live guard borrow.
         let _guard = unsafe { (*this).mutex.lock() };
         // SAFETY: inner mutex held ⇒ this thread has exclusive access.
-        let (ptr, len) = unsafe { (*this).do_append(&value)? };
+        let (ptr, len) = unsafe { (*this).do_append(value)? };
         // SAFETY: `ptr` came from `out.as_mut_ptr()` inside `do_append` (write provenance)
         // and points into storage owned by `*this` (backing_buf or a process-lifetime
         // mimalloc region); the slot was freshly reserved under the mutex so no other
@@ -2867,7 +2867,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         len: usize,
     ) -> core::result::Result<&'a mut [u8], AllocError> {
         // SAFETY: forwarded — see `append_mutable`.
-        unsafe { Self::append_mutable(this, EmptyType { len }) }
+        unsafe { Self::append_mutable(this, &EmptyType { len }) }
     }
 
     /// SAFETY: see [`append_mutable`].
@@ -2901,13 +2901,13 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         if core::fmt::write(&mut c, args).is_ok() {
             let written: &[u8] = &c.buf[..c.at];
             // SAFETY: forwarded — see `append`.
-            return unsafe { Self::append(this, written) };
+            return unsafe { Self::append(this, &written) };
         }
 
         // Overflow (> STACK bytes — rare): count exactly, reserve, re-format.
         let len = crate::fmt_count(args);
         // SAFETY: forwarded — see `append_mutable`.
-        let buf = unsafe { Self::append_mutable(this, EmptyType { len: len + 1 })? };
+        let buf = unsafe { Self::append_mutable(this, &EmptyType { len: len + 1 })? };
         let buf_len = buf.len();
         buf[buf_len - 1] = 0;
         let written = crate::buf_print_len(&mut buf[..buf_len - 1], args).expect("counted length");
@@ -2936,14 +2936,14 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
     #[inline]
     pub unsafe fn append<'a, A: BSSAppendable>(
         this: *mut Self,
-        value: A,
+        value: &A,
     ) -> core::result::Result<&'a [u8], AllocError> {
         // SAFETY: `this` is live; `Mutex: Sync` so concurrent `&Mutex` formation
         // is sound. `MutexGuard` stores a raw pointer (see its doc), so the
         // `&mut *this` formed below does not alias a live guard borrow.
         let _guard = unsafe { (*this).mutex.lock() };
         // SAFETY: inner mutex held ⇒ this thread has exclusive access.
-        let (ptr, len) = unsafe { (*this).do_append(&value)? };
+        let (ptr, len) = unsafe { (*this).do_append(value)? };
         // SAFETY: `ptr` points into storage owned by `*this` (backing_buf or a
         // process-lifetime mimalloc region); the slot was freshly reserved under
         // the mutex so no other writer aliases it, and reborrowing as shared is

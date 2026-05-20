@@ -642,7 +642,7 @@ impl Config {
                 }
             }
 
-            tree_shaking = Some(tree_shaking.unwrap_or(replacements.count() > 0));
+            tree_shaking = Some(tree_shaking.unwrap_or_else(|| replacements.count() > 0));
             self.runtime.replace_exports = replacements;
         }
 
@@ -1072,6 +1072,8 @@ impl JSTranspiler {
         // wrapper exists) so projecting `&mut`/`*mut` from the JsCells is trivially
         // alias-free.
         let config = unsafe { this.config.get_mut() };
+        // SAFETY: same exclusive-ownership invariant as the line above — `this: Box<_>`
+        // is uniquely owned at init time, so `&mut` projection is alias-free.
         let transpiler = unsafe { this.transpiler.get_mut() };
         transpiler.set_log(&raw mut config.log);
 
@@ -1135,9 +1137,10 @@ impl Drop for JSTranspiler {
                 ctx.deinit();
             }
         });
-        // SAFETY: `transpiler.log` is a *mut Log set via `set_log` to a live Log.
         let log = self.transpiler.get().log;
         if !log.is_null() {
+            // SAFETY: `transpiler.log` was set via `set_log` to `&mut self.config.log`
+            // (heap-stable for `Self`'s lifetime) and just checked non-null.
             unsafe { (*log).clear_and_free() };
         }
         // scan_pass_result.{named_imports,import_records,used_symbols}.deinit() → field Drop
@@ -1178,6 +1181,9 @@ impl TranspilerStateGuard {
     /// this runs.
     #[inline]
     fn transpiler_mut(&mut self) -> &mut Transpiler::Transpiler<'static> {
+        // SAFETY: `self.transpiler` is non-null (set from `JsCell::as_ptr()` on the
+        // heap-stable `Box<JSTranspiler>`); the guard holds the only live `&mut`
+        // projection of that `JsCell` between construction and `Drop`.
         unsafe { &mut *self.transpiler }
     }
 
@@ -1252,6 +1258,8 @@ impl JSTranspiler {
     /// that no `noalias &mut JSTranspiler` is live across that re-entry.
     #[inline]
     unsafe fn transpiler_mut(&self) -> &mut Transpiler::Transpiler<'static> {
+        // SAFETY: caller upholds the no-aliasing precondition documented on this
+        // `unsafe fn`; `JsCell::get_mut` projects through `UnsafeCell`.
         unsafe { self.transpiler.get_mut() }
     }
 
@@ -1751,6 +1759,8 @@ impl JSTranspiler {
         // `with_mut` borrow is closure-scoped; no JS re-entry inside.
         let prev_arena = self.transpiler.with_mut(|t| {
             let prev = t.arena;
+            // SAFETY: `arena` outlives every use through `t` — `_restore` below
+            // restores `prev_arena` before `arena` drops (reverse-decl order).
             t.set_arena(unsafe { bun_ptr::detach_lifetime_ref(&arena) });
             t.set_log(&raw mut log);
             prev

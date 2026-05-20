@@ -1257,7 +1257,7 @@ impl<'a> Part<'a> {
         // safe-signature wrapper does not hide the lifetime-widen.
         #[inline(always)]
         unsafe fn d(s: &[u8]) -> &'static [u8] {
-            // SAFETY (`Interned::assume` — Population B, holder-backed): every
+            // SAFETY: (`Interned::assume` — Population B, holder-backed) every
             // payload slice points into `FrameworkRouter::pattern_string_arena`,
             // which is owned by the `FrameworkRouter` and freed only on
             // router drop/reset — strictly after every `Route` holding a
@@ -1603,6 +1603,8 @@ impl FrameworkRouter {
         // program lifetime. Resolver mutex serializes mutation. We hold a raw pointer (no borrow)
         // so `r.read_dir_info_ignore_error(&mut self)` below does not conflict.
         let fs_ref = unsafe { &*fs };
+        // SAFETY: `fs` is the non-null process-global FileSystem singleton (see above);
+        // `addr_of_mut!` only computes a field address without forming a reference.
         let fs_impl = unsafe { core::ptr::addr_of_mut!((*fs).fs) };
 
         if let Some(entries) = dir_info.get_entries_const() {
@@ -1625,9 +1627,9 @@ impl FrameworkRouter {
             }
             let mut it = zig_order.iter();
             'outer: while let Some(entry) = it.next() {
+                let file_ptr: *mut bun_resolver::fs::Entry = *entry.1;
                 // SAFETY: EntryMap stores `*mut Entry` into the EntryStore singleton; entries
                 // outlive this scan and are serialized via `RealFS.entries_mutex`.
-                let file_ptr: *mut bun_resolver::fs::Entry = *entry.1;
                 let file = unsafe { &*file_ptr };
                 let base = file.base();
                 // PORT NOTE: reshaped for borrowck — fetch type fields fresh each iteration.

@@ -93,6 +93,8 @@ pub struct Blob {
 // the pointee data is either `'static`/heap-owned (`content_type`) or an
 // opaque JSC handle only ever dereferenced on its owning JS thread.
 unsafe impl Send for Blob {}
+// SAFETY: concurrent `&Blob` access only occurs under `ObjectURLRegistry`'s
+// mutex or on the single owning JS thread; the `Cell` fields are never raced.
 unsafe impl Sync for Blob {}
 
 impl Default for Blob {
@@ -613,6 +615,8 @@ pub mod store {
     // `NonNull<u8>` is uniquely owned (Zig: `ptr` is the sole alias) and
     // `StdAllocator` is `Send + Sync`.
     unsafe impl Send for Bytes {}
+    // SAFETY: `&Bytes` only reads the uniquely-owned slice via `slice()`; no
+    // interior mutability, so sharing references across threads is sound.
     unsafe impl Sync for Bytes {}
 
     impl Default for Bytes {
@@ -871,9 +875,7 @@ pub mod store {
             } else if bun_core::ends_with(path_name, b"\\") {
                 path_name = &path_name[0..path_name.len() - 1];
             }
-            if bun_core::starts_with(path_name, b"/") {
-                path_name = &path_name[1..];
-            } else if bun_core::starts_with(path_name, b"\\") {
+            if bun_core::starts_with(path_name, b"/") || bun_core::starts_with(path_name, b"\\") {
                 path_name = &path_name[1..];
             }
             path_name
@@ -885,8 +887,7 @@ pub mod store {
             credentials: Arc<bun_s3_signing::S3Credentials>,
         ) -> S3 {
             S3 {
-                // Zig: `credentials.ref()` — Arc::clone bumps the strong count.
-                credentials: Some(Arc::clone(&credentials)),
+                credentials: Some(credentials),
                 pathlike,
                 mime_type: mime_type.unwrap_or(bun_http_types::MimeType::OTHER),
                 options: bun_s3_signing::MultiPartUploadOptions::default(),
@@ -1131,9 +1132,7 @@ pub mod store {
         /// deallocator).
         #[inline]
         pub fn into_raw(self) -> *mut Store {
-            let p = self.ptr.as_ptr();
-            core::mem::forget(self);
-            p
+            core::mem::ManuallyDrop::new(self).ptr.as_ptr()
         }
 
         /// Mutable access to `data` through the shared handle. Zig mutates
@@ -1198,6 +1197,8 @@ pub mod store {
     // immutable-after-init or guarded by callers; matches Zig's cross-thread
     // `*Store` usage.
     unsafe impl Send for StoreRef {}
+    // SAFETY: `Store::ref_count` is atomic and `&StoreRef` only derefs to
+    // `&Store`; matches Zig's cross-thread shared `*Store` reads.
     unsafe impl Sync for StoreRef {}
 }
 pub use store::{Store, StoreRef};

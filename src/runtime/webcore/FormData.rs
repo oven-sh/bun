@@ -218,7 +218,7 @@ pub fn to_js_from_multipart_data(
     }
 
     impl<'a> Wrapper<'a> {
-        fn on_entry(wrap: &mut Self, name: bun_semver::String, field: Field, buf: &[u8]) {
+        fn on_entry(wrap: &mut Self, name: bun_semver::String, field: &Field, buf: &[u8]) {
             // SAFETY: `field.value` points into `buf` (caller-owned input), valid for this call.
             let value_str: &[u8] = unsafe { &*field.value };
             let key = ZigString::init_utf8(name.slice(buf));
@@ -316,7 +316,7 @@ pub fn for_each_multipart_entry<C>(
     input: &[u8],
     boundary: &[u8],
     ctx: &mut C,
-    mut iterator: impl FnMut(&mut C, bun_semver::String, Field, &[u8]),
+    mut iterator: impl FnMut(&mut C, bun_semver::String, &Field, &[u8]),
 ) -> Result<(), bun_core::Error> {
     let mut slice = input;
     let subslicer = SlicedString::init(input, input);
@@ -354,7 +354,7 @@ pub fn for_each_multipart_entry<C>(
     while let Some(chunk) = splitter.next() {
         let mut remain = chunk;
         let header_end =
-            strings::index_of(remain, b"\r\n\r\n").ok_or(err!("is missing header end"))?;
+            strings::index_of(remain, b"\r\n\r\n").ok_or_else(|| err!("is missing header end"))?;
         let header = &remain[..header_end + 2];
         remain = &remain[header_end + 4..];
 
@@ -365,11 +365,11 @@ pub fn for_each_multipart_entry<C>(
         let mut is_file = false;
         while !header_chunk.is_empty() && (filename.is_none() || name.len() == 0) {
             let line_end = strings::index_of(header_chunk, b"\r\n")
-                .ok_or(err!("is missing header line end"))?;
+                .ok_or_else(|| err!("is missing header line end"))?;
             let line = &header_chunk[..line_end];
             header_chunk = &header_chunk[line_end + 2..];
-            let colon =
-                strings::index_of(line, b":").ok_or(err!("is missing header colon separator"))?;
+            let colon = strings::index_of(line, b":")
+                .ok_or_else(|| err!("is missing header colon separator"))?;
 
             let key = &line[..colon];
             let mut value: &[u8] = if line.len() > colon + 1 {
@@ -449,7 +449,7 @@ pub fn for_each_multipart_entry<C>(
         field.filename = filename.unwrap_or_default();
         field.is_file = is_file;
 
-        iterator(ctx, name, field, input);
+        iterator(ctx, name, &field, input);
     }
 
     Ok(())

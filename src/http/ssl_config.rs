@@ -446,6 +446,9 @@ impl Drop for SSLConfig {
 // SAFETY: all raw pointers are heap-owned C strings with no interior
 // shared mutable state; cross-thread transfer is safe.
 unsafe impl Send for SSLConfig {}
+// SAFETY: the raw-pointer fields are only read (never written) through `&self`
+// and point to heap-owned immutable C strings; the sole interior-mutable field
+// (`cached_hash`) is an `AtomicU64`, which is itself `Sync`.
 unsafe impl Sync for SSLConfig {}
 
 /// Borrow a non-null, heap-owned, NUL-terminated C string field as bytes.

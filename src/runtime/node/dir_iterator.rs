@@ -396,6 +396,7 @@ mod platform {
                 debug_assert!(entry.is_aligned());
                 // SAFETY: entry points at a valid record header within buf.
                 let d_reclen: u16 = unsafe { core::ptr::addr_of!((*entry).d_reclen).read() };
+                // SAFETY: see above.
                 let d_type: u8 = unsafe { core::ptr::addr_of!((*entry).d_type).read() };
                 let entry_idx = self.index;
                 let next_index = entry_idx + d_reclen as usize;

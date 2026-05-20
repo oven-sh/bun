@@ -556,6 +556,7 @@ impl FetchTasklet {
         // SAFETY: caller contract — `this` is live and HTTP-thread-exclusive.
         let queued_progress_update =
             unsafe { (*this).has_schedule_callback.load(Ordering::Acquire) };
+        // SAFETY: caller contract — `this` is live and HTTP-thread-exclusive.
         unsafe { (*this).scheduled_response_buffer = MutableString::default() };
         FetchTasklet::deref_from_thread(this);
         if !queued_progress_update {
@@ -1071,6 +1072,8 @@ impl FetchTasklet {
                 };
                 if !x509.is_null() {
                     let global_object = self.global_this;
+                    // SAFETY: `x` is the non-null `X509*` returned by `d2i_X509` above; this
+                    // guard is its sole owner and frees it exactly once on scope exit.
                     let _x509_guard = scopeguard::guard(x509, |x| unsafe { X509_free(x) });
                     // SAFETY: x509 is non-null, freshly parsed; freed by guard above.
                     let js_cert = match X509::to_js(unsafe { &mut *x509 }, &global_object) {
@@ -1741,8 +1744,11 @@ impl FetchTasklet {
                     // doesn't tie `url`'s lifetime to the `fetch_tasklet` stack binding,
                     // which is moved into `heap::alloc` below.
                     let buf_ptr: *const [u8] = &raw const *fetch_tasklet.url_proxy_buffer;
-                    url = ZigURL::parse(unsafe { &(&*buf_ptr)[0..old_url_len] });
-                    proxy = Some(ZigURL::parse(unsafe { &(&*buf_ptr)[old_url_len..] }));
+                    // SAFETY: `buf_ptr` was just taken from the heap-owned `url_proxy_buffer`
+                    // assigned above; see lifetime argument in the preceding block comment.
+                    let buf = unsafe { &*buf_ptr };
+                    url = ZigURL::parse(&buf[0..old_url_len]);
+                    proxy = Some(ZigURL::parse(&buf[old_url_len..]));
                     // TODO(port): self-referential borrow into url_proxy_buffer; needs raw ptr or owned URL.
                 } else {
                     proxy = Some(env_proxy);
@@ -1784,6 +1790,7 @@ impl FetchTasklet {
         let headers_buf: &'static [u8] =
             unsafe { bun_ptr::Interned::assume(fetch_tasklet.request_headers.buf.as_slice()) }
                 .as_bytes();
+        // SAFETY: see `Interned::assume` note above — same heap-pinned `FetchTasklet` owner.
         let request_body_slice: &'static [u8] =
             unsafe { bun_ptr::Interned::assume(fetch_tasklet.request_body.slice()) }.as_bytes();
         let hostname: Option<&'static [u8]> = fetch_tasklet

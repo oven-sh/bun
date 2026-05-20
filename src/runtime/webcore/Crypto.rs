@@ -242,8 +242,12 @@ impl Crypto {
         // SAFETY: a_ptr/b_ptr are valid for `len` bytes (just obtained from JSUint8Array;
         // `JSUint8Array::slice()` needs `&mut self`, so reconstruct the slices here).
         // `ffi::slice` tolerates `(null, 0)` for detached/empty arrays.
-        let a = unsafe { bun_core::ffi::slice(a_ptr, len) };
-        let b = unsafe { bun_core::ffi::slice(b_ptr, len) };
+        let (a, b) = unsafe {
+            (
+                bun_core::ffi::slice(a_ptr, len),
+                bun_core::ffi::slice(b_ptr, len),
+            )
+        };
         JSValue::from(bun_boringssl_sys::constant_time_eq(a, b))
     }
 
@@ -426,7 +430,7 @@ pub fn bun_random_uuid_v7(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
     // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
     let entropy = global.bun_vm().as_mut().rare_data().entropy_slice(8);
 
-    let uuid = UUID7::init(timestamp, &<[u8; 8]>::try_from(&entropy[0..8]).unwrap());
+    let uuid = UUID7::init(timestamp, <[u8; 8]>::try_from(&entropy[0..8]).unwrap());
 
     if encoding == Encoding::Hex {
         let (mut str, bytes) = BunString::create_uninitialized_latin1(36);

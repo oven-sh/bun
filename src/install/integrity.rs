@@ -330,9 +330,9 @@ pub enum Hasher {
 }
 
 impl Streaming {
-    pub fn init(expected: Integrity, compute_if_missing: bool) -> Streaming {
+    pub fn init(expected: &Integrity, compute_if_missing: bool) -> Streaming {
         Streaming {
-            expected,
+            expected: *expected,
             hasher: match expected.tag {
                 Tag::SHA1 => Hasher::Sha1(Crypto::SHA1::init()),
                 Tag::SHA256 => Hasher::Sha256(Crypto::SHA256::init()),

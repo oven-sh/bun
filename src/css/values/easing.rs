@@ -33,7 +33,7 @@ pub struct CubicBezier {
     pub y2: CSSNumber,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Steps {
     /// The number of intervals in the function.
     pub count: CSSInteger,
@@ -147,7 +147,7 @@ impl EasingFunction {
                             p.expect_comma()?;
                             StepPosition::parse(p)
                         })
-                        .unwrap_or(StepPosition::default());
+                        .unwrap_or_default();
                     Ok(EasingFunction::Steps(Steps { count, position }))
                 },
                 _ => Err(location.new_unexpected_token_error(Token::Ident(function))),
@@ -295,8 +295,8 @@ fn step_position_map_get_any_case(ident: &[u8]) -> Option<StepPositionKeyword> {
 impl StepPosition {
     // TODO(port): Zig used `css.DeriveToCss(@This()).toCss` — reflection-derived serializer.
     // Replace with `#[derive(ToCss)]` once the trait/derive exists.
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        dest.write_str(<&'static str>::from(*self))
+    pub fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        dest.write_str(<&'static str>::from(self))
     }
 
     pub fn parse(input: &mut css::Parser) -> Result<StepPosition> {

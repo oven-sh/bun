@@ -201,7 +201,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             ) {
                 let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
                 let new_path = bun_core::handle_oom(generic_path_with_pretty_initialized(
-                    source_ref.path.clone(),
+                    &source_ref.path,
                     c.options.target,
                     top_level_dir,
                     arena,
@@ -214,6 +214,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         &*std::ptr::from_ref::<[u8]>(source_ref.contents.as_ref())
                     }),
                     contents_is_recycled: source_ref.contents_is_recycled,
+                    // SAFETY: `source_ref` is `&'static Source`, so re-borrowing its
+                    // `Cow` payload as `&'static [u8]` is sound regardless of arm.
                     identifier_name: std::borrow::Cow::Borrowed(unsafe {
                         &*std::ptr::from_ref::<[u8]>(source_ref.identifier_name.as_ref())
                     }),
@@ -287,6 +289,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         // SAFETY: see `parts` raw-pointer note above.
         && unsafe { (*parts)[namespace_export_part_index as usize].is_live }
     {
+        // SAFETY: see `parts` raw-pointer note above; index bounded by the range check just above.
         let ns_part_stmts: &[Stmt] =
             unsafe { (*parts)[namespace_export_part_index as usize].stmts }.slice();
         if let Err(err) = convert_stmts_for_chunk(
@@ -410,7 +413,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         new_properties.as_mut_ptr(),
                         src_len,
                     );
-                    unsafe { new_properties.set_len((src_len as u32) as usize) };
+                    new_properties.set_len((src_len as u32) as usize);
                 }
 
                 let resolved_exports = &c.graph.meta.items_resolved_exports()[source_index];

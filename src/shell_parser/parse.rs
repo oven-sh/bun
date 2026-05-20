@@ -782,11 +782,11 @@ pub mod ast {
 
         pub fn merge(
             self,
-            right: Atom<'arena>,
+            right: &Atom<'arena>,
             bump: &'arena Bump,
         ) -> Result<Atom<'arena>, bun_alloc::AllocError> {
             use SimpleAtom as SA;
-            match (&self, &right) {
+            match (&self, right) {
                 (Atom::Simple(l), Atom::Simple(r)) => {
                     // PORT NOTE: Zig `try allocator.alloc(SimpleAtom, 2)` —
                     // bumpalo has no fill_default for non-Default types, so
@@ -807,7 +807,7 @@ pub mod ast {
                 _ => {}
             }
 
-            if let (Atom::Compound(l), Atom::Compound(r)) = (&self, &right) {
+            if let (Atom::Compound(l), Atom::Compound(r)) = (&self, right) {
                 let total = l.atoms.len() + r.atoms.len();
                 let atoms = bump.alloc_slice_fill_with(total, |_| SimpleAtom::QuotedEmpty);
                 atoms[..l.atoms.len()].clone_from_slice(l.atoms);
@@ -820,7 +820,7 @@ pub mod ast {
             }
 
             if let Atom::Simple(l) = &self {
-                let Atom::Compound(r) = &right else {
+                let Atom::Compound(r) = right else {
                     unreachable!()
                 };
                 let atoms =
@@ -838,7 +838,7 @@ pub mod ast {
             let Atom::Compound(l) = &self else {
                 unreachable!()
             };
-            let Atom::Simple(r) = &right else {
+            let Atom::Simple(r) = right else {
                 unreachable!()
             };
             let atoms = bump.alloc_slice_fill_with(1 + l.atoms.len(), |_| SimpleAtom::QuotedEmpty);
@@ -1721,7 +1721,7 @@ impl<'bump> Parser<'bump> {
                             }
                         };
                         let left = ast::Atom::Simple(ast::SimpleAtom::Text(txt_value));
-                        let merged = left.merge(right, self.alloc)?;
+                        let merged = left.merge(&right, self.alloc)?;
                         break 'var_decl Some(ast::Assign {
                             label,
                             value: merged,
@@ -2383,6 +2383,7 @@ impl Token {
 pub type LexerAscii<'bump> = Lexer<'bump, { StringEncoding::Ascii }>;
 pub type LexerUnicode<'bump> = Lexer<'bump, { StringEncoding::Wtf8 }>;
 
+#[derive(Clone, Copy)]
 pub struct LexResult<'bump> {
     pub errors: &'bump [LexError],
     pub tokens: &'bump [Token],
@@ -2594,7 +2595,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         }
     }
 
-    fn backtrack(&mut self, snap: BacktrackSnapshot<'bump, ENCODING>) {
+    fn backtrack(&mut self, snap: &BacktrackSnapshot<'bump, ENCODING>) {
         self.chars = snap.chars;
         self.j = snap.j;
         self.word_start = snap.word_start;
@@ -2741,7 +2742,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                     fell_through = true;
                                     break 'escaped;
                                 }
-                                self.backtrack(state);
+                                self.backtrack(&state);
                             }
                             break 'escaped;
                         }
@@ -2792,7 +2793,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                     fell_through = true;
                                     break 'escaped;
                                 }
-                                self.backtrack(state);
+                                self.backtrack(&state);
                             }
                             break 'escaped;
                         }
@@ -3015,7 +3016,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                 fell_through = true;
                                 break 'escaped;
                             }
-                            self.backtrack(snapshot);
+                            self.backtrack(&snapshot);
                             break 'escaped;
                         }
                         // Operators
@@ -3514,17 +3515,17 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             match self.peek() {
                 Some(got) => {
                     let Ok(v) = CP::try_from(got.char) else {
-                        self.backtrack(snapshot);
+                        self.backtrack(&snapshot);
                         return false;
                     };
                     if v != want {
-                        self.backtrack(snapshot);
+                        self.backtrack(&snapshot);
                         return false;
                     }
                     let _ = self.eat();
                 }
                 None => {
-                    self.backtrack(snapshot);
+                    self.backtrack(&snapshot);
                     return false;
                 }
             }
@@ -3553,14 +3554,14 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         }
 
         if count == 0 {
-            self.backtrack(snap);
+            self.backtrack(&snap);
             return None;
         }
 
         let num = match bun_core::parse_int::<usize>(&buf[..count], 10) {
             Ok(n) => n,
             Err(_) => {
-                self.backtrack(snap);
+                self.backtrack(&snap);
                 return None;
             }
         };
@@ -4544,6 +4545,7 @@ pub struct SmolListAlloc(core::ptr::NonNull<Bump>);
 
 // SAFETY: just a pointer to a `Send + Sync` `MimallocArena`.
 unsafe impl Send for SmolListAlloc {}
+// SAFETY: just a pointer to a `Send + Sync` `MimallocArena`.
 unsafe impl Sync for SmolListAlloc {}
 
 impl SmolListAlloc {
@@ -4558,6 +4560,8 @@ impl SmolListAlloc {
     }
 }
 
+// SAFETY: forwards every method to `&Bump`'s `Allocator` impl; clones hold the
+// same arena pointer, so blocks stay valid across clones until the arena drops.
 unsafe impl core::alloc::Allocator for SmolListAlloc {
     #[inline]
     fn allocate(
@@ -4568,6 +4572,7 @@ unsafe impl core::alloc::Allocator for SmolListAlloc {
     }
     #[inline]
     unsafe fn deallocate(&self, ptr: core::ptr::NonNull<u8>, layout: core::alloc::Layout) {
+        // SAFETY: caller upholds `deallocate`'s contract; `ptr`/`layout` came from this arena.
         unsafe { core::alloc::Allocator::deallocate(&self.arena(), ptr, layout) }
     }
     #[inline]
@@ -4577,6 +4582,7 @@ unsafe impl core::alloc::Allocator for SmolListAlloc {
         old: core::alloc::Layout,
         new: core::alloc::Layout,
     ) -> Result<core::ptr::NonNull<[u8]>, core::alloc::AllocError> {
+        // SAFETY: caller upholds `grow`'s contract; `ptr`/`old` came from this arena.
         unsafe { core::alloc::Allocator::grow(&self.arena(), ptr, old, new) }
     }
     #[inline]
@@ -4586,6 +4592,7 @@ unsafe impl core::alloc::Allocator for SmolListAlloc {
         old: core::alloc::Layout,
         new: core::alloc::Layout,
     ) -> Result<core::ptr::NonNull<[u8]>, core::alloc::AllocError> {
+        // SAFETY: caller upholds `shrink`'s contract; `ptr`/`old` came from this arena.
         unsafe { core::alloc::Allocator::shrink(&self.arena(), ptr, old, new) }
     }
 }

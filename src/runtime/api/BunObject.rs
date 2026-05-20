@@ -235,7 +235,7 @@ mod static_adapters {
         } else {
             StringOrBuffer::from_js(g, a1)?
         };
-        Crypto::SHA512_256::hash_(g, input, output)
+        Crypto::SHA512_256::hash_(g, &input, output)
     }
 }
 
@@ -523,7 +523,7 @@ pub fn braces(
             Err(err) => return Err(global.throw_error(err.into(), "failed to parse braces")),
         };
         // PORT NOTE: see `tokenize` arm — manual JSON encoder for the AST.
-        let str = Braces::ast_to_json(ast_node);
+        let str = Braces::ast_to_json(&ast_node);
         let bun_str = BunString::from_bytes(&str);
         return bun_str.to_js(global);
     }
@@ -1700,7 +1700,9 @@ pub extern "C" fn Bun__escapeHTML16(
             // the external-string finalizer; do not drop it here.
             let (ptr, len) = (escaped_html.as_ptr(), escaped_html.len());
             core::mem::forget(escaped_html);
-            jsc::zig_string_to_external_u16(ptr, len, global_object)
+            // SAFETY: `ptr`/`len` describe `escaped_html`'s global-allocator buffer,
+            // forgotten above; ownership transfers to JSC's external-string finalizer.
+            unsafe { jsc::zig_string_to_external_u16(ptr, len, global_object) }
         }
     }
 }

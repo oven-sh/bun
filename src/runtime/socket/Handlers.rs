@@ -233,10 +233,10 @@ impl Handlers {
     ///   dereference it and must null any stored copy.
     pub unsafe fn mark_inactive(this: *mut Self) -> bool {
         bun_output::scoped_log!(Listener, "markInactive");
-        // SAFETY: caller contract — `this` is live on entry. Shared reborrow
-        // scoped to this block so no `&Handlers` protector spans the
-        // `heap::take` in the client branch below.
         let (remaining, mode) = {
+            // SAFETY: caller contract — `this` is live on entry. Shared reborrow
+            // scoped to this block so no `&Handlers` protector spans the
+            // `heap::take` in the client branch below.
             let h = unsafe { &*this };
             let remaining = h.active_connections.get() - 1;
             h.active_connections.set(remaining);
@@ -441,7 +441,7 @@ impl Drop for Handlers {
             // `~VM` may have already torn down the HandleSet that
             // `Strong::drop` writes back into; the slot is bulk-freed by the
             // VM destructor, so leaking it here is correct.
-            core::mem::forget(self.promise.replace(Strong::empty()));
+            let _ = core::mem::ManuallyDrop::new(self.promise.replace(Strong::empty()));
         }
     }
 }

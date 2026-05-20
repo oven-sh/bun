@@ -153,11 +153,10 @@ impl<T> Rect<T> {
     {
         T::parse(i)
     }
+}
 
-    pub fn is_compatible(&self, browsers: Browsers) -> bool
-    where
-        T: IsCompatible,
-    {
+impl<T: IsCompatible> IsCompatible for Rect<T> {
+    fn is_compatible(&self, browsers: Browsers) -> bool {
         self.top.is_compatible(browsers)
             && self.right.is_compatible(browsers)
             && self.bottom.is_compatible(browsers)

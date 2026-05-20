@@ -94,6 +94,7 @@ trait CronJobBase: Sized {
         let s = unsafe { &mut *this };
         debug_assert!(*s.remaining_fds_mut() > 0);
         *s.remaining_fds_mut() -= 1;
+        // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
         unsafe { Self::maybe_finished(this) };
     }
 
@@ -112,6 +113,7 @@ trait CronJobBase: Sized {
             );
             *s.err_msg_mut() = Some(msg);
         }
+        // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
         unsafe { Self::maybe_finished(this) };
     }
 
@@ -121,6 +123,7 @@ trait CronJobBase: Sized {
         let s = unsafe { &mut *this };
         *s.has_called_process_exit_mut() = true;
         *s.exit_status_mut() = Some(status);
+        // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
         unsafe { Self::maybe_finished(this) };
     }
 }
@@ -193,6 +196,7 @@ impl CronJobBase for CronRegisterJob {
         &mut self.exit_status
     }
     unsafe fn maybe_finished(this: *mut Self) {
+        // SAFETY: caller guarantees `this` is the live heap job with no active borrows.
         unsafe { CronRegisterJob::maybe_finished(this) }
     }
 }
@@ -222,6 +226,7 @@ impl CronRegisterJob {
             }
         }
         if s.err_msg.is_some() {
+            // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
             return unsafe { Self::finish(this) };
         }
         let Some(status) = s.exit_status.take() else {
@@ -273,12 +278,14 @@ impl CronRegisterJob {
                     } else {
                         s.set_err(format_args!("Process exited with code {}", exited.code));
                     }
+                    // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                     return unsafe { Self::finish(this) };
                 }
             }
             Status::Signaled(sig) => {
                 if s.state != RegisterState::BootingOut {
                     s.set_err(format_args!("Process killed by signal {}", sig as i32));
+                    // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                     return unsafe { Self::finish(this) };
                 }
             }
@@ -287,10 +294,12 @@ impl CronRegisterJob {
                     "Process error: {}",
                     <&'static str>::from(err.get_errno())
                 ));
+                // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                 return unsafe { Self::finish(this) };
             }
             Status::Running => return,
         }
+        // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
         unsafe { Self::advance_state(this) };
     }
 
@@ -313,10 +322,13 @@ impl CronRegisterJob {
         #[cfg(not(target_os = "macos"))]
         {
             match s.state {
+                // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                 RegisterState::ReadingCrontab => unsafe { Self::process_crontab_and_install(this) },
+                // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                 RegisterState::InstallingCrontab => unsafe { Self::finish(this) },
                 _ => {
                     s.set_err(format_args!("Unexpected state"));
+                    // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                     unsafe { Self::finish(this) };
                 }
             }
@@ -363,6 +375,7 @@ impl CronRegisterJob {
         stdin_opt: spawn::Stdio,
         stdout_opt: spawn::Stdio,
     ) {
+        // SAFETY: `this` is the live heap job (caller contract); may be freed inside.
         unsafe { spawn_cmd_generic(this, argv, stdin_opt, stdout_opt) };
     }
 
@@ -378,10 +391,12 @@ impl CronRegisterJob {
         s.stdout_reader.set_parent(this.cast());
         let Some(crontab_path) = find_crontab() else {
             s.set_err(format_args!("crontab not found in PATH"));
+            // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
             return unsafe { Self::finish(this) };
         };
         let mut argv: [*const c_char; 3] =
             [crontab_path, b"-l\0".as_ptr().cast(), core::ptr::null()];
+        // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
         unsafe { Self::spawn_cmd(this, &mut argv, spawn::Stdio::Ignore, spawn::Stdio::Buffer) };
     }
 
@@ -394,6 +409,7 @@ impl CronRegisterJob {
 
         if filter_crontab(existing_content, s.title.as_bytes(), &mut result).is_err() {
             s.set_err(format_args!("Out of memory building crontab"));
+            // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
             return unsafe { Self::finish(this) };
         }
 
@@ -410,6 +426,7 @@ impl CronRegisterJob {
         .is_err()
         {
             s.set_err(format_args!("Out of memory"));
+            // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
             return unsafe { Self::finish(this) };
         }
         result.extend_from_slice(&new_entry);
@@ -418,6 +435,7 @@ impl CronRegisterJob {
             Ok(p) => p,
             Err(_) => {
                 s.set_err(format_args!("Out of memory"));
+                // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                 return unsafe { Self::finish(this) };
             }
         };
@@ -433,12 +451,14 @@ impl CronRegisterJob {
             Ok(f) => f,
             Err(_) => {
                 s.set_err(format_args!("Failed to create temp file"));
+                // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                 return unsafe { Self::finish(this) };
             }
         };
         if file.write_all(&result).is_err() {
             let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
             s.set_err(format_args!("Failed to write temp file"));
+            // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
             return unsafe { Self::finish(this) };
         }
         let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
@@ -448,9 +468,11 @@ impl CronRegisterJob {
         s.stdout_reader = OutputReader::init::<CronRegisterJob>();
         let Some(crontab_path) = find_crontab() else {
             s.set_err(format_args!("crontab not found in PATH"));
+            // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
             return unsafe { Self::finish(this) };
         };
         let mut argv: [*const c_char; 3] = [crontab_path, tmp_path_ptr.cast(), core::ptr::null()];
+        // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
         unsafe { Self::spawn_cmd(this, &mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore) };
     }
 
@@ -466,12 +488,14 @@ impl CronRegisterJob {
             Ok(x) => x,
             Err(_) => {
                 s.set_err(format_args!("Invalid cron expression"));
+                // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                 return unsafe { Self::finish(this) };
             }
         };
 
         let Some(home) = env_var::HOME.get() else {
             s.set_err(format_args!("HOME environment variable not set"));
+            // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
             return unsafe { Self::finish(this) };
         };
 
@@ -485,6 +509,7 @@ impl CronRegisterJob {
             s.set_err(format_args!(
                 "Failed to create ~/Library/LaunchAgents directory"
             ));
+            // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
             return unsafe { Self::finish(this) };
         }
 
@@ -496,6 +521,7 @@ impl CronRegisterJob {
             Ok(p) => p,
             Err(_) => {
                 s.set_err(format_args!("Out of memory"));
+                // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                 return unsafe { Self::finish(this) };
             }
         };
@@ -508,6 +534,7 @@ impl CronRegisterJob {
                     Ok(v) => v,
                     Err(_) => {
                         s.set_err(format_args!("Out of memory"));
+                        // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                         return unsafe { Self::finish(this) };
                     }
                 }
@@ -552,6 +579,7 @@ impl CronRegisterJob {
         .is_err()
         {
             s.set_err(format_args!("Out of memory"));
+            // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
             return unsafe { Self::finish(this) };
         }
 
@@ -564,16 +592,19 @@ impl CronRegisterJob {
             Ok(f) => f,
             Err(_) => {
                 s.set_err(format_args!("Failed to create plist file"));
+                // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                 return unsafe { Self::finish(this) };
             }
         };
         if file.write_all(&plist).is_err() {
             let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
             s.set_err(format_args!("Failed to write plist"));
+            // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
             return unsafe { Self::finish(this) };
         }
         let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
 
+        // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
         unsafe { Self::spawn_bootout(this) };
     }
 
@@ -590,6 +621,7 @@ impl CronRegisterJob {
             Ok(v) => v,
             Err(_) => {
                 s.set_err(format_args!("Out of memory"));
+                // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                 return unsafe { Self::finish(this) };
             }
         };
@@ -599,6 +631,7 @@ impl CronRegisterJob {
             uid_str.as_ptr().cast(),
             core::ptr::null(),
         ];
+        // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
         unsafe { Self::spawn_cmd(this, &mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore) };
         drop(uid_str);
     }
@@ -610,12 +643,14 @@ impl CronRegisterJob {
         s.state = RegisterState::Bootstrapping;
         let Some(plist_path) = s.tmp_path.take() else {
             s.set_err(format_args!("No plist path"));
+            // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
             return unsafe { Self::finish(this) };
         };
         let uid_str = match alloc_print_z(format_args!("gui/{}", get_uid())) {
             Ok(v) => v,
             Err(_) => {
                 s.set_err(format_args!("Out of memory"));
+                // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                 return unsafe { Self::finish(this) };
             }
         };
@@ -627,6 +662,7 @@ impl CronRegisterJob {
             core::ptr::null(),
         ];
         // tmp_path already cleared via take() — don't delete the installed plist
+        // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
         unsafe { Self::spawn_cmd(this, &mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore) };
         drop(uid_str);
         drop(plist_path);
@@ -752,9 +788,9 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         tmp_path: None,
         event_loop_handle: EventLoopHandle::init(vm_mut().event_loop().cast::<()>()),
     }));
-    // SAFETY: just allocated; unique. Short-lived borrow ends before
-    // `start_*` (which may free `job`).
     let promise_value = {
+        // SAFETY: just allocated; unique. Short-lived borrow ends before
+        // `start_*` (which may free `job`).
         let job_ref = unsafe { &mut *job };
         job_ref.poll.ref_(bun_io::js_vm_ctx());
         job_ref.promise.value()
@@ -770,6 +806,7 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
     unsafe {
         CronRegisterJob::start_windows(job)
     };
+    // SAFETY: `job` is the freshly-leaked Box (see above); `start_*` takes ownership.
     #[cfg(all(not(target_os = "macos"), not(windows)))]
     unsafe {
         CronRegisterJob::start_linux(job)
@@ -794,6 +831,7 @@ impl CronRegisterJob {
             Ok(v) => v,
             Err(_) => {
                 s.set_err(format_args!("Out of memory"));
+                // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                 return unsafe { Self::finish(this) };
             }
         };
@@ -814,6 +852,7 @@ impl CronRegisterJob {
                 } else {
                     s.set_err(format_args!("Failed to build task XML"));
                 }
+                // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                 return unsafe { Self::finish(this) };
             }
         };
@@ -822,6 +861,7 @@ impl CronRegisterJob {
             Ok(p) => p,
             Err(_) => {
                 s.set_err(format_args!("Out of memory"));
+                // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                 return unsafe { Self::finish(this) };
             }
         };
@@ -837,12 +877,14 @@ impl CronRegisterJob {
             Ok(f) => f,
             Err(_) => {
                 s.set_err(format_args!("Failed to create temp XML file"));
+                // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                 return unsafe { Self::finish(this) };
             }
         };
         if file.write_all(&xml).is_err() {
             let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
             s.set_err(format_args!("Failed to write temp XML file"));
+            // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
             return unsafe { Self::finish(this) };
         }
         let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
@@ -858,6 +900,7 @@ impl CronRegisterJob {
             b"/f\0".as_ptr().cast(),
             core::ptr::null(),
         ];
+        // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
         unsafe { Self::spawn_cmd(this, &mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore) };
         drop(task_name);
     }
@@ -943,6 +986,7 @@ impl CronJobBase for CronRemoveJob {
         &mut self.exit_status
     }
     unsafe fn maybe_finished(this: *mut Self) {
+        // SAFETY: caller guarantees `this` is the live heap job with no active borrows.
         unsafe { CronRemoveJob::maybe_finished(this) }
     }
 }
@@ -972,6 +1016,7 @@ impl CronRemoveJob {
             }
         }
         if s.err_msg.is_some() {
+            // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
             return unsafe { Self::finish(this) };
         }
         let Some(status) = s.exit_status.take() else {
@@ -1003,12 +1048,14 @@ impl CronRemoveJob {
                     } else {
                         s.set_err(format_args!("Process exited with code {}", exited.code));
                     }
+                    // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                     return unsafe { Self::finish(this) };
                 }
             }
             Status::Signaled(sig) => {
                 if s.state != RemoveState::BootingOut {
                     s.set_err(format_args!("Process killed by signal {}", sig as i32));
+                    // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                     return unsafe { Self::finish(this) };
                 }
             }
@@ -1017,10 +1064,12 @@ impl CronRemoveJob {
                     "Process error: {}",
                     <&'static str>::from(err.get_errno())
                 ));
+                // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                 return unsafe { Self::finish(this) };
             }
             Status::Running => return,
         }
+        // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
         unsafe { Self::advance_state(this) };
     }
 
@@ -1057,10 +1106,13 @@ impl CronRemoveJob {
         #[cfg(not(target_os = "macos"))]
         {
             match s.state {
+                // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                 RemoveState::ReadingCrontab => unsafe { Self::remove_crontab_entry(this) },
+                // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                 RemoveState::InstallingCrontab => unsafe { Self::finish(this) },
                 _ => {
                     s.set_err(format_args!("Unexpected state"));
+                    // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                     unsafe { Self::finish(this) };
                 }
             }
@@ -1107,6 +1159,7 @@ impl CronRemoveJob {
         stdin_opt: spawn::Stdio,
         stdout_opt: spawn::Stdio,
     ) {
+        // SAFETY: `this` is the live heap job (caller contract); may be freed inside.
         unsafe { spawn_cmd_generic(this, argv, stdin_opt, stdout_opt) };
     }
 
@@ -1120,10 +1173,12 @@ impl CronRemoveJob {
         s.stdout_reader.set_parent(this.cast());
         let Some(crontab_path) = find_crontab() else {
             s.set_err(format_args!("crontab not found in PATH"));
+            // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
             return unsafe { Self::finish(this) };
         };
         let mut argv: [*const c_char; 3] =
             [crontab_path, b"-l\0".as_ptr().cast(), core::ptr::null()];
+        // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
         unsafe { Self::spawn_cmd(this, &mut argv, spawn::Stdio::Ignore, spawn::Stdio::Buffer) };
     }
 
@@ -1136,6 +1191,7 @@ impl CronRemoveJob {
 
         if filter_crontab(existing_content, s.title.as_bytes(), &mut result).is_err() {
             s.set_err(format_args!("Out of memory"));
+            // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
             return unsafe { Self::finish(this) };
         }
 
@@ -1143,6 +1199,7 @@ impl CronRemoveJob {
             Ok(p) => p,
             Err(_) => {
                 s.set_err(format_args!("Out of memory"));
+                // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                 return unsafe { Self::finish(this) };
             }
         };
@@ -1158,12 +1215,14 @@ impl CronRemoveJob {
             Ok(f) => f,
             Err(_) => {
                 s.set_err(format_args!("Failed to create temp file"));
+                // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                 return unsafe { Self::finish(this) };
             }
         };
         if file.write_all(&result).is_err() {
             let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
             s.set_err(format_args!("Failed to write temp file"));
+            // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
             return unsafe { Self::finish(this) };
         }
         let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
@@ -1172,9 +1231,11 @@ impl CronRemoveJob {
         s.stdout_reader = OutputReader::init::<CronRemoveJob>();
         let Some(crontab_path) = find_crontab() else {
             s.set_err(format_args!("crontab not found in PATH"));
+            // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
             return unsafe { Self::finish(this) };
         };
         let mut argv: [*const c_char; 3] = [crontab_path, tmp_path_ptr.cast(), core::ptr::null()];
+        // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
         unsafe { Self::spawn_cmd(this, &mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore) };
     }
 
@@ -1191,6 +1252,7 @@ impl CronRemoveJob {
             Ok(v) => v,
             Err(_) => {
                 s.set_err(format_args!("Out of memory"));
+                // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                 return unsafe { Self::finish(this) };
             }
         };
@@ -1200,6 +1262,7 @@ impl CronRemoveJob {
             uid_str.as_ptr().cast(),
             core::ptr::null(),
         ];
+        // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
         unsafe { Self::spawn_cmd(this, &mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore) };
         drop(uid_str);
     }
@@ -1239,9 +1302,9 @@ pub fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
         tmp_path: None,
         event_loop_handle: EventLoopHandle::init(vm_mut().event_loop().cast::<()>()),
     }));
-    // SAFETY: just allocated; unique. Short-lived borrow ends before
-    // `start_*` (which may free `job`).
     let promise_value = {
+        // SAFETY: just allocated; unique. Short-lived borrow ends before
+        // `start_*` (which may free `job`).
         let job_ref = unsafe { &mut *job };
         job_ref.poll.ref_(bun_io::js_vm_ctx());
         job_ref.promise.value()
@@ -1256,6 +1319,7 @@ pub fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
     unsafe {
         CronRemoveJob::start_windows(job)
     };
+    // SAFETY: `job` is the freshly-leaked Box (see above); `start_*` takes ownership.
     #[cfg(all(not(target_os = "macos"), not(windows)))]
     unsafe {
         CronRemoveJob::start_linux(job)
@@ -1276,6 +1340,7 @@ impl CronRemoveJob {
             Ok(v) => v,
             Err(_) => {
                 s.set_err(format_args!("Out of memory"));
+                // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                 return unsafe { Self::finish(this) };
             }
         };
@@ -1287,6 +1352,7 @@ impl CronRemoveJob {
             b"/f\0".as_ptr().cast(),
             core::ptr::null(),
         ];
+        // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
         unsafe { Self::spawn_cmd(this, &mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore) };
         drop(task_name);
     }
@@ -1836,6 +1902,7 @@ bun_jsc::jsc_host_abi! {
         global: *mut JSGlobalObject,
         frame: *mut CallFrame,
     ) -> JSValue {
+        // SAFETY: JSC passes valid non-null pointers for the host call's duration.
         let (global, frame) = unsafe { (&*global, &*frame) };
         jsc::host_fn::to_js_host_fn_result(global, on_promise_resolve(global, frame))
     }
@@ -1846,6 +1913,7 @@ bun_jsc::jsc_host_abi! {
         global: *mut JSGlobalObject,
         frame: *mut CallFrame,
     ) -> JSValue {
+        // SAFETY: JSC passes valid non-null pointers for the host call's duration.
         let (global, frame) = unsafe { (&*global, &*frame) };
         jsc::host_fn::to_js_host_fn_result(global, on_promise_reject(global, frame))
     }
@@ -2005,6 +2073,7 @@ impl SpawnCmdTarget for CronRegisterJob {
         CronRegisterJob::set_err(self, args)
     }
     unsafe fn finish(this: *mut Self) {
+        // SAFETY: caller guarantees `this` is the live heap job with no active borrows.
         unsafe { CronRegisterJob::finish(this) }
     }
     fn process_slot(&mut self) -> &mut Option<*mut Process> {
@@ -2026,6 +2095,7 @@ impl SpawnCmdTarget for CronRemoveJob {
         CronRemoveJob::set_err(self, args)
     }
     unsafe fn finish(this: *mut Self) {
+        // SAFETY: caller guarantees `this` is the live heap job with no active borrows.
         unsafe { CronRemoveJob::finish(this) }
     }
     fn process_slot(&mut self) -> &mut Option<*mut Process> {
@@ -2155,7 +2225,9 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
         ..SpawnOptions::default()
     };
 
-    let spawned = match spawn::spawn_process(&spawn_options, argv.as_mut_ptr().cast(), envp) {
+    // SAFETY: `argv`/`envp` are local null-terminated C-string arrays with
+    // argv[0] non-null; valid for this call.
+    let spawned = match unsafe { spawn::spawn_process(&spawn_options, argv.as_mut_ptr().cast(), envp) } {
         Ok(Ok(sp)) => sp,
         Ok(Err(err)) => {
             // `spawn_process_windows` only `heap::take`s the `Stdio::Buffer`
@@ -2168,12 +2240,14 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
                 "Failed to spawn process: {}",
                 bstr::BStr::new(err.name())
             ));
+            // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
             return unsafe { T::finish(this) };
         }
         Err(e) => {
             #[cfg(windows)]
             spawn_options.stderr.deinit();
             s.set_err(format_args!("Failed to spawn process: {}", e.name()));
+            // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
             return unsafe { T::finish(this) };
         }
     };
@@ -2199,6 +2273,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
                 }
                 if s.stdout_reader().start(stdout, true).is_err() {
                     s.set_err(format_args!("Failed to start reading stdout"));
+                    // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
                     return unsafe { T::finish(this) };
                 }
                 if let Some(p) = s.stdout_reader().handle.get_poll() {
@@ -2247,9 +2322,11 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     // exit handler (which re-enters `this` via the vtable thunk).
     match unsafe { (*process).watch_or_reap() } {
         Err(err) => {
+            // SAFETY: we hold a ref on `process` via `process_slot()`; it is live.
             if !unsafe { (*process).has_exited() } {
                 // SAFETY: all-zero is a valid Rusage.
                 let rusage = bun_core::ffi::zeroed::<Rusage>();
+                // SAFETY: `process` is live (ref held); no borrows of `this` remain.
                 unsafe { (*process).on_exit(Status::Err(err), &rusage) };
             }
         }
@@ -2307,7 +2384,7 @@ fn resolve_path(
         .resolver
         .resolve(source_dir, path_, bun_ast::ImportKind::EntryPointRun)
         .map_err(|_| bun_core::err!("ModuleNotFound"))?;
-    let entry_path = resolved.path().ok_or(bun_core::err!("ModuleNotFound"))?;
+    let entry_path = resolved.path().ok_or_else(|| bun_core::err!("ModuleNotFound"))?;
     Ok(ZString::from_bytes(entry_path.text))
 }
 
@@ -2515,12 +2592,12 @@ pub fn cron_to_calendar_interval(schedule: &[u8]) -> Result<Vec<u8>, CalendarErr
         if needs_or_split {
             // OR split: emit day-of-month dicts (no Weekday), then day-of-week dicts (no Day)
             // Pass 1: Day + time fields (minute, hour, day, month — no weekday)
-            emit_calendar_dicts(&mut result, fv_slices, EmitMode::ExcludeWeekday)?;
+            emit_calendar_dicts(&mut result, &fv_slices, EmitMode::ExcludeWeekday)?;
             // Pass 2: Weekday + time fields (minute, hour, weekday, month — no day)
-            emit_calendar_dicts(&mut result, fv_slices, EmitMode::ExcludeDay)?;
+            emit_calendar_dicts(&mut result, &fv_slices, EmitMode::ExcludeDay)?;
         } else {
             // Normal Cartesian product: all fields together
-            emit_calendar_dicts(&mut result, fv_slices, EmitMode::IncludeAll)?;
+            emit_calendar_dicts(&mut result, &fv_slices, EmitMode::IncludeAll)?;
         }
 
         result.extend_from_slice(b"    </array>");
@@ -2550,13 +2627,13 @@ enum EmitMode {
 /// In exclude_day mode, day-of-month (index 2) is treated as wildcard.
 fn emit_calendar_dicts(
     result: &mut Vec<u8>,
-    field_values: [Option<&[i32]>; 5],
+    field_values: &[Option<&[i32]>; 5],
     mode: EmitMode,
 ) -> Result<(), CalendarError> {
     const PLIST_KEYS: [&[u8]; 5] = [b"Minute", b"Hour", b"Day", b"Month", b"Weekday"];
 
     // Build effective field values based on mode
-    let mut effective: [Option<&[i32]>; 5] = field_values;
+    let mut effective: [Option<&[i32]>; 5] = *field_values;
     match mode {
         EmitMode::ExcludeWeekday => effective[4] = None,
         EmitMode::ExcludeDay => effective[2] = None,

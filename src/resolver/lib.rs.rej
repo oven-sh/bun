@@ -1,0 +1,29 @@
+--- src/resolver/lib.rs
++++ src/resolver/lib.rs
+@@ -137,15 +137,15 @@
+                     // formed). The returned slice borrows its never-freed backing storage
+                     // (heap-owned by a `'static` `BSSStringList` or a leaked mi_malloc), so
+                     // widening to `'static` is sound.
+-                    unsafe { bun_alloc::BSSStringList::append($backing(), value) }
++                    unsafe { bun_alloc::BSSStringList::append($backing(), &value) }
+                         .map_err(|_| bun_core::err!("OutOfMemory"))
+                 }
+                 pub fn append_parts(
+                     &self,
+                     parts: &[&[u8]],
+                 ) -> core::result::Result<&'static [u8], bun_core::Error> {
+                     // SAFETY: see `append_slice`.
+-                    unsafe { bun_alloc::BSSStringList::append($backing(), parts) }
++                    unsafe { bun_alloc::BSSStringList::append($backing(), &parts) }
+                         .map_err(|_| bun_core::err!("OutOfMemory"))
+                 }
+                 /// Zig: `FileSystem.DirnameStore.print(fmt, args)` — format
+@@ -186,7 +186,7 @@
+                     // `BSSStringList::append` takes `*mut Self` and serializes all mutation
+                     // through its internal `mutex`. Returned slice borrows its never-freed
+                     // storage, so widening to `'static` is sound.
+-                    unsafe { bun_alloc::BSSStringList::append($backing(), value) }
++                    unsafe { bun_alloc::BSSStringList::append($backing(), &value) }
+                         .map_err(|_| bun_alloc::AllocError)
+                 }
+                 /// Zig: `<Store>.appendLowerCase(allocator, value)`.

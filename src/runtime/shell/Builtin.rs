@@ -326,7 +326,7 @@ impl BuiltinIO {
             BuiltinIO::Fd(fd) => BuiltinIO::Fd(fd.clone()),
             BuiltinIO::Buf(target) => BuiltinIO::Buf(*target),
             BuiltinIO::Ignore => BuiltinIO::Ignore,
-            BuiltinIO::Blob(b) => BuiltinIO::Blob(b.clone()),
+            BuiltinIO::Blob(b) => BuiltinIO::Blob(Arc::clone(b)),
             BuiltinIO::ArrayBuf { .. } => {
                 unreachable!("duplicate_out precedes jsbuf redirects")
             }
@@ -443,7 +443,7 @@ impl BuiltinInput {
     fn from_in_kind(ik: &InKind) -> BuiltinInput {
         match ik {
             // `Arc::clone` IS the `dupeRef` (bumps the IOReader refcount).
-            InKind::Fd(r) => BuiltinInput::Fd(r.clone()),
+            InKind::Fd(r) => BuiltinInput::Fd(Arc::clone(r)),
             InKind::Ignore => BuiltinInput::Ignore,
         }
     }
@@ -604,7 +604,7 @@ impl Builtin {
                 } else {
                     let result = bun_io::open_for_writing_impl(
                         cwd_fd,
-                        path,
+                        &path,
                         redirect.to_flags(),
                         perm,
                         &mut pollable,
@@ -695,7 +695,7 @@ impl Builtin {
                 if redirect.stdout() {
                     let me = Self::of_mut(interp, cmd);
                     me.stdout = BuiltinIO::Fd(OutFd {
-                        writer: redirect_writer.clone(),
+                        writer: Arc::clone(&redirect_writer),
                         captured: None,
                     });
                 }
@@ -768,10 +768,10 @@ impl Builtin {
                     drop(original_blob);
                     let me = Self::of_mut(interp, cmd);
                     if redirect.stdin() {
-                        me.stdin = BuiltinInput::Blob(blob.clone());
+                        me.stdin = BuiltinInput::Blob(Arc::clone(&blob));
                     }
                     if redirect.stdout() {
-                        me.stdout = BuiltinIO::Blob(blob.clone());
+                        me.stdout = BuiltinIO::Blob(Arc::clone(&blob));
                     }
                     if redirect.stderr() {
                         me.stderr = BuiltinIO::Blob(blob);
@@ -1109,10 +1109,10 @@ impl Builtin {
         interp: &Interpreter,
         cmd: NodeId,
         kind: Kind,
-        e: ParseError,
+        e: &ParseError,
         set_wait_err: impl FnOnce(),
     ) -> Yield {
-        let buf: Vec<u8> = match &e {
+        let buf: Vec<u8> = match e {
             ParseError::IllegalOption(_) => Self::fmt_error_arena(
                 interp,
                 cmd,

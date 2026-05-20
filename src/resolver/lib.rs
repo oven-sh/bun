@@ -137,7 +137,7 @@ pub mod fs {
                     // formed). The returned slice borrows its never-freed backing storage
                     // (heap-owned by a `'static` `BSSStringList` or a leaked mi_malloc), so
                     // widening to `'static` is sound.
-                    unsafe { bun_alloc::BSSStringList::append($backing(), value) }
+                    unsafe { bun_alloc::BSSStringList::append($backing(), &value) }
                         .map_err(|_| bun_core::err!("OutOfMemory"))
                 }
                 pub fn append_parts(
@@ -145,7 +145,7 @@ pub mod fs {
                     parts: &[&[u8]],
                 ) -> core::result::Result<&'static [u8], bun_core::Error> {
                     // SAFETY: see `append_slice`.
-                    unsafe { bun_alloc::BSSStringList::append($backing(), parts) }
+                    unsafe { bun_alloc::BSSStringList::append($backing(), &parts) }
                         .map_err(|_| bun_core::err!("OutOfMemory"))
                 }
                 /// Zig: `FileSystem.DirnameStore.print(fmt, args)` — format
@@ -186,7 +186,7 @@ pub mod fs {
                     // `BSSStringList::append` takes `*mut Self` and serializes all mutation
                     // through its internal `mutex`. Returned slice borrows its never-freed
                     // storage, so widening to `'static` is sound.
-                    unsafe { bun_alloc::BSSStringList::append($backing(), value) }
+                    unsafe { bun_alloc::BSSStringList::append($backing(), &value) }
                         .map_err(|_| bun_alloc::AllocError)
                 }
                 /// Zig: `<Store>.appendLowerCase(allocator, value)`.
@@ -896,6 +896,8 @@ pub mod fs {
     // through `RealFS.entries_mutex`; Zig used a `threadlocal var instance`. The
     // raw-pointer fields are the only thing blocking auto-Sync.
     unsafe impl Sync for EntriesOption {}
+    // SAFETY: the `&'static mut DirEntry` points into the process-lifetime BSSMap
+    // singleton; ownership may cross threads under the same `entries_mutex` serialization.
     unsafe impl Send for EntriesOption {}
 
     /// Port of `FileSystem.RealFS.EntriesOption.Map` in `fs.zig`:
@@ -2006,9 +2008,9 @@ pub mod dir_entry_accessor {
             let res = FS::instance().fs.read_directory(path, None, 0, false)?;
             match res {
                 EntriesOption::Entries(entry) => {
+                    let p: *const DirEntry = &raw const **entry;
                     // SAFETY: ARENA — `entry` (unbounded `&mut DirEntry`) borrows the BSSMap
                     // singleton; reborrow as shared 'static for the Copy handle.
-                    let p: *const DirEntry = &raw const **entry;
                     Ok(Ok(DirEntryHandle {
                         value: Some(unsafe { &*p }),
                     }))

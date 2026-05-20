@@ -481,7 +481,7 @@ impl ShellLsTask {
             Err(e) => {
                 match e.get_errno() {
                     E::ENOENT => {
-                        this.err = Some(this.error_with_path(e));
+                        this.err = Some(this.error_with_path(&e));
                     }
                     E::ENOTDIR => {
                         this.result_kind = ResultKind::File;
@@ -490,7 +490,7 @@ impl ShellLsTask {
                         this.add_entry(p.as_bytes(), this.cwd);
                     }
                     _ => {
-                        this.err = Some(this.error_with_path(e));
+                        this.err = Some(this.error_with_path(&e));
                     }
                 }
                 return;
@@ -522,7 +522,7 @@ impl ShellLsTask {
             loop {
                 match iterator.next() {
                     Err(e) => {
-                        this.err = Some(this.error_with_path(e));
+                        this.err = Some(this.error_with_path(&e));
                         return;
                     }
                     Ok(None) => break,
@@ -611,18 +611,20 @@ impl ShellLsTask {
         let mtime = bun_sys::stat_mtime(&stat);
         let time_str = format_time(mtime.sec, self.now_secs);
 
-        // SAFETY: `perms`/`time_str` are filled with ASCII (`rwx-`/digits/
-        // spaces/month abbreviations) by `format_perms`/`format_time` above.
+        // SAFETY: `format_permissions` only writes ASCII bytes (`r`/`w`/`x`/`s`/`S`/`t`/`T`/`-`).
+        let perms_str = unsafe { core::str::from_utf8_unchecked(&perms) };
+        // SAFETY: `format_time` only writes ASCII bytes (month abbrevs, digits, spaces, `:`).
+        let time_s = unsafe { core::str::from_utf8_unchecked(&time_str) };
         let _ = write!(
             self.output,
             "{}{} {:>3} {:>5} {:>5} {:>8} {} ",
             file_type as char,
-            unsafe { core::str::from_utf8_unchecked(&perms) },
+            perms_str,
             nlink,
             uid,
             gid,
             size,
-            unsafe { core::str::from_utf8_unchecked(&time_str) },
+            time_s,
         );
         self.output.extend_from_slice(name);
         self.output.push(b'\n');
@@ -636,7 +638,7 @@ impl ShellLsTask {
     }
 
     /// Spec: ls.zig `errorWithPath`.
-    fn error_with_path(&self, err: bun_sys::Error) -> bun_sys::Error {
+    fn error_with_path(&self, err: &bun_sys::Error) -> bun_sys::Error {
         err.with_path(self.path.as_bytes())
     }
 

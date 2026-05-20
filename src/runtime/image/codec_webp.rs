@@ -234,8 +234,8 @@ pub fn encode(
 ) -> Result<codecs::Encoded, codecs::Error> {
     let mut out: *mut u8 = core::ptr::null_mut();
     let stride: c_int = c_int::try_from(w * 4).expect("int cast");
-    // SAFETY: rgba.ptr/len describe a valid readable buffer of stride*h bytes; out is a valid out-param.
     let len = if lossless {
+        // SAFETY: rgba.ptr/len describe a valid readable buffer of stride*h bytes; out is a valid out-param.
         unsafe {
             WebPEncodeLosslessRGBA(
                 rgba.as_ptr(),
@@ -246,6 +246,7 @@ pub fn encode(
             )
         }
     } else {
+        // SAFETY: rgba.ptr/len describe a valid readable buffer of stride*h bytes; out is a valid out-param.
         unsafe {
             WebPEncodeRGBA(
                 rgba.as_ptr(),

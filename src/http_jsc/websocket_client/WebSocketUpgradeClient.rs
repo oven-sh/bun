@@ -702,6 +702,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         bun_jsc::mark_binding!();
         // SAFETY: short-lived `&mut` borrows; each ends before the next call.
         unsafe { (*this).clear_data() };
+        // SAFETY: short-lived `&mut` for the field detach; `this` is live per caller contract.
         unsafe { (*this).tcp.detach() };
         // SAFETY: forwards `this` with root provenance; no `&mut Self` is live.
         unsafe { Self::dispatch_abrupt_close(this, ErrorCode::Ended) };
@@ -774,8 +775,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 } else {
                     b""
                 };
-                // SAFETY: ssl_ptr is a live `*SSL` from the open socket.
                 if hostname.is_empty()
+                    // SAFETY: `ssl_ptr` is the live `*SSL` for this open socket; reached only after a successful TLS handshake.
                     || !boringssl::check_server_identity(unsafe { &mut *ssl_ptr }, hostname)
                 {
                     // SAFETY: no `&mut Self` is live across this call.
@@ -875,6 +876,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         if this.outgoing_websocket.is_none() {
             // SAFETY: short-lived `&mut` writes; each ends before `socket.close`.
             unsafe { (*this.as_ptr()).state = State::Failed };
+            // SAFETY: short-lived `&mut` for clear_data; ends before `socket.close` below.
             unsafe { (*this.as_ptr()).clear_data() };
             // No `&mut Self` is live across this call (handle_close reenters).
             socket.close(uws::CloseCode::Failure);
@@ -1010,10 +1012,11 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
         // Proxy returned non-200 status
         if response.status_code != 200 {
-            // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
             if response.status_code == 407 {
+                // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
                 unsafe { Self::terminate(this, ErrorCode::ProxyAuthenticationRequired) };
             } else {
+                // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
                 unsafe { Self::terminate(this, ErrorCode::ProxyConnectFailed) };
             }
             return;
@@ -1123,7 +1126,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
         // Start TLS handshake
         // SAFETY: `tunnel` was just allocated by `init` (live, ref_count == 1).
-        if unsafe { WebSocketProxyTunnel::start(tunnel.as_ptr(), ssl_options, initial_data) }
+        if unsafe { WebSocketProxyTunnel::start(tunnel.as_ptr(), &ssl_options, initial_data) }
             .is_err()
         {
             // SAFETY: release the ref taken by `init`.
@@ -1571,6 +1574,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 bun_jsc::mark_binding!();
                 // SAFETY: short-lived reads.
                 let tcp = unsafe { (*this).tcp };
+                // SAFETY: short-lived read; `this` is live per caller contract.
                 let has_ws = unsafe { (*this).outgoing_websocket.is_some() };
                 if !tcp.is_closed() && has_ws {
                     tcp.timeout(0);
@@ -1628,6 +1632,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         bun_jsc::mark_binding!();
         // SAFETY: short-lived reads.
         let tcp = unsafe { (*this).tcp };
+        // SAFETY: short-lived read; `this` is live per caller contract.
         let has_ws = unsafe { (*this).outgoing_websocket.is_some() };
         if !tcp.is_closed() && has_ws {
             tcp.timeout(0);
@@ -1639,6 +1644,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             let socket = tcp;
 
             // Normal mode: pass socket directly to WebSocket client
+            // SAFETY: short-lived `&mut` for the field detach; ends before the FFI call below.
             unsafe { (*this).tcp.detach() };
             if let uws::InternalSocket::Connected(native_socket) = socket.socket {
                 // SAFETY: live C++ back-reference.
@@ -1667,6 +1673,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             // Once for the outgoing_websocket.
             unsafe { Self::deref(this) };
             // Once again for the TCP socket.
+            // SAFETY: releases the TCP-socket ref; may free `this` — no `&mut Self` is live.
             unsafe { Self::deref(this) };
         } else if tcp.is_closed() {
             // SAFETY: no `&mut Self` is live across this call.
@@ -1832,6 +1839,7 @@ impl<'a> Headers8Bit<'a> {
         }
         // SAFETY: per fn contract.
         let names_in = unsafe { bun_core::ffi::slice(names_ptr, len) };
+        // SAFETY: per fn contract — `values_ptr` points to `len` live `BunString`s.
         let values_in = unsafe { bun_core::ffi::slice(values_ptr, len) };
 
         let mut slices: Vec<Utf8Slice> = Vec::with_capacity(len * 2);

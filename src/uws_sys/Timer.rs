@@ -67,11 +67,11 @@ impl Timer {
         ms: i32,
         repeat_ms: i32,
     ) {
+        // SAFETY: ext storage was allocated with size_of::<T>() in create();
+        // @setRuntimeSafety(false) in Zig — caller guarantees T matches.
         unsafe {
             us_timer_set(self, cb, ms, repeat_ms);
             let value_ptr = us_timer_ext(self);
-            // SAFETY: ext storage was allocated with size_of::<T>() in create();
-            // @setRuntimeSafety(false) in Zig — caller guarantees T matches.
             (value_ptr.cast::<T>()).write(ptr);
         }
     }

@@ -869,29 +869,35 @@ pub mod SerializedSourceMap {
         /// Zig returns `[]align(1) const StringPointer` (StandaloneModuleGraph.zig)
         /// because the blob sits at an arbitrary offset in the executable. Rust
         /// cannot soundly form a `&[StringPointer]` here — that would require
-        /// 4-byte alignment regardless of target. Return raw `(ptr, count)` and
-        /// read each element via `ptr.add(i).read_unaligned()`.
-        pub fn source_file_names(self) -> (*const StringPointer, usize) {
-            let head = self.header();
-            let ptr = self.bytes[size_of::<Header>()..]
-                .as_ptr()
-                .cast::<StringPointer>();
-            (ptr, head.source_files_count as usize)
+        /// 4-byte alignment regardless of target. Read each element unaligned
+        /// by index instead.
+        pub fn source_file_name_at(self, index: usize) -> StringPointer {
+            // SAFETY: caller guarantees `index < header().source_files_count`;
+            // the layout doc on `Header` places this array immediately after
+            // the header within `bytes`, so the offset stays in-bounds.
+            unsafe {
+                core::ptr::read_unaligned(
+                    self.bytes
+                        .as_ptr()
+                        .add(size_of::<Header>() + index * size_of::<StringPointer>())
+                        .cast::<StringPointer>(),
+                )
+            }
         }
 
-        fn compressed_source_files(self) -> (*const StringPointer, usize) {
-            let head = self.header();
-            let count = head.source_files_count as usize;
+        fn compressed_source_file_at(self, index: usize) -> StringPointer {
+            let count = self.header().source_files_count as usize;
             // SAFETY: second contiguous `StringPointer` array immediately
-            // follows the first (see `Header` layout doc); the offset stays
-            // within `bytes`. Same align(1) caveat as `source_file_names`.
-            let ptr = unsafe {
-                self.bytes[size_of::<Header>()..]
-                    .as_ptr()
-                    .cast::<StringPointer>()
-                    .add(count)
-            };
-            (ptr, count)
+            // follows the first (see `Header` layout doc); caller guarantees
+            // `index < count` so the offset stays within `bytes`.
+            unsafe {
+                core::ptr::read_unaligned(
+                    self.bytes
+                        .as_ptr()
+                        .add(size_of::<Header>() + (count + index) * size_of::<StringPointer>())
+                        .cast::<StringPointer>(),
+                )
+            }
         }
     }
 
@@ -912,11 +918,7 @@ pub mod SerializedSourceMap {
             // wrote and re-read in the same scope. Here we populate first if
             // empty, then take a single borrow at the end.
             if self.decompressed_files[index].is_none() {
-                let (compressed_codes, _count) = self.map.compressed_source_files();
-                // SAFETY: `index < source_files_count` is upheld by caller;
-                // pointer is into the mmapped `'static` blob. Read unaligned
-                // per Zig's `[]align(1) const StringPointer`.
-                let sp = unsafe { compressed_codes.add(index).read_unaligned() };
+                let sp = self.map.compressed_source_file_at(index);
                 let compressed_file = sp.slice(self.map.bytes);
                 let size = bun_zstd::get_decompressed_size(compressed_file);
 
@@ -1155,7 +1157,7 @@ pub fn parse_json(
 
     let sources_content = match json
         .get(b"sourcesContent")
-        .ok_or(bun_core::err!("InvalidSourceMap"))?
+        .ok_or_else(|| bun_core::err!("InvalidSourceMap"))?
         .data
         .as_e_array()
     {
@@ -1165,7 +1167,7 @@ pub fn parse_json(
 
     let sources_paths = match json
         .get(b"sources")
-        .ok_or(bun_core::err!("InvalidSourceMap"))?
+        .ok_or_else(|| bun_core::err!("InvalidSourceMap"))?
         .data
         .as_e_array()
     {

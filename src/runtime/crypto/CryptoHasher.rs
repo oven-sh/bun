@@ -286,7 +286,7 @@ impl CryptoHasher {
             None => None,
         };
 
-        Self::hash_(global, algorithm, input, output)
+        Self::hash_(global, algorithm, &input, output)
     }
 
     fn throw_hmac_consumed(global: &JSGlobalObject) -> JsError {
@@ -335,13 +335,13 @@ impl CryptoHasher {
     fn hash_to_encoding(
         global: &JSGlobalObject,
         evp: &mut EVP,
-        input: BlobOrStringOrBuffer,
+        input: &BlobOrStringOrBuffer,
         encoding: Encoding,
     ) -> JsResult<JSValue> {
         let mut output_digest_buf: Digest = [0u8; EVP_MAX_MD_SIZE_USIZE];
         // `defer input.deinit()` — handled by Drop on `input`.
 
-        if is_bun_file_blob(&input) {
+        if is_bun_file_blob(input) {
             return Err(global.throw(format_args!(
                 "Bun.file() is not supported here yet (it needs an async version)"
             )));
@@ -364,14 +364,14 @@ impl CryptoHasher {
     fn hash_to_bytes(
         global: &JSGlobalObject,
         evp: &mut EVP,
-        input: BlobOrStringOrBuffer,
+        input: &BlobOrStringOrBuffer,
         output: Option<ArrayBuffer>,
     ) -> JsResult<JSValue> {
         let mut output_digest_buf: Digest = [0u8; EVP_MAX_MD_SIZE_USIZE];
         let mut output_digest_slice: &mut [u8] = &mut output_digest_buf;
         // `defer input.deinit()` — handled by Drop on `input`.
 
-        if is_bun_file_blob(&input) {
+        if is_bun_file_blob(input) {
             return Err(global.throw(format_args!(
                 "Bun.file() is not supported here yet (it needs an async version)"
             )));
@@ -412,7 +412,7 @@ impl CryptoHasher {
     pub fn hash_(
         global: &JSGlobalObject,
         algorithm: ZigString,
-        input: BlobOrStringOrBuffer,
+        input: &BlobOrStringOrBuffer,
         output: Option<StringOrBuffer>,
     ) -> JsResult<JSValue> {
         let mut evp = match EVP::by_name(&algorithm, global) {
@@ -896,7 +896,7 @@ impl CryptoHasherZig {
     pub fn hash_by_name(
         global: &JSGlobalObject,
         algorithm: &ZigString,
-        input: BlobOrStringOrBuffer,
+        input: &BlobOrStringOrBuffer,
         output: Option<StringOrBuffer>,
     ) -> JsResult<Option<JSValue>> {
         macro_rules! arm {
@@ -912,7 +912,7 @@ impl CryptoHasherZig {
 
     fn hash_by_name_inner<A: ZigHashAlgo>(
         global: &JSGlobalObject,
-        input: BlobOrStringOrBuffer,
+        input: &BlobOrStringOrBuffer,
         output: Option<StringOrBuffer>,
     ) -> JsResult<JSValue> {
         if let Some(string_or_buffer) = output {
@@ -943,12 +943,12 @@ impl CryptoHasherZig {
 
     fn hash_by_name_inner_to_string<A: ZigHashAlgo>(
         global: &JSGlobalObject,
-        input: BlobOrStringOrBuffer,
+        input: &BlobOrStringOrBuffer,
         encoding: Encoding,
     ) -> JsResult<JSValue> {
         // `defer input.deinit()` — handled by Drop.
 
-        if is_bun_file_blob(&input) {
+        if is_bun_file_blob(input) {
             return Err(global.throw(format_args!(
                 "Bun.file() is not supported here yet (it needs an async version)"
             )));
@@ -969,12 +969,12 @@ impl CryptoHasherZig {
 
     fn hash_by_name_inner_to_bytes<A: ZigHashAlgo>(
         global: &JSGlobalObject,
-        input: BlobOrStringOrBuffer,
+        input: &BlobOrStringOrBuffer,
         output: Option<ArrayBuffer>,
     ) -> JsResult<JSValue> {
         // `defer input.deinit()` — handled by Drop.
 
-        if is_bun_file_blob(&input) {
+        if is_bun_file_blob(input) {
             return Err(global.throw(format_args!(
                 "Bun.file() is not supported here yet (it needs an async version)"
             )));
@@ -1283,7 +1283,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
             None => None,
         };
 
-        Self::hash_(global, input, output)
+        Self::hash_(global, &input, output)
     }
 
     pub fn get_byte_length(_this: &Self, _: &JSGlobalObject) -> JSValue {
@@ -1357,12 +1357,12 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
 
     pub fn hash_(
         global: &JSGlobalObject,
-        input: BlobOrStringOrBuffer,
+        input: &BlobOrStringOrBuffer,
         output: Option<StringOrBuffer>,
     ) -> JsResult<JSValue> {
         // `defer input.deinit()` — handled by Drop.
 
-        if is_bun_file_blob(&input) {
+        if is_bun_file_blob(input) {
             return Err(global.throw(format_args!(
                 "Bun.file() is not supported here yet (it needs an async version)"
             )));
@@ -1371,7 +1371,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         if let Some(string_or_buffer) = output {
             if let StringOrBuffer::Buffer(buffer) = &string_or_buffer {
                 let ab = buffer.buffer;
-                return Self::hash_to_bytes(global, &input, Some(ab));
+                return Self::hash_to_bytes(global, input, Some(ab));
             }
             let Some(encoding) = Encoding::from(string_or_buffer.slice()) else {
                 return Err(global
@@ -1385,9 +1385,9 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
                     .throw());
             };
 
-            Self::hash_to_encoding(global, &input, encoding)
+            Self::hash_to_encoding(global, input, encoding)
         } else {
-            Self::hash_to_bytes(global, &input, None)
+            Self::hash_to_bytes(global, input, None)
         }
     }
 

@@ -127,10 +127,10 @@ pub fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> 
             subcommand,
         };
 
-        let mut fetcher = DependenciesScanner::new(&mut analyzer, entry_points);
+        let fetcher = DependenciesScanner::new(&mut analyzer, entry_points);
 
         // This runs the bundler.
-        BuildCommand::exec(command::get(), Some(&mut fetcher))?;
+        BuildCommand::exec(command::get(), Some(&fetcher))?;
         return Ok(());
     }
 

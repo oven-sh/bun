@@ -120,7 +120,7 @@ impl<'a> DataURL<'a> {
     pub fn parse_without_check(url: &'a [u8]) -> Result<DataURL<'a>, bun_core::Error> {
         // TODO(port): narrow error set
         let comma =
-            strings::index_of_char(url, b',').ok_or(bun_core::err!("InvalidDataURL"))? as usize;
+            strings::index_of_char(url, b',').ok_or_else(|| bun_core::err!("InvalidDataURL"))? as usize;
 
         let mut parsed = DataURL {
             url: bun_core::String::empty(),

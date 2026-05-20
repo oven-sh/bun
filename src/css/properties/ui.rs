@@ -91,9 +91,9 @@ impl ColorScheme {
         Ok(())
     }
 
-    pub fn deep_clone(&self, _arena: &Arena) -> Self {
+    pub fn deep_clone(self, _arena: &Arena) -> Self {
         // PORT NOTE: bitflags is Copy.
-        *self
+        self
     }
 }
 

@@ -714,7 +714,7 @@ fn find_dependency_paths(
 
                 // Get parent for next iteration
                 if let Some(parent) = parent_map.get(&*trace) {
-                    trace = parent.clone();
+                    trace.clone_from(parent);
                 } else {
                     break;
                 }

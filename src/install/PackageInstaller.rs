@@ -543,7 +543,7 @@ impl<'a> PackageInstaller<'a> {
                 if let Some(optimizer) =
                     manager
                         .postinstall_optimizer
-                        .get(postinstall_optimizer::PkgInfo {
+                        .get(&postinstall_optimizer::PkgInfo {
                             name_hash,
                             ..Default::default()
                         })
@@ -581,9 +581,7 @@ impl<'a> PackageInstaller<'a> {
             }
             // globally linked packages shouls always belong to the root
             // tree (0).
-            let global = if !manager.options.global {
-                false
-            } else if tree_id != 0 {
+            let global = if !manager.options.global || tree_id != 0 {
                 false
             } else {
                 'global: {
@@ -618,6 +616,9 @@ impl<'a> PackageInstaller<'a> {
                         .as_ref()
                         .map(std::ptr::from_ref::<AbsPath>)
                         .unwrap_or(nm_ptr.cast_const()),
+                    // SAFETY: `nm_ptr` = `&raw mut node_modules_path` (live local); the only
+                    // other pointer derived from it is the read-only `target_node_modules_path`
+                    // above, which `bin::Linker::link` never writes through.
                     node_modules_path: unsafe { &mut *nm_ptr },
                     abs_target_buf: link_target_buf,
                     abs_dest_buf: link_dest_buf,
@@ -1008,7 +1009,7 @@ impl<'a> PackageInstaller<'a> {
             }
         }
 
-        if let Some(removed) = self.manager_mut().task_queue.fetch_remove(task_id) {
+        if let Some(removed) = self.manager_mut().task_queue.fetch_remove(&task_id) {
             let callbacks = removed.value;
             // PORT NOTE: `defer callbacks.deinit(this.manager.allocator)` — Vec drops.
 
@@ -1040,7 +1041,7 @@ impl<'a> PackageInstaller<'a> {
                 self.node_modules.tree_id = context.tree_id;
                 // PORT NOTE: zig assigns `context.path` (ArrayList struct copy).
                 // `DependencyInstallContext.path: Vec<u8>` — clone since `cb` is `&`.
-                self.node_modules.path = context.path.clone();
+                self.node_modules.path.clone_from(&context.path);
                 self.current_tree_id = context.tree_id;
                 const NEEDS_VERIFY: bool = false;
                 const IS_PENDING_PACKAGE_INSTALL: bool = false;
@@ -1287,6 +1288,9 @@ impl<'a> PackageInstaller<'a> {
             },
             cache_dir: Dir::from_fd(Fd::INVALID), // assigned below
             destination_dir_subpath,
+            // SAFETY: `subpath_buf_ptr` = `&raw mut self.destination_dir_subpath_buf`; the
+            // field outlives `installer`. `destination_dir_subpath` above derives from the
+            // same raw pointer, so this `&mut` does not invalidate it under stacked-borrows.
             destination_dir_subpath_buf: unsafe { (*subpath_buf_ptr).as_mut_slice() },
             // PORT NOTE: zig `arena: this.lockfile.allocator` dropped — global mimalloc.
             package_name: pkg_name,
@@ -1772,7 +1776,7 @@ impl<'a> PackageInstaller<'a> {
                                 .manager()
                                 .postinstall_optimizer
                                 .should_ignore_lifecycle_scripts(
-                                    postinstall_optimizer::PkgInfo {
+                                    &postinstall_optimizer::PkgInfo {
                                         name_hash: pkg_name_hash,
                                         version: if resolution.tag == resolution::Tag::Npm {
                                             Some(resolution.npm().version)
@@ -2077,7 +2081,7 @@ impl<'a> PackageInstaller<'a> {
                         .manager()
                         .postinstall_optimizer
                         .should_ignore_lifecycle_scripts(
-                            postinstall_optimizer::PkgInfo {
+                            &postinstall_optimizer::PkgInfo {
                                 name_hash: pkg_name_hash,
                                 version: if resolution.tag == resolution::Tag::Npm {
                                     Some(resolution.npm().version)

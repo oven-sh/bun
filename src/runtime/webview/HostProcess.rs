@@ -187,7 +187,9 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
             ..SpawnOptions::default()
         };
 
-        let spawned = bun_spawn::spawn_process(&opts, argv.as_ptr(), env.as_ptr())??;
+        // SAFETY: `argv`/`env` are local null-terminated C-string arrays with
+        // argv[0] non-null; valid for this call.
+        let spawned = unsafe { bun_spawn::spawn_process(&opts, argv.as_ptr(), env.as_ptr()) }??;
 
         // SAFETY: vm is valid for the call.
         let event_loop = EventLoopHandle::init(unsafe { (*vm).event_loop() }.cast());

@@ -138,7 +138,7 @@ impl<'a> Snapshots<'a> {
         // TODO(port): narrow error set
         let mut buntest_strong = expect
             .bun_test()
-            .ok_or(bun_core::err!("SnapshotFailed"))?;
+            .ok_or_else(|| bun_core::err!("SnapshotFailed"))?;
         // defer buntest_strong.deinit() → Drop
         let bun_test = buntest_strong.get();
         match self.get_snapshot_file(bun_test.file_id)? {
@@ -561,6 +561,9 @@ impl<'a> Snapshots<'a> {
                     // discussion.
                     let log_ptr: *mut bun_ast::Log = &raw mut *log;
                     let mut lexer = js_lexer::Lexer::init_without_reading(
+                        // SAFETY: `log_ptr` derived from `&raw mut *log` just above; `log`
+                        // outlives `'blk` and no other `&mut Log` is live until `lexer` is
+                        // moved into `parser` below.
                         unsafe { &mut *log_ptr },
                         &source,
                         &arena,

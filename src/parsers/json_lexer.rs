@@ -207,6 +207,9 @@ impl<'a, 'bump> LexerLog<'a> for Lexer<'a, 'bump> {
     type Err = bun_core::Error;
     #[inline]
     fn log_mut(&mut self) -> &mut bun_ast::Log {
+        // SAFETY: `self.log` is the sole provenance chain to the `Log` for the
+        // lifetime of the parse (see struct doc); no other `&mut Log` is held,
+        // so this deref never overlaps another live borrow.
         unsafe { &mut *self.log }
     }
     #[inline]
@@ -569,16 +572,7 @@ where
                 Ok(js_ast::E::String::init(self.string_literal_raw_content))
             }
             StringLiteralFormat::Utf16 => {
-                // SAFETY: when Utf16, the raw-content slice was produced from a
-                // `[]const u16` reinterpreted as bytes; len is the u16 count.
-                // (JSON path never sets Utf16 — only the JSX rescan does.)
-                let s16 = unsafe {
-                    core::slice::from_raw_parts(
-                        self.string_literal_raw_content.as_ptr().cast::<u16>(),
-                        self.string_literal_raw_content.len(),
-                    )
-                };
-                Ok(js_ast::E::String::init_utf16(s16))
+                unreachable!("JSON path never sets Utf16 — only the JSX rescan does")
             }
             StringLiteralFormat::NeedsDecode => {
                 // Escape parsing may surface a syntax error.

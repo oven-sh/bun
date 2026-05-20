@@ -61,8 +61,7 @@ bun_jsc::jsc_host_abi! {
         f: *mut CallFrame,
     ) -> JSValue {
         // SAFETY: JSC guarantees both pointers are live for the duration of the host call.
-        let global = unsafe { &*g };
-        let callframe = unsafe { &*f };
+        let (global, callframe) = unsafe { (&*g, &*f) };
         bun_jsc::to_js_host_fn_result(global, BunTest::bun_test_done_callback(global, callframe))
     }
 }

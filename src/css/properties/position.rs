@@ -5,7 +5,7 @@ use crate::{Parser, PrintErr, Printer, Token, VendorPrefix};
 use bun_core::strings;
 
 /// A value for the [position](https://www.w3.org/TR/css-position-3/#position-property) property.
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Position {
     /// The box is laid in the document flow.
     Static,
@@ -82,16 +82,16 @@ impl Position {
         }
     }
 
-    pub fn eql(&self, rhs: &Self) -> bool {
+    pub fn eql(self, rhs: Self) -> bool {
         // Zig: css.implementEql(@This(), lhs, rhs) — comptime-reflection structural eq.
         // Rust: covered by #[derive(PartialEq)].
         self == rhs
     }
 
-    pub fn deep_clone(&self) -> Self {
+    pub fn deep_clone(self) -> Self {
         // Zig: css.implementDeepClone(@This(), this, arena) — comptime-reflection deep copy.
         // Rust: covered by #[derive(Clone)]; arena param dropped (global mimalloc).
-        self.clone()
+        self
     }
 }
 

@@ -45,7 +45,7 @@ pub mod ssl_wrapper {
         is_client: bool,
         handlers: Handlers<T>,
     ) -> Result<SSLWrapper<T>, bun_core::Error> {
-        SSLWrapper::<T>::init_from_options(ssl_options.as_usockets(), is_client, handlers)
+        SSLWrapper::<T>::init_from_options(&ssl_options.as_usockets(), is_client, handlers)
             .map_err(bun_core::Error::from)
     }
 }

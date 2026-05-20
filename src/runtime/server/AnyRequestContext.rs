@@ -218,12 +218,12 @@ impl AnyRequestContext {
     }
 
     pub fn dev_server(self) -> Option<&'static crate::bake::DevServer::DevServer> {
-        // SAFETY: server backref outlives any AnyRequestContext (held only for
-        // the duration of a request callback). `self` is a by-value tagged
-        // pointer, so there is no input lifetime to tie the borrow to.
-        dispatch!(self, None, |_T, ctx| ctx
-            .dev_server()
-            .map(|r| unsafe { bun_ptr::detach_lifetime_ref(r) }))
+        dispatch!(self, None, |_T, ctx| ctx.dev_server().map(|r| {
+            // SAFETY: the server backref outlives any AnyRequestContext (held only
+            // for the duration of a request callback); `self` is a by-value tagged
+            // pointer, so there is no input lifetime to tie the borrow to.
+            unsafe { bun_ptr::detach_lifetime_ref(r) }
+        }))
     }
 
     /// Mutable access to the attached DevServer. Zig passed `*DevServer`
@@ -233,9 +233,10 @@ impl AnyRequestContext {
     /// JS thread.
     pub fn dev_server_mut(self) -> Option<*mut crate::bake::DevServer::DevServer> {
         dispatch!(self, None, |_T, ctx| {
-            // SAFETY: server backref outlives this context; `dev_server` is a
-            // `Box` field never moved while requests are in flight.
             let server = ctx.server?.as_ptr();
+            // SAFETY: `ctx.server` is a non-null backref that outlives this context
+            // and `dev_server` is a `Box` field never moved while requests are in
+            // flight, so dereferencing for exclusive access on the JS thread is sound.
             let ds = unsafe { (*server).dev_server.as_deref_mut()? };
             Some(core::ptr::from_mut(ds))
         })

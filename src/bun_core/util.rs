@@ -3327,6 +3327,30 @@ pub fn runtime_embed_file(_root: EmbedKind, sub_path: &'static str) -> &'static 
     );
 }
 
+#[doc(hidden)]
+pub fn __runtime_embed_load(kind: EmbedKind, sub: &'static str) -> String {
+    // SAFETY: CODEGEN_PATH/BASE_PATH originate from `option_env!` (`&'static str`
+    // → bytes), so the bytes are valid UTF-8 by construction.
+    let from = |b: &'static [u8]| unsafe { ::core::str::from_utf8_unchecked(b) };
+    let mut p = match kind {
+        EmbedKind::Codegen | EmbedKind::CodegenEager => {
+            ::std::path::PathBuf::from(from(crate::build_options::CODEGEN_PATH))
+        }
+        EmbedKind::Src | EmbedKind::SrcEager => {
+            let mut b = ::std::path::PathBuf::from(from(crate::build_options::BASE_PATH));
+            b.push("src");
+            b
+        }
+    };
+    p.push(sub);
+    ::std::fs::read_to_string(&p).unwrap_or_else(|e| {
+        panic!(
+            "Failed to load '{}': {e}\n\nTo improve iteration speed, some files are not embedded but loaded at runtime, at the cost of making the binary non-portable. To fix this, build with codegen_embed.",
+            p.display(),
+        )
+    })
+}
+
 /// Per-call-site embedded file. `($root, $sub_path)` mirrors the Zig
 /// signature; `$root` must be one of the bare idents `Codegen` /
 /// `CodegenEager` / `Src` / `SrcEager` and `$sub_path` a string literal.
@@ -3385,32 +3409,7 @@ macro_rules! __runtime_embed_impl {
     }};
     (@load $kind:expr, $sub:literal) => {{
         static __CELL: $crate::Once<String> = $crate::Once::new();
-        __CELL.get_or_init(|| {
-            // CODEGEN_PATH/BASE_PATH come from `option_env!` (always &str → bytes);
-            // round-tripping through validation is wasted work.
-            // SAFETY: see above — provenance is a `&'static str` literal.
-            let __from = |b: &'static [u8]| unsafe { ::core::str::from_utf8_unchecked(b) };
-            let mut p = match $kind {
-                $crate::EmbedKind::Codegen | $crate::EmbedKind::CodegenEager => {
-                    ::std::path::PathBuf::from(__from($crate::build_options::CODEGEN_PATH))
-                }
-                $crate::EmbedKind::Src | $crate::EmbedKind::SrcEager => {
-                    let mut b = ::std::path::PathBuf::from(__from($crate::build_options::BASE_PATH));
-                    b.push("src");
-                    b
-                }
-            };
-            p.push($sub);
-            ::std::fs::read_to_string(&p).unwrap_or_else(|e| {
-                panic!(
-                    "Failed to load '{}': {e}\n\n\
-                     To improve iteration speed, some files are not embedded but loaded \
-                     at runtime, at the cost of making the binary non-portable. To fix \
-                     this, build with codegen_embed.",
-                    p.display(),
-                )
-            })
-        }).as_str()
+        __CELL.get_or_init(|| $crate::__runtime_embed_load($kind, $sub)).as_str()
     }};
 }
 

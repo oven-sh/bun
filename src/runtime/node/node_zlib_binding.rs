@@ -775,11 +775,11 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         this.write_in_progress().set(false);
 
         // Zig: `std.mem.sliceTo(err_.msg, 0) orelse ""`.
-        // SAFETY: when non-null, `msg`/`code` point at NUL-terminated bytes
-        // (static literals or zlib/zstd-owned buffers valid for this call).
         let msg_bytes: &[u8] = if err_.msg.is_null() {
             b""
         } else {
+            // SAFETY: `err_.msg` is non-null (checked above) and points at a NUL-terminated
+            // C string (static literal or zlib/zstd-owned buffer valid for this call).
             unsafe { bun_core::ffi::cstr(err_.msg) }.to_bytes()
         };
         let mut msg_str = BunString::create_format(format_args!("{}", bstr::BStr::new(msg_bytes)));
@@ -791,6 +791,8 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         let code_bytes: &[u8] = if err_.code.is_null() {
             b""
         } else {
+            // SAFETY: `err_.code` is non-null (checked above) and points at a NUL-terminated
+            // C string (static literal or zlib/zstd-owned buffer valid for this call).
             unsafe { bun_core::ffi::cstr(err_.code) }.to_bytes()
         };
         let mut code_str =

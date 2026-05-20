@@ -149,6 +149,7 @@ pub extern "C" fn BUN__warn__extra_ca_load_failed(
 ) {
     // SAFETY: C++ caller passes valid NUL-terminated strings.
     let filename = unsafe { bun_core::ffi::cstr(filename) };
+    // SAFETY: C++ caller passes a valid NUL-terminated string for error_msg.
     let error_msg = unsafe { bun_core::ffi::cstr(error_msg) };
     bun_core::Output::warn(&format_args!(
         "ignoring extra certs from {}, load failed: {}",
@@ -524,7 +525,7 @@ pub mod ssl_wrapper {
         /// `jsc`/`http_types` dependency. The original `SSLConfig`-taking `init` lives as
         /// an extension in the higher tier.
         pub fn init_from_options(
-            ctx_opts: crate::SocketContext::BunSocketContextOptions,
+            ctx_opts: &crate::SocketContext::BunSocketContextOptions,
             is_client: bool,
             handlers: Handlers<T>,
         ) -> Result<Self, InitError> {

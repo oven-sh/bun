@@ -105,6 +105,8 @@ fn intern_slow(name: &'static str) -> NonZeroU16 {
     let mut extra = EXTRA.write();
     // Double-checked: another thread may have inserted while we waited.
     if let Some(i) = extra.iter().position(|&s| s == name) {
+        // SAFETY: SEED.len()+1+i ∈ SEED.len()+1..=SEED.len()+extra.len() ⊂ 1..=u16::MAX
+        // (upper bound is debug_asserted on every push below).
         return unsafe { NonZeroU16::new_unchecked((SEED.len() + 1 + i) as u16) };
     }
     extra.push(name);
@@ -130,8 +132,11 @@ pub fn intern_cached(slot: &core::sync::atomic::AtomicU16, name: &'static str) -
 
 impl Error {
     // ── const handles into SEED (indices are load-bearing) ────────────────
+    // SAFETY: literal 1 is non-zero (SEED[0] = "Unexpected").
     pub const UNEXPECTED: Self = Self(unsafe { NonZeroU16::new_unchecked(1) });
+    // SAFETY: literal 2 is non-zero (SEED[1] = "OutOfMemory").
     pub const OUT_OF_MEMORY: Self = Self(unsafe { NonZeroU16::new_unchecked(2) });
+    // SAFETY: literal 6 is non-zero (SEED[5] = "WriteFailed").
     pub const WRITE_FAILED: Self = Self(unsafe { NonZeroU16::new_unchecked(6) });
     /// Placeholder retained for callers not yet migrated to `err!()`.
     /// Aliases `Unexpected` so it round-trips through `name()` sensibly.
@@ -155,6 +160,8 @@ impl Error {
         {
             let extra = EXTRA.read();
             if let Some(i) = extra.iter().position(|&s| s == name) {
+                // SAFETY: SEED.len()+1+i ∈ SEED.len()+1..=SEED.len()+extra.len() ⊂ 1..=u16::MAX
+                // (upper bound is debug_asserted at intern_slow's push site).
                 return Self(unsafe { NonZeroU16::new_unchecked((SEED.len() + 1 + i) as u16) });
             }
         }

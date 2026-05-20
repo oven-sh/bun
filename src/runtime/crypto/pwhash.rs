@@ -108,7 +108,7 @@ pub mod argon2 {
     #[derive(Copy, Clone, Default)]
     pub struct VerifyOptions;
 
-    fn map_err(e: vendor::Error) -> Error {
+    fn map_err(e: &vendor::Error) -> Error {
         use vendor::Error as E;
         match e {
             // Zig's PhcFormatHasher emits these tags; keep them recognisable so
@@ -166,7 +166,7 @@ pub mod argon2 {
             version: vendor::Version::Version13,
         };
 
-        let encoded = vendor::hash_encoded(password, &salt, &config).map_err(map_err)?;
+        let encoded = vendor::hash_encoded(password, &salt, &config).map_err(|e| map_err(&e))?;
         let bytes = encoded.as_bytes();
 
         // Zig: `phc_format.serialize(…, buf)` writes into the caller buffer and
@@ -230,7 +230,7 @@ pub mod argon2 {
             // `rust-argon2` constant-time compares and returns `Ok(false)` on
             // mismatch; Zig surfaces this as `error.PasswordVerificationFailed`.
             Ok(false) => Err(bun_core::err!("PasswordVerificationFailed")),
-            Err(e) => Err(map_err(e)),
+            Err(e) => Err(map_err(&e)),
         }
     }
 }
@@ -267,7 +267,7 @@ pub mod bcrypt {
         pub silently_truncate_password: bool,
     }
 
-    fn map_err(e: vendor::BcryptError) -> Error {
+    fn map_err(e: &vendor::BcryptError) -> Error {
         use vendor::BcryptError as E;
         match e {
             E::CostNotAllowed(_) => bun_core::err!("WeakParameters"),
@@ -314,7 +314,7 @@ pub mod bcrypt {
         // `hash_with_result` → `_hash_password(.., err_on_truncation = false)`:
         // null-terminates then clamps to 72 bytes, exactly matching Zig's
         // `State.init` when `silently_truncate_password == true`.
-        let parts = vendor::hash_with_result(password, cost).map_err(map_err)?;
+        let parts = vendor::hash_with_result(password, cost).map_err(|e| map_err(&e))?;
 
         // `format_for_version(TwoB)` yields the canonical `$2b$cc$<22 salt><31 hash>`
         // 60-byte string — identical to Zig's `crypt_format.strHashInternal`.
@@ -363,7 +363,7 @@ pub mod bcrypt {
             // and ignores the version prefix, which is the same observable
             // contract — any `$2a/b/x/y$` hash with matching salt+digest passes.
             Ok(false) => Err(bun_core::err!("PasswordVerificationFailed")),
-            Err(e) => Err(map_err(e)),
+            Err(e) => Err(map_err(&e)),
         }
     }
 

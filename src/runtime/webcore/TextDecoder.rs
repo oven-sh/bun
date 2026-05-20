@@ -287,11 +287,15 @@ impl TextDecoder {
 
                 let out = strings::copy_cp1252_into_utf16(&mut bytes, buffer_slice);
                 // PERF(port): heap::alloc transfers a tight allocation (no excess capacity).
-                Ok(jsc::zig_string::to_external_u16(
-                    bun_core::heap::into_raw(bytes).cast::<u16>(),
-                    out.written as usize,
-                    global_this,
-                ))
+                // SAFETY: `bytes` was allocated by the global allocator; `into_raw`
+                // transfers ownership of the buffer to JSC's external-string finalizer.
+                Ok(unsafe {
+                    jsc::zig_string::to_external_u16(
+                        bun_core::heap::into_raw(bytes).cast::<u16>(),
+                        out.written as usize,
+                        global_this,
+                    )
+                })
             }
             EncodingLabel::Utf8 => {
                 // PORT NOTE: reshaped for borrowck — Zig used a labeled tuple-destructuring block.
@@ -375,7 +379,9 @@ impl TextDecoder {
                     }
                     // PERF(port): Vec::leak may retain excess capacity vs Zig's items.ptr — profile if it shows up on a hot path.
                     let ptr = decoded.leak().as_mut_ptr();
-                    return Ok(jsc::zig_string::to_external_u16(ptr, len, global_this));
+                    // SAFETY: `ptr` was leaked from a global-allocator `Vec<u16>`;
+                    // ownership transfers to JSC's external-string finalizer.
+                    return Ok(unsafe { jsc::zig_string::to_external_u16(ptr, len, global_this) });
                 }
 
                 debug_assert!(input.is_empty() || !deinit);
@@ -429,7 +435,9 @@ impl TextDecoder {
                 let len = decoded.len();
                 // PERF(port): Vec::leak may retain excess capacity vs Zig's items.ptr — profile if it shows up on a hot path.
                 let ptr = decoded.leak().as_mut_ptr();
-                Ok(jsc::zig_string::to_external_u16(ptr, len, global_this))
+                // SAFETY: `ptr` was leaked from a global-allocator `Vec<u16>`;
+                // ownership transfers to JSC's external-string finalizer.
+                Ok(unsafe { jsc::zig_string::to_external_u16(ptr, len, global_this) })
             }
 
             // Handle all other encodings using WebKit's TextCodec

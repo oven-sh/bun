@@ -793,7 +793,7 @@ impl AnyRoute {
             return Ok(AnyRoute::File(
                 NonNull::new(FileRoute::init_from_blob(
                     blob,
-                    super::file_route::InitOptions {
+                    &super::file_route::InitOptions {
                         server: None,
                         status_code: 200,
                         headers,

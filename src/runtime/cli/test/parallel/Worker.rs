@@ -142,11 +142,15 @@ impl Worker {
             };
             // Zig: `try (try spawnProcess(...)).unwrap()` — outer `?` for the
             // anyerror, inner map for the bun_sys::Result.
-            let mut spawned = spawn::spawn_process(
-                &options,
-                coord.argv.as_ptr(),
-                coord.envps[this.idx as usize].as_ptr(),
-            )?
+            // SAFETY: `coord.argv`/`coord.envps[..]` are null-terminated
+            // C-string arrays with argv[0] non-null; valid for this call.
+            let mut spawned = unsafe {
+                spawn::spawn_process(
+                    &options,
+                    coord.argv.as_ptr(),
+                    coord.envps[this.idx as usize].as_ptr(),
+                )
+            }?
             .map_err(|e| {
                 Output::err(e, "spawnProcess failed for test worker", ());
                 bun_core::err!("SpawnFailed")
@@ -227,11 +231,15 @@ impl Worker {
             };
             // Zig: `try (try spawnProcess(...)).unwrap()` — outer `?` for the
             // anyerror, inner map for the bun_sys::Result.
-            let mut spawned = spawn::spawn_process(
-                &options,
-                coord.argv.as_ptr(),
-                coord.envps[this.idx as usize].as_ptr(),
-            )?
+            // SAFETY: `coord.argv`/`coord.envps[..]` are null-terminated
+            // C-string arrays with argv[0] non-null; valid for this call.
+            let mut spawned = unsafe {
+                spawn::spawn_process(
+                    &options,
+                    coord.argv.as_ptr(),
+                    coord.envps[this.idx as usize].as_ptr(),
+                )
+            }?
             .map_err(|e| {
                 Output::err(e, "spawnProcess failed for test worker", ());
                 bun_core::err!("SpawnFailed")

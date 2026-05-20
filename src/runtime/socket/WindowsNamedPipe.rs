@@ -392,18 +392,24 @@ impl WindowsNamedPipe {
     // SAFETY (all): `this` is the `ctx` we set to `self as *mut _` when building
     // the wrapper; SSLWrapper never holds a competing `&mut WindowsNamedPipe`.
     fn ssl_on_open(this: *mut Self) {
+        // SAFETY: `this` is the `ctx` we set to `self as *mut _` when building
+        // the wrapper; SSLWrapper holds no competing `&mut WindowsNamedPipe`.
         unsafe { (*this).on_open() }
     }
     fn ssl_on_handshake(this: *mut Self, ok: bool, e: us_bun_verify_error_t) {
+        // SAFETY: see `ssl_on_open`.
         unsafe { (*this).on_handshake(ok, e) }
     }
     fn ssl_on_data(this: *mut Self, d: &[u8]) {
+        // SAFETY: see `ssl_on_open`.
         unsafe { (*this).on_data(d) }
     }
     fn ssl_on_close(this: *mut Self) {
+        // SAFETY: see `ssl_on_open`.
         unsafe { (*this).on_close() }
     }
     fn ssl_write(this: *mut Self, d: &[u8]) {
+        // SAFETY: see `ssl_on_open`.
         unsafe { (*this).internal_write(d) }
     }
 
@@ -1016,14 +1022,14 @@ impl WindowsNamedPipe {
 
     pub fn start_tls(
         &mut self,
-        ssl_options: SSLConfig,
+        ssl_options: &SSLConfig,
         is_client: bool,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         self.flags.set_is_ssl(true);
         if self.start(is_client) {
             self.wrapper = Some(ssl_wrapper::init(
-                &ssl_options,
+                ssl_options,
                 is_client,
                 ssl_wrapper::Handlers {
                     ctx: std::ptr::from_mut(self),
@@ -1187,7 +1193,9 @@ impl WindowsNamedPipe {
                 unsafe { (*this).wrapper.as_mut().unwrap_unchecked() };
             // Re-entrancy: see `on_read` — only the OUTERMOST scope may clear
             // the flag / run the deferred-drop epilogue.
+            // SAFETY: `this` aliases the live `&mut self`; single JS thread.
             let was_busy = unsafe { (*this).flags.contains(Flags::WRAPPER_BUSY) };
+            // SAFETY: as above.
             unsafe { (*this).flags.insert(Flags::WRAPPER_BUSY) };
             // SAFETY: see `on_read` — WRAPPER_BUSY keeps the `Some` payload
             // bytes at `*w` valid for the call's duration.
@@ -1198,7 +1206,10 @@ impl WindowsNamedPipe {
                 // SAFETY: `this` is still the live payload (re-entry only
                 // toggles flags / defers wrapper drop while WRAPPER_BUSY).
                 unsafe { (*this).flags.remove(Flags::WRAPPER_BUSY) };
+                // SAFETY: `this` is still live; read-only flag check.
                 if unsafe { (*this).flags.is_closed() } {
+                    // SAFETY: `this` still live; WRAPPER_BUSY cleared so dropping
+                    // the wrapper no longer races its own `&mut self`.
                     unsafe { (*this).wrapper = None };
                 }
             }
@@ -1222,7 +1233,9 @@ impl WindowsNamedPipe {
                 unsafe { (*this).wrapper.as_mut().unwrap_unchecked() };
             // Re-entrancy: see `on_read` — only the OUTERMOST scope may clear
             // the flag / run the deferred-drop epilogue.
+            // SAFETY: `this` aliases the live `&mut self`; single JS thread.
             let was_busy = unsafe { (*this).flags.contains(Flags::WRAPPER_BUSY) };
+            // SAFETY: as above.
             unsafe { (*this).flags.insert(Flags::WRAPPER_BUSY) };
             // SAFETY: see `on_read` — WRAPPER_BUSY keeps the `Some` payload
             // bytes at `*w` valid for the call's duration.
@@ -1233,7 +1246,10 @@ impl WindowsNamedPipe {
                 // SAFETY: `this` is still live (re-entry only toggles flags /
                 // defers wrapper drop while WRAPPER_BUSY).
                 unsafe { (*this).flags.remove(Flags::WRAPPER_BUSY) };
+                // SAFETY: `this` is still live; read-only flag check.
                 if unsafe { (*this).flags.is_closed() } {
+                    // SAFETY: `this` still live; WRAPPER_BUSY cleared so dropping
+                    // the wrapper no longer races its own `&mut self`.
                     unsafe { (*this).wrapper = None };
                 }
             }

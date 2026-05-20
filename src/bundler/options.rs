@@ -665,6 +665,8 @@ pub fn get_loader_and_virtual_source<'a>(
     let package_json: Option<&PackageJSON> = if is_js_like && bun_paths::is_absolute(dir) {
         jsc_vm
             .read_dir_info_package_json(dir)
+            // SAFETY: the vtable returns a pointer into the resolver's DirInfo
+            // cache owned by `jsc_vm.owner`, which outlives `'a`.
             .map(|p| unsafe { &*p })
     } else {
         None
@@ -1641,6 +1643,8 @@ impl<'a> BundleOptions<'a> {
     /// holds a live `&mut Log` from one of those aliases concurrently.
     #[inline]
     pub fn log(&self) -> &bun_ast::Log {
+        // SAFETY: `self.log` is non-null after `from_api` and the caller-owned
+        // arena `Log` it points to outlives `self`; see method doc.
         unsafe { &*self.log }
     }
 
@@ -1654,6 +1658,8 @@ impl<'a> BundleOptions<'a> {
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn log_mut(&self) -> &mut bun_ast::Log {
+        // SAFETY: `self.log` is non-null and outlives `self`; caller upholds
+        // the no-alias contract documented on this method.
         unsafe { &mut *self.log }
     }
 
@@ -1665,6 +1671,8 @@ impl<'a> BundleOptions<'a> {
     /// (`PackageManager::init_with_runtime`) only reads through it.
     #[inline]
     pub fn install(&self) -> Option<&api::BunInstall> {
+        // SAFETY: when `Some`, the `NonNull` points at the process-lifetime
+        // `ctx.install` box (see field doc), never mutated after CLI parsing.
         self.install.map(|p| unsafe { p.as_ref() })
     }
 
@@ -1911,7 +1919,7 @@ impl<'a> BundleOptions<'a> {
             .serve_plugins
             .as_ref()
             .map(|v| v.clone().into_boxed_slice());
-        opts.bunfig_path = transform.bunfig_path.clone();
+        opts.bunfig_path.clone_from(&transform.bunfig_path);
 
         if !transform.env_files.is_empty() {
             opts.env.files = transform.env_files.clone().into_boxed_slice();
@@ -2323,7 +2331,7 @@ impl Env {
 
     pub fn set_defaults_map(
         &mut self,
-        defaults: api::StringMap,
+        defaults: &api::StringMap,
     ) -> Result<(), bun_alloc::AllocError> {
         self.defaults.shrink_retaining_capacity(0);
 
@@ -2347,7 +2355,7 @@ impl Env {
     pub fn set_from_api(&mut self, config: api::EnvConfig) -> Result<(), bun_alloc::AllocError> {
         self.set_behavior_from_prefix(config.prefix.as_deref().unwrap_or(b""));
 
-        if let Some(defaults) = config.defaults {
+        if let Some(defaults) = &config.defaults {
             self.set_defaults_map(defaults)?;
         }
         Ok(())
@@ -2377,7 +2385,7 @@ impl Env {
 
         self.prefix = config.prefix;
 
-        self.set_defaults_map(config.defaults)
+        self.set_defaults_map(&config.defaults)
     }
 
     pub fn to_api(&self) -> api::LoadedEnvConfig {

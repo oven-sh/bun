@@ -47,7 +47,6 @@ pub mod options {
     /// `RuntimeFeatures.server_components` resolve to one type.
     pub(crate) use crate::parser::Runtime::ServerComponentsMode as ServerComponents;
     pub use JSX::Runtime as JSXRuntime;
-    #[allow(non_snake_case)]
     pub use bun_options_types::jsx as JSX;
     #[derive(Clone, Copy, Default, PartialEq, Eq)]
     #[allow(non_camel_case_types)]
@@ -95,19 +94,15 @@ pub mod options {
     /// is captured.
     pub type AllowUnresolvedMatcher = fn(pattern: &[u8], shape: &[u8]) -> bool;
 
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, Default)]
     pub enum AllowUnresolved {
         /// Default. Skip all checks — current behavior.
+        #[default]
         All,
         /// Always error on dynamic specifiers.
         None,
         /// Glob patterns; at least one must match the extracted shape.
         Patterns(Box<[Box<[u8]>]>, AllowUnresolvedMatcher),
-    }
-    impl Default for AllowUnresolved {
-        fn default() -> Self {
-            AllowUnresolved::All
-        }
     }
     impl AllowUnresolved {
         // Zig: `pub const default: AllowUnresolved = .all;` — taken by address
@@ -1426,18 +1421,10 @@ pub struct ExprBindingTuple {
     pub binding: Option<Binding>,
 }
 
+#[derive(Default)]
 pub struct TempRef {
     pub r#ref: Ref,
     pub value: Option<Expr>,
-}
-
-impl Default for TempRef {
-    fn default() -> Self {
-        Self {
-            r#ref: Ref::default(),
-            value: None,
-        }
-    }
 }
 
 #[derive(Clone, Copy)]

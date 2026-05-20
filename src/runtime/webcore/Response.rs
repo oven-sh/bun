@@ -67,9 +67,7 @@ impl HeadersRef {
     /// Relinquish ownership without decrementing the ref. Inverse of `adopt`.
     #[inline]
     pub fn into_raw(self) -> NonNull<FetchHeaders> {
-        let p = self.0;
-        core::mem::forget(self);
-        p
+        core::mem::ManuallyDrop::new(self).0
     }
 
     #[inline]
@@ -1220,7 +1218,7 @@ impl Response {
                     let credentials = s3.get_credentials();
 
                     let result = match credentials.sign_request::<false>(
-                        bun_s3_signing::SignOptions {
+                        &bun_s3_signing::SignOptions {
                             path: s3.path(),
                             method: Method::GET,
                             content_hash: None,
@@ -1427,9 +1425,11 @@ impl Init {
                 // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
                 let orig = bun_opaque::opaque_deref_mut(orig.as_ptr());
                 if !orig.is_empty() {
-                    result.headers = orig
-                        .clone_this(global_this)?
-                        .map(|p| unsafe { HeadersRef::adopt(p) });
+                    result.headers = orig.clone_this(global_this)?.map(|p| {
+                        // SAFETY: `clone_this` returns a fresh +1-ref'd `FetchHeaders*`;
+                        // ownership of that ref is transferred into the `HeadersRef`.
+                        unsafe { HeadersRef::adopt(p) }
+                    });
                 }
             } else {
                 result.headers = HeadersRef::create_from_js(global_this, headers)?;

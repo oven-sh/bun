@@ -955,7 +955,7 @@ impl MultiPartUpload {
                     // StreamBuffer would Drop the old one and free the Vec<u8> backing storage,
                     // leaving UploadPart.data dangling (UAF on perform(), double-free on
                     // free_allocated_slice). Take + forget so the part remains sole owner.
-                    core::mem::forget(core::mem::take(&mut self.buffered));
+                    let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.buffered));
                     return Ok(());
                 }
                 scoped_log!(

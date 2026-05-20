@@ -47,12 +47,12 @@ pub struct PropertyHandlerContext<'a> {
 impl<'a> PropertyHandlerContext<'a> {
     pub fn new(
         arena: &'a Bump,
-        targets: css::targets::Targets,
+        targets: &css::targets::Targets,
         unused_symbols: &'a ArrayHashMap<Box<[u8]>, ()>,
     ) -> PropertyHandlerContext<'a> {
         PropertyHandlerContext {
             arena,
-            targets,
+            targets: *targets,
             is_important: false,
             supports: Vec::new(),
             ltr: Vec::new(),
@@ -115,6 +115,8 @@ impl<'a> PropertyHandlerContext<'a> {
     /// lifetime erasure.
     #[inline]
     fn bump_static(&self) -> &'static Bump {
+        // SAFETY: the arena outlives every rule built from it; `'static` is the
+        // crate-wide `'bump`-erasure placeholder documented on this fn.
         unsafe { bun_collections::detach_ref(self.arena) }
     }
 
@@ -332,7 +334,7 @@ impl<'a> PropertyHandlerContext<'a> {
             return;
         }
 
-        let fallbacks = unparsed.value.get_fallbacks(bump, self.targets);
+        let fallbacks = unparsed.value.get_fallbacks(bump, &self.targets);
         // PORT NOTE: Zig `for (fallbacks.slice()) |c|` copies by value; `SmallList`
         // has no `IntoIterator`, so spill to a Vec to preserve P3-before-LAB order.
         for condition_and_fallback in fallbacks.to_owned_slice().into_vec() {

@@ -43,7 +43,7 @@ fn slice_to_owned(input: &[&[u8]]) -> Vec<Box<[u8]>> {
 
 pub fn loader_resolver(input: &[u8]) -> Result<api::Loader, bun_core::Error> {
     let option_loader =
-        bun_ast::Loader::from_string(input).ok_or(bun_core::err!("InvalidLoader"))?;
+        bun_ast::Loader::from_string(input).ok_or_else(|| bun_core::err!("InvalidLoader"))?;
     Ok(option_loader.to_api())
 }
 

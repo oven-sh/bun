@@ -166,7 +166,7 @@ impl RouteConfig {
                 router.routes_enabled = !router.dir.is_empty();
             }
             _ => {
-                router.possible_dirs = router_.dir.clone();
+                router.possible_dirs.clone_from(&router_.dir);
                 for dir in router_.dir.iter() {
                     let trimmed = trim_right(dir, b"/\\");
                     if !trimmed.is_empty() {
@@ -899,14 +899,19 @@ impl<'a> RouteLoader<'a> {
                                 // SAFETY: entry.dir is at least base_dir.len()-1 bytes; verified above in debug
                                 let public_dir = &entry_dir[base_dir.len() - 1..entry_dir.len()];
 
-                                if let Some(route) = Route::parse(
-                                    entry.base(),
-                                    extname,
-                                    entry_ptr,
-                                    self.log,
-                                    public_dir,
-                                    self.route_dirname_len,
-                                ) {
+                                // SAFETY: `entry_ptr` is EntryStore-owned (process
+                                // lifetime) with no other live `&mut` borrow here.
+                                let route = unsafe {
+                                    Route::parse(
+                                        entry.base(),
+                                        extname,
+                                        entry_ptr,
+                                        self.log,
+                                        public_dir,
+                                        self.route_dirname_len,
+                                    )
+                                };
+                                if let Some(route) = route {
                                     self.append_route(route);
                                 }
                                 break;
@@ -1030,7 +1035,11 @@ pub type RoutePtr = TinyPtr;
 impl Route {
     pub const INDEX_ROUTE_NAME: &'static [u8] = b"/";
 
-    pub fn parse(
+    /// # Safety
+    /// `entry` must point to a live `Fs::Entry` (EntryStore-owned) with no
+    /// other active `&mut` borrow for the duration of the call. `base_` and
+    /// `extname` may borrow `(*entry).base_`; see the PORT NOTE below.
+    pub unsafe fn parse(
         base_: &[u8],
         extname: &[u8],
         entry: *mut Fs::Entry,
@@ -1431,12 +1440,14 @@ impl<'a> Match<'a> {
     /// SAFETY: caller guarantees `self.params` is live and not mutably aliased.
     #[inline]
     pub unsafe fn params(&self) -> &route_param::List<'a> {
+        // SAFETY: caller contract — `self.params` is live and not mutably aliased.
         unsafe { &*self.params }
     }
 
     /// SAFETY: caller guarantees `self.params` is live and uniquely accessed.
     #[inline]
     pub unsafe fn params_mut(&mut self) -> &mut route_param::List<'a> {
+        // SAFETY: caller contract — `self.params` is live and uniquely borrowed.
         unsafe { &mut *self.params }
     }
 
@@ -1475,7 +1486,11 @@ impl<'a> Match<'a> {
             // Raw pointer; lifetime parameter on the pointee is phantom for the
             // pointer value itself.
             params: self.params.cast::<route_param::List<'static>>(),
-            redirect_path: self.redirect_path.map(|s| unsafe { d(s) }),
+            redirect_path: self.redirect_path.map(|s| {
+                // SAFETY: caller contract on `detach_lifetime` — every borrowed
+                // slice outlives the returned `Match<'static>`.
+                unsafe { d(s) }
+            }),
             query_string: d(self.query_string),
         }
     }

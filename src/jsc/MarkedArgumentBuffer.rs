@@ -34,10 +34,11 @@ impl MarkedArgumentBuffer {
         where
             F: FnOnce(&mut MarkedArgumentBuffer) -> R,
         {
-            // SAFETY: `ctx` is the `&mut ctx` passed to `run` below; `args` is the
-            // live stack-allocated buffer C++ hands us.
+            // SAFETY: `ctx` is the `&mut ctx` passed to `run` below.
             let ctx = unsafe { &mut *ctx };
             let f = ctx.f.take().unwrap();
+            // SAFETY: `args` is the live stack-allocated `MarkedArgumentBuffer` C++
+            // hands us for the duration of this callback.
             ctx.r = Some(f(unsafe { &mut *args }));
         }
         let mut ctx = Ctx {

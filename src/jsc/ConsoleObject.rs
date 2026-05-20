@@ -324,7 +324,7 @@ fn vm_console(global: &JSGlobalObject) -> *mut ConsoleObject {
 /// to interleave borrows across a deferred guard (`message_with_type_and_level_`)
 /// keep using the raw [`vm_console`] pointer instead.
 #[inline]
-unsafe fn vm_console_mut(global: &JSGlobalObject) -> &mut ConsoleObject {
+unsafe fn vm_console_mut<'a>(global: &JSGlobalObject) -> &'a mut ConsoleObject {
     // SAFETY: see [`vm_console`] — `VirtualMachine.console` is initialized once
     // at VM construction to a boxed `ConsoleObject` that lives for the VM's
     // lifetime; the C++ side never calls into `Bun__ConsoleObject__*` before

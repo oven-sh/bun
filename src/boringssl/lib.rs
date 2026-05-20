@@ -123,6 +123,8 @@ struct CtxStore(ptr::NonNull<boring::SSL_CTX>);
 // refcount and hand it to `SSL_new`, both of which BoringSSL documents as
 // thread-safe on a shared `SSL_CTX*`.
 unsafe impl Send for CtxStore {}
+// SAFETY: same invariant as `Send` above — BoringSSL documents `SSL_CTX` as
+// safe for concurrent use across threads, so sharing `&CtxStore` is sound.
 unsafe impl Sync for CtxStore {}
 
 static CTX_STORE: std::sync::OnceLock<CtxStore> = std::sync::OnceLock::new();
@@ -142,12 +144,17 @@ std::thread_local! {
 /// # Safety
 /// `ctx` must be a live `SSL_CTX*`.
 pub unsafe fn ssl_ctx_setup(ctx: *mut boring::SSL_CTX) {
-    AUTO_CRYPTO_BUFFER_POOL.with(|pool| unsafe {
-        if pool.get().is_null() {
-            pool.set(CRYPTO_BUFFER_POOL_new());
+    AUTO_CRYPTO_BUFFER_POOL.with(|pool| {
+        // SAFETY: caller guarantees `ctx` is a live `SSL_CTX*`; the pool pointer
+        // is either freshly returned by `CRYPTO_BUFFER_POOL_new` or a previously
+        // stored thread-local pool, and `SSL_DEFAULT_CIPHER_LIST` is a valid C string.
+        unsafe {
+            if pool.get().is_null() {
+                pool.set(CRYPTO_BUFFER_POOL_new());
+            }
+            SSL_CTX_set0_buffer_pool(ctx, pool.get());
+            let _ = SSL_CTX_set_cipher_list(ctx, SSL_DEFAULT_CIPHER_LIST.as_ptr());
         }
-        SSL_CTX_set0_buffer_pool(ctx, pool.get());
-        let _ = SSL_CTX_set_cipher_list(ctx, SSL_DEFAULT_CIPHER_LIST.as_ptr());
     });
 }
 
@@ -213,8 +220,11 @@ pub extern "C" fn OPENSSL_memory_alloc(size: usize) -> *mut c_void {
 }
 
 // BoringSSL always expects memory to be zero'd
+/// # Safety
+/// `ptr` must be non-null and have been returned by `OPENSSL_memory_alloc`
+/// (i.e. `mi_malloc`); BoringSSL guarantees both for this hook.
 #[unsafe(no_mangle)]
-pub extern "C" fn OPENSSL_memory_free(ptr: *mut c_void) {
+pub unsafe extern "C" fn OPENSSL_memory_free(ptr: *mut c_void) {
     // SAFETY: BoringSSL guarantees ptr is non-null and was returned by
     // OPENSSL_memory_alloc above (i.e. mi_malloc).
     unsafe {

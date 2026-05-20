@@ -18,24 +18,25 @@ impl Header {
     /// Safe view of the header name bytes.
     #[inline]
     pub fn name_bytes(&self) -> &[u8] {
-        // SAFETY: lsquic populates `name` with `name_len` bytes valid for the
-        // duration of the header callback (or `Header::init` borrowed them
-        // from a caller-owned slice). The returned borrow is tied to `&self`.
-        // `(null, 0)` is tolerated for empty headers.
         if self.name.is_null() {
             &[]
         } else {
+            // SAFETY: lsquic populates `name` with `name_len` bytes valid for the
+            // duration of the header callback (or `Header::init` borrowed them
+            // from a caller-owned slice). The returned borrow is tied to `&self`,
+            // and the null case is handled above.
             unsafe { core::slice::from_raw_parts(self.name, self.name_len as usize) }
         }
     }
     /// Safe view of the header value bytes.
     #[inline]
     pub fn value_bytes(&self) -> &[u8] {
-        // SAFETY: same invariant as `name_bytes` — `value` points to
-        // `value_len` bytes valid for the borrow of `&self`.
         if self.value.is_null() {
             &[]
         } else {
+            // SAFETY: same invariant as `name_bytes` — `value` points to
+            // `value_len` bytes valid for the borrow of `&self`, and the null
+            // case is handled above.
             unsafe { core::slice::from_raw_parts(self.value, self.value_len as usize) }
         }
     }

@@ -2893,12 +2893,11 @@ function generateRust(
   if (finalize) {
     // `host_fn_finalize` does the single `Box::from_raw(this)` and hands the
     // user impl an owned `Box<Self>` — genuinely safe (ownership transferred).
-    // SAFETY: `this` is the unique GC-owned `m_ctx` pointer, valid and not
-    // aliased — `JS${T}::~JS${T}` is the only caller.
     thunk(
       classSymbolName(typeName, "finalize"),
       `(this: *mut ${T}) -> ()`,
-      `    host_fn::host_fn_finalize(this, |b| ${T}::finalize(b))`,
+      `    // SAFETY: this is the unique GC-owned m_ctx pointer from Box::into_raw in the construct path.\n` +
+        `    unsafe { host_fn::host_fn_finalize(this, |b| ${T}::finalize(b)) }`,
     );
   }
 

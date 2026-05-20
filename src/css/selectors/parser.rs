@@ -319,7 +319,7 @@ pub mod attrs {
         }
     }
 
-    #[derive(Clone, PartialEq)]
+    #[derive(Clone, PartialEq, Eq)]
     pub enum ParsedAttrSelectorOperation<AttrValue> {
         Exists,
         WithValue {
@@ -387,7 +387,7 @@ pub mod attrs {
     }
 
     impl AttrSelectorOperator {
-        pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
             // https://drafts.csswg.org/cssom/#serializing-selectors
             // See "attribute selector".
             dest.write_str(match self {
@@ -1111,7 +1111,7 @@ impl PseudoClass {
         }
     }
 
-    pub fn get_necessary_prefixes(&mut self, targets: css::targets::Targets) -> css::VendorPrefix {
+    pub fn get_necessary_prefixes(&mut self, targets: &css::targets::Targets) -> css::VendorPrefix {
         use PseudoClass as P;
         use css::prefixes::Feature as F;
         let (p, feature): (&mut css::VendorPrefix, F) = match self {
@@ -2871,15 +2871,15 @@ pub struct SpecificityAndFlags {
 }
 
 impl SpecificityAndFlags {
-    pub fn has_pseudo_element(&self) -> bool {
+    pub fn has_pseudo_element(self) -> bool {
         self.flags.contains(SelectorFlags::HAS_PSEUDO)
     }
-    pub fn hash(&self, hasher: &mut Wyhash) {
+    pub fn hash(self, hasher: &mut Wyhash) {
         hasher.update(&self.specificity.to_ne_bytes());
         hasher.update(&[self.flags.bits()]);
     }
-    pub fn deep_clone(&self) -> Self {
-        *self
+    pub fn deep_clone(self) -> Self {
+        self
     }
 }
 
@@ -2949,11 +2949,11 @@ impl Combinator {
     /// Do not call this! Use `serializer::serialize_combinator()` or
     /// `tocss_servo::to_css_combinator()` instead.
     #[deprecated = "use serializer::serialize_combinator()"]
-    pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(self, _dest: &mut Printer) -> Result<(), PrintErr> {
         unreachable!("use serializer::serialize_combinator()");
     }
 
-    pub fn is_tree_combinator(&self) -> bool {
+    pub fn is_tree_combinator(self) -> bool {
         matches!(
             self,
             Self::Child | Self::Descendant | Self::NextSibling | Self::LaterSibling
@@ -3160,7 +3160,7 @@ impl PseudoElement {
         self.clone()
     }
 
-    pub fn get_necessary_prefixes(&mut self, targets: css::targets::Targets) -> css::VendorPrefix {
+    pub fn get_necessary_prefixes(&mut self, targets: &css::targets::Targets) -> css::VendorPrefix {
         use PseudoElement as PE;
         use css::prefixes::Feature as F;
         let (p, feature): (&mut css::VendorPrefix, F) = match self {

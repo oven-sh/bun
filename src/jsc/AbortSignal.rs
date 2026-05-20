@@ -419,14 +419,19 @@ pub extern "C" fn AbortSignal__Timeout__create(
     Timeout::init(vm, signal_, milliseconds)
 }
 
+/// # Safety
+/// `this` must be a live boxed `Timeout` returned from `AbortSignal__Timeout__create`;
+/// `vm` must be the live per-thread `VirtualMachine`.
 #[unsafe(no_mangle)]
-pub extern "C" fn AbortSignal__Timeout__run(this: *mut Timeout, vm: *mut VirtualMachine) {
+pub unsafe extern "C" fn AbortSignal__Timeout__run(this: *mut Timeout, vm: *mut VirtualMachine) {
     // SAFETY: C++ caller passes a live boxed Timeout and the live per-thread VM.
     unsafe { Timeout::run(this, vm) }
 }
 
+/// # Safety
+/// `this` must be a live boxed `Timeout` returned from `AbortSignal__Timeout__create`.
 #[unsafe(no_mangle)]
-pub extern "C" fn AbortSignal__Timeout__deinit(this: *mut Timeout) {
+pub unsafe extern "C" fn AbortSignal__Timeout__deinit(this: *mut Timeout) {
     // Called from ~AbortSignal() / cancelTimer(). The AbortSignal's
     // ScriptExecutionContext may be a dead global under --isolate, so
     // we resolve the VM via the threadlocal instead of taking it as a

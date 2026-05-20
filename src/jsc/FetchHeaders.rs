@@ -123,7 +123,7 @@ struct PicoHeaders {
 }
 
 impl FetchHeaders {
-    pub fn create_value(
+    pub unsafe fn create_value(
         global: &JSGlobalObject,
         names: *mut StringPointer,
         values: *mut StringPointer,
@@ -167,7 +167,7 @@ impl FetchHeaders {
         self.put(name_, value, global)
     }
 
-    pub fn create(
+    pub unsafe fn create(
         global: &JSGlobalObject,
         names: *mut StringPointer,
         values: *mut StringPointer,
@@ -181,7 +181,7 @@ impl FetchHeaders {
         NonNull::new(p)
     }
 
-    pub fn from(
+    pub unsafe fn from(
         global: &JSGlobalObject,
         names: *mut StringPointer,
         values: *mut StringPointer,
@@ -344,7 +344,7 @@ impl FetchHeaders {
         WebCore__FetchHeaders__deref(self)
     }
 
-    pub fn copy_to(&mut self, names: *mut StringPointer, values: *mut StringPointer, buf: *mut u8) {
+    pub unsafe fn copy_to(&mut self, names: *mut StringPointer, values: *mut StringPointer, buf: *mut u8) {
         // SAFETY: caller guarantees names/values/buf are sized per a prior `count()` call
         unsafe { WebCore__FetchHeaders__copyTo(self, names, values, buf) }
     }

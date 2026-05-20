@@ -110,7 +110,7 @@ pub struct StartOptions {
 }
 
 impl FileResponseStream {
-    pub fn start(opts: StartOptions) {
+    pub fn start(opts: &StartOptions) {
         let use_sendfile = can_sendfile(opts.resp, opts.file_type, opts.length);
 
         // Heap-allocate; the raw pointer is handed to uWS callbacks and freed

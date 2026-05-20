@@ -1521,7 +1521,7 @@ impl VirtualMachine {
         // profile but before shutdown.
         if let Some(config) = self.heap_profiler_config.take() {
             if let Err(e) =
-                crate::bun_heap_profiler::generate_and_write_profile(self.jsc_vm_mut(), config)
+                crate::bun_heap_profiler::generate_and_write_profile(self.jsc_vm_mut(), &config)
             {
                 bun_core::Output::err(e, "Failed to write heap profile", ());
             }
@@ -3181,12 +3181,12 @@ impl VirtualMachine {
     }
 
     /// Spec VirtualMachine.zig:302 `onSubprocessSpawn`.
-    pub fn on_subprocess_spawn(&mut self, process: *mut bun_spawn::Process) {
+    pub fn on_subprocess_spawn(&mut self, process: core::ptr::NonNull<bun_spawn::Process>) {
         self.auto_killer.on_subprocess_spawn(process);
     }
 
     /// Spec VirtualMachine.zig:306 `onSubprocessExit`.
-    pub fn on_subprocess_exit(&mut self, process: *mut bun_spawn::Process) {
+    pub fn on_subprocess_exit(&mut self, process: core::ptr::NonNull<bun_spawn::Process>) {
         self.auto_killer.on_subprocess_exit(process);
     }
 

@@ -73,6 +73,7 @@ impl MachoFile {
             data,
             // SAFETY: all-zero is a valid segment_command_64 / section_64 (#[repr(C)] POD, no NonZero/NonNull fields)
             segment: unsafe { bun_core::ffi::zeroed_unchecked() },
+            // SAFETY: all-zero is a valid section_64 (#[repr(C)] POD, no NonZero/NonNull fields)
             section: unsafe { bun_core::ffi::zeroed_unchecked() },
         }))
     }
@@ -116,20 +117,13 @@ impl MachoFile {
                     if command.seg_name() == b"__BUN" {
                         if command.nsects > 0 {
                             let section_offset = entry.data.as_ptr() as usize - base_addr;
-                            // SAFETY: sections array immediately follows segment_command_64 in the load
-                            // command buffer; `nsects` entries are guaranteed by the Mach-O format.
-                            let sections: &mut [macho::section_64] = unsafe {
-                                core::slice::from_raw_parts_mut(
-                                    self.data
-                                        .as_mut_ptr()
-                                        .add(
-                                            section_offset + size_of::<macho::segment_command_64>(),
-                                        )
-                                        .cast::<macho::section_64>(),
-                                    command.nsects as usize,
-                                )
-                            };
-                            for sect in sections.iter_mut() {
+                            let sections_base =
+                                section_offset + size_of::<macho::segment_command_64>();
+                            let sect_sz = size_of::<macho::section_64>();
+                            for i in 0..command.nsects as usize {
+                                let sect_off = sections_base + i * sect_sz;
+                                let sect: macho::section_64 =
+                                    read_struct(&self.data[sect_off..][..sect_sz]);
                                 if sect.sect_name() == b"__bun" {
                                     found_bun = true;
                                     original_fileoff = sect.offset as u64;
@@ -137,7 +131,7 @@ impl MachoFile {
                                     original_data_end = command.fileoff + command.filesize;
                                     original_segsize = command.filesize;
                                     self.segment = command;
-                                    self.section = *sect;
+                                    self.section = sect;
 
                                     // Update segment with proper sizes and alignment
                                     self.segment.vmsize =
@@ -160,16 +154,14 @@ impl MachoFile {
                                         reserved2: 0,
                                         reserved3: 0,
                                     };
-                                    // SAFETY: entry.data points into self.data's load-command region; we
-                                    // overwrite the segment_command_64 in place (unaligned, mirroring Zig *align(1)).
-                                    unsafe {
-                                        let entry_ptr: *mut u8 = entry.data.as_ptr().cast_mut();
-                                        core::ptr::write_unaligned(
-                                            entry_ptr.cast::<macho::segment_command_64>(),
-                                            self.segment,
-                                        );
-                                    }
-                                    *sect = self.section;
+                                    write_struct(
+                                        &mut self.data[section_offset..sections_base],
+                                        &self.segment,
+                                    );
+                                    write_struct(
+                                        &mut self.data[sect_off..][..sect_sz],
+                                        &self.section,
+                                    );
                                 }
                             }
                         }
@@ -211,9 +203,9 @@ impl MachoFile {
 
         let mut sig_size: usize = 0;
 
+        let prev_len = self.data.len();
         // SAFETY: we just reserved `size_diff` bytes; new_len <= capacity. The newly-exposed bytes
         // are written below before being read (memmove + memset cover the whole range).
-        let prev_len = self.data.len();
         unsafe {
             self.data
                 .set_len(prev_len + usize::try_from(size_diff).expect("int cast"));
@@ -362,23 +354,39 @@ impl MachoFile {
 
             match cmd.cmd {
                 macho::LC::SYMTAB => {
-                    // SAFETY: cmd_ptr points into self.data's load-command region; symtab_command is POD.
-                    let symtab = unsafe { &mut *cmd_ptr.cast::<macho::symtab_command>() };
-                    shift_fields!(shifter, symtab, symoff, stroff);
+                    // SAFETY: cmd_ptr points into self.data's load-command region with at least
+                    // cmdsize bytes; symtab_command is #[repr(C)] POD. read/write_unaligned
+                    // tolerate the Vec<u8>'s arbitrary alignment.
+                    unsafe {
+                        let mut symtab: macho::symtab_command =
+                            core::ptr::read_unaligned(cmd_ptr.cast::<macho::symtab_command>());
+                        shift_fields!(shifter, symtab, symoff, stroff);
+                        core::ptr::write_unaligned(
+                            cmd_ptr.cast::<macho::symtab_command>(),
+                            symtab,
+                        );
+                    }
                 }
                 macho::LC::DYSYMTAB => {
-                    // SAFETY: as above.
-                    let dysymtab = unsafe { &mut *cmd_ptr.cast::<macho::dysymtab_command>() };
-                    shift_fields!(
-                        shifter,
-                        dysymtab,
-                        tocoff,
-                        modtaboff,
-                        extrefsymoff,
-                        indirectsymoff,
-                        extreloff,
-                        locreloff
-                    );
+                    // SAFETY: as above; dysymtab_command is #[repr(C)] POD.
+                    unsafe {
+                        let mut dysymtab: macho::dysymtab_command =
+                            core::ptr::read_unaligned(cmd_ptr.cast::<macho::dysymtab_command>());
+                        shift_fields!(
+                            shifter,
+                            dysymtab,
+                            tocoff,
+                            modtaboff,
+                            extrefsymoff,
+                            indirectsymoff,
+                            extreloff,
+                            locreloff
+                        );
+                        core::ptr::write_unaligned(
+                            cmd_ptr.cast::<macho::dysymtab_command>(),
+                            dysymtab,
+                        );
+                    }
                 }
                 macho::LC::DYLD_CHAINED_FIXUPS
                 | macho::LC::CODE_SIGNATURE
@@ -387,29 +395,44 @@ impl MachoFile {
                 | macho::LC::DYLIB_CODE_SIGN_DRS
                 | macho::LC::LINKER_OPTIMIZATION_HINT
                 | macho::LC::DYLD_EXPORTS_TRIE => {
-                    // SAFETY: as above.
-                    let linkedit_cmd =
-                        unsafe { &mut *cmd_ptr.cast::<macho::linkedit_data_command>() };
-                    shift_fields!(shifter, linkedit_cmd, dataoff);
+                    // SAFETY: as above; linkedit_data_command is #[repr(C)] POD.
+                    unsafe {
+                        let mut linkedit_cmd: macho::linkedit_data_command =
+                            core::ptr::read_unaligned(
+                                cmd_ptr.cast::<macho::linkedit_data_command>(),
+                            );
+                        shift_fields!(shifter, linkedit_cmd, dataoff);
 
-                    // Special handling for code signature
-                    if cmd.cmd == macho::LC::CODE_SIGNATURE {
-                        // Update the size of the code signature to the newer signature size
-                        linkedit_cmd.datasize = u32::try_from(sig_size).expect("int cast");
+                        // Special handling for code signature
+                        if cmd.cmd == macho::LC::CODE_SIGNATURE {
+                            // Update the size of the code signature to the newer signature size
+                            linkedit_cmd.datasize = u32::try_from(sig_size).expect("int cast");
+                        }
+                        core::ptr::write_unaligned(
+                            cmd_ptr.cast::<macho::linkedit_data_command>(),
+                            linkedit_cmd,
+                        );
                     }
                 }
                 macho::LC::DYLD_INFO | macho::LC::DYLD_INFO_ONLY => {
-                    // SAFETY: as above.
-                    let dyld_info = unsafe { &mut *cmd_ptr.cast::<macho::dyld_info_command>() };
-                    shift_fields!(
-                        shifter,
-                        dyld_info,
-                        rebase_off,
-                        bind_off,
-                        weak_bind_off,
-                        lazy_bind_off,
-                        export_off
-                    );
+                    // SAFETY: as above; dyld_info_command is #[repr(C)] POD.
+                    unsafe {
+                        let mut dyld_info: macho::dyld_info_command =
+                            core::ptr::read_unaligned(cmd_ptr.cast::<macho::dyld_info_command>());
+                        shift_fields!(
+                            shifter,
+                            dyld_info,
+                            rebase_off,
+                            bind_off,
+                            weak_bind_off,
+                            lazy_bind_off,
+                            export_off
+                        );
+                        core::ptr::write_unaligned(
+                            cmd_ptr.cast::<macho::dyld_info_command>(),
+                            dyld_info,
+                        );
+                    }
                 }
                 _ => {}
             }
@@ -528,6 +551,7 @@ impl MachoSigner {
 
         // SAFETY: all-zero is a valid segment_command_64 (#[repr(C)] POD)
         let mut text_seg: macho::segment_command_64 = unsafe { bun_core::ffi::zeroed_unchecked() };
+        // SAFETY: all-zero is a valid segment_command_64 (#[repr(C)] POD)
         let mut linkedit_seg: macho::segment_command_64 =
             unsafe { bun_core::ffi::zeroed_unchecked() };
 

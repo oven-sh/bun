@@ -267,9 +267,7 @@ impl<'a> Parser<'a> {
             }
             ExprData::EString(s) => {
                 if s.len() > 0 {
-                    let mut preloads: Vec<Box<[u8]>> = Vec::with_capacity(1);
-                    preloads.push(estring_to_owned(s, self.bump));
-                    self.ctx.preloads = preloads;
+                    self.ctx.preloads = vec![estring_to_owned(s, self.bump)];
                 }
             }
             ExprData::ENull(_) => {}
@@ -996,17 +994,7 @@ impl<'a> Parser<'a> {
             }
         }
         {
-            if self.ctx.args.jsx.is_none() {
-                self.ctx.args.jsx = Some(api::Jsx {
-                    factory: jsx_factory,
-                    fragment: jsx_fragment,
-                    import_source: jsx_import_source,
-                    runtime: jsx_runtime,
-                    development: jsx_dev,
-                    ..Default::default()
-                });
-            } else {
-                let jsx: &mut api::Jsx = self.ctx.args.jsx.as_mut().unwrap();
+            if let Some(jsx) = self.ctx.args.jsx.as_mut() {
                 if !jsx_factory.is_empty() {
                     jsx.factory = jsx_factory;
                 }
@@ -1018,6 +1006,15 @@ impl<'a> Parser<'a> {
                 }
                 jsx.runtime = jsx_runtime;
                 jsx.development = jsx_dev;
+            } else {
+                self.ctx.args.jsx = Some(api::Jsx {
+                    factory: jsx_factory,
+                    fragment: jsx_fragment,
+                    import_source: jsx_import_source,
+                    runtime: jsx_runtime,
+                    development: jsx_dev,
+                    ..Default::default()
+                });
             }
         }
 
@@ -1117,6 +1114,9 @@ impl Bunfig {
         // (Parser later needs `&mut ctx` alongside `&mut log`).
         let log_ptr: *mut bun_ast::Log = ctx.log;
         debug_assert!(!log_ptr.is_null());
+        // SAFETY: `log_ptr` is non-null (asserted above) and points to the Log
+        // owned by single-threaded CLI startup; Parser only touches the log via
+        // this borrow (never via `ctx.log`), so the `&mut` is exclusive.
         let log: &mut bun_ast::Log = unsafe { &mut *log_ptr };
         let log_count = log.errors + log.warnings;
 

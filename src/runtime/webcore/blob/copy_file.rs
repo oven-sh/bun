@@ -26,7 +26,7 @@ use bun_sys_jsc::ErrorJsc as _;
 // the same Zig `jsc.SystemError` extern struct; map field-by-field because the
 // two Rust definitions order their fields differently.
 #[allow(dead_code)]
-fn to_jsc_system_error(e: SystemError) -> jsc::SystemError {
+fn to_jsc_system_error(e: &SystemError) -> jsc::SystemError {
     jsc::SystemError {
         errno: e.errno,
         code: e.code,
@@ -108,9 +108,8 @@ impl<'a> CopyFile<'a> {
         let read_file = Box::new(CopyFile {
             destination_file_store: store.data.as_file().clone(),
             source_file_store: source_store.data.as_file().clone(),
-            // store.ref() / source_store.ref() — StoreRef::clone bumps the refcount
-            store: Some(store.clone()),
-            source_store: Some(source_store.clone()),
+            store: Some(store),
+            source_store: Some(source_store),
             offset: off,
             max_length: max_len,
             global_this,
@@ -143,7 +142,7 @@ impl<'a> CopyFile<'a> {
             system_error.message = bun_core::String::static_("Failed to copy file");
         }
 
-        let instance = to_jsc_system_error(system_error)
+        let instance = to_jsc_system_error(&system_error)
             .to_error_instance_with_async_stack(self.global_this, promise);
         if let Some(store) = self.store.take() {
             drop(store); // deref()

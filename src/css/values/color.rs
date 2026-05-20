@@ -50,19 +50,19 @@ impl RGBA {
     }
 
     #[inline]
-    pub fn red_f32(&self) -> f32 {
+    pub fn red_f32(self) -> f32 {
         self.red as f32 / 255.0
     }
     #[inline]
-    pub fn green_f32(&self) -> f32 {
+    pub fn green_f32(self) -> f32 {
         self.green as f32 / 255.0
     }
     #[inline]
-    pub fn blue_f32(&self) -> f32 {
+    pub fn blue_f32(self) -> f32 {
         self.blue as f32 / 255.0
     }
     #[inline]
-    pub fn alpha_f32(&self) -> f32 {
+    pub fn alpha_f32(self) -> f32 {
         self.alpha as f32 / 255.0
     }
 
@@ -77,7 +77,7 @@ impl RGBA {
     }
 
     #[inline]
-    pub fn into_srgb(&self) -> SRGB {
+    pub fn into_srgb(self) -> SRGB {
         SRGB {
             r: self.red_f32(),
             g: self.green_f32(),
@@ -88,13 +88,13 @@ impl RGBA {
 
     /// Zig: `rgba.into(.HSL)` — routes RGBA → SRGB → HSL.
     #[inline]
-    pub fn into_hsl(&self) -> HSL {
+    pub fn into_hsl(self) -> HSL {
         HSL::from_rgba(self)
     }
 
     /// Zig: `rgba.into(.LAB)` — routes RGBA → SRGB → LAB.
     #[inline]
-    pub fn into_lab(&self) -> LAB {
+    pub fn into_lab(self) -> LAB {
         LAB::from_rgba(self)
     }
 
@@ -1076,13 +1076,13 @@ pub trait Colorspace: Copy + Sized + FromAnyColorspace {
         c.convert_to()
     }
     #[inline]
-    fn from_rgba(rgba: &RGBA) -> Self {
+    fn from_rgba(rgba: RGBA) -> Self {
         rgba.into_srgb().into()
     }
 
     fn try_from_css_color(color: &CssColor) -> Option<Self> {
         match color {
-            CssColor::Rgba(rgba) => Some(Self::from_rgba(rgba)),
+            CssColor::Rgba(rgba) => Some(Self::from_rgba(*rgba)),
             CssColor::Lab(lab) => Some(Self::from_lab_color(lab)),
             CssColor::Predefined(p) => Some(Self::from_predefined_color(p)),
             CssColor::Float(f) => Some(Self::from_float_color(f)),
@@ -2129,8 +2129,8 @@ pub enum NumberOrPercentage {
 
 impl NumberOrPercentage {
     /// Return the value as a percentage.
-    pub fn unit_value(&self) -> f32 {
-        match *self {
+    pub fn unit_value(self) -> f32 {
+        match self {
             NumberOrPercentage::Number { value } => value,
             NumberOrPercentage::Percentage { unit_value } => unit_value,
         }
@@ -2138,8 +2138,8 @@ impl NumberOrPercentage {
 
     /// Return the value as a number with a percentage adjusted to the
     /// `percentage_basis`.
-    pub fn value(&self, percentage_basis: f32) -> f32 {
-        match *self {
+    pub fn value(self, percentage_basis: f32) -> f32 {
+        match self {
             NumberOrPercentage::Number { value } => value,
             NumberOrPercentage::Percentage { unit_value } => unit_value * percentage_basis,
         }
@@ -2578,14 +2578,14 @@ pub enum HueInterpolationMethod {
 }
 
 impl HueInterpolationMethod {
-    pub fn interpolate(&self, a: &mut f32, b: &mut f32) {
+    pub fn interpolate(self, a: &mut f32, b: &mut f32) {
         // https://drafts.csswg.org/css-color/#hue-interpolation
-        if *self == HueInterpolationMethod::Specified {
+        if self == HueInterpolationMethod::Specified {
             *a = ((*a).rem_euclid(360.0) + 360.0).rem_euclid(360.0);
             *b = ((*b).rem_euclid(360.0) + 360.0).rem_euclid(360.0);
         }
 
-        match *self {
+        match self {
             HueInterpolationMethod::Shorter => {
                 // https://www.w3.org/TR/css-color-4/#hue-shorter
                 let delta = *b - *a;

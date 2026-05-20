@@ -114,7 +114,7 @@ impl SecureContext {
             }
         }
 
-        let sc = Self::create_with_digest(global, ctx_opts, d)?;
+        let sc = Self::create_with_digest(global, &ctx_opts, d)?;
         // `sc` is a fresh Box from `create_with_digest`; ownership transfers to the GC wrapper.
         let value = Self::to_js_boxed(sc, global);
         cpp::Bun__SecureContextCache__set(global, key, value);
@@ -131,12 +131,12 @@ impl SecureContext {
     /// `us_ssl_ctx_from_options` so that override has roots to validate against.
     pub fn create(global: &JSGlobalObject, config: &SSLConfig) -> JsResult<Box<SecureContext>> {
         let ctx_opts = config.as_usockets();
-        Self::create_with_digest(global, ctx_opts, ctx_opts.digest())
+        Self::create_with_digest(global, &ctx_opts, ctx_opts.digest())
     }
 
     fn create_with_digest(
         global: &JSGlobalObject,
-        ctx_opts: uws::socket_context::BunSocketContextOptions,
+        ctx_opts: &uws::socket_context::BunSocketContextOptions,
         d: [u8; 32],
     ) -> JsResult<Box<SecureContext>> {
         let mut err = uws::create_bun_socket_error_t::none;
@@ -152,7 +152,7 @@ impl SecureContext {
         // `init_runtime_state`; the embedded `ssl_ctx_cache` has a stable
         // address for the VM's lifetime and is only touched from the JS thread.
         let cache = unsafe { &mut (*state).ssl_ctx_cache };
-        let Some(ctx) = cache.get_or_create_digest(ctx_opts, d, &mut err) else {
+        let Some(ctx) = cache.get_or_create_digest(*ctx_opts, d, &mut err) else {
             // `err` is only set for the input-validation paths (bad PEM, missing
             // file, …). When BoringSSL itself fails (e.g. unsupported curve) the
             // enum is still `.none`; surface the library error stack instead of

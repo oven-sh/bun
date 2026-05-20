@@ -598,7 +598,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let class = p.parse_class(
             class_keyword,
             name,
-            ParseClassOptions {
+            &ParseClassOptions {
                 allow_ts_decorators: Self::IS_TYPESCRIPT_ENABLED
                     || p.options.features.standard_decorators,
                 ..Default::default()
@@ -672,7 +672,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let class = p.parse_class(
             class_keyword,
             name,
-            ParseClassOptions {
+            &ParseClassOptions {
                 ts_decorators: ts_decorators_slice,
                 allow_ts_decorators: true,
                 ..Default::default()

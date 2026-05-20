@@ -287,6 +287,9 @@ impl PEFile {
         // SAFETY: bounds-checked above; SectionHeader is #[repr(C)] POD.
         // TODO(port): potentially unaligned — Zig used []align(1) const SectionHeader
         let ptr = unsafe { self.data.as_ptr().add(start).cast::<SectionHeader>() };
+        // SAFETY: `[start, start + size)` lies within `self.data` per the check above; the
+        // bytes are initialized from the input PE image and SectionHeader is repr(C) Copy
+        // with no invalid bit patterns.
         Ok(unsafe { slice::from_raw_parts(ptr, self.num_sections as usize) })
     }
 
@@ -299,6 +302,9 @@ impl PEFile {
         // SAFETY: bounds-checked above; SectionHeader is #[repr(C)] POD.
         // TODO(port): potentially unaligned — Zig used []align(1) SectionHeader
         let ptr = unsafe { self.data.as_mut_ptr().add(start).cast::<SectionHeader>() };
+        // SAFETY: `[start, start + size)` lies within `self.data` per the check above; the
+        // bytes are initialized from the input PE image and SectionHeader is repr(C) Copy
+        // with no invalid bit patterns.
         Ok(unsafe { slice::from_raw_parts_mut(ptr, self.num_sections as usize) })
     }
 
@@ -387,15 +393,13 @@ impl PEFile {
         let section_alignment = optional_header.section_alignment;
 
         if num_sections > 0 {
-            // SAFETY: bounds-checked above
-            let sections_ptr = unsafe {
-                data.as_ptr()
-                    .add(section_headers_offset)
-                    .cast::<SectionHeader>()
-            };
-            let sections = unsafe { slice::from_raw_parts(sections_ptr, num_sections as usize) };
-
-            for section in sections {
+            for i in 0..num_sections as usize {
+                let sh_off = section_headers_offset + i * size_of::<SectionHeader>();
+                // SAFETY: `sh_off + size_of::<SectionHeader>()` is within `data` per the
+                // `section_headers_offset + section_headers_size <= data.len()` check above.
+                let section = unsafe {
+                    ptr::read_unaligned(data.as_ptr().add(sh_off).cast::<SectionHeader>())
+                };
                 if section.size_of_raw_data > 0 {
                     if section.pointer_to_raw_data < first_raw {
                         first_raw = section.pointer_to_raw_data;
@@ -440,6 +444,7 @@ impl PEFile {
             unsafe { ptr::addr_of_mut!((*opt).data_directories[IMAGE_DIRECTORY_ENTRY_SECURITY]) };
         // SAFETY: dd_ptr is within the OptionalHeader64 struct
         let sec_off_u32 = unsafe { (*dd_ptr).virtual_address }; // file offset (not RVA)
+        // SAFETY: dd_ptr is within the OptionalHeader64 struct (bounds-checked via view_at_mut)
         let sec_size_u32 = unsafe { (*dd_ptr).size };
 
         if sec_off_u32 == 0 || sec_size_u32 == 0 {
@@ -581,6 +586,7 @@ impl PEFile {
         // SAFETY: opt points into self.data at validated offset
         // PORT NOTE: reshaped for borrowck — capture needed scalars from opt before re-borrowing self.data
         let file_alignment = unsafe { (*opt).file_alignment };
+        // SAFETY: opt points into self.data at the offset validated by get_optional_header_mut
         let section_alignment = unsafe { (*opt).section_alignment };
 
         // 3. Duplicate .bun guard - compare all 8 bytes exactly
@@ -903,8 +909,7 @@ pub mod utils {
         }
 
         // SAFETY: bounds-checked above; DOSHeader is #[repr(C)] POD at offset 0
-        // TODO(port): potentially unaligned — Zig used *align(1) const DOSHeader
-        let dos = unsafe { &*data.as_ptr().cast::<DOSHeader>() };
+        let dos = unsafe { ptr::read_unaligned(data.as_ptr().cast::<DOSHeader>()) };
         if dos.e_magic != DOS_SIGNATURE {
             return false;
         }
@@ -915,8 +920,7 @@ pub mod utils {
         }
 
         // SAFETY: bounds-checked above; PEHeader is #[repr(C)] POD
-        // TODO(port): potentially unaligned — Zig used *align(1) const PEHeader
-        let pe = unsafe { &*data.as_ptr().add(off).cast::<PEHeader>() };
+        let pe = unsafe { ptr::read_unaligned(data.as_ptr().add(off).cast::<PEHeader>()) };
         pe.signature == PE_SIGNATURE
     }
 }

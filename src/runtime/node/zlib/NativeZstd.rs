@@ -367,6 +367,7 @@ mod _impl {
             let _ = match self.mode {
                 // SAFETY: state was allocated by ZSTD_create{C,D}Ctx and not yet freed.
                 NodeMode::ZSTD_COMPRESS => unsafe { c::ZSTD_freeCCtx(self.state_ptr().cast()) },
+                // SAFETY: state was allocated by ZSTD_createDCtx and not yet freed.
                 NodeMode::ZSTD_DECOMPRESS => unsafe { c::ZSTD_freeDCtx(self.state_ptr().cast()) },
                 _ => unreachable!(),
             };
@@ -497,6 +498,7 @@ mod _impl {
                         c::ZSTD_reset_session_and_parameters,
                     )
                 },
+                // SAFETY: state is a valid DCtx set by init() for this mode.
                 NodeMode::ZSTD_DECOMPRESS => unsafe {
                     c::ZSTD_DCtx_reset(
                         self.state_ptr().cast(),

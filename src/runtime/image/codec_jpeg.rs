@@ -251,9 +251,7 @@ pub fn decode(
         return Err(codecs::Error::DecodeFailed);
     }
     // SAFETY: `h` is live; tj3Get only reads handle state.
-    if unsafe { tj3Get(h, TJPARAM_JPEGWIDTH) } != rw
-        || unsafe { tj3Get(h, TJPARAM_JPEGHEIGHT) } != rh
-    {
+    if unsafe { tj3Get(h, TJPARAM_JPEGWIDTH) != rw || tj3Get(h, TJPARAM_JPEGHEIGHT) != rh } {
         return Err(codecs::Error::DecodeFailed);
     }
 

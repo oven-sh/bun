@@ -809,7 +809,7 @@ pub enum Intrinsic {
     #[default]
     None = 0,
 }
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 pub struct CreateJSFunctionOptions {
     pub implementation_visibility: ImplementationVisibility,
     pub intrinsic: Intrinsic,
@@ -961,13 +961,13 @@ bun_opaque::opaque_ffi! { pub struct SslCtxCache; }
 impl SslCtxCache {
     pub fn get_or_create_opts(
         &mut self,
-        opts: bun_uws::us_bun_socket_context_options_t,
+        opts: &bun_uws::us_bun_socket_context_options_t,
         err: &mut bun_uws::create_bun_socket_error_t,
     ) -> Option<*mut bun_uws::SslCtx> {
         // SAFETY: `self` is `&mut runtime_state().ssl_ctx_cache`; `opts`/`err`
         // are caller stack locals.
         let p =
-            unsafe { (hooks().ssl_ctx_get_or_create)(self._p.get().cast::<c_void>(), &opts, err) };
+            unsafe { (hooks().ssl_ctx_get_or_create)(self._p.get().cast::<c_void>(), opts, err) };
         if p.is_null() { None } else { Some(p) }
     }
 }

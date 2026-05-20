@@ -523,12 +523,12 @@ impl<const SSL: bool> HTTPContext<SSL> {
             .unwrap()
             .get()
             .as_usockets_for_client_verification();
-        self.init_with_opts(opts)
+        self.init_with_opts(&opts)
     }
 
     fn init_with_opts(
         &mut self,
-        opts: uws::SocketContext::BunSocketContextOptions,
+        opts: &uws::SocketContext::BunSocketContextOptions,
     ) -> Result<(), InitError> {
         debug_assert!(SSL, "ssl only");
         let mut err = uws::create_bun_socket_error_t::none;
@@ -571,7 +571,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             request_cert: 1,
             ..Default::default()
         };
-        self.init_with_opts(opts)
+        self.init_with_opts(&opts)
     }
 
     pub fn init(&mut self) {

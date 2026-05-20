@@ -1715,7 +1715,7 @@ impl Terminal {
         }
     }
 
-    fn on_writer_error(&self, err: sys::Error) {
+    fn on_writer_error(&self, err: &sys::Error) {
         bun_output::scoped_log!(Terminal, "onWriterError: {:?}", err);
         // On write error, close the terminal to prevent further operations
         // This handles cases like broken pipe when the child process exits
@@ -1752,7 +1752,7 @@ impl Terminal {
         }
     }
 
-    pub fn on_reader_error(&self, err: sys::Error) {
+    pub fn on_reader_error(&self, err: &sys::Error) {
         bun_output::scoped_log!(Terminal, "onReaderError: {:?}", err);
         // R-2: see `on_reader_done` — `&self` + `Cell<Flags>` replaces the
         // prior `black_box` launder.
@@ -1926,7 +1926,7 @@ impl BufferedReaderParent for Terminal {
         Self::from_parent_ptr(this).on_reader_done()
     }
     unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
-        Self::from_parent_ptr(this).on_reader_error(err)
+        Self::from_parent_ptr(this).on_reader_error(&err)
     }
     unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
         // Delegate to the inherent `Terminal::loop_()` which is cfg-split:
@@ -1953,7 +1953,7 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
         Self::from_parent_ptr(this).on_write(amount, status)
     }
     unsafe fn on_error(this: *mut Self, err: sys::Error) {
-        Self::from_parent_ptr(this).on_writer_error(err)
+        Self::from_parent_ptr(this).on_writer_error(&err)
     }
     unsafe fn on_ready(this: *mut Self) {
         Self::from_parent_ptr(this).on_writer_ready()
@@ -1997,7 +1997,7 @@ impl bun_io::pipe_writer::WindowsStreamingWriterParent for Terminal {
         Self::from_parent_ptr(this).on_write(amount, status)
     }
     unsafe fn on_error(this: *mut Self, err: sys::Error) {
-        Self::from_parent_ptr(this).on_writer_error(err)
+        Self::from_parent_ptr(this).on_writer_error(&err)
     }
     unsafe fn on_writable(this: *mut Self) {
         Self::from_parent_ptr(this).on_writer_ready()

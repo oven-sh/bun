@@ -178,7 +178,7 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                 let gop = bun_core::handle_oom(by_file.get_or_put(name));
                 if !gop.found_existing {
                     let owned: Box<[u8]> = Box::from(name);
-                    *gop.key_ptr = owned.clone();
+                    gop.key_ptr.clone_from(&owned);
                     *gop.value_ptr = FileCoverage {
                         path: owned,
                         ..Default::default()

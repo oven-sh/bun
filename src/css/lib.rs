@@ -206,7 +206,7 @@ pub enum PrintErr {
 }
 impl PrintErr {
     #[inline]
-    pub fn name(&self) -> &'static str {
+    pub fn name(self) -> &'static str {
         "CSSPrintError"
     }
 }

@@ -172,7 +172,7 @@ impl Targets {
 ///   ..Browsers::default()
 /// }
 /// ```
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Browsers {
     pub android: Option<u32>,
     pub chrome: Option<u32>,
@@ -219,7 +219,7 @@ impl Browsers {
                 // TODO(port): narrow error set (InvalidCharacter | Overflow)
                 let year = strings::parse_int::<u16>(number_part, 10)
                     .ok()
-                    .ok_or(bun_core::err!("InvalidCharacter"))?;
+                    .ok_or_else(|| bun_core::err!("InvalidCharacter"))?;
                 match year {
                     // https://caniuse.com/?search=es2015
                     2015 => {

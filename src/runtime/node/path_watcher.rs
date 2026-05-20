@@ -106,6 +106,9 @@ pub struct PathWatcherManager {
 // publish ordered by the spawn happens-before — no data race. The manager is a
 // process-global singleton shared between the JS thread(s) and the reader thread.
 unsafe impl Sync for PathWatcherManager {}
+// SAFETY: same field invariants as `Sync` above; the manager is constructed on
+// one thread and only ever crosses threads as `&'static PathWatcherManager`,
+// whose `Send` bound reduces to `PathWatcherManager: Sync`.
 unsafe impl Send for PathWatcherManager {}
 
 impl Default for PathWatcherManager {
@@ -277,7 +280,7 @@ impl PathWatcher {
         }
     }
 
-    fn emit_error(&mut self, err: sys::Error) {
+    fn emit_error(&mut self, err: &sys::Error) {
         for &ctx in self.handlers.keys() {
             (FSWatcher::ON_PATH_UPDATE)(Some(ctx), Event::Error(err.clone()), false);
         }
@@ -322,11 +325,11 @@ impl PathWatcher {
         };
 
         manager.mutex.lock();
-        // SAFETY: holding manager.mutex; the reader/CF threads only form their own
-        // `&mut PathWatcher` while holding this lock, so ours is exclusive. Scope
-        // `w` so its last use is before `unlock()` (NLL ends the borrow there) —
-        // on macOS the tail below must not hold a `&mut` across `fse.deinit()`.
         {
+            // SAFETY: holding manager.mutex; the reader/CF threads only form their own
+            // `&mut PathWatcher` while holding this lock, so ours is exclusive. Scope
+            // `w` so its last use is before `unlock()` (NLL ends the borrow there) —
+            // on macOS the tail below must not hold a `&mut` across `fse.deinit()`.
             let w = unsafe { &mut *this };
             w.handlers.swap_remove(&ctx);
             if w.handlers.len() > 0 {
@@ -362,7 +365,8 @@ impl PathWatcher {
     /// `this` must have been produced by `PathWatcher::new` and have no remaining
     /// references (handlers empty, removed from manager maps).
     unsafe fn destroy(this: *mut PathWatcher) {
-        // handlers, platform, path all dropped by Box drop.
+        // SAFETY: caller contract — `this` came from `heap::into_raw` in
+        // `PathWatcher::new` and has no remaining references.
         drop(unsafe { bun_core::heap::take(this) });
     }
 }
@@ -503,7 +507,7 @@ pub fn watch(
             let w = unsafe { &mut *watcher };
             w.handlers.swap_remove(&ctx);
             if w.handlers.len() > 0 {
-                w.emit_error(err.clone());
+                w.emit_error(&err);
                 w.flush();
                 manager.mutex.unlock();
                 return Err(err.without_path());
@@ -820,7 +824,15 @@ impl Linux {
         // alignment so the `&InotifyEvent` cast is valid.
         #[repr(C, align(4))]
         struct AlignedBuf([u8; 64 * 1024]);
-        let mut buf = Box::new(AlignedBuf([0u8; 64 * 1024]));
+        let mut buf = {
+            let mut b = Box::<AlignedBuf>::new_uninit();
+            // SAFETY: `AlignedBuf` is `repr(C)` over `[u8; N]`; `write_bytes`
+            // fully zero-initializes it before `assume_init`.
+            unsafe {
+                core::ptr::write_bytes(b.as_mut_ptr(), 0, 1);
+                b.assume_init()
+            }
+        };
         let mut path_buf = PathBuffer::uninit();
 
         while running.load(Ordering::Acquire) {
@@ -842,7 +854,7 @@ impl Linux {
                     for &w in watchers.values() {
                         // SAFETY: holding manager.mutex; w is live.
                         unsafe {
-                            (*w).emit_error(err.clone());
+                            (*w).emit_error(&err);
                             (*w).flush();
                         }
                     }
@@ -861,8 +873,13 @@ impl Linux {
 
             let mut i: usize = 0;
             while i < n {
-                // SAFETY: inotify guarantees whole events; buf[i..] starts at an event header.
-                let ev: &InotifyEvent = unsafe { &*buf.0.as_ptr().add(i).cast::<InotifyEvent>() };
+                // SAFETY: inotify guarantees whole events and pads `name` so each
+                // header stays 4-byte aligned; `buf` is 4-byte aligned via
+                // `AlignedBuf`, so byte offset `i` always lands on an aligned
+                // event header within the `n` bytes the kernel just wrote.
+                let ev: &InotifyEvent = unsafe {
+                    &*core::ptr::from_ref(&*buf).cast::<InotifyEvent>().byte_add(i)
+                };
                 i += core::mem::size_of::<InotifyEvent>() + ev.name_len as usize;
                 let wd = ev.watch_descriptor;
 
@@ -956,6 +973,9 @@ impl Linux {
                             &*std::ptr::from_ref::<[u8]>((*owner_watcher).path.as_bytes()),
                         )
                     };
+                    // SAFETY: `owner_watcher` is live under `manager.mutex`; no
+                    // other `&mut PathWatcher` to this allocation exists while
+                    // the lock is held on this thread.
                     let watcher = unsafe { &mut *owner_watcher };
 
                     // Build the path relative to this owner's root.
@@ -1147,7 +1167,7 @@ impl Darwin {
         match event {
             Event::Rename(path) => watcher.emit(EventType::Rename, &path, is_file),
             Event::Change(path) => watcher.emit(EventType::Change, &path, is_file),
-            Event::Error(err) => watcher.emit_error(err),
+            Event::Error(err) => watcher.emit_error(&err),
             _ => {}
         }
     }

@@ -97,6 +97,9 @@ fn vm_mut<'a>(vm: &'a VirtualMachine) -> &'a mut VirtualMachine {
     // silenced above because the Zig spec's `*JSC.VirtualMachine` is a freely-
     // aliasing mutable pointer and `VirtualMachine` is `!Sync` single-thread state.
     let ptr: *mut VirtualMachine = core::ptr::from_ref(vm).cast_mut();
+    // SAFETY: `ptr` is non-null and points to a live `VirtualMachine` (derived from
+    // `&'a VirtualMachine`); the REPL is the sole driver on this single JS thread so
+    // no other `&mut` to this VM exists for `'a` (see fn-level SAFETY doc above).
     unsafe { &mut *ptr }
 }
 

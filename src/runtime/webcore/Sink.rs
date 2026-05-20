@@ -252,7 +252,7 @@ impl UTF8Fallback {
 
     pub fn write_utf16<Ctx>(
         ctx: &mut Ctx,
-        input: streams::Result,
+        input: &streams::Result,
         write_fn: fn(&mut Ctx, streams::Result) -> streams::result::Writable,
     ) -> streams::result::Writable {
         // PERF(port): `write_fn` was `comptime anytype` (monomorphized); now a fn pointer.

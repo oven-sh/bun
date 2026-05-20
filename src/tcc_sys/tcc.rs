@@ -193,7 +193,7 @@ impl State {
 
     /// Create and initialize a new TCC compilation context
     pub fn init<ErrCtx, const VALIDATE_OPTIONS: bool>(
-        config: Config<ErrCtx>,
+        config: &Config<ErrCtx>,
     ) -> Result<NonNull<State>, bun_core::Error> {
         // TODO(port): narrow error set to (AllocError | Error)
         let state_ptr = State::new()?;
@@ -244,6 +244,7 @@ impl State {
     /// `s` must have been returned by [`State::new`]/[`State::init`] and not yet freed.
     pub unsafe fn destroy(s: *mut State) {
         // PORT NOTE: opaque FFI handle — kept as explicit destroy fn, not `impl Drop`.
+        // SAFETY: caller's contract guarantees `s` is a live `tcc_new` handle not yet deleted.
         unsafe { tcc_delete(s) }
     }
 

@@ -297,7 +297,7 @@ impl AnimationName {
         // outlives this parse (CSSString = &'static [u8]).
         if let Ok(s) = input.try_parse(|i| i.expect_string().map(|s| std::ptr::from_ref::<[u8]>(s)))
         {
-            return Ok(AnimationName::String(unsafe { &raw const *s }));
+            return Ok(AnimationName::String(s));
         }
         let ident = CustomIdent::parse(input)?;
         Ok(AnimationName::Ident(ident))
@@ -400,8 +400,8 @@ pub enum AnimationDirection {
 }
 
 impl AnimationDirection {
-    pub fn deep_clone(&self) -> Self {
-        *self
+    pub fn deep_clone(self) -> Self {
+        self
     }
     pub fn default() -> AnimationDirection {
         AnimationDirection::Normal
@@ -418,8 +418,8 @@ pub enum AnimationPlayState {
 }
 
 impl AnimationPlayState {
-    pub fn deep_clone(&self) -> Self {
-        *self
+    pub fn deep_clone(self) -> Self {
+        self
     }
     pub fn default() -> AnimationPlayState {
         AnimationPlayState::Running
@@ -440,8 +440,8 @@ pub enum AnimationFillMode {
 }
 
 impl AnimationFillMode {
-    pub fn deep_clone(&self) -> Self {
-        *self
+    pub fn deep_clone(self) -> Self {
+        self
     }
     pub fn default() -> AnimationFillMode {
         AnimationFillMode::None
@@ -460,8 +460,8 @@ pub enum AnimationComposition {
 }
 
 impl AnimationComposition {
-    pub fn deep_clone(&self) -> Self {
-        *self
+    pub fn deep_clone(self) -> Self {
+        self
     }
 }
 
@@ -551,7 +551,7 @@ impl PartialEq for AnimationTimeline {
 }
 
 /// The [scroll()](https://drafts.csswg.org/scroll-animations-1/#scroll-notation) function.
-#[derive(PartialEq)]
+#[derive(PartialEq, Eq)]
 pub struct ScrollTimeline {
     /// Specifies which element to use as the scroll container.
     pub scroller: Scroller,
@@ -580,8 +580,8 @@ pub enum Scroller {
 }
 
 impl Scroller {
-    pub fn deep_clone(&self) -> Self {
-        *self
+    pub fn deep_clone(self) -> Self {
+        self
     }
     pub fn default() -> Scroller {
         Scroller::Nearest
@@ -602,8 +602,8 @@ pub enum ScrollAxis {
 }
 
 impl ScrollAxis {
-    pub fn deep_clone(&self) -> Self {
-        *self
+    pub fn deep_clone(self) -> Self {
+        self
     }
     pub fn default() -> ScrollAxis {
         ScrollAxis::Block

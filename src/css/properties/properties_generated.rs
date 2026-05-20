@@ -1335,7 +1335,7 @@ impl PropertyId {
     }
 
     /// Expands the stored prefix to the full set required by `targets`.
-    pub fn set_prefixes_for_targets(&mut self, targets: Targets) {
+    pub fn set_prefixes_for_targets(&mut self, targets: &Targets) {
         let Some(feature) = self.tag().prefix_feature() else {
             return;
         };

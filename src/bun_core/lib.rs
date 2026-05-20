@@ -209,6 +209,7 @@ impl<T: core::fmt::Debug> core::fmt::Debug for RawSlice<T> {
 // so its auto-trait bounds follow `&[T]` exactly: `&[T]: Send ⇔ T: Sync` and
 // `&[T]: Sync ⇔ T: Sync`. The wrapped raw pointer carries no ownership.
 unsafe impl<T: Sync> Send for RawSlice<T> {}
+// SAFETY: same reasoning as the `Send` impl above — `&[T]: Sync ⇔ T: Sync`.
 unsafe impl<T: Sync> Sync for RawSlice<T> {}
 
 /// Port of Zig's `std.os.environ` global (`[][*:0]u8`). On Windows the
@@ -518,13 +519,11 @@ pub mod vec {
     /// slice, call [`commit_spare`]`(v, n)` to expose them.
     #[inline]
     pub unsafe fn spare_bytes_mut(v: &mut Vec<u8>) -> &mut [u8] {
-        unsafe {
-            let spare = v.spare_capacity_mut();
-            // SAFETY: `MaybeUninit<u8>` and `u8` have identical layout; the slice
-            // covers exactly `[len, capacity)` of `v`'s allocation. Caller upholds
-            // the write-only contract above.
-            core::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<u8>(), spare.len())
-        }
+        let spare = v.spare_capacity_mut();
+        // SAFETY: `MaybeUninit<u8>` and `u8` have identical layout; the slice
+        // covers exactly `[len, capacity)` of `v`'s allocation. Caller upholds
+        // the write-only contract above.
+        unsafe { core::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<u8>(), spare.len()) }
     }
 
     /// `reserve(n)` then [`spare_bytes_mut`] — the libuv `uv_alloc_cb` shape
@@ -537,10 +536,9 @@ pub mod vec {
     /// Same as [`spare_bytes_mut`].
     #[inline]
     pub unsafe fn reserve_spare_bytes(v: &mut Vec<u8>, n: usize) -> &mut [u8] {
-        unsafe {
-            v.reserve(n);
-            spare_bytes_mut(v)
-        }
+        v.reserve(n);
+        // SAFETY: caller upholds the write-only contract of `spare_bytes_mut`.
+        unsafe { spare_bytes_mut(v) }
     }
 
     /// View the **entire** allocation `v[0..capacity]` as `&mut [u8]` (Zig:
@@ -568,10 +566,10 @@ pub mod vec {
     /// fully initialized (typically by the FFI/syscall that just returned `n`).
     #[inline]
     pub unsafe fn commit_spare(v: &mut Vec<u8>, n: usize) {
-        unsafe {
-            debug_assert!(n <= v.capacity() - v.len());
-            v.set_len(v.len() + n);
-        }
+        debug_assert!(n <= v.capacity() - v.len());
+        // SAFETY: caller contract — `n <= capacity - len` and `v[len .. len+n]`
+        // was fully initialized by the producer before this call.
+        unsafe { v.set_len(v.len() + n) };
     }
 
     /// One-shot "reserve → hand spare bytes to producer → commit" combinator.
@@ -593,10 +591,13 @@ pub mod vec {
         min_spare: usize,
         f: impl FnOnce(&mut [u8]) -> (usize, R),
     ) -> R {
+        if min_spare > 0 {
+            v.reserve(min_spare);
+        }
+        // SAFETY: caller upholds the `spare_bytes_mut` write-only contract via
+        // `f`; `n` is `f`'s reported written-byte count, which by contract is
+        // ≤ the spare slice length and covers only initialized bytes.
         unsafe {
-            if min_spare > 0 {
-                v.reserve(min_spare);
-            }
             let (n, r) = f(spare_bytes_mut(v));
             commit_spare(v, n);
             r
@@ -2855,7 +2856,11 @@ pub mod ffi {
     // ── Zeroable impls ──────────────────────────────────────────────────────
     // Primitives, raw pointers, arrays — match `bytemuck::Zeroable` blankets.
     macro_rules! zeroable_prim {
-        ($($t:ty),* $(,)?) => { $( unsafe impl Zeroable for $t {} )* };
+        ($($t:ty),* $(,)?) => { $(
+            // SAFETY: primitive numeric/unit type — the all-zero bit pattern is
+            // a valid value (`0`, `0.0`, or `()`).
+            unsafe impl Zeroable for $t {}
+        )* };
     }
     zeroable_prim!(
         (),
@@ -2893,44 +2898,64 @@ pub mod ffi {
     // blanket → E0119 if re-impl'd) but a real struct on Linux/Android
     // (`__val: [c_ulong; 16]`) and FreeBSD (`__bits: [u32; 4]`). Gate the
     // explicit impl to everywhere it's NOT already a primitive.
+    // SAFETY: integer-array struct on the gated targets; all-zero is valid.
     #[cfg(all(unix, not(target_vendor = "apple")))]
     unsafe impl Zeroable for libc::sigset_t {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(unix)]
     unsafe impl Zeroable for libc::utsname {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(unix)]
     unsafe impl Zeroable for libc::winsize {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(unix)]
     unsafe impl Zeroable for libc::rlimit {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(unix)]
     unsafe impl Zeroable for libc::passwd {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(unix)]
     unsafe impl Zeroable for libc::stat {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(unix)]
     unsafe impl Zeroable for libc::rusage {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(unix)]
     unsafe impl Zeroable for libc::timespec {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(unix)]
     unsafe impl Zeroable for libc::timeval {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(unix)]
     unsafe impl Zeroable for libc::pollfd {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(unix)]
     unsafe impl Zeroable for libc::Dl_info {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(unix)]
     unsafe impl Zeroable for libc::sockaddr {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(unix)]
     unsafe impl Zeroable for libc::sockaddr_in {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(unix)]
     unsafe impl Zeroable for libc::sockaddr_in6 {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(unix)]
     unsafe impl Zeroable for libc::sockaddr_storage {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(unix)]
     unsafe impl Zeroable for libc::addrinfo {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     unsafe impl Zeroable for libc::sysinfo {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     unsafe impl Zeroable for libc::epoll_event {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     unsafe impl Zeroable for libc::signalfd_siginfo {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(any(
         target_os = "linux",
         target_os = "android",
@@ -3209,6 +3234,9 @@ pub extern "C" fn Bun__captureStackTrace(begin: usize, out: *mut usize, cap: usi
     if out.is_null() || cap == 0 {
         return 0;
     }
+    // SAFETY: `out` is non-null (checked above) and the C++ caller passes a
+    // writable buffer of `cap` `usize` slots; `libc::backtrace` writes at most
+    // `cap` frame pointers into it.
     unsafe {
         // FreeBSD's libexecinfo backtrace() takes/returns size_t; glibc/macOS use int.
         #[cfg(any(

@@ -56,16 +56,16 @@ impl CatalogMap {
             if self.default.count() == 0 {
                 return None;
             }
-            return self.default.get_adapted(&dep_name, ctx(buf)).cloned();
+            return self.default.get_adapted(&dep_name, &ctx(buf)).cloned();
         }
 
-        let group = self.groups.get_adapted(&catalog_name, ctx(buf))?;
+        let group = self.groups.get_adapted(&catalog_name, &ctx(buf))?;
 
         if group.count() == 0 {
             return None;
         }
 
-        group.get_adapted(&dep_name, ctx(buf)).cloned()
+        group.get_adapted(&dep_name, &ctx(buf)).cloned()
     }
 
     /// PORT NOTE: Zig took `lockfile: *Lockfile` but only reads its string
@@ -82,7 +82,7 @@ impl CatalogMap {
             return Ok(&mut self.default);
         }
 
-        let entry = self.groups.get_or_put_adapted(catalog_name, ctx(buf))?;
+        let entry = self.groups.get_or_put_adapted(&catalog_name, &ctx(buf))?;
         if !entry.found_existing {
             *entry.key_ptr = catalog_name;
             *entry.value_ptr = Map::default();
@@ -103,7 +103,7 @@ impl CatalogMap {
 
         self.groups.get_ptr_adapted(
             &catalog_name,
-            ArrayHashContext {
+            &ArrayHashContext {
                 arg_buf: catalog_name_buf,
                 existing_buf: map_buf,
             },
@@ -212,7 +212,7 @@ impl CatalogMap {
                         };
 
                         let buf = builder.string_bytes.as_slice();
-                        let entry = group.get_or_put_adapted(dep_name, ctx(buf))?;
+                        let entry = group.get_or_put_adapted(&dep_name, &ctx(buf))?;
 
                         if entry.found_existing {
                             log.add_error(Some(source), key.loc, b"Duplicate catalog");
@@ -276,7 +276,7 @@ impl CatalogMap {
                                 };
 
                                 let buf = builder.string_bytes.as_slice();
-                                let entry = group.get_or_put_adapted(dep_name, ctx(buf))?;
+                                let entry = group.get_or_put_adapted(&dep_name, &ctx(buf))?;
 
                                 if entry.found_existing {
                                     log.add_error(Some(source), key.loc, b"Duplicate catalog");
@@ -512,7 +512,7 @@ fn put_entries_from_pnpm_lockfile(
         };
 
         let buf = string_buf.bytes.as_slice();
-        let entry = catalog_map.get_or_put_adapted(dep_name, ctx(buf))?;
+        let entry = catalog_map.get_or_put_adapted(&dep_name, &ctx(buf))?;
 
         if entry.found_existing {
             return Err(FromPnpmLockfileError::InvalidPnpmLockfile);

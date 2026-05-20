@@ -203,7 +203,7 @@ pub mod lib_info {
 
         let key = get_addr_info_request::PendingCacheKey::init(&query);
         let cache =
-            this.get_or_put_into_pending_cache(key, PendingCacheField::PendingHostCacheNative);
+            this.get_or_put_into_pending_cache(&key, PendingCacheField::PendingHostCacheNative);
 
         if let CacheHit::Inflight(inflight) = cache {
             let dns_lookup = DNSLookup::init(this.as_ctx_ptr(), global_this);
@@ -336,7 +336,7 @@ pub mod lib_c {
         let key = get_addr_info_request::PendingCacheKey::init(&query_init);
 
         let cache =
-            this.get_or_put_into_pending_cache(key, PendingCacheField::PendingHostCacheNative);
+            this.get_or_put_into_pending_cache(&key, PendingCacheField::PendingHostCacheNative);
         if let CacheHit::Inflight(inflight) = cache {
             let dns_lookup = DNSLookup::init(this.as_ctx_ptr(), global_this);
             // SAFETY: inflight points into resolver's pending-cache HiveArray slot.
@@ -361,7 +361,8 @@ pub mod lib_c {
         let promise_value = unsafe { (*request).head.promise.value() };
 
         let io = get_addr_info_request::Task::create_on_js_thread(global_this, request);
-        get_addr_info_request::Task::schedule(io);
+        // SAFETY: `io` was just heap-allocated by `create_on_js_thread`.
+        unsafe { get_addr_info_request::Task::schedule(io) };
         this.request_sent(this.vm());
 
         promise_value
@@ -441,7 +442,7 @@ pub mod lib_uv_backend {
         let key = get_addr_info_request::PendingCacheKey::init(&query);
 
         let cache =
-            this.get_or_put_into_pending_cache(key, PendingCacheField::PendingHostCacheNative);
+            this.get_or_put_into_pending_cache(&key, PendingCacheField::PendingHostCacheNative);
         if let CacheHit::Inflight(inflight) = cache {
             let dns_lookup = DNSLookup::init(this.as_ctx_ptr(), global_this);
             unsafe { (*inflight).append(dns_lookup) };
@@ -1100,8 +1101,10 @@ impl GetNameInfoRequest {
             },
             tail: ptr::null_mut(),
         }));
+        // SAFETY: `request` was just heap-allocated above; `head` is an inline field.
         unsafe { (*request).tail = &raw mut (*request).head };
         if let LookupCacheHit::New(new) = cache {
+            // SAFETY: `new` points into the resolver's HiveArray buffer; resolver/request are live.
             unsafe {
                 (*request).resolver_for_caching = resolver;
                 let pos = (*resolver.unwrap())
@@ -1123,6 +1126,8 @@ impl GetNameInfoRequest {
         timeout: i32,
         result: Option<c_ares::struct_nameinfo>,
     ) {
+        // SAFETY: `this` is the heap-allocated request c-ares calls back with;
+        // `resolver` (if set) is the live intrusive-RC ctx stored at init time.
         unsafe {
             if let Some(resolver) = (*this).resolver_for_caching {
                 scopeguard::defer! { (*resolver).request_completed() };
@@ -1196,6 +1201,7 @@ pub mod get_addr_info_request {
 
     impl PendingCacheKey {
         pub fn append(&mut self, dns_lookup: *mut DNSLookup) {
+            // SAFETY: `lookup`/`tail` are valid while the request sits in the pending cache.
             unsafe {
                 let tail = (*self.lookup).tail;
                 (*tail).next = NonNull::new(dns_lookup);
@@ -1337,7 +1343,10 @@ pub mod get_addr_info_request {
 
             // do not free addrinfo when err != 0
             // https://github.com/ziglang/zig/pull/14242
-            let _free = scopeguard::guard(addrinfo, |a| unsafe { bun_dns::freeaddrinfo(a) });
+            let _free = scopeguard::guard(addrinfo, |a| {
+                // SAFETY: `a` was returned by libc::getaddrinfo (non-null per the check above).
+                unsafe { bun_dns::freeaddrinfo(a) }
+            });
 
             // SAFETY: addrinfo is non-null (checked above); freed by `_free` guard after copy.
             *self =
@@ -1519,12 +1528,15 @@ impl GetAddrInfoRequest {
                 _ => unreachable!(),
             }
         }
-        get_addr_info_request::Task::on_finish(task);
+        // SAFETY: `task` is the live heap `WorkTask` passed in by `run_from_thread_pool`.
+        unsafe { get_addr_info_request::Task::on_finish(task) };
     }
 
     pub fn then(this: *mut Self, _global: &JSGlobalObject) {
         bun_output::scoped_log!(GetAddrInfoRequest, "then");
         #[cfg(not(windows))]
+        // SAFETY: WorkTask invokes `then` on the JS thread with the heap request it
+        // was created from; `resolver_for_caching` (if set) is the live ctx ref.
         unsafe {
             // Take the backend by value: `Success` holds a `Vec<GetAddrInfoResult>`
             // (not `Clone`) that we move into `GetAddrInfoResultAny::List`. The
@@ -1581,6 +1593,8 @@ impl GetAddrInfoRequest {
         result: Option<*mut c_ares::AddrInfo>,
     ) {
         bun_output::scoped_log!(GetAddrInfoRequest, "onCaresComplete");
+        // SAFETY: `this` is the heap-allocated request c-ares calls back with;
+        // `resolver` (if set) is the live intrusive-RC ctx stored at init time.
         unsafe {
             if let Some(resolver) = (*this).resolver_for_caching {
                 // if (this.cache.entry_cache and result != null and result.?.node != null) {
@@ -1792,6 +1806,8 @@ impl CAresReverse {
     /// exact pointer returned by `heap::alloc` in `init()`. Head nodes (`!allocated`)
     /// are dropped by their owner; this is a no-op for them.
     pub unsafe fn destroy(this: *mut Self) {
+        // SAFETY: see fn contract — `this` is live; if `allocated`, it is the
+        // exact pointer returned by `heap::alloc` in `init()`.
         unsafe {
             if (*this).allocated {
                 drop(bun_core::heap::take(this));
@@ -1940,6 +1956,8 @@ impl<T: CAresRecordType> CAresLookup<T> {
     /// exact pointer returned by `heap::alloc` in `new()`. Head nodes (`!allocated`)
     /// are dropped by their owner; this is a no-op for them.
     pub unsafe fn destroy(this: *mut Self) {
+        // SAFETY: see fn contract — `this` is live; if `allocated`, it is the
+        // exact pointer returned by `heap::alloc` in `init()`.
         unsafe {
             if (*this).allocated {
                 drop(bun_core::heap::take(this));
@@ -2165,6 +2183,7 @@ impl Drop for GlobalData {
         // value field — open-code the channel teardown so the c-ares state
         // frees when this box drops in `deinit_runtime_state`.
         if let Some(channel) = self.resolver.channel.take() {
+            // SAFETY: `channel` is the live handle from `ares_init_options`, owned by this resolver.
             unsafe { c_ares::Channel::destroy(channel) };
         }
     }
@@ -2566,10 +2585,12 @@ pub mod internal {
     impl DNSRequestOwner {
         pub fn notify_threadsafe(&self, req: *mut Request) {
             match self {
+                // SAFETY: `socket` is the live usockets handle stored when the request was registered.
                 DNSRequestOwner::Socket(socket) => unsafe {
                     us_internal_dns_callback_threadsafe(*socket, req)
                 },
                 DNSRequestOwner::Prefetch(_) => freeaddrinfo(req, 0),
+                // SAFETY: `pc` is the live PendingConnect borrowed for the lifetime of the request.
                 DNSRequestOwner::Quic(pc) => unsafe {
                     bun_http::H3::PendingConnect::on_dns_resolved_threadsafe(*pc)
                 },
@@ -2579,9 +2600,11 @@ pub mod internal {
         pub fn notify(&self, req: *mut Request) {
             match self {
                 DNSRequestOwner::Prefetch(_) => freeaddrinfo(req, 0),
+                // SAFETY: `socket` is the live usockets handle stored when the request was registered.
                 DNSRequestOwner::Socket(socket) => unsafe {
                     us_internal_dns_callback(*socket, req)
                 },
+                // SAFETY: `pc` is the live PendingConnect borrowed for the lifetime of the request.
                 DNSRequestOwner::Quic(pc) => unsafe {
                     bun_http::H3::PendingConnect::on_dns_resolved(*pc)
                 },
@@ -2591,7 +2614,9 @@ pub mod internal {
         pub fn loop_(&self) -> *mut Loop {
             match self {
                 DNSRequestOwner::Prefetch(l) => *l,
+                // SAFETY: `s` is the live usockets handle stored when the request was registered.
                 DNSRequestOwner::Socket(s) => unsafe { (**s).r#loop() },
+                // SAFETY: `pc` is the live PendingConnect borrowed for the lifetime of the request.
                 DNSRequestOwner::Quic(pc) => unsafe { (**pc).r#loop() },
             }
         }
@@ -2605,6 +2630,8 @@ pub mod internal {
     pub fn register_quic(request: *mut Request, pc: *mut bun_http::H3::PendingConnect) {
         let guard = global_cache().lock();
         let owner = DNSRequestOwner::Quic(pc);
+        // SAFETY: `request` is a live cache entry; `result`/`notify` are only
+        // touched under `global_cache().lock()`, which is held here.
         unsafe {
             if (*request).result.is_some() {
                 drop(guard);
@@ -2711,6 +2738,7 @@ pub mod internal {
             // ws2_32!getaddrinfo-allocated on Windows — free via the matching
             // ws2_32!freeaddrinfo (NOT uv_freeaddrinfo: different allocator).
             // `.cast()` is identity on POSIX, libuv_sys→ws2_32 addrinfo on Windows.
+            // SAFETY: `info` is non-null (checked above) and owned by getaddrinfo.
             unsafe { bun_dns::freeaddrinfo(info.cast()) };
             Some(res)
         } else {
@@ -2719,6 +2747,8 @@ pub mod internal {
 
         let guard = global_cache().lock();
 
+        // SAFETY: `req` is the heap-allocated cache entry; its mutable fields are
+        // only touched under `global_cache().lock()`, which is held here.
         let notify = unsafe {
             // Park the owning Box on `Request.result_buf`; `RequestResult.info`
             // borrows its first element as a thin pointer for the C side.
@@ -2743,6 +2773,7 @@ pub mod internal {
 
     fn work_pool_callback(req: *mut Request) {
         let mut service_buf = [0u8; 21];
+        // SAFETY: `req` is the heap-allocated cache entry; `key` is set at construction and read-only.
         let port = unsafe { (*req).key.port };
         let service: *const c_char = if port > 0 {
             bun_fmt::itoa_z(&mut service_buf, port as u64).as_ptr()
@@ -2772,6 +2803,8 @@ pub mod internal {
             after_result(req, addrinfo.cast(), err);
         }
         #[cfg(not(windows))]
+        // SAFETY: FFI getaddrinfo; `req.key.host` is the owned NUL-terminated host
+        // set at construction, `hints`/`addrinfo` are stack locals.
         unsafe {
             let mut addrinfo: *mut AddrInfo = ptr::null_mut();
             let mut hints = get_hints();
@@ -3013,8 +3046,10 @@ pub mod internal {
                     return None;
                 }
 
+                // SAFETY: `entry` is a live cache slot; refcount is only mutated under the held lock.
                 unsafe { (*entry).refcount += 1 };
 
+                // SAFETY: `entry` is a live cache slot; `result` is only mutated under the held lock.
                 if unsafe { (*entry).result.is_some() } {
                     *is_cache_hit.unwrap() = true;
                     bun_output::scoped_log!(
@@ -3176,6 +3211,7 @@ pub mod internal {
         };
         let mut is_cache_hit = false;
         let req = getaddrinfo(loop_, host, port, Some(&mut is_cache_hit)).unwrap();
+        // SAFETY: `socket` is the out-param the usockets caller passes; valid for one write.
         unsafe { *socket = req.cast::<c_void>() };
         if is_cache_hit { 0 } else { 1 }
     }
@@ -3183,6 +3219,8 @@ pub mod internal {
     extern "C" fn us_getaddrinfo_set(request: *mut Request, socket: *mut ConnectingSocket) {
         let _guard = global_cache().lock();
         let query = DNSRequestOwner::Socket(socket);
+        // SAFETY: `request` is a live cache entry; `result`/`notify` are only
+        // touched under `global_cache().lock()`, which is held here.
         unsafe {
             if (*request).result.is_some() {
                 query.notify(request);
@@ -3200,6 +3238,8 @@ pub mod internal {
         // afterResult sets result and moves the notify list out under this same
         // lock, so once result is non-null the socket is no longer cancellable
         // (the callback has fired or is about to fire on the worker thread).
+        // SAFETY: `request` is a live cache entry; `result`/`notify` are only
+        // touched under `global_cache().lock()`, which is held here.
         unsafe {
             if (*request).result.is_some() {
                 return 0;
@@ -3220,6 +3260,8 @@ pub mod internal {
     pub(super) extern "C" fn freeaddrinfo(req: *mut Request, err: c_int) {
         let mut guard = global_cache().lock();
 
+        // SAFETY: `req` is a live cache entry; refcount/valid are only mutated
+        // under `global_cache().lock()`, which is held here.
         unsafe {
             if err != 0 {
                 (*req).valid = false;
@@ -3711,6 +3753,7 @@ impl UvDnsPoll {
     }
 }
 
+#[derive(Clone, Copy)]
 pub enum CacheHit {
     Inflight(*mut get_addr_info_request::PendingCacheKey), // BORROW_FIELD into resolver buffer
     New(*mut get_addr_info_request::PendingCacheKey),      // BORROW_FIELD into resolver buffer
@@ -3724,6 +3767,13 @@ pub enum LookupCacheHit<R: HasPendingCacheKey> {
     New(*mut R::PendingCacheKey),      // BORROW_FIELD
     Disabled,
 }
+
+impl<R: HasPendingCacheKey> Clone for LookupCacheHit<R> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<R: HasPendingCacheKey> Copy for LookupCacheHit<R> {}
 
 /// Associates a request type with its `PendingCacheKey` and the matching `HiveArray`
 /// field on `Resolver`. Stands in for Zig's `request_type.PendingCacheKey` projection
@@ -4008,6 +4058,8 @@ impl Resolver {
     }
 
     fn deinit(this: *mut Self) {
+        // SAFETY: `this` is the heap allocation from `init()`; refcount has hit
+        // zero (sole caller is `Self::deref`), so we hold exclusive ownership.
         unsafe {
             if let Some(channel) = (*this).channel.get() {
                 c_ares::Channel::destroy(channel);
@@ -4309,6 +4361,8 @@ impl Resolver {
         };
 
         let Some(addr) = result else {
+            // SAFETY: `key.lookup` is the heap-allocated request stored in the
+            // pending-cache slot; consumed via `heap::take` below.
             unsafe {
                 let mut pending = (*key.lookup).head.next;
                 CAresLookup::<T>::process_resolve(
@@ -4327,6 +4381,8 @@ impl Resolver {
             return;
         };
 
+        // SAFETY: `key.lookup` is the heap-allocated request stored in the pending-cache
+        // slot; `addr` is the c-ares-allocated reply freed by `_free_addr` below.
         unsafe {
             let mut pending = (*key.lookup).head.next;
             let mut prev_global = (*key.lookup).head.global_this();
@@ -4371,6 +4427,8 @@ impl Resolver {
         let _g = unsafe { Self::ref_scope(self.as_ctx_ptr()) };
 
         let Some(addr) = result else {
+            // SAFETY: `key.lookup` is the heap-allocated request stored in the
+            // pending-cache slot; consumed via `heap::take` below.
             unsafe {
                 let mut pending = (*key.lookup).head.next;
                 DNSLookup::process_get_addr_info(
@@ -4389,6 +4447,8 @@ impl Resolver {
             return;
         };
 
+        // SAFETY: `key.lookup` is the heap-allocated request stored in the pending-cache
+        // slot; `addr` is the c-ares-allocated AddrInfo freed by `_free_addr` below.
         unsafe {
             let mut pending = (*key.lookup).head.next;
             let mut prev_global = (*key.lookup).head.global_this();
@@ -4439,6 +4499,8 @@ impl Resolver {
             // TODO: properly propagate exception upwards
             Some(a) => a,
             None => {
+                // SAFETY: `key.lookup` is the heap-allocated request stored in the
+                // pending-cache slot; consumed via `heap::take` below.
                 unsafe {
                     let mut pending = (*key.lookup).head.next;
                     // Consume the request and move `head` out by value;
@@ -4459,6 +4521,8 @@ impl Resolver {
                 return;
             }
         };
+        // SAFETY: `key.lookup` is the heap-allocated request stored in the
+        // pending-cache slot; consumed via `heap::take` below.
         unsafe {
             let mut pending = (*key.lookup).head.next;
             let mut prev_global = (*key.lookup).head.global_this();
@@ -4502,6 +4566,8 @@ impl Resolver {
         let _g = unsafe { Self::ref_scope(self.as_ctx_ptr()) };
 
         let Some(addr) = result else {
+            // SAFETY: `key.lookup` is the heap-allocated request stored in the
+            // pending-cache slot; consumed via `heap::take` below.
             unsafe {
                 let mut pending = (*key.lookup).head.next;
                 CAresReverse::process_resolve(
@@ -4520,6 +4586,8 @@ impl Resolver {
             return;
         };
 
+        // SAFETY: `key.lookup` is the heap-allocated request stored in the pending-cache
+        // slot; `addr` is the c-ares-owned hostent (freed by c-ares after the callback).
         unsafe {
             let mut pending = (*key.lookup).head.next;
             let mut prev_global = (*key.lookup).head.global_this();
@@ -4563,6 +4631,8 @@ impl Resolver {
         let _g = unsafe { Self::ref_scope(self.as_ctx_ptr()) };
 
         let Some(mut name_info) = result else {
+            // SAFETY: `key.lookup` is the heap-allocated request stored in the
+            // pending-cache slot; consumed via `heap::take` below.
             unsafe {
                 let mut pending = (*key.lookup).head.next;
                 CAresNameInfo::process_resolve(
@@ -4581,6 +4651,8 @@ impl Resolver {
             return;
         };
 
+        // SAFETY: `key.lookup` is the heap-allocated request stored in the
+        // pending-cache slot; consumed via `heap::take` below.
         unsafe {
             let mut pending = (*key.lookup).head.next;
             let mut prev_global = (*key.lookup).head.global_this();
@@ -4636,7 +4708,7 @@ impl Resolver {
 
     pub fn get_or_put_into_pending_cache(
         &self,
-        key: get_addr_info_request::PendingCacheKey,
+        key: &get_addr_info_request::PendingCacheKey,
         field: PendingCacheField,
     ) -> CacheHit {
         let cache = self.pending_host_cache(field);
@@ -4873,6 +4945,8 @@ impl Resolver {
                 // TODO(port): FilePoll generic owner type Resolver
             }
 
+            // SAFETY: `value_ptr` points at a slot just initialized above (or a
+            // previously-initialized live FilePoll hive slot); JS-thread exclusive.
             let poll = unsafe { &mut **poll_entry.value_ptr };
 
             // c-ares reports the full desired (readable, writable) set for this
@@ -5064,7 +5138,9 @@ impl Resolver {
         );
         if let LookupCacheHit::Inflight(inflight) = cache {
             let cares_reverse = CAresReverse::init(Some(self.as_ctx_ptr()), global_this, ip);
+            // SAFETY: `inflight` points into the resolver's pending-cache HiveArray slot.
             unsafe { (*inflight).append(cares_reverse) };
+            // SAFETY: `cares_reverse` was just heap-allocated; owned by the inflight list.
             return Ok(unsafe { (*cares_reverse).promise.value() });
         }
 
@@ -5076,6 +5152,7 @@ impl Resolver {
             PendingCacheField::PendingAddrCacheCares,
         );
 
+        // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
         let promise = unsafe { (*(*request).tail).promise.value() };
         // SAFETY: `request` is the heap-allocated GetHostByAddrInfoRequest; channel
         // stores it as the c-ares ctx and calls back via HostentHandler::on_hostent.
@@ -5360,7 +5437,9 @@ impl Resolver {
         if let LookupCacheHit::Inflight(inflight) = cache {
             // CAresLookup will have the name ownership
             let cares_lookup = CAresLookup::<T>::init(Some(self.as_ctx_ptr()), global_this, name);
+            // SAFETY: `inflight` points into the resolver's pending-cache HiveArray slot.
             unsafe { (*inflight).append(cares_lookup) };
+            // SAFETY: `cares_lookup` was just heap-allocated; owned by the inflight list.
             return Ok(unsafe { (*cares_lookup).promise.value() });
         }
 
@@ -5371,6 +5450,7 @@ impl Resolver {
             global_this,
             cache_field,
         );
+        // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
         let promise = unsafe { (*(*request).tail).promise.value() };
 
         // SAFETY: `channel` is the live c-ares channel owned by `self`; `request`
@@ -5412,10 +5492,12 @@ impl Resolver {
         let key = get_addr_info_request::PendingCacheKey::init(&query);
 
         let cache =
-            self.get_or_put_into_pending_cache(key, PendingCacheField::PendingHostCacheCares);
+            self.get_or_put_into_pending_cache(&key, PendingCacheField::PendingHostCacheCares);
         if let CacheHit::Inflight(inflight) = cache {
             let dns_lookup = DNSLookup::init(self.as_ctx_ptr(), global_this);
+            // SAFETY: `inflight` points into the resolver's pending-cache HiveArray slot.
             unsafe { (*inflight).append(dns_lookup) };
+            // SAFETY: `dns_lookup` was just heap-allocated; owned by the inflight list.
             return Ok(unsafe { (*dns_lookup).promise.value() });
         }
 
@@ -5428,6 +5510,7 @@ impl Resolver {
             global_this,
             PendingCacheField::PendingHostCacheCares,
         );
+        // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
         let promise = unsafe { (*(*request).tail).promise.value() };
 
         // SAFETY: `channel` is the live c-ares channel owned by `self`; `request`
@@ -5450,6 +5533,7 @@ impl Resolver {
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let mut servers: *mut c_ares::struct_ares_addr_port_node = ptr::null_mut();
+        // SAFETY: `channel` is a live handle from `ares_init_options`; `servers` is a stack out-param.
         let r = unsafe { c_ares::ares_get_servers_ports(channel, &raw mut servers) };
         if r != c_ares::ARES_SUCCESS {
             let err = c_ares::Error::get(r).unwrap();
@@ -5460,13 +5544,17 @@ impl Resolver {
                 ))),
             );
         }
-        scopeguard::defer! { unsafe { c_ares::ares_free_data(servers.cast()) } };
+        scopeguard::defer! {
+            // SAFETY: `servers` was allocated by ares_get_servers_ports; ares_free_data is its deallocator.
+            unsafe { c_ares::ares_free_data(servers.cast()) }
+        };
 
         let values = JSValue::create_empty_array(global_this, 0)?;
 
         let mut i: u32 = 0;
         let mut cur = servers;
         while !cur.is_null() {
+            // SAFETY: `cur` is non-null (loop guard) and walks the c-ares-allocated list.
             let current = unsafe { &*cur };
             // Formatting reference: https://nodejs.org/api/dns.html#dnsgetservers
             // Brackets '[' and ']' consume 2 bytes, used for IPv6 format (e.g., '[2001:4860:4860::8888]:1053').
@@ -5475,9 +5563,9 @@ impl Resolver {
             let mut buf = [0u8; INET6_ADDRSTRLEN + 2 + 6 + 1];
             let family = current.family;
 
-            // SAFETY: `src` is a `*const c_void` type-erasure of the in_addr/in6_addr
-            // union arm (read-only); `dst` is the stack buffer slice starting at [1].
             let addr_ptr: *const c_void = current.addr_ptr();
+            // SAFETY: `addr_ptr` type-erases the in_addr/in6_addr union arm (read-only);
+            // `dst` is the stack buffer slice starting at [1].
             let Some(ip) = (unsafe { bun_cares_sys::ntop(family, addr_ptr, &mut buf[1..]) }) else {
                 return Err(global_this.throw_value(global_this.create_error_instance(
                     format_args!(
@@ -5629,6 +5717,7 @@ impl Resolver {
 
         let mut addr = [0u8; 16];
 
+        // SAFETY: FFI; `slice` is NUL-terminated above; `addr` is a 16-byte stack buffer.
         if unsafe {
             c_ares::ares_inet_pton(
                 c_ares::AF::INET,
@@ -5643,6 +5732,7 @@ impl Resolver {
             return Ok(c_ares::AF::INET);
         }
 
+        // SAFETY: FFI; `slice` is NUL-terminated above; `addr` is a 16-byte stack buffer.
         if unsafe {
             c_ares::ares_inet_pton(
                 c_ares::AF::INET6,
@@ -5651,6 +5741,7 @@ impl Resolver {
             )
         } == 1
         {
+            // SAFETY: `channel` is a live handle from `ares_init_options`; `addr` is the 16-byte in6_addr.
             unsafe { c_ares::ares_set_local_ip6(channel, addr.as_ptr()) };
             return Ok(c_ares::AF::INET6);
         }
@@ -5754,10 +5845,9 @@ impl Resolver {
             node.udp_port = port;
             node.tcp_port = port;
 
-            // SAFETY: FFI; `address_buffer` is NUL-terminated above; `addr_mut_ptr()`
-            // yields a `*mut c_void` over the in_addr/in6_addr union (16 bytes —
-            // enough for in6_addr) with write provenance from `&mut node`.
             let addr_dst: *mut c_void = node.addr_mut_ptr();
+            // SAFETY: FFI; `address_buffer` is NUL-terminated above; `addr_dst` points at the
+            // in_addr/in6_addr union (16 bytes — enough for in6_addr) with write provenance.
             if unsafe {
                 c_ares::ares_inet_pton(af, address_buffer.as_ptr().cast::<c_char>(), addr_dst)
             } != 1
@@ -5928,7 +6018,9 @@ impl Resolver {
 
         if let LookupCacheHit::Inflight(inflight) = cache {
             let info = CAresNameInfo::init(global_this, cache_name);
+            // SAFETY: `inflight` points into the resolver's pending-cache HiveArray slot.
             unsafe { (*inflight).append(info) };
+            // SAFETY: `info` was just heap-allocated; owned by the inflight list.
             return Ok(unsafe { (*info).promise.value() });
         }
 
@@ -5940,6 +6032,7 @@ impl Resolver {
             PendingCacheField::PendingNameinfoCacheCares,
         );
 
+        // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
         let promise = unsafe { (*(*request).tail).promise.value() };
         // SAFETY: `channel` is the live c-ares channel; `sa` is a valid
         // sockaddr_storage reborrowed as sockaddr; `request` was just
@@ -5990,8 +6083,8 @@ macro_rules! export_host_fn {
                 f: *mut ::bun_jsc::CallFrame,
             ) -> ::bun_jsc::JSValue {
                 // SAFETY: JSC guarantees both pointers are live for the call.
-                let g = unsafe { &*g };
-                ::bun_jsc::__macro_support::host_fn_result(g, || $scope::$f(g, unsafe { &*f }))
+                let (g, f) = unsafe { (&*g, &*f) };
+                ::bun_jsc::__macro_support::host_fn_result(g, || $scope::$f(g, f))
             }
             #[cfg(not(all(windows, target_arch = "x86_64")))]
             #[unsafe(export_name = $name)]
@@ -6000,8 +6093,8 @@ macro_rules! export_host_fn {
                 f: *mut ::bun_jsc::CallFrame,
             ) -> ::bun_jsc::JSValue {
                 // SAFETY: JSC guarantees both pointers are live for the call.
-                let g = unsafe { &*g };
-                ::bun_jsc::__macro_support::host_fn_result(g, || $scope::$f(g, unsafe { &*f }))
+                let (g, f) = unsafe { (&*g, &*f) };
+                ::bun_jsc::__macro_support::host_fn_result(g, || $scope::$f(g, f))
             }
         };
     };

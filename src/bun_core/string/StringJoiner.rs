@@ -26,6 +26,10 @@ pub struct StringJoiner {
 // storage; no aliasing escapes `&mut self` methods. The Zig original is
 // passed across bundler worker threads (see Chunk.IntermediateOutput).
 unsafe impl Send for StringJoiner {}
+// SAFETY: `&StringJoiner` only exposes read-only views (`last_byte`,
+// `node_slices`, `contains`) over `RawSlice<u8>` storage with no interior
+// mutability; concurrent shared reads of the owned/borrowed-until-`done()`
+// byte buffers are data-race-free.
 unsafe impl Sync for StringJoiner {}
 
 impl Default for StringJoiner {
@@ -63,6 +67,9 @@ impl Node {
 // `Vec` rooted at `StringJoiner.nodes` and never shared aliased across threads
 // concurrently. The Zig original moves these between bundler worker threads.
 unsafe impl Send for Node {}
+// SAFETY: `&Node` only reads the immutable `RawSlice<u8>` backing bytes via
+// `slice()`; there is no interior mutability, so concurrent shared access from
+// multiple threads cannot race.
 unsafe impl Sync for Node {}
 
 impl Drop for Node {

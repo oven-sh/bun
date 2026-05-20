@@ -401,6 +401,9 @@ impl BlockList {
         // non-null out-param the caller expects us to advance.
         let ptr = unsafe { &mut *ptr };
         let total_length: usize = (end as usize) - (*ptr as usize);
+        // SAFETY: `*ptr` through `end` is the contiguous C++-owned deserialization
+        // buffer (see above); `total_length = end - *ptr`, so the resulting slice
+        // is exactly that buffer and stays valid for the lifetime of `r`.
         let mut r =
             bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(*ptr, total_length) });
 

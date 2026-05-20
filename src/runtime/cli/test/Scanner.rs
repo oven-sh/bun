@@ -171,8 +171,7 @@ impl<'a> Scanner<'a> {
                 entry_ptrs.sort_by(|a, b| {
                     // SAFETY: `EntryMap` stores `*mut Entry` into the
                     // process-static `EntryStore`; valid for `'static`.
-                    let an = unsafe { (**a).base_lowercase() };
-                    let bn = unsafe { (**b).base_lowercase() };
+                    let (an, bn) = unsafe { ((**a).base_lowercase(), (**b).base_lowercase()) };
                     an.cmp(bn)
                 });
                 for entry_ptr in entry_ptrs {

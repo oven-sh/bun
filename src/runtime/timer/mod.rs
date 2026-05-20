@@ -1176,11 +1176,15 @@ impl All {
                     // SAFETY: tag invariant — `node` IS the `event_loop_timer`
                     // field of a live `TimeoutObject`.
                     let parent = unsafe { TimeoutObject::from_timer_ptr(node) };
+                    // SAFETY: `parent` points at the live `TimeoutObject` recovered
+                    // above; `addr_of!` projects the in-bounds `internals` field.
                     to_cancel.push(unsafe { core::ptr::addr_of!((*parent).internals) });
                 }
                 EventLoopTimerTag::ImmediateObject => {
                     // SAFETY: tag invariant — see above.
                     let parent = unsafe { ImmediateObject::from_timer_ptr(node) };
+                    // SAFETY: `parent` points at the live `ImmediateObject` recovered
+                    // above; `addr_of!` projects the in-bounds `internals` field.
                     to_cancel.push(unsafe { core::ptr::addr_of!((*parent).internals) });
                 }
                 EventLoopTimerTag::AbortSignalTimeout => {

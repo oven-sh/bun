@@ -526,7 +526,7 @@ impl JSMySQLConnection {
             let mut err = uws::create_bun_socket_error_t::none;
             secure = vm
                 .ssl_ctx_cache()
-                .get_or_create_opts(tls_config.as_usockets_for_client_verification(), &mut err);
+                .get_or_create_opts(&tls_config.as_usockets_for_client_verification(), &mut err);
             if secure.is_none() {
                 drop(tls_config);
                 return Err(
@@ -654,10 +654,10 @@ impl JSMySQLConnection {
             let socket = match result {
                 Ok(s) => s,
                 Err(e) => {
+                    let _ = this;
                     // SAFETY: `ptr` is the freshly-boxed allocation; sole owner.
                     // `this` (a `ParentRef`) is not used past this point, so no
                     // borrow outlives the `heap::take` inside `deinit`.
-                    let _ = this;
                     unsafe { Self::deref(ptr) };
                     return Err(global_object.throw_error(e.into(), "failed to connect to mysql"));
                 }
@@ -862,7 +862,7 @@ impl JSMySQLConnection {
             .queue_microtask(on_connect, &[JSValue::NULL, js_value]);
     }
 
-    pub fn on_query_result(&self, request: &JSMySQLQuery, result: MySQLQueryResult) {
+    pub fn on_query_result(&self, request: &JSMySQLQuery, result: &MySQLQueryResult) {
         request.resolve(self.get_queries_array(), result);
     }
 
@@ -968,7 +968,7 @@ impl JSMySQLConnection {
         }
     }
 
-    pub fn on_error_packet(&self, request: Option<&JSMySQLQuery>, err: ErrorPacket) {
+    pub fn on_error_packet(&self, request: Option<&JSMySQLQuery>, err: &ErrorPacket) {
         if let Some(request) = request {
             if self.vm().is_shutting_down() {
                 request.mark_as_failed();

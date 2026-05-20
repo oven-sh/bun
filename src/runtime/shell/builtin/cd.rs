@@ -39,7 +39,7 @@ impl Cd {
                 Some(b'-') => {
                     let prev = Builtin::shell(interp, cmd).prev_cwd().to_vec();
                     if let Err(err) = interp.as_cmd_mut(cmd).base.shell_mut().change_prev_cwd() {
-                        return Self::handle_change_cwd_err(interp, cmd, err, &prev);
+                        return Self::handle_change_cwd_err(interp, cmd, &err, &prev);
                     }
                 }
                 Some(b'~') => {
@@ -47,13 +47,13 @@ impl Cd {
                     let target = homedir.slice().to_vec();
                     homedir.deref();
                     if let Err(err) = interp.as_cmd_mut(cmd).base.shell_mut().change_cwd(&target) {
-                        return Self::handle_change_cwd_err(interp, cmd, err, &target);
+                        return Self::handle_change_cwd_err(interp, cmd, &err, &target);
                     }
                 }
                 _ => {
                     let target = first_arg.to_vec();
                     if let Err(err) = interp.as_cmd_mut(cmd).base.shell_mut().change_cwd(&target) {
-                        return Self::handle_change_cwd_err(interp, cmd, err, &target);
+                        return Self::handle_change_cwd_err(interp, cmd, &err, &target);
                     }
                 }
             }
@@ -65,7 +65,7 @@ impl Cd {
     fn handle_change_cwd_err(
         interp: &Interpreter,
         cmd: NodeId,
-        err: bun_sys::Error,
+        err: &bun_sys::Error,
         new_cwd: &[u8],
     ) -> Yield {
         use bun_sys::E;

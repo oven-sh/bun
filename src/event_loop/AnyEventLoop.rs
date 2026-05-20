@@ -87,10 +87,10 @@ impl<'a> AnyEventLoop<'a> {
     /// the thread-local lookup in [`js_current`].
     #[inline]
     pub fn js(js_event_loop: *mut ()) -> AnyEventLoop<'static> {
-        // SAFETY: caller passes a live erased `*mut jsc::EventLoop` (Zig
-        // `vm.eventLoop()`). This is the single `unsafe` boundary for the
-        // `AnyEventLoop::Js` arm — all subsequent dispatch is safe.
         AnyEventLoop::Js {
+            // SAFETY: caller passes a live erased `*mut jsc::EventLoop` (Zig
+            // `vm.eventLoop()`). This is the single `unsafe` boundary for the
+            // `AnyEventLoop::Js` arm — all subsequent dispatch is safe.
             owner: unsafe { JsEventLoop::new(JsEventLoopKind::Jsc, js_event_loop) },
         }
     }
@@ -360,11 +360,11 @@ impl EventLoopHandle {
     // call `vm.eventLoop()`).
     #[inline]
     pub fn init(js_event_loop: *mut ()) -> EventLoopHandle {
-        // SAFETY: caller passes a live erased `*mut jsc::EventLoop` (the
-        // back-reference invariant — owner outlives every dispatch through this
-        // handle). This is the single `unsafe` boundary for the
-        // `EventLoopHandle::Js` arm.
         EventLoopHandle::Js {
+            // SAFETY: caller passes a live erased `*mut jsc::EventLoop` (the
+            // back-reference invariant — owner outlives every dispatch through this
+            // handle). This is the single `unsafe` boundary for the
+            // `EventLoopHandle::Js` arm.
             owner: unsafe { JsEventLoop::new(JsEventLoopKind::Jsc, js_event_loop) },
         }
     }
@@ -563,9 +563,9 @@ impl EventLoopHandle {
         match self {
             // SAFETY: caller guarantees `task.js` is the active union member when `self` is `Js`.
             EventLoopHandle::Js { owner } => owner.enqueue_task_concurrent(unsafe { task.js }),
-            // SAFETY: caller guarantees `task.mini` is the active union member
-            // when `self` is `Mini`.
             EventLoopHandle::Mini(mut mini) => {
+                // SAFETY: caller guarantees `task.mini` is the active union member
+                // when `self` is `Mini`.
                 mini_mut(&mut mini).enqueue_task_concurrent(unsafe { task.mini })
             }
         }

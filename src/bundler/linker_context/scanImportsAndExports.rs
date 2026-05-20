@@ -462,7 +462,10 @@ pub fn scan_imports_and_exports(
                         .graph
                         .symbols
                         .follow(col_ref!(module_refs)[source_index]);
+                    // SAFETY: `follow` returns a valid in-bounds `Ref`; no other
+                    // borrow into `this.graph.symbols` is live across this write.
                     unsafe { this.graph.symbol_mut(exports_ref) }.kind = SymbolKind::Unbound;
+                    // SAFETY: same as above; `module_ref` is a distinct slot.
                     unsafe { this.graph.symbol_mut(module_ref) }.kind = SymbolKind::Unbound;
                 } else if flag.force_include_exports_for_entry_point
                     || export_kind != ExportsKind::Cjs
@@ -654,6 +657,8 @@ pub fn scan_imports_and_exports(
                     builder.append(ident);
                     let end = builder.len;
                     let original_name = &builder.allocated_slice()[start..end];
+                    // SAFETY: `r#ref` was checked `is_valid()` above; no other
+                    // borrow into `this.graph.symbols` is live across this write.
                     unsafe { this.graph.symbol_mut(r#ref) }.original_name =
                         bun_ast::StoreStr::new(original_name);
                 }
@@ -1463,7 +1468,7 @@ mod __css_validation {
                     let name_v = name.v();
                     if !other_css_ast
                         .local_scope
-                        .contains_adapted(name_v, SliceBoxAdapter)
+                        .contains_adapted(name_v, &SliceBoxAdapter)
                     {
                         // Split-borrow — see `LinkerContext::log_disjoint`.
                         let _ = this.log_disjoint().add_error_fmt(
@@ -1654,7 +1659,7 @@ mod __css_validation {
                                 for name in compose.names.slice() {
                                     let name_v = name.v();
                                     let Some(other_name) =
-                                        other_ast.local_scope.get_adapted(name_v, SliceBoxAdapter)
+                                        other_ast.local_scope.get_adapted(name_v, &SliceBoxAdapter)
                                     else {
                                         continue;
                                     };
@@ -1677,7 +1682,7 @@ mod __css_validation {
                             for name in compose.names.slice() {
                                 let name_v = name.v();
                                 let Some(name_entry) =
-                                    ast.local_scope.get_adapted(name_v, SliceBoxAdapter)
+                                    ast.local_scope.get_adapted(name_v, &SliceBoxAdapter)
                                 else {
                                     continue;
                                 };

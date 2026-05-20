@@ -51,6 +51,9 @@ pub struct DeclarationBlock<'bump> {
 // element storage is uniquely owned exactly like `Vec<T>`, so thread-safety
 // follows `Property`'s auto-traits.
 unsafe impl<'bump> Send for DeclarationBlock<'bump> {}
+// SAFETY: same invariant as the `Send` impl above — post-parse the block is an
+// immutable, uniquely-owned tree whose `&Bump` is never used to allocate, so
+// shared `&DeclarationBlock` access across threads only reads `Property` data.
 unsafe impl<'bump> Sync for DeclarationBlock<'bump> {}
 
 pub struct DebugFmt<'a, 'bump>(&'a DeclarationBlock<'bump>);
@@ -69,7 +72,7 @@ impl<'a, 'bump> core::fmt::Display for DebugFmt<'a, 'bump> {
             &bump,
             bun_alloc::ArenaVec::<u8>::new_in(&bump),
             &mut arraylist,
-            css::PrinterOptions::default(),
+            &css::PrinterOptions::default(),
             None,
             None,
             &symbols,

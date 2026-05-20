@@ -36,7 +36,7 @@ impl Default for Intrinsic {
     }
 }
 
-#[derive(Default)]
+#[derive(Copy, Clone, Default)]
 pub struct CreateJSFunctionOptions {
     pub implementation_visibility: ImplementationVisibility,
     pub intrinsic: Intrinsic,

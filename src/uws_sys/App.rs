@@ -106,9 +106,9 @@ impl<const SSL: bool> App<SSL> {
         c::uws_app_close_idle(Self::SSL_FLAG, self.as_raw())
     }
 
-    pub fn create(opts: BunSocketContextOptions) -> Option<*mut Self> {
+    pub fn create(opts: &BunSocketContextOptions) -> Option<*mut Self> {
         // SAFETY: FFI call; uws_create_app returns null on failure.
-        let app = unsafe { c::uws_create_app(Self::SSL_FLAG, opts) };
+        let app = unsafe { c::uws_create_app(Self::SSL_FLAG, *opts) };
         if app.is_null() {
             None
         } else {
@@ -388,7 +388,7 @@ impl<const SSL: bool> App<SSL> {
     pub fn add_server_name_with_options(
         &mut self,
         hostname_pattern: &core::ffi::CStr,
-        opts: BunSocketContextOptions,
+        opts: &BunSocketContextOptions,
     ) -> Result<(), AddServerNameError> {
         // SAFETY: self is a valid app; hostname_pattern is NUL-terminated.
         let rc = unsafe {
@@ -396,7 +396,7 @@ impl<const SSL: bool> App<SSL> {
                 Self::SSL_FLAG,
                 std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
                 hostname_pattern.as_ptr(),
-                opts,
+                *opts,
             )
         };
         if rc != 0 {

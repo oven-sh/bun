@@ -124,7 +124,7 @@ impl UUID7 {
         UUID_V7_COUNTER.fetch_add(1, Ordering::Relaxed) % 4096
     }
 
-    pub fn init(timestamp: u64, random: &[u8; 8]) -> UUID7 {
+    pub fn init(timestamp: u64, random: [u8; 8]) -> UUID7 {
         let count = Self::get_count(timestamp);
 
         let mut bytes = [0u8; 16];

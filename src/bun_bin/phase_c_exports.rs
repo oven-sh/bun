@@ -66,10 +66,10 @@ type VirtualMachine = c_void;
 // REAL: src/main.rs (binary-level export; defined here directly)
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__panic(msg: *const u8, len: usize) -> ! {
-    // SAFETY: caller guarantees `msg` is valid for `len` bytes.
     let bytes = if msg.is_null() {
         &b""[..]
     } else {
+        // SAFETY: `msg` is non-null (checked above) and the C++ caller guarantees it is valid for reading `len` bytes for the duration of this call.
         unsafe { core::slice::from_raw_parts(msg, len) }
     };
     bun_core::output::panic(format_args!("{}", String::from_utf8_lossy(bytes)));

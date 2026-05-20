@@ -25,18 +25,6 @@ impl Overflow {
         }
         Ok(())
     }
-
-    pub fn deep_clone(&self, arena: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: css.implementDeepClone is comptime field reflection → #[derive(Clone)]
-        let _ = arena;
-        *self
-    }
-
-    #[inline]
-    pub fn eql(lhs: &Self, rhs: &Self) -> bool {
-        // PORT NOTE: css.implementEql is comptime field reflection → #[derive(PartialEq)]
-        lhs == rhs
-    }
 }
 
 /// An [overflow](https://www.w3.org/TR/css-overflow-3/#overflow-properties) keyword

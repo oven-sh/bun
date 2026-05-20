@@ -35,27 +35,27 @@ impl Image {
             Image::Gradient(g) => match &**g {
                 Gradient::Linear(linear) => {
                     css::Feature::LinearGradient.is_compatible(browsers)
-                        && linear.is_compatible(browsers)
+                        && linear.is_compatible(&browsers)
                 }
                 Gradient::RepeatingLinear(repeating_linear) => {
                     css::Feature::RepeatingLinearGradient.is_compatible(browsers)
-                        && repeating_linear.is_compatible(browsers)
+                        && repeating_linear.is_compatible(&browsers)
                 }
                 Gradient::Radial(radial) => {
                     css::Feature::RadialGradient.is_compatible(browsers)
-                        && radial.is_compatible(browsers)
+                        && radial.is_compatible(&browsers)
                 }
                 Gradient::RepeatingRadial(repeating_radial) => {
                     css::Feature::RepeatingRadialGradient.is_compatible(browsers)
-                        && repeating_radial.is_compatible(browsers)
+                        && repeating_radial.is_compatible(&browsers)
                 }
                 Gradient::Conic(conic) => {
                     css::Feature::ConicGradient.is_compatible(browsers)
-                        && conic.is_compatible(browsers)
+                        && conic.is_compatible(&browsers)
                 }
                 Gradient::RepeatingConic(repeating_conic) => {
                     css::Feature::RepeatingConicGradient.is_compatible(browsers)
-                        && repeating_conic.is_compatible(browsers)
+                        && repeating_conic.is_compatible(&browsers)
                 }
                 Gradient::WebkitGradient(_) => css::prefixes::Feature::is_webkit_gradient(browsers),
             },
@@ -75,7 +75,7 @@ impl Image {
 
     pub fn get_necessary_prefixes(&self, targets: css::targets::Targets) -> css::VendorPrefix {
         match self {
-            Image::Gradient(grad) => grad.get_necessary_prefixes(targets),
+            Image::Gradient(grad) => grad.get_necessary_prefixes(&targets),
             Image::ImageSet(image_set) => image_set.get_necessary_prefixes(targets),
             _ => css::VendorPrefix::NONE,
         }
@@ -230,7 +230,7 @@ impl Image {
 
     pub fn get_necessary_fallbacks(&self, targets: css::targets::Targets) -> ColorFallbackKind {
         match self {
-            Image::Gradient(grad) => grad.get_necessary_fallbacks(targets),
+            Image::Gradient(grad) => grad.get_necessary_fallbacks(&targets),
             _ => ColorFallbackKind::empty(),
         }
     }

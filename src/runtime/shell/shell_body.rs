@@ -85,7 +85,7 @@ pub enum ShellErr {
 
 impl ShellErr {
     /// Spec `ShellErr.newSys(bun.sys.Error)` — wrap a low-level syscall error.
-    pub fn new_sys(e: sys::Error) -> Self {
+    pub fn new_sys(e: &sys::Error) -> Self {
         ShellErr::Sys(e.to_shell_system_error())
     }
     /// Spec `ShellErr.newSys(jsc.SystemError)` — already JS-shaped.
@@ -276,7 +276,7 @@ impl<'a> GlobalJS<'a> {
     }
 
     #[inline]
-    pub fn throw_error(self, err: sys::Error) {
+    pub fn throw_error(self, err: &sys::Error) {
         self.global_this.throw_value(err.to_js(self.global_this));
     }
 
@@ -519,9 +519,9 @@ impl<'a> CmdEnvIter<'a> {
     pub fn from_env(env: &'a mut bun_collections::StringArrayHashMap<Box<ZStr>>) -> Self {
         // PORT NOTE: `iterator()` borrows `&mut self`; rebind through a raw ptr so the
         // struct can hold both the map ref and the iterator (Zig had no aliasing rules).
+        let env_ptr: *mut _ = env;
         // SAFETY: `env` outlives `'a` and is not mutated through `self.env` while `iter`
         // walks the backing arrays.
-        let env_ptr: *mut _ = env;
         let iter = unsafe { (*env_ptr).iterator() };
         Self { env, iter }
     }

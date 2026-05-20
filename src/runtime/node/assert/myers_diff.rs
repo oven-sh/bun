@@ -407,7 +407,7 @@ pub fn print_diff<T: Line + fmt::Display>(diffs: &Vec<Diff<T>>) {
 // =============================================================================
 
 #[inline]
-fn are_chars_equal<T: PartialEq>(a: T, b: T) -> bool {
+fn are_chars_equal<T: PartialEq>(a: &T, b: &T) -> bool {
     a == b
 }
 

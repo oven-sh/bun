@@ -180,7 +180,7 @@ impl JSGlobalObject {
         // stack locals (`dt` fields) and remain valid for the duration of the call.
         unsafe {
             crate::cpp::raw::Bun__msToGregorianDateTime(
-                self as *const JSGlobalObject as *mut JSGlobalObject,
+                self.as_ptr(),
                 ms,
                 false,
                 &raw mut dt.year,
@@ -762,7 +762,7 @@ impl JSGlobalObject {
         JscError::INVALID_ARG_TYPE.fmt(self, args)
     }
 
-    pub fn throw_sys_error(&self, opts: SysErrOptions, message: Arguments<'_>) -> JsError {
+    pub fn throw_sys_error(&self, opts: &SysErrOptions, message: Arguments<'_>) -> JsError {
         let err = self.create_error_instance(message);
         if err.is_empty() {
             debug_assert!(self.has_exception());
@@ -1411,7 +1411,7 @@ impl JSGlobalObject {
     }
 
     pub fn create(
-        v: *mut VirtualMachine,
+        v: &mut VirtualMachine,
         console: *mut c_void,
         context_id: i32,
         mini_mode: bool,
@@ -1420,9 +1420,7 @@ impl JSGlobalObject {
     ) -> *mut JSGlobalObject {
         let _trace = perf::trace("JSGlobalObject.create");
 
-        // SAFETY: caller passes the live VM under construction; event_loop()
-        // returns a raw self-pointer that we mutate once to install the waker.
-        unsafe { (*(*v).event_loop()).ensure_waker() };
+        v.event_loop_mut().ensure_waker();
         // C++ creates and returns a non-null global object; `console`/`worker_ptr`
         // are opaque round-trip pointers C++ stores into the new global.
         let global = Zig__GlobalObject__create(
@@ -1567,7 +1565,7 @@ use bun_core::fmt::VecWriter as WriteVec;
 // ──────────────────────────────────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Zig__GlobalObject__resolve(
+pub unsafe extern "C" fn Zig__GlobalObject__resolve(
     res: *mut ErrorableString,
     global: *const JSGlobalObject,
     specifier: *mut BunString,
@@ -1590,7 +1588,7 @@ pub extern "C" fn Zig__GlobalObject__resolve(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Zig__GlobalObject__reportUncaughtException(
+pub unsafe extern "C" fn Zig__GlobalObject__reportUncaughtException(
     global: *const JSGlobalObject,
     exception: *mut Exception,
 ) -> JSValue {

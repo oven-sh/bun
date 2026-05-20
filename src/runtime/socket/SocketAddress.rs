@@ -53,6 +53,7 @@ impl SocketAddress {
     }
 }
 
+#[derive(Copy, Clone)]
 pub struct Options {
     pub family: AF,
     /// When `None`, default is determined by address family.

@@ -189,9 +189,9 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
     pub fn add_many_as_array<const N: usize>(&mut self) -> Result<&mut [T; N], OverflowError> {
         let prev_len = self.len;
         self.resize((self.len as usize) + N)?;
+        let ptr = self.buffer[prev_len..][..N].as_mut_ptr().cast::<[T; N]>();
         // SAFETY: `[prev_len .. prev_len+N]` is within capacity after resize; caller must
         // initialize before reading (Zig returns `*[n]T` over undefined storage).
-        let ptr = self.buffer[prev_len..][..N].as_mut_ptr().cast::<[T; N]>();
         Ok(unsafe { &mut *ptr })
     }
 
@@ -200,9 +200,9 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
     pub fn add_many_as_slice(&mut self, n: usize) -> Result<&mut [T], OverflowError> {
         let prev_len = self.len;
         self.resize(self.len + n)?;
+        let s = &mut self.buffer[prev_len..][..n];
         // SAFETY: `[prev_len .. prev_len+n]` is within capacity after resize; caller must
         // initialize before reading.
-        let s = &mut self.buffer[prev_len..][..n];
         Ok(unsafe { &mut *(std::ptr::from_mut::<[MaybeUninit<T>]>(s) as *mut [T]) })
     }
 

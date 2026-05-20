@@ -32,10 +32,10 @@ pub fn get_body_stream_or_bytes_for_wasm_streaming(
     response_value: JSValue,
     streaming_compiler: *mut c_void,
 ) -> JsResult<JSValue> {
-    // SAFETY: `from_js` returns a pointer to the GC-owned `Response` cell;
-    // the cell stays live for the duration of this host call (rooted on the
-    // C++ caller's stack).
     let response: &mut Response = match response::from_js(response_value) {
+        // SAFETY: `from_js` returns a pointer to the GC-owned `Response` cell;
+        // the cell stays live for the duration of this host call (rooted on the
+        // C++ caller's stack).
         Some(r) => unsafe { &mut *r },
         None => {
             return Err(this.throw_invalid_argument_type_value2(

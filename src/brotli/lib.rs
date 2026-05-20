@@ -96,7 +96,7 @@ impl<'a> BrotliReaderArrayList<'a> {
     pub fn new_with_options(
         input: &'a [u8],
         list: &'a mut Vec<u8>,
-        options: DecoderOptions,
+        options: &DecoderOptions,
     ) -> Result<Box<Self>, Error> {
         // TODO(port): narrow error set
         Ok(Self::new(Self::init_with_options(
@@ -112,7 +112,7 @@ impl<'a> BrotliReaderArrayList<'a> {
     pub fn init_with_options(
         input: &'a [u8],
         list: &'a mut Vec<u8>,
-        options: DecoderOptions,
+        options: &DecoderOptions,
         flush_op: c::BrotliEncoderOperation,
         finish_flush_op: c::BrotliEncoderOperation,
         full_flush_op: c::BrotliEncoderOperation,
@@ -129,7 +129,7 @@ impl<'a> BrotliReaderArrayList<'a> {
             Some(BrotliAllocator::free),
             ptr::null_mut(),
         )
-        .ok_or(err!("BrotliFailedToCreateInstance"))?;
+        .ok_or_else(|| err!("BrotliFailedToCreateInstance"))?;
 
         if options.params.large_window {
             let _ =
@@ -293,7 +293,7 @@ impl BrotliCompressionStream {
             Some(BrotliAllocator::free),
             ptr::null_mut(),
         )
-        .ok_or(err!("BrotliFailedToCreateInstance"))?;
+        .ok_or_else(|| err!("BrotliFailedToCreateInstance"))?;
 
         Ok(Self {
             brotli: instance,

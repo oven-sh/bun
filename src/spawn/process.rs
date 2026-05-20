@@ -1169,11 +1169,14 @@ pub mod waiter_thread_posix {
 
     impl<T: ProcessLike> NewQueue<T> {
         pub fn append(&self, process: *mut T) {
-            self.queue
-                .push(bun_core::heap::into_raw(Box::new(TaskQueueEntry {
-                    process,
-                    next: bun_threading::Link::new(),
-                })));
+            // SAFETY: freshly boxed `TaskQueueEntry`; `into_raw` yields a valid owned pointer.
+            unsafe {
+                self.queue
+                    .push(bun_core::heap::into_raw(Box::new(TaskQueueEntry {
+                        process,
+                        next: bun_threading::Link::new(),
+                    })))
+            };
         }
 
         pub fn loop_(&self) {
@@ -1798,14 +1801,20 @@ mod spawn_process_body {
         }
     }
 
-    pub fn spawn_process(
+    /// # Safety
+    /// `argv` must point to a null-terminated array of NUL-terminated C
+    /// strings with at least one non-null element; `envp` must point to a
+    /// null-terminated array of NUL-terminated C strings. Both must remain
+    /// valid for the duration of the call.
+    pub unsafe fn spawn_process(
         options: &SpawnOptions,
         argv: Argv, // [*:null]?[*:0]const u8
         envp: Envp,
     ) -> Result<bun_sys::Result<SpawnProcessResult>, bun_core::Error> {
         #[cfg(unix)]
         {
-            spawn_process_posix(options, argv, envp)
+            // SAFETY: forwarded from this function's safety contract.
+            unsafe { spawn_process_posix(options, argv, envp) }
         }
         #[cfg(not(unix))]
         {
@@ -3129,8 +3138,10 @@ mod spawn_process_body {
             Bun__currentSyncPID.store(0, core::sync::atomic::Ordering::Relaxed);
             let _signals = SignalForwarding::register();
 
+            // SAFETY: caller-built argv/envp are null-terminated C-string
+            // arrays with argv[0] non-null; valid for this call.
             let process =
-                match spawn_process_posix(&options.to_spawn_options(no_orphans), argv, envp)? {
+                match unsafe { spawn_process_posix(&options.to_spawn_options(no_orphans), argv, envp) }? {
                     Err(err) => return Ok(Err(err)),
                     Ok(proces) => proces,
                 };

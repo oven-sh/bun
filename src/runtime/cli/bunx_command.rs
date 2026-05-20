@@ -580,6 +580,9 @@ impl BunxCommand {
         let mut opts = Options::parse(ctx, argv)?;
 
         let mut requests_buf = update_request::Array::with_capacity(64);
+        // SAFETY: CLI dispatch is single-threaded and `ctx_log` is consumed by
+        // `UpdateRequest::parse` immediately below; it is not held across any
+        // call that may itself reborrow the same `Log`.
         let ctx_log = unsafe { ctx.log_mut() };
         let update_requests = UpdateRequest::parse(
             None,

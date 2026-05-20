@@ -102,6 +102,7 @@ fn start_manifest_task(
     Ok(())
 }
 
+#[derive(Clone, Copy)]
 pub enum Packages<'a> {
     All,
     Ids(&'a [PackageID]),
@@ -200,6 +201,11 @@ pub fn populate_manifest_cache(
                 );
                 if cached.is_none() {
                     start_manifest_task(
+                        // SAFETY: `manager_ptr` is the SRW provenance root;
+                        // `start_manifest_task` only touches the network-task
+                        // pool / progress bar / log, never `lockfile.buffers`
+                        // or `lockfile.packages`, so the outstanding shared
+                        // slices (`pkg_name_slice`, `dep`) stay valid.
                         unsafe { &mut *manager_ptr },
                         pkg_name_slice,
                         dep,
@@ -207,7 +213,9 @@ pub fn populate_manifest_cache(
                     )?;
                 }
 
+                // SAFETY: SRW root; network-queue flush does not mutate `lockfile`.
                 run_tasks::flush_network_queue(unsafe { &mut *manager_ptr });
+                // SAFETY: SRW root; task scheduler does not mutate `lockfile`.
                 let _ = run_tasks::schedule_tasks(unsafe { &mut *manager_ptr });
             }
         }
@@ -248,13 +256,20 @@ pub fn populate_manifest_cache(
                     );
                     if cached.is_none() {
                         start_manifest_task(
+                            // SAFETY: `manager_ptr` is the SRW provenance
+                            // root; `start_manifest_task` only touches the
+                            // network-task pool / progress bar / log, never
+                            // `lockfile.buffers` or `lockfile.packages`, so
+                            // `package_name` / `dep` stay valid.
                             unsafe { &mut *manager_ptr },
                             package_name,
                             dep,
                             needs_extended_manifest,
                         )?;
 
+                        // SAFETY: SRW root; network-queue flush does not mutate `lockfile`.
                         run_tasks::flush_network_queue(unsafe { &mut *manager_ptr });
+                        // SAFETY: SRW root; task scheduler does not mutate `lockfile`.
                         let _ = run_tasks::schedule_tasks(unsafe { &mut *manager_ptr });
                     }
                 }

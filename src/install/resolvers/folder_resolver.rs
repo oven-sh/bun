@@ -298,6 +298,9 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
         let _tracer =
             bun_perf::trace(bun_perf::PerfEvent::FolderResolverReadPackageJSONFromDiskWorkspace);
 
+        // SAFETY: `manager_ptr` was just derived from the live `&mut PackageManager`
+        // argument; `log` points into a separate `Log` allocation (see PORT NOTE
+        // above), so this `&mut` reborrow aliases no other live reference.
         let json = unsafe { &mut *manager_ptr }
             .workspace_package_json_cache
             .get_with_path(log, abs.as_bytes(), Default::default())
@@ -368,7 +371,7 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
     if let Some(existing_id) =
         manager
             .lockfile
-            .get_package_id(package.name_hash, Some(version), &package.resolution)
+            .get_package_id(package.name_hash, Some(&version), &package.resolution)
     {
         package.meta.id = existing_id;
         manager.lockfile.packages.set(existing_id as usize, package);

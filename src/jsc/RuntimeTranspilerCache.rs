@@ -1087,8 +1087,7 @@ bun_ast::link_impl_TranspilerCacheImpl! {
     Jsc for bun_ast::RuntimeTranspilerCache => |this| {
         get(source, parser_options, used_jsx) => {
             let this = &mut *this;
-            let source = &*source;
-            let parser_options = &*parser_options.cast::<ParserOptions<'_>>();
+            let parser_options = parser_options.cast::<ParserOptions<'_>>().as_ref();
 
             let mut jsc = RuntimeTranspilerCache {
                 input_hash: this.input_hash,

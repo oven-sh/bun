@@ -311,12 +311,15 @@ impl<const SSL: bool> WebSocket<SSL> {
                 if !servername.is_null() {
                     // SAFETY: servername is a NUL-terminated C string owned by the SSL session.
                     let hostname = unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
-                    // SAFETY: ssl_ptr is non-null (connected SSL socket on the handshake path).
-                    if !ssl_ptr.is_null()
-                        && !boringssl::check_server_identity(unsafe { &mut *ssl_ptr }, hostname)
-                    {
-                        self.fail(ErrorCode::FailedToConnect);
-                        return;
+                    if !ssl_ptr.is_null() {
+                        // SAFETY: `ssl_ptr` is non-null (checked above) and is the live
+                        // `SSL*` native handle of the connected socket; the socket outlives
+                        // this call and no other Rust borrow of the `SSL` object exists.
+                        let ssl = unsafe { &mut *ssl_ptr };
+                        if !boringssl::check_server_identity(ssl, hostname) {
+                            self.fail(ErrorCode::FailedToConnect);
+                            return;
+                        }
                     }
                 }
             }
@@ -417,17 +420,17 @@ impl<const SSL: bool> WebSocket<SSL> {
                 };
                 let mut outstring = ZigString::EMPTY;
                 if let Some(utf16) = utf16_bytes {
-                    outstring = ZigString::from16_slice(&utf16);
-                    outstring.mark_global();
-                    jsc::mark_binding!();
-                    out.did_receive_text(false, &outstring);
                     // Ownership of the UTF-16 buffer transfers to C++: with
                     // `clone=false` and the global tag set, `Zig::toString`
                     // adopts the allocation into a `WTF::ExternalStringImpl`
                     // which `mi_free`s it later. Dropping the Vec here would
                     // be a UAF + double-free. Mirrors websocket_client.zig
                     // which never frees `utf16` locally.
-                    core::mem::forget(utf16);
+                    let utf16 = core::mem::ManuallyDrop::new(utf16);
+                    outstring = ZigString::from16_slice(&utf16);
+                    outstring.mark_global();
+                    jsc::mark_binding!();
+                    out.did_receive_text(false, &outstring);
                 } else {
                     outstring = ZigString::init(data);
                     jsc::mark_binding!();
@@ -1673,9 +1676,12 @@ impl<const SSL: bool> WebSocket<SSL> {
                 if wrote_len > 123 {
                     break 'inner;
                 }
-                // SAFETY: close_reason_buf has 128 bytes; reinterpret first 125 as fixed array
-                let buf_ptr = close_reason_buf.as_mut_ptr().cast::<[u8; 125]>();
-                this.send_close_with_body(code, Some(unsafe { &mut *buf_ptr }), wrote_len);
+                // SAFETY: `close_reason_buf` is a 128-byte stack array, so its
+                // first 125 bytes form a valid `[u8; 125]` (align 1); `cursor`
+                // (the only other borrow) ended at `wrote_len` above, so this
+                // `&mut` is unique.
+                let buf = unsafe { &mut *close_reason_buf.as_mut_ptr().cast::<[u8; 125]>() };
+                this.send_close_with_body(code, Some(buf), wrote_len);
                 return;
             }
         }

@@ -1408,6 +1408,7 @@ impl Store {
             return;
         }
 
+        // SAFETY: `poll` is a live hive slot (see fn-level comment); raw read of a POD field.
         debug_assert!(unsafe { (*poll).next_to_free }.is_null());
 
         if !self.pending_free_tail.is_null() {

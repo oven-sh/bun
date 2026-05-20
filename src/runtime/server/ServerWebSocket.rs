@@ -740,7 +740,7 @@ impl ServerWebSocket {
     where
         ServerType: WebSocketUpgradeServer<SSL>,
     {
-        Wrap::<ServerType, Self, SSL>::apply(opts)
+        Wrap::<ServerType, Self, SSL>::apply(&opts)
     }
 
     // PORT NOTE: no `#[bun_jsc::host_fn]` here — the constructor extern shim is

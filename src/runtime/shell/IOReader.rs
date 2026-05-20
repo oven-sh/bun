@@ -80,6 +80,7 @@ pub struct IOReader {
 
 // SAFETY: shell is single-threaded; `Arc` is used purely for refcounting.
 unsafe impl Send for IOReader {}
+// SAFETY: shell is single-threaded; `Arc` is used purely for refcounting.
 unsafe impl Sync for IOReader {}
 
 impl IOReader {
@@ -152,20 +153,19 @@ impl IOReader {
                 #[cfg(windows)]
                 is_reading: false,
                 started: false,
-                self_weak: w.clone(),
+                self_weak: std::sync::Weak::clone(w),
                 interp: None,
             }),
         });
         // PORT NOTE: set the parent backref after Arc allocation so the
         // address is stable.
-        //
+        let parent: *const IOReader = std::sync::Arc::as_ptr(&this);
         // SAFETY: `Arc::as_ptr` yields `*const IOReader`, but every field of
         // `IOReader` is `UnsafeCell`, so all mutation flows through interior
         // mutability (SharedReadWrite). The `*mut` cast exists solely to satisfy
         // `set_parent`'s `*mut` signature for the vtable backref; the
         // `BufferedReaderParent` callbacks only ever reborrow it as `&Self` to
         // call `&self` methods — no `&mut IOReader` is materialized from it.
-        let parent: *const IOReader = std::sync::Arc::as_ptr(&this);
         unsafe { (*this.reader.get()).set_parent(parent.cast_mut().cast()) };
         crate::shell_log!("IOReader(0x{:x}, fd={}) create", parent as usize, fd);
         this
@@ -230,7 +230,7 @@ impl IOReader {
             if need_start {
                 let fd = self.state().fd;
                 if let Err(e) = r.start(fd, true) {
-                    self.on_reader_error(e);
+                    self.on_reader_error(&e);
                 }
             }
             return Yield::suspended();
@@ -243,7 +243,7 @@ impl IOReader {
             }
             s.is_reading = true;
             if let Err(e) = self.reader().start_with_current_pipe() {
-                self.on_reader_error(e);
+                self.on_reader_error(&e);
                 return Yield::failed();
             }
             Yield::suspended()
@@ -316,7 +316,7 @@ impl IOReader {
     }
 
     /// Spec: IOReader.zig `onReaderError`.
-    fn on_reader_error(&self, err: sys::Error) {
+    fn on_reader_error(&self, err: &sys::Error) {
         // `dispatch_reader_done` may drop the last external Arc; keep `self`
         // alive across the loop. Spec gets this from `asyncDeinit`'s hop.
         let _keepalive = self.keepalive();
@@ -385,7 +385,7 @@ bun_io::impl_buffered_reader_parent! {
     has_on_read_chunk = true;
     on_read_chunk   = |this, chunk, has_more| (*this).on_read_chunk_cb(chunk, has_more);
     on_reader_done  = |this| (*this).on_reader_done_cb();
-    on_reader_error = |this, err| (*this).on_reader_error(err);
+    on_reader_error = |this, err| (*this).on_reader_error(&err);
     loop_           = |this| (*this).io_evtloop().native_loop();
     event_loop      = |this| (*this).io_evtloop();
 }

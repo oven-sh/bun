@@ -96,7 +96,7 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         // drop(this) — Box freed at scope exit
     }
 
-    pub fn run_from_thread_pool(task: *mut WorkPoolTask) {
+    pub unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
         crate::mark_binding();
         // SAFETY: only reachable via `WorkPoolTask::callback` (unsafe-fn-ptr
         // slot — safe-fn coerces) for the `task` field initialised in
@@ -111,7 +111,7 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         Context::run(ctx, this);
     }
 
-    pub fn run_from_js(this: *mut Self) -> Result<(), crate::JsTerminated> {
+    pub unsafe fn run_from_js(this: *mut Self) -> Result<(), crate::JsTerminated> {
         // SAFETY: `this` is the live heap allocation from create_on_js_thread,
         // exclusively owned by the JS thread at this point.
         let this = unsafe { &mut *this };
@@ -124,7 +124,7 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         Context::then(ctx, global_this)
     }
 
-    pub fn schedule(this: *mut Self) {
+    pub unsafe fn schedule(this: *mut Self) {
         // SAFETY: `this` is the live heap allocation from create_on_js_thread.
         let this = unsafe { &mut *this };
         this.ref_.ref_(Async::js_vm_ctx());
@@ -132,7 +132,7 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         WorkPool::schedule(&raw mut this.task);
     }
 
-    pub fn on_finish(this: *mut Self) {
+    pub unsafe fn on_finish(this: *mut Self) {
         // SAFETY: `this` is alive (called from `Context::run` on the thread pool).
         // `concurrent_task` is an intrusive field of `*this`; `from`
         // re-initializes it in place and returns the same address. Passing

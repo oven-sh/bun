@@ -58,6 +58,7 @@ unsafe extern "C" {
     -> u32;
 }
 
+#[derive(Clone, Copy)]
 pub struct Options {
     pub max_colors: u16,
     /// Floyd–Steinberg error diffusion. Hides banding on gradients at the

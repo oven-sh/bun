@@ -280,7 +280,7 @@ pub extern "C" fn TextEncoder__encodeRopeString(
     };
     let mut iter = encoder.iter();
     array.ensure_still_alive();
-    rope_str.iterator(global_this, (&raw mut iter).cast::<c_void>());
+    rope_str.iterator(global_this, &mut iter);
     array.ensure_still_alive();
 
     if encoder.any_non_ascii {

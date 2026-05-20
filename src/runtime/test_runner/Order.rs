@@ -52,6 +52,9 @@ impl Order {
             // `&T as *const T as *mut T` chain; field writes use raw deref to avoid materializing
             // a long-lived `&mut`.
             let entry: *mut ExecutionEntry = box_inner_mut(entry_box);
+            // SAFETY: `entry` is the heap address of a live `Box<ExecutionEntry>` uniquely owned by
+            // the DescribeScope tree (see paragraph above); raw-ptr field writes uphold the Zig
+            // `*ExecutionEntry` mutation contract without materializing a long-lived `&mut`.
             unsafe {
                 if bun_core::Environment::CI_ASSERT && (*entry).added_in_phase != AddedInPhase::Preload {
                     debug_assert!((*entry).next.is_none());
@@ -126,7 +129,9 @@ impl Order {
         // loop below, so we never hold a long-lived `&mut *current` across those calls — each access
         // dereferences the raw pointer locally.
         debug_assert!(unsafe { (*current).base.has_callback == (*current).callback.is_some() });
+        // SAFETY: caller-guaranteed live `ExecutionEntry` (see above); read-only field access.
         let use_each_hooks = unsafe { (*current).base.has_callback };
+        // SAFETY: caller-guaranteed live `ExecutionEntry` (see above); read-only field access.
         let first_parent: Option<*mut DescribeScope> = unsafe { (*current).base.parent };
 
         let mut list = EntryList::default();
@@ -140,12 +145,12 @@ impl Order {
                 // prepend in reverse so they end up in forwards order
                 let mut i: usize = p.before_each.len();
                 while i > 0 {
+                    let src: *const ExecutionEntry = &raw const *p.before_each[i - 1];
                     // PERF(port): was arena bulk-free — Zig allocated this clone in `this.arena`.
                     // TODO(port): ownership — heap::alloc leaks without the arena; decide whether
                     // test_runner keeps an arena or tracks these for cleanup.
                     // SAFETY: bitwise copy of *ExecutionEntry — matches Zig `bun.create(arena, T, src.*)`.
                     // The clone is leaked (heap::alloc) so its Strong/Box fields are never dropped twice.
-                    let src: *const ExecutionEntry = &raw const *p.before_each[i - 1];
                     let cloned = bun_core::heap::into_raw(Box::new(unsafe { core::ptr::read(src) }));
                     list.prepend(cloned);
                     i -= 1;
@@ -164,9 +169,9 @@ impl Order {
                 // SAFETY: parent chain consists of live DescribeScope nodes.
                 let p = unsafe { &*p_ptr };
                 for entry in p.after_each.iter() {
+                    let src: *const ExecutionEntry = &raw const **entry;
                     // PERF(port): was arena bulk-free — see note above.
                     // SAFETY: bitwise copy of *ExecutionEntry — matches Zig `bun.create(arena, T, src.*)`.
-                    let src: *const ExecutionEntry = &raw const **entry;
                     let cloned = bun_core::heap::into_raw(Box::new(unsafe { core::ptr::read(src) }));
                     list.append(cloned);
                 }

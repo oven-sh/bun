@@ -88,12 +88,12 @@ impl Default for Flags {
 impl Flags {
     /// Did the user end the request?
     #[inline]
-    pub fn is_requested_completed_or_ended(&self) -> bool {
+    pub fn is_requested_completed_or_ended(self) -> bool {
         self.intersects(Flags::REQUEST_HAS_COMPLETED | Flags::ENDED)
     }
 
     #[inline]
-    pub fn is_done(&self) -> bool {
+    pub fn is_done(self) -> bool {
         self.is_requested_completed_or_ended() || self.contains(Flags::SOCKET_CLOSED)
     }
 }

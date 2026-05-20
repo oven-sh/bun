@@ -236,6 +236,9 @@ pub fn install_isolated_packages(
     // passing `*PackageManager` (which owns it); take a raw pointer so column
     // borrows below don't tie up `&mut manager`.
     let lockfile: *mut Lockfile = &raw mut *manager.lockfile;
+    // SAFETY: `lockfile` was just derived from `&raw mut *manager.lockfile`;
+    // `manager` outlives this function and no other `&mut Lockfile` is formed
+    // while this reborrow is live (column slices below borrow through it).
     let lockfile: &mut Lockfile = unsafe { &mut *lockfile };
 
     let store: Store = 'store: {
@@ -1043,9 +1046,7 @@ pub fn install_isolated_packages(
                     )?
                 };
 
-            let mut new_entry_parents: Vec<store::entry::Id> = Vec::with_capacity(1);
-            new_entry_parents.push(entry.entry_parent_id);
-            // PERF(port): was appendAssumeCapacity — profile if hot.
+            let new_entry_parents: Vec<store::entry::Id> = vec![entry.entry_parent_id];
 
             let hoisted = 'hoisted: {
                 if new_entry_dep_id == invalid_dependency_id {
@@ -2092,6 +2093,10 @@ pub fn install_isolated_packages(
             summary: Default::default(),
             task_queue: Default::default(),
         };
+        // SAFETY: `manager_ptr` was derived from the caller's `&mut PackageManager`
+        // a few lines above; the only other copy lives in `installer.manager` as a
+        // BACKREF raw pointer that is dereferenced exclusively via `manager_mut()`
+        // on this thread, never while this `&mut` reborrow is live.
         let manager = unsafe { &mut *manager_ptr };
         // (Drop handles installer.deinit())
 

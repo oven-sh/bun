@@ -187,7 +187,7 @@ impl FSWatchTaskPosix {
             match &entry.event {
                 Event::Rename(file_path) => self.ctx().emit::<{ EventType::Rename }>(file_path),
                 Event::Change(file_path) => self.ctx().emit::<{ EventType::Change }>(file_path),
-                Event::Error(err) => self.ctx().emit_error(err.clone()),
+                Event::Error(err) => self.ctx().emit_error(err),
                 Event::Abort => self.ctx().emit_if_aborted(),
                 Event::Close => self.ctx().emit::<{ EventType::Close }>(b""),
             }
@@ -434,7 +434,7 @@ impl FSWatchTaskWindows {
         match &mut self.event {
             Event::Rename(path) => Self::run_path::<{ EventType::Rename }>(ctx, path),
             Event::Change(path) => Self::run_path::<{ EventType::Change }>(ctx, path),
-            Event::Error(err) => ctx.emit_error(err.clone()),
+            Event::Error(err) => ctx.emit_error(err),
             Event::Abort => ctx.emit_if_aborted(),
             Event::Close => ctx.emit::<{ EventType::Close }>(b""),
         }
@@ -823,7 +823,7 @@ impl FSWatcher {
 
     /// R-2: see `emit_abort` — `&self` + `Cell` so the trailing `close()`
     /// observes a re-entrant `watcher.close()` from inside the listener.
-    pub fn emit_error(&self, err: bun_sys::Error) {
+    pub fn emit_error(&self, err: &bun_sys::Error) {
         if self.closed.get() {
             return;
         }
@@ -1076,9 +1076,8 @@ impl FSWatcher {
         // R-2: deref as shared; mutation goes through `JsCell`.
         let ctx_ref = unsafe { &*ctx };
         // SAFETY: `ctx` is the heap-stable Box address; write provenance.
-        ctx_ref
-            .current_task
-            .with_mut(|t| t.ctx = Some(unsafe { bun_ptr::ParentRef::from_raw_mut(ctx) }));
+        let parent = unsafe { bun_ptr::ParentRef::from_raw_mut(ctx) };
+        ctx_ref.current_task.with_mut(|t| t.ctx = Some(parent));
 
         ctx_ref
             .path_watcher
@@ -1131,9 +1130,11 @@ impl FSWatcher {
                 ctx.cast::<c_void>(),
                 // §Dispatch cold-path vtable — `bun_jsc::RareData` stores
                 // (ptr, close-fn) so it can fire detach without naming FSWatcher.
-                // SAFETY (callee contract): `p` is the `ctx` registered above;
-                // still live until `remove_fs_watcher_for_isolation` runs.
-                |p| unsafe { (*p.cast::<FSWatcher>()).detach() },
+                |p| {
+                    // SAFETY: `p` is the `ctx` registered above; still live
+                    // until `remove_fs_watcher_for_isolation` runs.
+                    unsafe { (*p.cast::<FSWatcher>()).detach() }
+                },
             );
         }
         Ok(ctx)

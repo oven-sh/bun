@@ -466,6 +466,9 @@ pub unsafe fn sk_X509_value(sk: *const struct_stack_st_X509, i: usize) -> *mut X
 
 #[inline]
 pub unsafe fn sk_GENERAL_NAME_num(sk: *const struct_stack_st_GENERAL_NAME) -> usize {
+    // SAFETY: const→const cast between opaque aliases — `STACK_OF(GENERAL_NAME)`
+    // is the same C object as `OPENSSL_STACK`. Caller's `unsafe` contract
+    // guarantees `sk` is NULL or a live BoringSSL stack; `sk_num` accepts both.
     unsafe { sk_num(sk.cast::<OPENSSL_STACK>()) }
 }
 
@@ -482,6 +485,9 @@ pub unsafe fn sk_GENERAL_NAME_value(
 
 #[inline]
 pub unsafe extern "C" fn sk_GENERAL_NAME_free(sk: *mut struct_stack_st_GENERAL_NAME) {
+    // SAFETY: mut→mut cast between opaque aliases of the same allocation.
+    // Caller's `unsafe` contract guarantees `sk` is NULL or an owned
+    // BoringSSL stack; `sk_free` is documented to accept both.
     unsafe { sk_free(sk.cast::<OPENSSL_STACK>()) }
 }
 
@@ -497,6 +503,9 @@ unsafe extern "C" fn sk_GENERAL_NAME_call_free_func(
             free_func.expect("non-null free_func"),
         )
     };
+    // SAFETY: `ptr` is an element handed to this trampoline by `sk_pop_free_ex`
+    // while draining the `STACK_OF(GENERAL_NAME)` passed in below; the cast
+    // restores the typed pointer `f` was declared to accept before erasure.
     unsafe { f(ptr.cast::<struct_stack_st_GENERAL_NAME>()) }
 }
 
@@ -505,6 +514,11 @@ pub unsafe fn sk_GENERAL_NAME_pop_free(
     sk: *mut struct_stack_st_GENERAL_NAME,
     free_func: sk_GENERAL_NAME_free_func,
 ) {
+    // SAFETY: `sk` cast is mut→mut between opaque aliases; caller guarantees it
+    // is NULL or an owned `STACK_OF(GENERAL_NAME)`. The transmute erases
+    // `free_func`'s typed arg to `*mut c_void` — both sides are
+    // `extern "C" fn(*mut _)` so the fn-pointer reinterpret is ABI-sound, and
+    // `sk_GENERAL_NAME_call_free_func` restores the type before invoking it.
     unsafe {
         sk_pop_free_ex(
             sk.cast::<OPENSSL_STACK>(),

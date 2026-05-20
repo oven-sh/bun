@@ -384,7 +384,7 @@ impl EventLoop {
 
     /// SAFETY: returns `&mut` into VM-owned scratch; two calls alias the same
     /// buffer. Caller must not hold another live `&mut` to it.
-    pub unsafe fn pipe_read_buffer(&self) -> &mut [u8] {
+    pub unsafe fn pipe_read_buffer(&mut self) -> &mut [u8] {
         // SAFETY: vm() is the live owning VM; rare_data() lazily inits the
         // per-VM scratch buffer. Caller contract (see doc): no concurrent &mut.
         unsafe { &mut (*self.vm()).rare_data().pipe_read_buffer()[..] }
@@ -393,7 +393,7 @@ impl EventLoop {
     pub fn drain_microtasks_with_global(
         &mut self,
         global_object: &JSGlobalObject,
-        jsc_vm: *mut jsc::VM,
+        jsc_vm: &jsc::VM,
     ) -> Result<(), JsTerminated> {
         // Hoist the VM backref once. LLVM can't CSE the `Option<NonNull>` field
         // load across the FFI calls below (`release_weak_refs`, `drainMicrotasks`,
@@ -410,8 +410,7 @@ impl EventLoop {
         }
 
         jsc::mark_binding();
-        // SAFETY: `jsc_vm` is the live JSC::VM for this thread.
-        unsafe { (*jsc_vm).release_weak_refs() };
+        jsc_vm.release_weak_refs();
 
         match JSC__JSGlobalObject__drainMicrotasks(global_object) {
             DrainMicrotasksResult::Success => {}
@@ -447,7 +446,7 @@ impl EventLoop {
         // it via `global_ref()` instead of round-tripping through
         // `virtual_machine` (saves a dependent load on the hot path).
         let global = self.global_ref();
-        let jsc_vm = self.vm_ref().jsc_vm;
+        let jsc_vm = self.vm_ref().jsc_vm();
         self.drain_microtasks_with_global(global, jsc_vm)
     }
 
@@ -700,7 +699,7 @@ impl EventLoop {
         // PORT NOTE: reshaped for borrowck — `vm_ref()` is `&'static`, so the
         // global borrow detaches from `&self` and survives the `&mut self` call.
         let global = self.vm_ref().global();
-        let global_vm = self.vm_ref().jsc_vm;
+        let global_vm = self.vm_ref().jsc_vm();
 
         loop {
             // Zig: while (tickWithCount > 0) : (handleRejectedPromises) { tickConcurrent } else { ... }
@@ -893,7 +892,10 @@ impl EventLoop {
     /// load-bearing for `auto_tick`'s `has_pending_immediate` read, which must
     /// observe the post-swap `immediate_tasks` (next-tick immediates), not the
     /// un-drained current batch (busy-spin hazard, spec Timer.zig:251-256).
-    pub fn tick_immediate_tasks(&mut self, virtual_machine: *mut VirtualMachine) {
+    ///
+    /// # Safety
+    /// `virtual_machine` must be the live per-thread VM that owns this `EventLoop`.
+    pub unsafe fn tick_immediate_tasks(&mut self, virtual_machine: *mut VirtualMachine) {
         // R-2 noalias mitigation (PORT_NOTES_PLAN R-2; precedent
         // `b818e70e1c57` NodeHTTPResponse::cork): `&mut self` is `noalias`, and
         // the only thing reaching the `__bun_run_immediate_task` extern call is
@@ -909,7 +911,7 @@ impl EventLoop {
         // SAFETY: `this` is the unique live `EventLoop`; each access below is a
         // short-lived `&mut` that does not overlap re-entry.
         let mut to_run_now = core::mem::take(unsafe { &mut (*this).immediate_tasks });
-
+        // SAFETY: as above.
         unsafe { (*this).immediate_tasks = core::mem::take(&mut (*this).next_immediate_tasks) };
 
         let mut exception_thrown = false;
@@ -1060,7 +1062,8 @@ impl EventLoop {
                 panic!("EventLoop.enqueueTaskConcurrent: VM has terminated");
             }
         }
-        self.concurrent_tasks.push(task);
+        // SAFETY: caller contract — `task` is a valid live `ConcurrentTaskItem`.
+        unsafe { self.concurrent_tasks.push(task) };
         self.wakeup();
     }
 
@@ -1139,7 +1142,7 @@ impl EventLoop {
     ) -> JsResult<JSValue> {
         let result = callback.call(global_object, this_value, arguments)?;
         result.ensure_still_alive();
-        let jsc_vm = global_object.bun_vm().as_mut().jsc_vm;
+        let jsc_vm = global_object.bun_vm().jsc_vm();
         self.drain_microtasks_with_global(global_object, jsc_vm)?;
         Ok(result)
     }
@@ -1226,7 +1229,9 @@ impl EventLoop {
             !batch.front.is_null() && !batch.last.is_null(),
             "enqueue_task_concurrent_batch: empty batch",
         );
-        self.concurrent_tasks.push_batch(batch.front, batch.last);
+        // SAFETY: asserted non-null above; `batch` was produced by `pop_batch`,
+        // so `last` is reachable from `front` and every node is live.
+        unsafe { self.concurrent_tasks.push_batch(batch.front, batch.last) };
         self.wakeup();
     }
 }
@@ -1337,6 +1342,7 @@ pub fn event_loop_exit(global: &JSGlobalObject) {
 /// SAFETY: vtable contract — `owner` was erased from a live `*mut EventLoop`.
 #[inline(always)]
 fn el_ref<'a>(owner: *mut ()) -> &'a mut EventLoop {
+    // SAFETY: vtable contract — `owner` was erased from a live `*mut EventLoop`.
     unsafe { &mut *owner.cast::<EventLoop>() }
 }
 

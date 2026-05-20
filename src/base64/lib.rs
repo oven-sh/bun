@@ -621,10 +621,10 @@ pub mod zig_base64 {
                 acc_len += 6;
                 if acc_len >= 8 {
                     acc_len -= 8;
+                    debug_assert!(dest_idx < dest.len());
                     // SAFETY: callers size `dest` via `calc_size_for_slice(source)` (see doc comment),
                     // which yields exactly the number of output bytes this loop produces; `dest_idx`
                     // therefore stays in-bounds for any input that reaches this branch.
-                    debug_assert!(dest_idx < dest.len());
                     unsafe { *dest.get_unchecked_mut(dest_idx) = (acc >> acc_len) as u8 };
                     dest_idx += 1;
                 }

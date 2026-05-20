@@ -16,6 +16,7 @@ use css::css_values::number::{CSSNumber, CSSNumberFns};
 use css::css_values::percentage::NumberOrPercentage;
 use css::css_values::percentage::Percentage;
 use css::css_values::rect::Rect;
+use crate::generics::IsCompatible as _;
 
 use bun_alloc::Arena;
 
@@ -567,7 +568,7 @@ impl BorderImageHandler {
                         if unparsed.property_id.tag() == PropertyIdTag::BorderImage {
                             unparsed.get_prefixed(
                                 arena,
-                                context.targets,
+                                &context.targets,
                                 css::prefixes::Feature::BorderImage,
                             )
                         } else {

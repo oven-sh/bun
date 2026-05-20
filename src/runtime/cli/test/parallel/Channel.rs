@@ -489,6 +489,8 @@ impl<Owner: ChannelOwner> Channel<Owner> {
             // `container_of` arithmetic as `owner()`. The callback never
             // touches `self.r#in` (it only reads `rd` and may write other
             // channel fields / call `send()`), so the aliasing is sound.
+            // SAFETY: `self` is embedded at `Owner::OFFSET` inside an `Owner`
+            // that outlives all callbacks (see `Channel::owner()` / module doc).
             let owner_ptr: *mut Owner = unsafe { Owner::from_field_ptr(std::ptr::from_mut(self)) };
             let mut rd = frame::Reader {
                 p: &self.r#in[head + 5..][..len as usize],
@@ -575,6 +577,8 @@ impl<Owner: ChannelOwner> PosixHandlers<Owner> {
     /// callbacks (see module doc).
     #[inline(always)]
     unsafe fn chan<'a>(s: *mut uws::us_socket_t) -> &'a mut Channel<Owner> {
+        // SAFETY: caller upholds this fn's contract — `s` is live and its ext
+        // slot was stamped with `*mut Channel<Owner>` in `adopt()`.
         unsafe { &mut **(*s).ext::<PosixExt<Owner>>() }
     }
 

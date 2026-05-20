@@ -44,9 +44,11 @@ impl URLSearchParams {
         }
 
         extern "C" fn cb<Ctx>(c: *mut c_void, str: *const ZigString) {
-            // SAFETY: `c` is the &mut Wrap<Ctx> we passed below; `str` is a valid
-            // *const ZigString for the duration of this callback (borrowed from C++).
+            // SAFETY: `c` is the &mut Wrap<Ctx> we passed below; the callback is
+            // invoked synchronously so `w` is live for the entire call.
             let w = unsafe { bun_ptr::callback_ctx::<Wrap<'_, Ctx>>(c) };
+            // SAFETY: C++ passes a non-null pointer to a stack ZigString that is
+            // valid for the duration of this synchronous callback; ZigString is Copy.
             let str = unsafe { *str };
             (w.callback)(w.ctx, str);
         }

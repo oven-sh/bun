@@ -269,8 +269,9 @@ pub fn encode(
     // spng_get_png_buffer transfers ownership (libc malloc); hand to JS
     // with libc `free` as the finalizer instead of duping.
     // SAFETY: buf is non-null and points to `len` bytes owned by us (malloc'd by libspng).
+    let bytes = unsafe { NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(buf, len)) };
     Ok(codecs::Encoded {
-        bytes: unsafe { NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(buf, len)) },
+        bytes,
         free: encoded_wrap_free!(libc::free),
     })
 }
@@ -384,8 +385,9 @@ pub fn encode_indexed(
         return Err(codecs::Error::EncodeFailed);
     }
     // SAFETY: buf is non-null and points to `len` bytes owned by us (malloc'd by libspng).
+    let bytes = unsafe { NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(buf, len)) };
     Ok(codecs::Encoded {
-        bytes: unsafe { NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(buf, len)) },
+        bytes,
         free: encoded_wrap_free!(libc::free),
     })
 }

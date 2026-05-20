@@ -165,6 +165,7 @@ impl Symlinker {
     }
 }
 
+#[derive(Clone, Copy)]
 pub enum Strategy {
     ExpectExisting,
     ExpectMissing,

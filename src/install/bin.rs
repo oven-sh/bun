@@ -1216,7 +1216,7 @@ impl<'a> Linker<'a> {
             sys::Result::Err(err) => {
                 if err.get_errno() != sys::Errno::EEXIST && err.get_errno() != sys::Errno::ENOENT {
                     self.err = Some(err.to_zig_err());
-                    Self::chmod_on_ok(&self.err, abs_target);
+                    Self::chmod_on_ok(self.err, abs_target);
                     return;
                 }
 
@@ -1224,7 +1224,7 @@ impl<'a> Linker<'a> {
                 if err.get_errno() == sys::Errno::ENOENT {
                     if global {
                         self.err = Some(err.to_zig_err());
-                        Self::chmod_on_ok(&self.err, abs_target);
+                        Self::chmod_on_ok(self.err, abs_target);
                         return;
                     }
 
@@ -1242,11 +1242,11 @@ impl<'a> Linker<'a> {
                         sys::Result::Err(real_error) => {
                             // It was just created, no need to delete destination and symlink again
                             self.err = Some(real_error.to_zig_err());
-                            Self::chmod_on_ok(&self.err, abs_target);
+                            Self::chmod_on_ok(self.err, abs_target);
                             return;
                         }
                         sys::Result::Ok(()) => {
-                            Self::chmod_on_ok(&self.err, abs_target);
+                            Self::chmod_on_ok(self.err, abs_target);
                             return;
                         }
                     }
@@ -1258,7 +1258,7 @@ impl<'a> Linker<'a> {
                 debug_assert!(err.get_errno() == sys::Errno::EEXIST);
             }
             sys::Result::Ok(()) => {
-                Self::chmod_on_ok(&self.err, abs_target);
+                Self::chmod_on_ok(self.err, abs_target);
                 return;
             }
         }
@@ -1269,11 +1269,11 @@ impl<'a> Linker<'a> {
         if let Err(err) = sys::symlink_running_executable(rel_target, abs_dest) {
             self.err = Some(err.to_zig_err());
         }
-        Self::chmod_on_ok(&self.err, abs_target);
+        Self::chmod_on_ok(self.err, abs_target);
     }
 
     #[cfg(not(windows))]
-    fn chmod_on_ok(err: &Option<Error>, abs_target: &ZStr) {
+    fn chmod_on_ok(err: Option<Error>, abs_target: &ZStr) {
         // PORT NOTE: hoisted from `defer` block in create_symlink
         if err.is_none() {
             let _ = sys::chmod(abs_target, 0o777 & !(UMASK.load(Ordering::Acquire) as Mode));

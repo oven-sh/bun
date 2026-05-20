@@ -77,6 +77,10 @@ pub struct ThreadPool {
 // the raw-pointer fields are externally synchronized exactly as in the Zig
 // source.
 unsafe impl Send for ThreadPool {}
+// SAFETY: `&ThreadPool` is read concurrently from worker-pool threads via
+// `get_worker(&self)`; the only field mutated under `&self` is
+// `workers_assignments` (through its `bun_threading::Guarded` lock), and the
+// raw-pointer targets (`ThreadPoolLib::ThreadPool`, `BundleV2`) are `Sync`.
 unsafe impl Sync for ThreadPool {}
 
 impl Default for ThreadPool {

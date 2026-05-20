@@ -570,7 +570,7 @@ fn decode_wtf8_rune_at(bytes: &[u8], idx: usize) -> (u32, u8) {
     let mut buf = [0u8; 4];
     let n = (bytes.len() - idx).min(4);
     buf[..n].copy_from_slice(&bytes[idx..idx + n]);
-    let cp = strings::decode_wtf8_rune_t::<u32>(&buf, len, 0xFFFD);
+    let cp = strings::decode_wtf8_rune_t::<u32>(buf, len, 0xFFFD);
     (cp, len)
 }
 

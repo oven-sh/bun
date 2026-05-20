@@ -706,7 +706,7 @@ impl HTMLRewriterLoader {
     }
 
     pub fn write_utf16(&mut self, data: StreamResult) -> streams::Writable {
-        webcore::sink::UTF8Fallback::write_utf16(self, data, HTMLRewriterLoader::write)
+        webcore::sink::UTF8Fallback::write_utf16(self, &data, HTMLRewriterLoader::write)
     }
 
     pub fn write_latin1(&mut self, data: StreamResult) -> streams::Writable {
@@ -1042,6 +1042,8 @@ impl BufferOutputSink {
             // SAFETY: rewriter set by init(). Read into a local before the
             // call — `end()` re-enters `OutputSink::done(&mut *sink)`.
             let rewriter = unsafe { (*sink).rewriter };
+            // SAFETY: `rewriter` was created via `builder.build()` in `init()`
+            // and is not yet freed (destroyed only in `Drop` at refcount zero).
             let _ = unsafe { lolhtml::HTMLRewriter::end(rewriter) };
             return;
         }
@@ -1062,10 +1064,10 @@ impl BufferOutputSink {
         // SAFETY: sink is a live heap allocation (refcount > 0, caller
         // invariant). Read fields into locals before the FFI calls so no
         // borrow of `*sink` is live across the re-entrant callback.
-        let _ = unsafe { (*sink).bytes.grow_by(bytes.len()) }; // OOM/capacity: Zig aborts; port keeps fire-and-forget
-        let global = unsafe { (*sink).global };
-        let response = unsafe { (*sink).response };
-        let rewriter = unsafe { (*sink).rewriter };
+        let (global, response, rewriter) = unsafe {
+            let _ = (*sink).bytes.grow_by(bytes.len()); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+            ((*sink).global, (*sink).response, (*sink).rewriter)
+        };
 
         // SAFETY: rewriter set by init().
         if unsafe { lolhtml::HTMLRewriter::write(rewriter, bytes) }.is_err() {
@@ -2008,8 +2010,10 @@ impl AttributeIterator {
     /// whose generated trait `destroy` upholds the sole-owner contract.
     fn destroy_on_zero(this: *mut Self) {
         // SAFETY: refcount hit zero; sole owner of a `heap::alloc`'d `Self`.
-        unsafe { (*this).detach() };
-        drop(unsafe { bun_core::heap::take(this) });
+        unsafe {
+            (*this).detach();
+            drop(bun_core::heap::take(this));
+        }
     }
 
     pub fn init(iterator: *mut lolhtml::AttributeIterator) -> *mut AttributeIterator {
@@ -2119,8 +2123,10 @@ impl Element {
     /// whose generated trait `destroy` upholds the sole-owner contract.
     fn destroy_on_zero(this: *mut Self) {
         // SAFETY: refcount hit zero; sole owner of a `heap::alloc`'d `Self`.
-        unsafe { (*this).invalidate() };
-        drop(unsafe { bun_core::heap::take(this) });
+        unsafe {
+            (*this).invalidate();
+            drop(bun_core::heap::take(this));
+        }
     }
 
     pub fn init(element: *mut lolhtml::Element) -> *mut Element {

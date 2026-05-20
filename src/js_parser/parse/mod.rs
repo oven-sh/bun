@@ -152,7 +152,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         class_keyword: bun_ast::Range,
         name: Option<js_ast::LocRef>,
-        class_opts: ParseClassOptions<'a>,
+        class_opts: &ParseClassOptions<'a>,
     ) -> Result<G::Class, Error> {
         let p = self;
         let mut extends: Option<Expr> = None;
@@ -729,7 +729,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let scope_index = p
             .push_scope_for_parse_pass(js_ast::scope::Kind::ClassName, loc)
             .expect("unreachable");
-        let class = p.parse_class(class_keyword, name, class_opts)?;
+        let class = p.parse_class(class_keyword, name, &class_opts)?;
 
         if Self::IS_TYPESCRIPT_ENABLED {
             if opts.is_typescript_declare {

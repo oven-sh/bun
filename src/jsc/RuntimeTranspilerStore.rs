@@ -72,12 +72,14 @@ bun_core::declare_scope!(RuntimeTranspilerStore, hidden);
 // same VM, so a `&mut VirtualMachine` would be a data race AND would alias the
 // caller's `&mut TranspilerJob` (which is stored inside `vm.transpiler_store`).
 // Only the `source_mappings` leaf field is touched, under its own internal lock.
-pub fn dump_source(vm: *mut VirtualMachine, specifier: &[u8], printer: &BufferPrinter) {
-    dump_source_string(vm, specifier, printer.ctx.get_written());
+pub unsafe fn dump_source(vm: *mut VirtualMachine, specifier: &[u8], printer: &BufferPrinter) {
+    // SAFETY: caller contract — `vm` is a live `VirtualMachine` BACKREF.
+    unsafe { dump_source_string(vm, specifier, printer.ctx.get_written()) };
 }
 
-pub fn dump_source_string(vm: *mut VirtualMachine, specifier: &[u8], written: &[u8]) {
-    if let Err(e) = dump_source_string_failiable(vm, specifier, written) {
+pub unsafe fn dump_source_string(vm: *mut VirtualMachine, specifier: &[u8], written: &[u8]) {
+    // SAFETY: caller contract — `vm` is a live `VirtualMachine` BACKREF.
+    if let Err(e) = unsafe { dump_source_string_failiable(vm, specifier, written) } {
         bun_core::output::debug_warn(&format_args!("Failed to dump source string: {}", e.name()));
     }
 }
@@ -88,7 +90,7 @@ pub fn dump_source_string(vm: *mut VirtualMachine, specifier: &[u8], written: &[
 // safe code (replaces the prior split `Mutex` + `RacyCell` pair).
 static BUN_DEBUG_HOLDER: Guarded<Option<Dir>> = Guarded::new(None);
 
-pub fn dump_source_string_failiable(
+pub unsafe fn dump_source_string_failiable(
     vm: *mut VirtualMachine,
     specifier: &[u8],
     written: &[u8],
@@ -275,7 +277,7 @@ impl RuntimeTranspilerStore {
         }
     }
 
-    pub fn run_from_js_thread(
+    pub unsafe fn run_from_js_thread(
         &mut self,
         event_loop: *mut EventLoop,
         global: &JSGlobalObject,
@@ -283,7 +285,7 @@ impl RuntimeTranspilerStore {
     ) {
         let mut batch = self.queue.pop_batch();
         // SAFETY: `vm` is the live owning VM (caller is the JS-thread tick loop).
-        let jsc_vm = unsafe { (*vm).jsc_vm };
+        let jsc_vm = unsafe { (*vm).jsc_vm() };
         let mut iter = batch.iterator();
         let first = iter.next();
         if first.is_null() {
@@ -318,7 +320,7 @@ impl RuntimeTranspilerStore {
         vm: *mut VirtualMachine,
         global_object: &JSGlobalObject,
         input_specifier: String,
-        path: Fs::Path<'_>,
+        path: &Fs::Path<'_>,
         referrer: String,
         loader: Loader,
         package_json: Option<&PackageJSON>,
@@ -610,7 +612,7 @@ impl TranspilerJob {
         WorkPool::schedule(&raw mut self.work_task);
     }
 
-    pub fn run_from_worker_thread(work_task: *mut WorkPoolTask) {
+    pub unsafe fn run_from_worker_thread(work_task: *mut WorkPoolTask) {
         // SAFETY: only reachable via `WorkPoolTask::callback` (unsafe-fn-ptr
         // slot — safe-fn coerces) for the `work_task` field initialised in
         // `transpile`; the WorkPool calls back with exactly that field, so
@@ -658,6 +660,8 @@ impl TranspilerJob {
         // expressions / leaf-field borrows) only.
         let vm: *mut VirtualMachine = self.vm;
 
+        // SAFETY: `vm` is the live owning VM (BACKREF — see PORT NOTE above);
+        // atomic load on a leaf field, no `&VirtualMachine` formed.
         if self.generation_number
             != unsafe {
                 (*vm)
@@ -723,7 +727,7 @@ impl TranspilerJob {
         // fields aren't double-freed against `vm.transpiler`.
         let mut transpiler_storage =
             core::mem::ManuallyDrop::new(unsafe { ptr::read(ptr::addr_of!((*vm).transpiler)) });
-        // SAFETY (lifetime erasure): `Transpiler<'a>`'s `'a` only constrains the
+        // SAFETY: lifetime erasure — `Transpiler<'a>`'s `'a` only constrains the
         // `allocator` field (and resolver opts that share it), which we
         // immediately overwrite below via `set_arena(&arena)` to the stack-local
         // arena above. `arena` is declared before `transpiler_storage`, so it
@@ -861,6 +865,9 @@ impl TranspilerJob {
             loader,
             dirname_fd: Fd::INVALID,
             file_descriptor: fd,
+            // SAFETY: `input_file_fd` is a stack local declared above and
+            // outlives `parse_options`; `addr_of_mut!` avoids forming an
+            // intermediate `&mut` so the close-guard's later borrow stays sound.
             file_fd_ptr: Some(unsafe { &mut *ptr::addr_of_mut!(input_file_fd) }),
             file_hash: Some(hash),
             macro_remappings,
@@ -881,6 +888,9 @@ impl TranspilerJob {
                 && is_main
                 && set_break_point_on_first_line(),
             runtime_transpiler_cache: if !JscRuntimeTranspilerCache::is_disabled() {
+                // SAFETY: `cache` is a stack local declared above and outlives
+                // `parse_options`; `addr_of_mut!` avoids an intermediate `&mut`
+                // so the post-parse `cache.entry.take()` reborrow stays sound.
                 Some(unsafe { &mut *ptr::addr_of_mut!(cache) })
             } else {
                 None
@@ -1010,7 +1020,8 @@ impl TranspilerJob {
             );
 
             if bun_core::env::DUMP_SOURCE {
-                dump_source_string(vm, specifier, entry.output_code.byte_slice());
+                // SAFETY: `vm` is the live owning VM (BACKREF — see `vm` PORT NOTE above).
+                unsafe { dump_source_string(vm, specifier, entry.output_code.byte_slice()) };
             }
 
             let module_info: *mut c_void = if use_isolation_source_provider_cache
@@ -1178,7 +1189,8 @@ impl TranspilerJob {
         }
 
         if bun_core::env::DUMP_SOURCE {
-            dump_source(vm, specifier, source_code_printer);
+            // SAFETY: `vm` is the live owning VM (BACKREF — see `vm` PORT NOTE above).
+            unsafe { dump_source(vm, specifier, source_code_printer) };
         }
 
         let source_code = 'brk: {

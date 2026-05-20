@@ -36,13 +36,14 @@ fn dupe_path_like(path: &[u8]) -> PathLike {
 #[inline]
 fn set_blob_mime(blob: &mut Blob, mime: MimeType) {
     if let Some(store) = blob.store.get().as_ref() {
+        let store_ptr = store.as_ptr();
         // SAFETY: `store` is the freshly-allocated backing store uniquely owned
         // by `blob`; no other borrow exists yet.
-        let store_ptr = store.as_ptr();
-        unsafe { (*store_ptr).mime_type = mime };
-        blob.content_type.set(std::ptr::from_ref::<[u8]>(unsafe {
-            (*store_ptr).mime_type.value.as_ref()
-        }));
+        unsafe {
+            (*store_ptr).mime_type = mime;
+            blob.content_type
+                .set(std::ptr::from_ref::<[u8]>((*store_ptr).mime_type.value.as_ref()));
+        }
     } else {
         // No store (empty bytes). Loader-derived `mime.value` is `'static` — point at it
         // directly; boxing it leaked because `BuildArtifact`'s drop never runs `Blob::deinit`.

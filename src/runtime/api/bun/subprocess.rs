@@ -371,7 +371,7 @@ bun_spawn::link_impl_ProcessExit! {
         // hand it to `VirtualMachine::on_subprocess_exit` without a const→mut
         // provenance cast.
         on_process_exit(process, status, rusage) =>
-            (*this).on_process_exit(process, status, &*rusage),
+            (*this).on_process_exit(process, &status, &*rusage),
     }
 }
 
@@ -901,7 +901,7 @@ impl Subprocess<'_> {
             + self.stderr.get().memory_cost()
     }
 
-    pub fn on_process_exit(&self, process: *mut Process, status: Status, rusage: &Rusage) {
+    pub fn on_process_exit(&self, process: *mut Process, status: &Status, rusage: &Rusage) {
         bun_output::scoped_log!(Subprocess, "onProcessExit()");
         let this_jsvalue = self.this_value.get().try_get().unwrap_or(JSValue::ZERO);
         // Copy the BackRef out so the `&JSGlobalObject` borrow is detached from `&self`
@@ -928,7 +928,7 @@ impl Subprocess<'_> {
         // only. `process` is the raw `*mut Process` threaded from the vtable
         // thunk so the auto-killer's `(*process).deref()` keeps mutable
         // provenance (no `&Process → *mut` round-trip).
-        unsafe { (*jsc_vm).on_subprocess_exit(process) };
+        unsafe { (*jsc_vm).on_subprocess_exit(NonNull::new_unchecked(process)) };
 
         #[cfg(windows)]
         if self.flags.get().contains(Flags::OWNS_TERMINAL) {
@@ -1049,7 +1049,7 @@ impl Subprocess<'_> {
             // free `this`, so no `&mut FileSink` is materialized at the boundary.
             // SAFETY: `pipe_ptr` is the canonical heap pointer with write+dealloc
             // provenance, held live by the `Writable::Pipe`/cache +1.
-            unsafe { FileSink::on_attached_process_exit(pipe_ptr.as_ptr(), &status) };
+            unsafe { FileSink::on_attached_process_exit(pipe_ptr.as_ptr(), status) };
 
             if must_deref {
                 self.deref();
@@ -1083,7 +1083,7 @@ impl Subprocess<'_> {
                                 .resolve(global_this, JSValue::js_number(exited.code as f64));
                             // TODO: properly propagate exception upwards
                         }
-                        Status::Err(ref err) => {
+                        Status::Err(err) => {
                             let js_err = err.to_js(global_this);
                             let _ = promise
                                 .as_any_promise()
@@ -1094,7 +1094,7 @@ impl Subprocess<'_> {
                         Status::Signaled(signaled) => {
                             let _ = promise.as_any_promise().unwrap().resolve(
                                 global_this,
-                                JSValue::js_number(128u8.wrapping_add(signaled) as f64),
+                                JSValue::js_number(128u8.wrapping_add(*signaled) as f64),
                             );
                             // TODO: properly propagate exception upwards
                         }
@@ -1108,7 +1108,7 @@ impl Subprocess<'_> {
 
                 if let Some(callback) = js::on_exit_callback_take_cached(this_jsvalue, global_this)
                 {
-                    let waitpid_value: JSValue = if let Status::Err(err) = &status {
+                    let waitpid_value: JSValue = if let Status::Err(err) = status {
                         err.to_js(global_this)
                     } else {
                         JSValue::UNDEFINED
@@ -1379,7 +1379,7 @@ impl Subprocess<'_> {
         JSValue::NULL
     }
 
-    pub fn handle_ipc_message(&self, message: IPC::DecodedIPCMessage, handle: JSValue) {
+    pub fn handle_ipc_message(&self, message: &IPC::DecodedIPCMessage, handle: JSValue) {
         bun_output::scoped_log!(IPC, "Subprocess#handleIPCMessage");
         match message {
             // In future versions we can read this in order to detect version mismatches,
@@ -1395,12 +1395,14 @@ impl Subprocess<'_> {
                     if let Some(cb) = js::ipc_callback_get_cached(this_jsvalue) {
                         let global_this = self.global_this();
                         let event_loop = global_this.bun_vm().as_mut().event_loop();
+                        // SAFETY: `event_loop` is the live VM's owned event loop,
+                        // accessed on the single JS mutator thread.
                         unsafe {
                             (*event_loop).run_callback(
                                 cb,
                                 global_this,
                                 this_jsvalue,
-                                &[data, this_jsvalue, handle],
+                                &[*data, this_jsvalue, handle],
                             )
                         };
                     }
@@ -1412,7 +1414,7 @@ impl Subprocess<'_> {
                 let _ = node_cluster_binding::handle_internal_message_primary(
                     global_this.get(),
                     self,
-                    data,
+                    *data,
                 );
             }
         }
@@ -1435,6 +1437,8 @@ impl Subprocess<'_> {
                 js::on_disconnect_callback_take_cached(this_jsvalue, global_this)
             {
                 let event_loop = global_this.bun_vm().as_mut().event_loop();
+                // SAFETY: `event_loop` is the live VM's owned event loop,
+                // accessed on the single JS mutator thread.
                 unsafe {
                     (*event_loop).run_callback(
                         callback,

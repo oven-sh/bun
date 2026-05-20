@@ -51,7 +51,7 @@ impl LinkerContext<'_> {
         let source_index = source_index_.get();
         let _trace = perf::trace("Bundler.CreateNamespaceExports");
 
-        // Shared-ref view for all read-only access. Multiple worker threads may
+        // SAFETY: shared-ref view for all read-only access. Multiple worker threads may
         // hold `&LinkerContext` simultaneously; the SoA buffers live behind raw
         // pointers inside `MultiArrayList`, so this borrow does not assert
         // immutability over the heap cells we write below.
@@ -89,9 +89,9 @@ impl LinkerContext<'_> {
             ($col:expr, $ty:ty, $i:expr) => {{
                 // SAFETY: `$col: *mut [$ty]` from `split_raw()`; `$i < len`
                 // (guarded above for `meta`, and `ast.len == meta.len`). The
-                // `as *mut $ty` fat→thin cast preserves the raw provenance
+                // `.cast::<$ty>()` fat→thin cast preserves the raw provenance
                 // from `split_raw()`.
-                unsafe { &mut *(($col as *mut $ty).add($i as usize)) }
+                unsafe { &mut *($col.cast::<$ty>().add($i as usize)) }
             }};
         }
 

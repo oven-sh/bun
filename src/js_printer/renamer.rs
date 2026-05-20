@@ -293,7 +293,7 @@ pub type TopLevelSymbolSlotMap = HashMap<Ref, usize>;
 impl MinifyRenamer {
     pub fn init(
         symbols: symbol::Map,
-        first_top_level_slots: js_ast::SlotCounts,
+        first_top_level_slots: &js_ast::SlotCounts,
         reserved_names: StringHashMap<u32>,
     ) -> Result<Box<MinifyRenamer>, bun_alloc::AllocError> {
         let mut slots = SymbolSlotList::default();
@@ -452,7 +452,7 @@ impl MinifyRenamer {
                 slot: u32::try_from(i).expect("int cast"),
                 count: slot.count,
             }));
-            sorted.sort_unstable_by(SlotAndCount::less_than);
+            sorted.sort_unstable_by(|a, b| SlotAndCount::less_than(*a, *b));
 
             let mut next_name: isize = 0;
 
@@ -643,7 +643,7 @@ struct SlotAndCount {
 type SlotAndCountArray = Vec<SlotAndCount>;
 
 impl SlotAndCount {
-    fn less_than(a: &SlotAndCount, b: &SlotAndCount) -> Ordering {
+    fn less_than(a: SlotAndCount, b: SlotAndCount) -> Ordering {
         if a.count > b.count || (a.count == b.count && a.slot < b.slot) {
             Ordering::Less
         } else {
@@ -717,7 +717,7 @@ impl NumberRenamer {
 
     pub fn init(
         symbols: symbol::Map,
-        root_names: StringHashMap<u32>,
+        root_names: &StringHashMap<u32>,
     ) -> Result<Box<NumberRenamer>, bun_alloc::AllocError> {
         let len = symbols.symbols_for_source.len();
         let names: Box<[Vec<NameStr>]> = core::iter::repeat_with(Vec::<NameStr>::default)

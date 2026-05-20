@@ -237,7 +237,8 @@ pub fn run_task(
         }};
         (work $ty:ty) => {{
             let t = cast_ptr!($ty);
-            let r = bun_jsc::work_task::WorkTask::run_from_js(t);
+            // SAFETY: tag identifies pointee; heap-allocated at schedule time.
+            let r = unsafe { bun_jsc::work_task::WorkTask::run_from_js(t) };
             // SAFETY: paired with `create_on_js_thread` heap::alloc.
             unsafe { bun_jsc::work_task::WorkTask::destroy(t) };
             r?;
@@ -344,7 +345,10 @@ pub fn run_task(
             vm.modules.on_poll();
         }
         task_tag::RuntimeTranspilerStore => {
-            cast!(RuntimeTranspilerStore).run_from_js_thread(el, global, vm);
+            let store = cast!(RuntimeTranspilerStore);
+            // SAFETY: `el`/`vm` are the live JS-thread event-loop and owning VM
+            // for this dispatch tick; `run_from_js_thread` reads leaf fields only.
+            unsafe { store.run_from_js_thread(el, global, vm) };
         }
 
         // ── hot-reload (Zig early-returns from the drain loop) ───────────
@@ -603,7 +607,7 @@ pub fn tick_queue_with_count(
     // SAFETY: `el.global` is set by VM init before the first tick; live for
     // the duration of the drain loop (Zig: `this.global`).
     let global: &JSGlobalObject = unsafe { el.global.expect("EventLoop.global unset").as_ref() };
-    let global_vm: *mut bun_jsc::VM = std::ptr::from_ref::<bun_jsc::VM>(global.vm()).cast_mut();
+    let global_vm = global.vm();
 
     #[cfg(debug_assertions)]
     if el.debug.js_call_count_outside_tick_queue
@@ -679,8 +683,10 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
     /// covers most tags.
     macro_rules! poll_arm {
         ($Ty:ty) => {
-            poll_arm!($Ty, |h| unsafe {
-                (*h).on_poll(size_or_offset as isize, hup)
+            poll_arm!($Ty, |h| {
+                // SAFETY: tag matched, so `owner.ptr` was stored as `*mut $Ty` at
+                // `FilePoll::init` and the owner outlives this dispatch (caller contract).
+                unsafe { (*h).on_poll(size_or_offset as isize, hup) }
             })
         };
         ($Ty:ty, |$h:ident| $body:expr) => {{
@@ -691,8 +697,10 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
     }
 
     match owner.tag() {
-        poll_tag::BUFFERED_READER => poll_arm!(bun_io::BufferedReader, |h| unsafe {
-            bun_io::BufferedReader::on_poll(&mut *h, size_or_offset as isize, hup)
+        poll_tag::BUFFERED_READER => poll_arm!(bun_io::BufferedReader, |h| {
+            // SAFETY: tag matched, so `owner.ptr` is a live `*mut BufferedReader`
+            // set at `FilePoll::init`; exclusive for this dispatch.
+            unsafe { bun_io::BufferedReader::on_poll(&mut *h, size_or_offset as isize, hup) }
         }),
         poll_tag::PROCESS => {
             // Bypass `owner_as!` (which yields `&mut`) — `Process` may be freed
@@ -723,8 +731,10 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
             poll_arm!(StaticPipeWriterPoll<bun_install::SecurityScanSubprocess<'_>>)
         }
         // `bun.shell.Interpreter.IOWriter.Poll`
-        poll_tag::SHELL_BUFFERED_WRITER => poll_arm!(ShellBufferedWriterPoll, |h| unsafe {
-            crate::shell::io_writer::on_poll(&mut *h, size_or_offset as isize, hup)
+        poll_tag::SHELL_BUFFERED_WRITER => poll_arm!(ShellBufferedWriterPoll, |h| {
+            // SAFETY: tag matched, so `owner.ptr` is a live `*mut ShellBufferedWriterPoll`
+            // set at `FilePoll::init`; exclusive for this dispatch.
+            unsafe { crate::shell::io_writer::on_poll(&mut *h, size_or_offset as isize, hup) }
         }),
         poll_tag::DNS_RESOLVER => {
             // R-2: deref as shared (`&*const`) — `on_dns_poll` takes `&self` and
@@ -759,8 +769,10 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
         poll_tag::TERMINAL_POLL => poll_arm!(TerminalPoll),
         // `OutputReader = BufferedReader` in install crate — separate tag for ownership.
         poll_tag::LIFECYCLE_SCRIPT_SUBPROCESS_OUTPUT_READER => {
-            poll_arm!(bun_io::BufferedReader, |h| unsafe {
-                bun_io::BufferedReader::on_poll(&mut *h, size_or_offset as isize, hup)
+            poll_arm!(bun_io::BufferedReader, |h| {
+                // SAFETY: tag matched, so `owner.ptr` is a live `*mut BufferedReader`
+                // set at `FilePoll::init`; exclusive for this dispatch.
+                unsafe { bun_io::BufferedReader::on_poll(&mut *h, size_or_offset as isize, hup) }
             })
         }
 
@@ -821,7 +833,7 @@ pub unsafe fn __bun_io_pollable_on_io_error(
         bun_io::PollableTag::ReadFile => {
             // SAFETY: per fn contract.
             let this = unsafe { &mut *bun_core::from_field_ptr!(ReadFile, io_poll, poll) };
-            this.on_io_error(err);
+            this.on_io_error(&err);
         }
         bun_io::PollableTag::WriteFile => {
             // SAFETY: per fn contract.
@@ -1092,7 +1104,7 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
                 let rc = std::rc::Rc::from_raw(
                     container as *const crate::test_runner::bun_test::BunTestCell,
                 );
-                let cloned = rc.clone();
+                let cloned = std::rc::Rc::clone(&rc);
                 // Don't drop the original ref — it's borrowed, not owned here.
                 let _ = std::rc::Rc::into_raw(rc);
                 cloned

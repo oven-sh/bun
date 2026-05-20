@@ -367,8 +367,8 @@ const _: () = assert!(core::mem::size_of::<StreamPriority>() == StreamPriority::
 impl StreamPriority {
     pub const BYTE_SIZE: usize = 5;
     #[inline]
-    fn write(&self, writer: &mut impl WireWriter) -> bool {
-        let mut swap = *self;
+    fn write(self, writer: &mut impl WireWriter) -> bool {
+        let mut swap = self;
         swap.stream_identifier = swap.stream_identifier.swap_bytes();
         writer.write_all(bytemuck::bytes_of(&swap)).is_ok()
     }
@@ -1878,6 +1878,10 @@ impl Stream {
             // every access — see PORT NOTE above).
             macro_rules! lf {
                 () => {
+                    // SAFETY: `last_frame` points at the live tail slot of
+                    // `self.data_frame_queue`; provenance is re-laundered via
+                    // `black_box` before each post-dispatch expansion so no
+                    // other `&mut` to the slot is live here (see PORT NOTE).
                     unsafe { &mut *last_frame }
                 };
             }
@@ -2132,7 +2136,7 @@ type HeaderValue = lshpack::DecodeResult;
 // PORT NOTE: `lshpack::HpackError` does not yet impl `From` for `bun_core::Error`
 // (see TODO in lshpack.rs). Map variants 1:1 to interned error names so Zig
 // callers that match on `error.UnableToDecode` etc. keep their semantics.
-fn hpack_error_to_core(e: lshpack::HpackError) -> bun_core::Error {
+fn hpack_error_to_core(e: &lshpack::HpackError) -> bun_core::Error {
     match e {
         lshpack::HpackError::UnableToDecode => bun_core::err!("UnableToDecode"),
         lshpack::HpackError::EmptyHeaderName => bun_core::err!("EmptyHeaderName"),
@@ -2186,7 +2190,7 @@ impl H2FrameParser {
     pub fn decode(&self, src_buffer: &[u8]) -> Result<HeaderValue, bun_core::Error> {
         self.hpack.with_mut(|hpack| {
             if let Some(hpack) = hpack.as_mut() {
-                return hpack.decode(src_buffer).map_err(hpack_error_to_core);
+                return hpack.decode(src_buffer).map_err(|e| hpack_error_to_core(&e));
             }
             Err(bun_core::err!("UnableToDecode"))
         })
@@ -2205,7 +2209,7 @@ impl H2FrameParser {
                 // lets make sure the name is lowercase
                 return hpack
                     .encode(name, value, never_index, dst_buffer, dst_offset)
-                    .map_err(hpack_error_to_core);
+                    .map_err(|e| hpack_error_to_core(&e));
             }
             Err(bun_core::err!("UnableToEncode"))
         })
@@ -3431,7 +3435,7 @@ impl H2FrameParser {
         let settings = self
             .remote_settings
             .get()
-            .unwrap_or(self.local_settings.get());
+            .unwrap_or_else(|| self.local_settings.get());
 
         let max_frame_size = settings.max_frame_size;
         if frame.length > max_frame_size {
@@ -3611,7 +3615,7 @@ impl H2FrameParser {
         let settings = self
             .remote_settings
             .get()
-            .unwrap_or(self.local_settings.get());
+            .unwrap_or_else(|| self.local_settings.get());
 
         if frame.length < 8 || frame.length > settings.max_frame_size {
             self.send_go_away(
@@ -4095,7 +4099,7 @@ impl H2FrameParser {
         let settings = self
             .remote_settings
             .get()
-            .unwrap_or(self.local_settings.get());
+            .unwrap_or_else(|| self.local_settings.get());
         if frame.length > settings.max_frame_size {
             self.send_go_away(
                 frame.stream_identifier,
@@ -6083,7 +6087,7 @@ impl H2FrameParser {
         let actual_max_frame_size = this
             .remote_settings
             .get()
-            .unwrap_or(this.local_settings.get())
+            .unwrap_or_else(|| this.local_settings.get())
             .max_frame_size as usize;
 
         bun_output::scoped_log!(H2FrameParser, "trailers encoded_size {}", encoded_size);
@@ -7003,7 +7007,7 @@ impl H2FrameParser {
         let actual_max_frame_size = this
             .remote_settings
             .get()
-            .unwrap_or(this.local_settings.get())
+            .unwrap_or_else(|| this.local_settings.get())
             .max_frame_size as usize;
         let priority_overhead: usize = if has_priority {
             StreamPriority::BYTE_SIZE
@@ -7373,7 +7377,12 @@ impl H2FrameParser {
         };
         let this: *mut H2FrameParser = if ENABLE_ALLOCATOR_POOL {
             POOL.with_borrow_mut(|pool| {
-                let pool = pool.get_or_insert_with(|| Box::new(H2FrameParserHiveAllocator::init()));
+                let pool = pool.get_or_insert_with(|| {
+                    // SAFETY: `new_boxed` returns a `Box::leak`ed, fully
+                    // initialized allocation; `from_raw` reclaims that exact
+                    // pointer back into an owning `Box`.
+                    unsafe { Box::from_raw(H2FrameParserHiveAllocator::new_boxed().as_ptr()) }
+                });
                 let slot = pool.try_get();
                 // SAFETY: `slot` is a freshly-claimed, uninitialised `*mut H2FrameParser`
                 // (HiveArray slot or fallback `Box<MaybeUninit<_>>`); `write` moves

@@ -468,14 +468,14 @@ impl Interpreter {
             *out_lex_result = Some(lex_result);
             return Err(ParseError::Lex.into());
         }
-        // SAFETY: `bun_jsc::JSValue` and `bun_shell_parser::JSValueRaw` are both
-        // `#[repr(transparent)]` over `usize` — see the `JSValueRaw` doc in
-        // `shell_parser/parse.rs`. Reinterpret in place via a typed pointer cast.
-        // Compute `len` before deriving the raw mut pointer so the shared
-        // reborrow inside `len()` does not stack on top of the Unique tag.
         let jsobjs_raw: &'a mut [bun_shell_parser::JSValueRaw] = {
             let len = jsobjs.len();
             let ptr = jsobjs.as_mut_ptr().cast::<bun_shell_parser::JSValueRaw>();
+            // SAFETY: `bun_jsc::JSValue` and `bun_shell_parser::JSValueRaw` are both
+            // `#[repr(transparent)]` over `usize` — see the `JSValueRaw` doc in
+            // `shell_parser/parse.rs`. Reinterpret in place via a typed pointer cast.
+            // Compute `len` before deriving the raw mut pointer so the shared
+            // reborrow inside `len()` does not stack on top of the Unique tag.
             unsafe { core::slice::from_raw_parts_mut(ptr, len) }
         };
         *out_parser = Some(Parser::new(arena, lex_result, jsobjs_raw)?);
@@ -534,7 +534,7 @@ impl Interpreter {
         let mut pathbuf = bun_paths::path_buffer_pool::get();
         let cwd_len = match bun_sys::getcwd(&mut pathbuf[..]) {
             Ok(n) => n,
-            Err(e) => return Err(ShellErr::new_sys(e)),
+            Err(e) => return Err(ShellErr::new_sys(&e)),
         };
         // NUL-terminate for `open()` and so `__cwd` matches Zig's `[:0]` shape
         // (downstream `cwd()` strips the trailing 0).
@@ -543,7 +543,7 @@ impl Interpreter {
 
         let cwd_fd = match bun_sys::open(cwd_z, bun_sys::O::DIRECTORY | bun_sys::O::RDONLY, 0) {
             Ok(fd) => fd,
-            Err(e) => return Err(ShellErr::new_sys(e)),
+            Err(e) => return Err(ShellErr::new_sys(&e)),
         };
 
         let mut cwd_arr = Vec::with_capacity(cwd_len + 1);
@@ -573,7 +573,7 @@ impl Interpreter {
             Ok(fd) => fd,
             Err(e) => {
                 closefd(cwd_fd);
-                return Err(ShellErr::new_sys(e));
+                return Err(ShellErr::new_sys(&e));
             }
         };
 
@@ -650,7 +650,7 @@ impl Interpreter {
                 // exactly that teardown (drops `root_io` Arcs, frees env maps,
                 // closes `cwd_fd`, consumes the box).
                 interpreter.deinit_from_exec();
-                return Err(ShellErr::new_sys(e));
+                return Err(ShellErr::new_sys(&e));
             }
         }
 
@@ -1041,7 +1041,7 @@ impl Interpreter {
                 match Subshell::init_dupe_shell_state(self, shell, *s, parent, io) {
                     Ok(id) => id,
                     Err(e) => {
-                        self.throw(ShellErr::new_sys(e));
+                        self.throw(ShellErr::new_sys(&e));
                         // Spec: Zig's `Binary.makeChild` returns `null` here and
                         // the caller falls through as if the subshell exited 0
                         // (Binary.zig:55-61, 130-134); Stmt.zig returns `.failed`
@@ -1377,7 +1377,7 @@ impl Interpreter {
 
         if let Err(e) = self.setup_io_before_run() {
             self.deref_root_shell_and_io_if_needed(true);
-            let shellerr = ShellErr::new_sys(e);
+            let shellerr = ShellErr::new_sys(&e);
             return Err(throw_shell_err(
                 shellerr,
                 self.event_loop,
@@ -2850,6 +2850,8 @@ impl<P: OutputTaskVTable> OutputTask<P> {
     ) -> Yield {
         log!("OutputTask(0x{:x}) onIOWriterChunk", this as usize);
         // Zig derefs the SystemError; in Rust drop handles it.
+        // SAFETY: `this` is the live heap-allocated `OutputTask` guaranteed by
+        // this fn's caller contract; forwarded unchanged to `next`.
         unsafe { Self::next(this, interp) }
     }
 
@@ -3010,7 +3012,7 @@ impl ShellTask {
         log!("ShellTask schedule");
         // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
         unsafe {
-            let this = ctx.cast::<u8>().add(C::TASK_OFFSET).cast::<ShellTask>();
+            let this = ctx.byte_add(C::TASK_OFFSET).cast::<ShellTask>();
             (*this)
                 .keep_alive
                 .ref_((*this).event_loop.as_event_loop_ctx());
@@ -3032,7 +3034,7 @@ impl ShellTask {
         // thread may already be touching `*this`, so we must not hold a live
         // `&mut ShellTask` across that call.
         unsafe {
-            let this = ctx.cast::<u8>().add(C::TASK_OFFSET).cast::<ShellTask>();
+            let this = ctx.byte_add(C::TASK_OFFSET).cast::<ShellTask>();
             (*this).task.callback = shell_task_trampoline::<C>;
             WorkPool::schedule(&raw mut (*this).task);
         }
@@ -3057,7 +3059,7 @@ impl ShellTask {
         // into it may span that call. `this` is live and exclusively owned by
         // this thread until the enqueue below.
         let (event_loop, task_ptr) = unsafe {
-            let this = ctx.cast::<u8>().add(C::TASK_OFFSET).cast::<ShellTask>();
+            let this = ctx.byte_add(C::TASK_OFFSET).cast::<ShellTask>();
             let event_loop = (*this).event_loop;
             let task_ptr = match &mut (*this).concurrent_task {
                 EventLoopTask::Js(ct) => {
@@ -3096,7 +3098,7 @@ impl ShellTask {
         log!("ShellTask runFromJS");
         // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
         unsafe {
-            let this = ctx.cast::<u8>().add(C::TASK_OFFSET).cast::<ShellTask>();
+            let this = ctx.byte_add(C::TASK_OFFSET).cast::<ShellTask>();
             (*this)
                 .keep_alive
                 .unref((*this).event_loop.as_event_loop_ctx());

@@ -332,7 +332,7 @@ pub type WatchFd = Fd;
 bun_spawn::link_impl_ProcessExit! {
     Shell for ShellSubprocess => |this| {
         on_process_exit(process, status, rusage) =>
-            (*this).on_process_exit(&*process, status, &*rusage),
+            (*this).on_process_exit(&*process, &status, &*rusage),
     }
 }
 
@@ -702,11 +702,15 @@ impl ShellSubprocess {
 
         spawn_args.env_array.push(core::ptr::null());
 
-        let spawn_result = match bun_process::spawn_process(
-            &spawn_options,
-            spawn_args.argv.as_ptr(),
-            spawn_args.env_array.as_ptr(),
-        ) {
+        // SAFETY: `spawn_args.argv` / `env_array` are local null-terminated
+        // C-string arrays with argv[0] non-null; valid for this call.
+        let spawn_result = match unsafe {
+            bun_process::spawn_process(
+                &spawn_options,
+                spawn_args.argv.as_ptr(),
+                spawn_args.env_array.as_ptr(),
+            )
+        } {
             Err(err) => {
                 // Zig: `spawn_options.deinit()`. WindowsSpawnOptions has no Drop
                 // (its Stdio::Buffer/Ipc carry FFI-owned `*mut uv::Pipe` already
@@ -914,7 +918,7 @@ impl ShellSubprocess {
         self.proc().wait(sync)
     }
 
-    pub fn on_process_exit(&mut self, _: &Process, status: Status, _: &Rusage) {
+    pub fn on_process_exit(&mut self, _: &Process, status: &Status, _: &Rusage) {
         log!("onProcessExit({:x})", std::ptr::from_mut(self) as usize);
         let exit_code: Option<u8> = 'brk: {
             if let Status::Exited(exited) = &status {
@@ -1137,9 +1141,9 @@ impl Writable {
                     // the blob is moved exactly once.
                     let old =
                         core::mem::ManuallyDrop::new(core::mem::replace(&mut stdio, Stdio::Ignore));
-                    // SAFETY: `old` is Blob (matched above) and ManuallyDrop
-                    // prevents its Drop from running, so this is the sole move.
                     let blob = match &*old {
+                        // SAFETY: `old` is Blob (matched above) and ManuallyDrop
+                        // prevents its Drop from running, so this is the sole move.
                         Stdio::Blob(b) => unsafe { core::ptr::read(b) },
                         _ => unreachable!(),
                     };
@@ -1856,7 +1860,7 @@ impl CapturedWriter {
         Yield::Suspended
     }
 
-    pub fn on_error(&mut self, err: bun_sys::Error) {
+    pub fn on_error(&mut self, err: &bun_sys::Error) {
         // TODO(port): Zig assigns bun.sys.Error to ?jsc.SystemError field — type mismatch
         // in original (dead code under lazy compilation).
         self.err = Some(err.to_system_error());
@@ -2182,9 +2186,9 @@ impl PipeReader {
     /// (single JS-thread; see [`arc_as_mut_ptr`]). No `&`/`&mut PipeReader`
     /// to the same object may be live across this call.
     pub unsafe fn try_signal_done_to_cmd(this: *mut Self) -> Yield {
-        // SAFETY: caller contract — short-lived shared borrow for the
-        // read-only `is_done()` / log; no Cmd re-entry yet.
         let (done, out_type, process) = {
+            // SAFETY: caller contract — short-lived shared borrow for the
+            // read-only `is_done()` / log; no Cmd re-entry yet.
             let me = unsafe { &*this };
             (me.is_done(), me.out_type, me.process)
         };
@@ -2206,9 +2210,9 @@ impl PipeReader {
             // every PipeReader has signalled done. `cmd_mut` resolves through
             // the node arena (see `CmdHandle`).
             let cmd = unsafe { (*proc).cmd_parent.cmd_mut() };
-            // SAFETY: caller contract — `&mut *this` for the field rewrites;
-            // ends at the closing brace, *before* the `cmd` call below.
             let e: Option<SystemError> = {
+                // SAFETY: caller contract — `&mut *this` for the field rewrites;
+                // ends at the closing brace, *before* the `cmd` call below.
                 let me = unsafe { &mut *this };
                 if let Some(e) = me.captured_writer.err.take() {
                     // Transfer ownership of the error out of captured_writer so
@@ -2306,9 +2310,9 @@ impl PipeReader {
         // caller's +1 strong ref.
         let me = arc_as_mut_ptr(&this);
 
-        // SAFETY: see `arc_as_mut_ptr`; short-lived `&mut` for the `state`
-        // swap. No `Arc::deref(&this)` overlaps.
         match core::mem::replace(
+            // SAFETY: see `arc_as_mut_ptr`; short-lived `&mut` for the `state`
+            // swap. No `Arc::deref(&this)` overlaps.
             unsafe { &mut (*me).state },
             PipeReaderState::Done(Box::default()),
         ) {
@@ -2360,7 +2364,7 @@ impl PipeReader {
 
     /// # Safety
     /// See [`Self::on_reader_done`].
-    pub unsafe fn on_reader_error(this: *mut Self, err: bun_sys::Error) {
+    pub unsafe fn on_reader_error(this: *mut Self, err: &bun_sys::Error) {
         log!("PipeReader(0x{:x}) onReaderError {:?}", this as usize, err);
         // SAFETY: caller contract.
         let guard = unsafe { Self::guard_from_raw(this) };
@@ -2478,7 +2482,7 @@ bun_io::impl_buffered_reader_parent! {
     has_on_read_chunk = true;
     on_read_chunk   = |this, chunk, has_more| PipeReader::on_read_chunk(this.cast::<c_void>(), chunk, has_more);
     on_reader_done  = |this| PipeReader::on_reader_done(this);
-    on_reader_error = |this, err| PipeReader::on_reader_error(this, err);
+    on_reader_error = |this, err| PipeReader::on_reader_error(this, &err);
     loop_           = |this| (*this).r#loop();
     event_loop      = |this| (*this).event_loop.as_event_loop_ctx();
 }

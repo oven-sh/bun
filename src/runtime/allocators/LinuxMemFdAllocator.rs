@@ -163,8 +163,7 @@ impl LinuxMemFdAllocator {
             let flags_mut = (flags & !MAP_TYPE) | libc::MAP_SHARED;
 
             // SAFETY: `this` is live per caller contract; we only read scalar fields.
-            let self_size = unsafe { (*this).size };
-            let self_fd = unsafe { (*this).fd };
+            let (self_size, self_fd) = unsafe { ((*this).size, (*this).fd) };
 
             let map_len = size.min(self_size);
             match sys::mmap(

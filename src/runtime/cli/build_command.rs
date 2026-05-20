@@ -58,7 +58,7 @@ impl BuildCommand {
     #[inline(never)]
     pub fn exec(
         ctx: Context,
-        fetcher: Option<&mut bundle_v2::DependenciesScanner>,
+        fetcher: Option<&bundle_v2::DependenciesScanner>,
     ) -> Result<(), bun_core::Error> {
         Global::configure_allocator(Global::AllocatorConfiguration {
             long_running: true,
@@ -134,8 +134,8 @@ impl BuildCommand {
             std::ptr::from_ref::<transpiler::Transpiler>(this_transpiler).cast(),
             core::mem::size_of::<transpiler::Transpiler>(),
         );
-        if let Some(fetch) = fetcher.as_deref() {
-            this_transpiler.options.entry_points = fetch.entry_points.clone();
+        if let Some(fetch) = fetcher {
+            this_transpiler.options.entry_points.clone_from(&fetch.entry_points);
             // resolver.opts is a distinct subset type; entry_points / IMRE live
             // only on the bundler-side options struct (resolver never reads them).
             this_transpiler.options.ignore_module_resolution_errors = true;
@@ -175,10 +175,10 @@ impl BuildCommand {
         this_transpiler.options.supports_multiple_outputs =
             !(output_to_stdout || !outfile.is_empty());
 
-        this_transpiler.options.public_path = ctx.bundler_options.public_path.clone();
-        this_transpiler.options.entry_naming = ctx.bundler_options.entry_naming.clone();
-        this_transpiler.options.chunk_naming = ctx.bundler_options.chunk_naming.clone();
-        this_transpiler.options.asset_naming = ctx.bundler_options.asset_naming.clone();
+        this_transpiler.options.public_path.clone_from(&ctx.bundler_options.public_path);
+        this_transpiler.options.entry_naming.clone_from(&ctx.bundler_options.entry_naming);
+        this_transpiler.options.chunk_naming.clone_from(&ctx.bundler_options.chunk_naming);
+        this_transpiler.options.asset_naming.clone_from(&ctx.bundler_options.asset_naming);
         this_transpiler.options.server_components = ctx.bundler_options.server_components;
         this_transpiler.options.react_fast_refresh = ctx.bundler_options.react_fast_refresh;
         this_transpiler.options.inline_entrypoint_import_meta_main =
@@ -214,7 +214,7 @@ impl BuildCommand {
         this_transpiler.options.metafile =
             !ctx.bundler_options.metafile.is_empty() || !ctx.bundler_options.metafile_md.is_empty();
 
-        this_transpiler.options.output_dir = ctx.bundler_options.outdir.clone();
+        this_transpiler.options.output_dir.clone_from(&ctx.bundler_options.outdir);
         this_transpiler.options.output_format = ctx.bundler_options.output_format;
 
         if ctx.bundler_options.output_format == options::OutputFormat::InternalBakeDev {
@@ -399,7 +399,7 @@ impl BuildCommand {
         this_transpiler.options.transform_only = ctx.bundler_options.transform_only;
 
         this_transpiler.options.env.behavior = ctx.bundler_options.env_behavior;
-        this_transpiler.options.env.prefix = ctx.bundler_options.env_prefix.clone();
+        this_transpiler.options.env.prefix.clone_from(&ctx.bundler_options.env_prefix);
 
         if ctx.bundler_options.production {
             // SAFETY: `env` is a process-lifetime singleton set in `Transpiler::init`.
@@ -584,7 +584,7 @@ impl BuildCommand {
                 &mut reachable_file_count,
                 &mut minify_duration,
                 &mut input_code_length,
-                fetcher.as_deref(),
+                fetcher,
             ) {
                 Ok(r) => r,
                 Err(err) => {

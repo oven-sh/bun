@@ -1041,27 +1041,26 @@ fn patch_file_second_pass<'a>(files: &mut [FileDeets<'a>]) -> Result<PatchFile<'
             }
         }
 
-        if destination_file_path.is_some()
-            && file.old_mode.is_some()
-            && file.new_mode.is_some()
-            && file.old_mode.unwrap() != file.new_mode.unwrap()
+        if let (Some(path), Some(old_mode), Some(new_mode)) =
+            (destination_file_path, file.old_mode, file.new_mode)
+            && old_mode != new_mode
         {
             result
                 .parts
                 .push(PatchFilePart::FileModeChange(Box::new(FileModeChange {
-                    path: destination_file_path.unwrap(),
-                    old_mode: parse_file_mode(file.old_mode.unwrap())
-                        .ok_or(ParseErr::bad_file_mode)?,
-                    new_mode: parse_file_mode(file.new_mode.unwrap())
-                        .ok_or(ParseErr::bad_file_mode)?,
+                    path,
+                    old_mode: parse_file_mode(old_mode).ok_or(ParseErr::bad_file_mode)?,
+                    new_mode: parse_file_mode(new_mode).ok_or(ParseErr::bad_file_mode)?,
                 })));
         }
 
-        if destination_file_path.is_some() && !file.hunks.is_empty() {
+        if let Some(path) = destination_file_path
+            && !file.hunks.is_empty()
+        {
             result
                 .parts
                 .push(PatchFilePart::FilePatch(Box::new(FilePatch {
-                    path: destination_file_path.unwrap(),
+                    path,
                     hunks: file.take_hunks(),
                     before_hash: file.before_hash,
                     after_hash: file.after_hash,
@@ -1186,7 +1185,7 @@ enum HunkLineType {
     Pragma,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 struct ParseOpts {
     support_legacy_diffs: bool,
 }

@@ -77,7 +77,7 @@ pub struct ToJSOptions {
 fn valkey_str_to_js_value(
     global: &JSGlobalObject,
     str: &[u8],
-    options: &ToJSOptions,
+    options: ToJSOptions,
 ) -> JsResult<JSValue> {
     if options.return_as_buffer {
         // TODO: handle values > 4.7 GB
@@ -93,7 +93,7 @@ pub fn resp_value_to_js_with_options(
     options: ToJSOptions,
 ) -> JsResult<JSValue> {
     match this {
-        RESPValue::SimpleString(str) => valkey_str_to_js_value(global, str, &options),
+        RESPValue::SimpleString(str) => valkey_str_to_js_value(global, str, options),
         RESPValue::Error(str) => Ok(valkey_error_to_js(
             global,
             &**str,
@@ -102,7 +102,7 @@ pub fn resp_value_to_js_with_options(
         RESPValue::Integer(int) => Ok(JSValue::js_number(*int as f64)),
         RESPValue::BulkString(maybe_str) => {
             if let Some(str) = maybe_str {
-                valkey_str_to_js_value(global, str, &options)
+                valkey_str_to_js_value(global, str, options)
             } else {
                 Ok(JSValue::NULL)
             }
@@ -121,7 +121,7 @@ pub fn resp_value_to_js_with_options(
             RedisError::InvalidBlobError,
         )),
         RESPValue::VerbatimString(verbatim) => {
-            valkey_str_to_js_value(global, &verbatim.content, &options)
+            valkey_str_to_js_value(global, &verbatim.content, options)
         }
         RESPValue::Map(entries) => {
             let js_obj = JSValue::create_empty_object_with_null_prototype(global);

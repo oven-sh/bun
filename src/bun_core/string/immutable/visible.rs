@@ -899,7 +899,7 @@ pub mod visible {
             };
 
             let cp: u32 = if skip > 1 {
-                decode_wtf8_rune_t_multibyte(&cp_bytes, skip, UNICODE_REPLACEMENT)
+                decode_wtf8_rune_t_multibyte(cp_bytes, skip, UNICODE_REPLACEMENT)
             } else {
                 UNICODE_REPLACEMENT
             };
@@ -1509,7 +1509,7 @@ pub mod visible {
                 _ => unreachable!(),
             };
             let cp: u32 = if skip > 1 {
-                decode_wtf8_rune_t_multibyte(&cp_bytes, skip, UNICODE_REPLACEMENT)
+                decode_wtf8_rune_t_multibyte(cp_bytes, skip, UNICODE_REPLACEMENT)
             } else {
                 UNICODE_REPLACEMENT
             };

@@ -208,8 +208,8 @@ impl StreamPriority {
     }
 
     #[inline]
-    pub fn encode_into(&self, dst: &mut [u8; Self::BYTE_SIZE]) {
-        let mut swap = *self;
+    pub fn encode_into(self, dst: &mut [u8; Self::BYTE_SIZE]) {
+        let mut swap = self;
         swap.stream_identifier = u32::swap_bytes({ swap.stream_identifier });
         dst.copy_from_slice(bytemuck::bytes_of(&swap));
     }

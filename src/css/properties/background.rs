@@ -184,7 +184,7 @@ impl Background {
         }
 
         let output_padding_box = self.origin != BackgroundOrigin::PaddingBox
-            || (!self.clip.eql_origin(&BackgroundOrigin::BorderBox)
+            || (!self.clip.eql_origin(BackgroundOrigin::BorderBox)
                 && self.clip.is_background_box());
 
         if output_padding_box {
@@ -195,8 +195,8 @@ impl Background {
             has_output = true;
         }
 
-        if (output_padding_box && !self.clip.eql_origin(&BackgroundOrigin::BorderBox))
-            || !self.clip.eql_origin(&BackgroundOrigin::BorderBox)
+        if (output_padding_box && !self.clip.eql_origin(BackgroundOrigin::BorderBox))
+            || !self.clip.eql_origin(BackgroundOrigin::BorderBox)
         {
             if has_output {
                 dest.write_str(" ")?;
@@ -236,9 +236,9 @@ impl Background {
         ret
     }
 
-    pub fn get_necessary_fallbacks(&self, targets: css::targets::Targets) -> ColorFallbackKind {
-        self.color.get_necessary_fallbacks(targets)
-            | self.get_image().get_necessary_fallbacks(targets)
+    pub fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
+        self.color.get_necessary_fallbacks(*targets)
+            | self.get_image().get_necessary_fallbacks(*targets)
     }
 
     #[inline]
@@ -529,16 +529,16 @@ impl BackgroundClip {
         BackgroundClip::BorderBox
     }
 
-    pub fn eql_origin(&self, other: &BackgroundOrigin) -> bool {
+    pub fn eql_origin(self, other: BackgroundOrigin) -> bool {
         match self {
-            BackgroundClip::BorderBox => *other == BackgroundOrigin::BorderBox,
-            BackgroundClip::PaddingBox => *other == BackgroundOrigin::PaddingBox,
-            BackgroundClip::ContentBox => *other == BackgroundOrigin::ContentBox,
+            BackgroundClip::BorderBox => other == BackgroundOrigin::BorderBox,
+            BackgroundClip::PaddingBox => other == BackgroundOrigin::PaddingBox,
+            BackgroundClip::ContentBox => other == BackgroundOrigin::ContentBox,
             _ => false,
         }
     }
 
-    pub fn is_background_box(&self) -> bool {
+    pub fn is_background_box(self) -> bool {
         matches!(
             self,
             BackgroundClip::BorderBox | BackgroundClip::PaddingBox | BackgroundClip::ContentBox
@@ -1206,7 +1206,7 @@ impl crate::small_list::ImageFallback for Background {
     }
     #[inline]
     fn get_necessary_fallbacks(&self, targets: css::targets::Targets) -> ColorFallbackKind {
-        Background::get_necessary_fallbacks(self, targets)
+        Background::get_necessary_fallbacks(self, &targets)
     }
 }
 

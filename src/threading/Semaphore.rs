@@ -20,6 +20,8 @@ pub struct Semaphore {
 // SAFETY: `permits` is only read/written while `mutex` is held; `Mutex` and
 // `Condition` are themselves `Sync`/`Send`.
 unsafe impl Sync for Semaphore {}
+// SAFETY: `Mutex`, `Condition`, and `UnsafeCell<usize>` are all `Send`; the
+// semaphore holds no thread-affine state.
 unsafe impl Send for Semaphore {}
 
 impl Default for Semaphore {
@@ -54,7 +56,9 @@ impl Semaphore {
             self.cond.wait(&self.mutex);
         }
 
+        // SAFETY: `mutex` is still held (released only by the scopeguard on return).
         unsafe { *self.permits.get() -= 1 };
+        // SAFETY: `mutex` is still held; this is the sole accessor of `permits`.
         if unsafe { *self.permits.get() } > 0 {
             self.cond.signal();
         }

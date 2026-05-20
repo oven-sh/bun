@@ -189,7 +189,7 @@ impl Failure {
 
 pub enum InstallResult {
     Success,
-    Failure(Failure),
+    Failure(Box<Failure>),
 }
 
 impl InstallResult {
@@ -200,7 +200,7 @@ impl InstallResult {
         step: Step,
         _trace: Option<&bun_crash_handler::StackTrace>,
     ) -> InstallResult {
-        InstallResult::Failure(Failure {
+        InstallResult::Failure(Box::new(Failure {
             err,
             step,
             #[cfg(debug_assertions)]
@@ -208,7 +208,7 @@ impl InstallResult {
                 Some(t) => bun_core::StoredTrace::from(Some(t)),
                 None => bun_core::StoredTrace::capture(None /* @returnAddress() */),
             },
-        })
+        }))
     }
 
     pub fn is_fail(&self) -> bool {
@@ -492,12 +492,16 @@ impl<TaskType> NewTaskQueue<TaskType> {
         self.wait_group.finish();
     }
 
-    pub fn push(&self, task: *mut TaskType)
+    /// # Safety
+    /// `task` must point to a live, Box-allocated `TaskType` whose ownership is
+    /// being handed to the thread pool; the worker reclaims it in its callback.
+    pub unsafe fn push(&self, task: *mut TaskType)
     where
         TaskType: HasWorkPoolTask,
     {
         self.wait_group.add_one();
-        // SAFETY: task is a valid Box-allocated task; .task field is the intrusive node.
+        // SAFETY: caller contract — `task` is a valid Box-allocated task; `.task()`
+        // is the intrusive node field.
         self.thread_pool.schedule(Batch::from(unsafe {
             std::ptr::from_mut::<WorkPoolTask>((*task).task())
         }));
@@ -795,7 +799,7 @@ impl UninstallTask {
 
 impl<'a> PackageInstall<'a> {
     ///
-    fn verify_patch_hash(&mut self, patch: &Patch, root_node_modules_dir: Dir) -> bool {
+    fn verify_patch_hash(&mut self, patch: Patch, root_node_modules_dir: Dir) -> bool {
         // hash from the .patch file, to be checked against bun tag
         let patchfile_contents_hash = patch.contents_hash;
         let mut buf: BuntagHashBuf = BuntagHashBuf::default();
@@ -896,7 +900,7 @@ impl<'a> PackageInstall<'a> {
             if !verified {
                 return false;
             }
-            return self.verify_patch_hash(&patch, root_node_modules_dir);
+            return self.verify_patch_hash(patch, root_node_modules_dir);
         }
         verified
     }
@@ -1733,11 +1737,15 @@ impl<'a> PackageInstall<'a> {
                     head2[src_len] = 0;
                     let src = bun_core::WStr::from_buf(head2, src_len);
 
-                    queue.push(HardLinkWindowsInstallTask::init(
-                        src.as_slice(),
-                        dest.as_slice(),
-                        entry.basename.as_slice(),
-                    ));
+                    // SAFETY: `init` returns a fresh Box-allocated task; ownership
+                    // transfers to the thread pool, reclaimed in `run_from_thread_pool`.
+                    unsafe {
+                        queue.push(HardLinkWindowsInstallTask::init(
+                            src.as_slice(),
+                            dest.as_slice(),
+                            entry.basename.as_slice(),
+                        ));
+                    }
                     real_file_count += 1;
                 }
             }

@@ -191,7 +191,7 @@ impl LineOffsetTable {
                 let mut cp_bytes = [0u8; 4];
                 let take = (len_ as usize).min(remaining.len());
                 cp_bytes[..take].copy_from_slice(&remaining[..take]);
-                strings::decode_wtf8_rune_t::<i32>(&cp_bytes, len_, 0)
+                strings::decode_wtf8_rune_t::<i32>(cp_bytes, len_, 0)
             };
             let cp_len = len_ as usize;
 

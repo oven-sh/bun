@@ -130,7 +130,7 @@ impl<'a> TreeDepsSortCtx<'a> {
         let l = &self.deps_buf[lhs as usize];
         let r = &self.deps_buf[rhs as usize];
         strings::cmp_strings_asc(
-            &(),
+            (),
             l.name.slice(self.string_buf),
             r.name.slice(self.string_buf),
         )
@@ -240,12 +240,12 @@ impl Stringifier {
                 "\"lockfileVersion\": {},",
                 Version::CURRENT as u32
             )?;
-            Self::write_indent(writer, indent)?;
+            Self::write_indent(writer, *indent)?;
 
             let config_version: ConfigVersion =
                 options.config_version.unwrap_or(ConfigVersion::CURRENT);
             writeln!(writer, "\"configVersion\": {},", config_version as u32)?;
-            Self::write_indent(writer, indent)?;
+            Self::write_indent(writer, *indent)?;
 
             writer.write_all(b"\"workspaces\": {\n")?;
             Self::inc_indent(writer, indent)?;
@@ -291,7 +291,7 @@ impl Stringifier {
                 for &workspace_pkg_id in &workspace_sort_buf {
                     let res = &pkg_resolutions[workspace_pkg_id as usize];
                     writer.write_all(b"\n")?;
-                    Self::write_indent(writer, indent)?;
+                    Self::write_indent(writer, *indent)?;
                     Self::write_workspace_deps(
                         writer,
                         indent,
@@ -404,11 +404,11 @@ impl Stringifier {
             // PERF(port): std.sort.pdq
 
             if found_trusted_dependencies.len() > 0 {
-                Self::write_indent(writer, indent)?;
+                Self::write_indent(writer, *indent)?;
                 writer.write_all(b"\"trustedDependencies\": [\n")?;
                 *indent += 1;
                 for dep_name in found_trusted_dependencies.values() {
-                    Self::write_indent(writer, indent)?;
+                    Self::write_indent(writer, *indent)?;
                     writeln!(writer, "\"{}\",", bstr::BStr::new(dep_name.slice(buf)))?;
                 }
 
@@ -417,12 +417,12 @@ impl Stringifier {
             }
 
             if found_patched_dependencies.len() > 0 {
-                Self::write_indent(writer, indent)?;
+                Self::write_indent(writer, *indent)?;
                 writer.write_all(b"\"patchedDependencies\": {\n")?;
                 *indent += 1;
                 for value in found_patched_dependencies.values() {
                     let (name_and_version, patch_path) = value;
-                    Self::write_indent(writer, indent)?;
+                    Self::write_indent(writer, *indent)?;
                     writeln!(
                         writer,
                         "{}: {},",
@@ -443,11 +443,11 @@ impl Stringifier {
                     .overrides
                     .sort(lockfile.buffers.string_bytes.as_slice());
 
-                Self::write_indent(writer, indent)?;
+                Self::write_indent(writer, *indent)?;
                 writer.write_all(b"\"overrides\": {\n")?;
                 *indent += 1;
                 for override_dep in lockfile.overrides.map.values() {
-                    Self::write_indent(writer, indent)?;
+                    Self::write_indent(writer, *indent)?;
                     writeln!(
                         writer,
                         "{}: {},",
@@ -470,11 +470,11 @@ impl Stringifier {
             }
 
             if lockfile.catalogs.default.count() > 0 {
-                Self::write_indent(writer, indent)?;
+                Self::write_indent(writer, *indent)?;
                 writer.write_all(b"\"catalog\": {\n")?;
                 *indent += 1;
                 for catalog_dep in lockfile.catalogs.default.values() {
-                    Self::write_indent(writer, indent)?;
+                    Self::write_indent(writer, *indent)?;
                     writeln!(
                         writer,
                         "{}: {},",
@@ -491,13 +491,13 @@ impl Stringifier {
             }
 
             if lockfile.catalogs.groups.count() > 0 {
-                Self::write_indent(writer, indent)?;
+                Self::write_indent(writer, *indent)?;
                 writer.write_all(b"\"catalogs\": {\n")?;
                 *indent += 1;
 
                 let mut iter = lockfile.catalogs.groups.iter();
                 for (catalog_name, catalog_deps) in iter {
-                    Self::write_indent(writer, indent)?;
+                    Self::write_indent(writer, *indent)?;
                     writeln!(
                         writer,
                         "{}: {{",
@@ -506,7 +506,7 @@ impl Stringifier {
                     *indent += 1;
 
                     for catalog_dep in catalog_deps.values() {
-                        Self::write_indent(writer, indent)?;
+                        Self::write_indent(writer, *indent)?;
                         writeln!(
                             writer,
                             "{}: {},",
@@ -529,7 +529,7 @@ impl Stringifier {
             let mut tree_deps_sort_buf: Vec<DependencyID> = Vec::new();
             let mut pkg_deps_sort_buf: Vec<DependencyID> = Vec::new();
 
-            Self::write_indent(writer, indent)?;
+            Self::write_indent(writer, *indent)?;
             writer.write_all(b"\"packages\": {")?;
             let mut first = true;
             for item in &tree_sort_buf {
@@ -583,7 +583,7 @@ impl Stringifier {
                         Self::inc_indent(writer, indent)?;
                     } else {
                         writer.write_all(b",\n\n")?;
-                        Self::write_indent(writer, indent)?;
+                        Self::write_indent(writer, *indent)?;
                     }
 
                     writer.write_byte(b'"')?;
@@ -1152,14 +1152,14 @@ impl Stringifier {
 
             if let Some(version) = workspace_versions.get(&pkg_name_hashes[pkg_id as usize]) {
                 writer.write_all(b",\n")?;
-                Self::write_indent(writer, indent)?;
+                Self::write_indent(writer, *indent)?;
                 write!(writer, "\"version\": \"{}\"", version.fmt(buf))?;
             }
 
             if pkg_bins[pkg_id as usize].tag != BinTag::None {
                 let bin = &pkg_bins[pkg_id as usize];
                 writer.write_all(b",\n")?;
-                Self::write_indent(writer, indent)?;
+                Self::write_indent(writer, *indent)?;
                 if bin.tag == BinTag::Dir {
                     writer.write_all(b"\"binDir\": ")?;
                 } else {
@@ -1199,7 +1199,7 @@ impl Stringifier {
                     }
                     writer.write_byte(b'\n')?;
                     if any {
-                        Self::write_indent(writer, indent)?;
+                        Self::write_indent(writer, *indent)?;
                     } else {
                         Self::inc_indent(writer, indent)?;
                     }
@@ -1211,7 +1211,7 @@ impl Stringifier {
                     first = false;
                 } else {
                     writer.write_all(b",\n")?;
-                    Self::write_indent(writer, indent)?;
+                    Self::write_indent(writer, *indent)?;
                 }
 
                 let name = dep.name.slice(buf);
@@ -1245,11 +1245,11 @@ impl Stringifier {
         if !optional_peers_buf.is_empty() {
             debug_assert!(any);
             writer.write_all(b",\n")?;
-            Self::write_indent(writer, indent)?;
+            Self::write_indent(writer, *indent)?;
             writer.write_all(b"\"optionalPeers\": [\n")?;
             *indent += 1;
             for optional_peer in optional_peers_buf.iter() {
-                Self::write_indent(writer, indent)?;
+                Self::write_indent(writer, *indent)?;
                 writeln!(
                     writer,
                     "{},",
@@ -1273,10 +1273,10 @@ impl Stringifier {
         Ok(())
     }
 
-    fn write_indent(writer: &mut Writer, indent: &u32) -> Result<(), WriteError> {
+    fn write_indent(writer: &mut Writer, indent: u32) -> Result<(), WriteError> {
         const INDENT: &[u8] = b"  "; // " " ** indent_scalar (2)
         const _: () = assert!(INDENT.len() == Stringifier::INDENT_SCALAR);
-        for _ in 0..*indent {
+        for _ in 0..indent {
             writer.write_all(INDENT)?;
         }
         Ok(())
@@ -1740,8 +1740,8 @@ pub fn parse_into_binary_lockfile(
             };
 
             let entry = lockfile.catalogs.default.get_or_put_adapted(
-                dep_name,
-                string_array_hash_context(lockfile.buffers.string_bytes.as_slice()),
+                &dep_name,
+                &string_array_hash_context(lockfile.buffers.string_bytes.as_slice()),
             )?;
 
             if entry.found_existing {
@@ -1861,8 +1861,8 @@ pub fn parse_into_binary_lockfile(
                 };
 
                 let entry = group.get_or_put_adapted(
-                    dep_name,
-                    string_array_hash_context(lockfile.buffers.string_bytes.as_slice()),
+                    &dep_name,
+                    &string_array_hash_context(lockfile.buffers.string_bytes.as_slice()),
                 )?;
 
                 if entry.found_existing {

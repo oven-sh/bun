@@ -348,10 +348,10 @@ impl ArrayBuffer {
         })
     }
 
-    pub fn alloc<const KIND: JSType>(
+    pub fn alloc<'a, const KIND: JSType>(
         global: &JSGlobalObject,
         len: u32,
-    ) -> JsResult<(JSValue, &mut [u8])> {
+    ) -> JsResult<(JSValue, &'a mut [u8])> {
         let mut ptr_out: *mut u8 = ptr::null_mut();
         let buf = match KIND {
             JSType::Uint8Array => crate::host_fn::from_js_host_call(global, || {
@@ -396,7 +396,7 @@ impl ArrayBuffer {
                 // transfers to JSC. Coerce the borrowed slice directly to its
                 // fat raw pointer — no need to round-trip through
                 // `from_raw_parts_mut(as_mut_ptr(), len)`.
-                let owned = unsafe { bun_core::heap::take(bytes as *mut [u8]) };
+                let owned = unsafe { bun_core::heap::take(ptr::from_mut(bytes)) };
                 jsc::JSUint8Array::from_bytes(global, owned)
             }
             _ => unreachable!("Not implemented yet"), // Zig: @compileError
@@ -485,9 +485,9 @@ impl ArrayBuffer {
         // If it's not a mimalloc heap buffer, we're not going to call a deallocator.
         // Only meaningful when mimalloc is the global allocator; otherwise the
         // probe always returns false and we'd drop the deallocator for buffers we own.
-        // SAFETY: `mi_is_in_heap_region` accepts any pointer value (incl. null/non-mimalloc).
         if self.len > 0
             && bun_alloc::USE_MIMALLOC
+            // SAFETY: `mi_is_in_heap_region` accepts any pointer value (incl. null/non-mimalloc).
             && !unsafe { mimalloc::mi_is_in_heap_region(self.ptr.cast()) }
         {
             bun_core::scoped_log!(ArrayBuffer, "toJS but will never free: {} bytes", self.len);
@@ -612,10 +612,10 @@ impl ArrayBuffer {
         if self.is_detached() {
             return &mut [];
         }
+        let len = self.byte_len / core::mem::size_of::<u16>();
         // SAFETY: ptr non-null (checked above); `Unaligned<u16>` has size 2 and
         // align 1, so any `*mut u8` is a valid `*mut Unaligned<u16>`. `&mut self`
         // enforces exclusive access to this view for the borrow's lifetime.
-        let len = self.byte_len / core::mem::size_of::<u16>();
         unsafe { core::slice::from_raw_parts_mut(self.ptr.cast::<bun_core::Unaligned<u16>>(), len) }
     }
 
@@ -631,10 +631,10 @@ impl ArrayBuffer {
         if self.is_detached() {
             return &mut [];
         }
+        let len = self.byte_len / core::mem::size_of::<u32>();
         // SAFETY: ptr non-null; `Unaligned<u32>` has size 4 / align 1, so any
         // `*mut u8` is a valid `*mut Unaligned<u32>`. `&mut self` enforces
         // exclusive access to this view.
-        let len = self.byte_len / core::mem::size_of::<u32>();
         unsafe { core::slice::from_raw_parts_mut(self.ptr.cast::<bun_core::Unaligned<u32>>(), len) }
     }
 }
@@ -881,21 +881,13 @@ impl TypedArrayType {
 // MarkedArrayBuffer
 // ──────────────────────────────────────────────────────────────────────────
 
+#[derive(Default)]
 pub struct MarkedArrayBuffer {
     pub buffer: ArrayBuffer,
     // TODO(port): Zig stores `?std.mem.Allocator` to track ownership of the byte buffer.
     // In Rust the global allocator is implicit; we keep a bool flag so `destroy` knows
     // whether to mi_free the backing storage.
     pub owns_buffer: bool,
-}
-
-impl Default for MarkedArrayBuffer {
-    fn default() -> Self {
-        Self {
-            buffer: ArrayBuffer::default(),
-            owns_buffer: false,
-        }
-    }
 }
 
 // TODO(port): Zig `ArrayBuffer.Stream = std.io.FixedBufferStream([]u8)`.
@@ -1016,7 +1008,6 @@ impl MarkedArrayBuffer {
 // ──────────────────────────────────────────────────────────────────────────
 
 // `no_mangle` dropped: 0 C++ refs (phase_c_exports.rs mention is a comment).
-#[allow(non_upper_case_globals)]
 pub use bun_alloc::c_thunks::mi_free_bytes as MarkedArrayBuffer_deallocator;
 
 // LAYERING: `BlobArrayBuffer_deallocator` (array_buffer.zig:646) releases a

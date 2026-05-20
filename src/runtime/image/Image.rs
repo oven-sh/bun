@@ -551,7 +551,7 @@ impl Image {
         fmt: codecs::Format,
     ) -> JsResult<JSValue> {
         let mut enc: codecs::EncodeOptions =
-            self.pipeline.get().output.unwrap_or(codecs::EncodeOptions {
+            self.pipeline.get().output.unwrap_or_else(|| codecs::EncodeOptions {
                 format: fmt,
                 ..Default::default()
             });

@@ -51,14 +51,15 @@ pub fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
         }
     }
 
-    // SAFETY: `c_ptr` / `chunk_ptr` carry mutable provenance; the disjoint-write
-    // contract is documented on `pending_part_range_prologue`. The `&mut`
-    // borrows below are scoped to the impl call so they do not overlap the
-    // raw slot write that follows. (Peer tasks still hold their own `&mut`
-    // views into the same `LinkerContext`/`Chunk` for read-only printer use —
-    // see TODO(ub-audit) on `unsafe impl Sync for Chunk`.)
     let result = {
+        // SAFETY: `c_ptr` / `chunk_ptr` carry mutable provenance; the disjoint-write
+        // contract is documented on `pending_part_range_prologue`. The `&mut`
+        // borrows below are scoped to the impl call so they do not overlap the
+        // raw slot write that follows. (Peer tasks still hold their own `&mut`
+        // views into the same `LinkerContext`/`Chunk` for read-only printer use —
+        // see TODO(ub-audit) on `unsafe impl Sync for Chunk`.)
         let c_mut: &mut LinkerContext = unsafe { &mut *c_ptr };
+        // SAFETY: same mutable-provenance / disjoint-write contract as `c_ptr` above.
         let chunk_mut: &mut Chunk = unsafe { &mut *chunk_ptr };
         generate_compile_result_for_js_chunk_impl(
             &mut **worker,
@@ -165,6 +166,9 @@ fn generate_compile_result_for_js_chunk_impl(
     let result = generate_code_for_file_in_chunk_js(
         c,
         &mut buffer_writer,
+        // SAFETY: split borrow of `*chunk` — `renamer_ptr` aliases only
+        // `chunk.renamer`, which the callee never touches via its `chunk`
+        // parameter, so this deref does not overlap the `chunk` reborrow below.
         unsafe { (*renamer_ptr).as_renamer() },
         chunk,
         part_range,

@@ -74,9 +74,9 @@ pub fn from_js(value: JSValue, global_object: &JSGlobalObject) -> JsResult<Strin
     // SAFETY: `global_object` is a valid handle; `out` is a live stack out-param.
     let ok = unsafe {
         crate::cpp::raw::BunString__fromJS(
-            global_object as *const JSGlobalObject as *mut JSGlobalObject,
+            core::ptr::from_ref(global_object).cast_mut(),
             value,
-            &mut out,
+            &raw mut out,
         )
     };
 
@@ -251,11 +251,11 @@ fn slice_with_underlying_string_to_js_with_options(
                 // external string; do not drop it here.
                 let mut utf16 = core::mem::ManuallyDrop::new(utf16);
                 utf16.shrink_to_fit();
-                return Ok(zig_string::to_external_u16(
-                    utf16.as_ptr(),
-                    utf16.len(),
-                    global_object,
-                ));
+                // SAFETY: `utf16` was allocated by the global allocator and is
+                // wrapped in `ManuallyDrop`; ownership transfers to JSC here.
+                return Ok(unsafe {
+                    zig_string::to_external_u16(utf16.as_ptr(), utf16.len(), global_object)
+                });
             } else if let Some((ptr, len)) = this.utf8.take_owned_raw() {
                 // PORT NOTE: ownership of utf8 bytes transferred to JSC via
                 // `to_external_value`; `take_owned_raw` already cleared `utf8`

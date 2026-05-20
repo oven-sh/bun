@@ -497,10 +497,10 @@ impl CompileC {
         // SAFETY: TinyCC threads our own `&mut CompileC` back as `ctx`; we hold
         // the unique borrow for the duration of the callback.
         let this = unsafe { &mut *this_ };
-        // SAFETY: TCC guarantees message is a valid NUL-terminated string when non-null
         let mut msg: &[u8] = if message.is_null() {
             b""
         } else {
+            // SAFETY: TCC guarantees `message` is a valid NUL-terminated string when non-null.
             unsafe { bun_core::ffi::cstr(message) }.to_bytes()
         };
         if msg.is_empty() {
@@ -657,7 +657,7 @@ impl CompileC {
         };
 
         // TODO: correctly handle invalid user-provided options
-        let state_ptr = match TCC::State::init::<CompileC, true>(TCC::Config {
+        let state_ptr = match TCC::State::init::<CompileC, true>(&TCC::Config {
             options: Some(NonNull::from(compile_options)),
             output_type: TCC::OutputFormat::Memory,
             err: TCC::ConfigErr {
@@ -1425,8 +1425,10 @@ impl FFI {
         };
 
         let mut symbols = StringArrayHashMap::<Function>::default();
+        // SAFETY: `get_object()` returned a non-null `*mut JSObject`; `object` keeps it alive.
+        let obj = unsafe { &*obj };
         if let Some(val) =
-            generate_symbols(global, &mut symbols, unsafe { &*obj }).unwrap_or(Some(JSValue::ZERO))
+            generate_symbols(global, &mut symbols, obj).unwrap_or(Some(JSValue::ZERO))
         {
             // an error while validating symbols
             // keys/arg_types freed by Drop
@@ -1522,6 +1524,7 @@ impl FFI {
         }
 
         let mut symbols = StringArrayHashMap::<Function>::default();
+        // SAFETY: `get_object()` returned a non-null `*mut JSObject`; `object_value` keeps it alive.
         if let Some(val) = generate_symbols(global, &mut symbols, unsafe { &*object })
             .unwrap_or(Some(JSValue::ZERO))
         {
@@ -1670,6 +1673,7 @@ impl FFI {
         };
 
         let mut symbols = StringArrayHashMap::<Function>::default();
+        // SAFETY: `get_object()` returned a non-null `*mut JSObject`; `object_value` keeps it alive.
         if let Some(val) = generate_symbols(global, &mut symbols, unsafe { &*object })
             .unwrap_or(Some(JSValue::ZERO))
         {
@@ -2058,7 +2062,7 @@ impl Function {
         } else {
             zstr!("-std=c11 -nostdlib -Wl,--export-all-symbols")
         };
-        let state = match TCC::State::init::<Function, false>(TCC::Config {
+        let state = match TCC::State::init::<Function, false>(&TCC::Config {
             options: Some(NonNull::from(tcc_options)),
             output_type: TCC::OutputFormat::Memory,
             err: TCC::ConfigErr {
@@ -2180,7 +2184,7 @@ impl Function {
         } else {
             zstr!("-std=c11 -nostdlib -Wl,--export-all-symbols")
         };
-        let state = match TCC::State::init::<Function, false>(TCC::Config {
+        let state = match TCC::State::init::<Function, false>(&TCC::Config {
             options: Some(NonNull::from(tcc_options)),
             output_type: TCC::OutputFormat::Memory,
             err: TCC::ConfigErr {

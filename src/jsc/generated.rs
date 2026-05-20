@@ -488,9 +488,9 @@ impl SSLConfigFile {
                     // when `ZigType == ExternType`. This path copies-then-frees the
                     // source buffer; in-place reuse deferred.
                     // PERF(port): was BindgenArray in-place convert — profile if it shows up on a hot path.
-                    // `arr.data` was allocated by `WTF::fastMalloc` ≡ mimalloc
+                    // SAFETY: `arr.data` was allocated by `WTF::fastMalloc` ≡ mimalloc
                     // (per crate prereq); `mi_free` is size-agnostic.
-                    bun_alloc::basic::free_without_size(arr.data.cast());
+                    unsafe { bun_alloc::basic::free_without_size(arr.data.cast()) };
                 }
                 Self::Array(GenList(out))
             }

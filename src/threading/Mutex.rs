@@ -403,14 +403,14 @@ pub fn spin_cycle() {}
 
 // These have to be a size known to C.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__lock(ptr: *mut ReleaseImpl) {
+pub unsafe extern "C" fn Bun__lock(ptr: *mut ReleaseImpl) {
     // SAFETY: C caller passes a valid, initialized ReleaseImpl pointer.
     unsafe { (*ptr).lock() }
 }
 
 // These have to be a size known to C.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__unlock(ptr: *mut ReleaseImpl) {
+pub unsafe extern "C" fn Bun__unlock(ptr: *mut ReleaseImpl) {
     // SAFETY: C caller passes a valid, initialized ReleaseImpl pointer that this thread locked.
     unsafe { (*ptr).unlock() }
 }

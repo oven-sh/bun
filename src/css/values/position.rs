@@ -399,7 +399,7 @@ pub enum HorizontalPositionKeyword {
 }
 
 impl HorizontalPositionKeyword {
-    pub fn into_length_percentage(&self) -> LengthPercentage {
+    pub fn into_length_percentage(self) -> LengthPercentage {
         match self {
             HorizontalPositionKeyword::Left => LengthPercentage::zero(),
             HorizontalPositionKeyword::Right => {
@@ -418,7 +418,7 @@ pub enum VerticalPositionKeyword {
 }
 
 impl VerticalPositionKeyword {
-    pub fn into_length_percentage(&self) -> LengthPercentage {
+    pub fn into_length_percentage(self) -> LengthPercentage {
         match self {
             VerticalPositionKeyword::Top => LengthPercentage::zero(),
             VerticalPositionKeyword::Bottom => {

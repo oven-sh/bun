@@ -35,8 +35,8 @@ impl Default for FlexDirection {
 }
 
 impl FlexDirection {
-    pub fn to_2009(&self) -> (BoxOrient, BoxDirection) {
-        match *self {
+    pub fn to_2009(self) -> (BoxOrient, BoxDirection) {
+        match self {
             FlexDirection::Row => (BoxOrient::Horizontal, BoxDirection::Normal),
             FlexDirection::Column => (BoxOrient::Vertical, BoxDirection::Normal),
             FlexDirection::RowReverse => (BoxOrient::Horizontal, BoxDirection::Reverse),
@@ -64,13 +64,13 @@ impl Default for FlexWrap {
 }
 
 impl FlexWrap {
-    pub fn from_standard(&self) -> Option<FlexWrap> {
-        Some(*self)
+    pub fn from_standard(self) -> Option<FlexWrap> {
+        Some(self)
     }
 }
 
 /// A value for the [flex-flow](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#flex-flow-property) shorthand property.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct FlexFlow {
     /// The direction that flex items flow.
     pub direction: FlexDirection,
@@ -366,8 +366,8 @@ pub enum BoxLines {
 }
 
 impl BoxLines {
-    pub fn from_standard(wrap: &FlexWrap) -> Option<BoxLines> {
-        match *wrap {
+    pub fn from_standard(wrap: FlexWrap) -> Option<BoxLines> {
+        match wrap {
             FlexWrap::Nowrap => Some(BoxLines::Single),
             FlexWrap::Wrap => Some(BoxLines::Multiple),
             _ => None,
@@ -811,7 +811,7 @@ impl FlexHandler {
             // prop_2012 = None, prop_2009 = Some(Type, Variant)
             ($variant:ident, $key:expr, prop_2012 = None, prop_2009 = ($ty2009:ty, $v2009:ident), feature = $feature:ident) => {{
                 single_property!(@inner $variant, $key, $feature, |val, _prefix, prefixes_2009: VendorPrefix| {
-                    let s = <$ty2009>::from_standard(&val);
+                    let s = <$ty2009>::from_standard(val);
                     if let Some(v) = s {
                         dest.push(Property::$v2009((v, prefixes_2009)));
                     }

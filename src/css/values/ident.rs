@@ -165,7 +165,7 @@ impl DashedIdentReference {
             let name = dest.css_module.as_mut().unwrap().reference_dashed(
                 bump,
                 ident_v,
-                &self.from,
+                self.from,
                 specifier_path,
                 source_index,
             );
@@ -318,8 +318,9 @@ impl IdentOrRef {
     pub fn debug_ident(self) -> &'static [u8] {
         // TODO(port): lifetime — returns arena-borrowed slice; `'static` is a placeholder.
         if self.ref_bit() {
-            // SAFETY: in debug builds, ptrbits stores a heap pointer to a *const [u8] written by from_ref
             let ptr = self.ptrbits() as usize as *const *const [u8];
+            // SAFETY: in debug builds, `ptrbits` stores a valid arena-allocated `*const *const [u8]`
+            // written by `from_ref`; the pointee is an arena-owned slice (see `DashedIdent::v`).
             unsafe { crate::arena_str(*ptr) }
         } else {
             // SAFETY: as_ident reconstructs the arena slice this was packed from

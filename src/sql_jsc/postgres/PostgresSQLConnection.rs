@@ -739,7 +739,7 @@ impl PostgresSQLConnection {
         let err = match create_postgres_error(
             self.global(),
             &message,
-            PostgresErrorOptions {
+            &PostgresErrorOptions {
                 code,
                 ..Default::default()
             },
@@ -1132,7 +1132,7 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         let mut err: uws::create_bun_socket_error_t = uws::create_bun_socket_error_t::none;
         secure = vm
             .ssl_ctx_cache()
-            .get_or_create_opts(tls_config.as_usockets_for_client_verification(), &mut err);
+            .get_or_create_opts(&tls_config.as_usockets_for_client_verification(), &mut err);
         if secure.is_none() {
             drop(tls_config);
             // TODO(port): Zig `err.toJS(globalObject)` — `to_js` lives as an extension
@@ -1559,7 +1559,7 @@ impl PostgresSQLConnection {
                             request.on_js_error(reason, global);
                         } else {
                             request.on_error(
-                                StatementError::PostgresError(AnyPostgresError::ConnectionClosed),
+                                &StatementError::PostgresError(AnyPostgresError::ConnectionClosed),
                                 global,
                             );
                         }
@@ -1574,7 +1574,7 @@ impl PostgresSQLConnection {
                             request.on_js_error(reason, global);
                         } else {
                             request.on_error(
-                                StatementError::PostgresError(AnyPostgresError::ConnectionClosed),
+                                &StatementError::PostgresError(AnyPostgresError::ConnectionClosed),
                                 global,
                             );
                         }
@@ -1703,7 +1703,7 @@ impl Writer {
         Ok(())
     }
 
-    pub fn offset(&self) -> usize {
+    pub fn offset(self) -> usize {
         self.connection.write_buffer.get().len() as usize
     }
 }
@@ -1711,7 +1711,7 @@ impl Writer {
 impl protocol::WriterContext for Writer {
     #[inline]
     fn offset(self) -> usize {
-        Writer::offset(&self)
+        Writer::offset(self)
     }
     #[inline]
     fn write(mut self, bytes: &[u8]) -> Result<(), AnyPostgresError> {
@@ -1757,7 +1757,7 @@ impl Reader {
         self.connection.last_message_start.set(head);
     }
 
-    pub fn ensure_length(&self, count: usize) -> bool {
+    pub fn ensure_length(self, count: usize) -> bool {
         self.ensure_capacity(count)
     }
 
@@ -1771,7 +1771,7 @@ impl Reader {
         });
     }
 
-    pub fn ensure_capacity(&self, count: usize) -> bool {
+    pub fn ensure_capacity(self, count: usize) -> bool {
         let buf = self.read_buffer();
         (buf.head as usize) + count <= (buf.byte_list.len() as usize)
     }
@@ -1818,7 +1818,7 @@ impl protocol::ReaderContext for Reader {
     }
     #[inline]
     fn ensure_length(&mut self, count: usize) -> bool {
-        Reader::ensure_length(self, count)
+        Reader::ensure_length(*self, count)
     }
     #[inline]
     fn read(&mut self, count: usize) -> Result<Data, AnyPostgresError> {
@@ -2485,8 +2485,10 @@ impl PostgresSQLConnection {
                     // SAFETY: cells_ptr points into stack_buf/heap_cells, both declared
                     // earlier in this block and outliving this guard; `count` is the
                     // post-decode element count and never exceeds the slice length.
-                    for i in 0..count {
-                        unsafe { (*cells_ptr.add(i)).deinit() };
+                    unsafe {
+                        for i in 0..count {
+                            (*cells_ptr.add(i)).deinit();
+                        }
                     }
                     // `if free_cells free(cells)`: heap_cells Vec drops at scope end.
                 };

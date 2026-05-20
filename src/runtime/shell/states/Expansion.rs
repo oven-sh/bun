@@ -205,7 +205,7 @@ impl Expansion {
                     Ok(d) => d,
                     Err(e) => {
                         drop(io);
-                        interp.throw(ShellErr::new_sys(e));
+                        interp.throw(ShellErr::new_sys(&e));
                         return Yield::failed();
                     }
                 };
@@ -330,7 +330,7 @@ impl Expansion {
         ) {
             Ok(Ok(w)) => w,
             Ok(Err(e)) => {
-                interp.as_expansion_mut(this).state = ExpansionState::Err(ShellErr::new_sys(e));
+                interp.as_expansion_mut(this).state = ExpansionState::Err(ShellErr::new_sys(&e));
                 return Yield::Next(this);
             }
             Err(e) => {
@@ -523,7 +523,7 @@ impl Expansion {
         log!("Expansion {} onGlobWalkDone", this);
         if let Some(err) = err {
             let shell_err = match err {
-                ShellGlobErr::Syscall(e) => ShellErr::new_sys(e),
+                ShellGlobErr::Syscall(e) => ShellErr::new_sys(&e),
                 ShellGlobErr::Unknown(e) => ShellErr::Custom(e.to_string().into_bytes().into()),
             };
             interp.throw(shell_err);

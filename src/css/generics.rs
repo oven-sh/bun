@@ -476,9 +476,12 @@ mod inherent_bridge {
     bridge_deep_clone!(AnimationName);
 
     use crate::properties::custom::UAEnvironmentVariable;
-    bridge_eql!(UAEnvironmentVariable);
+    impl CssEql for UAEnvironmentVariable {
+        #[inline]
+        fn eql(&self, other: &Self) -> bool { UAEnvironmentVariable::eql(*self, *other) }
+    }
     // CssHash — via #[derive(CssHash)] on the enum (properties/custom.rs).
-    bridge_deep_clone!(UAEnvironmentVariable);
+    bridge_deep_clone_copy!(UAEnvironmentVariable);
 
     // `Direction` is re-exported from `properties::text` — bridged below as `TextDirection`.
     use crate::selectors::parser::{ViewTransitionPartName, WebKitScrollbarPseudoElement};
@@ -750,9 +753,7 @@ mod inherent_bridge {
 
     // ── properties/overflow ──
     use crate::properties::overflow::{Overflow, OverflowKeyword, TextOverflow};
-    bridge_eql!(Overflow);
-    bridge_deep_clone!(Overflow);
-    bridge_clone_partialeq!(OverflowKeyword, TextOverflow);
+    bridge_clone_partialeq!(Overflow, OverflowKeyword, TextOverflow);
 
     // ── properties/position ──
     use crate::properties::position::Position as PositionProp;
@@ -799,7 +800,7 @@ mod inherent_bridge {
 
     // ── properties/ui ──
     use crate::properties::ui::ColorScheme;
-    bridge_deep_clone!(ColorScheme);
+    bridge_deep_clone_copy!(ColorScheme);
     bridge_eql_partialeq!(ColorScheme);
 
     // ── properties/css_modules ──

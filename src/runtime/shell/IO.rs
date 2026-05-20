@@ -181,7 +181,7 @@ impl OutKind {
         match self {
             OutKind::Fd(val) => {
                 // Spec: `shellio.* = val.writer.dupeRef()`.
-                *shellio = Some(val.writer.clone());
+                *shellio = Some(std::sync::Arc::clone(&val.writer));
                 if let Some(cap) = val.captured {
                     Stdio::Capture(Capture { buf: cap })
                 } else {

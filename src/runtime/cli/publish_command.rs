@@ -461,6 +461,9 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         let mut lockfile = Lockfile::default();
         let manager_ptr: *mut PackageManager = manager;
         let log: &mut bun_ast::Log = manager.log_mut();
+        // SAFETY: `manager_ptr` was just derived from `manager: &'a mut PackageManager`;
+        // `log` borrows the disjoint `.log` field, so the aliased `&mut` here mirrors
+        // Zig's freely-aliased `*PackageManager`.
         let load_from_disk_result =
             lockfile.load_from_cwd::<false>(Some(unsafe { &mut *manager_ptr }), log);
 

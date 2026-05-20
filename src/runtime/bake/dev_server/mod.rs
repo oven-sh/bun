@@ -666,6 +666,8 @@ impl HotReloadEvent {
         {
             // SAFETY: `first` is live and exclusively owned by this thread.
             debug_assert!(unsafe { (*first).debug_mutex.try_lock() });
+            // SAFETY: `first` is live (caller contract); atomic load needs no
+            // exclusivity and does not alias any `&mut` borrow.
             debug_assert!(unsafe { (*first).contention_indicator.load(Ordering::SeqCst) } == 0);
         }
 
@@ -1281,11 +1283,17 @@ impl DirectoryWatchStore {
         let _g = unsafe { (*dev).graph_safety_lock.guard() };
         let owned_file_path: bun_ptr::RawSlice<u8> = match renderer {
             Graph::Client => {
+                // SAFETY: `dev` is the live DevServer owning this store;
+                // `client_graph` is disjoint from `directory_watchers` so this
+                // `&mut` does not alias `&mut self`. `graph_safety_lock` is held.
                 unsafe { &mut (*dev).client_graph }
                     .insert_empty(import_source, FileKind::Unknown)?
                     .key
             }
             Graph::Server | Graph::Ssr => {
+                // SAFETY: `dev` is the live DevServer owning this store;
+                // `server_graph` is disjoint from `directory_watchers` so this
+                // `&mut` does not alias `&mut self`. `graph_safety_lock` is held.
                 unsafe { &mut (*dev).server_graph }
                     .insert_empty(import_source, FileKind::Unknown)?
                     .key

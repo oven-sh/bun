@@ -94,13 +94,13 @@ impl Start {
             Start::Empty | Start::Ready => Ok(JSValue::UNDEFINED),
             Start::ChunkSize(chunk) => Ok(JSValue::from(chunk)),
             Start::Err(err) => Err(err.throw(global_this)),
-            Start::OwnedAndDone(mut list) => {
+            Start::OwnedAndDone(list) => {
                 // PORT NOTE: Zig captures `|list|` by bitwise copy with no destructor and
                 // hands the allocation to JSC (no-copy + MarkedArrayBuffer_deallocator). In
                 // Rust `list` is an owned Vec whose Drop would free the same buffer →
-                // double-free. Build the ArrayBuffer, then forget `list` so JSC is sole owner.
+                // double-free. Suppress Drop via ManuallyDrop so JSC is the sole owner.
+                let mut list = core::mem::ManuallyDrop::new(list);
                 let ab = ArrayBuffer::from_bytes(list.slice_mut(), JSType::Uint8Array);
-                core::mem::forget(list);
                 ab.to_js(global_this)
             }
             Start::Done(list) => {
@@ -872,18 +872,16 @@ impl StreamResult {
                 // PORT NOTE: Zig overwrites `result.* = .{ .temporary = .{} }` with no
                 // destructor after handing the buffer to JSC. In Rust the later
                 // `*result = Temporary(...)` in fulfill_promise drops the old Vec,
-                // double-freeing the allocation now owned by JSC. Move it out and forget
-                // so JSC's MarkedArrayBuffer_deallocator is the sole owner.
-                let mut taken = core::mem::take(list);
+                // double-freeing the allocation now owned by JSC. Move it out and suppress
+                // Drop so JSC's MarkedArrayBuffer_deallocator is the sole owner.
+                let mut taken = core::mem::ManuallyDrop::new(core::mem::take(list));
                 let ab = ArrayBuffer::from_bytes(taken.slice_mut(), JSType::Uint8Array);
-                core::mem::forget(taken);
                 ab.to_js(global_this)
             }
             StreamResult::OwnedAndDone(list) => {
                 // PORT NOTE: see Owned arm above — same ownership transfer to JSC.
-                let mut taken = core::mem::take(list);
+                let mut taken = core::mem::ManuallyDrop::new(core::mem::take(list));
                 let ab = ArrayBuffer::from_bytes(taken.slice_mut(), JSType::Uint8Array);
-                core::mem::forget(taken);
                 ab.to_js(global_this)
             }
             StreamResult::Temporary(temp) | StreamResult::TemporaryAndDone(temp) => {
@@ -1499,7 +1497,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         true
     }
 
-    pub fn start(&mut self, stream_start: Start) -> bun_sys::Result<()> {
+    pub fn start(&mut self, stream_start: &Start) -> bun_sys::Result<()> {
         if self.aborted || self.res.is_none() || self.any_res().unwrap().has_responded() {
             self.mark_done();
             self.signal.close(None);
@@ -1532,7 +1530,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
         self.buffer.clear();
 
-        if let Start::ChunkSize(chunk_size) = stream_start {
+        if let &Start::ChunkSize(chunk_size) = stream_start {
             if chunk_size > 0 {
                 self.high_water_mark = chunk_size;
             }
@@ -2056,7 +2054,7 @@ impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkType
         Self::flush_from_js(self, global, wait)
     }
     fn start(&mut self, config: Start) -> bun_sys::Result<()> {
-        Self::start(self, config)
+        Self::start(self, &config)
     }
     fn signal(&mut self) -> Option<&mut Signal> {
         Some(&mut self.signal)
@@ -2160,12 +2158,12 @@ impl NetworkSink {
         None
     }
 
-    pub fn start(&mut self, stream_start: Start) -> bun_sys::Result<()> {
+    pub fn start(&mut self, stream_start: &Start) -> bun_sys::Result<()> {
         if self.ended {
             return bun_sys::Result::Ok(());
         }
 
-        if let Start::ChunkSize(chunk_size) = stream_start {
+        if let &Start::ChunkSize(chunk_size) = stream_start {
             if chunk_size > 0 {
                 self.high_water_mark = chunk_size;
             }
@@ -2417,7 +2415,7 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
         Self::flush_from_js(self, global, wait)
     }
     fn start(&mut self, config: Start) -> bun_sys::Result<()> {
-        Self::start(self, config)
+        Self::start(self, &config)
     }
     fn signal(&mut self) -> Option<&mut Signal> {
         Some(&mut self.signal)
@@ -2483,7 +2481,7 @@ impl BufferAction {
     pub fn reject(
         &mut self,
         global: &JSGlobalObject,
-        err: StreamError,
+        err: &StreamError,
     ) -> core::result::Result<(), jsc::JsTerminated> {
         // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
         JSPromise::opaque_mut(self.swap()).reject(global, Ok(err.to_js_weak(global).0))

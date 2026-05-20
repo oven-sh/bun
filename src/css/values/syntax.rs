@@ -24,7 +24,7 @@ const SPACE_CHARACTERS: &[u8] = &[0x20, 0x09];
 // upstream lightningcss Rust threaded `'i`, but the port uses `&'static [u8]` /
 // `*const [u8]` placeholders for arena-borrowed slices (matching `Token` /
 // `ident.rs`). TODO(refactor): thread `'bump` and restore the lifetime.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyntaxString {
     /// A list of syntax components.
     // PERF(port): was arena ArrayList — `Vec` until `'bump` is threaded into BumpVec.
@@ -221,7 +221,7 @@ impl SyntaxString {
 ///
 /// A syntax component consists of a component kind an a multiplier, which indicates how the component
 /// may repeat during parsing.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyntaxComponent {
     pub kind: SyntaxComponentKind,
     pub multiplier: Multiplier,
@@ -267,7 +267,7 @@ impl SyntaxComponent {
 }
 
 /// A [syntax component component name](https://drafts.css-houdini.org/css-properties-values-api/#supported-names).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyntaxComponentKind {
     /// A `<length>` component.
     Length,

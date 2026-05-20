@@ -313,6 +313,10 @@ impl FileReader {
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn reader(&self) -> &mut IOReader {
+        // SAFETY: `FileReader` is single-threaded (JS event loop) and every
+        // `self.reader` access flows through this accessor, so the `UnsafeCell`
+        // is the sole SharedReadWrite root — no `&mut IOReader` is held live
+        // across a vtable-callback re-entry point (see field doc comment).
         unsafe { &mut *self.reader.get() }
     }
 
@@ -721,6 +725,7 @@ impl FileReader {
                     if self.reader().is_done() {
                         // SAFETY: see `reader_buffer` decl.
                         debug_assert_eq!(buf.as_ptr(), unsafe { (*reader_buffer).as_ptr() });
+                        // SAFETY: see `reader_buffer` decl — tight deref, no `&mut` held across.
                         let mut buffer = unsafe { mem::take(&mut *reader_buffer) };
                         buffer.truncate(buf.len()); // shrinkRetainingCapacity
                         self.pending.with_mut(|p| {
@@ -772,6 +777,7 @@ impl FileReader {
             self.buffered.with_mut(|b| b.extend_from_slice(buf));
             // SAFETY: see `reader_buffer` decl.
             if is_slice_in_vec_capacity(buf, unsafe { &*reader_buffer }) {
+                // SAFETY: see `reader_buffer` decl.
                 unsafe { (*reader_buffer).clear() };
             }
         }

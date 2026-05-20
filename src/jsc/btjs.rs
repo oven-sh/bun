@@ -620,7 +620,7 @@ fn dump_btjs_trace_debug_impl() -> *const c_char {
     // defer it.deinit() — handled by Drop
 
     while let Some(return_address) = it.next() {
-        print_last_unwind_error(&mut it, debug_info, w, &tty_config);
+        print_last_unwind_error(&mut it, debug_info, w, tty_config);
 
         // On arm64 macOS, the address of the last frame is 0x0 rather than 0x1 as on x86_64 macOS,
         // therefore, we do a check for `return_address == 0` before subtracting 1 from it to avoid
@@ -628,10 +628,10 @@ fn dump_btjs_trace_debug_impl() -> *const c_char {
         // condition on the subsequent iteration and return `null` thus terminating the loop.
         // same behaviour for x86-windows-msvc
         let address = return_address.saturating_sub(1);
-        let _ = print_source_at_address(debug_info, w, address, &tty_config, it.fp);
+        let _ = print_source_at_address(debug_info, w, address, tty_config, it.fp);
     }
     // Zig `while ... else` runs after normal loop exit (no `break` in body), so this is unconditional:
-    print_last_unwind_error(&mut it, debug_info, w, &tty_config);
+    print_last_unwind_error(&mut it, debug_info, w, tty_config);
 
     // remove nulls
     for itm in result_writer.iter_mut() {
@@ -652,7 +652,7 @@ fn print_source_at_address(
     debug_info: &mut SelfInfo,
     out_stream: &mut Vec<u8>,
     address: usize,
-    tty_config: &tty::Config,
+    tty_config: tty::Config,
     fp: usize,
 ) -> Result<(), Error> {
     // TODO(port): narrow error set
@@ -732,7 +732,7 @@ fn print_unknown_source(
     debug_info: &mut SelfInfo,
     out_stream: &mut Vec<u8>,
     address: usize,
-    tty_config: &tty::Config,
+    tty_config: tty::Config,
 ) -> Result<(), Error> {
     // TODO(port): narrow error set
     if !cfg!(debug_assertions) {
@@ -758,7 +758,7 @@ fn print_line_info(
     address: usize,
     symbol_name: &[u8],
     compile_unit_name: &[u8],
-    tty_config: &tty::Config,
+    tty_config: tty::Config,
     // Zig: `comptime printLineFromFile: anytype` — anytype maps to generic/impl-Trait so it
     // monomorphizes (PORTING.md type map), not a runtime fn pointer.
     print_line_from_file: impl Fn(&mut Vec<u8>, &SourceLocation) -> Result<(), Error>,
@@ -909,7 +909,7 @@ fn print_last_unwind_error(
     it: &mut StackIterator,
     debug_info: &mut SelfInfo,
     out_stream: &mut Vec<u8>,
-    tty_config: &tty::Config,
+    tty_config: tty::Config,
 ) {
     if !cfg!(debug_assertions) {
         unreachable!();
@@ -934,7 +934,7 @@ fn print_unwind_error(
     out_stream: &mut Vec<u8>,
     address: usize,
     err: UnwindError,
-    tty_config: &tty::Config,
+    tty_config: tty::Config,
 ) -> Result<(), Error> {
     // TODO(port): narrow error set
     if !cfg!(debug_assertions) {

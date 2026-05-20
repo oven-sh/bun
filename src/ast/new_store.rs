@@ -104,8 +104,10 @@ macro_rules! new_store {
                 // PERF(port): was IntFittingRange — picks smallest uN; using u32 (Block::SIZE
                 // for AST node stores fits comfortably). Profile.
 
+                /// SAFETY: `this` must point to a valid (possibly uninit-buffer)
+                /// `Block` allocation — non-null, aligned, and writable.
                 #[inline]
-                pub fn zero(this: *mut Block) {
+                pub unsafe fn zero(this: *mut Block) {
                     // Avoid initializing the entire struct.
                     // SAFETY: caller passes a valid (possibly uninit-buffer) Block allocation.
                     unsafe {
@@ -147,7 +149,9 @@ macro_rules! new_store {
                 fn new_boxed() -> Box<Block> {
                     // Zig: `backing_allocator.create(Block)` then `.zero()`
                     let mut b: Box<MaybeUninit<Block>> = Box::new_uninit();
-                    Block::zero(b.as_mut_ptr());
+                    // SAFETY: `b` is a fresh `Box<MaybeUninit<Block>>` — non-null,
+                    // aligned, and a valid allocation for `Block`.
+                    unsafe { Block::zero(b.as_mut_ptr()) };
                     // SAFETY: `zero` initialized every non-buffer field; `buffer` is
                     // `[MaybeUninit<u8>; _]` and is valid uninitialized.
                     unsafe { b.assume_init() }
@@ -248,7 +252,7 @@ macro_rules! new_store {
                             .as_deref_mut()
                             .expect("head is Some — checked above");
                         head.bytes_used = 0;
-                        head as *mut Block
+                        ::core::ptr::from_mut(head)
                     };
                     store.current = head_ptr;
                 }
@@ -264,7 +268,7 @@ macro_rules! new_store {
                     if store.current.is_null() {
                         debug_assert!(store.head.is_none());
                         let mut first = Block::new_boxed();
-                        store.current = (&mut *first) as *mut Block;
+                        store.current = &raw mut *first;
                         store.head = Some(first);
                     }
 
@@ -281,11 +285,11 @@ macro_rules! new_store {
                     let next_block: *mut Block = match &mut current.next {
                         Some(next) => {
                             next.bytes_used = 0;
-                            (&mut **next) as *mut Block
+                            &raw mut **next
                         }
                         slot @ None => {
                             let mut new_block = Block::new_boxed();
-                            let ptr = (&mut *new_block) as *mut Block;
+                            let ptr = &raw mut *new_block;
                             *slot = Some(new_block);
                             ptr
                         }

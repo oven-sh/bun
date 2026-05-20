@@ -1171,6 +1171,8 @@ impl JSValkeyClient {
         self.ref_();
         let _d = deref_guard(self);
         // Release the keep-alive ref from add_timer; remove_timer/stop_timers skip FIRED timers.
+        // SAFETY: `_d` holds a balancing ref so the count stays > 0 and `self`
+        // remains live past this call.
         unsafe { JSValkeyClient::deref(std::ptr::from_ref(self).cast_mut()) };
         if self.client.get().flags.failed {
             return;
@@ -1227,6 +1229,8 @@ impl JSValkeyClient {
         self.ref_();
         let _d = deref_guard(self);
         // Release the keep-alive ref from add_timer; remove_timer/stop_timers skip FIRED timers.
+        // SAFETY: `_d` holds a balancing ref so the count stays > 0 and `self`
+        // remains live past this call.
         unsafe { JSValkeyClient::deref(std::ptr::from_ref(self).cast_mut()) };
 
         // Execute reconnection logic
@@ -1278,10 +1282,13 @@ impl JSValkeyClient {
         debug_assert!(self.this_value.get().is_strong());
 
         let self_ptr = self.as_ctx_ptr();
-        let _defer = scopeguard::guard(self_ptr, |p| unsafe {
-            (*p).client_mut().on_writable();
-            // update again after running the callback
-            (*p).update_poll_ref();
+        let _defer = scopeguard::guard(self_ptr, |p| {
+            // SAFETY: `p` was `self.as_ctx_ptr()` at guard creation; the caller
+            // holds an intrusive ref across this scope so `*p` is live here.
+            unsafe {
+                (*p).client_mut().on_writable();
+                (*p).update_poll_ref();
+            }
         });
         let global_object = self.global_object;
         let _exit = self.vm().enter_event_loop_scope();
@@ -1430,10 +1437,14 @@ impl JSValkeyClient {
         let global_object = self.global_object;
 
         let self_ptr = self.as_ctx_ptr();
-        let _defer = scopeguard::guard(self_ptr, |p| unsafe {
-            // Update poll reference to allow garbage collection of disconnected clients
-            (*p).update_poll_ref();
-            JSValkeyClient::deref(p);
+        let _defer = scopeguard::guard(self_ptr, |p| {
+            // SAFETY: `p` was `self.as_ctx_ptr()`; the socket dispatch path
+            // holds an intrusive ref across this scope so `*p` is live here.
+            // The trailing `deref` releases that ref.
+            unsafe {
+                (*p).update_poll_ref();
+                JSValkeyClient::deref(p);
+            }
         });
 
         let Some(this_jsvalue) = self.this_value.get().try_get() else {
@@ -1640,8 +1651,8 @@ impl JSValkeyClient {
         }
         let ssl_ctx: Option<*mut uws::SslCtx> = match &self.client.get().tls {
             valkey::TLS::None => None,
-            // SAFETY: `vm_ptr` is the live per-thread VM (see above).
             valkey::TLS::Enabled => {
+                // SAFETY: `vm_ptr` is the live per-thread VM (see above).
                 Some(unsafe { crate::jsc_hooks::default_client_ssl_ctx(vm_ptr) })
             }
             valkey::TLS::Custom(_) => Some(self._secure.get().unwrap()),
@@ -1651,12 +1662,20 @@ impl JSValkeyClient {
         // Balance the ref above if connect() throws — the caller (e.g. send())
         // only knows to clean up its own state, not the keep-alive ref.
         let self_ptr = self.as_ctx_ptr();
-        let errdefer_deref = scopeguard::guard(self_ptr, |p| unsafe { JSValkeyClient::deref(p) });
+        let errdefer_deref = scopeguard::guard(self_ptr, |p| {
+            // SAFETY: balances the `ref_()` just taken; `*p` is live until this
+            // guard releases that ref on early return.
+            unsafe { JSValkeyClient::deref(p) }
+        });
         self.client_mut().status = valkey::Status::Connecting;
         self.update_poll_ref();
-        let errdefer_status = scopeguard::guard(self_ptr, |p| unsafe {
-            (*p).client_mut().status = valkey::Status::Disconnected;
-            (*p).update_poll_ref();
+        let errdefer_status = scopeguard::guard(self_ptr, |p| {
+            // SAFETY: `p` was `self.as_ctx_ptr()`; `errdefer_deref` (dropped
+            // after this guard) still holds the balancing ref, so `*p` is live.
+            unsafe {
+                (*p).client_mut().status = valkey::Status::Disconnected;
+                (*p).update_poll_ref();
+            }
         });
         // PORT NOTE: the socket ext slot is typed `ExtSlot<JSValkeyClient>`
         // (uws_handlers.rs `Valkey<SSL> = NsHandler<JSValkeyClient, …>`); store
@@ -1743,6 +1762,7 @@ impl JSValkeyClient {
         // pointer re-derived from `&Self` (SharedReadOnly under Stacked
         // Borrows, which would make the dealloc-write UB).
         {
+            // SAFETY: last ref dropped — sole owner of `*this` (see above).
             let this_ref = unsafe { &*this };
             debug_assert!(this_ref.client.get().socket.is_closed());
             if let Some(s) = this_ref._secure.get() {
@@ -2036,10 +2056,14 @@ impl<const SSL: bool> SocketHandler<SSL> {
         // Ensure the socket pointer is updated.
         this.client_mut().socket = Socket::SocketTcp(uws::SocketTCP::detached());
         let this_ptr = this.as_ctx_ptr();
-        let _defer = scopeguard::guard(this_ptr, |p| unsafe {
-            (*p).client_mut().status = valkey::Status::Disconnected;
-            (*p).update_poll_ref();
-            JSValkeyClient::deref(p);
+        let _defer = scopeguard::guard(this_ptr, |p| {
+            // SAFETY: `p` was `this.as_ctx_ptr()`; the `ref_()` taken above
+            // keeps `*p` live until this guard's `deref` releases it.
+            unsafe {
+                (*p).client_mut().status = valkey::Status::Disconnected;
+                (*p).update_poll_ref();
+                JSValkeyClient::deref(p);
+            }
         });
 
         let _ = this.client_mut().on_close(); // TODO: properly propagate exception upwards
@@ -2063,10 +2087,14 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this.client_mut().socket = Socket::SocketTcp(uws::SocketTCP::detached());
         this.ref_();
         let this_ptr = this.as_ctx_ptr();
-        let _defer = scopeguard::guard(this_ptr, |p| unsafe {
-            (*p).client_mut().status = valkey::Status::Disconnected;
-            (*p).update_poll_ref();
-            JSValkeyClient::deref(p);
+        let _defer = scopeguard::guard(this_ptr, |p| {
+            // SAFETY: `p` was `this.as_ctx_ptr()`; the `ref_()` taken above
+            // keeps `*p` live until this guard's `deref` releases it.
+            unsafe {
+                (*p).client_mut().status = valkey::Status::Disconnected;
+                (*p).update_poll_ref();
+                JSValkeyClient::deref(p);
+            }
         });
 
         narrow_terminated(this.client_mut().on_close())

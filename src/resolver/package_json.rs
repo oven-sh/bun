@@ -839,7 +839,7 @@ impl PackageJSON {
                                         }
                                     }
 
-                                    pair.router.dir = list[0].clone();
+                                    pair.router.dir.clone_from(&list[0]);
                                     pair.router.possible_dirs = list.into_boxed_slice();
 
                                     pair.loaded_routes = true;
@@ -1062,6 +1062,7 @@ impl PackageJSON {
         // aliasing contract (Zig had no borrow split here either — `r.fs`/`r.log`
         // are accessed freely throughout `parse`).
         let r_fs: &mut fs::FileSystem = unsafe { &mut *r.fs() };
+        // SAFETY: see above — `r.log()` points to a distinct singleton from `r.fs()`.
         let r_log: &mut bun_ast::Log = unsafe { &mut *r.log() };
 
         // TODO: remove this extra copy
@@ -1503,7 +1504,7 @@ impl PackageJSON {
                                 &package_json.version,
                                 DependencyVersionTag::Npm,
                                 &sliced,
-                                r_log,
+                                Some(&mut *r_log),
                             ) {
                                 if dependency_version.is_exact_npm() {
                                     if let Some(resolved) =
@@ -1622,7 +1623,7 @@ impl PackageJSON {
                                             Some(name_hash),
                                             version_str,
                                             &sliced_str,
-                                            r_log,
+                                            Some(&mut *r_log),
                                         ),
                                         None => Some(DependencyVersion::default()),
                                     };
@@ -2167,7 +2168,7 @@ impl<'a> Package<'a> {
             let after = usize::try_from(slash).expect("int cast") + 1;
             let slash2 = strings::index_of_char(&specifier[after..], b'/')
                 .map(|v| v as usize)
-                .unwrap_or(specifier[u32::try_from(slash + 1).expect("int cast") as usize..].len());
+                .unwrap_or_else(|| specifier[u32::try_from(slash + 1).expect("int cast") as usize..].len());
             Some(&specifier[0..usize::try_from(slash + 1).expect("int cast") + slash2])
         }
     }
@@ -2663,12 +2664,13 @@ impl<'a> ESModule<'a> {
     ) -> Resolution {
         match &target.data {
             EntryData::String(str) => {
+                let mb = module_bufs();
                 // SAFETY: threadlocal UnsafeCell; the `String` arm does NOT recurse into
                 // resolve_target, so these are the unique live `&mut`s on this thread for
                 // the duration of this arm. Map/Array arms below DO recurse and must not
                 // hold these — that's why acquisition is here, not at fn entry.
-                let mb = module_bufs();
                 let resolve_target_buf: &mut PathBuffer = unsafe { &mut (*mb).resolve_target_buf };
+                // SAFETY: see above — disjoint field of the same threadlocal struct.
                 let resolve_target_buf2: &mut PathBuffer =
                     unsafe { &mut (*mb).resolve_target_buf2 };
                 let str: &[u8] = str;
@@ -3176,12 +3178,13 @@ impl<'a> ESModule<'a> {
     ) -> Option<ReverseResolution> {
         match &target.data {
             EntryData::String(str) => {
+                let mb = module_bufs();
                 // SAFETY: threadlocal UnsafeCell; the `String` arm does NOT recurse into
                 // resolve_target_reverse, so these are the unique live `&mut`s on this thread.
                 // Map/Array arms below recurse and must not hold these — see MODULE_BUFS note.
-                let mb = module_bufs();
                 let resolve_target_reverse_prefix_buf: &mut PathBuffer =
                     unsafe { &mut (*mb).resolve_target_reverse_prefix_buf };
+                // SAFETY: see above — disjoint field of the same threadlocal struct.
                 let resolve_target_reverse_prefix_buf2: &mut PathBuffer =
                     unsafe { &mut (*mb).resolve_target_reverse_prefix_buf2 };
                 let str: &[u8] = str;

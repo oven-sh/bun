@@ -583,7 +583,7 @@ impl Transform {
 }
 
 /// A 2D matrix.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Matrix<T> {
     pub a: T,
     pub b: T,
@@ -607,7 +607,7 @@ impl<T: Clone> Matrix<T> {
 }
 
 /// A 3D matrix.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Matrix3d<T> {
     pub m11: T,
     pub m12: T,
@@ -724,8 +724,8 @@ impl Translate {
 
         Ok(Translate::Xyz {
             x,
-            y: y.unwrap_or(LengthPercentage::zero()),
-            z: z.unwrap_or(Length::zero()),
+            y: y.unwrap_or_else(|_| LengthPercentage::zero()),
+            z: z.unwrap_or_else(Length::zero),
         })
     }
 
@@ -1064,7 +1064,7 @@ impl TransformHandler {
                     let prop = if unparsed.property_id.tag() == PropertyIdTag::Transform {
                         Property::Unparsed(unparsed.get_prefixed(
                             bump,
-                            context.targets,
+                            &context.targets,
                             prefixes::Feature::Transform,
                         ))
                     } else {

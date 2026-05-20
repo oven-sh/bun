@@ -1860,8 +1860,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             let s3_path = url_static.s3_path();
 
             // Proxy href (if any) lives in the same buffer, immediately after `url`.
-            // SAFETY: see `url_static` SAFETY note above.
             let proxy_url: Option<&[u8]> = if proxy.is_some() {
+                // SAFETY: see `url_static` SAFETY note above.
                 Some(unsafe { bun_ptr::detach_lifetime(&owned_buffer[url_len..]) })
             } else {
                 None
@@ -1909,7 +1909,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
 
         let mut result = match credentials_with_options.credentials.sign_request::<false>(
-            SignOptions {
+            &SignOptions {
                 path: url.s3_path(),
                 method,
                 ..Default::default()

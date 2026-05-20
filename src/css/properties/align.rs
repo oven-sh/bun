@@ -38,7 +38,7 @@ pub enum AlignContent {
 // In Rust the equivalent is `#[derive(css::ToCss)]` on the lifted named-field
 // struct (see `css_derive::expand_derive_to_css` struct branch); the enum arm's
 // `__inner.to_css(dest)` then resolves to this generated inherent.
-#[derive(Clone, PartialEq, css::ToCss)]
+#[derive(Clone, PartialEq, Eq, css::ToCss)]
 #[css(generate_to_css)]
 pub struct AlignContentContentPosition {
     /// An overflow alignment mode.
@@ -67,7 +67,7 @@ impl AlignContentContentPosition {
 
 /// A [`<baseline-position>`](https://www.w3.org/TR/css-align-3/#typedef-baseline-position) value,
 /// as used in the alignment properties.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum BaselinePosition {
     /// The first baseline.
     First,
@@ -94,7 +94,7 @@ impl BaselinePosition {
         }}
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             BaselinePosition::First => dest.write_str("baseline"),
             BaselinePosition::Last => dest.write_str("last baseline"),
@@ -127,7 +127,7 @@ pub enum JustifyContent {
     },
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct JustifyContentContentPosition {
     /// A content position keyword.
     pub value: ContentPosition,
@@ -228,7 +228,7 @@ pub enum AlignSelf {
 }
 
 // Zig: `__generateToCss` marker — see `AlignContentContentPosition` note.
-#[derive(Clone, PartialEq, css::ToCss)]
+#[derive(Clone, PartialEq, Eq, css::ToCss)]
 #[css(generate_to_css)]
 pub struct AlignSelfSelfPosition {
     /// An overflow alignment mode.
@@ -284,7 +284,7 @@ pub enum JustifySelf {
     },
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct JustifySelfSelfPosition {
     /// A self position keyword.
     pub value: SelfPosition,
@@ -396,7 +396,7 @@ pub enum AlignItems {
 }
 
 // Zig: `__generateToCss` marker — see `AlignContentContentPosition` note.
-#[derive(Clone, PartialEq, css::ToCss)]
+#[derive(Clone, PartialEq, Eq, css::ToCss)]
 #[css(generate_to_css)]
 pub struct AlignItemsSelfPosition {
     /// An overflow alignment mode.
@@ -452,7 +452,7 @@ pub enum JustifyItems {
     Legacy(LegacyJustify),
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct JustifyItemsSelfPosition {
     /// A self position keyword.
     pub value: SelfPosition,
@@ -547,7 +547,7 @@ impl JustifyItems {
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// A legacy justification keyword, as used in the `justify-items` property.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum LegacyJustify {
     /// Left justify.
     Left,
@@ -589,7 +589,7 @@ impl LegacyJustify {
         }}
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         dest.write_str("legacy ")?;
         match self {
             LegacyJustify::Left => dest.write_str("left"),
@@ -946,7 +946,7 @@ pub enum ContentPosition {
 // SelfPositionInner / ContentPositionInner
 // ──────────────────────────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct SelfPositionInner {
     /// An overflow alignment mode.
     pub overflow: Option<OverflowPosition>,
@@ -954,7 +954,7 @@ pub struct SelfPositionInner {
     pub value: SelfPosition,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct ContentPositionInner {
     /// An overflow alignment mode.
     pub overflow: Option<OverflowPosition>,

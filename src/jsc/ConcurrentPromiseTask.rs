@@ -81,7 +81,7 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
         this
     }
 
-    pub fn run_from_thread_pool(task: *mut WorkPoolTask) {
+    pub unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
         // SAFETY: only reachable via `WorkPoolTask::callback` (unsafe-fn-ptr
         // slot — safe-fn coerces) for the `task` field initialised in
         // `create_on_js_thread`; the WorkPool calls back with exactly that

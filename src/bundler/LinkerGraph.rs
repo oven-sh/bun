@@ -94,6 +94,10 @@ pub struct LinkerGraph<'a> {
 // which is itself sent to the link task; the only `!Send` constituent is the
 // raw `*const Arena`, whose pointee is `Sync` and outlives the graph.
 unsafe impl Send for LinkerGraph<'_> {}
+// SAFETY: see the block above — every field reachable through `&LinkerGraph`
+// during worker fan-out is either frozen before the pool runs, split out as a
+// disjoint `&mut [_]` column beforehand, or written only via
+// `Symbol.chunk_index: AtomicU32` (interior-mutable), so shared `&Self` is sound.
 unsafe impl Sync for LinkerGraph<'_> {}
 
 impl<'a> LinkerGraph<'a> {

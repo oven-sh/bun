@@ -97,7 +97,7 @@ impl crate::media_query::FeatureIdTrait for ContainerSizeFeatureId {
 
 impl ContainerSizeFeatureId {
     pub fn to_css_with_prefix(
-        &self,
+        self,
         prefix: &[u8],
         dest: &mut Printer,
     ) -> core::result::Result<(), PrintErr> {

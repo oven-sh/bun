@@ -1015,6 +1015,7 @@ pub mod bv2_impl {
                     // convention used throughout `bun_resolver` (PORTING.md
                     // §Lifetimes: ARENA → `&'bump T`).
                     let dupe = |key: &[u8]| -> &'static [u8] {
+                        // SAFETY: see ARENA note above — bytes live in the build-pass arena.
                         unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(key)) }
                     };
 
@@ -1496,13 +1497,13 @@ pub mod bv2_impl {
         /// `Watcher.enableHotModuleReloading(this, null)` for `bun build --watch`.
         #[inline]
         pub fn enable_hot_module_reloading_for_bundler(bv2: *mut super::BundleV2<'_>) {
+            let bv2 = core::ptr::NonNull::new(bv2.cast::<super::BundleV2<'static>>())
+                .expect("BundleV2 watcher: bv2 is non-null");
             // SAFETY: link-time-resolved Rust-ABI fn in `bun_jsc::hot_reloader`.
             // Not `safe fn`: the callee dereferences `bv2`, so it must point to a
             // live `BundleV2` whose backing allocation outlives the watcher (sole
             // caller is `BundleV2::init`; the box is leaked on the success path —
             // see the watch-mode caveat above).
-            let bv2 = core::ptr::NonNull::new(bv2.cast::<super::BundleV2<'static>>())
-                .expect("BundleV2 watcher: bv2 is non-null");
             unsafe { __bun_jsc_enable_hot_module_reloading_for_bundler(bv2) }
         }
 
@@ -1544,6 +1545,7 @@ pub mod bv2_impl {
         // thread, read by the bundle thread; `enqueue_task_concurrent` is the only
         // cross-thread call and it goes through `jsc::EventLoop`'s lock-free queue.
         unsafe impl Send for CompletionHandle {}
+        // SAFETY: same as the `Send` impl above — only the lock-free enqueue crosses threads.
         unsafe impl Sync for CompletionHandle {}
         impl CompletionHandle {
             #[inline]
@@ -2089,12 +2091,12 @@ pub mod bv2_impl {
             self.thread_lock.assert_locked();
 
             if self.graph.pending_items == 0 {
+                let this: *mut Self = self;
                 // PORT NOTE: reshaped for borrowck — Zig passed `&self.graph` and
                 // `self` to the same call. Take a raw ptr so the two `&mut` don't
                 // overlap from rustc's view.
                 // SAFETY: `drain_deferred_tasks` only touches `self.graph.deferred_*`
                 // fields and the `BundleV2` callback surface; no aliasing UB.
-                let this: *mut Self = self;
                 if unsafe { (*this).graph.drain_deferred_tasks(&mut *this) } {
                     return false;
                 }
@@ -2208,7 +2210,7 @@ pub mod bv2_impl {
         #[cold]
         pub fn run_resolver(
             &mut self,
-            import_record: jsc_api::JSBundler::MiniImportRecord,
+            import_record: &jsc_api::JSBundler::MiniImportRecord,
             target: options::Target,
         ) {
             // PORT NOTE: reshaped for borrowck — Zig held a `*Transpiler` raw pointer alongside
@@ -2333,6 +2335,7 @@ pub mod bv2_impl {
                                 .expect("oom");
 
                                 // Turn this into an invalid AST, so that incremental mode skips it when printing.
+                                // SAFETY: truncating to len 0 never exposes uninitialized elements.
                                 unsafe {
                                     self.graph.ast.items_parts_mut()
                                         [import_record.importer_source_index as usize]
@@ -2864,6 +2867,7 @@ pub mod bv2_impl {
                             .server_components
                     );
                     if separate_ssr {
+                        // SAFETY: `separate_ssr` ⇒ `ssr_transpiler` was set in `init` and lives for `'a`.
                         debug_assert!(unsafe { (*this.ssr_transpiler).options.server_components });
                     }
                 }
@@ -2903,12 +2907,14 @@ pub mod bv2_impl {
             // `LinkerOptions` stores `&'static [u8]` as an arena-erased lifetime
             // (see `interned_slice` contract — these are bundle-pass-interned).
             this.linker.options.banner = unsafe { interned_slice(&this.transpiler.options.banner) };
+            // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
             this.linker.options.footer = unsafe { interned_slice(&this.transpiler.options.footer) };
             this.linker.options.css_chunking = this.transpiler.options.css_chunking;
             this.linker.options.compile_to_standalone_html =
                 this.transpiler.options.compile_to_standalone_html;
             this.linker.options.source_maps = this.transpiler.options.source_map;
             this.linker.options.tree_shaking = this.transpiler.options.tree_shaking;
+            // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
             this.linker.options.public_path =
                 unsafe { interned_slice(&this.transpiler.options.public_path) };
             this.linker.options.target = this.transpiler.options.target;
@@ -2916,8 +2922,10 @@ pub mod bv2_impl {
             this.linker.options.generate_bytecode_cache = this.transpiler.options.bytecode;
             this.linker.options.compile = this.transpiler.options.compile;
             this.linker.options.metafile = this.transpiler.options.metafile;
+            // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
             this.linker.options.metafile_json_path =
                 unsafe { interned_slice(&this.transpiler.options.metafile_json_path) };
+            // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
             this.linker.options.metafile_markdown_path =
                 unsafe { interned_slice(&this.transpiler.options.metafile_markdown_path) };
 
@@ -3079,7 +3087,7 @@ pub mod bv2_impl {
         #[cold]
         pub fn enqueue_entry_points_dev_server(
             &mut self,
-            files: bake_types::EntryPointList,
+            files: &bake_types::EntryPointList,
             css_data: &mut ArrayHashMap<Index, CssEntryPointMeta>,
         ) -> Result<(), Error> {
             self.enqueue_entry_points_common()?;
@@ -3154,10 +3162,12 @@ pub mod bv2_impl {
                                 bake::Graph::Server
                             },
                             abs_path,
+                            // SAFETY: `transpiler` points at one of self's transpilers, live for `'a`.
                             unsafe { (*transpiler).log }.cast_const(),
                             std::ptr::from_mut(self),
                         )
                         .expect("oom");
+                        // SAFETY: `transpiler.log` is the `'a`-owned log; sole writer here.
                         unsafe { (*(*transpiler).log).reset() };
                         continue;
                     }
@@ -3257,6 +3267,7 @@ pub mod bv2_impl {
             // `&mut ParseTask` to `*mut` immediately so the `&self` borrow from
             // `arena()` ends before we take `&mut self` below.
             let runtime_parse_task: *mut ParseTask = self.arena().alloc(rt.parse_task);
+            // SAFETY: freshly arena-allocated above; no other references exist yet.
             unsafe {
                 // BACKREF — lifetime erased per ParseTask::ctx convention.
                 (*runtime_parse_task).ctx = Some(bun_ptr::ParentRef::from_raw_mut(
@@ -3681,6 +3692,7 @@ pub mod bv2_impl {
                 known_target,
                 ..Default::default()
             });
+            // SAFETY: `task` was just arena-allocated above; no other references exist yet.
             unsafe {
                 // BACKREF — lifetime erased per ParseTask::ctx convention.
                 (*task).ctx = Some(bun_ptr::ParentRef::from_raw_mut(
@@ -3693,6 +3705,7 @@ pub mod bv2_impl {
             self.increment_scan_counter();
 
             // Handle onLoad plugins
+            // SAFETY: `task` lives in the bundle-pass arena; sole reference until scheduled.
             if !self.enqueue_on_load_plugin_if_needed(unsafe { &mut *task }) {
                 if loader.should_copy_for_bundling() {
                     let additional_files: &mut Vec<crate::AdditionalFile> =
@@ -3887,11 +3900,11 @@ pub mod bv2_impl {
                     return Err(bun_core::err!("BuildFailed"));
                 }
 
+                let entry_points: *const [Box<[u8]>] =
+                    &raw const *this.transpiler.options.entry_points;
                 // SAFETY: `transpiler.options.entry_points` is borrowed only for the duration
                 // of `enqueue_entry_points_normal`, which never frees/reallocates it; raw-ptr
                 // sidestep for the `&mut self` overlap (Zig stored both as raw `*Transpiler`).
-                let entry_points: *const [Box<[u8]>] =
-                    &raw const *this.transpiler.options.entry_points;
                 this.enqueue_entry_points_normal(unsafe { &*entry_points })?;
 
                 if this.transpiler.log().has_errors() {
@@ -3995,7 +4008,7 @@ pub mod bv2_impl {
             // Rust it's `Box`-allocated, so leak it here to match the spec lifetime.
             // Bounded leak: the next file change `execve()`s the process anyway.
             if enable_reloading {
-                core::mem::forget(this);
+                let _ = Box::into_raw(this);
             } else {
                 this.deinit_without_freeing_arena();
             }
@@ -4219,7 +4232,7 @@ pub mod bv2_impl {
                                 .asset_naming
                         };
                         if !asset_naming.is_empty() {
-                            template.data = asset_naming.clone();
+                            template.data.clone_from(asset_naming);
                         }
 
                         let source = &mut sources[index];
@@ -4476,10 +4489,10 @@ pub mod bv2_impl {
                         unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(contents.as_ref()) }
                     } else {
                         this.free_list.push(code.source_code);
+                        let last = this.free_list.last().unwrap();
                         // SAFETY: `free_list` is append-only until
                         // `deinit_without_freeing_arena` (after all ParseTasks
                         // complete); the boxed slice is heap-stable.
-                        let last = this.free_list.last().unwrap();
                         let s: &'static [u8] =
                             unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(last) };
                         this.graph.input_files.items_source_mut()
@@ -4650,7 +4663,7 @@ pub mod bv2_impl {
                         }
 
                         this.run_resolver(
-                            resolve.import_record.clone(),
+                            &resolve.import_record,
                             resolve.import_record.original_target,
                         );
                         return;
@@ -4752,6 +4765,7 @@ pub mod bv2_impl {
                             // We need to parse this
                             let source_index =
                                 Index::init(u32::try_from(this.graph.ast.len()).expect("int cast"));
+                            // SAFETY: map slot from `get_or_put` above; map not mutated since.
                             unsafe { *value_ptr = source_index.get() };
                             out_source_index = Some(source_index);
                             let _ = this.graph.ast.append(JSAst::empty_in(this.graph.heap)); // OOM/capacity: Zig aborts; port keeps fire-and-forget
@@ -4826,6 +4840,7 @@ pub mod bv2_impl {
                                 this.graph.pool().schedule(task);
                             }
                         } else {
+                            // SAFETY: map slot from `get_or_put` above; map not mutated since.
                             out_source_index = Some(Index::init(unsafe { *value_ptr }));
                             // PORT NOTE: Zig freed result.{namespace,path} here; Rust drops below.
                             drop(result.namespace);
@@ -5307,7 +5322,7 @@ pub mod bv2_impl {
             let mut ctx = DevServerInput {
                 css_entry_points: ArrayHashMap::new(),
             };
-            self.enqueue_entry_points_dev_server(bake_entry_points, &mut ctx.css_entry_points)?;
+            self.enqueue_entry_points_dev_server(&bake_entry_points, &mut ctx.css_entry_points)?;
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
@@ -5370,6 +5385,7 @@ pub mod bv2_impl {
                 for index in 1..self.graph.ast.len() {
                     // SAFETY: `index < ast.len()`; see PORT NOTE above for column aliasing.
                     let part_list = unsafe { &mut *parts_col.add(index) };
+                    // SAFETY: `index < ast.len()`; see PORT NOTE above for column aliasing.
                     let import_records = unsafe { &mut *import_records_col.add(index) };
                     let maybe_css = &css_asts[index];
                     let target = asts.items_target()[index];
@@ -5829,7 +5845,7 @@ pub mod bv2_impl {
             // DEDUP(D059): route through the canonical body in `ungate_support`;
             // D090 unified `Fs::Path` and `bun_paths::fs::Path<'static>` so the shims are identity.
             let out = crate::ungate_support::generic_path_with_pretty_initialized(
-                path_as_static(path),
+                &path_as_static(path),
                 target,
                 self.transpiler.fs().top_level_dir,
                 bump,
@@ -6235,6 +6251,7 @@ pub mod bv2_impl {
                         let resolve_entry =
                             resolve_queue.get_or_put(&path_primary.text).expect("oom");
                         if resolve_entry.found_existing {
+                            // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
                             import_record.path =
                                 path_as_static(unsafe { &**resolve_entry.value_ptr }.path.clone());
                             continue;
@@ -6294,6 +6311,7 @@ pub mod bv2_impl {
                             // `&mut Log` tied to `&mut self`, but it's always a raw-ptr
                             // deref (DevServer vtable or `transpiler.log`). Detach via
                             // `*mut` so later `self.*` reads don't conflict.
+                            // SAFETY: log lives in DevServer/transpiler, disjoint from `self.graph`.
                             let log: &mut bun_ast::Log = unsafe {
                                 &mut *std::ptr::from_mut::<bun_ast::Log>(
                                     self.log_for_resolution_failures(&source.path.text, bake_graph),
@@ -6482,6 +6500,7 @@ pub mod bv2_impl {
                 // The Rust port returns `Option<&mut Path>`, which would lock the
                 // whole struct. Detach via raw ptr to mirror the Zig aliasing.
                 let path: &mut Fs::Path = match resolve_result.path() {
+                    // SAFETY: `resolve_result` outlives this borrow; see PORT NOTE above.
                     Some(p) => unsafe { bun_ptr::detach_lifetime_mut::<Fs::Path>(p) },
                     None => {
                         import_record.path.is_disabled = true;
@@ -6627,6 +6646,7 @@ pub mod bv2_impl {
 
                 let resolve_entry = resolve_queue.get_or_put(&path.text).expect("oom");
                 if resolve_entry.found_existing {
+                    // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
                     import_record.path = path_as_static(unsafe { &**resolve_entry.value_ptr }.path);
                     continue;
                 }
@@ -6957,8 +6977,10 @@ pub mod bv2_impl {
             let ast_for_html_entrypoint = JSAst::init(
                 bun_js_parser::new_lazy_export_ast(
                     heap,
+                    // SAFETY: `define`/`log` live for `'a` (owned by the Transpiler).
                     unsafe { &mut *define_ptr },
                     js_parser_options,
+                    // SAFETY: `define`/`log` live for `'a` (owned by the Transpiler).
                     unsafe { &mut *log_ptr },
                     Expr::init(
                         E::EString {

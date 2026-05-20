@@ -824,6 +824,8 @@ impl CreateCommand {
                     package_json_contents.list.as_slice(),
                 );
 
+                // SAFETY: single-threaded CLI dispatch; no other borrow of the
+                // process-static `Cli::LOG_` is live across this scope.
                 let log: &mut bun_ast::Log = unsafe { ctx.log_mut() };
                 let bump = bun_alloc::Arena::new();
                 let mut package_json_expr = match JSON::parse_utf8(&source, log, &bump) {
@@ -1379,10 +1381,10 @@ impl CreateCommand {
                         // `&'static [u8]`. Erase the local borrow lifetime via
                         // raw-pointer round-trip so the task slices can outlive
                         // the temporary `Query`.
-                        // SAFETY: `s` always points into the JSON arena
-                        // (initialized via `initialize_store()`), which lives
-                        // for the rest of `exec`.
                         let arena_str = |s: &[u8]| -> &'static [u8] {
+                            // SAFETY: `s` always points into the JSON arena
+                            // (initialized via `initialize_store()`), which
+                            // lives for the rest of `exec`.
                             unsafe { &*std::ptr::from_ref::<[u8]>(s) }
                         };
                         if let Some(postinstall) = value.as_property(b"postinstall") {
@@ -2117,11 +2119,11 @@ fn run_on_entry_point(
         node,
     };
 
-    let mut fetcher = bun_bundler::bundle_v2::DependenciesScanner::new(
+    let fetcher = bun_bundler::bundle_v2::DependenciesScanner::new(
         &mut analyzer,
         vec![Box::<[u8]>::from(entry_point)].into_boxed_slice(),
     );
-    crate::cli::build_command::BuildCommand::exec(crate::cli::Command::get(), Some(&mut fetcher))
+    crate::cli::build_command::BuildCommand::exec(crate::cli::Command::get(), Some(&fetcher))
 }
 
 // `Commands` was a Zig anonymous tuple of three single-element string arrays, used only to
@@ -2247,7 +2249,7 @@ impl Example {
                 let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
                 folders[0] = bun_sys::open_dir_at(bun_sys::Fd::cwd(), outdir_path)
                     .map(bun_sys::Dir::from_fd)
-                    .unwrap_or(bun_sys::Dir::from_fd(bun_sys::Fd::invalid()));
+                    .unwrap_or_else(|_| bun_sys::Dir::from_fd(bun_sys::Fd::invalid()));
             }
 
             {
@@ -2255,7 +2257,7 @@ impl Example {
                 let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
                 folders[1] = bun_sys::open_dir_at(bun_sys::Fd::cwd(), outdir_path)
                     .map(bun_sys::Dir::from_fd)
-                    .unwrap_or(bun_sys::Dir::from_fd(bun_sys::Fd::invalid()));
+                    .unwrap_or_else(|_| bun_sys::Dir::from_fd(bun_sys::Fd::invalid()));
             }
 
             if let Some(home_dir) = env_loader.map.get(bun_core::env_var::HOME.key()) {
@@ -2263,7 +2265,7 @@ impl Example {
                 let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
                 folders[2] = bun_sys::open_dir_at(bun_sys::Fd::cwd(), outdir_path)
                     .map(bun_sys::Dir::from_fd)
-                    .unwrap_or(bun_sys::Dir::from_fd(bun_sys::Fd::invalid()));
+                    .unwrap_or_else(|_| bun_sys::Dir::from_fd(bun_sys::Fd::invalid()));
             }
 
             // subfolders with package.json
@@ -2532,6 +2534,8 @@ impl Example {
         refresher.refresh();
         bun_ast::initialize_store();
         let source = bun_ast::Source::init_path_string(b"package.json", mutable.list.as_slice());
+        // SAFETY: single-threaded CLI dispatch; no other borrow of the
+        // process-static `Cli::LOG_` is live across this scope.
         let log = unsafe { ctx.log_mut() };
         let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
         let expr = match JSON::parse_utf8(&source, log, bump) {
@@ -2696,6 +2700,8 @@ impl Example {
         // field (global mimalloc) — use the process-lifetime CLI arena (examples
         // slices borrow from it and the CLI exits shortly after).
         let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
+        // SAFETY: single-threaded CLI dispatch; no other borrow of the
+        // process-static `Cli::LOG_` is live across this scope.
         let log = unsafe { ctx.log_mut() };
         let examples_object = match JSON::parse_utf8(&source, log, bump) {
             Ok(e) => e,
@@ -2864,6 +2870,7 @@ impl GitHandler {
         // SAFETY: `destination` lives in `filesystem.dirname_store` and `path` in env loader;
         // both are 'static for the CLI process. Extend lifetimes to satisfy `spawn`.
         let destination: &'static [u8] = unsafe { bun_ptr::detach_lifetime(destination) };
+        // SAFETY: `path` is owned by the process-lifetime env loader; valid for `'static`.
         let path: &'static [u8] = unsafe { bun_ptr::detach_lifetime(path) };
         let thread = match std::thread::Builder::new()
             .spawn(move || Self::spawn_thread(destination, path, verbose))

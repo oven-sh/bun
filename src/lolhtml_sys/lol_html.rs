@@ -390,7 +390,10 @@ unsafe extern "C" fn output_sink_function<S: OutputSink>(
     let this = unsafe { bun_core::callback_ctx::<S>(user_data) };
     match len {
         0 => this.done(),
-        _ => this.write(unsafe { bun_core::ffi::slice(ptr, len) }),
+        _ => this.write(
+            // SAFETY: len > 0 here and lol-html guarantees ptr[0..len] is valid for this callback
+            unsafe { bun_core::ffi::slice(ptr, len) },
+        ),
     }
 }
 
@@ -1056,12 +1059,12 @@ impl AttributeIterator {
     pub fn next<'a>(&mut self) -> Option<&'a Attribute> {
         auto_disable();
         let p = lol_html_attributes_iterator_next(self);
-        // SAFETY: lol-html guarantees the returned pointer (when non-null) is
-        // valid until the next call to `next` or `free`; `Attribute` is an
-        // opaque `UnsafeCell<[u8; 0]>` so `&Attribute` carries no `dereferenceable`.
         if p.is_null() {
             None
         } else {
+            // SAFETY: lol-html guarantees the returned pointer (when non-null) is
+            // valid until the next call to `next` or `free`; `Attribute` is an
+            // opaque `UnsafeCell<[u8; 0]>` so `&Attribute` carries no `dereferenceable`.
             Some(unsafe { &*p })
         }
     }

@@ -402,7 +402,7 @@ impl File {
     pub fn less_than_by_index(ctx: &[File], lhs_i: u32, rhs_i: u32) -> bool {
         let lhs = &ctx[lhs_i as usize];
         let rhs = &ctx[rhs_i as usize];
-        strings::cmp_strings_asc(&(), lhs.name, rhs.name)
+        strings::cmp_strings_asc((), lhs.name, rhs.name)
     }
 
     pub fn to_wtf_string(&mut self) -> BunString {

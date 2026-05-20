@@ -46,7 +46,7 @@ impl<SemverInt: VersionInt> Default for ResolutionType<SemverInt> {
 /// used by [`ResolutionType::init`] / [`value_init`] to construct a zero-padded union.
 // `Tag` is a `#[repr(transparent)] struct Tag(u8)` with sparse `pub const`
 // associated values; the derive maps `Self::Variant` → `Tag::Variant` by name.
-#[derive(bun_core::EnumTag)]
+#[derive(Clone, Copy, bun_core::EnumTag)]
 #[enum_tag(existing = Tag)]
 pub enum TaggedValue<SemverInt: VersionInt> {
     Uninitialized,

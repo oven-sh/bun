@@ -60,7 +60,7 @@ impl Mkdir {
                     return Self::fail_usage(interp, cmd);
                 }
                 Err(e) => {
-                    return Builtin::fail_parse(interp, cmd, Kind::Mkdir, e, || {
+                    return Builtin::fail_parse(interp, cmd, Kind::Mkdir, &e, || {
                         Self::state_mut(interp, cmd).state = State::WaitingWriteErr
                     });
                 }

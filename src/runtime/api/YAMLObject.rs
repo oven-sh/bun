@@ -161,6 +161,7 @@ pub enum AnchorAliasName {
     },
 }
 
+#[derive(Clone, Copy)]
 pub enum ValueOrigin {
     Root,
     ArrayItem,
@@ -1079,8 +1080,7 @@ impl<'a> ParserCtx<'a> {
 
     pub extern "C" fn run(ctx: *mut ParserCtx<'a>, args: *mut MarkedArgumentBuffer) {
         // SAFETY: MarkedArgumentBuffer::run passes valid non-null pointers for the duration of the call
-        let ctx = unsafe { &mut *ctx };
-        let args = unsafe { &mut *args };
+        let (ctx, args) = unsafe { (&mut *ctx, &mut *args) };
         let root = ctx.root;
         ctx.result = match ctx.to_js(args, root) {
             Ok(v) => v,

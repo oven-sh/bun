@@ -67,8 +67,8 @@ impl<R> StyleRule<R> {
         }
     }
 
-    pub fn is_compatible(&self, targets: css::targets::Targets) -> bool {
-        selector::is_compatible(self.selectors.v.slice(), targets)
+    pub fn is_compatible(&self, targets: &css::targets::Targets) -> bool {
+        selector::is_compatible(self.selectors.v.slice(), *targets)
     }
 }
 

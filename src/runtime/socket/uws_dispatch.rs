@@ -139,7 +139,12 @@ macro_rules! us_dispatch_shims {
         #[allow(clippy::unused_unit)]
         pub extern "C" fn $name($recv: *mut $Recv $(, $a: $t)*) -> $ret {
             match $lookup($recv).$field {
-                Some(f) => unsafe { f($($call),*) },
+                Some(f) => {
+                    // SAFETY: `f` is the vtable callback for this socket kind; loop.c
+                    // guarantees `$recv` and any data/len buffers are live for the call,
+                    // and the vtable entry's signature matches this shim's C ABI exactly.
+                    unsafe { f($($call),*) }
+                }
                 None => $default,
             }
         }
@@ -186,10 +191,10 @@ pub extern "C" fn us_dispatch_ssl_raw_tap(
     debug_assert!(s_ref.kind() == SocketKind::BunSocketTls);
     // `bun.jsc.API.NewSocket(true)` → the runtime-local `socket::NewSocket<true>`.
     type TLSSocket = super::NewSocket<true>;
-    // SAFETY: ext slot for BunSocketTls always holds a non-null *mut TLSSocket
-    // (stamped at construction); the slot read is safe via `opaque_mut`, only
-    // the final `&*tls_ptr` needs the deref invariant.
     let tls_ptr: *mut TLSSocket = *s_ref.ext::<*mut TLSSocket>();
+    // SAFETY: ext slot for BunSocketTls always holds a non-null *mut TLSSocket
+    // (stamped at construction); dispatch is single-threaded so no `&mut`
+    // alias exists for the lifetime of this shared borrow.
     let tls: &TLSSocket = unsafe { &*tls_ptr };
     if let Some(raw) = tls.twin.get().as_ref() {
         // `twin` is `IntrusiveRc<Self>` (intrusive ref-counted heap pointer);

@@ -711,6 +711,10 @@ pub struct DirTask {
 // them (worker pool / main thread); the surrounding atomics + `err` mutex
 // provide the necessary synchronisation.
 unsafe impl Send for ShellRmTask {}
+// SAFETY: `task_manager` / `parent_task` point at heap allocations kept alive
+// by the `subtask_count` / `pending_main_callbacks` atomic protocol; non-atomic
+// fields are single-owner per the `need_to_wait` handoff (see
+// `verbose_deleted`).
 unsafe impl Send for DirTask {}
 
 impl ShellRmTask {
@@ -796,10 +800,7 @@ impl ShellRmTask {
         // heap-allocated task; the worker thread has exclusive access to
         // `root_task` until it spawns subtasks.
         unsafe {
-            let this = task
-                .cast::<u8>()
-                .sub(<Self as crate::shell::interpreter::ShellTaskCtx>::TASK_OFFSET)
-                .cast::<ShellRmTask>();
+            let this = <Self as crate::shell::interpreter::ShellTaskCtx>::from_work_task(task);
             DirTask::run_from_thread_pool_impl((*this).root_task);
         }
     }
@@ -973,7 +974,7 @@ impl ShellRmTask {
 
     /// Spec: rm.zig `errorWithPath`.
     #[inline]
-    fn error_with_path(&self, e: bun_sys::Error, path: &[u8]) -> bun_sys::Error {
+    fn error_with_path(&self, e: &bun_sys::Error, path: &[u8]) -> bun_sys::Error {
         e.with_path(path)
     }
 
@@ -1045,7 +1046,7 @@ impl ShellRmTask {
                             if self.opts.force {
                                 return self.verbose_deleted(dir_task, path.as_bytes());
                             }
-                            return Err(self.error_with_path(e, path.as_bytes()));
+                            return Err(self.error_with_path(&e, path.as_bytes()));
                         }
                         E::ENOTDIR => {
                             state.treat_as_dir = false;
@@ -1055,7 +1056,7 @@ impl ShellRmTask {
                             }
                             break 'out_to_iter;
                         }
-                        _ => return Err(self.error_with_path(e, path.as_bytes())),
+                        _ => return Err(self.error_with_path(&e, path.as_bytes())),
                     },
                 }
             }
@@ -1075,13 +1076,13 @@ impl ShellRmTask {
                     if self.opts.force {
                         return self.verbose_deleted(dir_task, path.as_bytes());
                     }
-                    return Err(self.error_with_path(e, path.as_bytes()));
+                    return Err(self.error_with_path(&e, path.as_bytes()));
                 }
                 E::ENOTDIR => {
                     let mut dummy = DummyRemoveFile;
                     return self.remove_entry_file(dir_task, path, is_absolute, buf, &mut dummy);
                 }
-                _ => return Err(self.error_with_path(e, path.as_bytes())),
+                _ => return Err(self.error_with_path(&e, path.as_bytes())),
             },
         };
 
@@ -1109,7 +1110,7 @@ impl ShellRmTask {
         let mut i: usize = 0;
         loop {
             let current = match iterator.next() {
-                Err(e) => return Err(self.error_with_path(e, path.as_bytes())),
+                Err(e) => return Err(self.error_with_path(&e, path.as_bytes())),
                 Ok(None) => break,
                 Ok(Some(ent)) => ent,
             };
@@ -1187,7 +1188,7 @@ impl ShellRmTask {
                     if self.opts.force {
                         return self.verbose_deleted(dir_task, path.as_bytes());
                     }
-                    Err(self.error_with_path(e, path.as_bytes()))
+                    Err(self.error_with_path(&e, path.as_bytes()))
                 }
                 _ => Err(e),
             },
@@ -1220,13 +1221,13 @@ impl ShellRmTask {
                                 let _ = self.verbose_deleted(dir_task, path.as_bytes());
                                 return Ok(true);
                             }
-                            return Err(self.error_with_path(e, path.as_bytes()));
+                            return Err(self.error_with_path(&e, path.as_bytes()));
                         }
                         E::ENOTDIR => {
                             state.treat_as_dir = false;
                             continue;
                         }
-                        _ => return Err(self.error_with_path(e, path.as_bytes())),
+                        _ => return Err(self.error_with_path(&e, path.as_bytes())),
                     },
                 }
             } else {
@@ -1260,7 +1261,7 @@ impl ShellRmTask {
                     if self.opts.force {
                         return self.verbose_deleted(parent_dir_task, path.as_bytes());
                     }
-                    Err(self.error_with_path(e, path.as_bytes()))
+                    Err(self.error_with_path(&e, path.as_bytes()))
                 }
                 E::EISDIR => vtable.on_is_dir(parent_dir_task, path, is_absolute, buf),
                 // This might happen if the file is actually a directory.
@@ -1302,8 +1303,8 @@ impl ShellRmTask {
                                         buf,
                                     ),
                                     // actually a file, the error is a permissions error
-                                    E::ENOTDIR => Err(self.error_with_path(e, path.as_bytes())),
-                                    _ => Err(self.error_with_path(e2, path.as_bytes())),
+                                    E::ENOTDIR => Err(self.error_with_path(&e, path.as_bytes())),
+                                    _ => Err(self.error_with_path(&e2, path.as_bytes())),
                                 },
                             };
                         }
@@ -1313,9 +1314,9 @@ impl ShellRmTask {
                         return vtable.on_is_dir(parent_dir_task, path, is_absolute, buf);
                     }
                     #[allow(unreachable_code)]
-                    Err(self.error_with_path(e, path.as_bytes()))
+                    Err(self.error_with_path(&e, path.as_bytes()))
                 }
-                _ => Err(self.error_with_path(e, path.as_bytes())),
+                _ => Err(self.error_with_path(&e, path.as_bytes())),
             },
         }
     }

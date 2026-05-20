@@ -624,6 +624,8 @@ where
 // that additionally call `get_mut` across threads must separately ensure
 // `T: Send` at the call site (no different from `NonNull<T>` today).
 unsafe impl<T: ?Sized + Sync> Send for BackRef<T> {}
+// SAFETY: `&BackRef<T>` only yields `&T` (via `get`/`Deref`); `&T: Sync` holds
+// exactly when `T: Sync`, so sharing the back-reference across threads is sound.
 unsafe impl<T: ?Sized + Sync> Sync for BackRef<T> {}
 
 // ─────────────────────────────────────────────────────────────────────────────

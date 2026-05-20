@@ -2628,10 +2628,12 @@ impl<'a> Formatter<'a> {
 
                     macro_rules! print_typed_slice {
                         ($t:ty) => {{
-                            // SAFETY: array buffer bytes are aligned to the element type by JSC.
-                            let slice_with_type: &[$t] = unsafe {
+                            // SAFETY: `Unaligned<$t>` has align 1 and the same size as `$t`, so any
+                            // `*const u8` is a valid `*const Unaligned<$t>`; `slice` is the live
+                            // backing store of a JSC typed array whose elements are valid `$t`.
+                            let slice_with_type: &[bun_core::Unaligned<$t>] = unsafe {
                                 core::slice::from_raw_parts(
-                                    slice.as_ptr().cast::<$t>(),
+                                    slice.as_ptr().cast::<bun_core::Unaligned<$t>>(),
                                     slice.len() / core::mem::size_of::<$t>(),
                                 )
                             };
@@ -2639,7 +2641,7 @@ impl<'a> Formatter<'a> {
                             for el in slice_with_type {
                                 writer.write_all(b"\n");
                                 let _ = self.write_indent(writer.ctx);
-                                writer.print(format_args!("{},", el));
+                                writer.print(format_args!("{},", el.get()));
                             }
                             self.indent = self.indent.saturating_sub(1);
                         }};

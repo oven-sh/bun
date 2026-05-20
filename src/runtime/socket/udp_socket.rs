@@ -1141,9 +1141,11 @@ impl UDPSocket {
             result: JsResult<JSValue>,
         }
         extern "C" fn run(ctx: *mut Ctx<'_>, payload_roots: *mut MarkedArgumentBuffer) {
-            // SAFETY: ctx points to a stack-local Ctx; payload_roots provided by
-            // MarkedArgumentBuffer::run for the duration of this call.
+            // SAFETY: ctx points to the stack-local Ctx passed to
+            // MarkedArgumentBuffer::run below; exclusive for this call.
             let ctx = unsafe { &mut *ctx };
+            // SAFETY: payload_roots is the stack MarkedArgumentBuffer that
+            // MarkedArgumentBuffer::run lends exclusively to this callback.
             let payload_roots = unsafe { &mut *payload_roots };
             ctx.result =
                 UDPSocket::send_many_impl(ctx.this, ctx.global_this, ctx.callframe, payload_roots);

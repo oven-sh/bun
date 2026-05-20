@@ -313,7 +313,7 @@ impl Default for CompileResult {
 /// the type stored on `bun_ast::Source.path`). `dupe_alloc_fix_pretty` interns into
 /// `FilenameStore` (process-static), so the `'static` return is satisfied.
 pub fn generic_path_with_pretty_initialized(
-    path: bun_paths::fs::Path<'static>,
+    path: &bun_paths::fs::Path<'static>,
     target: options::Target,
     top_level_dir: &[u8],
     _bump: &bun_alloc::Arena,
@@ -328,7 +328,7 @@ pub fn generic_path_with_pretty_initialized(
         && (strings::has_prefix(path.text, bun_node_fallbacks::IMPORT_PATH)
             || !bun_paths::is_absolute(path.text))
     {
-        return Ok(path);
+        return Ok(*path);
     }
 
     // "file" namespace should use the relative file path for its display name.
@@ -343,7 +343,7 @@ pub fn generic_path_with_pretty_initialized(
         >(&mut **buf2, top_level_dir, path.text);
         // D090: `bun_paths::fs::Path<'static>` and `bun_fs::Path` are the same type;
         // covariance lets `path_clone` widen to `Path<'_>` for the temp `pretty`.
-        let mut path_clone: bun_fs::Path<'_> = path;
+        let mut path_clone: bun_fs::Path<'_> = *path;
         // stack-allocated temporary is not leaked because dupeAlloc on the path will
         // move .pretty into the heap. that function also fixes some slash issues.
         if target == options::Target::BakeServerComponentsSsr {
@@ -364,7 +364,7 @@ pub fn generic_path_with_pretty_initialized(
         path_clone.dupe_alloc_fix_pretty()
     } else {
         // in non-file namespaces, standard filesystem rules do not apply.
-        let mut path_clone: bun_fs::Path<'_> = path;
+        let mut path_clone: bun_fs::Path<'_> = *path;
         let mut fbs = bun_io::FixedBufferStream::new_mut(&mut buf.0[..]);
         // PORT NOTE: raw byte writes (not `write!` over `bstr::BStr`) — see
         // the `ssr:` branch above; namespace/text may carry non-UTF-8 bytes.

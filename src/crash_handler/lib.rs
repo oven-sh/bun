@@ -259,8 +259,8 @@ pub mod debug {
         #[cfg(not(windows))]
         pub fn get_symbol_at_address(&mut self, address: usize) -> Result<SymbolInfo, Error> {
             let _ = self.base_address;
-            // SAFETY: dladdr only reads; out-param is a valid Dl_info.
             let mut info: libc::Dl_info = bun_core::ffi::zeroed();
+            // SAFETY: dladdr only reads; out-param is a valid Dl_info.
             let rc = unsafe { libc::dladdr(address as *const c_void, &raw mut info) };
             if rc == 0 || info.dli_sname.is_null() {
                 // Zig returns a default-initialized `Symbol` (`.{}` — name "???") here
@@ -2614,7 +2614,7 @@ mod draft {
                 self.object
                     .as_deref()
                     .map(bstr::BStr::new)
-                    .unwrap_or(bstr::BStr::new(b"")),
+                    .unwrap_or_default(),
             )
         }
     }
@@ -3844,11 +3844,8 @@ mod draft {
             // SAFETY: action is a valid NUL-terminated C string for the duration of the dlopen call
             let s = unsafe { bun_core::ffi::cstr(action) }.to_bytes();
             // SAFETY: noreturn-on-crash usage; the C string outlives the action via caller contract
-            CURRENT_ACTION.with(|c| {
-                c.set(Some(Action::Dlopen(unsafe {
-                    bun_collections::detach_lifetime(s)
-                })))
-            });
+            let s: &'static [u8] = unsafe { bun_collections::detach_lifetime(s) };
+            CURRENT_ACTION.with(|c| c.set(Some(Action::Dlopen(s))));
         } else {
             debug_assert!(matches!(
                 CURRENT_ACTION.with(|c| c.get()),

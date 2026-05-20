@@ -98,9 +98,7 @@ impl FileCopier {
                         E::EROFS
                     } else if e == err!("FileSystem") {
                         E::EIO
-                    } else if e == err!("FileBusy") {
-                        E::EBUSY
-                    } else if e == err!("DeviceBusy") {
+                    } else if e == err!("FileBusy") || e == err!("DeviceBusy") {
                         E::EBUSY
                     }
                     // One of the path components was not a directory.
@@ -109,14 +107,12 @@ impl FileCopier {
                         E::ENOTDIR
                     }
                     // On Windows, file paths must be valid Unicode.
-                    else if e == err!("InvalidUtf8") {
-                        E::EINVAL
-                    } else if e == err!("InvalidWtf8") {
-                        E::EINVAL
-                    }
                     // On Windows, file paths cannot contain these characters:
                     // '/', '*', '?', '"', '<', '>', '|'
-                    else if e == err!("BadPathName") {
+                    else if e == err!("InvalidUtf8")
+                        || e == err!("InvalidWtf8")
+                        || e == err!("BadPathName")
+                    {
                         E::EINVAL
                     } else if e == err!("FileNotFound") {
                         E::ENOENT

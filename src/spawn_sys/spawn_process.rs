@@ -653,8 +653,13 @@ impl Drop for PosixSpawnFdGuard {
     }
 }
 
+/// # Safety
+/// `argv` must point to a null-terminated array of NUL-terminated C strings
+/// with at least one non-null element (`argv[0]`); `envp` must point to a
+/// null-terminated array of NUL-terminated C strings. Both must remain valid
+/// for the duration of the call.
 #[cfg(unix)]
-pub fn spawn_process_posix(
+pub unsafe fn spawn_process_posix(
     options: &PosixSpawnOptions,
     argv: Argv,
     envp: Envp,

@@ -162,6 +162,7 @@ css_rule_variants! {
 // hands the arena-backed AST between threads). Thread-safety therefore follows
 // `R`'s auto-traits.
 unsafe impl<R: Send> Send for CssRule<R> {}
+// SAFETY: see the `Send` impl above — uniquely-owned storage; `Sync` follows `R: Sync`.
 unsafe impl<R: Sync> Sync for CssRule<R> {}
 
 /// Zig: pub fn CssRuleList(comptime AtRule: type) type { return struct { ... } }
@@ -286,9 +287,9 @@ pub(super) mod dc {
     pub fn decl_handler_static<'a>(
         h: &'a mut crate::DeclarationHandler<'_>,
     ) -> &'a mut crate::DeclarationHandler<'static> {
-        // Inner-lifetime variance cast via raw pointer — `DeclarationHandler<'_>`
-        // and `DeclarationHandler<'static>` share layout; only the borrowck tag
-        // on the arena handle differs. See SAFETY note above.
+        // SAFETY: inner-lifetime variance cast via raw pointer — `DeclarationHandler<'_>`
+        // and `DeclarationHandler<'static>` share layout; only the borrowck tag on the
+        // arena handle differs. See the fn doc SAFETY note above for the invariant.
         unsafe { &mut *core::ptr::from_mut(h).cast::<crate::DeclarationHandler<'static>>() }
     }
 
@@ -688,7 +689,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     // we need to either wrap in :is() or split them into multiple rules.
     let mut incompatible: SmallList<Selector, 1> = if sty.selectors.v.len() > 1
         && context.targets.should_compile_selectors()
-        && !sty.is_compatible(*context.targets)
+        && !sty.is_compatible(context.targets)
     {
         // The :is() selector accepts a forgiving selector list, so use that if possible.
         // Note that :is() does not allow pseudo elements, so we need to check for that.
@@ -945,8 +946,8 @@ pub fn merge_style_rules<R>(
     // Merge declarations if the selectors are equivalent, and both are compatible with all targets.
     // Does not apply if css modules are enabled.
     if sty.selectors.eql(&last_style_rule.selectors)
-        && sty.is_compatible(*context.targets)
-        && last_style_rule.is_compatible(*context.targets)
+        && sty.is_compatible(context.targets)
+        && last_style_rule.is_compatible(context.targets)
         && sty.rules.v.is_empty()
         && last_style_rule.rules.v.is_empty()
         && (!context.css_modules || sty.loc.source_index == last_style_rule.loc.source_index)
@@ -989,7 +990,7 @@ pub fn merge_style_rules<R>(
         }
 
         // Append the selectors to the last rule if the declarations are the same, and all selectors are compatible.
-        if sty.is_compatible(*context.targets) && last_style_rule.is_compatible(*context.targets) {
+        if sty.is_compatible(context.targets) && last_style_rule.is_compatible(context.targets) {
             let moved = core::mem::take(&mut sty.selectors.v);
             // `reserve` (not `ensure_total_capacity`) so capacity grows
             // super-linearly across repeated merges — matches .zig

@@ -44,7 +44,6 @@ pub mod workspace_map;
 
 pub use meta::Meta;
 pub use scripts::Scripts;
-#[allow(non_snake_case)]
 pub use workspace_map as WorkspaceMap;
 
 bun_output::declare_scope!(Lockfile, hidden);
@@ -543,7 +542,7 @@ impl Package<u64> {
         }
 
         builder.clamp();
-        drop(builder_); // release `&mut new.buffers.string_bytes` / `string_pool`
+        let _ = builder_; // release `&mut new.buffers.string_bytes` / `string_pool`
 
         let new_package = new.append_package_with_id(pkg_value, id)?;
 
@@ -1254,13 +1253,10 @@ impl Diff {
             }
 
             // 2
-            if from_lockfile.trusted_dependencies.is_some()
-                && to_lockfile.trusted_dependencies.is_some()
-            {
-                let from_trusted_dependencies =
-                    from_lockfile.trusted_dependencies.as_ref().unwrap();
-                let to_trusted_dependencies = to_lockfile.trusted_dependencies.as_ref().unwrap();
-
+            if let (Some(from_trusted_dependencies), Some(to_trusted_dependencies)) = (
+                from_lockfile.trusted_dependencies.as_ref(),
+                to_lockfile.trusted_dependencies.as_ref(),
+            ) {
                 // added
                 for &to_trusted in to_trusted_dependencies.keys() {
                     if !from_trusted_dependencies.contains(&to_trusted) {
@@ -1279,12 +1275,10 @@ impl Diff {
             }
 
             // 3
-            if from_lockfile.trusted_dependencies.is_some()
-                && to_lockfile.trusted_dependencies.is_none()
-            {
-                let from_trusted_dependencies =
-                    from_lockfile.trusted_dependencies.as_ref().unwrap();
-
+            if let (Some(from_trusted_dependencies), None) = (
+                from_lockfile.trusted_dependencies.as_ref(),
+                to_lockfile.trusted_dependencies.as_ref(),
+            ) {
                 // added
                 for entry in default_trusted_dependencies::entries() {
                     if !from_trusted_dependencies
@@ -1311,11 +1305,10 @@ impl Diff {
             }
 
             // 4
-            if from_lockfile.trusted_dependencies.is_none()
-                && to_lockfile.trusted_dependencies.is_some()
-            {
-                let to_trusted_dependencies = to_lockfile.trusted_dependencies.as_ref().unwrap();
-
+            if let (None, Some(to_trusted_dependencies)) = (
+                from_lockfile.trusted_dependencies.as_ref(),
+                to_lockfile.trusted_dependencies.as_ref(),
+            ) {
                 // add all to trusted dependencies, even if they exist in default because they weren't in the
                 // lockfile originally
                 for &to_trusted in to_trusted_dependencies.keys() {
@@ -1670,7 +1663,12 @@ impl Package<u64> {
     /// `manager.lockfile`, `manager`, `manager.log` as three separate args;
     /// Rust borrowck rejects the overlap on `&mut self`, so split via raw
     /// pointer here once instead of at every call site.
-    pub fn parse_from_real_manager<R: ResolverContext>(
+    ///
+    /// # Safety
+    /// `manager` must point to a live `PackageManager` for the duration of the
+    /// call, and its `lockfile` / `log` fields must point to live allocations
+    /// disjoint from `*manager` itself.
+    pub unsafe fn parse_from_real_manager<R: ResolverContext>(
         &mut self,
         manager: *mut crate::package_manager_real::PackageManager,
         source: &bun_ast::Source,
@@ -1834,9 +1832,9 @@ impl Package<u64> {
                     .append::<String>(if relative.is_empty() { b"." } else { relative });
             }
             dependency::version::Tag::Npm => {
-                if workspace_version.is_some() {
+                if let Some(workspace_version) = workspace_version {
                     let satisfies = dependency_version.npm().version.satisfies(
-                        workspace_version.unwrap(),
+                        workspace_version,
                         buf,
                         buf,
                     );
@@ -3278,7 +3276,7 @@ pub mod serializer {
             if matches!(field, PackageField::Resolution) {
                 // copy each resolution to make sure the union is zero initialized
                 let resolutions: &[Resolution<SemverIntType>] =
-                    unsafe { sliced.items::<"resolution", Resolution<SemverIntType>>() };
+                    sliced.items::<"resolution", Resolution<SemverIntType>>();
                 for val in resolutions {
                     // `ResolutionType::copy` builds a fresh zero-initialised
                     // `Resolution` and writes only the active union member,
@@ -3499,7 +3497,7 @@ pub mod serializer {
                     // need to check if any values were created from an older version of bun
                     // (currently just `has_install_script`). If any are found, the values need
                     // to be updated before saving the lockfile.
-                    let metas: &mut [Meta] = unsafe { sliced.items_mut::<"meta", Meta>() };
+                    let metas: &mut [Meta] = sliced.items_mut::<"meta", Meta>();
                     for meta in metas {
                         if meta.needs_update() {
                             *needs_update = true;

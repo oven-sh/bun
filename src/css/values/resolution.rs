@@ -61,8 +61,8 @@ impl Resolution {
         }
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        let (value, unit): (CSSNumber, &'static [u8]) = match *self {
+    pub fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        let (value, unit): (CSSNumber, &'static [u8]) = match self {
             Resolution::Dpi(dpi) => (dpi, b"dpi".as_slice()),
             Resolution::Dpcm(dpcm) => (dpcm, b"dpcm".as_slice()),
             Resolution::Dppx(dppx) => {

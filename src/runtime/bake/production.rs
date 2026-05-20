@@ -137,8 +137,8 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
         // TODO(port): preload/argv are `Vec<Box<[u8]>>` on both sides; clone since
         // ctx outlives vm but Zig assigned slices directly (no ownership transfer).
         // Could change VM fields to borrow from ctx.
-        vm.preload = ctx.preloads.clone();
-        vm.argv = ctx.passthrough.clone();
+        vm.preload.clone_from(&ctx.preloads);
+        vm.argv.clone_from(&ctx.passthrough);
         vm.arena = NonNull::new(&raw mut arena);
         // vm.allocator = arena.arena() — dropped per §Allocators
         // Spec production.zig:50: `b.options.install = ctx.install` (raw

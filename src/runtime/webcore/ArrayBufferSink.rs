@@ -43,14 +43,14 @@ impl ArrayBufferSink {
         self.signal = signal;
     }
 
-    pub fn start(&mut self, stream_start: streams::Start) -> bun_sys::Result<()> {
+    pub fn start(&mut self, stream_start: &streams::Start) -> bun_sys::Result<()> {
         self.bytes.clear_retaining_capacity();
 
         if let streams::Start::ArrayBufferSink {
             chunk_size,
             as_uint8array,
             stream,
-        } = stream_start
+        } = *stream_start
         {
             if chunk_size > 0 {
                 self.bytes
@@ -314,7 +314,7 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
         Self::flush_from_js(self, global, wait)
     }
     fn start(&mut self, config: streams::Start) -> bun_sys::Result<()> {
-        Self::start(self, config)
+        Self::start(self, &config)
     }
     fn signal(&mut self) -> Option<&mut Signal> {
         Some(&mut self.signal)

@@ -497,9 +497,9 @@ pub fn tokens_to_json(tokens: &[Token]) -> Vec<u8> {
     out
 }
 
-pub fn ast_to_json(root: ast::Group) -> Vec<u8> {
+pub fn ast_to_json(root: &ast::Group) -> Vec<u8> {
     let mut out = Vec::new();
-    ast_group_to_json(&root, &mut out);
+    ast_group_to_json(root, &mut out);
     out
 }
 

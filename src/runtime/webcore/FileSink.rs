@@ -382,6 +382,7 @@ impl FileSink {
     /// provenance over the allocation.
     pub unsafe fn on_attached_process_exit(this: *mut FileSink, status: &SpawnStatus) {
         bun_core::scoped_log!(FileSink, "onAttachedProcessExit()");
+        // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
             // `writer.close()` below re-enters `onClose` which releases the
             // keep-alive ref, and `stream.cancel`/`runPending` drain microtasks
@@ -437,6 +438,7 @@ impl FileSink {
     /// may re-enter JS / drop refs / free `this` on the last `deref`; the body
     /// reborrows `(*this).field` per-statement only.
     unsafe fn run_pending(this: *mut FileSink) {
+        // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
             let _guard = FileSinkRef::new_ref(this);
 
@@ -460,6 +462,7 @@ impl FileSink {
     /// [`on_attached_process_exit`](Self::on_attached_process_exit)).
     pub unsafe fn on_write(this: *mut FileSink, amount: usize, status: WriteStatus) {
         bun_core::scoped_log!(FileSink, "onWrite({}, {})", amount, status as u8);
+        // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
             // `runPending()` below drains microtasks and may drop the JS wrapper's
             // ref, and `writer.end()`/`writer.close()` re-enter `onClose` which
@@ -537,6 +540,7 @@ impl FileSink {
     /// [`on_attached_process_exit`](Self::on_attached_process_exit)).
     pub unsafe fn on_error(this: *mut FileSink, err: sys::Error) {
         bun_core::scoped_log!(FileSink, "onError({:?})", err);
+        // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
             if (*this).pending.get().state == streams::PendingState::Pending {
                 (*this)
@@ -576,6 +580,7 @@ impl FileSink {
     /// [`on_attached_process_exit`](Self::on_attached_process_exit)).
     pub unsafe fn on_ready(this: *mut FileSink) {
         bun_core::scoped_log!(FileSink, "onReady()");
+        // SAFETY: caller contract — `this` is live; only `signal` is reborrowed.
         unsafe { (*this).signal.with_mut(|s| s.ready(None, None)) };
     }
 
@@ -585,6 +590,7 @@ impl FileSink {
     /// at the end may free `this`.
     pub unsafe fn on_close(this: *mut FileSink) {
         bun_core::scoped_log!(FileSink, "onClose()");
+        // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
             // SAFETY(JsCell): `Strong::has`/`get` are read-only on the GC root.
             if (*this).readable_stream.get_mut().has() {
@@ -615,6 +621,7 @@ impl FileSink {
     /// pointer (= `this`), so this must be that pointer; it must not be used
     /// afterwards.
     unsafe fn clear_keep_alive_ref(this: *mut FileSink) {
+        // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
             if (*this).must_be_kept_alive_until_eof.get() {
                 (*this).must_be_kept_alive_until_eof.set(false);
@@ -673,7 +680,7 @@ impl FileSink {
     }
 
     pub fn setup(&self, options: &Options) -> sys::Result<()> {
-        // SAFETY(JsCell): `Strong::has` is a read-only GC-root probe.
+        // SAFETY: JsCell — `Strong::has` is a read-only GC-root probe; no JS re-entry.
         if unsafe { self.readable_stream.get_mut() }.has() {
             // Already started.
             return sys::Result::Ok(());
@@ -699,7 +706,7 @@ impl FileSink {
         };
         let result = bun_io::open_for_writing(
             Fd::cwd(),
-            io_path,
+            &io_path,
             options.flags(),
             options.mode,
             &mut pollable_out,
@@ -847,9 +854,9 @@ impl FileSink {
         self.signal.set(signal);
     }
 
-    pub fn start(&self, stream_start: streams::Start) -> sys::Result<()> {
+    pub fn start(&self, stream_start: &streams::Start) -> sys::Result<()> {
         match stream_start {
-            streams::Start::FileSink(ref file)
+            streams::Start::FileSink(file)
                 if !matches!(file.input_path, PathOrFileDescriptor::Fd(Fd::INVALID)) =>
             {
                 match self.setup(file) {
@@ -905,6 +912,7 @@ impl FileSink {
     /// [`on_attached_process_exit`](Self::on_attached_process_exit)): live,
     /// with write+dealloc provenance over the allocation.
     pub unsafe fn on_auto_flush(this: *mut FileSink) -> bool {
+        // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
             if (*this).done.get() || !(*this).writer.get().has_pending_data() {
                 (*this).update_ref(false);
@@ -1368,7 +1376,7 @@ impl FileSink {
                 self.pending
                     .with_mut(|p| p.result = streams::Writable::Owned(pending_written as u64));
 
-                // SAFETY(JsCell): `WritablePending::promise` allocates a JSPromise
+                // SAFETY: JsCell — `WritablePending::promise` allocates a JSPromise
                 // (may GC) but does not invoke any FileSink host-fn synchronously.
                 let promise_result = unsafe { self.pending.get_mut() }.promise(global_this);
 
@@ -1454,10 +1462,10 @@ impl crate::webcore::sink::JsSinkType for FileSink {
         Self::flush_from_js(self, global, wait)
     }
     fn start(&mut self, config: streams::Start) -> sys::Result<()> {
-        Self::start(self, config)
+        Self::start(self, &config)
     }
     fn signal(&mut self) -> Option<&mut streams::Signal> {
-        // SAFETY(JsCell): trait receiver is `&mut self`; sole borrow.
+        // SAFETY: JsCell — trait receiver is `&mut self`; sole borrow of `signal`.
         Some(unsafe { self.signal.get_mut() })
     }
     fn done(&self) -> bool {

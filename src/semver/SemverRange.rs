@@ -148,7 +148,7 @@ impl Range {
     /// Is the Range equal to another Range
     /// This does not evaluate the range.
     #[inline]
-    pub fn eql(self, rhs: Range) -> bool {
+    pub fn eql(self, rhs: &Range) -> bool {
         self.left.eql(rhs.left) && self.right.eql(rhs.right)
     }
 

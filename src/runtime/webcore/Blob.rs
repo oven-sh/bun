@@ -477,7 +477,8 @@ impl BlobExt for Blob {
             let promise_value = unsafe { (*handler).promise.value() };
             promise_value.ensure_still_alive();
 
-            read_file::ReadFileTask::schedule(read_file_task);
+            // SAFETY: `read_file_task` was just heap-allocated by `create_on_js_thread`.
+            unsafe { read_file::ReadFileTask::schedule(read_file_task) };
 
             debug!("doReadFile: read_file_task scheduled");
             promise_value
@@ -673,7 +674,8 @@ impl BlobExt for Blob {
                 global,
                 bun_core::heap::into_raw(file_read),
             );
-            read_file::ReadFileTask::schedule(read_file_task);
+            // SAFETY: `read_file_task` was just heap-allocated by `create_on_js_thread`.
+            unsafe { read_file::ReadFileTask::schedule(read_file_task) };
         }
     }
     fn get_content_type(&self) -> Option<ZigStringSlice> {
@@ -1573,7 +1575,7 @@ impl BlobExt for Blob {
                 });
 
                 // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink.
-                if let bun_sys::Result::Err(err) = unsafe { (*sink).start(stream_start) } {
+                if let bun_sys::Result::Err(err) = unsafe { (*sink).start(&stream_start) } {
                     // SAFETY: release the +1 strong ref taken by `init` on the error path.
                     unsafe { webcore::FileSink::deref(sink) };
                     return Ok(
@@ -1948,7 +1950,7 @@ impl BlobExt for Blob {
             }
 
             // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink; sole owner here.
-            if let bun_sys::Result::Err(err) = unsafe { (*sink).start(stream_start) } {
+            if let bun_sys::Result::Err(err) = unsafe { (*sink).start(&stream_start) } {
                 // SAFETY: release the +1 ref from `init`.
                 unsafe { webcore::FileSink::deref(sink) };
                 return Err(global_this.throw_value(err.to_js(global_this)));
@@ -2706,7 +2708,9 @@ impl BlobExt for Blob {
                 let ptr = bun_core::heap::into_raw(external.into_boxed_slice())
                     .cast::<u16>()
                     .cast_const();
-                return Ok(zig_string_to_external_u16(ptr, len, global));
+                // SAFETY: `ptr` came from `heap::into_raw` on a global-allocator
+                // `Box<[u16]>`; ownership transfers to JSC's external-string finalizer.
+                return Ok(unsafe { zig_string_to_external_u16(ptr, len, global) });
             }
 
             if LIFETIME != Lifetime::Temporary {
@@ -2720,11 +2724,15 @@ impl BlobExt for Blob {
             Lifetime::Clone => {
                 let store = self.store().expect("infallible: store present").clone();
                 // we don't need to worry about UTF-8 BOM in this case because the store owns the memory.
-                Ok(ZigString::init(buf).external(
-                    global,
-                    store.into_raw().cast::<c_void>(),
-                    Store::external,
-                ))
+                // SAFETY: `into_raw` hands the store's +1 ref to JSC; `Store::external`
+                // is the matching finalizer that consumes `ctx` and the buffer.
+                Ok(unsafe {
+                    ZigString::init(buf).external(
+                        global,
+                        store.into_raw().cast::<c_void>(),
+                        Store::external,
+                    )
+                })
             }
             Lifetime::Transfer => {
                 // Zig: `const store = this.store.?` (no ref bump) → `this.transfer()`
@@ -2734,19 +2742,27 @@ impl BlobExt for Blob {
                 // `into_raw` then hands that single ref to JSC.
                 let store = self.take_store().expect("transfer with null store");
                 debug_assert!(matches!(store.data, store::Data::Bytes(_)));
-                Ok(ZigString::init(buf).external(
-                    global,
-                    store.into_raw().cast::<c_void>(),
-                    Store::external,
-                ))
+                // SAFETY: `into_raw` hands the store's +1 ref to JSC; `Store::external`
+                // is the matching finalizer that consumes `ctx` and the buffer.
+                Ok(unsafe {
+                    ZigString::init(buf).external(
+                        global,
+                        store.into_raw().cast::<c_void>(),
+                        Store::external,
+                    )
+                })
             }
             Lifetime::Share => {
                 let store = self.store().expect("infallible: store present").clone();
-                Ok(ZigString::init(buf).external(
-                    global,
-                    store.into_raw().cast::<c_void>(),
-                    Store::external,
-                ))
+                // SAFETY: `into_raw` hands the store's +1 ref to JSC; `Store::external`
+                // is the matching finalizer that consumes `ctx` and the buffer.
+                Ok(unsafe {
+                    ZigString::init(buf).external(
+                        global,
+                        store.into_raw().cast::<c_void>(),
+                        Store::external,
+                    )
+                })
             }
             Lifetime::Temporary => {
                 // if there was a UTF-8 BOM, we need to clone the buffer because
@@ -4561,7 +4577,8 @@ pub fn write_file_with_source_destination(
             // SAFETY: same `write_file_promise` as above; still solely owned here.
             let promise_value = unsafe { (*write_file_promise).promise.value() };
             promise_value.ensure_still_alive();
-            write_file_mod::WriteFileTask::schedule(task);
+            // SAFETY: `task` was just heap-allocated by `create_on_js_thread`.
+            unsafe { write_file_mod::WriteFileTask::schedule(task) };
             return Ok(promise_value);
         }
     }
@@ -6666,7 +6683,10 @@ impl Internal {
             let out_ptr = bun_core::heap::into_raw(out.into_boxed_slice())
                 .cast::<u16>()
                 .cast_const();
-            let return_value = jsc::zig_string::to_external_u16(out_ptr, out_len, global_this);
+            // SAFETY: `out_ptr` came from `heap::into_raw` on a global-allocator
+            // `Box<[u16]>`; ownership transfers to JSC's external-string finalizer.
+            let return_value =
+                unsafe { jsc::zig_string::to_external_u16(out_ptr, out_len, global_this) };
             return_value.ensure_still_alive();
             self.bytes = Vec::new();
             return Ok(return_value);

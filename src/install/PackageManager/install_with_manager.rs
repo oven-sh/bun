@@ -203,6 +203,8 @@ pub fn install_with_manager(
                     let mgr: *mut PackageManager = manager;
                     maybe_root.parse(
                         &mut lockfile,
+                        // SAFETY: `mgr` is the sole provenance root for `*manager`; `log` is a
+                        // disjoint backref and `lockfile` is a stack local, so this `&mut` is unique.
                         unsafe { &mut *mgr },
                         log,
                         &source_copy,
@@ -232,13 +234,19 @@ pub fn install_with_manager(
                     // `&mut` to `*mgr` exists across the call.
                     let from_lockfile: *mut Lockfile = unsafe { &raw mut *(*mgr).lockfile };
                     let update_requests = if to_update {
+                        // SAFETY: shared reborrow of a field disjoint from `lockfile`; `mgr` is the
+                        // sole provenance root and `Diff::generate` does not mutate `update_requests`.
                         Some(unsafe { &(&(*mgr).update_requests)[..] })
                     } else {
                         None
                     };
                     Diff::generate(
+                        // SAFETY: `mgr` is the sole provenance root; `Diff::generate` touches only
+                        // `PackageManager` fields disjoint from `lockfile`/`update_requests` via this.
                         unsafe { &mut *mgr },
                         log,
+                        // SAFETY: `from_lockfile` projects `(*mgr).lockfile`; `Diff::generate` never
+                        // reaches `manager.lockfile` through the `&mut *mgr` arg, so this is unique.
                         unsafe { &mut *from_lockfile },
                         &mut lockfile,
                         &root,
@@ -479,7 +487,6 @@ pub fn install_with_manager(
                     }
 
                     builder.clamp();
-                    drop(builder_);
 
                     // `enqueueDependencyWithMain` can reach `Lockfile.Package.fromNPM`,
                     // which grows `buffers.dependencies` and may reallocate it.
@@ -1152,10 +1159,19 @@ fn print_summary_tree(
     let writer = Output::writer_buffered();
     // Runtime bool → comptime dispatch (Zig `switch (b) { inline else => |c| ... }`).
     if Output::enable_ansi_colors_stdout() {
-        LockfilePrinter::Tree::print::<_, true>(&printer, unsafe { &mut *mgr }, writer, log_level)?;
+        LockfilePrinter::Tree::print::<_, true>(
+            &printer,
+            // SAFETY: `mgr` is the sole provenance root; `Tree::print` writes only fields
+            // disjoint from `printer`'s shared `lockfile`/`options`/`update_requests` borrows.
+            unsafe { &mut *mgr },
+            writer,
+            log_level,
+        )?;
     } else {
         LockfilePrinter::Tree::print::<_, false>(
             &printer,
+            // SAFETY: `mgr` is the sole provenance root; `Tree::print` writes only fields
+            // disjoint from `printer`'s shared `lockfile`/`options`/`update_requests` borrows.
             unsafe { &mut *mgr },
             writer,
             log_level,
@@ -1569,7 +1585,10 @@ fn create_new_lockfile_and_enqueue(
         // disjoint `lockfile` field through it. No other live `&mut` to
         // `*mgr` exists across the call.
         root.parse(
+            // SAFETY: disjoint field projection through the sole provenance root `mgr`.
             unsafe { &mut (*mgr).lockfile },
+            // SAFETY: `parse` touches only `PackageManager` fields disjoint from
+            // `lockfile` through this borrow; `mgr` is the sole provenance root.
             unsafe { &mut *mgr },
             log,
             &source_copy,

@@ -230,7 +230,7 @@ impl Collection {
             ));
 
             if let Some(cfg_data) = BunTest::run_test_callback(
-                buntest_strong.clone(),
+                &buntest_strong,
                 global_this,
                 callback.get(),
                 false,

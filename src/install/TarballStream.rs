@@ -199,7 +199,7 @@ impl TarballStream {
         let npm_mode = tarball.resolution.tag != ResolutionTag::Github;
         let want_first_dirname = tarball.resolution.tag == ResolutionTag::Github;
         let hasher = integrity::Streaming::init(
-            if tarball.skip_verify {
+            &if tarball.skip_verify {
                 Integrity::default()
             } else {
                 tarball.integrity
@@ -543,7 +543,7 @@ impl TarballStream {
                             lib::Result::Retry => return Ok(()),
                             lib::Result::Ok | lib::Result::Warn => {
                                 if let Some(fd) = (*this).out_fd {
-                                    (*this).write_data_block(fd, block)?;
+                                    (*this).write_data_block(fd, &block)?;
                                 }
                             }
                             _ => {
@@ -841,7 +841,7 @@ impl TarballStream {
     /// `entry_actual_offset` / `entry_final_offset` persist across calls so
     /// `close_output_file` can perform the same trailing `ftruncate` the
     /// buffered path does after its block loop.
-    fn write_data_block(&mut self, fd: Fd, block: lib::Block) -> Result<(), bun_core::Error> {
+    fn write_data_block(&mut self, fd: Fd, block: &lib::Block) -> Result<(), bun_core::Error> {
         let file = bun_sys::File::from_fd(fd);
         let data = block.bytes;
         if data.is_empty() {

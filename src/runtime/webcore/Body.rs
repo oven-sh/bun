@@ -1293,7 +1293,7 @@ impl Value {
                 // Transfer the body's +1 to local `wtf`; suppress `Value::drop` (which
                 // would deref) so the StringImpl stays alive across
                 // `to_utf8_if_needed`/`latin1_slice` and is released exactly once below.
-                core::mem::forget(core::mem::replace(self, Value::Used));
+                let _ = core::mem::ManuallyDrop::new(core::mem::replace(self, Value::Used));
                 let wtf_ref = wtf_impl(&wtf);
                 // SAFETY: VirtualMachine::get() returns the live per-thread VM.
                 let global = VirtualMachine::get().global();
@@ -1338,7 +1338,7 @@ impl Value {
                     // Transfer the body's +1 to AnyBlob; suppress `Value::drop` so the
                     // assignment below does not deref the StringImpl we just handed out.
                     let s = *str;
-                    core::mem::forget(core::mem::replace(self, Value::Used));
+                    let _ = core::mem::ManuallyDrop::new(core::mem::replace(self, Value::Used));
                     return Some(AnyBlob::WTFStringImpl(s));
                 } else {
                     return None;
@@ -1380,7 +1380,7 @@ impl Value {
                     });
                 } else {
                     // Transfer the body's +1 into AnyBlob; suppress `Value::drop`.
-                    core::mem::forget(core::mem::replace(self, Value::Used));
+                    let _ = core::mem::ManuallyDrop::new(core::mem::replace(self, Value::Used));
                     break 'brk AnyBlob::WTFStringImpl(str);
                 }
             }
@@ -1406,7 +1406,7 @@ impl Value {
             Value::WTFStringImpl(s) => {
                 let s = *s;
                 // Transfer the body's +1 into AnyBlob; suppress `Value::drop`.
-                core::mem::forget(core::mem::replace(self, Value::Used));
+                let _ = core::mem::ManuallyDrop::new(core::mem::replace(self, Value::Used));
                 AnyBlob::WTFStringImpl(s)
             }
             // Value::InlineBlob(b) => AnyBlob::InlineBlob(b),

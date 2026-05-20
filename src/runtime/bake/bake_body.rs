@@ -285,7 +285,7 @@ impl StringRefList {
     pub fn track(&mut self, str: ZigStringSlice) -> &'static [u8] {
         self.strings.push(str);
         let slice = self.strings.last().unwrap().slice();
-        // SAFETY (`Interned::assume` — Population B, holder-backed): the
+        // SAFETY: (`Interned::assume` — Population B, holder-backed) the
         // `ZigStringSlice` is now owned by `self.strings` and lives exactly as
         // long as the `StringRefList`, which is owned by `UserOptions` and
         // dropped only when bake teardown runs (`UserOptions::deinit`). The

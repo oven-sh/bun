@@ -96,6 +96,7 @@ impl ReplCommand {
 
         // SAFETY: vm is a freshly heap-allocated VirtualMachine valid for process lifetime.
         let b = unsafe { &mut (*vm).transpiler };
+        // SAFETY: vm valid as above; preload/argv are disjoint from `b`'s transpiler borrow.
         unsafe {
             (*vm).preload = core::mem::take(&mut ctx.preloads);
             (*vm).argv = core::mem::take(&mut ctx.passthrough);
@@ -158,6 +159,9 @@ impl ReplCommand {
             // PORT NOTE: ctx is the process-global ContextData; extend the
             // borrow past the local reborrow lifetime via raw ptr (the runner
             // never outlives ctx — global_exit() is `!`).
+            // SAFETY: ctx.runtime_options.eval.script lives in the process-global
+            // ContextData; the raw-ptr reborrow is sound because the runner never
+            // outlives it — hold_api_lock returns into global_exit() (`!`).
             eval_script: unsafe { &*(&raw const *ctx.runtime_options.eval.script) },
             eval_and_print: ctx.runtime_options.eval.eval_and_print,
         };
@@ -165,6 +169,8 @@ impl ReplCommand {
         // lifetime is the holdAPILock scope (globalExit() never returns so the frame never unwinds).
         // Assigned AFTER moving `arena` into `runner` — assigning from the pre-move local would
         // dangle. Model as raw ptr until VM arena ownership is decided.
+        // SAFETY: vm is valid for process lifetime (see above); runner.arena is pinned on this
+        // stack frame for the holdAPILock scope and global_exit() (`!`) prevents unwind past it.
         unsafe { (*vm).arena = NonNull::new(&raw mut runner.arena) };
 
         // PORT NOTE: jsc.OpaqueWrap(ReplRunner, ReplRunner.start) — comptime fn-ptr wrapper that

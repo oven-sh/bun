@@ -2063,7 +2063,7 @@ fn get_or_put_resolved_package_with_find_result(
         if should_update || suppress_peer_satisfies {
             None
         } else {
-            Some(version.clone())
+            Some(&version)
         },
         &Resolution::init(ResolutionTagged::Npm(ResolutionNpmValue {
             version: find_result.version,

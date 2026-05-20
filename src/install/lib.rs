@@ -418,7 +418,7 @@ pub mod ci_info {
         // Port of the trailing fallback in `ci_info.zig:detectCiName` —
         // the per-vendor probes live in `bun_runtime` (T6) and are wired in
         // there; install only needs *some* answer for the user-agent string.
-        if std::env::var_os("CI").is_some() {
+        if bun_core::env_var::CI::get().is_some() {
             return Some(b"ci");
         }
         None

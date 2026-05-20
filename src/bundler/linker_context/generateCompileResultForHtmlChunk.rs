@@ -263,12 +263,9 @@ impl<'a> HTMLLoader<'a> {
         self.added_body_script = true;
 
         // PERF(port): was stack-fallback (std.heap.stackFallback(256))
-        // `self.chunk` is a `BackRef` (safe `Deref`); SAFETY for `chunks`:
-        // raw `*mut [Chunk]` valid for the link step, sole live `&mut`.
-        if let Some(js_chunk) = self
-            .chunk
-            .get_js_chunk_for_html(unsafe { &mut *self.chunks })
-        {
+        // SAFETY: `self.chunks` raw `*mut [Chunk]` valid for the link step; sole live `&mut`.
+        let chunks = unsafe { &mut *self.chunks };
+        if let Some(js_chunk) = self.chunk.get_js_chunk_for_html(chunks) {
             let mut script = Vec::new();
             write!(
                 &mut script,
@@ -485,12 +482,9 @@ fn generate_compile_result_for_html_chunk_impl<'a>(
                 }
                 if !html_loader.added_body_script {
                     if html_loader.compile_to_standalone_html {
-                        // `chunk` is a `BackRef` (safe `Deref`); SAFETY for `chunks`:
-                        // raw `*mut [Chunk]` valid for the link step, sole live `&mut`.
-                        if let Some(js_chunk) = html_loader
-                            .chunk
-                            .get_js_chunk_for_html(unsafe { &mut *html_loader.chunks })
-                        {
+                        // SAFETY: `html_loader.chunks` raw `*mut [Chunk]` valid for the link step; sole live `&mut`.
+                        let chunks = unsafe { &mut *html_loader.chunks };
+                        if let Some(js_chunk) = html_loader.chunk.get_js_chunk_for_html(chunks) {
                             let mut script = Vec::new();
                             write!(
                                 &mut script,

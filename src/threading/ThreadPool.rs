@@ -39,7 +39,7 @@ use bun_core::Output;
 #[inline]
 fn stats_enabled() -> bool {
     static CELL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *CELL.get_or_init(|| std::env::var_os("BUN_THREADPOOL_STATS").is_some())
+    *CELL.get_or_init(|| bun_core::getenv_z(bun_core::zstr!("BUN_THREADPOOL_STATS")).is_some())
 }
 
 #[derive(Default)]
@@ -211,6 +211,7 @@ pub struct ThreadPool {
 
 /// Configuration options for the thread pool.
 /// TODO: add CPU core affinity?
+#[derive(Clone, Copy)]
 pub struct Config {
     pub stack_size: u32,
     pub max_threads: u32,
@@ -283,7 +284,7 @@ impl ThreadPool {
         } else {
             0.0
         };
-        eprintln!(
+        Output::print_errorln(format_args!(
             "[threadpool {}] workers={} tasks={} wall={:.3}s busy={:.3}s idle={:.3}s util={:.1}% eff_cpus={:.2} sleeps={}",
             label,
             spawned,
@@ -294,7 +295,7 @@ impl ThreadPool {
             util,
             eff,
             sleeps,
-        );
+        ));
     }
 
     pub fn wake_for_idle_events(&self) {
@@ -774,7 +775,12 @@ impl ThreadPool {
                 Ok(_handle) => {
                     // Dropping JoinHandle detaches the thread (matches Zig `thread.detach()`).
                 }
-                Err(_) => return unsafe { Self::unregister(self, ptr::null_mut()) },
+                Err(_) => {
+                    // SAFETY: `&self` keeps the pool live; `null` thread makes
+                    // `unregister` return right after undoing the `spawned`
+                    // increment CAS'd above (no per-thread wait past notify).
+                    return unsafe { Self::unregister(self, ptr::null_mut()) };
+                }
             }
             sync = new_sync;
         }
@@ -834,6 +840,9 @@ impl ThreadPool {
                                     // detach by dropping
                                 }
                                 Err(_) => {
+                                    // SAFETY: `&self` keeps the pool live; `null` thread makes
+                                    // `unregister` return right after undoing the `spawned`
+                                    // increment CAS'd above (no per-thread wait past notify).
                                     return unsafe { Self::unregister(self, ptr::null_mut()) };
                                 }
                             }
@@ -988,6 +997,8 @@ impl ThreadPool {
         // The last thread to exit must wake up the thread pool join()er
         // who will start the chain to shutdown all the threads.
         if sync.state() == SyncState::Shutdown && sync.spawned() == 1 {
+            // SAFETY: `pool` is live until this notify wakes the joiner (same
+            // invariant as the `fetch_sub` above); not touched after this line.
             unsafe { (*pool).join_event.notify() };
         }
         // ── `*pool` may be invalid past this point. ──
@@ -1275,6 +1286,8 @@ impl Thread {
         while let Some(node) = consumer.pop() {
             // SAFETY: node points to the `node` field of a Task.
             let task = unsafe { Task::from_node(node) };
+            // SAFETY: `task` was dequeued from this thread's idle queue; it is a
+            // live scheduled `Task` whose `callback` was set by the producer.
             unsafe { ((*task).callback)(task) };
         }
     }
@@ -1503,6 +1516,9 @@ pub mod node {
     // bit in `stack` (Acquire on take, Release on give-back), so all `cache`
     // accesses are totally ordered despite `Cell: !Sync`.
     unsafe impl core::marker::Sync for Queue {}
+    // SAFETY: `Queue` holds only an atomic word and a `*mut Node` cache; the
+    // raw pointer is the sole `!Send` field and is only dereferenced under the
+    // `IS_CONSUMING` exclusion described above, so moving the queue is sound.
     unsafe impl Send for Queue {}
 
     impl Default for Queue {

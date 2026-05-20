@@ -211,7 +211,7 @@ impl ByteStream {
                 // R-2: move the action out of the cell *before* calling
                 // `reject` (which resolves a JS promise and may re-enter).
                 let mut action = self.buffer_action.replace(None).unwrap();
-                let res = action.reject(global, err.clone());
+                let res = action.reject(global, err);
 
                 self.buffer.with_mut(|b| {
                     b.clear();
@@ -498,7 +498,7 @@ impl ByteStream {
             // TODO: properly propagate exception upwards
             let _ = action.reject(
                 global,
-                streams::StreamError::AbortReason(jsc::CommonAbortReason::UserAbort),
+                &streams::StreamError::AbortReason(jsc::CommonAbortReason::UserAbort),
             );
             self.buffer_action.set(None);
         }

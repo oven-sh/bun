@@ -162,10 +162,10 @@ pub fn downlevel_component<'bump>(
                     }
                     VendorPrefix::empty()
                 }
-                _ => pc.get_necessary_prefixes(targets),
+                _ => pc.get_necessary_prefixes(&targets),
             };
         }
-        Component::PseudoElement(pe) => pe.get_necessary_prefixes(targets),
+        Component::PseudoElement(pe) => pe.get_necessary_prefixes(&targets),
         Component::Is(selectors) => {
             let mut necessary_prefixes = downlevel_selectors(bump, selectors, targets);
 
@@ -600,7 +600,7 @@ fn is_selector_unused(
                         a == &**b
                     }
                 }
-                if unused_symbols.contains_adapted(actual_ident, SliceAdapter) {
+                if unused_symbols.contains_adapted(actual_ident, &SliceAdapter) {
                     return true;
                 }
             }

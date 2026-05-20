@@ -618,7 +618,7 @@ impl ProxyTunnel {
     pub fn start<const IS_SSL: bool>(
         this: &mut HTTPClient,
         socket: HTTPSocket<IS_SSL>,
-        ssl_options: SSLConfig,
+        ssl_options: &SSLConfig,
         start_payload: &[u8],
     ) {
         let proxy_tunnel = bun_core::heap::into_raw(Box::new(ProxyTunnel::default()));
@@ -629,7 +629,7 @@ impl ProxyTunnel {
         // We always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match
         let custom_options = ssl_options.as_usockets_for_client_verification();
         match ProxyTunnelWrapper::init_from_options(
-            custom_options,
+            &custom_options,
             true,
             SSLWrapperHandlers {
                 on_open,
@@ -655,6 +655,8 @@ impl ProxyTunnel {
         // Move the sole strong ref (refcount == 1 from `ProxyTunnel::default`)
         // into the client field; no bump (matches the bare `this.proxy_tunnel =
         // tunnel` in http.zig — Zig's `RefPtr.create` returns the owned ref).
+        // SAFETY: `proxy_nn` is the fresh `heap::into_raw` allocation above with
+        // `ref_count == 1`; `adopt_ref` takes ownership of that sole +1.
         this.proxy_tunnel = Some(unsafe { RefPtr::adopt_ref(proxy_nn.as_ptr()) });
         proxy_tunnel_ref.socket = Socket::from_generic::<IS_SSL>(socket);
         // End the named &mut borrows before calling into the SSLWrapper. start()

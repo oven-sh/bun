@@ -602,7 +602,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             Err(err) => {
                 let len = root_path_len + 1;
                 return Ok(Err(self.walker.handle_sys_err_with_path(
-                    err,
+                    &err,
                     // SAFETY: NUL at index len-1 written above
                     unsafe { ZStr::from_raw(path_buf_ptr, len) },
                 )));
@@ -750,7 +750,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 if had_dot_dot {
                     break 'fd match A::openat(self.cwd_fd, dir_path)? {
                         Err(err) => {
-                            return Ok(Err(self.walker.handle_sys_err_with_path(err, dir_path)));
+                            return Ok(Err(self.walker.handle_sys_err_with_path(&err, dir_path)));
                         }
                         Ok(fd_) => {
                             self.bump_open_fds();
@@ -765,7 +765,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
 
             match A::openat(self.cwd_fd, dir_path)? {
                 Err(err) => {
-                    return Ok(Err(self.walker.handle_sys_err_with_path(err, dir_path)));
+                    return Ok(Err(self.walker.handle_sys_err_with_path(&err, dir_path)));
                 }
                 Ok(fd_) => {
                     self.bump_open_fds();
@@ -991,8 +991,14 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
 
                             // Buffer is read-only from here on; read via &self.walker.
                             let scratch_ptr = self.walker.path_buf.as_ptr();
+                            // SAFETY: scratch_ptr is self.walker.path_buf (boxed, outlives this
+                            // borrow); the write block above NUL-terminated it at index
+                            // symlink_full_path_len and skip_special_components_disjoint preserves that.
                             let symlink_full_path_z =
                                 unsafe { ZStr::from_raw(scratch_ptr, symlink_full_path_len) };
+                            // SAFETY: entry_start is the entry-name offset within the path written
+                            // above, so [entry_start..symlink_full_path_len] lies inside the
+                            // initialized region of self.walker.path_buf.
                             let entry_name: &[u8] = unsafe {
                                 core::slice::from_raw_parts(
                                     scratch_ptr.add(entry_start),
@@ -1009,7 +1015,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                         }
                                         if self.walker.error_on_broken_symlinks {
                                             return Ok(Err(self.walker.handle_sys_err_with_path(
-                                                err,
+                                                &err,
                                                 symlink_full_path_z,
                                             )));
                                         }
@@ -1078,7 +1084,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             let at_cwd = dir.at_cwd;
                             let dir_path = dir.dir_path();
                             // PORT NOTE: reshaped for borrowck
-                            let err = self.walker.handle_sys_err_with_path(err, dir_path);
+                            let err = self.walker.handle_sys_err_with_path(&err, dir_path);
                             if !at_cwd {
                                 self.close_disallowing_cwd(dir_fd);
                             }
@@ -1526,7 +1532,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         Ok(Ok(this))
     }
 
-    pub fn handle_sys_err_with_path(&mut self, err: SysError, path_buf: &ZStr) -> SysError {
+    pub fn handle_sys_err_with_path(&mut self, err: &SysError, path_buf: &ZStr) -> SysError {
         let src = path_buf.as_bytes();
         let copy_len = src.len().min(self.path_buf.len());
         // Several callers pass a `path_buf` that is itself a slice of

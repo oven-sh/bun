@@ -143,7 +143,7 @@ impl FallbackHandler {
                             // to get the VendorPrefix from the PropertyId payload. Mapped to
                             // the generated `PropertyId::prefix()` accessor.
                             let newval = if val.property_id.prefix().contains(VendorPrefix::NONE) {
-                                val.get_prefixed(arena, context.targets, Feature::$FeatureVariant)
+                                val.get_prefixed(arena, &context.targets, Feature::$FeatureVariant)
                             } else {
                                 val.deep_clone(arena)
                             };

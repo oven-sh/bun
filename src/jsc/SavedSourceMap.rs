@@ -44,7 +44,7 @@ impl Default for SavedSourceMap {
 
 impl SavedSourceMap {
     // TODO(port): in-place init — `this` is a pre-allocated field on VirtualMachine; `map` is a sibling field backref.
-    pub fn init(this: &mut core::mem::MaybeUninit<Self>, map: *mut HashTable) {
+    pub unsafe fn init(this: &mut core::mem::MaybeUninit<Self>, map: *mut HashTable) {
         this.write(Self {
             map,
             mutex: Mutex::default(),
@@ -330,7 +330,7 @@ impl SavedSourceMap {
         // errdefer: on error, reconstitute and drop the Box.
         match self.put_value(
             source.path.text,
-            Value::init(blob_ptr.cast::<u8>().cast::<InternalSourceMap>()),
+            Value::init(blob_ptr.cast::<c_void>().cast::<InternalSourceMap>()),
         ) {
             Ok(()) => Ok(()),
             Err(e) => {

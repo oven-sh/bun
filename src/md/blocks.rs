@@ -220,13 +220,13 @@ impl Parser<'_> {
                             + align_mask_)
                             & !align_mask_;
                         if top_off + size_of::<BlockHeader>() <= self.block_bytes.len() {
-                            // SAFETY: block_bytes stores BlockHeader-aligned records; top_off computed above
-                            let top_hdr: &BlockHeader = unsafe {
-                                &*(self
-                                    .block_bytes
+                            // SAFETY: len > size_of::<BlockHeader>() guarded above; offset is in-bounds
+                            let top_hdr: BlockHeader = unsafe {
+                                self.block_bytes
                                     .as_ptr()
                                     .add(self.block_bytes.len() - size_of::<BlockHeader>())
-                                    .cast::<BlockHeader>())
+                                    .cast::<BlockHeader>()
+                                    .read_unaligned()
                             };
                             if top_hdr.block_type == BlockType::Li {
                                 self.last_list_item_starts_with_two_blank_lines = true;
@@ -246,13 +246,13 @@ impl Parser<'_> {
                         && self.current_block.is_none()
                         && self.block_bytes.len() > size_of::<BlockHeader>()
                     {
-                        // SAFETY: block_bytes stores BlockHeader-aligned records at len - sizeof
-                        let top_hdr: &BlockHeader = unsafe {
-                            &*(self
-                                .block_bytes
+                        // SAFETY: len > size_of::<BlockHeader>() guarded above; offset is in-bounds
+                        let top_hdr: BlockHeader = unsafe {
+                            self.block_bytes
                                 .as_ptr()
                                 .add(self.block_bytes.len() - size_of::<BlockHeader>())
-                                .cast::<BlockHeader>())
+                                .cast::<BlockHeader>()
+                                .read_unaligned()
                         };
                         if top_hdr.block_type == BlockType::Li {
                             n_parents -= 1;

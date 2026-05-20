@@ -542,12 +542,9 @@ impl<'a> PackageCollector<'a> {
                 continue;
             }
 
-            let mut pkg_path_buf: Vec<PackageID> = Vec::new();
-            pkg_path_buf.push(root_pkg_id);
-            pkg_path_buf.push(dep_pkg_id);
+            let pkg_path_buf: Vec<PackageID> = vec![root_pkg_id, dep_pkg_id];
 
-            let mut dep_path_buf: Vec<DependencyID> = Vec::new();
-            dep_path_buf.push(dep_id);
+            let dep_path_buf: Vec<DependencyID> = vec![dep_id];
 
             self.queue.push_back(QueueItem {
                 pkg_id: dep_pkg_id,
@@ -582,12 +579,9 @@ impl<'a> PackageCollector<'a> {
                     continue;
                 }
 
-                let mut pkg_path_buf: Vec<PackageID> = Vec::new();
-                pkg_path_buf.push(pkg_id);
-                pkg_path_buf.push(dep_pkg_id);
+                let pkg_path_buf: Vec<PackageID> = vec![pkg_id, dep_pkg_id];
 
-                let mut dep_path_buf: Vec<DependencyID> = Vec::new();
-                dep_path_buf.push(dep_id);
+                let dep_path_buf: Vec<DependencyID> = vec![dep_id];
 
                 self.queue.push_back(QueueItem {
                     pkg_id: dep_pkg_id,
@@ -661,8 +655,7 @@ impl<'a> PackageCollector<'a> {
                 }
                 initial_pkg_path.push(update_pkg_id);
 
-                let mut initial_dep_path: Vec<DependencyID> = Vec::new();
-                initial_dep_path.push(update_dep_id);
+                let initial_dep_path: Vec<DependencyID> = vec![update_dep_id];
 
                 self.queue.push_back(QueueItem {
                     pkg_id: update_pkg_id,
@@ -955,10 +948,10 @@ fn attempt_security_scan_with_retry(
     fn scanner_is_done(scanner: &mut Box<SecurityScanSubprocess>) -> bool {
         scanner.is_done()
     }
+    let mgr: *mut PackageManager = scanner.manager;
     // SAFETY: `scanner.manager` is the live exclusive `&mut PackageManager`
     // borrow held by the subprocess; `sleep_until` + `tick_raw` hold no
     // `&mut PackageManager` across `scanner_is_done`.
-    let mgr: *mut PackageManager = scanner.manager;
     unsafe { PackageManager::sleep_until(mgr, &mut scanner, scanner_is_done) };
 
     scanner.handle_results(
@@ -1146,11 +1139,15 @@ impl<'a> SecurityScanSubprocess<'a> {
         };
 
         // Zig: `try (try spawnProcess(...)).unwrap()` — propagate both layers silently.
-        let mut spawned = spawn::spawn_process(
-            &spawn_options,
-            argv.as_mut_ptr().cast(),
-            bun_sys::environ_ptr(),
-        )?
+        // SAFETY: `argv` is a local null-terminated C-string array with a
+        // non-null argv[0]; `environ_ptr()` is the process environ block.
+        let mut spawned = unsafe {
+            spawn::spawn_process(
+                &spawn_options,
+                argv.as_mut_ptr().cast(),
+                bun_sys::environ_ptr(),
+            )
+        }?
         .map_err(|e| e.to_zig_err())?;
         // `defer spawned.extra_pipes.deinit()` — drops at scope exit.
 
@@ -1259,11 +1256,15 @@ impl<'a> SecurityScanSubprocess<'a> {
         };
 
         // Zig: `try (try spawnProcess(...)).unwrap()` — propagate both layers silently.
-        let mut spawned = spawn::spawn_process(
-            &spawn_options,
-            argv.as_mut_ptr().cast(),
-            bun_sys::environ_ptr(),
-        )?
+        // SAFETY: `argv` is a local null-terminated C-string array with a
+        // non-null argv[0]; `environ_ptr()` is the process environ block.
+        let mut spawned = unsafe {
+            spawn::spawn_process(
+                &spawn_options,
+                argv.as_mut_ptr().cast(),
+                bun_sys::environ_ptr(),
+            )
+        }?
         .map_err(|e| e.to_zig_err())?;
         // `defer spawned.extra_pipes.deinit()` — drops at scope exit.
 
@@ -1384,9 +1385,9 @@ impl<'a> SecurityScanSubprocess<'a> {
             }
         });
 
+        let writer_ptr = writer_local.as_ptr();
         // SAFETY: `writer_local` holds a live ref; `start()` mutates the writer
         // in place (raw intrusive object — no Rust aliasing across the RefPtr).
-        let writer_ptr = writer_local.as_ptr();
         let start_result = unsafe { (*writer_ptr).start() };
         // SAFETY: `writer_local` keeps `*writer_ptr` live; we own the `start()` ref.
         unsafe { RefCount::<StaticPipeWriter>::deref(writer_ptr) };

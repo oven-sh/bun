@@ -356,7 +356,7 @@ fn construct_s3_file_internal_store(
             .env_mut()
             .get_s3_credentials(),
     );
-    construct_s3_file_with_s3_credentials(global, path, options, existing_credentials)
+    construct_s3_file_with_s3_credentials(global, path, options, &existing_credentials)
 }
 
 /// if the credentials have changed, we need to clone it, if not we can just ref/deref it
@@ -449,10 +449,10 @@ pub fn construct_s3_file_with_s3_credentials(
     global: &JSGlobalObject,
     path: PathLike,
     options: Option<JSValue>,
-    existing_credentials: s3::S3Credentials,
+    existing_credentials: &s3::S3Credentials,
 ) -> JsResult<Blob> {
     let aws_options = <s3::S3Credentials>::get_credentials_with_options(
-        &existing_credentials,
+        existing_credentials,
         Default::default(),
         options,
         None,
@@ -789,7 +789,7 @@ pub fn get_presign_url_from(
     let path = s3.path();
 
     let result = match credentials_with_options.credentials.sign_request::<false>(
-        bun_s3_signing::SignOptions {
+        &bun_s3_signing::SignOptions {
             path,
             method,
             acl: credentials_with_options.acl,

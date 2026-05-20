@@ -24,21 +24,18 @@ for (const r of results) {
   const patchFile = join(dir, r.file.replace(/[\/]/g, "_") + ".patch");
   // ensure trailing newline; git apply is picky
   writeFileSync(patchFile, r.patch.endsWith("\n") ? r.patch : r.patch + "\n");
-  // Fixers reliably produce correct hunk bodies but miscount @@ headers, so
-  // --recount (recompute counts from body) is the primary mode. --unidiff-zero
-  // tolerates 0-context hunks; --inaccurate-eof tolerates trailing-LF drift.
-  let res = spawnSync(
-    "git",
-    ["apply", "--recount", "--unidiff-zero", "--inaccurate-eof", "--whitespace=nowarn", patchFile],
-    { cwd: process.cwd(), encoding: "utf8" },
-  );
+  // Strict first; fall back to --recount only (recomputes @@ counts from body).
+  // NEVER use --unidiff-zero or -C1: both silently corrupt by joining adjacent
+  // source lines when the agent's @@ counts are off.
+  let res = spawnSync("git", ["apply", "--whitespace=nowarn", patchFile], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+  });
   if (res.status !== 0) {
-    // context drift from a previously-applied multi-file diff: retry with fuzz
-    res = spawnSync(
-      "git",
-      ["apply", "--recount", "-C1", "--unidiff-zero", "--inaccurate-eof", "--whitespace=nowarn", patchFile],
-      { cwd: process.cwd(), encoding: "utf8" },
-    );
+    res = spawnSync("git", ["apply", "--recount", "--whitespace=nowarn", patchFile], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+    });
   }
   if (res.status === 0) {
     applied++;

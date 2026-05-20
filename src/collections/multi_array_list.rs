@@ -554,6 +554,8 @@ pub struct MultiArrayList<T, A: Allocator = Global> {
 
 // SAFETY: `bytes` is uniquely owned; the only shared state is the allocator.
 unsafe impl<T: Send, A: Allocator + Send> Send for MultiArrayList<T, A> {}
+// SAFETY: no interior mutability; shared access yields only `&[F]` column
+// views over the uniquely-owned buffer, which are `Sync` when `T: Sync`.
 unsafe impl<T: Sync, A: Allocator + Sync> Sync for MultiArrayList<T, A> {}
 
 /// A `MultiArrayList::Slice` contains cached start pointers for each field in
@@ -914,10 +916,8 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     where
         A: Default,
     {
-        let old = core::mem::replace(self, Self::new_in(A::default()));
-        let result = old.slice();
-        core::mem::forget(old);
-        result
+        let old = ManuallyDrop::new(core::mem::replace(self, Self::new_in(A::default())));
+        old.slice()
     }
 
     /// Compute pointers to the start of each field of the array.
@@ -1194,7 +1194,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         Ok(result)
     }
 
-    fn sort_internal<C: SortContext, const STABLE: bool>(&mut self, a: usize, b: usize, ctx: C) {
+    fn sort_internal<C: SortContext, const STABLE: bool>(&mut self, a: usize, b: usize, ctx: &C) {
         let mut slice = self.slice();
         let swap = |ai: usize, bi: usize| slice.swap_rows(ai, bi);
         let less = |ai: usize, bi: usize| ctx.less_than(ai, bi);
@@ -1207,22 +1207,22 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
 
     /// Stable sort by index-based context.
     pub fn sort<C: SortContext>(&mut self, ctx: C) {
-        self.sort_internal::<C, true>(0, self.len, ctx);
+        self.sort_internal::<C, true>(0, self.len, &ctx);
     }
 
     /// Stable sort of `[a, b)` by index-based context.
     pub fn sort_span<C: SortContext>(&mut self, a: usize, b: usize, ctx: C) {
-        self.sort_internal::<C, true>(a, b, ctx);
+        self.sort_internal::<C, true>(a, b, &ctx);
     }
 
     /// Unstable sort by index-based context.
     pub fn sort_unstable<C: SortContext>(&mut self, ctx: C) {
-        self.sort_internal::<C, false>(0, self.len, ctx);
+        self.sort_internal::<C, false>(0, self.len, &ctx);
     }
 
     /// Unstable sort of `[a, b)` by index-based context.
     pub fn sort_span_unstable<C: SortContext>(&mut self, a: usize, b: usize, ctx: C) {
-        self.sort_internal::<C, false>(a, b, ctx);
+        self.sort_internal::<C, false>(a, b, &ctx);
     }
 
     pub fn capacity_in_bytes(capacity: usize) -> usize {

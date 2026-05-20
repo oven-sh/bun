@@ -567,13 +567,13 @@ impl Expect {
 
     pub fn get_snapshot_name(&self, hint: &[u8]) -> Result<Vec<u8>, bun_core::Error> {
         // TODO(port): narrow error set
-        let parent = self.parent.as_ref().ok_or(bun_core::err!("NoTest"))?;
-        let mut buntest_strong = parent.bun_test().ok_or(bun_core::err!("TestNotActive"))?;
+        let parent = self.parent.as_ref().ok_or_else(|| bun_core::err!("NoTest"))?;
+        let mut buntest_strong = parent.bun_test().ok_or_else(|| bun_core::err!("TestNotActive"))?;
         let buntest = buntest_strong.get();
         let execution_entry = parent
             .phase
             .entry(buntest)
-            .ok_or(bun_core::err!("SnapshotInConcurrentGroup"))?;
+            .ok_or_else(|| bun_core::err!("SnapshotInConcurrentGroup"))?;
 
         let test_name: &[u8] = execution_entry.base.name.as_deref().unwrap_or(b"(unnamed)");
 
@@ -674,9 +674,9 @@ impl Expect {
         super::expect::js::captured_value_set_cached(expect_js_value, global_this, value);
         expect_js_value.ensure_still_alive();
 
-        // SAFETY: just-created wrapper; `from_js` returns the live m_ctx payload
-        // kept alive by `expect_js_value` (ensure_still_alive above).
         if let Some(expect_ptr) = Self::from_js(expect_js_value) {
+            // SAFETY: `expect_ptr` is the live `m_ctx` payload of the just-created
+            // wrapper, kept alive by `expect_js_value.ensure_still_alive()` above.
             unsafe { (*expect_ptr).post_match(global_this) };
         }
         Ok(expect_js_value)
@@ -2153,6 +2153,7 @@ impl Expect {
 
 /// Where `expected.is_array()` runs relative to `get_value` — observable when
 /// both would throw (Keys-family Zig validates *after*, Values-family *before*).
+#[derive(Clone, Copy)]
 pub enum ExpectedArray {
     /// `toContainKey` / `toContainValue`: scalar `expected`, no array check.
     None,
@@ -2166,6 +2167,7 @@ pub enum ExpectedArray {
 /// reads `"Expected to not {not_verb}: …"`, the plain arm `"Expected to
 /// {verb}: …"`. For most matchers both are `"contain"`; the All/Any variants
 /// override to `"contain all keys"` etc.
+#[derive(Clone, Copy)]
 pub struct ContainMsgs {
     pub verb: &'static str,
     pub not_verb: &'static str,

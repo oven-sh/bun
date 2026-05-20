@@ -1499,6 +1499,26 @@ mod border_handler_body {
 
             self.has_any = false;
 
+            self.flush_physical(dest, context);
+            self.flush_logical(dest, context);
+
+            let arena = dest.bump();
+            self.border_top.reset(arena);
+            self.border_bottom.reset(arena);
+            self.border_left.reset(arena);
+            self.border_right.reset(arena);
+            self.border_block_start.reset(arena);
+            self.border_block_end.reset(arena);
+            self.border_inline_start.reset(arena);
+            self.border_inline_end.reset(arena);
+        }
+
+        #[inline(never)]
+        fn flush_physical(
+            &mut self,
+            dest: &mut DeclarationList,
+            context: &mut PropertyHandlerContext,
+        ) {
             let logical_supported = !context.should_compile_logical(Feature::LogicalBorders);
             let logical_shorthand_supported =
                 !context.should_compile_logical(Feature::LogicalBorderShorthand);
@@ -1540,6 +1560,27 @@ mod border_handler_body {
                 &mut self.border_right,
                 is_logical = false
             );
+        }
+
+        #[inline(never)]
+        fn flush_logical(
+            &mut self,
+            dest: &mut DeclarationList,
+            context: &mut PropertyHandlerContext,
+        ) {
+            let logical_supported = !context.should_compile_logical(Feature::LogicalBorders);
+            let logical_shorthand_supported =
+                !context.should_compile_logical(Feature::LogicalBorderShorthand);
+
+            let arena = dest.bump();
+            let mut flctx = FlushContext {
+                flushed_properties: &mut self.flushed_properties,
+                dest,
+                ctx: context,
+                arena,
+                logical_supported,
+                logical_shorthand_supported,
+            };
 
             flush_category!(
                 &mut flctx,
@@ -1565,15 +1606,6 @@ mod border_handler_body {
                 &mut self.border_inline_end,
                 is_logical = true
             );
-
-            self.border_top.reset(arena);
-            self.border_bottom.reset(arena);
-            self.border_left.reset(arena);
-            self.border_right.reset(arena);
-            self.border_block_start.reset(arena);
-            self.border_block_end.reset(arena);
-            self.border_inline_start.reset(arena);
-            self.border_inline_end.reset(arena);
         }
 
         fn flush_unparsed(

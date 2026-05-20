@@ -4171,7 +4171,7 @@ unsafe fn transpile_file(
                     jsc_vm,
                     global_ref,
                     (*specifier_ptr).dupe_ref(),
-                    lr.path,
+                    &lr.path,
                     (*referrer).dupe_ref(),
                     concurrent_loader,
                     lr.package_json,

@@ -383,12 +383,12 @@ mod _impl {
 
                 let mut times = CPUTimes::default();
                 // TODO(port): narrow error set
-                times.user = scale * parse_u64(toks.next().ok_or(bun_core::err!("eol"))?)?;
-                times.nice = scale * parse_u64(toks.next().ok_or(bun_core::err!("eol"))?)?;
-                times.sys = scale * parse_u64(toks.next().ok_or(bun_core::err!("eol"))?)?;
-                times.idle = scale * parse_u64(toks.next().ok_or(bun_core::err!("eol"))?)?;
-                let _ = toks.next().ok_or(bun_core::err!("eol"))?; // skip iowait
-                times.irq = scale * parse_u64(toks.next().ok_or(bun_core::err!("eol"))?)?;
+                times.user = scale * parse_u64(toks.next().ok_or_else(|| bun_core::err!("eol"))?)?;
+                times.nice = scale * parse_u64(toks.next().ok_or_else(|| bun_core::err!("eol"))?)?;
+                times.sys = scale * parse_u64(toks.next().ok_or_else(|| bun_core::err!("eol"))?)?;
+                times.idle = scale * parse_u64(toks.next().ok_or_else(|| bun_core::err!("eol"))?)?;
+                let _ = toks.next().ok_or_else(|| bun_core::err!("eol"))?; // skip iowait
+                times.irq = scale * parse_u64(toks.next().ok_or_else(|| bun_core::err!("eol"))?)?;
 
                 // Actually create the JS object representing the CPU
                 let cpu = JSValue::create_empty_object(global_this, 1);
@@ -1054,6 +1054,7 @@ mod _impl {
             // TODO(port): std.net.Address — using bun_sys::net::Address (no std::net)
             // SAFETY: ifa_addr/ifa_netmask are valid sockaddr* (skip() ensures ifa_addr non-null)
             let addr = unsafe { bun_sys::net::Address::init_posix(iface.ifa_addr.cast_const()) };
+            // SAFETY: ifa_netmask is a valid sockaddr* populated by getifaddrs for this entry
             let netmask =
                 unsafe { bun_sys::net::Address::init_posix(iface.ifa_netmask.cast_const()) };
 
@@ -1071,6 +1072,7 @@ mod _impl {
                             .sin_addr
                             .s_addr
                     }),
+                    // SAFETY: family checked; storage is sockaddr_in6-sized
                     libc::AF_INET6 => netmask_to_cidr_suffix(u128::from_ne_bytes(unsafe {
                         (*netmask.as_sockaddr().cast::<libc::sockaddr_in6>())
                             .sin6_addr
@@ -1374,7 +1376,7 @@ mod _impl {
 
             // mac
             {
-                let mac_buf = bun_fmt::mac_address_lower(&iface.phys_addr);
+                let mac_buf = bun_fmt::mac_address_lower(iface.phys_addr);
                 interface.put(
                     global_this,
                     b"mac",
@@ -1604,7 +1606,7 @@ mod _impl {
 
     pub fn user_info(
         global_this: &JSGlobalObject,
-        options: gen_::UserInfoOptions,
+        options: &gen_::UserInfoOptions,
     ) -> JsResult<JSValue> {
         let _ = options; // TODO:
 

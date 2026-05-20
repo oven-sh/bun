@@ -210,7 +210,7 @@ impl StaticRouteEntry {
     /// `sort_by` callsite uses `strings::order` directly so it can return
     /// `Ordering::Equal` (Rust 1.81+ panics on a comparator that never does).
     pub fn is_less_than(_: (), this: &StaticRouteEntry, other: &StaticRouteEntry) -> bool {
-        strings::cmp_strings_desc(&(), &this.path, &other.path)
+        strings::cmp_strings_desc((), &this.path, &other.path)
     }
 }
 
@@ -373,6 +373,9 @@ pub fn apply_static_route<const SSL: bool, T>(
         } else {
             bun_uws_sys::AnyResponse::TCP(resp.cast())
         };
+        // SAFETY: `route`, `req`, and `resp` are non-null and valid for the
+        // duration of this uWS callback (see invariants established above);
+        // `on_request` only dereferences them while this frame is live.
         unsafe { T::on_request(route, bun_uws_sys::AnyRequest::H1(req), any_resp) };
     }
 
@@ -389,6 +392,8 @@ pub fn apply_static_route<const SSL: bool, T>(
         } else {
             bun_uws_sys::AnyResponse::TCP(resp.cast())
         };
+        // SAFETY: `route`, `req`, and `resp` validity is guaranteed by uWS for
+        // the callback's duration — same invariants as `handler` above.
         unsafe { T::on_head_request(route, bun_uws_sys::AnyRequest::H1(req), any_resp) };
     }
 

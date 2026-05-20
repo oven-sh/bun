@@ -155,11 +155,15 @@ impl<'a> ProcessHandle<'a> {
             });
             // SAFETY: same loader; the `_restore` guard's closure has not fired yet.
             envp = unsafe { (*env_ptr).map.create_null_delimited_env_map()? };
-            spawn::spawn_process(
-                &self.options,
-                argv.as_ptr(),
-                envp.as_ptr().cast::<*const c_char>(),
-            )?
+            // SAFETY: `argv`/`envp` are local null-terminated C-string arrays
+            // with argv[0] non-null; valid for this call.
+            unsafe {
+                spawn::spawn_process(
+                    &self.options,
+                    argv.as_ptr(),
+                    envp.as_ptr().cast::<*const c_char>(),
+                )
+            }?
             .map_err(|e| Error::from(e))?
         };
         // POSIX-only: pipe FDs are read before `to_process` consumes `spawned`.
@@ -800,8 +804,11 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
 
     // SAFETY: transpiler.env is a process-lifetime *mut Loader set in init.
     let env_ptr: *mut DotEnvLoader<'static> = this_transpiler.env;
-    let event_loop =
-        bun_event_loop::MiniEventLoop::init_global(Some(unsafe { &mut *env_ptr }), None);
+    let event_loop = bun_event_loop::MiniEventLoop::init_global(
+        // SAFETY: env_ptr is the process-lifetime DotEnv loader; no other borrow of it is live yet.
+        Some(unsafe { &mut *env_ptr }),
+        None,
+    );
     // --no-orphans: register the macOS kqueue parent watch on this MiniEventLoop
     // (the VirtualMachine.init path is never reached for --parallel). Linux is
     // already covered by prctl in enable() + linux_pdeathsig on each spawn.
@@ -810,10 +817,12 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
     ));
     // shell_bin is NUL-terminated ([:0]const u8) for argv use.
     let shell_bin: Box<[u8]> = if cfg!(unix) {
+        // SAFETY: env_ptr is the process-lifetime DotEnv loader; the &mut borrow passed to
+        // init_global above has been released, so this read does not alias a live &mut.
         let path_env = unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b"");
         Box::from(
             RunCommand::find_shell(path_env, cwd)
-                .ok_or(err!("MissingShell"))?
+                .ok_or_else(|| err!("MissingShell"))?
                 .as_bytes_with_nul(),
         )
     } else {
@@ -840,6 +849,8 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
 
         let mut root_buf = PathBuffer::uninit();
         let resolve_root = FilterArg::get_candidate_package_patterns(
+            // SAFETY: single-threaded CLI path; the returned `&mut Log` is the only live borrow
+            // of the process-static log for the duration of this call.
             unsafe { ctx.log_mut() },
             &mut patterns,
             cwd,

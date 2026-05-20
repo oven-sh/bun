@@ -46,7 +46,7 @@ use bun_sys::{
 /// such inherent method; route through `bun_sys::open_dir_at`.
 #[inline]
 fn dir_open_dir_z(
-    dir: &Dir,
+    dir: Dir,
     path: &ZStr,
     _opts: bun_sys::OpenDirOptions,
 ) -> Result<Dir, bun_core::Error> {
@@ -72,7 +72,7 @@ fn pack_bump() -> &'static bun_alloc::Arena {
 
 /// `bun.sys.File.toSourceAt` re-homed here (T1→T2 layering split: `bun_sys`
 /// can't depend on `bun_logger`, but `bun_runtime` already does).
-fn file_to_source_at(dir: &Dir, path: &ZStr) -> bun_sys::Maybe<bun_ast::Source> {
+fn file_to_source_at(dir: Dir, path: &ZStr) -> bun_sys::Maybe<bun_ast::Source> {
     let bytes = File::read_from(dir.fd, path)?;
     Ok(bun_ast::Source::init_path_string_owned(
         path.as_bytes(),
@@ -639,7 +639,7 @@ fn iterate_included_project_tree(
                             continue 'next_entry;
                         }
                     }
-                    let subdir = open_subdir(&dir, entry_name, &entry_subpath);
+                    let subdir = open_subdir(dir, entry_name, &entry_subpath);
                     dirs.push(DirInfo(
                         subdir,
                         entry_subpath.as_bytes().into(),
@@ -659,7 +659,7 @@ fn iterate_included_project_tree(
                             continue 'next_entry;
                         }
                     }
-                    let subdir = open_subdir(&dir, entry_name, &entry_subpath);
+                    let subdir = open_subdir(dir, entry_name, &entry_subpath);
                     included_dirs.push(DirInfo(
                         subdir,
                         entry_subpath.as_bytes().into(),
@@ -755,7 +755,7 @@ fn add_entire_tree(
             ignores.pop();
         }
 
-        if let Some(patterns) = IgnorePatterns::read_from_disk(&dir, dir_depth)? {
+        if let Some(patterns) = IgnorePatterns::read_from_disk(dir, dir_depth)? {
             ignores.push(patterns);
         }
 
@@ -832,7 +832,7 @@ fn add_entire_tree(
                         }
                     }
 
-                    let subdir = open_subdir(&dir, entry_name, &entry_subpath);
+                    let subdir = open_subdir(dir, entry_name, &entry_subpath);
 
                     dirs.push(DirInfo(
                         subdir,
@@ -848,7 +848,7 @@ fn add_entire_tree(
     Ok(())
 }
 
-fn open_subdir(dir: &Dir, entry_name: &[u8], entry_subpath: &ZStr) -> Dir {
+fn open_subdir(dir: Dir, entry_name: &[u8], entry_subpath: &ZStr) -> Dir {
     match dir_open_dir_z(
         dir,
         entry_name_z(entry_name, entry_subpath),
@@ -895,7 +895,7 @@ fn entry_name_z<'a>(entry_name: &[u8], entry_subpath: &'a ZStr) -> &'a ZStr {
 
 fn iterate_bundled_deps(
     ctx: &mut Context<'_>,
-    root_dir: &Dir,
+    root_dir: Dir,
     log_level: LogLevel,
 ) -> Result<PackQueue, AllocError> {
     let mut bundled_pack_queue = new_pack_queue();
@@ -983,10 +983,10 @@ fn iterate_bundled_deps(
                     continue;
                 }
 
-                let subdir = open_subdir(&dir, entry_name.as_bytes(), &entry_subpath_);
+                let subdir = open_subdir(dir, entry_name.as_bytes(), &entry_subpath_);
                 add_bundled_dep(
                     ctx,
-                    root_dir,
+                    &root_dir,
                     DirInfo(subdir, entry_subpath_.as_bytes().into(), 2),
                     &mut bundled_pack_queue,
                     &mut dedupe,
@@ -1013,10 +1013,10 @@ fn iterate_bundled_deps(
                 continue;
             }
 
-            let subdir = open_subdir(&dir, entry_name, &entry_subpath_);
+            let subdir = open_subdir(dir, entry_name, &entry_subpath_);
             add_bundled_dep(
                 ctx,
-                root_dir,
+                &root_dir,
                 DirInfo(subdir, entry_subpath_.as_bytes().into(), 2),
                 &mut bundled_pack_queue,
                 &mut dedupe,
@@ -1044,7 +1044,7 @@ fn iterate_bundled_deps(
 
         add_bundled_dep(
             ctx,
-            root_dir,
+            &root_dir,
             bundled_dir_info,
             &mut bundled_pack_queue,
             &mut dedupe,
@@ -1093,7 +1093,7 @@ fn add_bundled_dep(
                         }
                         // find more dependencies to bundle
                         let source = match file_to_source_at(
-                            &dir,
+                            dir,
                             entry_name_z(entry_name, &entry_subpath_),
                         ) {
                             Ok(s) => s,
@@ -1170,7 +1170,7 @@ fn add_bundled_dep(
                                 let mut dep_dir_depth: usize = bundled_root_depth + 2;
 
                                 match dir_open_dir_z(
-                                    root_dir,
+                                    *root_dir,
                                     dep_subpath,
                                     bun_sys::OpenDirOptions {
                                         iterate: true,
@@ -1216,7 +1216,7 @@ fn add_bundled_dep(
                                             remain_end = node_modules_start;
 
                                             let parent_dep_dir = match dir_open_dir_z(
-                                                root_dir,
+                                                *root_dir,
                                                 parent_dep_subpath,
                                                 bun_sys::OpenDirOptions {
                                                     iterate: true,
@@ -1284,7 +1284,7 @@ fn add_bundled_dep(
                     })?;
                 }
                 bun_sys::FileKind::Directory => {
-                    let subdir = open_subdir(&dir, entry_name, &entry_subpath_);
+                    let subdir = open_subdir(dir, entry_name, &entry_subpath_);
 
                     dirs.push(DirInfo(
                         subdir,
@@ -1327,7 +1327,7 @@ fn iterate_project_tree(
             ignores.pop();
         }
 
-        if let Some(patterns) = IgnorePatterns::read_from_disk(&dir, dir_depth)? {
+        if let Some(patterns) = IgnorePatterns::read_from_disk(dir, dir_depth)? {
             ignores.push(patterns);
         }
 
@@ -1407,7 +1407,7 @@ fn iterate_project_tree(
                         }
                     }
 
-                    let subdir = open_subdir(&dir, entry_name, &entry_subpath_);
+                    let subdir = open_subdir(dir, entry_name, &entry_subpath_);
 
                     dirs.push(DirInfo(
                         subdir,
@@ -2301,7 +2301,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
         // SAFETY: NUL written above
         let z = ZStr::from_buf(&path_buf[..], abs_workspace_path.len());
         match dir_open_dir_z(
-            &Dir::cwd(),
+            Dir::cwd(),
             z,
             bun_sys::OpenDirOptions {
                 iterate: true,
@@ -2353,7 +2353,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
             }
             BinType::Dir => {
                 let bin_dir = match dir_open_dir_z(
-                    &root_dir,
+                    root_dir,
                     &bin.path,
                     bun_sys::OpenDirOptions {
                         iterate: true,
@@ -2441,7 +2441,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
         }
     }
 
-    let mut bundled_pack_queue = iterate_bundled_deps(ctx, &root_dir, log_level)?;
+    let mut bundled_pack_queue = iterate_bundled_deps(ctx, root_dir, log_level)?;
 
     // +1 for package.json
     ctx.stats.total_files = pack_queue.count() + bundled_pack_queue.count() + 1;
@@ -2510,9 +2510,13 @@ pub fn pack<const FOR_PUBLISH: bool>(
             // Zig freely aliased `*PackageManager`/`*ContextData` between
             // `pack::Context` and `Publish::Context`; both are process-lifetime
             // singletons (see `cli::command::GLOBAL_CLI_CTX`).
-            // SAFETY: pointers came from `&mut` and outlive the returned value.
             return Ok(Some(Publish::Context {
+                // SAFETY: `manager_ptr` was derived from `&mut *ctx.manager`; the
+                // process-lifetime singleton outlives the returned `Publish::Context`.
                 manager: unsafe { &mut *manager_ptr },
+                // SAFETY: `ctx.command_ctx` aliases the process-lifetime
+                // `GLOBAL_CLI_CTX` singleton (see PORT NOTE above); reborrowed
+                // disjointly from `manager`.
                 command_ctx: unsafe { &mut *std::ptr::from_mut(ctx.command_ctx) },
                 package_name: package_name.into(),
                 package_version: package_version.into(),
@@ -2659,6 +2663,8 @@ pub fn pack<const FOR_PUBLISH: bool>(
 
         entry = archive_package_json(
             ctx,
+            // SAFETY: `archive` is the non-null `*mut Archive` returned by
+            // `Archive::write_new()` above; only this thread accesses it.
             unsafe { &mut *archive },
             entry,
             &root_dir,
@@ -2737,6 +2743,8 @@ pub fn pack<const FOR_PUBLISH: bool>(
                 &item.path,
                 &mut read_buf,
                 &mut file_reader,
+                // SAFETY: `archive` is the non-null `*mut Archive` returned by
+                // `Archive::write_new()` above; only this thread accesses it.
                 unsafe { &mut *archive },
                 entry,
                 &mut print_buf,
@@ -2796,6 +2804,8 @@ pub fn pack<const FOR_PUBLISH: bool>(
                 &item.path,
                 &mut read_buf,
                 &mut file_reader,
+                // SAFETY: `archive` is the non-null `*mut Archive` returned by
+                // `Archive::write_new()` above; only this thread accesses it.
                 unsafe { &mut *archive },
                 entry,
                 &mut print_buf,
@@ -2980,10 +2990,13 @@ pub fn pack<const FOR_PUBLISH: bool>(
     }
 
     if FOR_PUBLISH {
-        // SAFETY: see dry-run construction above — `manager`/`command_ctx` are
-        // process-lifetime singletons aliased exactly as Zig's `*T` did.
         return Ok(Some(Publish::Context {
+            // SAFETY: `manager_ptr` was derived from `&mut *ctx.manager`; the
+            // process-lifetime singleton outlives the returned `Publish::Context`.
             manager: unsafe { &mut *manager_ptr },
+            // SAFETY: `ctx.command_ctx` aliases the process-lifetime
+            // `GLOBAL_CLI_CTX` singleton (see dry-run PORT NOTE above);
+            // reborrowed disjointly from `manager`.
             command_ctx: unsafe { &mut *std::ptr::from_mut(ctx.command_ctx) },
             package_name: package_name.into(),
             package_version: package_version.into(),
@@ -3756,13 +3769,13 @@ enum IgnoreFileFailReason {
 
 impl IgnorePatterns {
     fn ignore_file_fail(
-        dir: &Dir,
+        dir: Dir,
         ignore_kind: IgnorePatternsKind,
         reason: IgnoreFileFailReason,
         err: bun_core::Error,
     ) -> ! {
         let mut buf = PathBuffer::uninit();
-        let dir_path: &[u8] = match bun_sys::get_fd_path(Fd::from_std_dir(dir), &mut buf) {
+        let dir_path: &[u8] = match bun_sys::get_fd_path(Fd::from_std_dir(&dir), &mut buf) {
             Ok(p) => &*p,
             Err(_) => b"",
         };
@@ -3795,7 +3808,7 @@ impl IgnorePatterns {
 
     /// ignore files are always ignored, don't need to worry about opening or reading twice
     pub fn read_from_disk(
-        dir: &Dir,
+        dir: Dir,
         dir_depth: usize,
     ) -> Result<Option<IgnorePatterns>, AllocError> {
         let mut patterns: Vec<Pattern> = Vec::new();

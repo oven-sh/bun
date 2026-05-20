@@ -101,10 +101,10 @@ impl IniTestingAPIs {
 
         let mut install = Box::new(BunInstall::default());
         let mut configs: Vec<config_iterator::Item> = Vec::new();
-        // SAFETY: `env` points to either the VM-singleton Loader or `env_storage`;
-        // both outlive this call and are not aliased for its duration.
         if load_npmrc(
             &mut install,
+            // SAFETY: `env` points to either the VM-singleton Loader or `env_storage`;
+            // both outlive this call and are not aliased for its duration.
             unsafe { &mut *env },
             ZStr::from_static(b".npmrc\0"),
             &mut log,

@@ -117,11 +117,15 @@ impl<'a> ProcessHandle<'a> {
             }
             // SAFETY: see above; reborrow through raw ptr to avoid overlapping &mut with guard.
             let envp = unsafe { (*env_ptr).map.create_null_delimited_env_map()? };
-            break 'brk spawn::spawn_process(
-                &handle.options,
-                argv.as_ptr(),
-                envp.as_ptr().cast::<*const c_char>(),
-            )??;
+            // SAFETY: `argv`/`envp` are local null-terminated C-string arrays
+            // with argv[0] non-null; valid for this call.
+            break 'brk unsafe {
+                spawn::spawn_process(
+                    &handle.options,
+                    argv.as_ptr(),
+                    envp.as_ptr().cast::<*const c_char>(),
+                )
+            }??;
             // `_guard` drops here (or on `?` above), restoring PATH — matches Zig `defer`.
         };
         #[cfg(unix)]
@@ -207,7 +211,7 @@ impl<'a> ProcessHandle<'a> {
 
     pub fn on_reader_done(&mut self) {}
 
-    pub fn on_reader_error(&mut self, err: sys::Error) {
+    pub fn on_reader_error(&mut self, err: &sys::Error) {
         let _ = err;
     }
 }
@@ -249,7 +253,7 @@ bun_io::impl_buffered_reader_parent! {
     has_on_read_chunk = true;
     on_read_chunk   = |this, chunk, has_more| (*this).on_read_chunk(chunk, has_more);
     on_reader_done  = |this| (*this).on_reader_done();
-    on_reader_error = |this, err| (*this).on_reader_error(err);
+    on_reader_error = |this, err| (*this).on_reader_error(&err);
     loop_           = |this| (*this).loop_();
     event_loop      = |this| (*(*this).state.as_ptr()).event_loop_handle.as_event_loop_ctx();
 }
@@ -740,6 +744,8 @@ pub fn run_scripts_with_filter(
     // Find package.json at workspace root
     let mut root_buf = bun_paths::PathBuffer::uninit();
     let resolve_root = FilterArg::get_candidate_package_patterns(
+        // SAFETY: `ctx.log` is the process-static `Cli::LOG_`; CLI dispatch is single-threaded
+        // and no other `&mut Log` borrow is live for the duration of this call.
         unsafe { ctx.log_mut() },
         &mut patterns,
         fsinstance.top_level_dir,
@@ -903,7 +909,7 @@ pub fn run_scripts_with_filter(
                 unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b""),
                 fsinstance.top_level_dir,
             )
-            .ok_or(bun_core::err!("MissingShell"))?
+            .ok_or_else(|| bun_core::err!("MissingShell"))?
         }
         #[cfg(not(unix))]
         {

@@ -34,7 +34,7 @@ mod buffer_pool {
         BufferPool::first().cast::<MutableString>()
     }
 
-    pub fn put(mutable: *mut MutableString) {
+    pub unsafe fn put(mutable: *mut MutableString) {
         // SAFETY: `mutable` was returned by `get()` above; #[repr(transparent)] cast is sound;
         // `release_value` recovers the parent node via offset_of.
         unsafe {

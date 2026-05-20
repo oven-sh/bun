@@ -312,7 +312,8 @@ impl Listener {
         // `deinitExcludingHandlers()` on the original. Here we read the handlers
         // out by raw ptr and prevent double-drop by clearing the source via
         // `deinit_excluding_handlers` + `mem::forget`.
-        // SAFETY: socket_config.handlers is valid; we forget socket_config below to avoid double-drop.
+        let mut socket_config = core::mem::ManuallyDrop::new(socket_config);
+        // SAFETY: socket_config.handlers is valid; ManuallyDrop suppresses the second drop.
         let handlers_moved: Handlers =
             unsafe { core::ptr::read(&raw const socket_config.handlers) };
         let protos_taken = socket_config.ssl.as_mut().and_then(|s| s.take_protos());
@@ -324,8 +325,6 @@ impl Listener {
             .into_boxed_slice();
         let fd_opt = socket_config.fd;
         let ssl_cfg_taken = socket_config.ssl.take();
-        // Prevent double-drop of `handlers` (moved out above).
-        core::mem::forget(socket_config);
 
         let this: *mut Listener = bun_core::heap::into_raw(Box::new(Listener {
             handlers: JsCell::new(handlers_moved),
@@ -1300,12 +1299,12 @@ impl Listener {
         default_data.ensure_still_alive();
 
         // PORT NOTE: by-value move of Handlers. See `listen()` for rationale.
-        // SAFETY: socket_config.handlers is valid; we forget socket_config below to avoid double-drop.
+        let mut socket_config = core::mem::ManuallyDrop::new(socket_config);
+        // SAFETY: socket_config.handlers is valid; ManuallyDrop suppresses the second drop.
         let handlers_moved: Handlers =
             unsafe { core::ptr::read(&raw const socket_config.handlers) };
         let allow_half_open = socket_config.allow_half_open;
         let mut ssl_taken = socket_config.ssl.take();
-        core::mem::forget(socket_config);
 
         let mut handlers_box = Box::new(handlers_moved);
         handlers_box.mode = SocketMode::Client;

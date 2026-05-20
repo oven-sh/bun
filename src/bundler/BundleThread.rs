@@ -200,8 +200,10 @@ impl<C: CompletionStruct> BundleThread<C> {
         // `AtomicBool` for `has_pending_wake`), so this autorefs to `&Waker` and is
         // safe to call concurrently with `wait(&self)` in `thread_main` and with
         // other `enqueue` callers.
-        unsafe { (*instance).queue.push(completion) };
-        unsafe { (*instance).waker.wake() };
+        unsafe {
+            (*instance).queue.push(completion);
+            (*instance).waker.wake();
+        }
     }
 
     unsafe fn thread_main(instance: *mut Self) {
@@ -387,6 +389,9 @@ pub mod singleton {
     // `'static`; cross-thread access is mediated entirely through
     // `UnboundedQueue` / `ResetEvent` atomics inside `BundleThread::enqueue`.
     unsafe impl Send for Instance {}
+    // SAFETY: `&Instance` only exposes the raw pointer; every dereference path
+    // goes through `BundleThread::enqueue`'s atomic queue/waker primitives, so
+    // sharing the pointer across threads is sound.
     unsafe impl Sync for Instance {}
 
     static INSTANCE: std::sync::OnceLock<Instance> = std::sync::OnceLock::new();

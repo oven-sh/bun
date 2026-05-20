@@ -2570,7 +2570,8 @@ mod _async_tasks {
                     next: bun_threading::Link::new(),
                     value: ResultListEntryValue::from_vec(clone),
                 });
-                self.result_list_queue.push(bun_core::heap::into_raw(list));
+                // SAFETY: freshly boxed node; `into_raw` yields a valid owned pointer.
+                unsafe { self.result_list_queue.push(bun_core::heap::into_raw(list)) };
             }
 
             if self.subtask_count.fetch_sub(1, Ordering::Relaxed) == 1 {

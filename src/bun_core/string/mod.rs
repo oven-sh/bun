@@ -233,6 +233,7 @@ impl String {
         if s.is_empty() {
             return Self::EMPTY;
         }
+        // SAFETY: s.as_ptr()/len describe a valid byte slice.
         unsafe { BunString__fromLatin1(s.as_ptr(), s.len()) }
     }
     /// `bun.String.cloneUTF16` — narrows to Latin-1 if all-ASCII (string.zig:207).
@@ -250,6 +251,7 @@ impl String {
         }
     }
     pub fn create_atom(s: &[u8]) -> Self {
+        // SAFETY: s.as_ptr()/len describe a valid byte slice.
         unsafe { BunString__createAtom(s.as_ptr(), s.len()) }
     }
     /// `bun.String.tryCreateAtom` — `None` if `bytes` is non-ASCII or too long
@@ -1262,6 +1264,8 @@ impl Default for String {
 // postcondition. A `ThreadSafeString` newtype split would make this static,
 // but is deferred until the FFI surface can be reshaped.
 unsafe impl Send for String {}
+// SAFETY: same contract as the `Send` impl above — sharing requires
+// `is_thread_safe()`; non-WTF tags are inert and trivially `Sync`.
 unsafe impl Sync for String {}
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1289,9 +1293,7 @@ impl OwnedString {
     /// the +1 to the caller — Zig's "no defer, returned by value").
     #[inline]
     pub fn into_inner(self) -> String {
-        let s = self.0;
-        core::mem::forget(self);
-        s
+        core::mem::ManuallyDrop::new(self).0
     }
     /// Borrow the inner `String` by value (it's `Copy`) without bumping the
     /// refcount. Do NOT `deref()` the result.
@@ -1364,6 +1366,8 @@ impl core::fmt::Display for OwnedString {
 impl core::fmt::Display for String {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let s = self.to_utf8_without_ref();
+        // SAFETY: `to_utf8_without_ref` always yields valid UTF-8 — it
+        // transcodes Latin-1/UTF-16 and borrows already-UTF-8 inputs.
         f.write_str(unsafe { core::str::from_utf8_unchecked(s.slice()) })
     }
 }
@@ -1814,11 +1818,11 @@ impl ZigString {
     }
     #[inline]
     pub fn cmp_asc(a: &ZigString, b: &ZigString) -> bool {
-        strings::cmp_strings_asc(&(), a.slice(), b.slice())
+        strings::cmp_strings_asc((), a.slice(), b.slice())
     }
     #[inline]
     pub fn cmp_desc(a: &ZigString, b: &ZigString) -> bool {
-        strings::cmp_strings_desc(&(), a.slice(), b.slice())
+        strings::cmp_strings_desc((), a.slice(), b.slice())
     }
 
     /// `ZigString.toSliceLowercase` — allocate a lowercased UTF-8 copy.
@@ -2552,7 +2556,7 @@ pub mod printer {
                 StrEncoding::Utf8 => {
                     let mut buf = [0u8; 4];
                     buf[..clamped_width].copy_from_slice(&text_in[i..i + clamped_width]);
-                    strings::decode_wtf8_rune_t::<i32>(&buf, width, 0)
+                    strings::decode_wtf8_rune_t::<i32>(buf, width, 0)
                 }
                 StrEncoding::Ascii => {
                     debug_assert!(text_in[i] <= 0x7F);

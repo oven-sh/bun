@@ -450,8 +450,8 @@ impl MySQLConnection {
                             // `tls_config` for the connection lifetime.
                             let hostname = unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
                             if ssl_ptr.is_null()
-                                // SAFETY: `ssl_ptr` is non-null and live (handshake just succeeded).
                                 || !bun_boringssl::check_server_identity(
+                                    // SAFETY: `ssl_ptr` is non-null (checked by the short-circuit above) and live (handshake just succeeded).
                                     unsafe { &mut *ssl_ptr },
                                     hostname,
                                 )
@@ -790,7 +790,7 @@ impl MySQLConnection {
                 let mut err = ErrorPacket::default();
                 err.decode_internal(reader)?;
 
-                self.js_connection_ref().on_error_packet(None, err);
+                self.js_connection_ref().on_error_packet(None, &err);
                 return Err(AnyMySQLError::AuthenticationFailed);
             }
 
@@ -970,7 +970,7 @@ impl MySQLConnection {
                     // `JsCell`, so re-entrant `connection_mut()` does not alias
                     // this outer shared borrow.
                     self.js_connection_ref()
-                        .on_error_packet(Some(request), ErrorPacket::default());
+                        .on_error_packet(Some(request), &ErrorPacket::default());
                     let _ = self.flush_queue();
                 }
             }
@@ -1241,7 +1241,7 @@ impl MySQLConnection {
                 // temporary — and `*self` sits inside the parent's `JsCell`, so
                 // re-entrant `connection_mut()` does not alias the outer
                 // shared borrow.
-                self.js_connection_ref().on_error_packet(Some(request), err);
+                self.js_connection_ref().on_error_packet(Some(request), &err);
                 self.advance();
             }
 
@@ -1297,7 +1297,7 @@ impl MySQLConnection {
         // independent of this outer shared borrow.
         self.js_connection_ref().on_query_result(
             request,
-            MySQLQueryResult {
+            &MySQLQueryResult {
                 result_count,
                 last_insert_id,
                 affected_rows,
@@ -1364,7 +1364,7 @@ impl MySQLConnection {
                 // `js_connection_ref()` container_of accessor. `*self` lives
                 // inside the parent's `JsCell`, so re-entrant `connection_mut()`
                 // does not alias this outer shared borrow.
-                self.js_connection_ref().on_error_packet(Some(request), err);
+                self.js_connection_ref().on_error_packet(Some(request), &err);
                 let _ = self.flush_queue();
             }
 

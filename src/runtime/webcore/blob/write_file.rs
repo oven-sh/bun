@@ -369,11 +369,11 @@ impl WriteFile {
     }
 
     pub fn then(this: *mut WriteFile, _global: &JSGlobalObject) -> Result<(), JsTerminated> {
-        // SAFETY: `this` is a Box-allocated WriteFile owned by the WorkTask flow; we consume it here.
         let cb;
         let cb_ctx;
         let system_error;
         let total_written;
+        // SAFETY: `this` is a Box-allocated WriteFile owned by the WorkTask flow; we consume it here.
         unsafe {
             cb = (*this).on_complete_callback;
             cb_ctx = (*this).on_complete_ctx;

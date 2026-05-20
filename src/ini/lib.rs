@@ -1355,9 +1355,11 @@ mod draft {
         // `'p` (matches `Parser::init`'s own erasures for `path`/`src`).
         // SAFETY: `parser` does not outlive `env`/`source.contents`.
         let contents: &'static [u8] = source.contents.as_ref().into_str();
-        // Round-trip through a raw pointer to erase both the borrow and the inner
-        // lifetime; identical bit-pattern.
-        let env = unsafe { &mut *(env as *mut DotEnvLoader<'_> as *mut DotEnvLoader<'static>) };
+        // SAFETY: `parser` is dropped before this function returns and so does not
+        // outlive `env` or its borrowed data; this cast only erases lifetimes.
+        let env = unsafe {
+            &mut *std::ptr::from_mut::<DotEnvLoader<'_>>(env).cast::<DotEnvLoader<'static>>()
+        };
         let mut parser = Parser::init(npmrc_path.as_bytes(), contents, env);
         // TODO(port): borrowck — `parser.arena` is borrowed while `parser` is `&mut`.
         // SAFETY: arena outlives all bump-allocated slices used below. TODO(refactor):
@@ -1497,9 +1499,7 @@ mod draft {
                     install.node_linker = Some(NodeLinker::Hoisted);
                 } else if install_strategy_str == b"linked" {
                     install.node_linker = Some(NodeLinker::Isolated);
-                } else if install_strategy_str == b"nested" {
-                    // TODO
-                } else if install_strategy_str == b"shallow" {
+                } else if install_strategy_str == b"nested" || install_strategy_str == b"shallow" {
                     // TODO
                 }
             }

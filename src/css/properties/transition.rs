@@ -313,7 +313,7 @@ mod transition_handler_body {
                         self.flush(dest, context);
                         dest.push(Property::Unparsed(x.get_prefixed(
                             arena,
-                            context.targets,
+                            &context.targets,
                             Feature::Transition,
                         )));
                     } else {
@@ -573,7 +573,7 @@ mod transition_handler_body {
                     let index = i;
                     // Expand vendor prefixes for targets.
                     properties.slice_mut()[index as usize]
-                        .set_prefixes_for_targets(context.targets);
+                        .set_prefixes_for_targets(&context.targets);
 
                     // Expand mask properties, which use different vendor-prefixed names.
                     if let Some(property_id) =
@@ -591,7 +591,7 @@ mod transition_handler_body {
 
                     if let Some(rtl_props) = &mut rtl_properties {
                         rtl_props.slice_mut()[index as usize]
-                            .set_prefixes_for_targets(context.targets);
+                            .set_prefixes_for_targets(&context.targets);
 
                         if let Some(property_id) =
                             masking::get_webkit_mask_property(rtl_props.at(index))

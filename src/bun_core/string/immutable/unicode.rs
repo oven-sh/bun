@@ -270,7 +270,7 @@ impl<'a, C: CodePointZero> NewCodePointIterator<'a, C> {
                     if n > 2 { remaining[2] } else { 0 },
                     if n > 3 { remaining[3] } else { 0 },
                 ];
-                decode_wtf8_rune_t_multibyte::<C>(&cp_bytes, cp_len, error_char)
+                decode_wtf8_rune_t_multibyte::<C>(cp_bytes, cp_len, error_char)
             }
         };
 
@@ -361,7 +361,7 @@ impl<'a, C: CodePointZero> NewCodePointIterator<'a, C> {
             2..=4 => {
                 let mut quad = [0u8; 4];
                 quad[..slice.len()].copy_from_slice(slice);
-                decode_wtf8_rune_t_multibyte::<C>(&quad, slice.len() as U3Fast, C::ZERO_VALUE)
+                decode_wtf8_rune_t_multibyte::<C>(quad, slice.len() as U3Fast, C::ZERO_VALUE)
             }
             _ => unreachable!(),
         };
@@ -399,7 +399,7 @@ pub(super) type UnsignedCodepointIterator<'a> = NewCodePointIterator<'a, u32>;
 /// Convert potentially ill-formed UTF-8 or UTF-16 bytes to a Unicode Codepoint.
 /// - Invalid codepoints are replaced with `zero` parameter
 /// - Null bytes return 0
-pub fn decode_wtf8_rune_t<T: CodePointZero>(p: &[u8; 4], len: U3Fast, zero: T) -> T {
+pub fn decode_wtf8_rune_t<T: CodePointZero>(p: [u8; 4], len: U3Fast, zero: T) -> T {
     if len == 0 {
         return zero;
     }
@@ -574,7 +574,7 @@ impl UTF16Replacement {
 }
 
 pub(super) fn convert_utf8_bytes_into_utf16_with_length(
-    sequence: &[u8; 4],
+    sequence: [u8; 4],
     len: U3Fast,
     remaining_len: usize,
 ) -> UTF16Replacement {
@@ -741,7 +741,7 @@ pub(super) fn convert_utf8_bytes_into_utf16(bytes: &[u8]) -> UTF16Replacement {
     };
     debug_assert!(sequence[0] > 127);
     let sequence_length = non_ascii_sequence_length(sequence[0]);
-    convert_utf8_bytes_into_utf16_with_length(&sequence, sequence_length, bytes.len())
+    convert_utf8_bytes_into_utf16_with_length(sequence, sequence_length, bytes.len())
 }
 
 // SWAR body moved down into `crate::strings` (T0) so the canonical
@@ -831,7 +831,7 @@ pub(super) fn eql_utf16(self_: &[u8], other: &[u16]) -> bool {
 #[inline]
 pub(super) fn append_utf8_machine_word_to_utf16_machine_word(
     output: &mut [u16; core::mem::size_of::<usize>() / 2],
-    input: &[u8; core::mem::size_of::<usize>() / 2],
+    input: [u8; core::mem::size_of::<usize>() / 2],
 ) {
     // PERF(port): Zig used @Vector(4, u8) -> @Vector(4, u16) widening; scalar widen here.
     for (o, &i) in output.iter_mut().zip(input.iter()) {
@@ -1285,7 +1285,7 @@ pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: b
         let converted_length = non_ascii_sequence_length(sequence[0]);
 
         let converted =
-            convert_utf8_bytes_into_utf16_with_length(&sequence, converted_length, remaining.len());
+            convert_utf8_bytes_into_utf16_with_length(sequence, converted_length, remaining.len());
 
         if !FLUSH {
             if converted.fail
@@ -1898,7 +1898,7 @@ pub(super) use super::{wtf8_byte_sequence_length, wtf8_byte_sequence_length_with
 /// which was a clone of golang's "utf8.DecodeRune" that was modified to decode using WTF-8 instead.
 /// Asserts a multi-byte codepoint
 #[inline]
-pub fn decode_wtf8_rune_t_multibyte<T: CodePointZero>(p: &[u8; 4], len: U3Fast, zero: T) -> T {
+pub fn decode_wtf8_rune_t_multibyte<T: CodePointZero>(p: [u8; 4], len: U3Fast, zero: T) -> T {
     debug_assert!(len > 1);
 
     let s1 = p[1];

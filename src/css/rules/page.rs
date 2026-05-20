@@ -260,9 +260,9 @@ pub enum PagePseudoClass {
 
 impl PagePseudoClass {
     #[inline]
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone(self, _bump: &bun_alloc::Arena) -> Self {
         // `Copy` enum (generics.zig "simple copy types" → identity).
-        *self
+        self
     }
 }
 

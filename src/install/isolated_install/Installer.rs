@@ -1651,7 +1651,7 @@ impl Task {
                             && manager
                                 .postinstall_optimizer
                                 .should_ignore_lifecycle_scripts(
-                                    postinstall_optimizer::PkgInfo {
+                                    &postinstall_optimizer::PkgInfo {
                                         name_hash: pkg_name_hash,
                                         version: if pkg_res.tag == ResolutionTag::Npm {
                                             Some(pkg_res.npm().version)
@@ -1972,7 +1972,8 @@ impl Task {
                     );
                 }
                 this.result = Result::RunScripts(list);
-                installer.task_queue.push(this);
+                // SAFETY: `this` is a live `&mut Task`; ownership moves to the queue.
+                unsafe { installer.task_queue.push(this) };
                 unsafe { PackageManager::wake_raw(manager_ptr) };
             }
             Yield::Done => {
@@ -1985,7 +1986,8 @@ impl Task {
                     );
                 }
                 this.result = Result::Done;
-                installer.task_queue.push(this);
+                // SAFETY: `this` is a live `&mut Task`; ownership moves to the queue.
+                unsafe { installer.task_queue.push(this) };
                 unsafe { PackageManager::wake_raw(manager_ptr) };
             }
             Yield::Blocked => {
@@ -1998,7 +2000,8 @@ impl Task {
                     );
                 }
                 this.result = Result::Blocked;
-                installer.task_queue.push(this);
+                // SAFETY: `this` is a live `&mut Task`; ownership moves to the queue.
+                unsafe { installer.task_queue.push(this) };
                 unsafe { PackageManager::wake_raw(manager_ptr) };
             }
             Yield::Fail(err) => {
@@ -2013,7 +2016,8 @@ impl Task {
                 installer.store.entries.items_step()[this.entry_id.get() as usize]
                     .store(Step::Done as u32, Ordering::Release);
                 this.result = Result::Err(err);
-                installer.task_queue.push(this);
+                // SAFETY: `this` is a live `&mut Task`; ownership moves to the queue.
+                unsafe { installer.task_queue.push(this) };
                 unsafe { PackageManager::wake_raw(manager_ptr) };
             }
         }
@@ -2198,7 +2202,7 @@ impl<'a> Installer<'a> {
         }
         let name_hash = name_hashes[pkg_id as usize];
 
-        if let Some(optimizer) = postinstall_optimizer.get(postinstall_optimizer::PkgInfo {
+        if let Some(optimizer) = postinstall_optimizer.get(&postinstall_optimizer::PkgInfo {
             name_hash,
             ..postinstall_optimizer::PkgInfo::default()
         }) {

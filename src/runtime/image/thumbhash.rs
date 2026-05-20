@@ -50,10 +50,10 @@ pub fn encode<'a>(out: &'a mut [u8; MAX_LEN], w: u32, h: u32, rgba: &[u8]) -> &'
     // RGBA → LPQA, compositing transparent pixels onto the average so the DCT
     // doesn't see a black fringe.
     // PERF(port): was `undefined` stack arrays — profile if it shows up on a hot path.
-    let mut l = [0.0f32; 100 * 100];
-    let mut p = [0.0f32; 100 * 100];
-    let mut q = [0.0f32; 100 * 100];
-    let mut a = [0.0f32; 100 * 100];
+    let mut l = vec![0.0f32; 100 * 100];
+    let mut p = vec![0.0f32; 100 * 100];
+    let mut q = vec![0.0f32; 100 * 100];
+    let mut a = vec![0.0f32; 100 * 100];
     i = 0;
     let mut px: usize = 0;
     while i < rgba.len() {

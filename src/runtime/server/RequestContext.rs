@@ -319,7 +319,11 @@ where
 ///   the borrow.
 #[inline]
 unsafe fn as_response(value: JSValue) -> Option<&'static mut Response> {
-    response::from_js(value).map(|p| unsafe { &mut *p.cast::<Response>() })
+    response::from_js(value).map(|p| {
+        // SAFETY: see the fn-level safety doc — caller guarantees no live
+        // aliasing `&mut Response` and keeps `value` GC-rooted for the borrow.
+        unsafe { &mut *p.cast::<Response>() }
+    })
 }
 
 // ─── sibling-subtree shims ───────────────────────────────────────────────────
@@ -338,17 +342,17 @@ mod shim {
         r.detach_readable_stream(g)
     }
     #[inline]
-    pub fn signal_aborted(s: &NonNull<AbortSignal>) -> bool {
+    pub fn signal_aborted(s: NonNull<AbortSignal>) -> bool {
         // `signal` is kept alive by the intrusive C++ refcount (+1 from
         // `AbortSignal::new()` / `ref_()`) plus `pending_activity_ref()` until
         // `signal_release` drops both — satisfies the `BackRef` outlives-holder
         // invariant for the duration of this call.
-        bun_ptr::BackRef::from(*s).aborted()
+        bun_ptr::BackRef::from(s).aborted()
     }
     #[inline]
-    pub fn signal_fire(s: &NonNull<AbortSignal>, g: &JSGlobalObject, r: jsc::CommonAbortReason) {
+    pub fn signal_fire(s: NonNull<AbortSignal>, g: &JSGlobalObject, r: jsc::CommonAbortReason) {
         // See `signal_aborted` — counted ref keeps pointee live.
-        bun_ptr::BackRef::from(*s).signal(g, r)
+        bun_ptr::BackRef::from(s).signal(g, r)
     }
     /// Release BOTH refcounts the request holds on its AbortSignal, mirroring
     /// the Zig `defer { signal.pendingActivityUnref(); signal.unref(); }` pair.
@@ -574,8 +578,7 @@ where
         // the pointee `NewServer` outlives this context (it owns the pool).
         // `'r` may exceed `&self` because the server is not borrowed from
         // `*self`; it lives independently and outlives every context.
-        let p = self.server.expect("infallible: server bound").as_ptr();
-        unsafe { &*p }
+        unsafe { &*self.server.expect("infallible: server bound").as_ptr() }
     }
 
     /// Mutably borrow the pooled request-body slot, if attached.
@@ -625,7 +628,7 @@ where
             if let Some(server) = self.server {
                 // server is a BACKREF — valid while this RequestContext is alive
                 let global = server.global_this();
-                shim::signal_fire(signal, global, reason);
+                shim::signal_fire(*signal, global, reason);
             }
         }
     }
@@ -1413,9 +1416,9 @@ where
         }
         // if signal is not aborted, abort the signal
         if let Some(signal) = this.signal.take() {
-            if !shim::signal_aborted(&signal) {
+            if !shim::signal_aborted(signal) {
                 shim::signal_fire(
-                    &signal,
+                    signal,
                     global_this,
                     jsc::CommonAbortReason::ConnectionClosed,
                 );
@@ -1492,9 +1495,9 @@ where
 
         // if signal is not aborted, abort the signal
         if let Some(signal) = self.signal.take() {
-            if self.flags.aborted() && !shim::signal_aborted(&signal) {
+            if self.flags.aborted() && !shim::signal_aborted(signal) {
                 shim::signal_fire(
-                    &signal,
+                    signal,
                     global_this,
                     jsc::CommonAbortReason::ConnectionClosed,
                 );
@@ -1556,6 +1559,9 @@ where
         // Copy to stack memory to prevent aliasing issues in release builds
         // PORT NOTE: AnyBlob is not Copy in Rust; reborrow through a raw ptr
         // so the slice borrow doesn't conflict with `&mut self` below.
+        // SAFETY: `this.blob`'s backing bytes are owned by the context and
+        // outlive `send_writable_bytes_for_blob`; detaching the borrow lets
+        // `&mut *this` reborrow disjoint fields below without aliasing.
         let bytes: &[u8] = unsafe { bun_ptr::detach_lifetime(this.blob.slice()) };
 
         let _ = this.send_writable_bytes_for_blob(bytes, write_offset, resp);
@@ -1849,7 +1855,7 @@ where
 
         // SAFETY: BACKREF
         let server = self.server();
-        FileResponseStream::start(file_response_stream::StartOptions {
+        FileResponseStream::start(&file_response_stream::StartOptions {
             fd,
             auto_close,
             resp,
@@ -3322,10 +3328,9 @@ where
 
     pub fn run_error_handler_with_status_code(&mut self, value: JSValue, status: u16) {
         jsc::mark_binding!();
-        // SAFETY: FFI handle, just checked is_some()
-        if self.resp.is_none()
-            || unsafe { self.resp.expect("infallible: resp bound").has_responded() }
-        {
+        let Some(resp) = self.resp else { return };
+        // SAFETY: `resp` is a live uWS FFI handle while `self.resp` is bound.
+        if unsafe { resp.has_responded() } {
             return;
         }
 
@@ -3524,6 +3529,9 @@ where
         // copy it to stack memory to prevent aliasing issues in release builds
         // PORT NOTE: AnyBlob is not Copy in Rust; reborrow through a raw ptr
         // so the slice borrow doesn't conflict with `&mut self` below.
+        // SAFETY: `self.blob`'s backing bytes are owned by the context and
+        // outlive the `try_end`/`on_writable` calls below; detaching the
+        // borrow lets `&mut *self` reborrow disjoint fields without aliasing.
         let bytes: &[u8] = unsafe { bun_ptr::detach_lifetime(self.blob.slice()) };
         if let Some(resp) = self.resp {
             // SAFETY: FFI handle
@@ -4140,7 +4148,7 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
     );
 
     #[inline]
-    pub fn is_web_browser_navigation(&self) -> bool {
+    pub fn is_web_browser_navigation(self) -> bool {
         DEBUG_MODE && self.0.contains(FlagsBits::IS_WEB_BROWSER_NAVIGATION)
     }
     #[inline]
@@ -4151,7 +4159,7 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
     }
 
     #[inline]
-    pub fn has_finalized(&self) -> bool {
+    pub fn has_finalized(self) -> bool {
         cfg!(debug_assertions) && self.0.contains(FlagsBits::HAS_FINALIZED)
     }
     #[inline]

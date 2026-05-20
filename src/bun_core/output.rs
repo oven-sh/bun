@@ -120,7 +120,7 @@ pub struct File(pub Fd);
 impl File {
     pub const ZEROED: Self = Self(Fd::INVALID);
     #[inline]
-    pub const fn fd(&self) -> Fd {
+    pub const fn fd(self) -> Fd {
         self.0
     }
     #[inline]
@@ -139,18 +139,18 @@ impl File {
     /// Write all bytes (best-effort; routes through QuietWriter so errors are
     /// swallowed per Zig `bun.Output` semantics). Progress.rs uses this.
     #[inline]
-    pub fn write_all(&self, bytes: &[u8]) -> Result<(), crate::Error> {
+    pub fn write_all(self, bytes: &[u8]) -> Result<(), crate::Error> {
         let mut qw = self.quiet_writer();
         let _ = output_sink().quiet_writer_write_all(&mut qw, bytes);
         Ok(())
     }
     #[inline]
-    pub fn write(&self, bytes: &[u8]) -> Result<usize, crate::Error> {
+    pub fn write(self, bytes: &[u8]) -> Result<usize, crate::Error> {
         self.write_all(bytes).map(|_| bytes.len())
     }
-    pub fn write_fmt(&self, args: core::fmt::Arguments<'_>) -> Result<(), crate::Error> {
-        struct Adapter<'a>(&'a File);
-        impl core::fmt::Write for Adapter<'_> {
+    pub fn write_fmt(self, args: core::fmt::Arguments<'_>) -> Result<(), crate::Error> {
+        struct Adapter(File);
+        impl core::fmt::Write for Adapter {
             fn write_str(&mut self, s: &str) -> core::fmt::Result {
                 let _ = self.0.write_all(s.as_bytes());
                 Ok(())
@@ -2402,6 +2402,7 @@ macro_rules! write_pretty {
 
 /// Argument shape accepted by `command`/`commandOut`. Mirrors the Zig `anytype`
 /// switch over `[][]const u8` vs `[]const u8`.
+#[derive(Clone, Copy)]
 pub enum CommandArgv<'a> {
     List(&'a [&'a [u8]]),
     Single(&'a [u8]),

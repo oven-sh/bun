@@ -232,10 +232,16 @@ impl UpgradedDuplex {
     }
     #[inline]
     pub fn encode_and_write(&mut self, data: &[u8]) -> i32 {
+        // SAFETY: `&mut self` coerces to a non-null `*mut UpgradedDuplex` valid for
+        // the call, and `(data.as_ptr(), data.len())` is a valid readable region
+        // borrowed for the call's duration; the callee only reads from it.
         unsafe { UpgradedDuplex__encode_and_write(self, data.as_ptr(), data.len()) }
     }
     #[inline]
     pub fn raw_write(&mut self, data: &[u8]) -> i32 {
+        // SAFETY: `&mut self` coerces to a non-null `*mut UpgradedDuplex` valid for
+        // the call, and `(data.as_ptr(), data.len())` is a valid readable region
+        // borrowed for the call's duration; the callee only reads from it.
         unsafe { UpgradedDuplex__raw_write(self, data.as_ptr(), data.len()) }
     }
     #[inline]

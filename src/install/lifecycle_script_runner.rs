@@ -380,17 +380,19 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         self.manager.get()
     }
 
-    /// SAFETY: see [`Self::manager`]. Mutable access is sound because Zig's
+    /// # Safety
+    /// See [`Self::manager`]. Mutable access is sound because Zig's
     /// `*PackageManager` is a non-exclusive pointer; no `&PackageManager`
     /// outlives the brief field accesses below on the install thread.
     #[inline]
-    fn manager_mut(&self) -> &mut PackageManager {
+    unsafe fn manager_mut(&self) -> &mut PackageManager {
         // SAFETY: see fn doc.
         unsafe { &mut *self.manager.as_ptr() }
     }
 
     pub fn loop_(&self) -> *mut AsyncLoop {
-        self.manager_mut().event_loop.native_loop()
+        // SAFETY: see [`Self::manager_mut`].
+        unsafe { self.manager_mut() }.event_loop.native_loop()
     }
 
     pub fn event_loop(&self) -> &AnyEventLoop<'static> {
@@ -409,7 +411,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         self.maybe_finished();
     }
 
-    pub fn on_reader_error(&mut self, err: bun_sys::Error) {
+    pub fn on_reader_error(&mut self, err: &bun_sys::Error) {
         debug_assert!(self.remaining_fds > 0);
         self.remaining_fds -= 1;
 
@@ -937,7 +939,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
                 if let Some(nanos) = maybe_duration {
                     if nanos > MIN_MILLISECONDS_TO_LOG * bun_core::time::NS_PER_MS {
-                        self.manager_mut()
+                        // SAFETY: see [`Self::manager_mut`].
+                        unsafe { self.manager_mut() }
                             .lifecycle_script_time_log
                             .append_concurrent(
                                 // PORT NOTE: Zig passed `manager.lockfile.allocator`; allocator param
@@ -1265,7 +1268,7 @@ bun_io::impl_buffered_reader_parent! {
     LifecycleScript for LifecycleScriptSubprocess<'a>;
     has_on_read_chunk = false;
     on_reader_done  = |this| (*this).on_reader_done();
-    on_reader_error = |this, err| (*this).on_reader_error(err);
+    on_reader_error = |this, err| (*this).on_reader_error(&err);
     loop_           = |this| (*this).loop_();
     event_loop = |this| bun_event_loop::EventLoopHandle::from_any(
         &mut (*(*this).manager.as_ptr()).event_loop,

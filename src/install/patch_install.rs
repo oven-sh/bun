@@ -163,16 +163,17 @@ impl PatchTask {
     /// ownership must be returned here exactly once.
     pub unsafe fn destroy(this: *mut Self) {
         // TODO: how to deinit `this.callback.calc_hash.network_task` (carried over from Zig)
+        // SAFETY: caller contract — `this` was produced by `heap::into_raw` in
+        // `new_calc_patch_hash`/`new_apply_patch_hash` and is reclaimed exactly once.
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    // Safe-fn: only ever invoked by `ThreadPool` via the `callback` fn-pointer
-    // with the `*mut ThreadPoolTask` we registered in `new_calc_patch_hash` /
-    // `new_apply_patch_hash`. The thread-pool contract — not the Rust caller —
-    // guarantees `task` is live and points at `PatchTask.task`, so the
-    // precondition is discharged locally. Safe `fn` coerces to the
-    // `unsafe fn(*mut Task)` field type.
-    pub fn run_from_thread_pool(task: *mut ThreadPoolTask) {
+    /// # Safety
+    /// Only invoked by `ThreadPool` via the `callback` fn-pointer registered in
+    /// `new_calc_patch_hash` / `new_apply_patch_hash`. `task` must be live and
+    /// point at the `task` field of a heap-allocated `PatchTask`, with the pool
+    /// granting exclusive access for the duration of the call.
+    pub unsafe fn run_from_thread_pool(task: *mut ThreadPoolTask) {
         // SAFETY: thread-pool callback contract — `task` points to the `task`
         // field of a live `PatchTask` (set at construction); the pool runs
         // each task at most once with exclusive access for the call.
@@ -202,11 +203,11 @@ impl PatchTask {
                 self.apply().expect("OOM");
             }
         }
+        let mgr = self.manager.as_ptr();
         // SAFETY: `self.manager` is a long-lived BACKREF (Zig `*PackageManager`);
         // the worker thread only touches the lock-free `patch_task_queue` and the
         // event-loop wake atomics, neither of which alias data the main thread
         // holds an exclusive borrow on.
-        let mgr = self.manager.as_ptr();
         unsafe {
             (*mgr)
                 .patch_task_queue
@@ -748,9 +749,9 @@ impl PatchTask {
 
     pub fn notify(&mut self) {
         // PORT NOTE: Zig `defer this.manager.wake()` then `push`. No early returns; inline order.
+        let mgr = self.manager.as_ptr();
         // SAFETY: `self.manager` is a long-lived BACKREF (Zig `*PackageManager`);
         // only touches the lock-free queue and event-loop wake atomics.
-        let mgr = self.manager.as_ptr();
         unsafe {
             (*mgr)
                 .patch_task_queue

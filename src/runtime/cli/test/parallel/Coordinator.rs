@@ -94,6 +94,9 @@ impl<'a> Coordinator<'a> {
         for i in 0..len {
             // SAFETY: `i < len`; read-only inspection of `range` through *mut.
             let v = unsafe { base.add(i) };
+            // SAFETY: `v = base.add(i)` with `i < len` is in-bounds for
+            // `self.workers`; field read through *mut so no `&mut Worker` is
+            // formed that could alias the caller's live `w`.
             let n = unsafe { (*v).range.len() };
             if n > most {
                 most = n;
@@ -458,10 +461,10 @@ impl<'a> Coordinator<'a> {
             return;
         }
         let status = w.exit_status.take().expect("checked above");
-        self.reap_worker(w, status);
+        self.reap_worker(w, &status);
     }
 
-    fn reap_worker(&mut self, w: &mut Worker, status: SpawnStatus) {
+    fn reap_worker(&mut self, w: &mut Worker, status: &SpawnStatus) {
         // Decrement here (not in onProcessExit) so drive() keeps pumping until
         // the IPC pipe has been drained and this reap actually runs.
         self.live_workers -= 1;
@@ -478,12 +481,12 @@ impl<'a> Coordinator<'a> {
             // masked by the rest of the suite passing: abort the whole run so
             // the exit status reflects the crash. SIGKILL is treated as a
             // regular failure (commonly the OOM killer or the user).
-            let panicked = is_panic_status(&status);
-            self.account_crash(idx, &status);
+            let panicked = is_panic_status(status);
+            self.account_crash(idx, status);
             Output::flush();
             w.inflight = None;
             if panicked {
-                self.abort_on_worker_panic(idx, &status);
+                self.abort_on_worker_panic(idx, status);
             }
         }
 
@@ -579,9 +582,13 @@ impl<'a> Coordinator<'a> {
             // SAFETY: `i < spawned_count <= workers.len()`; field reads
             // through *mut so no `&mut Worker` aliases the caller's `w`.
             let other = unsafe { base.add(i) };
+            // SAFETY: `other` is in-bounds (see above); reading `.alive`
+            // through *mut forms no `&mut Worker` aliasing the caller's `w`.
             if unsafe { !(*other).alive } {
                 continue;
             }
+            // SAFETY: `other` is in-bounds (see above); reading `.process`
+            // through *mut forms no `&mut Worker` aliasing the caller's `w`.
             if let Some(p) = unsafe { (*other).process } {
                 #[cfg(unix)]
                 {
@@ -618,6 +625,8 @@ impl<'a> Coordinator<'a> {
             // SAFETY: `i < len`; range mutation through *mut so no
             // `&mut Worker` aliases the caller's live `w`.
             let wp = unsafe { base.add(i) };
+            // SAFETY: `wp` is in-bounds (see above); mutating `.range` through
+            // *mut forms no `&mut Worker` aliasing the caller's live `w`.
             while let Some(idx) = unsafe { (*wp).range.pop_front() } {
                 Output::pretty_error(format_args!(
                     "<r><red>✗<r> <b>{}<r> <d>({})<r>\n",

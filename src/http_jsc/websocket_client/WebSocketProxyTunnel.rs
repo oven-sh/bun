@@ -69,6 +69,7 @@ impl UpgradeClientUnion {
             UpgradeClientUnion::Http(client) => unsafe {
                 HttpUpgradeClient::handle_decrypted_data(*client, data)
             },
+            // SAFETY: BACKREF — caller (WebSocketUpgradeClient) outlives the tunnel during handshake phase
             UpgradeClientUnion::Https(client) => unsafe {
                 HttpsUpgradeClient::handle_decrypted_data(*client, data)
             },
@@ -82,6 +83,7 @@ impl UpgradeClientUnion {
             UpgradeClientUnion::Http(client) => unsafe {
                 HttpUpgradeClient::terminate(*client, code)
             },
+            // SAFETY: BACKREF — caller (WebSocketUpgradeClient) outlives the tunnel during handshake phase
             UpgradeClientUnion::Https(client) => unsafe {
                 HttpsUpgradeClient::terminate(*client, code)
             },
@@ -95,6 +97,7 @@ impl UpgradeClientUnion {
             UpgradeClientUnion::Http(client) => unsafe {
                 HttpUpgradeClient::on_proxy_tls_handshake_complete(*client)
             },
+            // SAFETY: BACKREF — caller (WebSocketUpgradeClient) outlives the tunnel during handshake phase
             UpgradeClientUnion::Https(client) => unsafe {
                 HttpsUpgradeClient::on_proxy_tls_handshake_complete(*client)
             },
@@ -190,7 +193,7 @@ impl WebSocketProxyTunnel {
     /// not hold a `&mut Self` across that call.
     pub unsafe fn start(
         this: *mut Self,
-        ssl_options: SslConfig,
+        ssl_options: &SslConfig,
         initial_data: &[u8],
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
@@ -203,7 +206,7 @@ impl WebSocketProxyTunnel {
         // `BunSocketContextOptions` (= what `SSLConfig.asUSockets()` produces);
         // the `SSLConfig`-taking `init` lives in bun_runtime.
         let wrapper = SslWrapperType::init_from_options(
-            options.as_usockets(),
+            &options.as_usockets(),
             true,
             SslHandlers {
                 // Store the Box-provenance pointer directly so callback derefs

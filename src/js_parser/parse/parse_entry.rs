@@ -823,7 +823,7 @@ impl<'a> Parser<'a> {
                     || strings::has_suffix_comptime(path.name.filename, b".tsx");
                 if cache.get(
                     p.source,
-                    (&raw const p.options).cast::<()>(),
+                    core::ptr::NonNull::from(&p.options).cast::<()>(),
                     p.options.jsx.parse && (!is_node_module || is_jsx_file),
                 ) {
                     return Ok(crate::Result::Cached);

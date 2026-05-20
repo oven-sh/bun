@@ -239,12 +239,13 @@ impl MimallocArena {
             HEAP_DESTROY_COUNT.fetch_add(1, Ordering::Relaxed);
             HEAP_NEW_COUNT.fetch_add(1, Ordering::Relaxed);
         }
+        crate::ast_alloc::bump_invalidate_heap(self.heap_ptr());
         // SAFETY: `self.heap` was obtained from `mi_heap_new` and has not been
         // destroyed (we own it). After this call all outstanding allocations
         // are freed; replacing `self.heap` with a fresh heap restores the
         // invariant.
-        crate::ast_alloc::bump_invalidate_heap(self.heap_ptr());
         unsafe { mimalloc::mi_heap_destroy(self.heap_ptr()) };
+        // SAFETY: FFI call with no preconditions.
         let heap = unsafe { mimalloc::mi_heap_new() };
         self.heap = NonNull::new(heap).unwrap_or_else(|| crate::out_of_memory());
         // `&mut self` proves exclusive access; re-stamp the debug thread-lock
@@ -377,8 +378,13 @@ impl MimallocArena {
     }
 
     /// Zig: `MimallocArena.ownsPtr()` → `mi_heap_contains(heap, p)`.
+    ///
+    /// # Safety
+    /// `p` may be any pointer value (including null or dangling) —
+    /// `mi_heap_contains` only tests address-range membership and never
+    /// dereferences it.
     #[inline]
-    pub fn owns_ptr(&self, p: *const c_void) -> bool {
+    pub unsafe fn owns_ptr(&self, p: *const c_void) -> bool {
         // SAFETY: `self.heap` is a live heap; `p` may be any pointer.
         unsafe { mimalloc::mi_heap_contains(self.heap_ptr(), p) }
     }
@@ -584,9 +590,9 @@ impl Drop for MimallocArena {
         HEAP_DESTROY_COUNT.fetch_add(1, Ordering::Relaxed);
         // Zig: `deinit` → `mi_heap_destroy`. Destroys the heap and bulk-frees
         // every block still allocated in it without running per-block free.
+        crate::ast_alloc::bump_invalidate_heap(self.heap_ptr());
         // SAFETY: `self.heap` is a live heap obtained from `mi_heap_new` and
         // is destroyed exactly once here.
-        crate::ast_alloc::bump_invalidate_heap(self.heap_ptr());
         unsafe { mimalloc::mi_heap_destroy(self.heap_ptr()) };
     }
 }

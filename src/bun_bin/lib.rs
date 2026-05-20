@@ -152,8 +152,12 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
 /// empty and the binary would see argc=0. Capturing the C-runtime-provided
 /// pair here is the only portable source — same contract as Zig's
 /// `bun.initArgv` wrapping `std.os.argv`.
+///
+/// # Safety
+/// `argv` must point to `argc` valid NUL-terminated C strings that live for
+/// the entire process — guaranteed by the C runtime that calls this symbol.
 #[unsafe(no_mangle)]
-pub extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
+pub unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
     // 0. Capture argv FIRST — before the crash handler, whose panic path
     //    dumps the command line via `bun_core::argv()`.
     //    SAFETY: `argc`/`argv` come from the C runtime; the argv block lives
@@ -164,6 +168,9 @@ pub extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
     bun_crash_handler::init();
 
     // SIGPIPE/SIGXFSZ → SIG_IGN, like main.zig's posix block.
+    // SAFETY: `SIGPIPE`/`SIGXFSZ` are valid signal numbers and `SIG_IGN` is a
+    // valid disposition; called once on the main thread before any other
+    // thread is spawned, so there is no concurrent sigaction.
     #[cfg(unix)]
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_IGN);

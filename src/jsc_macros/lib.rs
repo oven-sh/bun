@@ -80,9 +80,9 @@ impl Parse for HostFnArgs {
 /// needs to type-check, not link.
 fn jsc_extern_fn(
     export_name: Option<&str>,
-    sig_args: TokenStream2,
-    ret: TokenStream2,
-    body: TokenStream2,
+    sig_args: &TokenStream2,
+    ret: &TokenStream2,
+    body: &TokenStream2,
 ) -> TokenStream2 {
     let export_attr = export_name.map(|n| {
         let lit = LitStr::new(n, Span::call_site());
@@ -105,12 +105,12 @@ fn jsc_extern_fn(
 pub fn host_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as HostFnArgs);
     let func = parse_macro_input!(item as ItemFn);
-    expand_host_fn(args, func)
+    expand_host_fn(&args, &func)
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }
 
-fn expand_host_fn(args: HostFnArgs, func: ItemFn) -> syn::Result<TokenStream2> {
+fn expand_host_fn(args: &HostFnArgs, func: &ItemFn) -> syn::Result<TokenStream2> {
     let fn_name = &func.sig.ident;
     let fn_name_str = fn_name.to_string();
 
@@ -243,7 +243,7 @@ fn expand_host_fn(args: HostFnArgs, func: ItemFn) -> syn::Result<TokenStream2> {
         ),
     };
 
-    let shim = jsc_extern_fn(export.as_deref(), sig_args, ret, body);
+    let shim = jsc_extern_fn(export.as_deref(), &sig_args, &ret, &body);
 
     Ok(quote! {
         #func
@@ -543,12 +543,12 @@ pub fn JsClass(attr: TokenStream, item: TokenStream) -> TokenStream {
     // payloads are frequently `union(enum)`, which port to Rust `enum`s.
     let item2 = item.clone();
     if let Ok(strukt) = syn::parse::<ItemStruct>(item) {
-        return expand_js_class(args, strukt)
+        return expand_js_class(&args, strukt)
             .unwrap_or_else(|e| e.to_compile_error())
             .into();
     }
     let enm = parse_macro_input!(item2 as ItemEnum);
-    expand_js_class_enum(args, enm).into()
+    expand_js_class_enum(&args, &enm).into()
 }
 
 /// `#[derive(JsClass)]` form — same expansion, for callers that prefer derive
@@ -563,22 +563,22 @@ pub fn js_class_derive(item: TokenStream) -> TokenStream {
     hooks.into()
 }
 
-fn expand_js_class(args: JsClassArgs, strukt: ItemStruct) -> syn::Result<TokenStream2> {
+fn expand_js_class(args: &JsClassArgs, strukt: ItemStruct) -> syn::Result<TokenStream2> {
     // Strip any helper `#[js(...)]` attrs from fields so the struct compiles
     // (they are metadata for the macro, not real attributes).
     let mut strukt = strukt;
     for field in strukt.fields.iter_mut() {
         field.attrs.retain(|a| !a.path().is_ident("js"));
     }
-    let hooks = js_class_hooks(&args, &strukt.ident);
+    let hooks = js_class_hooks(args, &strukt.ident);
     Ok(quote! {
         #strukt
         #hooks
     })
 }
 
-fn expand_js_class_enum(args: JsClassArgs, enm: ItemEnum) -> TokenStream2 {
-    let hooks = js_class_hooks(&args, &enm.ident);
+fn expand_js_class_enum(args: &JsClassArgs, enm: &ItemEnum) -> TokenStream2 {
+    let hooks = js_class_hooks(args, &enm.ident);
     quote! {
         #enm
         #hooks
@@ -816,12 +816,12 @@ impl Parse for UwsCallbackArgs {
 pub fn uws_callback(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as UwsCallbackArgs);
     let func = parse_macro_input!(item as ItemFn);
-    expand_uws_callback(args, func)
+    expand_uws_callback(&args, &func)
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }
 
-fn expand_uws_callback(args: UwsCallbackArgs, func: ItemFn) -> syn::Result<TokenStream2> {
+fn expand_uws_callback(args: &UwsCallbackArgs, func: &ItemFn) -> syn::Result<TokenStream2> {
     let fn_name = &func.sig.ident;
     let vis = &func.vis;
 

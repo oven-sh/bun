@@ -199,8 +199,11 @@ static Z_ALLOCATOR_VTABLE: AllocatorVTable = AllocatorVTable {
 };
 
 /// mimalloc can free allocations without being given their size.
-pub fn free_without_size(ptr: *mut c_void) {
-    // SAFETY: ptr is null or was allocated by mimalloc; mi_free accepts null
+///
+/// # Safety
+/// `ptr` must be null or have been allocated by mimalloc.
+pub unsafe fn free_without_size(ptr: *mut c_void) {
+    // SAFETY: caller contract — ptr is null or was allocated by mimalloc; mi_free accepts null
     unsafe { mimalloc::mi_free(ptr) }
 }
 

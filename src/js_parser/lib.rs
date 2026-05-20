@@ -176,7 +176,7 @@ pub mod Macro {
             // `&mut Transpiler<'_>` and only reads/borrows fields — it does not
             // retain the pointer past return (the boxed state it allocates owns
             // its own data).
-            unsafe { __bun_macro_context_init(transpiler as *mut T as *mut core::ffi::c_void) }
+            unsafe { __bun_macro_context_init(core::ptr::from_mut(transpiler).cast::<core::ffi::c_void>()) }
         }
         /// Free the boxed higher-tier state behind `data`. Only call when the
         /// owning `Transpiler` is a short-lived bytewise clone (e.g. the
@@ -382,6 +382,8 @@ pub mod defines {
     // process-lifetime AST stores. `DefineData` is only shared across threads
     // via the read-only `Box<Define>` after init. Never written through.
     unsafe impl Send for DefineData {}
+    // SAFETY: see `Send` impl above — the `StoreRef` targets are immutable and
+    // process-lifetime, and `DefineData` is read-only after init.
     unsafe impl Sync for DefineData {}
 
     impl Default for DefineData {
@@ -396,6 +398,7 @@ pub mod defines {
     }
 
     /// Named-init shim (mirrors Zig anonymous-struct init).
+    #[derive(Clone, Copy)]
     pub struct Options<'a> {
         pub original_name: Option<&'a [u8]>,
         pub value: ExprData,
@@ -479,7 +482,7 @@ pub mod defines {
             }
         }
 
-        pub fn merge(a: DefineData, b: DefineData) -> DefineData {
+        pub fn merge(a: &DefineData, b: DefineData) -> DefineData {
             DefineData {
                 value: b.value,
                 flags: Flags::new(
@@ -496,20 +499,11 @@ pub mod defines {
         }
     }
 
+    #[derive(Default)]
     pub struct Define {
         pub identifiers: StringHashMap<IdentifierDefine>,
         pub dots: StringHashMap<Vec<DotDefine>>,
         pub drop_debugger: bool,
-    }
-
-    impl Default for Define {
-        fn default() -> Self {
-            Self {
-                identifiers: StringHashMap::default(),
-                dots: StringHashMap::default(),
-                drop_debugger: false,
-            }
-        }
     }
 
     impl Define {
@@ -552,7 +546,7 @@ pub mod defines {
                 if let Some(existing) = self.dots.get_mut(tail) {
                     for part in existing.iter_mut() {
                         if are_parts_equal(&part.parts, &parts) {
-                            part.data = DefineData::merge(part.data.clone(), value);
+                            part.data = DefineData::merge(&part.data, value);
                             return Ok(());
                         }
                     }

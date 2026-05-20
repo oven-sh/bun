@@ -722,7 +722,7 @@ impl S3Client {
             global,
             PathLike::default(),
             options,
-            existing_credentials,
+            &existing_credentials,
         )?;
 
         // Zig: `blob.store.?.data.s3.listObjects(blob.store.?, globalThis, object_keys, options)`.

@@ -237,7 +237,6 @@ pub use self::package_manager_options::Options;
 // Zig's `PackageJSONEditor` is a file-level namespace (no struct) — re-export
 // the module itself so `PackageJSONEditor::edit(...)` resolves to the free fns.
 pub use self::install_with_manager::install_with_manager;
-#[allow(non_snake_case)]
 pub use self::package_json_editor as PackageJSONEditor;
 pub use self::update_request::UpdateRequest;
 pub use self::workspace_package_json_cache::WorkspacePackageJSONCache;
@@ -977,7 +976,11 @@ impl PackageManager {
         err: Error,
     ) {
         if let Some(ctx) = self.on_wake.context {
-            (self.on_wake.get_on_dependency_error())(ctx.as_ptr(), dependency, dependency_id, err);
+            // SAFETY: `ctx` is the `WakeHandler::context` registered alongside
+            // this callback (a live `*mut Queue`); see `runtime::jsc_hooks`.
+            unsafe {
+                (self.on_wake.get_on_dependency_error())(ctx.as_ptr(), dependency, dependency_id, err);
+            }
         }
     }
 
@@ -1000,6 +1003,9 @@ impl PackageManager {
     /// # Safety
     /// `this` must point to a live `PackageManager` (BACKREF).
     pub unsafe fn wake_raw(this: *mut Self) {
+        // SAFETY: caller guarantees `this` points to a live `PackageManager`; we
+        // only form field pointers via `addr_of!`/`addr_of_mut!` (no whole-struct
+        // borrow) and `wakeup()` is internally synchronized for cross-thread use.
         unsafe {
             let on_wake = &*core::ptr::addr_of!((*this).on_wake);
             if let Some(ctx) = on_wake.context {
@@ -1040,10 +1046,10 @@ impl PackageManager {
             is_done: fn(&mut C) -> bool,
         }
         fn trampoline<C>(p: *mut c_void) -> bool {
+            let erased = p as *const Erased<C>;
             // SAFETY: `p` is the `Erased<C>` local we pass to `tick_raw` below. We only
             // read its two POD fields here (no `&mut Erased` materialized — the local
             // `&mut erased` borrow in the caller is still notionally live across the call).
-            let erased = p as *const Erased<C>;
             let (ctx_ptr, is_done) = unsafe { ((*erased).ctx, (*erased).is_done) };
             // SAFETY: `ctx_ptr` was derived from the caller's exclusive `closure: &mut C`
             // and the caller does not touch `closure` again until `tick_raw` returns, so
@@ -1893,8 +1899,8 @@ pub fn init(
     // Zig: `try env.load(entries_option.entries, &[_][]u8{}, .production, false)`
     // (PackageManager.zig:794). Reborrow the BSSMap-owned `*DirEntry` for the
     // call; `env.load` only reads it (`hasComptimeQuery` lookups for `.env*`).
-    // SAFETY: see `entries_option` above — single-threaded init, BSSMap-owned.
     env.load(
+        // SAFETY: see `entries_option` above — single-threaded init, BSSMap-owned.
         unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(entries_option) },
         &[],
         dot_env::DotEnvFileSuffix::Production,
@@ -2165,11 +2171,11 @@ pub fn init(
         // normalized.deinit() → Drop (stack buffer)
     }
 
-    // SAFETY: singleton fully initialized; main thread, no workers yet.
     // Zig: `jsc.MiniEventLoop.global = &manager.event_loop.mini` — set the
     // thread-local global to point at the embedded mini loop. The Rust port
     // stores it in `bun_event_loop::mini_event_loop::GLOBAL`.
     {
+        // SAFETY: singleton fully initialized; main thread, no workers yet.
         let evl = unsafe { &mut (*manager_ptr).event_loop };
         if let AnyEventLoop::Mini(mini) = evl {
             let mini_ptr: *mut MiniEventLoop<'static> = mini;
@@ -2210,9 +2216,9 @@ pub fn init(
 
         manager
             .options
-            // SAFETY: ctx.log is the process-lifetime CLI log set by
-            // create_context_data(); single-threaded init region.
             .load(
+                // SAFETY: ctx.log is the process-lifetime CLI log set by
+                // create_context_data(); single-threaded init region.
                 unsafe { &mut *ctx.log },
                 env,
                 Some(cli),

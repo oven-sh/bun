@@ -169,7 +169,7 @@ pub fn generate_code_for_lazy_export(
                     let name: &[u8] = syms[css_ref.inner_index() as usize].original_name.slice();
                     let loc = ast
                         .local_scope
-                        .get_adapted(name, SliceBoxAdapter)
+                        .get_adapted(name, &SliceBoxAdapter)
                         .unwrap()
                         .loc;
 
@@ -234,7 +234,7 @@ pub fn generate_code_for_lazy_export(
                                             let name_v = name.v();
                                             let Some(other_name_entry) = other_file
                                                 .local_scope
-                                                .get_adapted(name_v, SliceBoxAdapter)
+                                                .get_adapted(name_v, &SliceBoxAdapter)
                                             else {
                                                 continue;
                                             };
@@ -277,7 +277,7 @@ pub fn generate_code_for_lazy_export(
                                     for name in compose.names.slice() {
                                         let name_v = name.v();
                                         let Some(name_entry) =
-                                            ast.local_scope.get_adapted(name_v, SliceBoxAdapter)
+                                            ast.local_scope.get_adapted(name_v, &SliceBoxAdapter)
                                         else {
                                             self.log.add_error_fmt(
                                                 &self.all_sources[idx as usize],

@@ -97,7 +97,7 @@ fn tag_to_hooks(t: resolution::Tag) -> hooks::ResolutionTag {
 }
 
 #[inline]
-fn resolution_to_hooks(r: resolution::Resolution) -> hooks::Resolution {
+fn resolution_to_hooks(r: &resolution::Resolution) -> hooks::Resolution {
     // `resolution::Value<u64>` is a type alias for `hooks::ResolutionValue<u64>`,
     // so `value` copies as the SAME nominal type. `hooks::Resolution` is
     // in-memory only (never byte-serialized), so trailing union bytes carrying
@@ -150,7 +150,7 @@ impl hooks::AutoInstaller for PackageManager {
     }
 
     fn lockfile_package_resolution(&self, id: PackageID) -> hooks::Resolution {
-        resolution_to_hooks(self.lockfile.packages.get(id as usize).resolution)
+        resolution_to_hooks(&self.lockfile.packages.get(id as usize).resolution)
     }
 
     fn lockfile_dependencies_buf(&self) -> &[hooks::Dependency] {
@@ -174,7 +174,7 @@ impl hooks::AutoInstaller for PackageManager {
         // Zig: `manager.lockfile.resolve(name, dependency_version)`
         // (resolver.zig:2028) → `Lockfile.resolvePackageFromNameAndVersion`.
         self.lockfile
-            .resolve_package_from_name_and_version(name, Clone::clone(version))
+            .resolve_package_from_name_and_version(name, version)
     }
 
     fn lockfile_legacy_package_to_dependency_id(
@@ -378,7 +378,7 @@ impl hooks::AutoInstaller for PackageManager {
         name: &[u8],
         version: &hooks::DependencyVersion,
     ) -> Option<PackageID> {
-        pm_resolution::resolve_from_disk_cache(self, name, Clone::clone(version))
+        pm_resolution::resolve_from_disk_cache(self, name, version)
     }
 
     fn enqueue_dependency_to_root(
@@ -394,7 +394,7 @@ impl hooks::AutoInstaller for PackageManager {
                 resolution,
             } => hooks::EnqueueResult::Resolution {
                 package_id,
-                resolution: resolution_to_hooks(resolution),
+                resolution: resolution_to_hooks(&resolution),
             },
             enqueue::DependencyToEnqueue::Pending(id) => hooks::EnqueueResult::Pending(id),
             enqueue::DependencyToEnqueue::NotFound => hooks::EnqueueResult::NotFound,
@@ -410,11 +410,8 @@ impl hooks::AutoInstaller for PackageManager {
         name_hash: Option<u64>,
         version: &[u8],
         sliced: &SlicedString,
-        log: *mut bun_ast::Log,
+        log: Option<&mut bun_ast::Log>,
     ) -> Option<hooks::DependencyVersion> {
-        // SAFETY: resolver passes `self.log()` which is a valid `*mut Log`;
-        // null is also accepted (Zig: `?*logger.Log`).
-        let log = unsafe { log.as_mut() };
         // Zig threads `pm` so `parse_with_tag` can record `npm:` aliases into
         // `pm.known_npm_aliases` (dependency.zig:905).
         dependency::parse(name, name_hash, version, sliced, log, Some(self))
@@ -427,10 +424,8 @@ impl hooks::AutoInstaller for PackageManager {
         version: &[u8],
         tag: hooks::DependencyVersionTag,
         sliced: &SlicedString,
-        log: *mut bun_ast::Log,
+        log: Option<&mut bun_ast::Log>,
     ) -> Option<hooks::DependencyVersion> {
-        // SAFETY: see `parse_dependency`.
-        let log = unsafe { log.as_mut() };
         dependency::parse_with_tag(
             name,
             Some(name_hash),
@@ -484,8 +479,8 @@ pub unsafe fn __bun_resolver_init_package_manager(
         install.map(|p| unsafe { p.as_ref() });
     // SAFETY: caller guarantees `log` / `env` point at process-lifetime
     // Transpiler-owned storage with no aliasing `&mut` live across this call.
-    let log_ref: &mut bun_ast::Log = unsafe { log.as_mut() };
-    let env_ref: &mut bun_dotenv::Loader<'static> = unsafe { env.as_mut() };
+    let (log_ref, env_ref): (&mut bun_ast::Log, &mut bun_dotenv::Loader<'static>) =
+        unsafe { (log.as_mut(), env.as_mut()) };
 
     let pm: *mut PackageManager = crate::package_manager::init_with_runtime(
         log_ref,

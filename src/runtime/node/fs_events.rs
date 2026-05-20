@@ -206,6 +206,9 @@ pub struct CoreFoundation {
 // inside the loaded framework. Everything else is a resolved fn pointer.
 // Sharing/sending bitwise copies across threads is sound.
 unsafe impl Send for CoreFoundation {}
+// SAFETY: all fields are immutable process-lifetime data (leaked dlopen handle,
+// framework-static `*const CFStringRef`, resolved fn pointers); none provide
+// interior mutability, so concurrent `&CoreFoundation` access is sound.
 unsafe impl Sync for CoreFoundation {}
 
 impl CoreFoundation {
@@ -250,6 +253,9 @@ pub struct CoreServices {
 // resolved fn pointers and a u64 sentinel. Sharing/sending across threads is
 // sound.
 unsafe impl Send for CoreServices {}
+// SAFETY: all fields are immutable process-lifetime data (leaked dlopen handle,
+// resolved fn pointers, a `u64` constant); none provide interior mutability, so
+// concurrent `&CoreServices` access is sound.
 unsafe impl Sync for CoreServices {}
 
 impl CoreServices {
@@ -375,9 +381,9 @@ impl Task {
     /// Rust: `Task::new(ctx, Callback)`
     // PERF(port): was @call(.always_inline) on the wrapper.
     pub fn new<T>(ctx: &mut T, callback: fn(&mut T)) -> Task {
-        // SAFETY: fn(&mut T) and fn(*mut ()) have identical single-pointer ABI;
-        // ctx is always a valid &mut T at call time (see run()).
         Task {
+            // SAFETY: fn(&mut T) and fn(*mut ()) have identical single-pointer ABI;
+            // ctx is always a valid &mut T at call time (see run()).
             callback: unsafe { bun_ptr::cast_fn_ptr::<fn(&mut T), fn(*mut ())>(callback) },
             ctx: std::ptr::from_mut::<T>(ctx).cast::<()>(),
         }
@@ -552,8 +558,8 @@ impl FSEventsLoop {
         event_flags: *mut FSEventStreamEventFlags,
         _: *mut FSEventStreamEventId,
     ) {
-        // SAFETY: event_paths is a `char **` of length num_events per FSEvents API
         let paths_ptr = event_paths as *const *const c_char;
+        // SAFETY: event_paths is a `char **` of length num_events per FSEvents API
         let paths = unsafe { bun_core::ffi::slice(paths_ptr, num_events) };
         // SAFETY: info was set to self in _schedule()
         let loop_ = unsafe { bun_ptr::callback_ctx::<FSEventsLoop>(info) };

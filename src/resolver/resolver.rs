@@ -3057,7 +3057,7 @@ impl<'a> Resolver<'a> {
                                 None,
                                 esm.version,
                                 &sliced_string,
-                                self.log(),
+                                Some(self.log_mut()),
                             ) {
                                 Some(v) => v,
                                 None => break 'load_module_from_cache,

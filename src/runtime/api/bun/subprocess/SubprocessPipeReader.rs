@@ -101,6 +101,7 @@ impl PipeReader {
     pub unsafe fn detach(this: *mut Self) {
         // SAFETY: `this` is live; raw-ptr field write avoids holding a `&mut` across deref.
         unsafe { (*this).process = None };
+        // SAFETY: caller contract — `this` is live with refcount > 0; no borrow of `*this` outlives this call.
         unsafe { PipeReader::deref(this) };
     }
 

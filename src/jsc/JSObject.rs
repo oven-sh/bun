@@ -173,7 +173,10 @@ impl JSObject {
         core::hint::black_box(std::ptr::from_ref::<Self>(self));
     }
 
-    pub fn create_structure(
+    /// # Safety
+    /// `names` must point to `length` initialized `ExternColumnIdentifier`s
+    /// valid for the duration of the call; C++ does not retain the pointer.
+    pub unsafe fn create_structure(
         global: &JSGlobalObject,
         owner: JSValue,
         length: u32,

@@ -518,8 +518,8 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
     }
 
     /// Zig `fetchRemove` — remove and return the owned `{key, value}` pair.
-    pub fn fetch_remove(&mut self, key: K) -> Option<crate::hash_map::KV<K, V>> {
-        self.remove_entry(&key)
+    pub fn fetch_remove(&mut self, key: &K) -> Option<crate::hash_map::KV<K, V>> {
+        self.remove_entry(key)
             .map(|(k, v)| crate::hash_map::KV { key: k, value: v })
     }
 

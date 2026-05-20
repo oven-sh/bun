@@ -71,15 +71,19 @@ impl Expect {
                 entry_: *mut c_void,
                 item: JSValue,
             ) {
-                // SAFETY: entry_ is &mut ExpectedEntry on the caller's stack, threaded through
-                // for_each as opaque userdata; non-null asserted by Zig `entry_.?`. global/pass
-                // point at live stack locals for the duration of the for_each call.
                 debug_assert!(!entry_.is_null());
+                // SAFETY: entry_ is &mut ExpectedEntry on the caller's stack, threaded through
+                // for_each as opaque userdata; non-null asserted above (Zig `entry_.?`).
                 let entry = unsafe { bun_ptr::callback_ctx::<ExpectedEntry>(entry_) };
-                let Ok(same) = item.is_same_value(entry.expected, unsafe { &*entry.global }) else {
+                // SAFETY: entry.global was set from `std::ptr::from_ref(global)` on the caller's
+                // stack frame, which outlives the synchronous for_each this callback runs inside.
+                let global = unsafe { &*entry.global };
+                let Ok(same) = item.is_same_value(entry.expected, global) else {
                     return;
                 };
                 if same {
+                    // SAFETY: entry.pass is `&raw mut pass` on the caller's stack, live for the
+                    // duration of for_each; this callback is the sole writer (no aliasing &mut).
                     unsafe { *entry.pass = true };
                     // TODO(perf): break out of the `forEach` when a match is found
                 }

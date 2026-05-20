@@ -62,7 +62,7 @@ impl From<JsError> for ReadFromBlobError {
 
 /// `ZBox` is global-allocator memory; re-allocate via `dupe_z` so `mi_free` can free it.
 #[inline]
-fn zbox_into_raw(z: bun_core::ZBox) -> *const c_char {
+fn zbox_into_raw(z: &bun_core::ZBox) -> *const c_char {
     bun_core::dupe_z(z.as_bytes())
 }
 
@@ -113,7 +113,7 @@ fn read_from_blob(
     if zbox.is_empty() {
         return Err(ReadFromBlobError::EmptyFile);
     }
-    Ok(zbox_into_raw(zbox))
+    Ok(zbox_into_raw(&zbox))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -157,7 +157,7 @@ impl SSLConfigFromJs for SSLConfig {
         let mut any = false;
 
         if let Some(passphrase) = generated.passphrase.get() {
-            result.passphrase = zbox_into_raw(passphrase.to_owned_slice_z());
+            result.passphrase = zbox_into_raw(&passphrase.to_owned_slice_z());
             any = true;
         }
         if let Some(dh_params_file) = generated.dh_params_file.get() {
@@ -165,7 +165,7 @@ impl SSLConfigFromJs for SSLConfig {
             any = true;
         }
         if let Some(server_name) = generated.server_name.get() {
-            result.server_name = zbox_into_raw(server_name.to_owned_slice_z());
+            result.server_name = zbox_into_raw(&server_name.to_owned_slice_z());
             result.requires_custom_request_ctx = true;
         }
 
@@ -206,7 +206,7 @@ impl SSLConfigFromJs for SSLConfig {
         let protocols: *const c_char = match &generated.alpn_protocols {
             jsc::generated::SSLConfigAlpnProtocols::None => core::ptr::null(),
             jsc::generated::SSLConfigAlpnProtocols::String(val) => {
-                zbox_into_raw(val.get().to_owned_slice_z())
+                zbox_into_raw(&val.get().to_owned_slice_z())
             }
             jsc::generated::SSLConfigAlpnProtocols::Buffer(val) => {
                 // SAFETY: `val.get()` returns a non-null `*mut JSCArrayBuffer`
@@ -220,7 +220,7 @@ impl SSLConfigFromJs for SSLConfig {
             result.requires_custom_request_ctx = true;
         }
         if let Some(ciphers) = generated.ciphers.get() {
-            result.ssl_ciphers = zbox_into_raw(ciphers.to_owned_slice_z());
+            result.ssl_ciphers = zbox_into_raw(&ciphers.to_owned_slice_z());
             result.is_using_default_ciphers = false;
             result.requires_custom_request_ctx = true;
         }
@@ -274,10 +274,10 @@ fn handle_path(
         // the canonical helper so the secure-zero core stays single-sourced.
         // SAFETY: `zbox_into_raw` yields a `default_alloc::malloc`-backed,
         // NUL-terminated buffer whose ownership we now hold exclusively.
-        unsafe { bun_core::free_sensitive(zbox_into_raw(name)) };
+        unsafe { bun_core::free_sensitive(zbox_into_raw(&name)) };
         return Err(global.throw_invalid_arguments(format_args!("Unable to access {} path", field)));
     }
-    Ok(zbox_into_raw(name))
+    Ok(zbox_into_raw(&name))
 }
 
 fn handle_file_for_field(
@@ -309,14 +309,14 @@ fn handle_file(
         match file {
             jsc::generated::SSLConfigFile::None => return Ok(None),
             jsc::generated::SSLConfigFile::String(val) => SingleFile::String(val.get()),
-            // SAFETY: GenVal::get() yields a non-null pointer valid for the
-            // lifetime of `generated`; we narrow it to `&mut` for the call.
             jsc::generated::SSLConfigFile::Buffer(val) => {
+                // SAFETY: GenVal::get() yields a non-null pointer valid for the
+                // lifetime of `generated`; we narrow it to `&mut` for the call.
                 SingleFile::Buffer(unsafe { &mut *val.get() })
             }
-            // SAFETY: opaque `GenBlob` (`*mut c_void`) is the JS class `m_ctx`
-            // pointer, layout-identical to `crate::webcore::Blob`.
             jsc::generated::SSLConfigFile::File(val) => {
+                // SAFETY: opaque `GenBlob` (`*mut c_void`) is the JS class `m_ctx`
+                // pointer, layout-identical to `crate::webcore::Blob`.
                 SingleFile::File(unsafe { &mut *val.get().cast::<crate::webcore::Blob>() })
             }
             jsc::generated::SSLConfigFile::Array(list) => {
@@ -351,14 +351,14 @@ fn handle_file_array(
             global,
             match elem {
                 jsc::generated::SSLConfigSingleFile::String(val) => SingleFile::String(val.get()),
-                // SAFETY: see `handle_file` above — non-null GenVal pointers
-                // valid for the lifetime of `generated`.
                 jsc::generated::SSLConfigSingleFile::Buffer(val) => {
+                    // SAFETY: see `handle_file` above — non-null GenVal pointers
+                    // valid for the lifetime of `generated`.
                     SingleFile::Buffer(unsafe { &mut *val.get() })
                 }
-                // SAFETY: opaque `GenBlob` (`*mut c_void`) is layout-identical
-                // to `crate::webcore::Blob`.
                 jsc::generated::SSLConfigSingleFile::File(val) => {
+                    // SAFETY: opaque `GenBlob` (`*mut c_void`) is layout-identical
+                    // to `crate::webcore::Blob`.
                     SingleFile::File(unsafe { &mut *val.get().cast::<crate::webcore::Blob>() })
                 }
             },
@@ -380,7 +380,7 @@ fn handle_single_file(
     file: SingleFile<'_>,
 ) -> Result<*const c_char, ReadFromBlobError> {
     match file {
-        SingleFile::String(string) => Ok(zbox_into_raw(string.to_owned_slice_z())),
+        SingleFile::String(string) => Ok(zbox_into_raw(&string.to_owned_slice_z())),
         SingleFile::Buffer(jsc_buffer) => {
             let buffer: jsc::ArrayBuffer = jsc_buffer.as_array_buffer();
             Ok(dupe_z(buffer.byte_slice()))

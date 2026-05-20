@@ -833,7 +833,7 @@ pub struct StringRangeStart {
 
 impl StringRangeStart {
     #[inline]
-    pub fn end(&self, end: Pos) -> StringRange {
+    pub fn end(self, end: Pos) -> StringRange {
         StringRange { off: self.off, end }
     }
 }
@@ -896,24 +896,28 @@ pub struct StringBuilder<'a, Enc: Encoding> {
 }
 
 impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
-    // SAFETY: callers construct StringBuilder via Parser::string_builder{,_raw}()
-    // which stores `self as *mut Parser`; the builder never outlives the parser
-    // stack frame and is the sole mutator of `whitespace_buf` while live.
     #[inline]
     fn parser(&self) -> &Parser<'a, Enc> {
+        // SAFETY: callers construct StringBuilder via Parser::string_builder{,_raw}()
+        // which stores `self as *mut Parser`; the builder never outlives the parser
+        // stack frame and is the sole mutator of `whitespace_buf` while live.
         unsafe { &*self.parser }
     }
     #[inline]
     fn parser_mut(&mut self) -> &mut Parser<'a, Enc> {
+        // SAFETY: same backref invariant as `parser()`; `&mut self` guarantees
+        // exclusive access to the builder so the derived `&mut Parser` does not
+        // alias another live borrow.
         unsafe { &mut *self.parser }
     }
     /// Shortcut for `self.parser().input` that returns the slice with its
     /// original `'a` lifetime (decoupled from `&self`), so it can be hoisted
     /// above `match &mut self.str` without tripping borrowck.
-    // SAFETY: see `parser()` note above; `input` is a `&'a` borrow stored in
-    // the Parser and is unaffected by any mutation this builder performs.
     #[inline]
     fn input(&self) -> &'a [Enc::Unit] {
+        // SAFETY: same backref invariant as `parser()`; `input` is a `&'a`
+        // borrow stored in the Parser and is unaffected by any mutation this
+        // builder performs.
         unsafe { (*self.parser).input }
     }
 
@@ -1332,6 +1336,9 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         let raw_parser: *mut Parser<'i, Enc> = self.parser;
         macro_rules! parser {
             () => {
+                // SAFETY: `raw_parser` is `self.parser`, set from `&mut Parser`
+                // in `scan_plain_scalar`; ctx never outlives that borrow and each
+                // expansion's `&mut` is dropped before the next is derived.
                 unsafe { &mut *raw_parser }
             };
         }
@@ -3829,11 +3836,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
     fn scan_plain_scalar(&mut self, opts: ScanOptions) -> Result<Token<Enc>, ParseError> {
         let parser: *mut Parser<'i, Enc> = self;
-        // SAFETY: single provenance chain — once the raw pointer is derived,
-        // route ALL parser access through it; never touch `self` directly again
-        // (Stacked Borrows: reborrowing `self` would invalidate `parser`).
         macro_rules! parser {
             () => {
+                // SAFETY: single provenance chain — `parser` was derived from
+                // `&mut self` above; all access routes through it (never reborrow
+                // `self` directly), and each expansion's `&mut` is dropped before
+                // the next is derived.
                 unsafe { &mut *parser }
             };
         }

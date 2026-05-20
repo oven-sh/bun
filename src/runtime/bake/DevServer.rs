@@ -1481,7 +1481,7 @@ fn on_unref_source_map_request(dev: &mut DevServer, req: &mut Request, resp: Any
 
 /// `WebSocketBehavior.Wrap(DevServer, HmrSocket, ssl).apply(.{})`.
 fn hmr_socket_behavior<const SSL: bool>() -> bun_uws_sys::WebSocketBehavior {
-    bun_uws_sys::web_socket::Wrap::<DevServer, HmrSocket, SSL>::apply(Default::default())
+    bun_uws_sys::web_socket::Wrap::<DevServer, HmrSocket, SSL>::apply(&Default::default())
 }
 
 // `WebSocketBehavior.Wrap(ServerType, Type, ssl)` requires `Type` (= `HmrSocket`)

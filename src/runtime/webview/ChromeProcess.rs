@@ -121,16 +121,16 @@ pub extern "C" fn Bun__Chrome__ensure(
             unsafe { core::slice::from_raw_parts(extra_argv, extra_argv_len as usize) }
         };
         let vm = global.bun_vm_ptr();
-        // SAFETY: caller passes valid NUL-terminated strings when non-null.
         let user_data_dir = if user_data_dir.is_null() {
             None
         } else {
+            // SAFETY: caller passes a valid NUL-terminated string when non-null; null is handled above.
             Some(unsafe { bun_core::ffi::cstr(user_data_dir) })
         };
-        // SAFETY: caller passes valid NUL-terminated strings when non-null.
         let path = if path.is_null() {
             None
         } else {
+            // SAFETY: caller passes a valid NUL-terminated string when non-null; null is handled above.
             Some(unsafe { bun_core::ffi::cstr(path) })
         };
         let fd = match spawn(
@@ -400,7 +400,7 @@ fn spawn(
     {
         // PERF(port): was arena bulk-free — all temp strings now individually heap-allocated.
 
-        let chrome = find_chrome(explicit_path).ok_or(bun_core::err!("ChromeNotFound"))?;
+        let chrome = find_chrome(explicit_path).ok_or_else(|| bun_core::err!("ChromeNotFound"))?;
         scoped_log!(
             Chrome,
             "using chrome: {}",
@@ -517,7 +517,9 @@ fn spawn(
         };
 
         // TODO(port): narrow error set — outer Result + inner bun_sys::Result
-        let spawned = bun_spawn::spawn_process(&opts, argv.as_ptr(), env.as_ptr().cast())??;
+        // SAFETY: `argv`/`env` are local null-terminated C-string arrays with
+        // argv[0] non-null; valid for this call.
+        let spawned = unsafe { bun_spawn::spawn_process(&opts, argv.as_ptr(), env.as_ptr().cast()) }??;
 
         // PORT NOTE: reshaped for borrowck — Zig's errdefer stays armed past
         // this point (and would re-close fds on the WatchFailed path below);

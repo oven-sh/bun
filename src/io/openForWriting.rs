@@ -65,7 +65,7 @@ impl OpenForWritingInput for &mut ZStr {
 
 pub fn open_for_writing<P, C>(
     dir: Fd,
-    input_path: P,
+    input_path: &P,
     input_flags: i32,
     mode: Mode,
     pollable: &mut bool,
@@ -97,7 +97,7 @@ where
 
 pub fn open_for_writing_impl<P, C>(
     dir: Fd,
-    input_path: P,
+    input_path: &P,
     input_flags: i32,
     mode: Mode,
     pollable: &mut bool,

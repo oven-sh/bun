@@ -30,7 +30,7 @@ impl AlphaValue {
         CSSNumberFns::to_css(&self.v, dest)
     }
 
-    pub fn eql(lhs: &Self, rhs: &Self) -> bool {
+    pub fn eql(lhs: Self, rhs: Self) -> bool {
         // PORT NOTE: Zig used css.implementEql (comptime field reflection); single f32 field → direct compare.
         lhs.v == rhs.v
     }
@@ -38,9 +38,9 @@ impl AlphaValue {
     // TODO(port): css.implementHash (comptime field reflection) — wires once
     // generics::CssHash blanket impl covers f32-payload structs.
 
-    pub fn deep_clone(&self) -> Self {
+    pub fn deep_clone(self) -> Self {
         // PORT NOTE: Zig used css.implementDeepClone; struct is Copy so this is a trivial copy.
-        *self
+        self
     }
 }
 

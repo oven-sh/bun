@@ -3111,10 +3111,10 @@ pub fn u64_hex_fixed<const LOWER: bool, const N: usize>(v: u64) -> [u8; N] {
 /// for `ZigString::init`. Port of the inline `std.fmt.bufPrint(.., "{x:0>2}:..")`
 /// pattern duplicated at `node_os.zig:686` and `:800`.
 #[inline]
-pub fn mac_address_lower(mac: &[u8; 6]) -> [u8; 17] {
+pub fn mac_address_lower(mac: [u8; 6]) -> [u8; 17] {
     let mut out = [b':'; 17];
     let mut i = 0;
-    for &b in mac {
+    for b in mac {
         out[i] = LOWER_HEX_TABLE[(b >> 4) as usize];
         out[i + 1] = LOWER_HEX_TABLE[(b & 0x0f) as usize];
         i += 3;
@@ -3682,6 +3682,7 @@ pub type IntOutOfRangeFormatter<'a> = NewOutOfRangeFormatter<'a, i64>;
 pub type StringOutOfRangeFormatter<'a> = NewOutOfRangeFormatter<'a, &'a [u8]>;
 pub type BunStringOutOfRangeFormatter<'a> = NewOutOfRangeFormatter<'a, bun_alloc::String>;
 
+#[derive(Copy, Clone)]
 pub struct OutOfRangeOptions<'a> {
     pub min: i64,
     pub max: i64,

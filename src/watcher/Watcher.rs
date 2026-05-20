@@ -1011,7 +1011,7 @@ impl WatchEvent {
         &buf[self.name_off as usize..][..self.name_len as usize]
     }
 
-    pub fn sort_by_index(event: &WatchEvent, rhs: &WatchEvent) -> core::cmp::Ordering {
+    pub fn sort_by_index(event: WatchEvent, rhs: WatchEvent) -> core::cmp::Ordering {
         event.index.cmp(&rhs.index)
     }
 

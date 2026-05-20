@@ -272,7 +272,7 @@ pub mod unicode {
             let mut buf = [0u8; 4];
             let avail = (self.bytes.len() - self.i).min(4);
             buf[..avail].copy_from_slice(&self.bytes[self.i..self.i + avail]);
-            let cp = decode_wtf8_rune_t::<CodePoint>(&buf, len, -1);
+            let cp = decode_wtf8_rune_t::<CodePoint>(buf, len, -1);
             self.width = len;
             self.i += len as usize;
             self.c = cp;
@@ -334,7 +334,7 @@ pub mod unicode {
             let take = (len as usize).min(tail.len());
             let mut buf = [0u8; 4];
             buf[..take].copy_from_slice(&tail[..take]);
-            let cp = decode_wtf8_rune_t::<CodePoint>(&buf, len, -1);
+            let cp = decode_wtf8_rune_t::<CodePoint>(buf, len, -1);
             if cp == -1 {
                 cursor.c = super::UNICODE_REPLACEMENT as CodePoint;
                 cursor.width = 1;
@@ -518,11 +518,11 @@ pub mod lexer_step {
             // truncated multibyte at EOF → Zig's empty-slice arm
             -1
         } else {
+            let mut quad = [0u8; 4];
             // SAFETY: `*current < len` (checked by caller), `cp_len ∈ 2..=4`, and
             // `avail >= cp_len`, so `contents[current..current + cp_len]` is in-bounds.
             // `decode_wtf8_rune_t_multibyte` only dereferences `p[0..len]`; pad bytes are
             // never read.
-            let mut quad = [0u8; 4];
             unsafe {
                 core::ptr::copy_nonoverlapping(
                     contents.as_ptr().add(*current),
@@ -530,7 +530,7 @@ pub mod lexer_step {
                     cp_len,
                 );
             }
-            decode_wtf8_rune_t_multibyte(&quad, cp_len as u8, UNICODE_REPLACEMENT as CodePoint)
+            decode_wtf8_rune_t_multibyte(quad, cp_len as u8, UNICODE_REPLACEMENT as CodePoint)
         };
 
         *current += if code_point != UNICODE_REPLACEMENT as CodePoint {
@@ -907,7 +907,7 @@ pub fn last_index_of_char(self_: &[u8], char: u8) -> Option<usize> {
 }
 
 #[inline]
-pub fn last_index_of_char_t<T: Eq>(self_: &[T], char: T) -> Option<usize> {
+pub fn last_index_of_char_t<T: Copy + Eq>(self_: &[T], char: T) -> Option<usize> {
     self_.iter().rposition(|c| *c == char)
 }
 
@@ -1064,9 +1064,9 @@ impl StringOrTinyString {
             }
             0 => {
                 const USZ: usize = core::mem::size_of::<usize>();
-                // SAFETY: init() wrote ptr.to_le_bytes() at [0..USZ] and len at [USZ..USZ*2].
                 let mut ptr_bytes = [0u8; USZ];
                 let mut len_bytes = [0u8; USZ];
+                // SAFETY: init() wrote ptr.to_le_bytes() at [0..USZ] and len at [USZ..USZ*2].
                 unsafe {
                     core::ptr::copy_nonoverlapping(buf, ptr_bytes.as_mut_ptr(), USZ);
                     core::ptr::copy_nonoverlapping(buf.add(USZ), len_bytes.as_mut_ptr(), USZ);
@@ -2498,11 +2498,11 @@ pub fn order_t<T: Ord>(a: &[T], b: &[T]) -> Ordering {
     a.cmp(b)
 }
 
-pub fn cmp_strings_asc(_: &(), a: &[u8], b: &[u8]) -> bool {
+pub fn cmp_strings_asc(_: (), a: &[u8], b: &[u8]) -> bool {
     order(a, b) == Ordering::Less
 }
 
-pub fn cmp_strings_desc(_: &(), a: &[u8], b: &[u8]) -> bool {
+pub fn cmp_strings_desc(_: (), a: &[u8], b: &[u8]) -> bool {
     order(a, b) == Ordering::Greater
 }
 
@@ -2735,7 +2735,7 @@ pub fn has_prefix_with_word_boundary(input: &[u8], prefix: &'static [u8]) -> boo
             if next.len() > 3 { next[3] } else { 0 },
         ];
 
-        let cp = decode_wtf8_rune_t::<i32>(&bytes, wtf8_byte_sequence_length(next[0]), -1);
+        let cp = decode_wtf8_rune_t::<i32>(bytes, wtf8_byte_sequence_length(next[0]), -1);
         if cp < 0 || !crate::string::lexer::is_identifier_continue(cp as u32) {
             return true;
         }

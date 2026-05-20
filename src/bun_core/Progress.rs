@@ -75,7 +75,7 @@ impl File {
     /// `Output.Source.init`). We route through the sink so the platform check
     /// lives in `bun_sys`.
     #[inline]
-    pub fn supports_ansi_escape_codes(&self) -> bool {
+    pub fn supports_ansi_escape_codes(self) -> bool {
         #[cfg(windows)]
         {
             // Zig std.fs.File.supportsAnsiEscapeCodes(): query the live console
@@ -96,7 +96,7 @@ impl File {
         }
     }
     #[inline]
-    pub fn is_tty(&self) -> bool {
+    pub fn is_tty(self) -> bool {
         output_sink().is_terminal(self.fd())
     }
     /// Windows console HANDLE for the legacy `SetConsoleCursorPosition` path.
@@ -106,7 +106,7 @@ impl File {
         self.fd().native()
     }
     #[inline]
-    pub fn winsize(&self) -> Option<crate::Winsize> {
+    pub fn winsize(self) -> Option<crate::Winsize> {
         output_sink().tty_winsize(self.fd())
     }
 }
@@ -605,6 +605,7 @@ impl Progress {
             let mut need_ellipse = false;
             let mut maybe_node: *mut Node = &raw mut self.root;
             while !maybe_node.is_null() {
+                let (name, unit, eti, completed_items);
                 // SAFETY: walking the recently_updated_child chain under
                 // update_mutex; nodes are caller-owned and outlive this call
                 // per API contract. Read every field through the raw pointer
@@ -614,7 +615,6 @@ impl Progress {
                 // tag derived from it under Stacked Borrows. (Zig has no
                 // aliasing model, so Progress.zig:313-345 holds `node: *Node`
                 // across `self.bufWrite` freely; Rust must not.)
-                let (name, unit, eti, completed_items);
                 unsafe {
                     name = (*maybe_node).name;
                     unit = (*maybe_node).unit;

@@ -211,7 +211,7 @@ macro_rules! string_store_impl {
                 // returned slice borrows the singleton's never-freed storage
                 // (heap-owned by a `'static` `BSSStringList` or a leaked
                 // mi_malloc), so widening to `'static` is sound.
-                unsafe { <$bty>::append(Self::backing(), value) }
+                unsafe { <$bty>::append(Self::backing(), &value) }
             }
             /// Zig: `FileSystem.DirnameStore.print(fmt, args)` — format directly
             /// into the store's tail (no intermediate `String`). See
@@ -239,7 +239,7 @@ macro_rules! string_store_impl {
             fn append(&mut self, s: &[u8]) -> core::result::Result<&[u8], AllocError> {
                 // SAFETY: see `<$t>::append`. Returned `'static` narrows to the
                 // trait's elided lifetime.
-                unsafe { <$bty>::append(<$t>::backing(), s) }
+                unsafe { <$bty>::append(<$t>::backing(), &s) }
             }
             fn append_lower_case(&mut self, s: &[u8]) -> core::result::Result<&[u8], AllocError> {
                 // SAFETY: see `append`.
@@ -288,7 +288,7 @@ impl strings::Appender for FilenameStoreAppender {
         // singleton; `BSSStringList::append` takes `*mut Self` and serializes on
         // its inner mutex (no aliased `&mut` is ever formed). Returned slice
         // borrows the singleton's never-freed storage.
-        let r = unsafe { FilenameStoreBacking::append(self.backing, s)? };
+        let r = unsafe { FilenameStoreBacking::append(self.backing, &s)? };
         // SAFETY: storage owned by the process-lifetime `BSSStringList` singleton
         // (never freed); `Interned` is the canonical proof type for this widen.
         Ok(unsafe { bun_ptr::Interned::assume(r) }.as_bytes())
@@ -1834,11 +1834,13 @@ pub enum EntriesOption {
 // fields are the only thing blocking auto-Sync (needed for `bss_map_inner!`'s
 // `SyncUnsafeCell` static).
 unsafe impl Sync for EntriesOption {}
+// SAFETY: same invariant as the `Sync` impl above.
 unsafe impl Send for EntriesOption {}
 
 // SAFETY: same ARENA contract as `EntriesOption` — `Entry` lives in the
 // `BSSList` singleton; `*mut Entry` raw pointers are the only !Send/!Sync field.
 unsafe impl Sync for Entry {}
+// SAFETY: same invariant as the `Sync` impl above.
 unsafe impl Send for Entry {}
 
 #[repr(u8)]
@@ -2343,10 +2345,10 @@ impl RealFS {
         &mut self,
         path: &'p [u8],
         size_: Option<usize>,
-        file: bun_sys::File,
+        file: &bun_sys::File,
         shared_buffer: &'buf mut MutableString,
     ) -> Result<PathContentsPair<'p, 'buf>, bun_core::Error> {
-        read_file_with_handle_impl::<USE_SHARED_BUFFER, STREAM>(path, size_, &file, shared_buffer)
+        read_file_with_handle_impl::<USE_SHARED_BUFFER, STREAM>(path, size_, file, shared_buffer)
     }
 
     /// Thin forward — kept for spec-shape fidelity (fs.zig:1160).
@@ -2359,13 +2361,13 @@ impl RealFS {
         &mut self,
         path: &'p [u8],
         size_hint: Option<usize>,
-        file: bun_sys::File,
+        file: &bun_sys::File,
         shared_buffer: &'buf mut MutableString,
     ) -> Result<PathContentsPair<'p, 'buf>, bun_core::Error> {
         read_file_with_handle_impl::<USE_SHARED_BUFFER, STREAM>(
             path,
             size_hint,
-            &file,
+            file,
             shared_buffer,
         )
     }

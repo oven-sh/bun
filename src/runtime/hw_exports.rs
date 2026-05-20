@@ -56,7 +56,7 @@ pub fn drain_microtasks_from_js(global: &JSGlobalObject, _cf: &CallFrame) -> JSV
     // `as_mut()` ignores its receiver and re-reads the TLS slot anyway, so go
     // straight to the thread-local for the VM.
     let vm = VirtualMachine::get_mut();
-    let jsc_vm = vm.jsc_vm;
+    let jsc_vm = global.vm();
     let _ = vm
         .event_loop_mut()
         .drain_microtasks_with_global(global, jsc_vm);
@@ -347,6 +347,7 @@ pub extern "C" fn bindgen_NodeModuleModule_dispatch_stat1(
     // SAFETY: `arg_str` is a live `bun.String` (C++ stack local); `out` is a
     // valid out-param.
     let s = unsafe { (*arg_str).to_utf8() };
+    // SAFETY: `out` is a valid C++ stack out-param.
     unsafe { *out = bun_jsc::node_module_module::_stat(s.slice()) };
     true
 }
@@ -365,6 +366,7 @@ pub fn bindgen_bunobject_dispatch_braces(
     // a plain deref matches that exactly; `braces` only borrows the bytes via
     // `to_utf8()` and never derefs the handle.
     let input = unsafe { *arg_input };
+    // SAFETY: `arg_options` points to a `BracesOptions` on the C++ caller's stack.
     let opts = unsafe { *arg_options };
     bun_jsc::host_fn::to_js_host_call(global, || {
         crate::api::bun_object::braces(global, input, opts)
@@ -400,9 +402,11 @@ pub fn bindgen_fmt_jsc_dispatch_fmt_string(
     // SAFETY: `arg_code`/`arg_formatter`/`out` are valid C++ stack locals
     // (see GeneratedBindings.cpp call site).
     let code = unsafe { (*arg_code).to_utf8() };
+    // SAFETY: `arg_formatter` points to a `Formatter` on the C++ caller's stack.
     let formatter = unsafe { *arg_formatter };
     match bun_jsc::fmt_jsc::js_bindings::fmt_string(global, code.slice(), formatter) {
         Ok(s) => {
+            // SAFETY: `out` is a valid C++ stack out-param.
             unsafe { *out = s };
             true
         }
@@ -445,6 +449,7 @@ pub fn bindgen_bindgen_test_dispatch_add(
     // GeneratedBindings.cpp:149).
     match bun_jsc::bindgen_test::add(global, unsafe { *arg_a }, unsafe { *arg_b }) {
         Ok(v) => {
+            // SAFETY: `out` is a valid C++ stack out-param.
             unsafe { *out = v };
             true
         }
@@ -479,12 +484,14 @@ pub extern "C" fn bindgen_Bindgen_test_dispatchRequiredAndOptionalArg1(
     // SAFETY: all pointers are valid C++ stack locals; `buf` fields are read
     // gated on their `_set` flags (matching `if buf.b_set buf.b_value else null`).
     let buf = unsafe { &*buf };
+    // SAFETY: `arg_a`/`arg_c` point to scalars on the C++ caller's stack.
     let v = bun_jsc::bindgen_test::required_and_optional_arg(
         unsafe { *arg_a },
         if buf.b_set { Some(buf.b_value) } else { None },
         unsafe { *arg_c },
         if buf.d_set { Some(buf.d_value) } else { None },
     );
+    // SAFETY: `out` is a valid C++ stack out-param.
     unsafe { *out = v };
     true
 }
@@ -596,7 +603,7 @@ pub fn bindgen_node_os_dispatch_user_info(
     // SAFETY: `arg_options` is a valid C++ stack local; `UserInfoOptions` is
     // `#[repr(C)]` matching the bindgen `extern struct`.
     let options = unsafe { core::ptr::read(arg_options) };
-    bun_jsc::host_fn::to_js_host_call(global, || node_os::user_info(global, options))
+    bun_jsc::host_fn::to_js_host_call(global, || node_os::user_info(global, &options))
 }
 
 // HOST_EXPORT(bindgen_Node_os_dispatchVersion1, c)

@@ -948,8 +948,8 @@ pub fn migrate_yarn_lockfile<'a>(
             }
         }
 
-        let name: &[u8] = if is_npm_alias && entry.resolved.is_some() {
-            Entry::get_package_name_from_resolved_url(entry.resolved.unwrap())
+        let name: &[u8] = if let (true, Some(resolved)) = (is_npm_alias, entry.resolved) {
+            Entry::get_package_name_from_resolved_url(resolved)
                 .unwrap_or_else(|| Entry::get_name_from_spec(entry.specs[0]))
         } else if is_direct_url {
             Entry::get_name_from_spec(entry.specs[0])
@@ -1044,8 +1044,8 @@ pub fn migrate_yarn_lockfile<'a>(
             }
         }
 
-        let base_name: &[u8] = if is_npm_alias && entry.resolved.is_some() {
-            Entry::get_package_name_from_resolved_url(entry.resolved.unwrap())
+        let base_name: &[u8] = if let (true, Some(resolved)) = (is_npm_alias, entry.resolved) {
+            Entry::get_package_name_from_resolved_url(resolved)
                 .unwrap_or_else(|| Entry::get_name_from_spec(entry.specs[0]))
         } else {
             Entry::get_name_from_spec(entry.specs[0])
@@ -1161,11 +1161,7 @@ pub fn migrate_yarn_lockfile<'a>(
                     ));
                 }
 
-                if Entry::is_remote_tarball(resolved) {
-                    break 'blk Resolution::init(ResolutionValue::RemoteTarball(
-                        sbuf!().append(resolved)?,
-                    ));
-                } else if resolved.ends_with(b".tgz") {
+                if Entry::is_remote_tarball(resolved) || resolved.ends_with(b".tgz") {
                     break 'blk Resolution::init(ResolutionValue::RemoteTarball(
                         sbuf!().append(resolved)?,
                     ));

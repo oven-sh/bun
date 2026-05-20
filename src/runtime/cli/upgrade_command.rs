@@ -599,6 +599,7 @@ impl UpgradeCommand {
                 // `get_latest_version` only touches them on the !SILENT error
                 // path (no overlapping live borrows).
                 Some(unsafe { &mut *refresher }),
+                // SAFETY: progress points into the same leaked allocation (see above).
                 Some(unsafe { &mut *progress }),
                 use_profile,
             )?
@@ -608,6 +609,7 @@ impl UpgradeCommand {
 
             // SAFETY: see above.
             unsafe { (*progress).end() };
+            // SAFETY: refresher is a leaked Box (process-lifetime); no other &mut is live.
             unsafe { (*refresher).refresh() };
 
             if !Environment::IS_CANARY {
@@ -669,6 +671,7 @@ impl UpgradeCommand {
                 unsafe { (*refresher).start(b"Downloading", version.size as usize) };
             // SAFETY: see above.
             unsafe { (*progress).unit = Progress::Unit::Bytes };
+            // SAFETY: refresher is a leaked Box (process-lifetime); no other &mut is live.
             unsafe { (*refresher).refresh() };
             // Zig leaks this allocation intentionally — store in CLI arena.
             let zip_file_buffer: &'static mut MutableString = crate::cli::cli_arena()
@@ -716,6 +719,7 @@ impl UpgradeCommand {
 
             // SAFETY: refresher/progress are leaked allocations.
             unsafe { (*progress).end() };
+            // SAFETY: refresher is a leaked Box (process-lifetime); no other &mut is live.
             unsafe { (*refresher).refresh() };
 
             if bytes.is_empty() {
@@ -1117,7 +1121,7 @@ impl UpgradeCommand {
                 )
             };
             let target_dir_ = bun_core::dirname(destination_executable)
-                .ok_or(bun_core::err!("UpgradeFailedBecauseOfMissingExecutableDir"))?;
+                .ok_or_else(|| bun_core::err!("UpgradeFailedBecauseOfMissingExecutableDir"))?;
             // safe because the slash will no longer be in use
             let target_dir_len = target_dir_.len();
             // SAFETY: in-bounds; write is at the separator byte between dirname

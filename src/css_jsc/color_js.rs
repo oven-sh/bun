@@ -595,7 +595,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                 &arena,
                 bun_alloc::ArenaVec::<u8>::new_in(&arena),
                 &mut dest,
-                css::PrinterOptions::default(),
+                &css::PrinterOptions::default(),
                 None,
                 None,
                 &symbols,

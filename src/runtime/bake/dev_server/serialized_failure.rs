@@ -42,6 +42,7 @@ impl OwnerPacked {
 
 /// The metaphorical owner of an incremental file error. The packed variant is
 /// given to the HMR runtime as an opaque handle.
+#[derive(Copy, Clone)]
 pub enum Owner {
     None,
     Route(route_bundle::Index),

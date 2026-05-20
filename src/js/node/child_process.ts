@@ -493,9 +493,13 @@ function spawnSync(file, args, options) {
   };
 
   if (options.windowsBatchFileError) {
-    const error = options.windowsBatchFileError;
-    error.syscall = "spawnSync " + options.file;
-    error.path = options.file;
+    const error = new SystemError(
+      `spawnSync ${options.file} EINVAL`,
+      options.file,
+      "spawnSync " + options.file,
+      -4071,
+      "EINVAL",
+    );
     error.spawnargs = ArrayPrototypeSlice.$call(options.args, 1);
     return {
       signal: null,

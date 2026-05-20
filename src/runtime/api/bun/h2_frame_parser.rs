@@ -4439,7 +4439,7 @@ impl H2FrameParser {
             return None;
         }
         // Client-initiated streams must use odd identifiers (RFC 9113 §5.1.1).
-        if self.is_server.get() && stream_identifier & 1 == 0 {
+        if stream_identifier & 1 == 0 {
             return None;
         }
         self.handle_received_stream_id(stream_identifier)

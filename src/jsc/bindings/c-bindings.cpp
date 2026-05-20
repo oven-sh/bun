@@ -933,9 +933,12 @@ static struct sigaction previous_actions[NSIG];
     M(SIGIO);
 
 #if OS(LINUX)
+// SIGPWR is intentionally excluded: JSC's GC uses it (see wtf/posix/ThreadingPOSIX.cpp,
+// g_wtfConfig.sigThreadSuspendResume) to suspend/resume threads for conservative stack
+// scanning. Replacing that handler here would break the suspend protocol and, via
+// SA_RESETHAND, revert SIGPWR to SIG_DFL so the next GC suspend terminates the process.
 #define FOR_EACH_LINUX_ONLY_SIGNAL(M) \
     M(SIGPOLL);                       \
-    M(SIGPWR);                        \
     M(SIGSTKFLT);
 
 #endif

@@ -740,6 +740,132 @@ describe.if(isWindows)("#30839 - imports entry pointing at a scoped package", ()
       } catch {}
     }
   });
+
+  it.skipIf(!canTriggerEACCES)("module resolution skips unreadable cwd ancestors", async () => {
+    using dir = tempDir("resolver-inaccessible-ancestor", {
+      "blocked/project/entry.js": `import { value } from "pkg";\nconsole.log(value);`,
+      "blocked/project/node_modules/pkg/index.js": `export const value = "resolved";\n`,
+      "blocked/project/node_modules/pkg/package.json": JSON.stringify({
+        name: "pkg",
+        module: "index.js",
+      }),
+    });
+    const root = String(dir);
+    const blocked = join(root, "blocked");
+    const project = join(blocked, "project");
+
+    if (canUseRunuser) {
+      for (const p of [root, project, join(project, "node_modules"), join(project, "node_modules/pkg")]) {
+        chmodSync(p, 0o755);
+      }
+      for (const p of [
+        join(project, "entry.js"),
+        join(project, "node_modules/pkg/index.js"),
+        join(project, "node_modules/pkg/package.json"),
+      ]) {
+        chmodSync(p, 0o644);
+      }
+    }
+
+    try {
+      chmodSync(blocked, 0o111);
+      await using proc = Bun.spawn({
+        cmd: canUseRunuser ? ["runuser", "-u", "nobody", "--", bunExe(), "entry.js"] : [bunExe(), "entry.js"],
+        env: bunEnv,
+        cwd: project,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(stdout).toBe("resolved\n");
+      expect(exitCode).toBe(0);
+    } finally {
+      try {
+        chmodSync(blocked, 0o755);
+      } catch {}
+    }
+  });
+
+  it.skipIf(!canTriggerEACCES)("unreadable cwd ancestors stop parent package metadata inheritance", async () => {
+    using dir = tempDir("resolver-inaccessible-ancestor-boundary", {
+      "package.json": JSON.stringify({
+        name: "parent-package",
+        imports: {
+          "#secret": "./secret.js",
+        },
+      }),
+      "secret.js": `export const value = "leaked";\n`,
+      "blocked/project/entry.js": `import { value } from "#secret";\nconsole.log(value);`,
+    });
+    const root = String(dir);
+    const blocked = join(root, "blocked");
+    const project = join(blocked, "project");
+
+    if (canUseRunuser) {
+      for (const p of [root, blocked, project]) {
+        chmodSync(p, 0o755);
+      }
+      for (const p of [join(root, "package.json"), join(root, "secret.js"), join(project, "entry.js")]) {
+        chmodSync(p, 0o644);
+      }
+    }
+
+    try {
+      chmodSync(blocked, 0o111);
+      await using proc = Bun.spawn({
+        cmd: canUseRunuser ? ["runuser", "-u", "nobody", "--", bunExe(), "entry.js"] : [bunExe(), "entry.js"],
+        env: bunEnv,
+        cwd: project,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout).toBe("");
+      expect(stderr).toContain("#secret");
+      expect(exitCode).not.toBe(0);
+    } finally {
+      try {
+        chmodSync(blocked, 0o755);
+      } catch {}
+    }
+  });
+
+  it.skipIf(!canTriggerEACCES)("module resolution still fails when cwd itself is unreadable", async () => {
+    using dir = tempDir("resolver-inaccessible-target", {
+      "project/entry.js": `console.log("should not run");\n`,
+    });
+    const root = String(dir);
+    const project = join(root, "project");
+
+    if (canUseRunuser) {
+      chmodSync(root, 0o755);
+      chmodSync(project, 0o755);
+      chmodSync(join(project, "entry.js"), 0o644);
+    }
+
+    try {
+      chmodSync(project, 0o111);
+      await using proc = Bun.spawn({
+        cmd: canUseRunuser ? ["runuser", "-u", "nobody", "--", bunExe(), "entry.js"] : [bunExe(), "entry.js"],
+        env: bunEnv,
+        cwd: project,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout).toBe("");
+      expect(stderr).not.toBe("");
+      expect(exitCode).not.toBe(0);
+    } finally {
+      try {
+        chmodSync(project, 0o755);
+      } catch {}
+    }
+  });
 }
 
 describe("resolving external URL specifiers with non-ASCII characters", () => {

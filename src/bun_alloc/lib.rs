@@ -2116,10 +2116,28 @@ macro_rules! get_zone {
 
 type HashKeyType = u64;
 
-// Zig `IndexMapContext` is the identity hash on a u64 key.
-// TODO(port): `bun_collections::HashMap` needs an identity-hash builder; using std default for now.
-pub type IndexMap = HashMap<HashKeyType, IndexType>;
-pub type IndexMapManaged = HashMap<HashKeyType, IndexType>;
+/// Zig `IndexMapContext` — identity hash on a u64 key. Keys here are already
+/// `bun_wyhash` outputs, so rehashing with std's SipHash just costs cycles.
+#[derive(Default, Clone, Copy)]
+pub struct IdentityU64Hasher(u64);
+impl core::hash::Hasher for IdentityU64Hasher {
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        self.0 = bun_wyhash::hash_with_seed(self.0, bytes);
+    }
+    #[inline]
+    fn write_u64(&mut self, n: u64) {
+        self.0 = n;
+    }
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+type IndexMapHasher = core::hash::BuildHasherDefault<IdentityU64Hasher>;
+
+pub type IndexMap = HashMap<HashKeyType, IndexType, IndexMapHasher>;
+pub type IndexMapManaged = HashMap<HashKeyType, IndexType, IndexMapHasher>;
 
 #[derive(Clone, Copy)]
 pub struct Result {
@@ -2317,9 +2335,17 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
             self.list.ptrs[block_id].as_ref().expect("alloc").used as usize > (idx % COUNT)
         );
 
-        // SAFETY: `idx % COUNT < used` (asserted above) ⇒ slot was initialized by `append`.
+        // SAFETY: `block_id <= used` ⇒ `append` allocated `ptrs[block_id]`;
+        // `idx % COUNT < used` ⇒ slot was initialized by `append`.
         unsafe {
-            self.list.ptrs[block_id].as_ref().expect("alloc").items[idx % COUNT].assume_init_ref()
+            self.list
+                .ptrs
+                .get_unchecked(block_id)
+                .as_ref()
+                .unwrap_unchecked()
+                .items
+                .get_unchecked(idx % COUNT)
+                .assume_init_ref()
         }
     }
 
@@ -2334,9 +2360,17 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
             self.list.ptrs[block_id].as_ref().expect("alloc").used as usize > (idx % COUNT)
         );
 
-        // SAFETY: `idx % COUNT < used` (asserted above) ⇒ slot was initialized by `append`.
+        // SAFETY: `block_id <= used` ⇒ `append` allocated `ptrs[block_id]`;
+        // `idx % COUNT < used` ⇒ slot was initialized by `append`.
         unsafe {
-            self.list.ptrs[block_id].as_mut().expect("alloc").items[idx % COUNT].assume_init_mut()
+            self.list
+                .ptrs
+                .get_unchecked_mut(block_id)
+                .as_mut()
+                .unwrap_unchecked()
+                .items
+                .get_unchecked_mut(idx % COUNT)
+                .assume_init_mut()
         }
     }
 }

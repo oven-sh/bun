@@ -2,6 +2,7 @@ use core::ptr::NonNull;
 
 use crate::BundledAst as JSAst;
 use bun_alloc::Arena as ThreadLocalArena;
+use bun_alloc::{AstAlloc, AstVec};
 use bun_ast::server_component_boundary;
 use bun_collections::{MultiArrayList, VecExt};
 use enum_map::EnumMap;
@@ -100,19 +101,33 @@ pub struct HtmlImports {
     pub html_source_indices: Vec<IndexInt>,
 }
 
-#[derive(Default)]
 pub struct InputFile {
     pub source: bun_ast::Source,
-    pub secondary_path: Box<[u8]>,
+    pub secondary_path: AstVec<u8>,
     pub loader: options::Loader,
     pub side_effects: SideEffects,
     // PORT NOTE: Zig stored `arena: std.mem.Allocator = bun.default_allocator`
     // here so deinit could free `source`/`secondary_path` with the right alloc.
     // In Rust the owned fields (Box/Vec) carry their arena; field dropped.
-    pub additional_files: Vec<AdditionalFile>,
-    pub unique_key_for_additional_file: Box<[u8]>,
+    pub additional_files: AstVec<AdditionalFile>,
+    pub unique_key_for_additional_file: Box<[u8], AstAlloc>,
     pub content_hash_for_additional_file: u64,
     pub flags: InputFileFlags,
+}
+
+impl Default for InputFile {
+    fn default() -> Self {
+        Self {
+            source: bun_ast::Source::default(),
+            secondary_path: AstAlloc::vec(),
+            loader: options::Loader::default(),
+            side_effects: SideEffects::default(),
+            additional_files: AstAlloc::vec(),
+            unique_key_for_additional_file: AstAlloc::vec().into_boxed_slice(),
+            content_hash_for_additional_file: 0,
+            flags: InputFileFlags::default(),
+        }
+    }
 }
 
 // SoA column accessors on `MultiArrayList<InputFile>` and `Slice<InputFile>`.
@@ -121,11 +136,11 @@ pub struct InputFile {
 bun_collections::multi_array_columns! {
     pub trait InputFileColumns for InputFile {
         source: bun_ast::Source,
-        secondary_path: Box<[u8]>,
+        secondary_path: AstVec<u8>,
         loader: options::Loader,
         side_effects: SideEffects,
-        additional_files: Vec<AdditionalFile>,
-        unique_key_for_additional_file: Box<[u8]>,
+        additional_files: AstVec<AdditionalFile>,
+        unique_key_for_additional_file: Box<[u8], AstAlloc>,
         content_hash_for_additional_file: u64,
         flags: InputFileFlags,
     }

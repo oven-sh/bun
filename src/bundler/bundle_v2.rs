@@ -6981,6 +6981,19 @@ pub mod bv2_impl {
                         &mut this.graph.input_files.items_source_mut()[result_source_index],
                         &mut result.source,
                     );
+                    // `on_load` (copy-for-bundling path) parks plugin asset bytes
+                    // as `Cow::Owned` directly in this slot and gives the ParseTask
+                    // a borrowed alias. The full-Source swap just moved that owner
+                    // into `result.source`; move it back so `parse_worker::on_complete`'s
+                    // `drop(heap::take(result))` doesn't free the buffer
+                    // `process_files_to_copy` will later `mem::take`.
+                    if matches!(result.source.contents, std::borrow::Cow::Owned(_)) {
+                        core::mem::swap(
+                            &mut this.graph.input_files.items_source_mut()[result_source_index]
+                                .contents,
+                            &mut result.source.contents,
+                        );
+                    }
                     // PORT NOTE: Zig kept `source` as a stable pointer into the SoA.
                     // Borrowck forbids holding `&input_files.source[i]` while writing
                     // other `input_files` columns through the MultiArrayList accessor

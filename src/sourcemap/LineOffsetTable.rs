@@ -268,11 +268,10 @@ impl LineOffsetTable {
                     }
 
                     // Zig used a stack-fallback allocator and duped onto `allocator` only when
-                    // stack-owned, then reset the fixed buffer. `SmallVec::into_vec()` is the
-                    // exact equivalent: inline → one alloc sized to content (Zig's `dupe`),
-                    // spilled → `into_boxed_slice()` shrink-reallocs when cap > len. `mem::take`
-                    // re-primes a fresh inline scratch with zero allocation. ASCII-only lines
-                    // (almost all of them) store `Box::default()` and keep the scratch untouched.
+                    // stack-owned, then reset the fixed buffer. The SmallVec scratch reuses its
+                    // inline storage across lines; copy out into an `A`-backed box only when a
+                    // line had non-ASCII bytes. ASCII-only lines (almost all of them) store an
+                    // empty dangling box and leave the scratch untouched.
                     let owned: Box<[i32], A> = if columns_for_non_ascii.is_empty() {
                         empty_box()
                     } else {

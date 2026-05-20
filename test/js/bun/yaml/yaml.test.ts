@@ -989,11 +989,19 @@ folded: >
         expect(() => YAML.parse("a: b: c\n")).toThrow();
       });
 
-      test("rejects explicit : at wrong indent", () => {
+      test("rejects explicit : at deeper indent than ?", () => {
         // [191] requires `:` at exactly the `?` indent
+        expect(() => YAML.parse("? a\n  : b\n")).toThrow();
         expect(() => YAML.parse("x: 1\n? a\n  : b\n")).toThrow();
         expect(() => YAML.parse("x: 1\n? a\n    : b\n")).toThrow();
-        expect(() => YAML.parse("outer:\n  x: 1\n  ? a\n: v\n")).toThrow();
+      });
+
+      test("explicit : at lesser indent ends the entry (e-node value)", () => {
+        // [189] explicit-value is optional; a `:` at lesser indent belongs to
+        // an outer construct. Reference parsers split 2-2 on this.
+        expect(YAML.parse("outer:\n  ? a\n: v\n")).toEqual({ outer: { a: null }, null: "v" });
+        expect(YAML.parse("outer:\n  x: 1\n  ? a\n: v\n")).toEqual({ outer: { x: 1, a: null }, null: "v" });
+        expect(YAML.parse("?\n  ? inner\n: outer\n")).toEqual({ "[object Object]": "outer" });
       });
 
       test("compact mapping as nested explicit key", () => {
@@ -1005,6 +1013,22 @@ folded: >
       test("flow collection inside ? - …", () => {
         expect(YAML.parse("? - [1]\n: b\n")).toEqual({ 1: "b" });
         expect(YAML.parse("? - {k: 1}\n: b\n")).toEqual({ "[object Object]": "b" });
+      });
+
+      test("alias / flow collection as nested explicit key", () => {
+        expect(YAML.parse("outer:\n  ? [1]\n  : v\n")).toEqual({ outer: { 1: "v" } });
+        expect(YAML.parse("outer:\n  ? {k: 1}\n  : v\n")).toEqual({ outer: { "[object Object]": "v" } });
+        expect(YAML.parse("x: &a 1\nouter:\n  ? *a\n  : v\n")).toEqual({ x: 1, outer: { 1: "v" } });
+      });
+
+      test("pnpm-lock style", () => {
+        expect(
+          YAML.parse(
+            "packages:\n  ? /@types/node@20.0.0\n  : dependencies:\n      undici-types: 5.0.0\n    dev: true\n",
+          ),
+        ).toEqual({
+          packages: { "/@types/node@20.0.0": { dependencies: { "undici-types": "5.0.0" }, dev: true } },
+        });
       });
     });
 

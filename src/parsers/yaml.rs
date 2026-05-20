@@ -2919,6 +2919,16 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         // a same-line `- ` after it is a compact sequence whose
                         // indent is column-based, not line-based.
                         let parent_indent = if mapping_value_line != mapping_line {
+                            if !matches!(self.context.get(), Context::FlowIn | Context::FlowKey)
+                                && self.token.indent != mapping_indent
+                            {
+                                if self.token.indent.is_less_than(mapping_indent) {
+                                    // [189] e-node — `:` belongs to an outer
+                                    // construct; this entry has no value.
+                                    break 'value Expr::init(E::Null {}, mapping_value_start.loc());
+                                }
+                                return Err(Self::unexpected_token());
+                            }
                             Some(mapping_indent.add(1))
                         } else {
                             None
@@ -3008,13 +3018,25 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             }
                             return Err(Self::unexpected_token());
                         }
-                        TokenData::MappingValue => {
-                            if explicit_key {
-                                // [191] l-block-map-explicit-value ::= s-indent(n) ':' …
-                                if self.token.indent != mapping_indent {
-                                    return Err(Self::unexpected_token());
+                        TokenData::MappingValue if explicit_key => {
+                            // [191] l-block-map-explicit-value ::= s-indent(n) ':' …
+                            if self.token.indent != mapping_indent {
+                                if self.token.indent.is_less_than(mapping_indent) {
+                                    // [189] e-node — `:` belongs to an outer
+                                    // construct; this entry has no value.
+                                    let value = Expr::init(E::Null {}, self.pos.loc());
+                                    props.append(G::Property {
+                                        key: Some(key),
+                                        value: Some(value),
+                                        ..Default::default()
+                                    })?;
+                                    continue;
                                 }
-                            } else if key_line != self.token.line {
+                                return Err(Self::unexpected_token());
+                            }
+                        }
+                        TokenData::MappingValue => {
+                            if key_line != self.token.line {
                                 return Err(ParseError::MultilineImplicitKey);
                             }
                         }
@@ -3492,7 +3514,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     self.scan(ScanOptions::default())?;
 
                     if matches!(self.token.data, TokenData::MappingValue) {
-                        if self.token.indent.is_less_than(alias_indent) {
+                        if self.token.indent.is_less_than(alias_indent)
+                            || (opts.explicit_mapping_key
+                                && alias_line != self.token.line
+                                && self.token.indent.is_less_than_or_equal(alias_indent))
+                        {
                             break 'node copy;
                         }
                         if alias_line != self.token.line && !opts.explicit_mapping_key {
@@ -3524,7 +3550,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let seq = self.parse_flow_sequence()?;
 
                     if matches!(self.token.data, TokenData::MappingValue) {
-                        if self.token.indent.is_less_than(sequence_indent) {
+                        if self.token.indent.is_less_than(sequence_indent)
+                            || (opts.explicit_mapping_key
+                                && sequence_line != self.token.line
+                                && self.token.indent.is_less_than_or_equal(sequence_indent))
+                        {
                             break 'node seq;
                         }
                         if sequence_line != self.token.line && !opts.explicit_mapping_key {
@@ -3595,7 +3625,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let map = self.parse_flow_mapping()?;
 
                     if matches!(self.token.data, TokenData::MappingValue) {
-                        if self.token.indent.is_less_than(mapping_indent) {
+                        if self.token.indent.is_less_than(mapping_indent)
+                            || (opts.explicit_mapping_key
+                                && mapping_line != self.token.line
+                                && self.token.indent.is_less_than_or_equal(mapping_indent))
+                        {
                             break 'node map;
                         }
                         if mapping_line != self.token.line && !opts.explicit_mapping_key {

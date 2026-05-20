@@ -18,8 +18,12 @@
 /// Version 19: Sourcemap blob is InternalSourceMap (varint stream + sync points), not VLQ.
 /// Version 20: InternalSourceMap stream is bit-packed windows.
 /// Version 21: ModuleInfo records a phase byte per requested module (`import defer`).
-/// Version 22: Emits UTF-8 files in rare cases (tagged templates, regex with unicode)
-const expected_version = 22;
+/// Version 22: Serialize `has_tla` in the cached ESM record flags byte. Entries
+///             written before #30888 carried `has_tla=false` for every module;
+///             the cache-HIT path reinstates the bug for any previously-cached
+///             TLA module (#30887).
+/// Version 23: Emits UTF-8 files in rare cases (tagged templates, regex with unicode)
+const expected_version = 23;
 
 const debug = Output.scoped(.cache, .visible);
 // Source files smaller than this are not written to / read from the on-disk

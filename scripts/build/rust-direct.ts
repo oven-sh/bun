@@ -299,7 +299,7 @@ function resolveUnits(cfg: Config, vendorStamps: string[]): { resolved: Resolved
   });
   if (md.status !== 0) throw new BuildError("cargo metadata failed", { cause: md.stderr });
   const pkgs = new Map<string, MetaPkg>();
-  for (const p of (JSON.parse(md.stdout).packages as MetaPkg[])) pkgs.set(p.id, p);
+  for (const p of JSON.parse(md.stdout).packages as MetaPkg[]) pkgs.set(p.id, p);
 
   // `-Zbuild-std` units aren't in `cargo metadata` — std is its own workspace
   // under `lib/rustlib/src/rust/`. Synthesise their MetaPkg from pkg_id +
@@ -313,7 +313,10 @@ function resolveUnits(cfg: Config, vendorStamps: string[]): { resolved: Resolved
       if (!u.is_std || pkgs.has(u.pkg_id)) continue;
       const m = u.pkg_id.match(/#(?:([^@]+)@)?([\d][^#]*)$/);
       assert(m, `unparseable std pkg_id: ${u.pkg_id}`);
-      const pathName = u.pkg_id.match(/^path\+file:\/\/(.+?)#/)?.[1]?.split("/").pop();
+      const pathName = u.pkg_id
+        .match(/^path\+file:\/\/(.+?)#/)?.[1]
+        ?.split("/")
+        .pop();
       const srcDir = dirname(u.target.src_path);
       const manifest =
         u.target.kind[0] === "custom-build"

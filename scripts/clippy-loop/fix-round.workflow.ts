@@ -49,24 +49,34 @@ const FIXER_RULES = `
 HARD CONSTRAINTS — violating any of these means your output is discarded:
 - You may use ONLY the Read and Grep tools. You are FORBIDDEN from using Bash, Edit, Write, git, cargo, or any tool that mutates state. Do not build, do not run tests.
 - Return your change ONLY as a unified diff in the structured output. Do not apply it.
-- The diff MUST apply cleanly with \`git apply --unidiff-zero\` from repo root: headers \`--- a/<path>\` / \`+++ b/<path>\`, @@ hunks with ≥3 context lines, exact whitespace.
-- Touch ONLY the file you were assigned. Do not modify other files.
-- NEVER silence a lint with #[allow(...)] unless the code is correct-as-is and the lint is a false positive — and then say why in \`skipped\`.
-- NEVER weaken behavior to satisfy a lint (e.g. don't drop a mem::forget without replacing it with the equivalent ManuallyDrop/into_raw; don't make a fn \`unsafe\` if callers in other files would break — leave it and note in \`skipped\`).
+- The diff MUST apply cleanly with \`git apply --unidiff-zero\` from repo root: headers \`--- a/<path>\` / \`+++ b/<path>\`, @@ hunks with ≥3 context lines per hunk, exact whitespace, LF line endings.
+- The PRIMARY file is the one you were assigned. You MAY include hunks for OTHER files **only** when a signature you changed in the primary file has callers there (found via Grep). Never refactor unrelated code in other files.
+- **NEVER add \`#[allow(...)]\`, \`#[expect(...)]\`, or any lint-silencing attribute. Fix the underlying code.** If a lint genuinely cannot be fixed without breaking semantics, return it in \`skipped\` with a one-sentence reason — the loop driver will escalate it; do not silence it.
+- NEVER weaken behavior to satisfy a lint (no dropping a \`mem::forget\` without an equivalent ownership transfer; no deleting a \`drop()\` that has side effects; no changing eager→lazy eval where the eager value has observable side effects).
 - NEVER add comments other than \`// SAFETY:\` justifications.
 - Prefer the smallest correct diff. Do not reformat unrelated lines.
 
 LINT-SPECIFIC GUIDANCE:
-- undocumented_unsafe_blocks: add a \`// SAFETY: <reason>\` immediately above the \`unsafe {\`. The reason must state the invariant, not restate the code. Read surrounding code to find the invariant.
-- mem_forget: replace with ManuallyDrop where the value is later reclaimed, or \`Box::into_raw\`/\`Arc::into_raw\` for FFI handoff. If neither applies and the forget is intentional process-lifetime, use \`#[allow(clippy::mem_forget)]\` with a one-line reason in \`skipped\`.
-- not_unsafe_ptr_arg_deref: if the fn is only called from FFI/generated code, mark it \`unsafe fn\` and add \`// SAFETY:\` at call sites IF they're in the same file. If callers are elsewhere, leave it and note in \`skipped\`.
-- mut_from_ref: do NOT attempt to fix — add \`#[allow(clippy::mut_from_ref)]\` only if missing; this needs the bun_ptr::Cell refactor (separate PR).
-- cast_ptr_alignment: use \`.cast::<T>()\` and \`read_unaligned()\` if the source may be misaligned; otherwise document alignment in SAFETY.
-- or_fun_call / assigning_clones / trivially_copy_pass_by_ref / implicit_clone / unnecessary_unwrap / derivable_impls / derive_partial_eq_without_eq / clone_on_ref_ptr / vec_init_then_push / ptr_as_ptr family: apply clippy's suggested fix verbatim if it compiles by inspection.
-- needless_pass_by_value / large_types_passed_by_value: change to borrow ONLY if you can see all callers are in this file or the fn is private. Public API: skip.
-- disallowed_types / disallowed_methods / disallowed_macros: replace with the bun_* equivalent named in the lint message. If the replacement needs a new import, add it. If the bun_* API differs, skip and note.
-- large_enum_variant / large_stack_frames: Box the offending arm/local. Skip if in a hot path you can't assess.
-- todo / unimplemented / dbg_macro: skip and note — these need human triage.
+- undocumented_unsafe_blocks: add \`// SAFETY: <invariant>\` immediately above the \`unsafe {\`. State the invariant the surrounding code guarantees, not a restatement of the operation. Read enough context to be specific.
+- mem_forget: convert to the structural equivalent — \`ManuallyDrop::new\` + later \`ManuallyDrop::into_inner\`/\`drop\`, or \`Box::into_raw\`/\`Arc::into_raw\`/\`Vec::into_raw_parts\` for FFI handoff, or \`Box::leak\`/\`&'static\` for process-lifetime. Preserve the exact ownership semantics.
+- not_unsafe_ptr_arg_deref: mark the fn \`unsafe\` (or \`unsafe extern "C"\`). Grep for every Rust call site (\`rg 'fn_name\\('\` under \`src/\`) and wrap each in \`unsafe { ... }\` with a \`// SAFETY:\` comment in those files. C/C++ callers via \`#[no_mangle]\` need no change. If the pointer is never null/dangling by construction, prefer changing the param type to \`NonNull<T>\` or \`&T\`/\`&mut T\` instead — that fixes the lint without making the fn unsafe.
+- trivially_copy_pass_by_ref: change \`&T\` → \`T\`. Grep for callers; change \`f(&x)\` → \`f(x)\` (or \`f(*x)\` if \`x\` is itself a ref). Trait impls: only if the trait def is in this repo and you update it + all impls.
+- needless_pass_by_value: change \`T\` → \`&T\` (or \`&str\`/\`&[_]\` for owned string/vec). Grep for callers; add \`&\`. Skip ONLY if the body moves out of the value or stores it (intentional sink) — note in \`skipped\` with the line that consumes it.
+- large_types_passed_by_value: change \`T\` → \`&T\`; update callers. If the fn must own it (stores into self, returns it), \`Box<T>\` instead.
+- mut_from_ref: change the backing storage to \`UnsafeCell<T>\` (or the existing \`bun_ptr::Cell\` if available) and return \`unsafe { &mut *cell.get() }\` with a \`// SAFETY:\` stating the no-alias invariant. Update field access sites in the same file. If the field lives in another file, include that hunk.
+- cast_ptr_alignment: if the source buffer may be unaligned, use \`ptr.cast::<T>()\` + \`read_unaligned()\`/\`write_unaligned()\` (or \`core::ptr::copy_nonoverlapping\` to a stack \`MaybeUninit<T>\`). If alignment is guaranteed, keep the cast and add the guarantee to the enclosing \`// SAFETY:\`.
+- or_fun_call: \`.unwrap_or(expr)\` → \`.unwrap_or_else(|| expr)\` etc. ONLY when \`expr\` allocates/computes; if \`expr\` is a const/literal/cheap-copy, this is a false positive — note in \`skipped\`.
+- assigning_clones: \`*a = b.clone()\` → \`a.clone_from(&b)\` (or \`a.clone_from(b)\` if \`b\` is already a ref).
+- unnecessary_unwrap: rewrite to \`if let\`/\`match\`/\`?\` per clippy's suggestion.
+- clone_on_ref_ptr: \`x.clone()\` → \`Arc::clone(&x)\` / \`Rc::clone(&x)\`.
+- derive_partial_eq_without_eq: add \`Eq\` to the derive **only if** every field type is \`Eq\` (no \`f32\`/\`f64\`). Otherwise skip — the lint is a false positive there.
+- derivable_impls / vec_init_then_push / implicit_clone / map_clone / iter_overeager_cloned / ptr_as_ptr / ref_as_ptr / borrow_as_ptr / ptr_cast_constness / if_same_then_else / drop_non_drop: apply clippy's suggested rewrite.
+- disallowed_types / disallowed_methods / disallowed_macros: replace with the \`bun_*\` equivalent named in the lint reason (e.g. \`std::sync::Mutex\` → \`bun_threading::Mutex\`, \`std::fs::read\` → \`bun_sys::file::read\`, \`println!\` → \`bun_core::output::println\`). Add the \`use\` import. If the bun_* API has a different signature, adapt the call. If the file IS the bun_* wrapper itself (e.g. \`bun_sys\`, \`bun_threading\`, \`bun_core::output\`), the std use is the implementation — skip and note.
+- large_enum_variant: \`Box<BigArm>\` the large variant; update every construction and pattern-match site (Grep for the variant name).
+- large_stack_frames: move the large local to \`Box::new\` / heap; if it's a fixed-size scratch buffer in a hot loop, switch to a reused field or \`SmallVec\` instead.
+- useless_attribute / absurd_extreme_comparisons: delete the attribute / dead branch.
+- todo / unimplemented: Grep for the function's callers. If unreachable in practice, replace with \`unreachable!()\` + a SAFETY-style comment. Otherwise skip and note — implementing missing functionality is out of scope.
+- dbg_macro: delete the \`dbg!()\` (keep its inner expression if its value is used).
 `;
 
 const REVIEWER_RULES = `
@@ -74,12 +84,13 @@ You are an ADVERSARIAL reviewer. Default stance: REJECT. Approve only if you can
 You may use ONLY Read and Grep. No Bash, no cargo, no git, no Edit/Write.
 
 REJECT if ANY of:
-- The diff would not compile (type mismatch, missing import, signature change breaks a caller you can find with Grep).
-- The diff changes behavior (a dropped mem::forget that now double-frees; a fn made \`unsafe\` whose safe callers exist; an .unwrap_or → .unwrap_or_else that changes evaluation semantics observably).
-- The diff silences a lint with #[allow] without a stated false-positive reason.
-- The diff touches lines outside the reported lint locations without need.
-- A SAFETY comment is vacuous ("SAFETY: this is safe") or wrong.
-- Unified-diff format is malformed (bad headers, missing context, wrong line counts).
+- The diff would not compile (type mismatch, missing import, signature change with a caller — Grep for it — left un-updated).
+- The diff changes behavior (a dropped mem::forget that now double-frees; a fn made \`unsafe\` while a safe Rust caller exists un-wrapped; eager→lazy eval where the eager expr had side effects; \`Eq\` added to a type with float fields).
+- The diff adds ANY \`#[allow(...)]\` / \`#[expect(...)]\` attribute. **These are forbidden.** Reject.
+- The diff touches files other than the primary file for any reason OTHER than updating direct callers of a changed signature.
+- A SAFETY comment is vacuous ("SAFETY: this is safe", "SAFETY: trust me") or factually wrong about the invariant.
+- A \`disallowed_*\` replacement is applied inside the wrapper crate that legitimately implements it (\`bun_sys\`, \`bun_threading\`, \`bun_core::output\`, \`bun_collections\`).
+- Unified-diff format is malformed (missing \`--- a/\` or \`+++ b/\` headers, missing/wrong @@ line counts, <3 context lines, tabs↔spaces drift).
 
 If you reject for a FIXABLE reason (typo, missing import, off-by-one context), provide \`revisedPatch\` with the corrected diff.
 If you reject because the change is unsound or the lint should be skipped, leave \`revisedPatch\` empty.

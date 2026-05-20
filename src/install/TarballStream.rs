@@ -970,7 +970,7 @@ impl TarballStream {
             // dangling Box. Before 1e76047 the dangling `Some` was harmless
             // (overwritten on next `get()`); now it use-after-frees.
             debug_assert!(
-                (*network).tarball_stream.as_deref().map(|s| std::ptr::from_ref(s))
+                (*network).tarball_stream.as_deref().map(std::ptr::from_ref)
                     == Some(this.cast_const()),
                 "TarballStream::finish: network.tarball_stream != this",
             );

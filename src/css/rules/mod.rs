@@ -302,9 +302,8 @@ pub(super) mod dc {
         this.deep_clone(bump)
     }
 
-    /// `SelectorList::deep_clone` — selectors/parser.rs intentionally drops
-    /// the `&Arena` parameter (its slices are arena-static). Adapt the call
-    /// shape so leaf rules can stay uniform.
+    /// `SelectorList::deep_clone` re-derives the source `ArenaPtr` instead of
+    /// taking `bump`; intra-arena only (footgun if a cross-arena clone is added).
     #[inline]
     pub fn selector_list(
         this: &crate::selectors::SelectorList,

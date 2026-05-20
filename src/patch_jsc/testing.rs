@@ -91,7 +91,7 @@ impl TestingAPIs {
                 "TestingAPIs.parse: expected at least 1 argument, got 0"
             )));
         };
-        let patchfile_src_bunstr = patchfile_src_js.to_bun_string(global)?;
+        let patchfile_src_bunstr = OwnedString::new(patchfile_src_js.to_bun_string(global)?);
         let patchfile_src = patchfile_src_bunstr.to_utf8();
 
         let patchfile = match parse_patch_file(patchfile_src.slice()) {

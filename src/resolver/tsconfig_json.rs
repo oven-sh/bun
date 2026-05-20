@@ -65,9 +65,7 @@ impl JsonCache {
         // PORT NOTE: reshaped for borrowck — Zig `defer temp_log.appendToMaybeRecycled(log, source) catch {}`
         // runs after the `func() catch null` body; here the append is hoisted past the match.
         let result = match func(source, &mut temp_log, bump) {
-            // Lift the T2 value-subset `bun_ast::Expr` into the full
-            // `bun_ast::Expr` (src/js_parser/ast/Expr.rs `From` impl).
-            Ok(expr) => Some(bun_ast::Expr::from(expr)),
+            Ok(expr) => Some(expr),
             Err(_) => None,
         };
         let _ = temp_log.append_to_maybe_recycled(log, source);

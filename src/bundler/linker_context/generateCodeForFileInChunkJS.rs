@@ -51,7 +51,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     let parts: *mut [Part] = unsafe {
         let list = &mut c.graph.ast.items_parts_mut()[source_index];
         core::ptr::addr_of_mut!(
-            list.slice_mut()
+            list.as_mut_slice()
                 [part_range.part_index_begin as usize..part_range.part_index_end as usize]
         )
     };
@@ -442,7 +442,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                             .graph
                             .top_level_symbol_to_parts(source_index as u32, export_ref)[0]
                             as usize;
-                        let export_part = &ast.parts.slice()[part_idx];
+                        let export_part = &ast.parts.as_slice()[part_idx];
                         if export_part.is_live {
                             // PTR_AUDIT(#1): `*prop` is a bitwise copy of
                             // `e_object.properties[i]` (see `copy_nonoverlapping`

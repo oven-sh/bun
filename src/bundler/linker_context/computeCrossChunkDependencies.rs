@@ -87,15 +87,15 @@ pub fn compute_cross_chunk_dependencies(
     compute_cross_chunk_dependencies_with_chunk_metas(c, chunks, &mut chunk_metas)
 }
 
-pub struct CrossChunkDependencies<'a> {
+pub struct CrossChunkDependencies<'a, 'bump> {
     chunk_meta: &'a mut [ChunkMeta],
     // PORT NOTE: `BackRef` — the same `[Chunk]` slice is also iterated mutably by
     // the caller's sequential `walk` loop; `walk` only reads `chunks[other].unique_key`
     // (disjoint from the per-iteration `&mut Chunk`). The slice outlives the struct
     // (caller stack frame).
     chunks: bun_ptr::BackRef<[Chunk]>,
-    parts: &'a [Vec<Part>],
-    import_records: &'a mut [Vec<ImportRecord>],
+    parts: &'a [bun_ast::PartList<'bump>],
+    import_records: &'a mut [bun_ast::import_record::List<'bump>],
     flags: &'a [js_meta::Flags],
     entry_point_chunk_indices: &'a [IndexInt],
     imports_to_bind: &'a [RefImportData],
@@ -119,7 +119,7 @@ pub struct CrossChunkDependencies<'a> {
     symbols: bun_ptr::BackRef<bun_ast::symbol::Map>,
 }
 
-impl<'a> CrossChunkDependencies<'a> {
+impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
     // Called once per chunk from the sequential loop above. Writes:
     // `self.chunk_meta[chunk_index]` (per-chunk disjoint),
     // `self.import_records[source_index][rec].{path,source_index}` (per-chunk
@@ -156,8 +156,8 @@ impl<'a> CrossChunkDependencies<'a> {
             }
 
             // Go over each part in this file that's marked for inclusion in this chunk
-            let parts = deps.parts[source_index as usize].slice();
-            let import_records = deps.import_records[source_index as usize].slice_mut();
+            let parts = deps.parts[source_index as usize].as_slice();
+            let import_records = deps.import_records[source_index as usize].as_mut_slice();
             let imports_to_bind = &deps.imports_to_bind[source_index as usize];
             let wrap = deps.flags[source_index as usize].wrap;
             let wrapper_ref = deps.wrapper_refs[source_index as usize];
@@ -469,7 +469,10 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                 OutputFormat::Esm => {
                     c.sorted_cross_chunk_export_items(&chunk_meta.exports, &mut stable_ref_list);
                     let mut clause_items =
-                        Vec::<bun_ast::ClauseItem>::init_capacity(stable_ref_list.len());
+                        bun_alloc::ArenaVec::<bun_ast::ClauseItem>::with_capacity_in(
+                            stable_ref_list.len(),
+                            c.arena(),
+                        );
                     repr.exports_to_other_chunks.reserve(stable_ref_list.len());
                     // PERF(port): was ensureUnusedCapacity — profile if it shows up on a hot path
                     r.clear_retaining_capacity();
@@ -518,10 +521,8 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
 
                     if clause_items.len() > 0 {
                         let mut stmts = Vec::<bun_ast::Stmt>::init_capacity(1);
-                        // PORT NOTE: `S.ExportClause.items` is `*mut [ClauseItem]`; leak the
-                        // Vec buffer (arena-lifetime) into a raw fat ptr.
-                        let items_ptr = bun_ast::StoreSlice::new_mut(clause_items.slice_mut());
-                        core::mem::forget(clause_items);
+                        let items_ptr =
+                            bun_ast::StoreSlice::new_mut(clause_items.into_bump_slice_mut());
                         // Zig: `c.allocator().create(S.ExportClause)` + struct literal —
                         // bypasses Stmt.Data.Store (not pushed on this thread here).
                         let export_clause = c.arena().alloc(bun_ast::S::ExportClause {

@@ -53,24 +53,17 @@ impl From<JsError> for ReadFromBlobError {
 // Allocation helpers
 //
 // Every owned C-string field on `bun_http::SSLConfig` is freed via
-// `bun_core::free_sensitive` (== `mi_free` after secure-zero). Allocate via
-// `bun_core::dupe_z` (== `mi_malloc`) so the allocator pairing is exact, OR
-// leak a `Box<[u8]>` allocation directly (the process-global
-// `#[global_allocator]` is mimalloc, so `mi_free` pairs with `Box`-owned
-// memory too — same invariant the previous `into_http()` bridge relied on
-// via `CString::into_raw`).
+// `bun_core::free_sensitive` (the default-allocator free after secure-zero).
+// Allocate via `bun_core::dupe_z` (the matching default-allocator alloc) so the
+// pairing is exact. Do NOT leak a `Box<[u8]>` here: under `cfg(bun_asan)` the
+// process-global `#[global_allocator]` is `std::alloc::System`, not mimalloc,
+// so `free_sensitive` would not pair with `Box`-owned memory.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Transfer ownership of a `ZBox` (NUL-terminated `Box<[u8]>`) to a raw
-/// `*const c_char`. No reallocation. Freed by `bun_core::free_sensitive`
-/// (mimalloc) in `SSLConfig::deinit`.
+/// `ZBox` is global-allocator memory; re-allocate via `dupe_z` so `mi_free` can free it.
 #[inline]
 fn zbox_into_raw(z: bun_core::ZBox) -> *const c_char {
-    let mut b = z.into_vec_with_nul().into_boxed_slice();
-    debug_assert_eq!(b.last(), Some(&0));
-    let p = b.as_mut_ptr() as *const c_char;
-    core::mem::forget(b);
-    p
+    bun_core::dupe_z(z.as_bytes())
 }
 
 /// `dupeZ` a byte slice into a fresh mimalloc allocation.

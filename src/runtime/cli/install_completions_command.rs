@@ -160,10 +160,8 @@ impl InstallCompletionsCommand {
             // TODO: fix this zig bug, it is one line change to a few functions.
             // const file = try std.fs.createFileAbsoluteW(bunx_cmd, .{});
             let file = File::create_w(bun_sys::Fd::cwd(), bunx_cmd.as_slice())?;
-            // bun_sys::File has no Drop impl; must close explicitly (zig: defer file.close())
-            let res = file.write_all(SCRIPT);
-            let _ = file.close();
-            res?;
+            // zig: `defer file.close()`
+            file.write_all(SCRIPT)?;
         }
         Ok(())
     }
@@ -212,10 +210,8 @@ impl InstallCompletionsCommand {
         )?;
 
         let file = File::create_w(bun_sys::Fd::cwd(), uninstaller_path)?;
-        // bun_sys::File has no Drop impl; must close explicitly (zig: defer file.close())
-        let res = file.write_all(CONTENT);
-        let _ = file.close();
-        res?;
+        // zig: `defer file.close()`
+        file.write_all(CONTENT)?;
         Ok(())
     }
 
@@ -563,7 +559,6 @@ impl InstallCompletionsCommand {
             Global::exit(fail_exit_code);
         }
 
-        // defer output_dir.close()
         let _ = bun_sys::close(output_dir);
 
         // Check if they need to load the zsh completions file into their .zshrc
@@ -662,13 +657,7 @@ impl InstallCompletionsCommand {
                 };
                 let input_size = end_pos.max(64 * 1024);
 
-                // defer dot_zshrc.close() — handled by Drop
-                let mut buf: Vec<u8> = vec![
-                    0u8;
-                    usize::try_from(input_size).expect("int cast")
-                        + completions_path.len() * 4
-                        + 96
-                ];
+                let mut buf: Vec<u8> = vec![0u8; input_size + completions_path.len() * 4 + 96];
 
                 let Ok(read) = dot_zshrc.pread_all(&mut buf, 0) else {
                     break 'brk true;

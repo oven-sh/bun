@@ -1,4 +1,4 @@
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 pub struct NPMClient {
     // TODO(port): verify `bin` is always a static literal (no deinit in Zig source)
     pub bin: &'static [u8],

@@ -23,7 +23,7 @@ use bun_install::{
 use bun_io::Loop as AsyncLoop;
 use bun_io::pipe_reader::PosixFlags;
 use bun_io::{BufferedReader, ReadState};
-use bun_ptr::{RefPtr, ThreadSafeRefCount};
+use bun_ptr::{RefCount, RefPtr, ThreadSafeRefCount};
 use bun_spawn::subprocess::{self, StdioResult};
 use bun_spawn::{
     self as spawn, Exited, Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions,
@@ -228,7 +228,7 @@ pub fn perform_security_scan_after_resolution(
     command_ctx: CommandContext,
     original_cwd: &[u8],
 ) -> Result<Option<SecurityScanResults>, Error> {
-    let Some(security_scanner) = manager.options.security_scanner.clone() else {
+    let Some(security_scanner) = manager.options.security_scanner else {
         return Ok(None);
     };
 
@@ -289,7 +289,7 @@ pub fn perform_security_scan_for_all(
     command_ctx: CommandContext,
     original_cwd: &[u8],
 ) -> Result<Option<SecurityScanResults>, Error> {
-    let Some(security_scanner) = manager.options.security_scanner.clone() else {
+    let Some(security_scanner) = manager.options.security_scanner else {
         return Ok(None);
     };
 
@@ -1386,7 +1386,13 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         // SAFETY: `writer_local` holds a live ref; `start()` mutates the writer
         // in place (raw intrusive object — no Rust aliasing across the RefPtr).
-        match unsafe { (*writer_local.as_ptr()).start() } {
+        let writer_ptr = writer_local.as_ptr();
+        let start_result = unsafe { (*writer_ptr).start() };
+        // SAFETY: `writer_local` keeps `*writer_ptr` live; we own the `start()` ref.
+        unsafe { RefCount::<StaticPipeWriter>::deref(writer_ptr) };
+        // SAFETY: `writer_local` keeps `*writer_ptr` live.
+        unsafe { (*writer_ptr).started = false };
+        match start_result {
             Err(e) => {
                 writer_local.deref();
                 Output::err_generic(

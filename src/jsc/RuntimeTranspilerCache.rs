@@ -39,7 +39,8 @@ bun_core::declare_scope!(cache, visible);
 /// Version 18: Include ESM record (module info) with an ES Module, see #15758
 /// Version 19: Sourcemap blob is InternalSourceMap (varint stream + sync points), not VLQ.
 /// Version 20: InternalSourceMap stream is bit-packed windows.
-const EXPECTED_VERSION: u32 = 20;
+/// Version 21: ModuleInfo records a phase byte per requested module (`import defer`).
+const EXPECTED_VERSION: u32 = 21;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a
@@ -79,7 +80,9 @@ impl Encoding {
     pub const LATIN1: Encoding = Encoding(3);
 }
 
-#[derive(Clone, PartialEq, Eq)]
+// Copy is intentional despite the ~120-byte size: Metadata is the
+// fixed-layout cache-entry header passed by value through encode/decode/verify.
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub struct Metadata {
     pub cache_version: u32,
     pub output_encoding: Encoding,
@@ -233,7 +236,7 @@ impl OutputCode {
 
     fn deinit(&mut self) {
         match core::mem::take(self) {
-            OutputCode::Utf8(_b) => {} // Box drops
+            OutputCode::Utf8(_b) => {}
             OutputCode::String(s) => s.deref(),
         }
     }
@@ -285,11 +288,8 @@ impl Entry {
 
         // First we open the tmpfile, to avoid any other work in the event of failure.
         let mut tmpfile = sys::Tmpfile::create(destination_dir, tmpfilename)?;
-        // Zig: `defer tmpfile.fd.close()` — close on all exit paths.
         let _close_guard = sys::CloseOnDrop::new(tmpfile.fd);
         {
-            // Zig: `errdefer if (!tmpfile.using_tmpfile) unlinkat(...)` — disarmed
-            // via `into_inner` on the success path below.
             let errdefer = scopeguard::guard(tmpfile.using_tmpfile, |using_tmpfile| {
                 if !using_tmpfile {
                     let _ = sys::unlinkat(destination_dir, tmpfilename);
@@ -413,7 +413,6 @@ impl Entry {
                 position += i64::try_from(written).expect("int cast");
             }
 
-            // disarm errdefer (success path)
             let _ = scopeguard::ScopeGuard::into_inner(errdefer);
         }
 
@@ -818,15 +817,12 @@ impl RuntimeTranspilerCache {
     ) -> Result<Entry, bun_core::Error> {
         let mut metadata_bytes_buf = [0u8; Metadata::SIZE * 2];
         let cache_fd = sys::open(cache_file_path.slice_assume_z(), sys::O::RDONLY, 0)?;
-        // Zig: `defer cache_fd.close()` — close on all exit paths.
-        let _close_guard = sys::CloseOnDrop::new(cache_fd);
+        let file = sys::File::from_fd(cache_fd);
         // Zig: `errdefer { _ = bun.sys.unlink(...) }` — on any error, delete the
-        // cache file. Disarmed via `into_inner` on the success path below.
+        // cache file.
         let unlink_guard = scopeguard::guard(cache_file_path, |p| {
             let _ = sys::unlink(p.slice_assume_z());
         });
-
-        let file = sys::File::from_fd(cache_fd);
         let metadata_bytes = file.pread_all(&mut metadata_bytes_buf, 0)?;
         #[cfg(windows)]
         {
@@ -855,7 +851,6 @@ impl RuntimeTranspilerCache {
 
         entry.load(&file)?;
 
-        // disarm errdefer (success path)
         let _ = scopeguard::ScopeGuard::into_inner(unlink_guard);
         Ok(entry)
     }
@@ -884,8 +879,7 @@ impl RuntimeTranspilerCache {
         // Zig: `else => .{ .string = source_code }` — by-value copy, **no**
         // `dupeRef()` and **no** matching `deref()`. `BunString` is `Copy` and
         // `OutputCode` has no `Drop`, so `*source_code` here is the same
-        // refcount-neutral borrow. (A previous revision did `dupe_ref()` +
-        // scopeguard `deref()`, which was balanced but redundant.)
+        // refcount-neutral borrow.
         let output_code: OutputCode = if source_code.is_utf8() {
             OutputCode::Utf8(Box::from(source_code.byte_slice()))
         } else {
@@ -909,10 +903,7 @@ impl RuntimeTranspilerCache {
                 // Zig: `std.fs.cwd().makeOpenPath(dirname, .{ .access_sub_paths = true })`
                 let dir =
                     sys::Dir::cwd().make_open_path(dirname, sys::OpenDirOptions::default())?;
-                // Zig: `errdefer dir.close()` (brk-scoped). `sys::Dir` has no
-                // `Drop`, so close explicitly on the `make_lib_uv_owned` error
-                // edge (Windows-only failure path) before propagating.
-                let dfd = dir.fd;
+                let dfd = dir.into_raw();
                 break 'brk match dfd.make_lib_uv_owned() {
                     Ok(f) => f,
                     Err(e) => {
@@ -1111,9 +1102,11 @@ bun_ast::link_impl_TranspilerCacheImpl! {
                 return;
             }
             debug_assert!(this.entry.is_none());
-            this.output_code = Some(Box::<[u8]>::from(output_code_bytes));
 
-            let output_code = BunString::clone_latin1(output_code_bytes);
+            // Borrowed Latin-1 view: `to_file` only reads `byte_slice()` + the encoding
+            // tag (unmarked 8-bit ZigString -> Encoding::LATIN1, same as clone_latin1),
+            // and `output_code_bytes` outlives the synchronous `to_file` call.
+            let output_code = BunString::ascii(output_code_bytes);
             let result = RuntimeTranspilerCache::to_file(
                 this.input_byte_length.unwrap(),
                 this.input_hash.unwrap(),
@@ -1123,7 +1116,6 @@ bun_ast::link_impl_TranspilerCacheImpl! {
                 &output_code,
                 this.exports_kind,
             );
-            output_code.deref();
             if let Err(err) = result {
                 bun_core::scoped_log!(cache, "put() = {}", err.name());
             }

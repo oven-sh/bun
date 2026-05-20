@@ -387,6 +387,25 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   // (flags.ts:293-301). Needed so profilers and crash backtraces walk Rust
   // frames the same as the Zig binary did.
   rustflags.push("-Cforce-frame-pointers=yes");
+  // Parallel frontend: rustc's default is single-threaded for parse / macro
+  // expansion / typeck / borrowck, so the critical-path crate (`bun_runtime`)
+  // sits on one core while the rest idle. With this, independent compiler
+  // queries run on a rayon pool and the long pole roughly halves. The pool
+  // shares cargo's jobserver, so N rustcs × 8 doesn't oversubscribe — each
+  // thread acquires a `-j` token before doing work.
+  //
+  // Why 8, not nproc: returns flatten past ~8 (the query DAG has its own
+  // serial spine — macro expansion in particular), and `-Zthreads=0` (= nproc)
+  // measured marginally *worse* on a 32-core box from sharded-lock contention.
+  // 8 is also the upstream proposal for the eventual default
+  // (rust-lang/compiler-team#681).
+  //
+  // Local-only: CI/release builds want byte-identical output across runs, and
+  // the parallel frontend can reorder diagnostics (and is still nightly
+  // `-Z`-gated). The shipped binaries stay on the serial path.
+  if (!cfg.ci) {
+    rustflags.push("-Zthreads=8");
+  }
   // rustc does not emit `.llvm_addrsig` by default on *any* target (verified
   // empirically — Linux-gnu, musl, darwin, msvc all missing it). lld's
   // `--icf=safe` (flags.ts:960) and lld-link's `/OPT:SAFEICF` (flags.ts:778)

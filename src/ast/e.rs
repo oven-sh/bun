@@ -175,20 +175,21 @@ bitflags::bitflags! {
         /// because that syntax is invalid in strict mode. We also need to make sure
         /// we don't accidentally change the return value:
         ///
-        ///   Returns false:
-        ///     "var a; delete (a)"
-        ///     "var a = Object.freeze({b: 1}); delete (a.b)"
-        ///     "var a = Object.freeze({b: 1}); delete (a?.b)"
-        ///     "var a = Object.freeze({b: 1}); delete (a['b'])"
-        ///     "var a = Object.freeze({b: 1}); delete (a?.['b'])"
+        /// ```text
+        /// Returns false:
+        ///   "var a; delete (a)"
+        ///   "var a = Object.freeze({b: 1}); delete (a.b)"
+        ///   "var a = Object.freeze({b: 1}); delete (a?.b)"
+        ///   "var a = Object.freeze({b: 1}); delete (a['b'])"
+        ///   "var a = Object.freeze({b: 1}); delete (a?.['b'])"
         ///
-        ///   Returns true:
-        ///     "var a; delete (0, a)"
-        ///     "var a = Object.freeze({b: 1}); delete (true && a.b)"
-        ///     "var a = Object.freeze({b: 1}); delete (false || a?.b)"
-        ///     "var a = Object.freeze({b: 1}); delete (null ?? a?.['b'])"
-        ///
-        ///     "var a = Object.freeze({b: 1}); delete (true ? a['b'] : a['b'])"
+        /// Returns true:
+        ///   "var a; delete (0, a)"
+        ///   "var a = Object.freeze({b: 1}); delete (true && a.b)"
+        ///   "var a = Object.freeze({b: 1}); delete (false || a?.b)"
+        ///   "var a = Object.freeze({b: 1}); delete (null ?? a?.['b'])"
+        ///   "var a = Object.freeze({b: 1}); delete (true ? a['b'] : a['b'])"
+        /// ```
         const WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS = 1 << 1;
     }
 }

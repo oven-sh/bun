@@ -823,6 +823,12 @@ impl Default for DynamicBitSetUnmanaged {
     }
 }
 
+impl Drop for DynamicBitSetUnmanaged {
+    fn drop(&mut self) {
+        self.deinit();
+    }
+}
+
 impl DynamicBitSetUnmanaged {
     pub const EMPTY: fn() -> Self = Self::default;
     // TODO(port): Zig has `pub const empty: Self = .{ ... }` as a const value.
@@ -991,9 +997,7 @@ impl DynamicBitSetUnmanaged {
 
     /// deinitializes the array and releases its memory.
     /// The passed allocator must be the same one used for
-    /// init* or resize in the past.
-    // TODO(port): kept as an explicit method (not `Drop`) because `List` hands
-    // out non-owning `DynamicBitSetUnmanaged` views that must NOT free on drop.
+    /// init* or resize in the past. Idempotent.
     pub fn deinit(&mut self) {
         self.resize(0, false).expect("unreachable");
     }
@@ -1344,14 +1348,14 @@ impl DynamicBitSetList {
     /// live. All current callers (`hoisted_install`, `isolated_install`,
     /// `PackageInstaller::can_run_scripts`) satisfy this by keeping the list
     /// alive for the view's entire use. The view must not be `deinit`ed.
-    pub fn at(&self, i: usize) -> DynamicBitSetUnmanaged {
+    pub fn at(&self, i: usize) -> core::mem::ManuallyDrop<DynamicBitSetUnmanaged> {
         debug_assert!(i < self.n, "DynamicBitSetList::at index out of bounds");
         let num_masks = DynamicBitSetUnmanaged::num_masks(self.bit_length);
         let single_bitset_buf_size = num_masks + 1;
 
         let offset = single_bitset_buf_size * i;
 
-        DynamicBitSetUnmanaged {
+        core::mem::ManuallyDrop::new(DynamicBitSetUnmanaged {
             bit_length: self.bit_length,
             // SAFETY: `i < n` (asserted), so `offset + 1 + num_masks <= buf_len`
             // and the pointer is in-bounds. `buf` is a raw allocation never
@@ -1361,7 +1365,7 @@ impl DynamicBitSetList {
             // hold `&self` here — `&self` freezes the pointer *value*, not the
             // pointee.
             masks: unsafe { self.buf.as_ptr().add(offset).add(1) },
-        }
+        })
     }
 
     pub fn set(&self, i: usize, j: usize) {
@@ -1739,12 +1743,6 @@ impl DynamicBitSet {
     }
 }
 
-impl Drop for DynamicBitSet {
-    fn drop(&mut self) {
-        self.unmanaged.deinit();
-    }
-}
-
 // ───────────────────────────── IteratorOptions ─────────────────────────────
 
 /// Options for configuring an iterator over a bit set
@@ -1885,42 +1883,8 @@ pub struct Range {
 
 // ───────────────────────────── Tests ─────────────────────────────
 
-// TODO(port): the Zig source defines test helper fns (`testEql`, `testBitSet`,
-// `testPureBitSet`, `testStaticBitSet`, ...) but no `test "..." {}` blocks
-// actually invoke them — dead code carried from the std fork. Ported as
-// `#[cfg(test)]` helpers; Phase B should add `#[test]` entry points or delete.
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // TODO(port): these helpers used `anytype` to accept Integer/Array/Dynamic
-    // bit sets uniformly. Rust would need a common trait. Stubbed pending
-    // Phase B trait extraction.
-
-    #[allow(dead_code)]
-    fn fill_even<const SIZE: usize, const M: usize>(set: &mut ArrayBitSet<SIZE, M>, len: usize)
-    where
-        [(); num_masks_for(SIZE)]:,
-    {
-        for i in 0..len {
-            set.set_value(i, i & 1 == 0);
-        }
-    }
-
-    #[allow(dead_code)]
-    fn fill_odd<const SIZE: usize, const M: usize>(set: &mut ArrayBitSet<SIZE, M>, len: usize)
-    where
-        [(); num_masks_for(SIZE)]:,
-    {
-        for i in 0..len {
-            set.set_value(i, i & 1 == 1);
-        }
-    }
-
-    // TODO(port): `testEql`, `testSubsetOf`, `testSupersetOf`, `testBitSet`,
-    // `testPureBitSet`, `testStaticBitSet` omitted — they rely on Zig
-    // `anytype` duck-typing across all bitset variants and `@hasField`
-    // reflection (`needs_ptr`). Re-author in Phase B against a `BitSet` trait.
-}
+// TODO(port): the Zig source's test helpers (`testEql`, `testBitSet`, …) are
+// dead code carried from the std fork — no `test` block invokes them. They
+// rely on `anytype` duck-typing; re-author against a trait when adding tests.
 
 // ported from: src/collections/bit_set.zig

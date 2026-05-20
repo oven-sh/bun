@@ -734,8 +734,6 @@ fn read_file_once<'a>(path: &ZStr, buf: &'a mut [u8]) -> Option<&'a [u8]> {
         Ok(fd) => fd,
         Err(_) => return None,
     };
-    // PORT NOTE: Zig `defer file.close()`. `bun_sys::File` does not impl Drop;
-    // close explicitly on every exit path.
     let _guard = scopeguard::guard(fd, |fd| {
         let _ = bun_sys::close(fd);
     });

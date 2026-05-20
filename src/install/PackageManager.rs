@@ -819,6 +819,9 @@ mod holder {
     pub static RAW_PTR: core::sync::atomic::AtomicPtr<PackageManager> =
         core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
+    pub static INITIALIZED: core::sync::atomic::AtomicBool =
+        core::sync::atomic::AtomicBool::new(false);
+
     // Process-lifetime env storage for `init()`. `dot_env::Loader<'a>` borrows `&'a mut Map`,
     // so the pair is self-referential and cannot live in `OnceLock<T>` (which only yields `&T`).
     // Mirrors Zig's `ctx.allocator.create(dot_env::Map)` / `create(dot_env::Loader)` — owned by
@@ -861,6 +864,11 @@ pub static ROOT_PACKAGE_JSON_PATH: bun_core::RacyCell<&ZStr> = bun_core::RacyCel
 impl PackageManager {
     pub fn clear_cached_items_depending_on_lockfile_buffer(&mut self) {
         self.root_package_id.id = None;
+    }
+
+    pub fn deinit_caches(&mut self) {
+        self.workspace_package_json_cache = WorkspacePackageJSONCache::default();
+        self.update_requests = Box::default();
     }
 
     /// Zig: `pm.lockfile.loadFromCwd(pm, allocator, log, attempt_loading_from_other_lockfile)`.
@@ -1153,7 +1161,6 @@ fn configure_env_for_scripts_run(
 
     let init_cwd_entry = this.env_mut().map.get_or_put_without_value(b"INIT_CWD")?;
     if !init_cwd_entry.found_existing {
-        *init_cwd_entry.key_ptr = Box::<[u8]>::from(&**init_cwd_entry.key_ptr);
         *init_cwd_entry.value_ptr = dot_env::HashTableValue {
             value: Box::<[u8]>::from(strings::without_trailing_slash(
                 FileSystem::instance().top_level_dir(),
@@ -1187,10 +1194,9 @@ fn configure_env_for_scripts_run(
     {
         let mut node_path = PathBuffer::uninit();
         if let Some(node_path_z) = this.env_mut().get_node_path(paths_fs, &mut node_path) {
-            let node_path_owned: Box<[u8]> = Box::<[u8]>::from(node_path_z.as_ref());
             let _ = this
                 .env_mut()
-                .load_node_js_config(paths_fs, &node_path_owned)?;
+                .load_node_js_config(paths_fs, node_path_z.as_ref())?;
         } else {
             'brk: {
                 let current_path = this.env().get(b"PATH").unwrap_or(b"");
@@ -1243,8 +1249,6 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
             Global::crash();
         }
     };
-    let _node_gyp_tempdir_guard = bun_sys::CloseOnDrop::dir(node_gyp_tempdir);
-    // PORT NOTE: reshaped for borrowck — `defer node_gyp_tempdir.close()`
 
     #[cfg(windows)]
     const FILE_NAME: &str = "node-gyp.cmd";
@@ -1274,7 +1278,6 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
             Global::crash();
         }
     };
-    let _close_node_gyp_file = bun_sys::CloseOnDrop::file(&node_gyp_file);
 
     #[cfg(windows)]
     const CONTENT: &str = "if not defined npm_config_node_gyp (\n  bun x --silent node-gyp %*\n) else (\n  node \"%npm_config_node_gyp%\" %*\n)\n";
@@ -1411,6 +1414,19 @@ pub fn allocate_package_manager() {
         }
         holder::RAW_PTR.store(ptr, core::sync::atomic::Ordering::Release);
     }
+    bun_core::add_exit_callback(deinit_caches_at_exit);
+}
+
+extern "C" fn deinit_caches_at_exit() {
+    if !holder::INITIALIZED.load(core::sync::atomic::Ordering::Acquire) {
+        return;
+    }
+    let ptr = get();
+    if ptr.is_null() {
+        return;
+    }
+    // SAFETY: `deinit_caches()` only touches main-thread-owned fields.
+    unsafe { (*ptr).deinit_caches() };
 }
 
 /// Returns the raw singleton pointer (Zig: `pub fn get() *PackageManager`).
@@ -1663,23 +1679,14 @@ pub fn init(
                             continue;
                         }
                     };
-                    // Zig: `defer if (!found) json_file.close()`. The only path
-                    // that sets `found = true` immediately hands the file out
-                    // via `break :root_package_json_file`, so model it as an
-                    // unconditional close-on-drop guard that the success path
-                    // defuses with `ScopeGuard::into_inner` — avoids the
-                    // `&mut found` capture that borrowck rejects.
-                    let json_file_guard = scopeguard::guard(json_file, |f| {
-                        let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
-                    });
-                    let json_stat_size = json_file_guard.get_end_pos()?;
+                    let json_stat_size = json_file.get_end_pos()?;
                     let mut json_buf = vec![0u8; (json_stat_size + 64) as usize];
-                    let json_len = json_file_guard.pread_all(&mut json_buf, 0)?;
+                    let json_len = json_file.pread_all(&mut json_buf, 0)?;
                     // SAFETY: ROOT_PACKAGE_JSON_PATH_BUF is a process-global only touched on main
                     // thread; `&raw mut` + explicit reborrow avoids the 2024 `static_mut_refs` deny.
                     let json_path = unsafe {
                         bun_sys::get_fd_path(
-                            json_file_guard.handle,
+                            json_file.handle,
                             &mut *ROOT_PACKAGE_JSON_PATH_BUF.get(),
                         )?
                     };
@@ -1773,12 +1780,6 @@ pub fn init(
                                 // process-lifetime (`set_top_level_dir` requires `'static`).
                                 fs.set_top_level_dir(fs.dirname_store().append(parent)?);
                                 let _ = child_json.close();
-                                // Zig sets `found = true` here so the deferred close is
-                                // skipped; defuse the guard to the same effect. On the
-                                // Windows `seekTo` error path Zig also leaves the file
-                                // open (defer sees `found == true`), which `into_inner`
-                                // before `seek_to(0)?` preserves.
-                                let json_file = scopeguard::ScopeGuard::into_inner(json_file_guard);
                                 #[cfg(windows)]
                                 {
                                     json_file.seek_to(0)?;
@@ -2104,6 +2105,7 @@ pub fn init(
         wr!(last_reported_slow_lifecycle_script_at, 0);
         wr!(cached_tick_for_slow_lifecycle_script_logging, 0);
     }
+    holder::INITIALIZED.store(true, core::sync::atomic::Ordering::Release);
     // The per-field placement above fully initialized the singleton; the
     // `&mut PackageManager` validity invariant now holds (Zig PackageManager.zig:850
     // onward). We do NOT bind a long-lived `&'static mut` here: `http::HTTPThread::init`
@@ -2562,6 +2564,7 @@ pub fn init_with_runtime_once(
         wr!(last_reported_slow_lifecycle_script_at, 0);
         wr!(cached_tick_for_slow_lifecycle_script_logging, 0);
     }
+    holder::INITIALIZED.store(true, core::sync::atomic::Ordering::Release);
     // SAFETY: per-field placement above fully initialized the PackageManager;
     // the `&mut PackageManager` validity invariant now holds for the post-init
     // body (Zig PackageManager.zig:1031 onward).

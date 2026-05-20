@@ -1,12 +1,13 @@
 //! Instance of the development server. Attaches to an instance of `Bun.serve`,
-//! controlling bundler, routing, and hot module reloading.
+//! controlling bundler, routing, and hot module reloading. All work is held
+//! in-memory, with hardcore data-oriented-design.
 //!
 //! Reprocessing files that did not change is banned; by having perfect
 //! incremental tracking over the project, editing a file's contents (asides
 //! adjusting imports) must always rebundle only that one file.
 //!
-//! All work is held in-memory, using manually managed data-oriented design.
-//! For questions about DevServer, please consult the delusional @paperclover
+//! Theorized and designed over 2 years out of pure love —— paper clover <3
+//! For questions about its core philosophy, email `devserver@paperclover.net`
 
 #![allow(unexpected_cfgs)] // `feature = "bake_debugging_features"` mirrors Zig `bun.FeatureFlags.bake_debugging_features`; not yet a declared cargo feature.
 
@@ -276,6 +277,9 @@ pub struct CurrentBundle {
     /// make `DevServer` self-referential; raw-ptr aliasing inside `BundleV2`
     /// already encodes that contract.
     pub bv2: Box<BundleV2<'static>>,
+    /// Owns the arena that `bv2.graph.heap` borrows (`'static` self-ref via the
+    /// boxed allocation's stable address; same erasure as `bv2` above).
+    pub heap: Box<bun_alloc::MimallocArena>,
     /// Information BundleV2 needs to finalize the bundle
     pub start_data: bundler::bundle_v2::DevServerInput,
     /// Started when the bundle was queued
@@ -421,6 +425,7 @@ pub struct DevServer {
     pub bundles_since_last_error: usize,
 
     pub framework: bake::Framework,
+    pub bundler_framework_views: Vec<*mut bun_bundler::bake_types::Framework>,
     pub bundler_options: bake::SplitBundlerOptions,
     // Each logical graph gets its own bundler configuration.
     // PORT NOTE: `'static` is the DevServer-self lifetime stand-in (see
@@ -499,8 +504,6 @@ impl DeferredPromise {
     }
 
     pub fn reset(&mut self) {
-        // Zig: `this.strong.deinit()` — `JSPromiseStrong` has no `deinit`; the
-        // underlying `JscStrong` is released by `Drop` when overwritten.
         self.strong = jsc::JSPromiseStrong::empty();
         self.route_bundle_indices.clear_retaining_capacity();
     }
@@ -520,8 +523,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
 
     #[cfg(feature = "bake_debugging_features")]
     let dump_dir = if let Some(dir) = options.dump_sources {
-        // TODO(port): std.fs.cwd().makeOpenPath - use bun_sys
-        match sys::Dir::cwd().make_open_path(dir) {
+        match sys::Dir::cwd().make_open_path(dir, Default::default()) {
             Ok(d) => Some(d),
             Err(err) => {
                 Output::warn(format_args!(
@@ -536,7 +538,6 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     };
     #[cfg(not(feature = "bake_debugging_features"))]
     let dump_dir = ();
-    // TODO(port): errdefer dump_dir.close() — handled by Drop on sys::Dir
 
     let separate_ssr_graph = options
         .framework
@@ -584,7 +585,10 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         );
         w!(generation, 0);
         w!(graph_safety_lock, ThreadLock::init_unlocked());
-        w!(dump_dir, dump_dir);
+        // `dump_dir` is written LAST (just before `assume_init()` below), not
+        // here — see the comment at its declaration. Moving it into the
+        // `MaybeUninit` early would leak the fd on any error return between
+        // here and `assume_init()`, since `MaybeUninit` never drops fields.
         w!(framework, options.framework);
         w!(bundler_options, options.bundler_options);
         w!(emit_incremental_visualizer_events, 0);
@@ -704,9 +708,6 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     };
     // SAFETY: per-field write into uninit struct; see `w!` SAFETY above.
     unsafe { w!(bun_watcher, ::core::mem::ManuallyDrop::new(bun_watcher)) };
-    // errdefer dev.bun_watcher.deinit(false) — handled by `Watcher::shutdown` in
-    // `Drop for DevServer` when `dev_uninit` is dropped on an error path after
-    // `assume_init()`.
 
     // `.watcher_atomics = undefined` → `WatcherAtomics.init(dev)`
     // SAFETY: `WatcherAtomics::init` / `HotReloadEvent::init_empty` only store `p`
@@ -730,12 +731,14 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // SAFETY: `options.arena` outlives every `Transpiler` field it backs (see
     // `Options::arena` doc — "must live until DevServer drops").
     let arena: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(options.arena) };
+    let mut bundler_framework_views: Vec<*mut bun_bundler::bake_types::Framework> =
+        Vec::with_capacity(4);
     unsafe {
         let framework = &mut *addr_of_mut!((*p).framework);
         let log = &mut *addr_of_mut!((*p).log);
         let bundler_options = &mut *addr_of_mut!((*p).bundler_options);
 
-        if let Err(err) = framework.init_transpiler(
+        match framework.init_transpiler(
             arena,
             log,
             bake::Mode::Development,
@@ -743,9 +746,10 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             &mut *addr_of_mut!((*p).server_transpiler),
             &bundler_options.server,
         ) {
-            return Err(global.throw_error(err, generic_action));
+            Ok(view) => bundler_framework_views.push(view),
+            Err(err) => return Err(global.throw_error(err, generic_action)),
         }
-        if let Err(err) = framework.init_transpiler(
+        match framework.init_transpiler(
             arena,
             log,
             bake::Mode::Development,
@@ -753,10 +757,11 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             &mut *addr_of_mut!((*p).client_transpiler),
             &bundler_options.client,
         ) {
-            return Err(global.throw_error(err, generic_action));
+            Ok(view) => bundler_framework_views.push(view),
+            Err(err) => return Err(global.throw_error(err, generic_action)),
         }
         if separate_ssr_graph {
-            if let Err(err) = framework.init_transpiler(
+            match framework.init_transpiler(
                 arena,
                 log,
                 bake::Mode::Development,
@@ -764,22 +769,33 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
                 &mut *addr_of_mut!((*p).ssr_transpiler),
                 &bundler_options.ssr,
             ) {
-                return Err(global.throw_error(err, generic_action));
+                Ok(view) => bundler_framework_views.push(view),
+                Err(err) => return Err(global.throw_error(err, generic_action)),
             }
         } else {
             // PORT NOTE: Zig left `ssr_transpiler` `undefined` when
             // `!separate_ssr_graph` and never read it. Rust must still write a
             // valid value before `assume_init()`. Bitwise-alias the server
-            // transpiler (it is never independently dropped: `Drop for DevServer`
-            // does not free transpiler heap fields — see `useAllFields` mapping
-            // where `.ssr_transpiler = {}` is a no-op in Zig).
+            // transpiler. This is sound only because `Drop for DevServer` gates
+            // `ssr_transpiler.assume_init_drop()` behind the same
+            // `separate_ssr_graph` check (see Drop impl): in the `!separate`
+            // branch the alias is never independently dropped, so there is no
+            // double-free. Do not remove that gate.
             ::core::ptr::copy_nonoverlapping(
                 addr_of_mut!((*p).server_transpiler).cast_const(),
                 addr_of_mut!((*p).ssr_transpiler),
                 1,
             );
         }
+
+        w!(bundler_framework_views, bundler_framework_views);
     }
+
+    // `dump_dir` is moved into the struct as the *last* field write so its
+    // `Drop` (which closes the fd) still runs if any earlier `?` above
+    // returned early — `MaybeUninit` never runs field destructors.
+    // SAFETY: per-field write into uninit struct; see `w!` SAFETY above.
+    unsafe { w!(dump_dir, dump_dir) };
 
     // ── every field is now written ───────────────────────────────────────────
     // SAFETY: all fields of `*p` were written exactly once above via
@@ -851,8 +867,11 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // `serverRuntimeImportSource` in `wrap_exports_for_client_reference`) see
     // absolute paths instead of the user's relative `"./framework/server.ts"`.
     {
-        let resolved_view: &'static bun_bundler::bake_types::Framework =
-            &*arena.alloc(dev.framework.as_bundler_view());
+        let resolved_ptr: *mut bun_bundler::bake_types::Framework =
+            arena.alloc(dev.framework.as_bundler_view());
+        dev.bundler_framework_views.push(resolved_ptr);
+        // SAFETY: `resolved_ptr` is a fresh arena slot, no aliasing borrows.
+        let resolved_view: &'static bun_bundler::bake_types::Framework = unsafe { &*resolved_ptr };
         dev.server_transpiler_mut().options.framework = Some(resolved_view);
         dev.client_transpiler_mut().options.framework = Some(resolved_view);
         if separate_ssr_graph {
@@ -861,18 +880,15 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     }
 
     // errdefer dev.route_lookup.clearAndFree() / client_graph.deinit() / server_graph.deinit()
-    // — handled by Drop
 
     dev.configuration_hash_key = 'hash_key: {
         let mut h = Wyhash::init(128);
 
         if cfg!(debug_assertions) {
-            // PORT NOTE: `sys::stat` returns `Maybe<Stat>` (no `unwrap_or_else`);
-            // go through `Result` for the panic-on-error path.
-            let stat = match ::core::result::Result::from(sys::stat(
+            let stat = match sys::stat(
                 bun_core::self_exe_path()
                     .unwrap_or_else(|e| Output::panic(format_args!("unhandled {}", e))),
-            )) {
+            ) {
                 Ok(s) => s,
                 Err(e) => Output::panic(format_args!("unhandled {}", e)),
             };
@@ -963,10 +979,11 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // Add react fast refresh if needed. This is the first file on the client side,
     // as it will be referred to by index.
     if let Some(rfr) = &dev.framework.react_fast_refresh {
-        debug_assert!(
-            dev.client_graph.insert_stale(&rfr.import_source, false)?
-                == incremental_graph::FileIndex::<{ bake::Side::Client }>::init(0) // Zig: react_refresh_index = .init(0)
-        );
+        // Spec (DevServer.zig:511): `bun.assert` always evaluates its argument;
+        // `debug_assert!` does not in release. Hoist the side-effecting `insert_stale`
+        // out so the refresh runtime is registered at index 0 in all builds.
+        let idx = dev.client_graph.insert_stale(&rfr.import_source, false)?;
+        debug_assert!(idx == incremental_graph::FileIndex::<{ bake::Side::Client }>::init(0)); // Zig: react_refresh_index = .init(0)
     }
 
     if !dev.frontend_only {
@@ -1077,8 +1094,7 @@ impl Drop for DevServer {
         DEV_SERVER_DEINIT_COUNT_FOR_TESTING.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         // TODO(port): Zig used `useAllFields(DevServer, .{...})` to ensure every field
-        // was visited. In Rust, Drop on each field handles most freeing automatically.
-        // Only side-effecty cleanup is kept here.
+        // was visited. Only side-effecty cleanup is kept here.
 
         // WebSockets should be deinitialized before other parts.
         // `websocket.close()` synchronously dispatches `HmrSocket.onClose`,
@@ -1151,8 +1167,6 @@ impl Drop for DevServer {
         for value in self.source_maps.entries.values_mut() {
             debug_assert!(value.ref_count > 0);
             value.ref_count = 0;
-            // PORT NOTE: `Entry`'s owned buffers are freed by `Drop` when the
-            // map drops; Zig's explicit `deinit` was the allocator-free.
         }
         if self.source_maps.weak_ref_sweep_timer.state == EventLoopTimerState::ACTIVE {
             let timer_ptr: *mut EventLoopTimer = &raw mut self.source_maps.weak_ref_sweep_timer;
@@ -1170,6 +1184,39 @@ impl Drop for DevServer {
                 &mut batch.entry_points,
                 EntryPointList::empty(),
             ));
+        }
+
+        let separate_ssr_graph = self
+            .framework
+            .server_components
+            .as_ref()
+            .is_some_and(|sc| sc.separate_ssr_graph);
+        // SAFETY: each transpiler is initialized exactly once in `init()`.
+        unsafe {
+            self.server_transpiler.assume_init_drop();
+            self.client_transpiler.assume_init_drop();
+            if separate_ssr_graph {
+                self.ssr_transpiler.assume_init_drop();
+            }
+        }
+
+        // SAFETY: each ptr is a unique arena slot written once in `init()`.
+        for &ptr in &self.bundler_framework_views {
+            unsafe { ::core::ptr::drop_in_place(ptr) };
+        }
+        self.bundler_framework_views.clear();
+
+        for rb in &mut self.route_bundles {
+            if let Some(bundle) = rb.client_bundle.take() {
+                // SAFETY: stored ref from `StaticRoute::init_*`; no live borrow.
+                unsafe { StaticRoute::deref_(bundle.as_ptr()) };
+            }
+            if let route_bundle::Data::Html(html) = &mut rb.data {
+                if let Some(cached) = html.cached_response.take() {
+                    // SAFETY: stored ref from `init_from_any_blob`; no live borrow.
+                    unsafe { StaticRoute::deref_(cached.as_ptr()) };
+                }
+            }
         }
 
         debug_assert!(self.magic == Magic::Valid);
@@ -2801,7 +2848,7 @@ impl DevServer {
     fn generate_javascript_code_for_html_file(
         &mut self,
         index: bun_ast::Index,
-        import_records: &[Vec<ImportRecord>],
+        import_records: &[bun_ast::import_record::List<'_>],
         input_file_sources: &[bun_ast::Source],
         loaders: &[Loader],
     ) -> Result<Box<[u8]>, bun_core::Error> {
@@ -2816,7 +2863,7 @@ impl DevServer {
         )?;
         w.extend_from_slice(b": [ [");
         let mut any = false;
-        for import in import_records[index.get() as usize].slice() {
+        for import in import_records[index.get() as usize].as_slice() {
             if import.source_index.is_valid() {
                 if !loaders[import.source_index.get() as usize].is_javascript_like() {
                     continue; // ignore non-JavaScript imports
@@ -3109,16 +3156,11 @@ impl DevServer {
             server.on_pending_request();
         }
 
-        let heap = bun_alloc::MimallocArena::new();
-        // TODO(port): heap is moved into BundleV2; errdefer heap.deinit() handled by Drop
-        // PORT NOTE: `MimallocArena = bumpalo::Bump` (no `.arena()` accessor);
-        // `Bump::alloc` is the inherent method, and `BundleV2::init`'s `alloc`
-        // param is `&bun_alloc::Arena` (== `&Bump`).
+        // Boxed so its address is stable: `bv2.graph.heap: &'static Arena`
+        // borrows it (self-ref via `CurrentBundle`, see PORT NOTE on
+        // `CurrentBundle.bv2`).
+        let heap: Box<bun_alloc::MimallocArena> = Box::new(bun_alloc::MimallocArena::new());
         // TODO(port): ASTMemoryAllocator scope — bake is an AST crate; arena threading required
-        // PORT NOTE: `heap.alloc` returns `&mut T` borrowing `heap`, but `heap` is
-        // later moved into `bv2.graph.heap`. Bumpalo chunk storage is heap-allocated
-        // and stable across the move of the `Bump` handle, so erase the borrow to a
-        // raw pointer (same rationale as `event_loop` below).
         let ast_memory_store: *mut bun_ast::ASTMemoryAllocator =
             heap.alloc(bun_ast::ASTMemoryAllocator::default());
         // SAFETY: the `ASTMemoryAllocator` lives in a bumpalo chunk owned by
@@ -3137,20 +3179,10 @@ impl DevServer {
                 bun_event_loop::AnyEventLoop::js(self.vm().event_loop().cast()),
             )));
 
-        // PORT NOTE: `BundleV2::init` consumes `heap` and also wants
-        // `alloc: &Arena` derived from it. Zig's `heap.arena()` is a
-        // `Copy` vtable handle that survives the move; in Rust the `Bump` is
-        // moved into `bv2.graph.heap`, so any pre-move borrow would dangle.
-        // `BundleV2::init` itself re-derives `linker.graph.bump = &this.graph
-        // .heap` internally and only uses `alloc` for short-lived setup —
-        // pass the heap's address via raw pointer (it lives at a stable
-        // `Box`-interior slot once `init` writes it).
-        //
-        // SAFETY: `heap_ptr` is read by `BundleV2::init` only after `heap` is
-        // moved into `this.graph.heap` (same allocation, stable address inside
-        // the freshly-`Box::new`'d `BundleV2`). The borrow is scoped to the
-        // call; we never reuse `heap_ptr` after `init` returns.
-        let heap_ptr: *const bun_alloc::Arena = &raw const heap;
+        // SAFETY: `heap` is `Box`-allocated above and moved into
+        // `CurrentBundle` (which also owns `bv2`); the boxed arena's address
+        // is stable for the lifetime of `bv2.graph.heap`'s borrow.
+        let heap_ptr: *const bun_alloc::Arena = &raw const *heap;
         // PORT NOTE: split `&mut self` into disjoint field reborrows so
         // `server_transpiler` (`&'a mut`) and `client/ssr_transpiler`
         // (NonNull) don't trip the single-`&mut self` rule.
@@ -3177,7 +3209,8 @@ impl DevServer {
             Some(::core::ptr::NonNull::from(
                 bun_threading::work_pool::WorkPool::get(),
             )),
-            heap,
+            // SAFETY: see `heap_ptr` note above.
+            unsafe { &*heap_ptr },
         )?;
         bv2.bun_watcher = Some(::core::ptr::NonNull::from(&mut **self.bun_watcher));
         bv2.asynchronous = true;
@@ -3210,6 +3243,7 @@ impl DevServer {
         drop(entry_points);
         self.current_bundle = Some(CurrentBundle {
             bv2,
+            heap,
             timer,
             start_data,
             had_reload_event,
@@ -3624,7 +3658,7 @@ pub struct HotUpdateContext<'a> {
     /// bundle_v2.Graph.input_files.items(.source)
     pub sources: &'a [bun_ast::Source],
     /// bundle_v2.Graph.ast.items(.import_records)
-    pub import_records: &'a [Vec<ImportRecord>],
+    pub import_records: &'a [bun_ast::import_record::List<'a>],
     /// bundle_v2.Graph.server_component_boundaries.slice()
     pub scbs: bun_ast::server_component_boundary::Slice<'a>,
     /// bundle_v2.Graph.input_files.items(.loader)
@@ -3715,15 +3749,13 @@ pub fn finalize_bundle(
         // SAFETY: `dev`/`bv2` are `&mut` params; both outlive this fn-scoped guard.
         let dev = unsafe { &mut *dev_ptr_outer };
         let bv2 = unsafe { &mut *bv2_ptr_outer };
-        // TODO(port): heap moved out before deinit
-        let mut heap = ::core::mem::replace(&mut bv2.graph.heap, bun_alloc::Arena::new());
         bv2.deinit_without_freeing_arena();
         if let Some(cb) = &mut dev.current_bundle {
             cb.promise.deinit_idempotently();
         }
+        // Drops `CurrentBundle.heap` (the arena `bv2.graph.heap` borrows).
         dev.current_bundle = None;
         dev.log.clear_and_free();
-        drop(heap);
 
         let _ = dev.assets.reindex_if_needed(); // not fatal
 
@@ -3806,6 +3838,14 @@ pub fn finalize_bundle(
     // without re-borrowing `result.chunks` (already split).
     let chunks_ptr: *mut bundler::chunk::Chunk = result.chunks.as_mut_ptr();
     let chunks_len = result.chunks.len();
+    scopeguard::defer! {
+        // SAFETY: `chunks_ptr/len` snapshot the arena slice before any `split_at_mut`.
+        unsafe {
+            ::core::ptr::drop_in_place(::core::ptr::slice_from_raw_parts_mut(
+                chunks_ptr, chunks_len,
+            ));
+        }
+    };
     let (js_chunk_slice, rest_chunks) = result.chunks.split_at_mut(1);
     let js_chunk = &mut js_chunk_slice[0];
     let (css_chunks_mut, html_rest) = rest_chunks.split_at_mut(n_css);
@@ -3895,7 +3935,7 @@ pub fn finalize_bundle(
                     code: compile_result.code().to_vec().into_boxed_slice(),
                     source_map: Some(incremental_graph::ReceiveChunkSourceMap {
                         chunk: source_map,
-                        escaped_source: quoted_contents.clone(),
+                        escaped_source: quoted_contents.clone().map(Vec::into_boxed_slice),
                     }),
                 },
                 false,
@@ -3907,7 +3947,7 @@ pub fn finalize_bundle(
                     code: compile_result.code().to_vec().into_boxed_slice(),
                     source_map: Some(incremental_graph::ReceiveChunkSourceMap {
                         chunk: source_map,
-                        escaped_source: quoted_contents.clone(),
+                        escaped_source: quoted_contents.clone().map(Vec::into_boxed_slice),
                     }),
                 },
                 graph == bake::Graph::Ssr,
@@ -4049,15 +4089,13 @@ pub fn finalize_bundle(
             route_bundle::Data::Html(h) => h,
             _ => unreachable!(),
         };
-        if let Some(_slice) = html.bundled_html_text.take() {
-            // freed by Drop
-        }
+        if let Some(_slice) = html.bundled_html_text.take() {}
         html.bundled_html_text = Some(compile_result_code.clone()); // TODO(port): ownership transfer
         html.script_injection_offset = Some(route_bundle::ByteOffset::init(*compile_result_offset));
 
         chunk
             .entry_point
-            .set_entry_point_id(u32::try_from(route_bundle_index.get()).expect("int cast"));
+            .set_entry_point_id(route_bundle_index.get());
     }
 
     // Zig: `var gts = try dev.initGraphTraceState(...); ctx.gts = &gts;` — sized AFTER
@@ -4162,7 +4200,6 @@ pub fn finalize_bundle(
         } else {
             None
         };
-        // _ = source_map_json freed by Drop
 
         let server_bundle = dev.server_graph.take_js_bundle_server(
             &incremental_graph::TakeJSBundleOptionsServer {
@@ -4170,7 +4207,6 @@ pub fn finalize_bundle(
                 script_id: server_script_id,
             },
         )?;
-        // freed by Drop
 
         let global = dev.global();
         let server_modules = if let Some(json) = source_map_json {
@@ -5107,7 +5143,7 @@ impl DevServer {
             // Found a matching route, bundle it and handle the request
             match ensure_route_is_bundled(self, rbi, &mut ctx) {
                 Ok(()) => {}
-                Err(jsc::JsError::OutOfMemory) => return Err(bun_core::err!(OutOfMemory).into()),
+                Err(jsc::JsError::OutOfMemory) => return Err(bun_core::err!(OutOfMemory)),
                 Err(e @ (jsc::JsError::Thrown | jsc::JsError::Terminated)) => {
                     self.vm().global().report_active_exception_as_unhandled(e);
                 }
@@ -5492,7 +5528,6 @@ pub fn dump_bundle(
     }
 
     bufw.flush()?;
-    _ = file.close();
     Ok(())
 }
 
@@ -6190,7 +6225,7 @@ fn from_opaque_file_id<const SIDE: bake::Side>(
         debug_assert!(SIDE == safe.side());
         return incremental_graph::FileIndex::<SIDE>::init(safe.index());
     }
-    incremental_graph::FileIndex::<SIDE>::init(u32::try_from(id.get()).expect("int cast"))
+    incremental_graph::FileIndex::<SIDE>::init(id.get())
 }
 
 impl DevServer {

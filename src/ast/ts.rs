@@ -1,5 +1,7 @@
 use crate::Loc;
+use bun_alloc::AstAlloc;
 use bun_collections::StringArrayHashMap;
+use bun_collections::array_hash_map::StringContext;
 
 use crate::base::Ref;
 use crate::e::String as EString;
@@ -81,8 +83,7 @@ pub struct TSNamespaceScope {
     /// generated proxy symbols that represent the property access "x3.y". This
     /// map is unique per namespace block because "x3" is the argument symbol that
     /// is specific to that particular namespace block.
-    // Zig default: `= .{}` — callers should init with `StringArrayHashMap::default()`.
-    pub property_accesses: StringArrayHashMap<Ref>,
+    pub property_accesses: StringArrayHashMap<Ref, StringContext, AstAlloc>,
 
     /// Even though enums are like namespaces and both enums and namespaces allow
     /// implicit references to properties of sibling scopes, they behave like
@@ -112,7 +113,7 @@ pub struct TSNamespaceScope {
     pub is_enum_scope: bool,
 }
 
-pub type TSNamespaceMemberMap = StringArrayHashMap<TSNamespaceMember>;
+pub type TSNamespaceMemberMap = StringArrayHashMap<TSNamespaceMember, StringContext, AstAlloc>;
 
 pub struct TSNamespaceMember {
     pub loc: Loc,

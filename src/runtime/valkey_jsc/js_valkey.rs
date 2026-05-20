@@ -1170,6 +1170,8 @@ impl JSValkeyClient {
         // Increment ref to ensure 'self' stays alive throughout the function
         self.ref_();
         let _d = deref_guard(self);
+        // Release the keep-alive ref from add_timer; remove_timer/stop_timers skip FIRED timers.
+        unsafe { JSValkeyClient::deref(std::ptr::from_ref(self).cast_mut()) };
         if self.client.get().flags.failed {
             return;
         }
@@ -1224,6 +1226,8 @@ impl JSValkeyClient {
         // Increment ref to ensure 'self' stays alive throughout the function
         self.ref_();
         let _d = deref_guard(self);
+        // Release the keep-alive ref from add_timer; remove_timer/stop_timers skip FIRED timers.
+        unsafe { JSValkeyClient::deref(std::ptr::from_ref(self).cast_mut()) };
 
         // Execute reconnection logic
         self.reconnect();
@@ -1409,6 +1413,16 @@ impl JSValkeyClient {
         if delay_ms > 0 {
             self.add_timer(&self.reconnect_timer, delay_ms);
         }
+
+        // Release the keep-alive ref `connect()` took for the just-closed
+        // socket. We only reach here from `ValkeyClient::on_close()`'s reconnect
+        // branch, which (unlike its other branches) does not call
+        // `on_valkey_close()` and so never balances that ref. The reconnect
+        // timer (and the next `connect()`) take their own refs, so without this
+        // every retry leaks one ref and the client is never freed.
+        // SAFETY: caller (`SocketHandler::on_close`/`on_connect_error`) holds a
+        // scoped ref across this call, so the count stays > 0.
+        unsafe { JSValkeyClient::deref(std::ptr::from_ref(self).cast_mut()) };
     }
 
     // Callback for when Valkey client closes
@@ -1482,6 +1496,14 @@ impl JSValkeyClient {
 
     fn close_socket_next_tick(&self) {
         if self.client.get().socket.is_closed() {
+            return;
+        }
+
+        // During VM shutdown the event loop won't tick, so the deferred task below
+        // would never run; close inline (this_value is cleared, no JS re-entry).
+        if self.vm().is_shutting_down() {
+            bun_core::hint::cold();
+            self.client_mut().close();
             return;
         }
 

@@ -3,6 +3,7 @@
 #include "helpers.h"
 
 #include "ZigSourceProvider.h"
+#include "MimallocWTFMalloc.h"
 #include "BunAnalyzeTranspiledModule.h"
 
 #include <JavaScriptCore/BytecodeCacheError.h>
@@ -115,7 +116,10 @@ Ref<SourceProvider> SourceProvider::create(
     const auto getProvider = [&]() -> Ref<SourceProvider> {
         if (resolvedSource.bytecode_cache != nullptr) {
             const auto destructorPtr = [](const void* ptr) {
-                mi_free(const_cast<void*>(ptr));
+                // `bytecode_cache` was `heap::into_raw`'d from a Rust `Box<[u8]>`
+                // (the global allocator); free with `defaultAllocatorFree` so
+                // it agrees with the `#[global_allocator]`.
+                Bun::defaultAllocatorFree(const_cast<void*>(ptr));
             };
             const auto destructorNoOp = [](const void* ptr) {
                 // no-op, for bun build --compile.

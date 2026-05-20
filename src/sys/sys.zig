@@ -1818,9 +1818,9 @@ pub fn openA(file_path: []const u8, flags: i32, perm: bun.Mode) Maybe(bun.FD) {
 }
 
 pub fn open(file_path: [:0]const u8, flags: i32, perm: bun.Mode) Maybe(bun.FD) {
-    // TODO(@paperclover): this should not use libuv; when the libuv path is
-    // removed here, the call sites in node_fs.zig should make sure they parse
-    // the libuv specific file flags using the WindowsOpenFlags structure.
+    // TODO: this should not use libuv; when the libuv path is removed here, the
+    // call sites in node_fs.zig should make sure they parse the libuv specific
+    // file flags using the WindowsOpenFlags structure.
     if (comptime Environment.isWindows) {
         return sys_uv.open(file_path, flags, perm);
     }

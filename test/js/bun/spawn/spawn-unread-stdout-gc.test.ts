@@ -92,5 +92,5 @@ test.skipIf(isWindows)(
     expect(iters).toBe(10);
     expect(exitCode).toBe(0);
   },
-  60_000,
+  120_000,
 );

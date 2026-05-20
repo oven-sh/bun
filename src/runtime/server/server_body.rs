@@ -135,7 +135,7 @@ pub trait RequestCtxOps: RequestCtx {
     fn ctx_method(&self) -> http::Method;
     fn set_upgrade_context(&mut self, ctx: Option<*mut WebSocketUpgradeContext>);
     fn defer_deinit_ptr(&mut self) -> &mut Option<DeferDeinitFlag>;
-    fn set_request_body(&mut self, body: Option<NonNull<BodyValue>>);
+    fn set_request_body(&mut self, body: Option<crate::webcore::body::BodyHiveHandle>);
     fn request_body_mut(&mut self) -> Option<&mut BodyValue>;
     fn set_signal(&mut self, sig: *mut AbortSignal);
     fn set_request_weakref(&mut self, req: *mut Request);
@@ -217,14 +217,16 @@ where
         &mut self.defer_deinit_until_callback_completes
     }
     #[inline]
-    fn set_request_body(&mut self, body: Option<NonNull<BodyValue>>) {
+    fn set_request_body(&mut self, body: Option<crate::webcore::body::BodyHiveHandle>) {
         self.request_body = body
     }
     #[inline]
     fn request_body_mut(&mut self) -> Option<&mut BodyValue> {
-        // SAFETY: request_body points at a live HiveRef<Value> slot owned by the
-        // VM's hive allocator while the RequestContext holds a ref.
-        self.request_body.map(|p| unsafe { &mut *p.as_ptr() })
+        // SAFETY: R-2 invariant — slot shared with `Request.body`, never
+        // `&mut`-borrowed concurrently (single-threaded event loop).
+        self.request_body
+            .as_ref()
+            .map(|h| unsafe { &mut (*h.as_ptr()).value })
     }
     #[inline]
     fn set_signal(&mut self, sig: *mut AbortSignal) {
@@ -1663,7 +1665,7 @@ where
         if topic_value.is_undefined_or_null() {
             return Err(global.throw_invalid_arguments(format_args!("Expected string")));
         }
-        let topic = ZigString::from(topic_value.get_zig_string(global)?);
+        let topic = topic_value.get_zig_string(global)?;
         // jsc.JSValue
         let message_value = iter
             .next_eat()
@@ -2478,13 +2480,16 @@ where
 
             let mut url = URL::parse(temp_url_str);
 
-            // Both branches produce a heap-owned buffer that `url.href` borrows.
-            // `bun.String.cloneUTF8(url.href)` below makes its own copy, so this
-            // buffer must be freed before we leave the block.
-            let owned_url_buf: Vec<u8> = if url.hostname.is_empty() {
-                strings::append(&self.base_url_string_for_joining, url.pathname).into_vec()
+            // `bun.String.cloneUTF8(url.href)` below makes its own copy, so the
+            // joined buffer only needs to live through this block. The else arm
+            // borrows `temp_url_str` (kept alive by `url_zig_str`) instead of
+            // duping it just to satisfy a uniform `defer free` like the Zig did.
+            let owned_url_buf: std::borrow::Cow<'_, [u8]> = if url.hostname.is_empty() {
+                std::borrow::Cow::Owned(
+                    strings::append(&self.base_url_string_for_joining, url.pathname).into_vec(),
+                )
             } else {
-                temp_url_str.to_vec()
+                std::borrow::Cow::Borrowed(temp_url_str)
             };
             url = URL::parse(&owned_url_buf);
 
@@ -2529,9 +2534,8 @@ where
             Box::new(Request::init2(
                 BunString::clone_utf8(url.href),
                 headers,
-                // Zig: `bun.handleOom(this.vm.initRequestBodyValue(body))` —
-                // moves `body` into the per-VM hive pool (ref_count = 1).
-                crate::webcore::body::hive_alloc(self.vm().as_mut(), body),
+                // Moves `body` into the per-VM hive pool (ref_count = 1).
+                crate::webcore::body::hive_alloc(body),
                 method,
             ))
         } else if let Some(request_) = first_arg
@@ -3170,22 +3174,16 @@ where
         };
         // SAFETY: ctx_slot was just initialized by create_in.
         let ctx = unsafe { &mut *ctx_slot };
-        // `VirtualMachine::jsc_vm()` is the safe accessor for the JSC VM
-        // owned by the per-thread VirtualMachine.
-        self.vm_ref()
-            .jsc_vm()
-            .deprecated_report_extra_memory(mem::size_of::<Ctx>());
 
-        // `vm.initRequestBodyValue(.{ .Null = {} })` — typed wrapper over the
-        // type-erased RuntimeHooks vtable. Returns `NonNull<HiveRef>` with
-        // `ref_count = 1` (held by `ctx.request_body`).
-        let body_hive = crate::webcore::body::hive_alloc(self.vm().as_mut(), BodyValue::Null);
-        // SAFETY: hive_alloc returns a freshly-initialized hive slot; live until
-        // its refcount drops to zero (released in `RequestContext::deinit` and
-        // `Request::finalize`).
-        let body_ptr: *mut BodyValue =
-            unsafe { core::ptr::addr_of_mut!((*body_hive.as_ptr()).value) };
-        ctx.set_request_body(NonNull::new(body_ptr));
+        // Don't report extra GC memory here: ctx is a recycled pool slot,
+        // not a fresh heap allocation (see NewServer::on_request).
+
+        // `vm.initRequestBodyValue(.{ .Null = {} })` — pooled body slot,
+        // ref_count = 1.
+        let body_hive = crate::webcore::body::hive_alloc(BodyValue::Null);
+        // Zig: `.body = body.ref()` — ctx and Request each own a +1 on the
+        // same slot. Paired drop in `RequestContext::deinit` / `Request::finalize`.
+        ctx.set_request_body(Some(body_hive.clone()));
 
         let signal = AbortSignal::new(&self.global());
         ctx.set_signal(signal);
@@ -3196,19 +3194,12 @@ where
         // copy and adopt into RAII so it pairs with `Request::Drop`'s unref.
         // SAFETY: `signal` is live; `ref_()` returns the same non-null ptr +1.
         let signal_for_req = unsafe { jsc::AbortSignalRef::adopt((*signal).ref_()) };
-        // Zig: `.body = body.ref()` — bump once so the JS Request shares the
-        // same hive slot as `ctx.request_body` (streamed bytes buffered into
-        // the ctx surface on `request.body`/`request.json()`). Paired with
-        // `HiveRef::unref` in `Request::finalize`.
-        // SAFETY: `body_hive` is live (ref_count >= 1).
-        let body_for_req: NonNull<crate::webcore::body::HiveRef> =
-            unsafe { NonNull::from((*body_hive.as_ptr()).ref_()) };
         let request_object_box = Request::new(Request::init(
             ctx.ctx_method(),
             AnyRequestContext::init(std::ptr::from_ref::<Ctx>(ctx)),
             SSL,
             Some(signal_for_req),
-            body_for_req,
+            body_hive,
         ));
         let request_object: &mut Request =
             // SAFETY: leak so the ctx (which outlives this stack frame) can
@@ -3228,20 +3219,23 @@ where
                 ))
             }));
             // PORT NOTE: `ReqLike::{url,header}` both borrow `&mut req`; the
-            // returned slices alias the same uWS-owned header buffer. Snapshot
-            // `host` into an owned buffer first so the second borrow for `url`
-            // is unconflicted.
-            let host: Option<Vec<u8>> = ReqLike::header(req, b"host").map(|h| h.to_vec());
+            // returned slices alias the same uWS-owned header buffer. Format
+            // the `https://{host}` prefix while `host` is borrowed so the
+            // second `&mut req` borrow for `url` is unconflicted.
+            let prefix: Option<Vec<u8>> = ReqLike::header(req, b"host").map(|host| {
+                let fmt = bun_fmt::HostFormatter {
+                    is_https: true,
+                    host,
+                    port: None,
+                };
+                let mut s = Vec::new();
+                write!(&mut s, "https://{}", fmt).ok();
+                s
+            });
             let path = ReqLike::url(req);
             if !path.is_empty() && path[0] == b'/' {
-                if let Some(host) = host.as_deref() {
-                    let fmt = bun_fmt::HostFormatter {
-                        is_https: true,
-                        host,
-                        port: None,
-                    };
-                    let mut s = Vec::new();
-                    write!(&mut s, "https://{}{}", fmt, BStr::new(path)).ok();
+                if let Some(mut s) = prefix {
+                    s.extend_from_slice(path);
                     request_object.url.set(BunString::clone_utf8(&s));
                 } else {
                     request_object.url.set(BunString::clone_utf8(path));
@@ -3425,12 +3419,11 @@ where
         // SAFETY: ctx_slot was just initialized by create_in.
         let ctx = unsafe { &mut *ctx_slot };
 
-        let body_hive = crate::webcore::body::hive_alloc(this.vm().as_mut(), BodyValue::Null);
-        // SAFETY: hive_alloc returns a freshly-initialized hive slot; live until
-        // its refcount drops to zero.
-        let body_ptr: *mut BodyValue =
-            unsafe { core::ptr::addr_of_mut!((*body_hive.as_ptr()).value) };
-        ctx.request_body = NonNull::new(body_ptr);
+        // Pooled body slot, ref_count = 1.
+        let body_hive = crate::webcore::body::hive_alloc(BodyValue::Null);
+        // Zig: `.body = body.ref()` — ctx and Request each own a +1 on the
+        // same slot. Paired drop in `RequestContext::deinit` / `Request::finalize`.
+        ctx.request_body = Some(body_hive.clone());
 
         let signal = AbortSignal::new(&this.global());
         // Zig: `ctx.signal = signal; signal.pendingActivityRef();` — the
@@ -3443,18 +3436,12 @@ where
         // adopt into RAII so it pairs with `Request::Drop`'s unref.
         // SAFETY: `signal` is live; `ref_()` returns the same non-null ptr +1.
         let signal_for_req = unsafe { jsc::AbortSignalRef::adopt((*signal).ref_()) };
-        // Zig: `.body = body.ref()` — bump once so the JS Request shares the
-        // same hive slot as `ctx.request_body`. Paired unref in
-        // `Request::finalize`.
-        // SAFETY: `body_hive` is live (ref_count >= 1).
-        let body_for_req: NonNull<crate::webcore::body::HiveRef> =
-            unsafe { NonNull::from((*body_hive.as_ptr()).ref_()) };
         let request_object_box = Request::new(Request::init(
             ctx.method,
             AnyRequestContext::init(std::ptr::from_ref(ctx)),
             SSL,
             Some(signal_for_req),
-            body_for_req,
+            body_hive,
         ));
         ctx.upgrade_context = Some(upgrade_ctx);
         let request_object: &mut Request =

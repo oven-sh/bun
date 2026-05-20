@@ -912,7 +912,6 @@ impl<'a> Loader<'a> {
                     }
                 }
             };
-        let _close = bun_sys::CloseOnDrop::file(&file);
 
         match read_env_file_contents(&file)? {
             ReadEnvFile::Empty => {}
@@ -962,7 +961,6 @@ impl<'a> Loader<'a> {
                 return Ok(());
             }
         };
-        let _close = bun_sys::CloseOnDrop::file(&file);
 
         match read_env_file_contents(&file)? {
             ReadEnvFile::Empty => {}

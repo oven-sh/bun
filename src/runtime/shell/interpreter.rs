@@ -1474,8 +1474,31 @@ impl Interpreter {
 
         match this.cleanup_state.get() {
             CleanupState::NeedsFullCleanup => {
-                // The interpreter never finished normally (e.g. early error or
-                // never started), so we need to clean up IO and shell env here.
+                // A node owns `base.shell` iff it was created via `dupe_for_subshell`,
+                // i.e. its `base.shell` differs from its parent's.
+                {
+                    let root_shell_ptr: *mut ShellExecEnv = this.root_shell.as_ptr();
+                    let nodes = this.nodes.get();
+                    let owned_envs: Vec<*mut ShellExecEnv> = nodes
+                        .iter()
+                        .filter_map(|n| {
+                            let base = n.base()?;
+                            if base.shell.is_null() {
+                                return None;
+                            }
+                            let parent_shell: *mut ShellExecEnv =
+                                if base.parent == NodeId::INTERPRETER {
+                                    root_shell_ptr
+                                } else {
+                                    nodes.get(base.parent.idx())?.base()?.shell
+                                };
+                            (base.shell != parent_shell).then_some(base.shell)
+                        })
+                        .collect();
+                    for env in owned_envs {
+                        ShellExecEnv::deinit_impl(env);
+                    }
+                }
                 this.root_io.set(IO::default());
                 this.root_shell.with_mut(|rs| rs.deinit_embedded(true));
             }
@@ -3183,7 +3206,8 @@ pub fn create_shell_interpreter(
 
     let (shargs, jsobjs, quiet, cwd, export_env) = parsed_shell_script.take(global);
 
-    let cwd_slice = cwd.as_ref().map(|c| c.to_utf8());
+    let cwd = cwd.map(bun_core::OwnedString::new);
+    let cwd_slice = cwd.as_deref().map(|c| c.to_utf8());
 
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global;
     // dereferencing for `event_loop()` is sound on the mutator thread.

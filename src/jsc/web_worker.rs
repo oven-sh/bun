@@ -225,7 +225,7 @@ unsafe extern "C" {
     safe fn WebWorker__dispatchError(
         global: &JSGlobalObject,
         cpp_worker: *mut c_void,
-        message: BunString,
+        message: &mut BunString,
         err: JSValue,
     );
 }
@@ -285,7 +285,7 @@ mod live_workers {
     // other threads may hold `&WebWorker`, so the caller only has shared-ref
     // provenance. All writes here go through `Cell` fields
     // (`live_next`/`live_prev`), which is sound via shared provenance.
-    pub(super) fn unregister(worker: *const WebWorker) {
+    pub(super) fn unlink(worker: *const WebWorker) {
         MUTEX.lock();
         // SAFETY: MUTEX held; node was registered in `register`.
         unsafe {
@@ -303,11 +303,24 @@ mod live_workers {
             (*worker).live_next.set(core::ptr::null_mut());
         }
         MUTEX.unlock();
+    }
+
+    /// Decrement `OUTSTANDING` and wake `terminate_all_and_wait`. Split from
+    /// `unlink` so `shutdown()` can defer it until after `dispatchExit` has
+    /// posted the close task — guaranteeing `global_exit` observes that task
+    /// before draining the parent's concurrent queue. Touches no `WebWorker`
+    /// state, so it is safe even if `self` has already been freed.
+    pub(super) fn mark_exited() {
         // Wake any waiter in terminateAllAndWait when we hit zero. Waking
         // unconditionally is fine (spurious wakeups just re-check the
         // counter) and avoids a compare-before-wake race.
         OUTSTANDING.fetch_sub(1, Ordering::Release);
         Futex::wake(&OUTSTANDING, 1);
+    }
+
+    pub(super) fn unregister(worker: *const WebWorker) {
+        unlink(worker);
+        mark_exited();
     }
 }
 
@@ -1242,6 +1255,14 @@ impl WebWorker {
             vm.on_exit();
             if let Some(hooks) = runtime_hooks() {
                 (hooks.cron_clear_all_teardown)(vm);
+                // Drain `TimeoutObject`s from this worker's timer heap before
+                // `close_all_socket_groups` / `WebWorker__teardownJSCVM` so
+                // their heap nodes are unlinked while `runtime_state` and the
+                // JSC heap are both still alive.
+                // SAFETY: `vm_ptr` was unpublished under `vm_lock` above, so
+                // this thread is the sole owner; `runtime_state` for this
+                // worker thread is still installed (torn down in `destroy()`).
+                unsafe { (hooks.cancel_all_timers)(vm_ptr) };
             }
             // Embedded socket groups must drain while JSC is still alive —
             // closeAll() fires on_close → JS callbacks. RareData.deinit() runs
@@ -1264,15 +1285,20 @@ impl WebWorker {
         }
 
         // JSC is down; no more resolver/module-loader access past this point.
-        // Unregister so the main thread's terminateAllAndWait() can proceed to
-        // free process-global resolver state. Must happen before dispatchExit
-        // because `this` may be freed once that posts.
-        live_workers::unregister(self);
+        // Unlink so the main thread's terminateAllAndWait() sweep skips us;
+        // the OUTSTANDING decrement is deferred until after dispatchExit so
+        // terminateAllAndWait() doesn't return before the close task is
+        // posted (global_exit drains the parent's concurrent queue right
+        // after). Unlink touches `self` and so must precede dispatchExit;
+        // mark_exited() does not, so the post-dispatchExit "this may be
+        // freed" window is fine.
+        live_workers::unlink(self);
 
         // ---- 4. Post close task to parent ----------------------------------
         // `cpp_worker` is the opaque C++-owned handle (snapshot taken above).
         WebWorker__dispatchExit(cpp_worker, exit_code);
         // `this` may be freed past this point.
+        live_workers::mark_exited();
 
         // ---- 5. Free worker-thread resources -------------------------------
         if let Some(loop_) = loop_ {
@@ -1295,6 +1321,29 @@ impl WebWorker {
             // SAFETY: vm_ptr valid; sole owner. `destroy()` is the port of
             // Zig `vm.deinit()`.
             unsafe { (*vm_ptr).destroy() };
+            // Reclaim the boxes that Zig bulk-freed via `arena.deinit()`
+            // (web_worker.zig:515) but the Rust port allocated on the global
+            // heap in `VirtualMachine::init` — `destroy()` only deinits the
+            // fields, not the box storage. Worker `init_worker` always passes
+            // `log: None`, so the log box is VM-owned here.
+            // SAFETY: sole owner; nothing past this point dereferences the VM.
+            unsafe {
+                let console = core::mem::replace(&mut (*vm_ptr).console, core::ptr::null_mut());
+                if !console.is_null() {
+                    bun_core::heap::destroy(console);
+                }
+                if let Some(log) = (*vm_ptr).log.take() {
+                    bun_core::heap::destroy(log.as_ptr());
+                }
+                virtual_machine::VMHolder::set_vm(None);
+                // The VM was `alloc_zeroed(Layout::<VirtualMachine>())` in
+                // `init`, NOT `Box::new` — dealloc the raw storage directly so
+                // field `Drop`s do not re-run on already-`deinit`'d state.
+                std::alloc::dealloc(
+                    vm_ptr.cast::<u8>(),
+                    core::alloc::Layout::new::<VirtualMachine>(),
+                );
+            }
         }
         // Reclaim the cloned env (loader borrows `*map` — drop loader first).
         // In Zig both lived on the worker arena and were bulk-freed below;
@@ -1309,6 +1358,14 @@ impl WebWorker {
             drop(unsafe { bun_core::heap::take(env_map) });
         }
         bun_core::delete_all_pools_for_thread_exit();
+        // Free this thread's lazily-created uWS loop and its 512 KiB recv
+        // buffer. Zig reached this via the `pthread_exit`-driven C++
+        // thread_local `~LoopCleaner`, but the Rust port returns normally and
+        // unwinding never crosses the `extern "C"` frame, so the destructor is
+        // skipped on glibc; under BUN_DESTRUCT_VM_ON_EXIT it would also gate
+        // on `!bun_is_exiting()`. Everything that registers polls on the loop
+        // (gc_controller, sockets, timers) has been deinit'd above.
+        bun_uws::on_thread_exit();
         drop(arena.take());
 
         // PORT NOTE: Zig calls `bun.exitThread()` (`pthread_exit`) here. In
@@ -1375,11 +1432,10 @@ impl WebWorker {
             Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
             Err(JsError::Thrown | JsError::Terminated) => panic!("unhandled exception"),
         };
-        // RAII: Zig's `defer str.deref()` — released on scope exit.
-        scopeguard::defer! { str.deref(); }
+        let mut str = bun_core::OwnedString::new(str);
         let dispatch = jsc::host_fn::from_js_host_call_generic(global, || {
             // `cpp_worker` is the opaque C++-owned handle; `str` reffed for the call.
-            WebWorker__dispatchError(global, self.cpp_worker, str, err)
+            WebWorker__dispatchError(global, self.cpp_worker, &mut str, err)
         });
         if let Err(e) = dispatch {
             // Spec web_worker.zig:810 — `.asException(..).?`: `take_exception`
@@ -1457,12 +1513,13 @@ fn on_unhandled_rejection(
     // (declares + checks a TopExceptionScope around the FFI call, same as
     // `flush_logs` above) and discard any actual exception: we are already the
     // last-resort error handler and about to arm termination.
+    let mut error_message = bun_core::OwnedString::new(BunString::clone_utf8(&array));
     if jsc::host_fn::from_js_host_call_generic(global_object, || {
         // `cpp_worker` is the opaque C++-owned handle round-tripped via `safe fn`.
         WebWorker__dispatchError(
             global_object,
             worker.cpp_worker,
-            BunString::clone_utf8(&array),
+            &mut error_message,
             error_instance,
         );
     })

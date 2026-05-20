@@ -1250,7 +1250,7 @@ impl<'a> JsCallbackRenderer<'a> {
                 data: self.stack.last().unwrap().data,
                 flags: self.stack.last().unwrap().flags,
                 child_index: self.stack.last().unwrap().child_index,
-                detail: self.stack.last().unwrap().detail.clone(),
+                detail: self.stack.last().unwrap().detail,
             }
         } else {
             CallbackStackEntry::default()
@@ -1288,7 +1288,7 @@ impl<'a> JsCallbackRenderer<'a> {
 
         let callback = self.get_span_callback(span_type);
         let detail = if self.stack.len() > 1 {
-            self.stack.last().unwrap().detail.clone()
+            self.stack.last().unwrap().detail
         } else {
             md::SpanDetail::default()
         };

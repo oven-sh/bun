@@ -66,33 +66,38 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 // Is the symbol a member of this scope's TypeScript namespace?
-                if let Some(mut ts_namespace) = scope.ts_namespace {
-                    let ts = &*ts_namespace;
-                    let exported: &js_ast::TSNamespaceMemberMap = &ts.exported_members;
-                    if let Some(member) = exported.get(name) {
-                        if member.data.is_enum() == ts.is_enum_scope {
-                            declare_loc = member.loc;
-                            // If this is an identifier from a sibling TypeScript namespace, then we're
-                            // going to have to generate a property access instead of a simple reference.
-                            // Lazily-generate an identifier that represents this property access.
-                            // PORT NOTE: reshaped for borrowck — Zig's getOrPut returns key/value
-                            // pointers while we also call self.new_symbol (&mut self). Split into
-                            // get-then-insert so the &mut self borrow does not overlap the map borrow.
-                            if let Some(existing) = ts.property_accesses.get(name) {
-                                break 'brk *existing;
+                // `scope.ts_namespace` is only assigned behind `IS_TYPESCRIPT_ENABLED`
+                // guards, so the probe is dead for JS inputs — gate it so the
+                // load+branch fold away in the `TYPESCRIPT == false` monomorphization.
+                if Self::IS_TYPESCRIPT_ENABLED {
+                    if let Some(mut ts_namespace) = scope.ts_namespace {
+                        let ts = &*ts_namespace;
+                        let exported: &js_ast::TSNamespaceMemberMap = &ts.exported_members;
+                        if let Some(member) = exported.get(name) {
+                            if member.data.is_enum() == ts.is_enum_scope {
+                                declare_loc = member.loc;
+                                // If this is an identifier from a sibling TypeScript namespace, then we're
+                                // going to have to generate a property access instead of a simple reference.
+                                // Lazily-generate an identifier that represents this property access.
+                                // PORT NOTE: reshaped for borrowck — Zig's getOrPut returns key/value
+                                // pointers while we also call self.new_symbol (&mut self). Split into
+                                // get-then-insert so the &mut self borrow does not overlap the map borrow.
+                                if let Some(existing) = ts.property_accesses.get(name) {
+                                    break 'brk *existing;
+                                }
+                                let arg_ref = ts.arg_ref;
+                                let new_ref = self.new_symbol(js_ast::symbol::Kind::Other, name)?;
+                                // Re-borrow ts_namespace mutably after &mut self.
+                                let ts_mut = &mut *ts_namespace;
+                                ts_mut.property_accesses.insert(name, new_ref);
+                                self.symbols[new_ref.inner_index() as usize].namespace_alias =
+                                    Some(js_ast::NamespaceAlias {
+                                        namespace_ref: arg_ref,
+                                        alias: js_ast::StoreStr::new(name),
+                                        ..Default::default()
+                                    });
+                                break 'brk new_ref;
                             }
-                            let arg_ref = ts.arg_ref;
-                            let new_ref = self.new_symbol(js_ast::symbol::Kind::Other, name)?;
-                            // Re-borrow ts_namespace mutably after &mut self.
-                            let ts_mut = &mut *ts_namespace;
-                            ts_mut.property_accesses.insert(name, new_ref);
-                            self.symbols[new_ref.inner_index() as usize].namespace_alias =
-                                Some(js_ast::NamespaceAlias {
-                                    namespace_ref: arg_ref,
-                                    alias: js_ast::StoreStr::new(name),
-                                    ..Default::default()
-                                });
-                            break 'brk new_ref;
                         }
                     }
                 }

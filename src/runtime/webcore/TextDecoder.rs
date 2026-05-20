@@ -195,7 +195,7 @@ impl TextDecoder {
         if !remain.is_empty() && i == remain.len() - 1 {
             self.lead_byte.set(Some(remain[i]));
         } else {
-            bun_core::assert_with_location(i == remain.len(), core::panic::Location::caller());
+            assert!(i == remain.len());
         }
 
         if FLUSH {
@@ -362,6 +362,17 @@ impl TextDecoder {
                         }
                     }
                     let len = decoded.len();
+                    // `to_external_u16` returns `jsEmptyString` and never
+                    // calls `free_global_string` for `len == 0`, so a
+                    // zero-length decode (e.g. a buffered partial sequence
+                    // with `stream: true`, or all-replaced bytes when
+                    // `fatal: false`) would strand the `Vec`'s reserved
+                    // backing store. Drop it here and return the canonical
+                    // empty string instead.
+                    if len == 0 {
+                        drop(decoded);
+                        return Ok(ZigString::EMPTY.to_js(global_this));
+                    }
                     // PERF(port): Vec::leak may retain excess capacity vs Zig's items.ptr — profile if it shows up on a hot path.
                     let ptr = decoded.leak().as_mut_ptr();
                     return Ok(jsc::zig_string::to_external_u16(ptr, len, global_this));

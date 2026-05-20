@@ -1929,19 +1929,17 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
 
     /// Zig `getAdapted` — look up by `key` using `adapter` for hash/eql.
     ///
-    /// PERF(port): the underlying `std::HashMap` cannot be queried with an
-    /// external u64 hash (it uses its own `BuildHasher`), so the adapter's
-    /// precomputed hash is ignored and the lookup falls back to the normal
-    /// `get(key)` path. Correctness is preserved (`adapter.eql` is byte
-    /// equality for all current adapters); only the rehash-avoidance is lost.
-    /// Restore once `StringHashMap` is moved off `std::HashMap` onto a
-    /// wyhash-backed table that accepts a raw u64.
+    /// The adapter's precomputed hash is ignored; the lookup falls back to the
+    /// normal `get(key)` path (correctness is preserved — `adapter.eql` is byte
+    /// equality for all current adapters). Callers that already hold a hash
+    /// computed with [`hash_key`] should use [`get_hashed`] instead to skip the
+    /// rehash.
     #[inline]
     pub fn get_adapted<C>(&self, key: &[u8], _adapter: &C) -> Option<&V> {
         self.inner.get(key)
     }
 
-    /// See `get_adapted` for the PERF(port) caveat.
+    /// See [`get_adapted`] — same precomputed-hash caveat applies.
     #[inline]
     pub fn contains_adapted<C>(&self, key: &[u8], _adapter: &C) -> bool {
         self.inner.contains_key(key)
@@ -1962,8 +1960,9 @@ impl<V: Default, A: Allocator + HashbrownAllocator + Clone + Default> StringHash
     /// allocations + double-hashes per file. Route through a single `entry()`
     /// match; the `Box` is still allocated upfront (std `HashMap::entry`
     /// requires the owned key) but on hit it is dropped without a second
-    /// probe. Full prehash reuse needs a `raw_entry`-style API — tracked in
-    /// the `get_adapted` PERF note above.
+    /// probe. Full prehash reuse needs a `raw_entry`-style API; see
+    /// [`get_hashed`] / [`put_static_key_hashed`] for the existing single-hash
+    /// entry points.
     pub fn get_or_put(&mut self, key: &[u8]) -> Result<StringHashMapGetOrPut<'_, V>, AllocError> {
         Ok(self.get_or_put_context_adapted(key, ()))
     }

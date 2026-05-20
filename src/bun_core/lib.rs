@@ -1,6 +1,7 @@
 #![feature(allocator_api)]
 #![feature(adt_const_params)]
 #![feature(macro_metavar_expr)] // `$$` in define_scoped_log! (nightly-2026-05-06)
+#![feature(thread_local)] // bare `__thread` slot for `thread_id::current()` cache
 #![allow(
     unused,
     non_snake_case,
@@ -1020,12 +1021,6 @@ pub fn concat_boxed<T: Copy>(parts: &[&[T]]) -> Box<[T]> {
 #[inline]
 pub fn concat<'b>(buf: &'b mut [u8], parts: &[&[u8]]) -> &'b [u8] {
     concat_into(buf, parts)
-}
-
-/// Zig `bun.assertf(cond, fmt, args)` — debug-only formatted assert.
-#[macro_export]
-macro_rules! assertf {
-    ($cond:expr, $($arg:tt)*) => { ::core::debug_assert!($cond, $($arg)*) };
 }
 
 /// Zig `union(enum)` field projection — `data.file`, `chunk.content.javascript`.
@@ -2620,8 +2615,9 @@ pub mod strings {
     pub use crate::strings_impl::{index_of_any, index_of_any_t};
 }
 
-// bun_alloc stubs Global.rs expects (real consts pending bun_alloc::basic)
-pub const USE_MIMALLOC: bool = true;
+// `true` when mimalloc is the `#[global_allocator]`; `false` under ASAN where
+// `std::alloc::System` is installed instead. Mirrors `bun_alloc::USE_MIMALLOC`.
+pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
 pub mod debug_allocator_data {
     #[inline]
     pub fn deinit_ok() -> bool {
@@ -2678,18 +2674,6 @@ pub fn linux_kernel_version() -> Version {
         major: 0,
         minor: 0,
         patch: 0,
-    }
-}
-
-/// Port of `bun.assertWithLocation` (src/bun_core/bun.zig) — `bun.assert` plus
-/// the caller's source location for the failure message. In release builds the
-/// Zig version logs and continues; here it panics under `debug_assertions` and
-/// is a no-op otherwise (matching `bun.assert`'s release-safe behaviour).
-#[track_caller]
-#[inline]
-pub fn assert_with_location(cond: bool, loc: &'static core::panic::Location<'static>) {
-    if cfg!(debug_assertions) && !cond {
-        panic!("assertion failed at {}:{}", loc.file(), loc.line());
     }
 }
 

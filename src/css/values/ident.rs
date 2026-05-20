@@ -415,13 +415,13 @@ impl IdentOrRef {
             .map(|p| unsafe { crate::arena_str(&**p) })
     }
 
-    pub fn as_original_string(self, symbols: &bun_ast::symbol::List) -> &[u8] {
+    pub fn as_original_string(self, symbols: &[bun_ast::Symbol]) -> &[u8] {
         if self.is_ident() {
             // SAFETY: arena slice reconstructed from packed ptr/len
             return unsafe { crate::arena_str(self.as_ident().unwrap().v) };
         }
         let r = self.as_ref().unwrap();
-        symbols.at(r.inner_index() as usize).original_name.slice()
+        symbols[r.inner_index() as usize].original_name.slice()
     }
 
     pub fn hash(&self, hasher: &mut Wyhash) {

@@ -265,6 +265,8 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
 
         let mut map: Self = Self::default();
         map.metadata = vec![SLOT_FREE; new_cap as usize];
+        // LSAN: this Vec is owned by the map and freed by HashMap's auto-Drop.
+        // A leak reported here means the *container* HashMap leaked, not grow().
         map.slots = Vec::with_capacity(new_cap as usize);
         for _ in 0..new_cap {
             map.slots.push(None);

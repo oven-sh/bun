@@ -10,6 +10,7 @@ pub struct ManagedTask {
     // TODO(port): lifetime — opaque userdata pointer round-tripped through `new`/`run`
     pub ctx: Option<NonNull<c_void>>,
     pub callback: fn(*mut c_void) -> JsResult<()>,
+    pub cleanup: Option<fn(*mut c_void)>,
 }
 
 impl ManagedTask {
@@ -59,6 +60,25 @@ impl ManagedTask {
                 )
             },
             ctx: NonNull::new(ctx.cast::<c_void>()),
+            cleanup: None,
+        }));
+        ManagedTask::task(managed)
+    }
+
+    pub fn new_owned<T>(ctx: *mut T, callback: fn(*mut T) -> JsResult<()>) -> Task {
+        fn drop_ctx<T>(p: *mut c_void) {
+            // SAFETY: `p` is the `heap::into_raw(Box<T>)` stored in `ctx` by `new_owned`.
+            unsafe { bun_core::heap::destroy(p.cast::<T>()) };
+        }
+        let managed = bun_core::heap::into_raw(Box::new(ManagedTask {
+            // SAFETY: same fn-pointer ABI cast as `new`.
+            callback: unsafe {
+                bun_ptr::cast_fn_ptr::<fn(*mut T) -> JsResult<()>, fn(*mut c_void) -> JsResult<()>>(
+                    callback,
+                )
+            },
+            ctx: NonNull::new(ctx.cast::<c_void>()),
+            cleanup: Some(drop_ctx::<T>),
         }));
         ManagedTask::task(managed)
     }

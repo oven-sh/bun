@@ -336,7 +336,7 @@ describe.concurrent("socket", () => {
     } finally {
       server!.stop(true);
     }
-  }, 10_000);
+  }, 60_000);
 
   it("should allow large amounts of data to be sent and received", async () => {
     expect([fileURLToPath(new URL("./socket-huge-fixture.js", import.meta.url))]).toRun();

@@ -188,8 +188,7 @@ pub fn construct_render(global_this: &JSGlobalObject, callframe: &CallFrame) -> 
     }
 
     // Get the path string
-    let path_str = path_arg.to_bun_string(global_this)?;
-    // `defer path_str.deref()` → handled by Drop on bun_core::String
+    let path_str = bun_core::OwnedString::new(path_arg.to_bun_string(global_this)?);
 
     let path_utf8 = path_str.to_utf8();
     // `defer path_utf8.deinit()` → handled by Drop on the UTF-8 slice guard

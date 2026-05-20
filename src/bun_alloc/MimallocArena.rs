@@ -243,6 +243,7 @@ impl MimallocArena {
         // destroyed (we own it). After this call all outstanding allocations
         // are freed; replacing `self.heap` with a fresh heap restores the
         // invariant.
+        crate::ast_alloc::bump_invalidate_heap(self.heap_ptr());
         unsafe { mimalloc::mi_heap_destroy(self.heap_ptr()) };
         let heap = unsafe { mimalloc::mi_heap_new() };
         self.heap = NonNull::new(heap).unwrap_or_else(|| crate::out_of_memory());
@@ -585,6 +586,7 @@ impl Drop for MimallocArena {
         // every block still allocated in it without running per-block free.
         // SAFETY: `self.heap` is a live heap obtained from `mi_heap_new` and
         // is destroyed exactly once here.
+        crate::ast_alloc::bump_invalidate_heap(self.heap_ptr());
         unsafe { mimalloc::mi_heap_destroy(self.heap_ptr()) };
     }
 }
@@ -778,14 +780,7 @@ unsafe fn global_vtable_alloc(
     a: crate::Alignment,
     _ra: usize,
 ) -> *mut u8 {
-    // `mi_malloc[_aligned]` are declared `safe fn` in the extern block (no input
-    // preconditions — any len/alignment is valid; returns null on OOM), so no
-    // `unsafe { }` is required here.
-    if mimalloc::must_use_aligned_alloc(a.to_byte_units()) {
-        mimalloc::mi_malloc_aligned(len, a.to_byte_units()).cast()
-    } else {
-        mimalloc::mi_malloc(len).cast()
-    }
+    crate::default_alloc::malloc_aligned(len, a.to_byte_units()).cast()
 }
 
 /// Zig: `global_mimalloc_vtable`.
@@ -793,7 +788,7 @@ pub static GLOBAL_MIMALLOC_VTABLE: crate::AllocatorVTable = crate::AllocatorVTab
     alloc: global_vtable_alloc,
     resize: crate::basic::MimallocAllocator::resize_with_default_allocator,
     remap: crate::basic::MimallocAllocator::remap_with_default_allocator,
-    free: crate::basic::mimalloc_free,
+    free: crate::basic::default_allocator_free,
 };
 
 /// Both vtable addresses this module hands out, for
@@ -805,21 +800,6 @@ pub fn std_vtables() -> [&'static crate::AllocatorVTable; 2] {
 }
 
 // ── ArenaVec helpers ─────────────────────────────────────────────────────
-// `std::vec::Vec<T, A>` lacks `from_iter_in` / `into_bump_slice*`; provide
-// thin shims so call sites that used `bumpalo::collections::Vec` keep working.
-
-/// `bumpalo::collections::Vec::from_iter_in` parity for `Vec<T, &MimallocArena>`.
-#[inline]
-pub fn vec_from_iter_in<'a, T, I>(iter: I, arena: &'a MimallocArena) -> Vec<T, &'a MimallocArena>
-where
-    I: IntoIterator<Item = T>,
-{
-    let iter = iter.into_iter();
-    let (lo, _) = iter.size_hint();
-    let mut v = Vec::with_capacity_in(lo, arena);
-    v.extend(iter);
-    v
-}
 
 /// `bumpalo::collections::String` parity — a UTF-8 buffer backed by the arena.
 /// Thin newtype over `Vec<u8, &'a MimallocArena>` so `write!` works and
@@ -911,12 +891,33 @@ pub trait ArenaVecExt<'a, T> {
 impl<'a, T> ArenaVecExt<'a, T> for Vec<T, &'a MimallocArena> {
     #[inline]
     fn from_iter_in<I: IntoIterator<Item = T>>(iter: I, arena: &'a MimallocArena) -> Self {
-        vec_from_iter_in(iter, arena)
+        let iter = iter.into_iter();
+        let (lo, _) = iter.size_hint();
+        let mut v = Vec::with_capacity_in(lo, arena);
+        v.extend(iter);
+        v
     }
     #[inline]
     fn into_bump_slice(self) -> &'a [T] {
-        // Storage is owned by the arena and lives for `'a`; `Vec::leak` forgoes
-        // the `Vec` drop so the arena reclaims it on `reset`/`Drop`.
+        &*self.leak()
+    }
+    #[inline]
+    fn into_bump_slice_mut(self) -> &'a mut [T] {
+        self.leak()
+    }
+    #[inline]
+    fn bump(&self) -> &'a MimallocArena {
+        *self.allocator()
+    }
+}
+
+impl<'a, T> ArenaVecExt<'a, T> for crate::BabyVec<'a, T> {
+    #[inline]
+    fn from_iter_in<I: IntoIterator<Item = T>>(iter: I, arena: &'a MimallocArena) -> Self {
+        crate::vec_from_iter_in(iter, arena)
+    }
+    #[inline]
+    fn into_bump_slice(self) -> &'a [T] {
         &*self.leak()
     }
     #[inline]

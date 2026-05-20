@@ -336,6 +336,8 @@ impl Crypto {
     pub fn constructor(global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<*mut Crypto> {
         Err(global.throw_illegal_constructor("Crypto"))
     }
+
+    pub fn finalize(self: Box<Self>) {}
 }
 
 fn random_data(global: &JSGlobalObject, slice: &mut [u8]) {
@@ -490,8 +492,7 @@ pub fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
     // `name` is a ZigString.Slice in Zig (borrow-or-own UTF-8). Port as bun_core::ZigStringSlice.
     let name: bun_core::ZigStringSlice = 'brk: {
         if name_value.is_string() {
-            let name_str = name_value.to_bun_string(global)?;
-            // `defer name_str.deref()` — BunString's Drop handles the deref.
+            let name_str = bun_core::OwnedString::new(name_value.to_bun_string(global)?);
             let result = name_str.to_utf8();
 
             break 'brk result;
@@ -511,10 +512,8 @@ pub fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
 
     let namespace: [u8; 16] = 'brk: {
         if namespace_value.is_string() {
-            let namespace_str = namespace_value.to_bun_string(global)?;
-            // `defer namespace_str.deref()` — Drop handles it.
+            let namespace_str = bun_core::OwnedString::new(namespace_value.to_bun_string(global)?);
             let namespace_slice = namespace_str.to_utf8();
-            // `defer namespace_slice.deinit()` — Drop handles it.
 
             if namespace_slice.slice().len() != 36 {
                 if let Some(namespace) = uuid::namespaces::get(namespace_slice.slice()) {

@@ -176,7 +176,7 @@ impl UserOptions {
         if !config.is_object() {
             // Allow users to do `export default { app: 'react' }` for convenience
             if config.is_string() {
-                let bunstr = config.to_bun_string(global)?;
+                let bunstr = bun_core::OwnedString::new(config.to_bun_string(global)?);
                 let utf8_string = bunstr.to_utf8();
 
                 if strings::eql(utf8_string.slice(), b"react") {
@@ -761,7 +761,7 @@ impl Framework {
         arena: &Arena,
     ) -> JsResult<Framework> {
         if opts.is_string() {
-            let str = opts.to_bun_string(global)?;
+            let str = bun_core::OwnedString::new(opts.to_bun_string(global)?);
 
             // Deprecated
             if str.eql_comptime("react-server-components") {
@@ -818,7 +818,7 @@ impl Framework {
                 }
             };
 
-            let str = prop.to_bun_string(global)?;
+            let str = bun_core::OwnedString::new(prop.to_bun_string(global)?);
 
             Some(ReactFastRefresh {
                 import_source: refs.track(str.to_utf8()),
@@ -1367,7 +1367,7 @@ pub enum BuiltInModule {
     Code(&'static [u8]),
 }
 
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 pub struct ServerComponents {
     pub separate_ssr_graph: bool,
     pub server_runtime_import: &'static [u8],
@@ -1389,7 +1389,7 @@ impl Default for ServerComponents {
     }
 }
 
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 pub struct ReactFastRefresh {
     pub import_source: &'static [u8],
 }
@@ -1438,7 +1438,7 @@ fn get_optional_string(
     if value.is_undefined_or_null() {
         return Ok(None);
     }
-    let str = value.to_bun_string(global)?;
+    let str = bun_core::OwnedString::new(value.to_bun_string(global)?);
     let _ = arena; // TODO(port): arena param unused after to_utf8() drops allocator
     Ok(Some(allocations.track(str.to_utf8())))
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import crypto from "crypto";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, gc, tempDir, tls } from "harness";
+import { bunEnv, bunExe, gc, isASAN, tempDir, tls } from "harness";
 import { createServer } from "net";
 import { join } from "path";
 import process from "process";
@@ -916,7 +916,8 @@ describe("WebSocket tls option does not leak SSLConfig on error paths", () => {
     console.log(JSON.stringify({ baseline, after, growthMiB }));
     // 500 iterations * 2 paths * 256 KiB would leak ~250 MiB. Allow generous
     // headroom for allocator noise while still catching the regression.
-    if (growthMiB > 64) {
+    // ASAN's quarantine retains freed allocations so widen the threshold there.
+    if (growthMiB > ${isASAN ? 256 : 64}) {
       process.exitCode = 1;
     }
   `;
@@ -937,7 +938,7 @@ describe("WebSocket tls option does not leak SSLConfig on error paths", () => {
       .join("\n");
     expect(filteredStderr).toBe("");
     const { growthMiB } = JSON.parse(stdout.trim());
-    expect(growthMiB).toBeLessThan(64);
+    expect(growthMiB).toBeLessThan(isASAN ? 256 : 64);
     expect(exitCode).toBe(0);
   });
 });

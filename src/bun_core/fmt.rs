@@ -443,9 +443,27 @@ pub fn format_json_string_utf8(
 
 type SharedTempBuffer = [u8; 32 * 1024];
 
+struct SharedTempBufferSlot(Cell<Option<NonNull<SharedTempBuffer>>>);
+impl Drop for SharedTempBufferSlot {
+    fn drop(&mut self) {
+        if let Some(p) = self.0.take() {
+            // SAFETY: produced by `heap::alloc_nn` in `SharedTempBufferBorrow::
+            // new` and parked here on borrow drop; the thread is exiting so no
+            // outstanding borrow holds it.
+            unsafe { crate::heap::destroy(p.as_ptr()) };
+        }
+    }
+}
+impl core::ops::Deref for SharedTempBufferSlot {
+    type Target = Cell<Option<NonNull<SharedTempBuffer>>>;
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 thread_local! {
-    static SHARED_TEMP_BUFFER_PTR: Cell<Option<NonNull<SharedTempBuffer>>> =
-        const { Cell::new(None) };
+    static SHARED_TEMP_BUFFER_PTR: SharedTempBufferSlot =
+        const { SharedTempBufferSlot(Cell::new(None)) };
 }
 
 /// RAII borrow of the thread-local shared temp buffer.

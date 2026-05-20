@@ -341,24 +341,6 @@ fn intern_package_json(pkg: PackageJSON) -> core::ptr::NonNull<PackageJSON> {
     core::ptr::NonNull::from(&mut **guard.last_mut().unwrap())
 }
 
-/// Intern tsconfig.json source bytes into the process-lifetime DirInfo arena.
-/// `use_shared_buffer = false` at the read site guarantees `Owned`/`Empty`.
-fn intern_tsconfig_contents(contents: crate::cache::Contents) -> &'static [u8] {
-    use crate::cache::Contents;
-    let owned: Box<[u8]> = match contents {
-        Contents::Empty => return b"",
-        Contents::Owned(v) => v.into_boxed_slice(),
-        // Unreachable for the `parse_tsconfig` caller (use_shared_buffer=false);
-        // fall back to a copy so we never hand out a dangling slice.
-        other => Box::from(other.as_slice()),
-    };
-    // `Interned::leak` is the centralized process-lifetime byte-slice store
-    // (PORTING.md §Forbidden bars open-coded `Box::leak` + `from_raw_parts`;
-    // `bun_ptr::Interned` is the sanctioned wrapper that consumes the `Box`
-    // and hands back a proven `&'static [u8]`).
-    bun_ptr::Interned::leak(owned).as_bytes()
-}
-
 // Port of `const debuglog = Output.scoped(.Resolver, .hidden)` (resolver.zig:4).
 // `bun_core::declare_scope!` emits the per-scope `static ScopedLogger`; the
 // `debuglog!` macro forwards to the real `bun_core::scoped_log!` so debug builds
@@ -433,21 +415,39 @@ pub struct Bufs {
     pub win32_normalized_dir_info_cache: (),
 }
 // TODO(port): bun.ThreadlocalBuffers(Bufs) — lazily-allocated threadlocal Box<Bufs>.
-// In Rust we model it as a `thread_local! { static BUFS_PTR: Cell<*mut Bufs> }`
-// caching a leaked `Box<Bufs>` pointer (the Box is never freed in Zig either —
-// process-lifetime scratch storage). The `bufs!()` macro hands out `&mut` to a
+// In Rust we model it as a `thread_local! { static BUFS_PTR: BufsSlot }` caching a
+// leaked `Box<Bufs>` pointer. `BufsSlot`'s `Drop` reclaims that box when a
+// worker/transpiler-pool thread exits; the main thread's lives process-lifetime
+// (as in Zig, which never freed it). The `bufs!()` macro hands out `&mut` to a
 // single field. This relies on the caller never holding two `bufs!()` borrows
 // simultaneously across the same field; the Zig code already obeys that invariant.
+struct BufsSlot(core::cell::Cell<*mut Bufs>);
+impl Drop for BufsSlot {
+    fn drop(&mut self) {
+        // Reclaim the per-thread `Box<Bufs>` when a worker/transpiler-pool
+        // thread exits. Main-thread Bufs lives as long as the process, but
+        // every worker that touches the resolver allocates a fresh ~116 KiB
+        // box that was previously stranded.
+        let p = self.0.get();
+        if !p.is_null() {
+            // SAFETY: produced by `Box::leak` in `bufs_storage_init`; this
+            // thread is exiting so no resolver call frame holds a `bufs!()`
+            // borrow into it.
+            drop(unsafe { Box::from_raw(p) });
+        }
+    }
+}
 thread_local! {
-    static BUFS_PTR: core::cell::Cell<*mut Bufs> = const { core::cell::Cell::new(core::ptr::null_mut()) };
+    static BUFS_PTR: BufsSlot = const { BufsSlot(core::cell::Cell::new(core::ptr::null_mut())) };
 }
 
 #[inline(always)]
 fn bufs_storage_get() -> *mut Bufs {
-    // Fast path: single TLS pointer load + null check. `LocalKey<Cell<T>>::get`
-    // (T: Copy) compiles to a plain `__tls_get_addr` + load with no
+    // Fast path: TLS access + null check. `BUFS_PTR` is a `BufsSlot` (it has a
+    // `Drop`), so `with()` goes through `thread_local!`'s destructor-state check
+    // before the `Cell::get` load — still only a few instructions, no
     // RefCell/Option/closure machinery on the hot path (benches: misc/require-fs).
-    let p = BUFS_PTR.get();
+    let p = BUFS_PTR.with(|s| s.0.get());
     if !p.is_null() {
         return p;
     }
@@ -465,7 +465,7 @@ fn bufs_storage_init() -> *mut Bufs {
     // including `open_dirs` which is bounded by `open_dir_count`), so
     // there is no need to pay for zero-filling ~100 KiB on first use.
     let p: *mut Bufs = Box::leak(unsafe { Box::<Bufs>::new_uninit().assume_init() });
-    BUFS_PTR.set(p);
+    BUFS_PTR.with(|s| s.0.set(p));
     p
 }
 
@@ -979,7 +979,7 @@ impl<'a> Resolver<'a> {
 
     #[inline]
     pub fn use_package_manager(&self) -> bool {
-        // TODO(@paperclover): make this configurable. the rationale for disabling
+        // TODO: make this configurable. the rationale for disabling
         // auto-install in standalone mode is that such executable must either:
         //
         // - bundle the dependency itself. dynamic `require`/`import` could be
@@ -1703,7 +1703,7 @@ impl<'a> Resolver<'a> {
             }
 
             if let Some(tsconfig) = dir.enclosing_tsconfig_json {
-                result.jsx = tsconfig.merge_jsx(result.jsx.clone());
+                result.jsx = tsconfig.merge_jsx(core::mem::take(&mut result.jsx));
                 result.flags.set_emit_decorator_metadata(
                     result.flags.emit_decorator_metadata() || tsconfig.emit_decorator_metadata,
                 );
@@ -1834,7 +1834,6 @@ impl<'a> Resolver<'a> {
                 primary: Path::empty(),
                 secondary: None,
             },
-            jsx: self.opts.jsx.clone(),
             ..Default::default()
         };
 
@@ -1891,7 +1890,7 @@ impl<'a> Resolver<'a> {
                                 package_json: res.package_json,
                                 dirname_fd: res.dirname_fd,
                                 file_fd: res.file_fd,
-                                jsx: tsconfig.merge_jsx(result.jsx),
+                                jsx: tsconfig.merge_jsx(self.opts.jsx.clone()),
                                 ..Default::default()
                             });
                         }
@@ -1981,6 +1980,7 @@ impl<'a> Resolver<'a> {
 
         if check_package {
             if self.opts.polyfill_node_globals {
+                result.jsx = self.opts.jsx.clone();
                 let had_node_prefix = import_path.starts_with(b"node:");
                 let import_path_without_node_prefix = if had_node_prefix {
                     &import_path[b"node:".len()..]
@@ -2359,7 +2359,6 @@ impl<'a> Resolver<'a> {
                 result.flags.set_is_from_node_modules(
                     result.flags.is_from_node_modules() || res.is_node_module,
                 );
-                result.jsx = self.opts.jsx.clone();
                 result.module_type = res.module_type;
                 result.flags.set_is_external(res.is_external);
                 // Potentially rewrite the import path if it's external that
@@ -2756,16 +2755,6 @@ impl<'a> Resolver<'a> {
                                 // `&mut self` call is aliased-&mut UB. Build a fresh short-lived
                                 // `ESModule` per `resolve` call so its borrow ends before
                                 // `self.handle_esm_resolution` re-borrows `self`.
-                                let conditions = match kind {
-                                    ast::ImportKind::Require | ast::ImportKind::RequireResolve => {
-                                        self.opts.conditions.require.clone().expect("oom")
-                                    }
-                                    ast::ImportKind::At | ast::ImportKind::AtConditional => {
-                                        self.opts.conditions.style.clone().expect("oom")
-                                    }
-                                    _ => self.opts.conditions.import.clone().expect("oom"),
-                                };
-
                                 // Resolve against the path "/", then join it with the absolute
                                 // directory path. This is done because ESM package resolution uses
                                 // URLs while our path resolution uses file system paths. We don't
@@ -2773,9 +2762,18 @@ impl<'a> Resolver<'a> {
                                 // paths. We also want to avoid any "%" characters in the absolute
                                 // directory path accidentally being interpreted as URL escapes.
                                 {
-                                    // PERF(port): extra conditions clone vs Zig — profile if hot.
                                     let esm_resolution = ESModule {
-                                        conditions: conditions.clone().expect("oom"),
+                                        conditions: match kind {
+                                            ast::ImportKind::Require
+                                            | ast::ImportKind::RequireResolve => {
+                                                &self.opts.conditions.require
+                                            }
+                                            ast::ImportKind::At
+                                            | ast::ImportKind::AtConditional => {
+                                                &self.opts.conditions.style
+                                            }
+                                            _ => &self.opts.conditions.import,
+                                        },
                                         debug_logs: self.debug_logs.as_mut(),
                                         module_type: &mut module_type,
                                     }
@@ -2819,7 +2817,17 @@ impl<'a> Resolver<'a> {
                                 let extname = bun_paths::extension(esm.subpath);
                                 if extname == b".js" && esm.subpath.len() > 3 {
                                     let esm_resolution = ESModule {
-                                        conditions,
+                                        conditions: match kind {
+                                            ast::ImportKind::Require
+                                            | ast::ImportKind::RequireResolve => {
+                                                &self.opts.conditions.require
+                                            }
+                                            ast::ImportKind::At
+                                            | ast::ImportKind::AtConditional => {
+                                                &self.opts.conditions.style
+                                            }
+                                            _ => &self.opts.conditions.import,
+                                        },
                                         debug_logs: self.debug_logs.as_mut(),
                                         module_type: &mut module_type,
                                     }
@@ -3202,14 +3210,6 @@ impl<'a> Resolver<'a> {
                                 if let Some(exports_map) = package_json.exports.as_ref() {
                                     // The condition set is determined by the kind of import
                                     // PORT NOTE: reshaped for borrowck — see identical note above.
-                                    let conditions = match kind {
-                                        ast::ImportKind::Require
-                                        | ast::ImportKind::RequireResolve => {
-                                            self.opts.conditions.require.clone().expect("oom")
-                                        }
-                                        _ => self.opts.conditions.import.clone().expect("oom"),
-                                    };
-
                                     // Resolve against the path "/", then join it with the absolute
                                     // directory path. This is done because ESM package resolution uses
                                     // URLs while our path resolution uses file system paths. We don't
@@ -3217,9 +3217,14 @@ impl<'a> Resolver<'a> {
                                     // paths. We also want to avoid any "%" characters in the absolute
                                     // directory path accidentally being interpreted as URL escapes.
                                     {
-                                        // PERF(port): extra conditions clone vs Zig — profile if hot.
                                         let esm_resolution = ESModule {
-                                            conditions: conditions.clone().expect("oom"),
+                                            conditions: match kind {
+                                                ast::ImportKind::Require
+                                                | ast::ImportKind::RequireResolve => {
+                                                    &self.opts.conditions.require
+                                                }
+                                                _ => &self.opts.conditions.import,
+                                            },
                                             debug_logs: self.debug_logs.as_mut(),
                                             module_type: &mut module_type,
                                         }
@@ -3249,7 +3254,13 @@ impl<'a> Resolver<'a> {
                                     let extname = bun_paths::extension(esm.subpath);
                                     if extname == b".js" && esm.subpath.len() > 3 {
                                         let esm_resolution = ESModule {
-                                            conditions,
+                                            conditions: match kind {
+                                                ast::ImportKind::Require
+                                                | ast::ImportKind::RequireResolve => {
+                                                    &self.opts.conditions.require
+                                                }
+                                                _ => &self.opts.conditions.import,
+                                            },
                                             debug_logs: self.debug_logs.as_mut(),
                                             module_type: &mut module_type,
                                         }
@@ -3907,14 +3918,17 @@ impl<'a> Resolver<'a> {
 
         // `use_shared_buffer = false` above, so `entry_contents` is
         // `Contents::Owned`/`Empty`. Zig reads with `bun.default_allocator` and
-        // never frees (tsconfig is interned into the permanent DirInfo cache).
-        // PORTING.md §Forbidden bars `mem::forget`/`from_raw_parts` to mint
-        // `&'static`; route through the process-lifetime arena instead.
-        // TODO(port): once `bun_ast::Source.contents` becomes `Cow<'static,[u8]>`
-        // / `Box<[u8]>`, the arena indirection here can be dropped.
-        let contents_static: &'static [u8] = intern_tsconfig_contents(entry_contents);
+        // never frees because the Zig `TSConfigJSON` borrows slices into the
+        // source; the Rust `TSConfigJSON` owns `Box<[u8]>` copies of every
+        // field, so the source bytes are dead once `parse` returns and can be
+        // dropped with the local `Source`.
+        let contents = match entry_contents {
+            crate::cache::Contents::Owned(v) => v,
+            crate::cache::Contents::Empty => Vec::new(),
+            other => other.as_slice().to_vec(),
+        };
 
-        let source = bun_ast::Source::init_path_string(key_path, contents_static);
+        let source = bun_ast::Source::init_path_string_owned(key_path, contents);
         let file_dir = source.path.source_dir();
 
         // SAFETY: BACKREF — `self.log` (see `log()` PORT NOTE); disjoint from `self.caches`,
@@ -4086,7 +4100,7 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        ::bun_core::assertf!(
+        assert!(
             bun_paths::is_absolute(input_path),
             "cannot resolve DirInfo for non-absolute path: {}",
             bstr::BStr::new(input_path)
@@ -4326,7 +4340,6 @@ impl<'a> Resolver<'a> {
                                 iterate: true,
                             },
                         )
-                        .map_err(Into::into)
                     };
                     #[cfg(windows)]
                     let open_req: core::result::Result<FD, bun_core::Error> = {
@@ -4825,9 +4838,9 @@ impl<'a> Resolver<'a> {
         let esm_resolution = ESModule {
             conditions: match kind {
                 ast::ImportKind::Require | ast::ImportKind::RequireResolve => {
-                    self.opts.conditions.require.clone().expect("oom")
+                    &self.opts.conditions.require
                 }
-                _ => self.opts.conditions.import.clone().expect("oom"),
+                _ => &self.opts.conditions.import,
             },
             debug_logs: self.debug_logs.as_mut(),
             module_type: &mut module_type,
@@ -5906,7 +5919,7 @@ impl<'a> Resolver<'a> {
             // `path` is stored in the permanent `dir_cache` as `DirInfo.abs_path`. It must not
             // point into a reused threadlocal scratch buffer, or a later resolution will
             // corrupt cached entries. Callers must intern it (e.g. via `DirnameStore`) first.
-            ::bun_core::assertf!(
+            assert!(
                 !allocators::is_slice_in_buffer(path, &bufs!(path_in_global_disk_cache)[..]),
                 "DirInfo.abs_path must not point into the threadlocal path_in_global_disk_cache buffer (got \"{}\")",
                 bstr::BStr::new(path)

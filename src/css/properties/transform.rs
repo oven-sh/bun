@@ -761,7 +761,7 @@ impl Translate {
             Translate::Xyz { x, y, z } => Transform::Translate3d {
                 x: x.clone(),
                 y: y.clone(),
-                z: z.clone(),
+                z: *z,
             },
         }
     }
@@ -773,7 +773,7 @@ impl Translate {
 }
 
 /// A value for the [rotate](https://drafts.csswg.org/css-transforms-2/#propdef-rotate) property.
-#[derive(Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 pub struct Rotate {
     /// Rotation around the x axis.
     pub x: f32,

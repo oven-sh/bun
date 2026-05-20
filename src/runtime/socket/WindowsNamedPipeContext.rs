@@ -430,7 +430,7 @@ impl WindowsNamedPipeContext {
         if path[path.len() - 1] == 0 {
             // is already null terminated
             // SAFETY: path[path.len()-1] == 0 checked above
-            let slice_z = ZStr::from_slice_with_nul(&path[..]);
+            let slice_z = ZStr::from_slice_with_nul(path);
             named_pipe.connect(slice_z, ssl_config, owned_ctx)?;
         } else {
             let mut path_buf = PathBuffer::uninit();

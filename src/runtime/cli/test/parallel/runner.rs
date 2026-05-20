@@ -702,7 +702,15 @@ pub fn run_as_worker(
         // SAFETY: event_loop pointer is valid while vm lives.
         unsafe { (*vm_ref.event_loop()).auto_tick() };
     }
-    Global::exit(0);
+    // Mirror TestCommand::exec's exit path so BUN_DESTRUCT_VM_ON_EXIT teardown
+    // (lastChanceToFinalize) runs; bypassing it leaks JSC-owned native state.
+    vm_ref.exit_handler.exit_code = 0;
+    vm_ref.is_shutting_down = true;
+    vm_ref.run_with_api_lock(|| unsafe { (*vm).global_exit() });
+    #[allow(unreachable_code)]
+    {
+        Global::exit(0);
+    }
 }
 
 fn worker_flush_aggregates(

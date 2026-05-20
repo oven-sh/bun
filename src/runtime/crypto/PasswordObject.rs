@@ -161,9 +161,12 @@ impl AlgorithmValue {
 
                             let memory_cost = memory_value.coerce_to_i32(global_object)?;
 
-                            if memory_cost < 1 {
+                            // argon2 requires `memoryCost >= 8 * parallelism`;
+                            // Bun hard-codes `parallelism = 1` (see
+                            // `Argon2Params::to_params`), so the floor is 8.
+                            if memory_cost < 8 {
                                 return Err(global_object.throw_invalid_arguments(format_args!(
-                                    "Memory cost must be greater than 0"
+                                    "Memory cost must be at least 8"
                                 )));
                             }
 

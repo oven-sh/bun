@@ -555,21 +555,18 @@ const POOL_SIZE: usize = if bun_alloc::heap_breakdown::ENABLED {
 };
 pub type HiveRef = bun_collections::HiveRef<Value, POOL_SIZE>;
 pub type HiveAllocator = bun_collections::hive_array::Fallback<HiveRef, POOL_SIZE>;
+pub type BodyHiveHandle = bun_collections::HiveRefHandle<Value, POOL_SIZE>;
 
-/// Typed front-end for `VirtualMachine::init_request_body_value` (the hook is
-/// type-erased to break the `bun_jsc` → `bun_runtime` dep edge). Spec
-/// `VirtualMachine.zig:255 initRequestBodyValue` — moves `value` into a
-/// pooled `HiveRef` slot (ref_count = 1) and returns it.
-pub fn hive_alloc(vm: &mut VirtualMachine, value: Value) -> core::ptr::NonNull<HiveRef> {
-    // The hook impl (`runtime/jsc_hooks.rs`) `ptr::read`s its `*mut Value`
-    // argument; suppress the local drop so the move is one-way.
-    let mut value = core::mem::ManuallyDrop::new(value);
-    let ptr = vm
-        .init_request_body_value((&raw mut *value).cast::<core::ffi::c_void>())
-        .cast::<HiveRef>();
-    // `HiveRef::init` only fails on allocator OOM, which `handle_oom` upstream
-    // would have already aborted on; treat null as unreachable.
-    core::ptr::NonNull::new(ptr).expect("body HiveAllocator returned null")
+/// Spec `VirtualMachine.zig:255 initRequestBodyValue` — moves `value` into a
+/// pooled `HiveRef` slot and returns an owning handle (ref_count = 1).
+pub fn hive_alloc(value: Value) -> BodyHiveHandle {
+    let state = crate::jsc_hooks::runtime_state();
+    debug_assert!(!state.is_null(), "hive_alloc before init_runtime_state");
+    // SAFETY: `state` is the live boxed RuntimeState; `body_value_pool` is a
+    // heap-stable `Box<HiveAllocator>` for the VM lifetime.
+    let pool = unsafe { &raw const *(*state).body_value_pool };
+    // SAFETY: `pool` outlives every handle (process lifetime).
+    unsafe { BodyHiveHandle::new(value, pool) }
 }
 
 pub const HEAP_BREAKDOWN_LABEL: &str = "BodyValue";
@@ -686,33 +683,6 @@ impl ValueError {
 }
 
 impl Value {
-    /// Decrement the refcount of the enclosing pooled `HiveRef<Value>` slot.
-    ///
-    /// `RequestContext.request_body` stores `NonNull<Value>` (the pooled
-    /// payload), but the Zig field type is `?*Body.Value.HiveRef` — the slot
-    /// header carries the refcount + pool back-pointer. Recover the parent via
-    /// `offset_of!``) and forward.
-    ///
-    /// # Safety
-    /// `self` must be the `value` field of a live `HiveRef<Value, POOL_SIZE>`
-    /// produced by `HiveRef::init`.
-    pub unsafe fn unref(&mut self) -> Option<&mut Self> {
-        // SAFETY: caller contract — `self` is the `.value` field of a HiveRef slot.
-        let parent = unsafe {
-            &mut *bun_core::from_field_ptr!(HiveRef, value, std::ptr::from_mut::<Self>(self))
-        };
-        parent.unref().map(|h| &mut h.value)
-    }
-
-    /// See [`Value::unref`] for the safety contract.
-    pub unsafe fn ref_(&mut self) -> &mut Self {
-        // SAFETY: caller contract — `self` is the `.value` field of a HiveRef slot.
-        let parent = unsafe {
-            &mut *bun_core::from_field_ptr!(HiveRef, value, std::ptr::from_mut::<Self>(self))
-        };
-        &mut parent.ref_().value
-    }
-
     /// Downcast a `JSValue` to the `Body.Value` it owns, if any.
     ///
     /// Port of the `Body.Value` special-case in `JSValue.as()` (JSValue.zig:449):
@@ -874,7 +844,13 @@ impl Value {
             Value::Null => Ok(JSValue::NULL),
             Value::InternalBlob(_) | Value::Blob(_) | Value::WTFStringImpl(_) => {
                 // Zig: `defer blob.detach()` — must run on every exit incl. `?` paths.
-                let mut blob = scopeguard::guard(self.use_(), |mut b| b.detach());
+                // `use_()` hands back a stack-owned `Blob`; `Blob::detach()` only
+                // releases the store, so a heap-owned `content_type` (e.g. the
+                // `multipart/form-data; boundary=…` from `from_dom_form_data`)
+                // would leak. `deinit()` = detach + free_content_type and is a
+                // no-op on the heap-free path (`is_heap_allocated()` is false —
+                // asserted in `use_()`). Same gap exists in the Zig spec.
+                let mut blob = scopeguard::guard(self.use_(), |mut b| b.deinit());
                 blob.resolve_size();
                 let blob_size = blob.size.get();
                 let value = ReadableStream::from_blob_copy_ref(global_this, &mut blob, blob_size)?;
@@ -1151,7 +1127,15 @@ impl Value {
                     Action::GetText => match new {
                         Value::WTFStringImpl(_) | Value::InternalBlob(_) /* | Value::InlineBlob(_) */ => {
                             let mut blob = new.use_as_any_blob_allow_non_utf8_string();
-                            promise.wrap(global, |g| blob.to_string_transfer(g))?;
+                            // `Any` has no Drop. `to_string_transfer` moves the bytes into
+                            // a JS string but leaves the heap-owned `content_type` (from
+                            // `from_dom_form_data`) behind in the `Any::Blob` variant —
+                            // detach() (idempotent) reclaims it. Same defer is already in
+                            // the GetJSON / GetFormData arms; the Zig spec omits it here
+                            // and leaks ~80B per FormData body under ASAN.
+                            let result = promise.wrap(global, |g| blob.to_string_transfer(g));
+                            blob.detach();
+                            result?;
                         }
                         _ => {
                             let mut blob = new.use_();
@@ -1166,11 +1150,15 @@ impl Value {
                     }
                     Action::GetArrayBuffer => {
                         let mut blob = new.use_as_any_blob_allow_non_utf8_string();
-                        promise.wrap(global, |g| blob.to_array_buffer_transfer(g))?;
+                        let result = promise.wrap(global, |g| blob.to_array_buffer_transfer(g));
+                        blob.detach();
+                        result?;
                     }
                     Action::GetBytes => {
                         let mut blob = new.use_as_any_blob_allow_non_utf8_string();
-                        promise.wrap(global, |g| blob.to_uint8_array_transfer(g))?;
+                        let result = promise.wrap(global, |g| blob.to_uint8_array_transfer(g));
+                        blob.detach();
+                        result?;
                     }
                     Action::GetFormData(form_data_slot) => 'inner: {
                         let mut blob = new.use_as_any_blob();
@@ -1879,9 +1867,13 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
 
         let value = self.get_body_value();
         let mut blob = value.use_as_any_blob_allow_non_utf8_string();
-        Ok(JSPromise::wrap(global_object, |g| {
-            blob.to_string(g, Lifetime::Transfer)
-        })?)
+        // `Any` has no Drop. `to_string(Transfer)` moves the bytes into the JS
+        // string but leaves the heap-owned `content_type` (e.g. the
+        // `multipart/form-data; boundary=…` string from `from_dom_form_data`)
+        // behind in `Any::Blob` — `detach()` (idempotent) reclaims it.
+        let result = JSPromise::wrap(global_object, |g| blob.to_string(g, Lifetime::Transfer));
+        blob.detach();
+        Ok(result?)
     }
 
     fn get_body(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
@@ -1956,9 +1948,9 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
 
         let value = self.get_body_value();
         let mut blob = value.use_as_any_blob_allow_non_utf8_string();
-        Ok(JSPromise::wrap(global_object, |g| {
-            blob.to_json(g, Lifetime::Share)
-        })?)
+        let result = JSPromise::wrap(global_object, |g| blob.to_json(g, Lifetime::Share));
+        blob.detach();
+        Ok(result?)
     }
 
     fn get_array_buffer(
@@ -2007,9 +1999,11 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
         // toArrayBuffer in AnyBlob checks for non-UTF8 strings
         let value = self.get_body_value();
         let mut blob: AnyBlob = value.use_as_any_blob_allow_non_utf8_string();
-        Ok(JSPromise::wrap(global_object, |g| {
+        let result = JSPromise::wrap(global_object, |g| {
             blob.to_array_buffer(g, Lifetime::Transfer)
-        })?)
+        });
+        blob.detach();
+        Ok(result?)
     }
 
     fn get_bytes(
@@ -2053,9 +2047,11 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
         // toArrayBuffer in AnyBlob checks for non-UTF8 strings
         let value = self.get_body_value();
         let mut blob: AnyBlob = value.use_as_any_blob_allow_non_utf8_string();
-        Ok(JSPromise::wrap(global_object, |g| {
+        let result = JSPromise::wrap(global_object, |g| {
             blob.to_uint8_array(g, Lifetime::Transfer)
-        })?)
+        });
+        blob.detach();
+        Ok(result?)
     }
 
     fn get_form_data(

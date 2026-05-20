@@ -528,7 +528,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 
         debug_assert_eq!(trees.len(), dependencies.len());
         for (tree, child) in trees.iter_mut().zip(dependencies.iter_mut()) {
-            // `child` (Vec) drops at end of `slice` scope; explicit deinit removed.
+            let child = core::mem::take(child);
 
             // PERF(port): `dep_ids` is pre-reserved to `total` (sum of all
             // `tree.dependencies.len: u32`), so `len()` is provably < 2^32.
@@ -552,6 +552,8 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 
         // queue / sort_buf / pending_optional_peers freed by Drop; explicit deinit removed.
         // TODO(port): if Builder outlives clean(), explicitly clear these fields here.
+
+        slice.deinit_owned();
 
         Ok(CleanResult { trees, dep_ids })
     }

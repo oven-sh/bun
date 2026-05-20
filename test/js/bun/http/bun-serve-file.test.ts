@@ -1,6 +1,6 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { rmScope, tempDirWithFiles } from "harness";
+import { isASAN, rmScope, tempDirWithFiles } from "harness";
 import { unlinkSync } from "node:fs";
 import { join } from "node:path";
 
@@ -465,7 +465,9 @@ describe("Bun.file in serve routes", () => {
       const final = (process.memoryUsage.rss() / 1024 / 1024) | 0;
       const delta = final - baseline;
 
-      expect(delta).toBeLessThan(100); // Should not leak significant memory
+      // ASAN's quarantine retains freed allocations (default 256 MB) so RSS
+      // deltas run far higher under bun-asan; widen the threshold there.
+      expect(delta).toBeLessThan(isASAN ? 400 : 100); // Should not leak significant memory
     }, 30000);
 
     it("deleted file goes to handler", async () => {

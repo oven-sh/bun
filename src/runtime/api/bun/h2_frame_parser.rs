@@ -3996,11 +3996,7 @@ impl H2FrameParser {
             );
             return Ok(data.len());
         }
-        let settings = self
-            .remote_settings
-            .get()
-            .unwrap_or_else(|| self.local_settings.get());
-        if frame.length > settings.max_frame_size {
+        if frame.length > self.local_settings.get().max_frame_size {
             self.send_go_away(
                 frame.stream_identifier,
                 ErrorCode::FRAME_SIZE_ERROR,

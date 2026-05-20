@@ -331,23 +331,23 @@ pub trait TargetExt: Copy {
     // fields is empty by default. You must explicitly configure it yourself.
     // array.set(Target.neutral, &listc);
     fn default_main_fields_map() -> EnumMap<Target, &'static [&'static [u8]]> {
-        enum_map::enum_map! {
+        EnumMap::from_fn(|k| match k {
             Target::Node => DEFAULT_MAIN_FIELDS_NODE,
             Target::Browser => DEFAULT_MAIN_FIELDS_BROWSER,
             Target::Bun => DEFAULT_MAIN_FIELDS_BUN,
             Target::BunMacro => DEFAULT_MAIN_FIELDS_BUN,
             Target::BakeServerComponentsSsr => DEFAULT_MAIN_FIELDS_BUN,
-        }
+        })
     }
 
     fn default_conditions_map() -> EnumMap<Target, &'static [&'static [u8]]> {
-        enum_map::enum_map! {
+        EnumMap::from_fn(|k| match k {
             Target::Node => &[b"node" as &[u8]][..],
             Target::Browser => &[b"browser" as &[u8], b"module"][..],
             Target::Bun => &[b"bun" as &[u8], b"node"][..],
             Target::BakeServerComponentsSsr => &[b"bun" as &[u8], b"node"][..],
             Target::BunMacro => &[b"macro" as &[u8], b"bun", b"node"][..],
-        }
+        })
     }
 }
 

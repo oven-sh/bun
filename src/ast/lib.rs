@@ -1612,14 +1612,13 @@ impl Level {
     // Zig: `pub const label: std.EnumArray(Level, string)`
     pub const LABEL: std::sync::LazyLock<enum_map::EnumMap<Level, &'static [u8]>> =
         std::sync::LazyLock::new(|| {
-            use enum_map::enum_map;
-            enum_map! {
+            enum_map::EnumMap::from_fn(|k| match k {
                 Level::Verbose => b"verbose" as &[u8],
                 Level::Debug => b"debug",
                 Level::Info => b"info",
                 Level::Warn => b"warn",
                 Level::Err => b"error",
-            }
+            })
         });
 
     // Zig: `pub const Map = bun.ComptimeStringMap(Level, ...)`

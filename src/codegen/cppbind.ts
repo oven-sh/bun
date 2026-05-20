@@ -625,8 +625,8 @@ function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void 
       wrapParams.push(`${ident}: &${handle}`);
       callArgs.push(
         p.type.type === "pointer" && p.type.isConst
-          ? `${ident} as *const ${handle}`
-          : `${ident} as *const ${handle} as *mut ${handle}`,
+          ? `core::ptr::from_ref(${ident})`
+          : `core::ptr::from_ref(${ident}).cast_mut()`,
       );
     } else if (p.type.type === "pointer" || p.type.type === "fn") {
       needsUnsafe = true;
@@ -651,6 +651,7 @@ function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void 
       rustWrap.push(
         `#[inline]`,
         `pub fn ${fn.name}(${wrapParamsStr})${ret === "()" ? "" : ` -> ${ret}`} {`,
+        `    // SAFETY: \`[[ZIG_EXPORT(nothrow)]]\` extern; ref args are opaque-ZST handles valid for the call.`,
         `    unsafe { raw::${fn.name}(${callArgsStr}) }`,
         `}`,
       );
@@ -678,6 +679,8 @@ function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void 
       `#[inline]`,
       `pub ${safeKw}fn ${fn.name}(${wrapParamsStr}) -> crate::JsResult<${ret}> {`,
       `    crate::top_scope!(__scope, ${gname});`,
+      `    // SAFETY: \`[[ZIG_EXPORT(check_slow)]]\` extern; ref args are opaque-ZST handles valid for the call;`,
+      `    // any raw-pointer args are forwarded under the wrapper's own \`unsafe fn\` contract.`,
       `    let __r = unsafe { raw::${fn.name}(${callArgsStr}) };`,
       `    __scope.return_if_exception()?;`,
       `    Ok(__r)`,
@@ -699,8 +702,9 @@ function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void 
     okType = `()`;
   } else if (fn.tag === "null_is_throw") {
     errCond = `__v.is_null()`;
-    // SAFETY: `errCond` already checked for null.
-    okExpr = `unsafe { core::ptr::NonNull::new_unchecked(__v) }`;
+    okExpr =
+      `\n        // SAFETY: \`__v.is_null()\` checked in the branch above.\n` +
+      `        unsafe { core::ptr::NonNull::new_unchecked(__v) }`;
     okType = `core::ptr::NonNull<${generateRustType((fn.returnType as CppType & { type: "pointer" }).child, fn.returnType)}>`;
   } else assertNever(fn.tag);
 
@@ -711,6 +715,8 @@ function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void 
     `#[inline]`,
     `pub ${safeKw}fn ${fn.name}(${wrapParamsStr}) -> crate::JsResult<${okType}> {`,
     `    crate::validation_scope!(__scope, ${gname});`,
+    `    // SAFETY: \`[[ZIG_EXPORT(${fn.tag})]]\` extern; ref args are opaque-ZST handles valid for the call;`,
+    `    // any raw-pointer args are forwarded under the wrapper's own \`unsafe fn\` contract.`,
     `    let __v = unsafe { raw::${fn.name}(${callArgsStr}) };`,
     `    __scope.assert_exception_presence_matches(${errCond});`,
     `    if ${errCond} { Err(crate::JsError::Thrown) } else { Ok(${okExpr}) }`,

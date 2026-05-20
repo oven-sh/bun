@@ -65,12 +65,18 @@ pub extern "C" fn Bun__queueJSCDeferredWorkTaskConcurrently(
     unsafe { loop_.enqueue_task_concurrent(ConcurrentTask::create_from(task)) };
 }
 
+/// # Safety
+/// `paused` must point to a live `bool`; C++ writes `true` through it from a
+/// callback inside `tick()`.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__tickWhilePaused(paused: &mut bool) {
+pub unsafe extern "C" fn Bun__tickWhilePaused(paused: *const bool) {
     crate::mark_binding!();
-    VirtualMachine::get()
-        .event_loop_mut()
-        .tick_while_paused(paused);
+    // SAFETY: see fn contract.
+    unsafe {
+        VirtualMachine::get()
+            .event_loop_mut()
+            .tick_while_paused(paused);
+    }
 }
 
 // Zig `comptime { _ = Bun__... }` force-reference block dropped — Rust links what's `pub`.

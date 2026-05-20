@@ -145,7 +145,9 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
                 .concurrent_task
                 .from(this, AutoDeinit::ManualDeinit),
         );
-        event_loop.enqueue_task_concurrent(task);
+        // SAFETY: `task` is the inline `concurrent_task` field of the live
+        // heap-allocated `*this`; `event_loop` is the JS-thread loop stored at init.
+        unsafe { event_loop.enqueue_task_concurrent(task) };
     }
 }
 

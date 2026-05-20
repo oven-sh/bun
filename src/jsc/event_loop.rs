@@ -1126,8 +1126,12 @@ impl EventLoop {
 }
 
 impl EventLoop {
-    pub fn tick_while_paused(&mut self, done: &mut bool) {
-        while !*done {
+    /// # Safety
+    /// `done` must point to a live `bool`; C++ writes `true` through it from a
+    /// callback inside `tick()`, so it cannot be a Rust `&mut` (would alias).
+    pub unsafe fn tick_while_paused(&mut self, done: *const bool) {
+        // SAFETY: see fn contract — `done` is a live FFI bool written by C++.
+        while !unsafe { done.read_volatile() } {
             self.vm_ref()
                 .platform_loop_opt()
                 .expect("event_loop_handle")

@@ -59,7 +59,7 @@ use bun_core::StringBuilder;
 use bun_core::{OwnedString, strings};
 use bun_url::PercentEncoding;
 use bun_url::whatwg::URL as JscUrl;
-use enum_map::{Enum, EnumMap, enum_map};
+use enum_map::{Enum, EnumMap};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Errors
@@ -1857,7 +1857,7 @@ fn configs() -> &'static EnumMap<HostProvider, Config> {
     use std::sync::OnceLock;
     static CONFIGS: OnceLock<EnumMap<HostProvider, Config>> = OnceLock::new();
     CONFIGS.get_or_init(|| {
-        enum_map! {
+        EnumMap::from_fn(|k| match k {
             HostProvider::Bitbucket => Config {
                 protocols: &[
                     WellDefinedProtocol::GitPlusHttp,
@@ -1954,7 +1954,7 @@ fn configs() -> &'static EnumMap<HostProvider, Config> {
                 format_git: formatters::git::DEFAULT,
                 format_extract: formatters::extract::sourcehut,
             },
-        }
+        })
     })
 }
 

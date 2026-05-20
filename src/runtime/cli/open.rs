@@ -403,7 +403,7 @@ pub const DEFAULT_PREFERENCE_LIST: [Editor; 8] = [
 // PORT NOTE: was `pub const bin_name: std.EnumMap(Editor, string)` built in a comptime block.
 pub static BIN_NAME: std::sync::LazyLock<enum_map::EnumMap<Editor, Option<&'static [u8]>>> =
     std::sync::LazyLock::new(|| {
-        enum_map::enum_map! {
+        enum_map::EnumMap::from_fn(|k| match k {
             Editor::Sublime => Some(&b"subl"[..]),
             Editor::Vscode => Some(&b"code"[..]),
             Editor::Atom => Some(&b"atom"[..]),
@@ -415,7 +415,7 @@ pub static BIN_NAME: std::sync::LazyLock<enum_map::EnumMap<Editor, Option<&'stat
             Editor::Emacs => Some(&b"emacs"[..]),
             Editor::Other => Some(&b""[..]),
             Editor::None => None,
-        }
+        })
     });
 
 // PORT NOTE: was `pub const bin_path: std.EnumMap(Editor, []const [:0]const u8)`.

@@ -119,35 +119,34 @@ pub static METHOD_MAP: phf::Map<&'static [u8], Method> = phf::phf_map! {
 };
 
 impl Method {
-    // TODO(port): EnumMap const-init — `enum_map!` macro at static init.
     pub fn macos() -> BackendSupport {
-        enum_map::enum_map! {
+        enum_map::EnumMap::from_fn(|k| match k {
             Method::Clonefile => true,
             Method::ClonefileEachDir => true,
             Method::Hardlink => true,
             Method::Copyfile => true,
             Method::Symlink => true,
-        }
+        })
     }
 
     pub fn linux() -> BackendSupport {
-        enum_map::enum_map! {
+        enum_map::EnumMap::from_fn(|k| match k {
             Method::Clonefile => false,
             Method::ClonefileEachDir => false,
             Method::Hardlink => true,
             Method::Copyfile => true,
             Method::Symlink => true,
-        }
+        })
     }
 
     pub fn windows() -> BackendSupport {
-        enum_map::enum_map! {
+        enum_map::EnumMap::from_fn(|k| match k {
             Method::Clonefile => false,
             Method::ClonefileEachDir => false,
             Method::Hardlink => true,
             Method::Copyfile => true,
             Method::Symlink => false,
-        }
+        })
     }
 
     #[inline]

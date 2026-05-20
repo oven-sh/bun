@@ -110,7 +110,7 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier identifi
     };
 
     // Read BIT STRING
-    if (keyData.size() < index + 1)
+    if (keyData.size() < index + 2)
         return nullptr;
     if (keyData[index++] != 3)
         return nullptr;

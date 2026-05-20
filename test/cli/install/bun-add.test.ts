@@ -2323,6 +2323,142 @@ it("should add local tarball dependency", async () => {
     await access(join(package_dir, "bun.lockb")));
 });
 
+it("should not add duplicate package.json entries when installing the same local folder twice (#30933)", async () => {
+  setHandler(dummyRegistry([]));
+  await writeFile(
+    join(add_dir, "package.json"),
+    JSON.stringify({
+      name: "myproject",
+      version: "1.0.0",
+      bin: { myproject: "./index.js" },
+    }),
+  );
+  await writeFile(join(add_dir, "index.js"), 'console.log("hi")');
+
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "host",
+      version: "0.0.1",
+    }),
+  );
+
+  const local_path = resolve(add_dir);
+  const stored_path = local_path.replace(/\\/g, "/");
+
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "add", local_path],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    const out = await stdout.text();
+    expect(out).toContain("installed myproject@");
+    expect(await exited).toBe(0);
+  }
+
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "add", local_path],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    const out = await stdout.text();
+    expect(out).toContain("installed myproject@");
+    expect(await exited).toBe(0);
+  }
+
+  const raw = await file(join(package_dir, "package.json")).text();
+  expect(raw.match(/"myproject"\s*:/g) ?? []).toHaveLength(1);
+  expect(JSON.parse(raw)).toStrictEqual({
+    name: "host",
+    version: "0.0.1",
+    dependencies: {
+      myproject: stored_path,
+    },
+  });
+});
+
+it("should not add duplicate package.json entries when installing the same tarball URL twice (#30499)", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch() {
+      return new Response(Bun.file(join(__dirname, "baz-0.0.3.tgz")));
+    },
+  });
+  const tarball_url = `${server.url.href.replace(/\/+$/, "")}/baz-0.0.3.tgz`;
+  setHandler(dummyRegistry([]));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+    }),
+  );
+
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "add", tarball_url],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    expect(err).toContain("Saved lockfile");
+    const out = await stdout.text();
+    expect(out).toContain("installed baz@");
+    expect(await exited).toBe(0);
+  }
+  expect(await file(join(package_dir, "package.json")).json()).toStrictEqual({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: {
+      baz: tarball_url,
+    },
+  });
+
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "add", tarball_url],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    const out = await stdout.text();
+    expect(out).toContain("installed baz@");
+    expect(await exited).toBe(0);
+  }
+
+  const raw = await file(join(package_dir, "package.json")).text();
+  expect(raw.match(/"baz"\s*:/g) ?? []).toHaveLength(1);
+  expect(JSON.parse(raw)).toStrictEqual({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: {
+      baz: tarball_url,
+    },
+  });
+});
+
 it("should add multiple dependencies specified on command line", async () => {
   expect(check_npm_auth_type.check).toBe(true);
   using server = Bun.serve({

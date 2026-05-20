@@ -952,6 +952,11 @@ function normalizeSpawnArguments(file, args, options) {
       else file = "/bin/sh";
       args = ["-c", command];
     }
+  } else if (process.platform === "win32" && /\.(?:cmd|bat)[\s.]*$/i.exec(file) !== null) {
+    // CVE-2024-27980: CreateProcess routes .bat/.cmd through cmd.exe, which
+    // re-parses argv with shell metacharacter rules. Reject unless the caller
+    // explicitly opted into shell semantics.
+    throw new SystemError(`spawn EINVAL: ${file}`, file, "spawn", -4071, "EINVAL");
   }
 
   // Handle argv0

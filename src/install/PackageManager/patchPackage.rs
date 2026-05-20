@@ -19,9 +19,7 @@ use crate::lockfile_real::tree;
 use crate::lockfile_real::{self as lockfile, Lockfile, PackageIndexEntry};
 use crate::package_manager_real::PackageManager;
 use crate::package_manager_real::options::{LogLevel, PatchFeatures};
-use crate::package_manager_real::package_manager_directories::{
-    compute_cache_dir_and_subpath, get_temporary_directory,
-};
+use crate::package_manager_real::package_manager_directories::compute_cache_dir_and_subpath;
 use crate::{
     BuntagHashBuf, DependencyID, Features, PackageID, buntaghashbuf_make, initialize_store,
     invalid_package_id,
@@ -590,16 +588,6 @@ pub fn do_patch_commit(
         break 'brk contents;
     };
 
-    // write the patch contents to temp file then rename
-    let mut tmpname_buf = [0u8; 1024];
-    let tempfile_name =
-        bun_paths::fs::FileSystem::tmpname(b"tmp", &mut tmpname_buf, bun_core::fast_random())?;
-    let tmpdir = get_temporary_directory(manager).handle.fd();
-    if let Err(e) = sys::File::write_file(tmpdir, tempfile_name, &patchfile_contents) {
-        Output::err(e, "failed to write patch to temp file", ());
-        Global::crash();
-    }
-
     resolution_buf[resolution_label_len..resolution_label_len + b".patch".len()]
         .copy_from_slice(b".patch");
     let mut patch_filename: &[u8] = &resolution_buf[0..resolution_label_len + b".patch".len()];
@@ -633,19 +621,57 @@ pub fn do_patch_commit(
         Global::crash();
     }
 
-    // rename to patches dir
-    if let Err(e) = sys::renameat_concurrently(
-        tmpdir,
+    // Stage the patch file inside the patches dir itself so the final rename
+    // is always same-filesystem. Staging in the cache-drive tempdir breaks
+    // when the project is on a different drive than the install cache
+    // (common on Windows): renameat returns E.XDEV, falls back to CopyFileW,
+    // and CopyFileW fails with EPERM while the source fd is still open.
+    let patches_dir_handle = match Dir::open(patches_dir) {
+        Ok(d) => d,
+        Err(e) => {
+            Output::err(
+                e,
+                "failed to open patches dir {f}",
+                (bun_fmt::quote(patches_dir),),
+            );
+            Global::crash();
+        }
+    };
+    let patches_dir_fd = patches_dir_handle.fd();
+
+    // Write the patch contents to a temp file inside patches/ and then rename
+    // to the final filename. `write_file` opens + writes + closes the fd
+    // before returning, so no writable handle is left open on the source
+    // path when the rename runs.
+    let mut tmpname_buf = [0u8; 1024];
+    let tempfile_name =
+        bun_paths::fs::FileSystem::tmpname(b"tmp", &mut tmpname_buf, bun_core::fast_random())?;
+    if let Err(e) = sys::File::write_file(patches_dir_fd, tempfile_name, &patchfile_contents) {
+        let _ = sys::unlinkat(patches_dir_fd, tempfile_name);
+        Output::err(e, "failed to write patch to temp file", ());
+        Global::crash();
+    }
+
+    // rename within the patches dir — same directory, same filesystem. Use
+    // plain renameat (which atomically replaces an existing target on POSIX
+    // and Windows) rather than renameat_concurrently: when the target patch
+    // file already exists (re-commit of an existing patch), the concurrent
+    // path falls through to RENAME_EXCHANGE on Linux/macOS and swaps rather
+    // than replaces, leaving the *previous* patch's bytes as a stray
+    // `.<hex>-<hex>.tmp` in the user's patches/ dir.
+    let mut patch_filename_z_buf = PathBuffer::uninit();
+    let patch_filename_z = resolve_path::z(patch_filename, &mut patch_filename_z_buf);
+    if let Err(e) = sys::renameat(
+        patches_dir_fd,
         tempfile_name,
-        Fd::cwd(),
-        path_in_patches_dir,
-        sys::RenameOptions {
-            move_fallback: true,
-        },
+        patches_dir_fd,
+        patch_filename_z,
     ) {
+        let _ = sys::unlinkat(patches_dir_fd, tempfile_name);
         Output::err(e, "failed renaming patch file to patches dir", ());
         Global::crash();
     }
+    // patches_dir_handle drops at scope end → closes the fd.
 
     let mut patch_key = Vec::new();
     // PORT NOTE: re-slice instead of reusing `resolution_label` so its borrow ends

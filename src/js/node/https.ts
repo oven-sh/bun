@@ -44,11 +44,21 @@ function Agent(options) {
 $toClass(Agent, "Agent", http.Agent);
 Agent.prototype.createConnection = http.createConnection;
 
+function Server(options, requestListener) {
+  if (!(this instanceof Server)) return new Server(options, requestListener);
+  http.Server.$apply(this, [options, requestListener]);
+}
+$toClass(Server, "Server", http.Server);
+
+function createServer(options, requestListener) {
+  return new Server(options, requestListener);
+}
+
 var https = {
   Agent,
   globalAgent: new Agent({ keepAlive: true, scheduling: "lifo", timeout: 5000 }),
-  Server: http.Server,
-  createServer: http.createServer,
+  Server,
+  createServer,
   get,
   request,
 };

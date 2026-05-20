@@ -982,6 +982,34 @@ describe("node:http", () => {
     });
   });
 
+  describe("Server", () => {
+    // https://github.com/oven-sh/bun/issues/31125
+    it("https.Server is a distinct class from http.Server", () => {
+      expect(http.Server).not.toBe(https.Server);
+    });
+
+    it("http.createServer() is instanceof http.Server but not https.Server", () => {
+      const server = http.createServer(() => {});
+      expect(server instanceof http.Server).toBe(true);
+      expect(server instanceof https.Server).toBe(false);
+      server.close();
+    });
+
+    it("https.createServer() is instanceof https.Server and http.Server", () => {
+      const server = https.createServer(() => {});
+      expect(server instanceof https.Server).toBe(true);
+      expect(server instanceof http.Server).toBe(true);
+      server.close();
+    });
+
+    it("new https.Server() is instanceof https.Server and http.Server", () => {
+      const server = new https.Server(() => {});
+      expect(server instanceof https.Server).toBe(true);
+      expect(server instanceof http.Server).toBe(true);
+      server.close();
+    });
+  });
+
   describe("ClientRequest.signal", () => {
     it("should attempt to make a standard GET request and abort", async () => {
       let server_port;

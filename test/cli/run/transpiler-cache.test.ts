@@ -176,6 +176,28 @@ describe("transpiler cache", () => {
       chmodSync(join(cache_dir), "777");
     }
   });
+  test("unknown-extension child import still uses file loader after entry cache hit", () => {
+    // Entry is large enough to cache; second run serves it from the cache and
+    // returns early out of transpile_source_code before the print path. The
+    // child's extension is not in the loader map, so loader selection in
+    // transpile_file falls through to the has_loaded gate — which must pick
+    // the file loader (path string) on the cache-hit run just like the first.
+    const pad = Buffer.alloc(50 * 1024, "*").toString();
+    writeFileSync(
+      join(temp_dir, "entry.js"),
+      `/*${pad}*/\nimport x from "./data.unknownext";\nconsole.log(typeof x === "string" && x.endsWith("data.unknownext") ? "file-loader" : "wrong:" + JSON.stringify(x));\n`,
+    );
+    writeFileSync(join(temp_dir, "data.unknownext"), `export default 42;\n`);
+
+    const a = bunRun(join(temp_dir, "entry.js"), env);
+    expect(a.stdout).toBe("file-loader");
+    expect(existsSync(cache_dir)).toBeTrue();
+    expect(newCacheCount()).toBe(1);
+
+    const b = bunRun(join(temp_dir, "entry.js"), env);
+    expect(b.stdout).toBe("file-loader");
+    expect(newCacheCount()).toBe(0);
+  });
   test("does not inline process.env", () => {
     writeFileSync(
       join(temp_dir, "a.js"),

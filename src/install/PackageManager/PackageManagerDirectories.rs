@@ -52,7 +52,7 @@ impl PackageManager {
 
     /// Like [`manifest_disk_cache_ctx`] but adjusts the `enable_manifest_cache_control`
     /// flag based on the per-name refresh-target set populated by
-    /// `bun update --recursive`. When `name_hash` is `None`, returns the global
+    /// `bun update --transitive`. When `name_hash` is `None`, returns the global
     /// default (used by callers that resolve unrelated workspace tooling).
     pub fn manifest_disk_cache_ctx_for(
         &mut self,

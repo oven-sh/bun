@@ -570,7 +570,7 @@ pub fn install_with_manager(
         _ => {}
     }
 
-    // `bun update --recursive`: even when package.json had no diffs, walk
+    // `bun update --transitive`: even when package.json had no diffs, walk
     // every dependency edge and re-enqueue resolution so the resolver consults
     // the freshly-refreshed manifests for every (or targeted) name. This is
     // what lets transitives get bumped to newer in-range versions without
@@ -578,7 +578,7 @@ pub fn install_with_manager(
     // repointing pass that follows.
     if !needs_new_lockfile
         && manager.subcommand == Subcommand::Update
-        && manager.options.do_.recursive()
+        && manager.options.do_.transitive()
     {
         let _ = manager.get_cache_directory();
         let _ = manager.get_temporary_directory();

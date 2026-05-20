@@ -2070,7 +2070,7 @@ fn get_or_put_resolved_package_with_find_result(
         && !install_peer
         && !(version.tag == dependency::version::Tag::Npm && version.npm().version.is_star());
 
-    // `bun update --recursive`: refreshed manifests may offer a newer in-range
+    // `bun update --transitive`: refreshed manifests may offer a newer in-range
     // version. Setting the version filter to `None` makes `get_package_id`
     // require an exact-resolution match (its `satisfies` fallback is gated on
     // a non-None npm version). When the lockfile holds an older entry, the
@@ -2079,7 +2079,7 @@ fn get_or_put_resolved_package_with_find_result(
     // semantics for transitive CVE remediation. The post-clone re-resolve pass
     // in `Cloner` then repoints dep edges from the stale to the fresh entry.
     let force_fresh_resolution = this.subcommand == Subcommand::Update
-        && this.options.do_.recursive()
+        && this.options.do_.transitive()
         && (this.manifest_refresh_all || this.manifest_refresh_targets.contains_key(&name_hash));
 
     if let Some(id) = this.lockfile.get_package_id(

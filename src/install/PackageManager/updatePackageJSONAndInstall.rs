@@ -312,20 +312,20 @@ fn update_package_json_and_install_with_manager_with_updates(
             // `bun update <package>` is basically the same as `bun add <package>`, except
             // update will not exceed the current dependency range if it exists.
             //
-            // With `bun update --recursive`: do NOT edit package.json. Instead,
+            // With `bun update --transitive`: do NOT edit package.json. Instead,
             // populate the manifest refresh target set so resolution fetches
             // fresh registry data, then let the lockfile cloner re-resolve
             // transitives in place. This is the workflow for transitive CVE
             // remediation (npm `update`, yarn `up --recursive`).
-            let is_recursive_update =
-                subcommand == Subcommand::Update && manager.options.do_.recursive();
+            let is_transitive_update =
+                subcommand == Subcommand::Update && manager.options.do_.transitive();
 
-            if is_recursive_update {
-                // For --recursive, always refresh ALL manifests. Positional
+            if is_transitive_update {
+                // For --transitive, always refresh ALL manifests. Positional
                 // arguments still gate which root-level enqueues happen, but
                 // transitive re-resolution needs fresh data for every name in
                 // the dep graph — not just the named roots. (Without this,
-                // `bun update parent --recursive` would refresh `parent`'s
+                // `bun update parent --transitive` would refresh `parent`'s
                 // manifest but keep `dep` stale, defeating the purpose.)
                 // We still record positional names in the target set so
                 // future, more targeted logic (e.g. only re-enqueue named
@@ -601,14 +601,14 @@ fn update_package_json_and_install_with_manager_with_updates(
                 }
             };
 
-        // `bun update --recursive` must not touch package.json — this is the
+        // `bun update --transitive` must not touch package.json — this is the
         // post-install re-edit phase that normally commits resolved versions
         // back to the manifest. Skip it so declared ranges stay intact while
         // the lockfile records re-resolved transitive versions.
-        let is_recursive_update =
-            subcommand == Subcommand::Update && manager.options.do_.recursive();
+        let is_transitive_update =
+            subcommand == Subcommand::Update && manager.options.do_.transitive();
 
-        if is_recursive_update {
+        if is_transitive_update {
             // No-op: keep package.json byte-for-byte identical.
         } else if updates.is_empty() {
             PackageJSONEditor::edit_update_no_args(

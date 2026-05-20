@@ -491,7 +491,7 @@ pub struct PackageManager {
     pub last_reported_slow_lifecycle_script_at: u64,
     pub cached_tick_for_slow_lifecycle_script_logging: u64,
 
-    /// `bun update --recursive` support. Names whose manifests should be
+    /// `bun update --transitive` support. Names whose manifests should be
     /// refreshed during resolution so the lockfile can re-resolve transitives
     /// to newer in-range versions. When empty AND `manifest_refresh_all` is
     /// false, falls back to `options.enable.manifest_cache_control`.
@@ -879,7 +879,7 @@ impl PackageManager {
     }
 
     /// True when the (in-memory + on-disk) manifest cache should be honored
-    /// for this package name. Under `bun update --recursive`, targeted names
+    /// for this package name. Under `bun update --transitive`, targeted names
     /// bypass the cache so the resolver sees fresh registry data. All other
     /// callers see the normal `options.enable.manifest_cache_control` value.
     pub fn should_use_manifest_cache(&self, name_hash: PackageNameHash) -> bool {

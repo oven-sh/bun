@@ -1,4 +1,4 @@
-// Tests for `bun update --recursive`: transitive CVE remediation.
+// Tests for `bun update --transitive`: transitive CVE remediation.
 //
 // Behavior under test:
 //   1. Refreshes manifests for targeted packages (or all if no args).
@@ -11,7 +11,7 @@
 // registry has `dep@1.0.0` and `dep@1.5.0`. After installing parent@1.0.0,
 // the lockfile records `dep@1.0.0` (latest in-range at install time). We then
 // claim to "have updated" the registry by clearing Bun's manifest cache and
-// asserting `bun update --recursive` picks up `dep@1.5.0`.
+// asserting `bun update --transitive` picks up `dep@1.5.0`.
 //
 // References:
 //   - https://github.com/oven-sh/bun/issues/24523
@@ -128,7 +128,7 @@ function startRegistry(db: RegistryDB): { server: Server; url: string; hits: str
   return { server, url: `http://localhost:${server.port}`, hits };
 }
 
-describe("bun update --recursive", () => {
+describe("bun update --transitive", () => {
   let server: Server;
   let registryUrl: string;
   let hits: string[];
@@ -144,7 +144,7 @@ describe("bun update --recursive", () => {
       "1.1.0": { dep: "^1.0.0" },
     };
     // dep has 1.0.0 (the stale one we want to replace) and 1.5.0 (the fresh one
-    // that should be picked up by --recursive).
+    // that should be picked up by --transitive).
     db.dep = {
       "1.0.0": undefined,
       "1.5.0": undefined,
@@ -162,7 +162,7 @@ describe("bun update --recursive", () => {
   afterAll(() => server?.stop());
 
   test("baseline: initial install resolves dep to the highest in-range (1.5.0)", async () => {
-    using dir = tempDir("update-recursive-baseline", {
+    using dir = tempDir("update-transitive-baseline", {
       "package.json": JSON.stringify({ name: "consumer", dependencies: { parent: "^1.0.0" } }),
       "bunfig.toml": `[install]\nregistry = "${registryUrl}"\ncache = false\nsaveTextLockfile = true\n`,
     });
@@ -184,7 +184,7 @@ describe("bun update --recursive", () => {
     expect(lock).not.toContain("\"dep@1.0.0\"");
   });
 
-  test("repro of #24523: bun update without --recursive leaves stale transitive", async () => {
+  test("repro of #24523: bun update without --transitive leaves stale transitive", async () => {
     // Simulate a "stale lockfile" by installing against a registry that only has
     // dep@1.0.0, then "publishing" dep@1.5.0 in the registry mutation step.
     const limitedDb: RegistryDB = {
@@ -193,7 +193,7 @@ describe("bun update --recursive", () => {
     };
     const { server: s, url } = startRegistry(limitedDb);
     try {
-      using dir = tempDir("update-recursive-repro", {
+      using dir = tempDir("update-transitive-repro", {
         "package.json": JSON.stringify({ name: "consumer", dependencies: { parent: "^1.0.0" } }),
         "bunfig.toml": `[install]\nregistry = "${url}"\ncache = false\nsaveTextLockfile = true\n`,
       });
@@ -213,7 +213,7 @@ describe("bun update --recursive", () => {
       // Now "publish" dep@1.5.0.
       limitedDb.dep["1.5.0"] = undefined;
 
-      // `bun update parent` (without --recursive) bumps package.json but leaves
+      // `bun update parent` (without --transitive) bumps package.json but leaves
       // the transitive dep at 1.0.0.
       const update = Bun.spawn({
         cmd: [bunExe(), "update", "parent"],
@@ -232,14 +232,14 @@ describe("bun update --recursive", () => {
     }
   });
 
-  test("bun update parent --recursive re-resolves transitive dep to 1.5.0", async () => {
+  test("bun update parent --transitive re-resolves transitive dep to 1.5.0", async () => {
     const recDb: RegistryDB = {
       parent: { "1.0.0": { dep: "^1.0.0" }, "1.1.0": { dep: "^1.0.0" } },
       dep: { "1.0.0": undefined },
     };
     const { server: s, url } = startRegistry(recDb);
     try {
-      using dir = tempDir("update-recursive-fix", {
+      using dir = tempDir("update-transitive-fix", {
         "package.json": JSON.stringify({ name: "consumer", dependencies: { parent: "^1.0.0" } }),
         "bunfig.toml": `[install]\nregistry = "${url}"\ncache = false\nsaveTextLockfile = true\n`,
       });
@@ -260,7 +260,7 @@ describe("bun update --recursive", () => {
       recDb.dep["1.5.0"] = undefined;
 
       const update = Bun.spawn({
-        cmd: [bunExe(), "update", "parent", "--recursive"],
+        cmd: [bunExe(), "update", "parent", "--transitive"],
         cwd: dir + "",
         env: bunEnv,
         stdout: "pipe",
@@ -277,7 +277,7 @@ describe("bun update --recursive", () => {
       // Sanity: package.json on disk is preserved (^1.0.0). The lockfile
       // workspace-deps section may temporarily show ^1.1.0 (the resolved
       // version) — a known, pre-existing lockfile bookkeeping wart in
-      // `bun update <pkg>` that's orthogonal to --recursive. The snapshot
+      // `bun update <pkg>` that's orthogonal to --transitive. The snapshot
       // below documents the current state; the next `bun install` will
       // reconcile workspace deps against package.json.
       const pkg = JSON.parse(await Bun.file(`${dir}/package.json`).text());
@@ -310,7 +310,7 @@ describe("bun update --recursive", () => {
     }
   });
 
-  test("--recursive does NOT mutate package.json", async () => {
+  test("--transitive does NOT mutate package.json", async () => {
     const recDb: RegistryDB = {
       parent: { "1.0.0": { dep: "^1.0.0" }, "1.1.0": { dep: "^1.0.0" } },
       dep: { "1.0.0": undefined, "1.5.0": undefined },
@@ -318,7 +318,7 @@ describe("bun update --recursive", () => {
     const { server: s, url } = startRegistry(recDb);
     try {
       const original = { name: "consumer", dependencies: { parent: "^1.0.0" } };
-      using dir = tempDir("update-recursive-no-pkgjson", {
+      using dir = tempDir("update-transitive-no-pkgjson", {
         "package.json": JSON.stringify(original),
         "bunfig.toml": `[install]\nregistry = "${url}"\ncache = false\nsaveTextLockfile = true\n`,
       });
@@ -333,7 +333,7 @@ describe("bun update --recursive", () => {
       expect(await install.exited).toBe(0);
 
       const update = Bun.spawn({
-        cmd: [bunExe(), "update", "parent", "--recursive"],
+        cmd: [bunExe(), "update", "parent", "--transitive"],
         cwd: dir + "",
         env: bunEnv,
         stdout: "pipe",
@@ -349,14 +349,14 @@ describe("bun update --recursive", () => {
     }
   });
 
-  test("bare `bun update --recursive` re-resolves everything in range", async () => {
+  test("bare `bun update --transitive` re-resolves everything in range", async () => {
     const recDb: RegistryDB = {
       parent: { "1.0.0": { dep: "^1.0.0" }, "1.1.0": { dep: "^1.0.0" } },
       dep: { "1.0.0": undefined },
     };
     const { server: s, url } = startRegistry(recDb);
     try {
-      using dir = tempDir("update-recursive-bare", {
+      using dir = tempDir("update-transitive-bare", {
         "package.json": JSON.stringify({ name: "consumer", dependencies: { parent: "^1.0.0" } }),
         "bunfig.toml": `[install]\nregistry = "${url}"\ncache = false\nsaveTextLockfile = true\n`,
       });
@@ -373,7 +373,7 @@ describe("bun update --recursive", () => {
       recDb.dep["1.5.0"] = undefined;
 
       const update = Bun.spawn({
-        cmd: [bunExe(), "update", "--recursive"],
+        cmd: [bunExe(), "update", "--transitive"],
         cwd: dir + "",
         env: bunEnv,
         stdout: "pipe",
@@ -415,7 +415,7 @@ describe("bun update --recursive", () => {
     };
     const { server: s, url } = startRegistry(recDb);
     try {
-      using dir = tempDir("update-recursive-force", {
+      using dir = tempDir("update-transitive-force", {
         "package.json": JSON.stringify({ name: "consumer", dependencies: { parent: "^1.0.0" } }),
         "bunfig.toml": `[install]\nregistry = "${url}"\ncache = false\nsaveTextLockfile = true\n`,
       });
@@ -432,7 +432,7 @@ describe("bun update --recursive", () => {
       recDb.dep["1.5.0"] = undefined;
 
       const update = Bun.spawn({
-        cmd: [bunExe(), "update", "parent", "--recursive", "--force"],
+        cmd: [bunExe(), "update", "parent", "--transitive", "--force"],
         cwd: dir + "",
         env: bunEnv,
         stdout: "pipe",

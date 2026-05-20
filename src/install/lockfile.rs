@@ -1398,7 +1398,7 @@ impl<'a> Cloner<'a> {
             self.lockfile.buffers.resolutions[to_clone.resolve_id as usize] = new_id;
         }
 
-        // `bun update --recursive` pass: after the breadth-first clone settles,
+        // `bun update --transitive` pass: after the breadth-first clone settles,
         // walk every dependency edge and repoint it to the highest in-range
         // npm version that landed in the new lockfile's `package_index` during
         // resolution. This is the lockfile-side half of transitive CVE
@@ -1406,9 +1406,9 @@ impl<'a> Cloner<'a> {
         // `install_with_manager::install_with_manager`) ensures newer in-range
         // versions actually get fetched and appended to the new lockfile.
         if self.manager.subcommand == crate::Subcommand::Update
-            && self.manager.options.do_.recursive()
+            && self.manager.options.do_.transitive()
         {
-            self.recursive_re_resolve();
+            self.transitive_re_resolve();
         }
 
         // cloning finished, items in lockfile buffer might have a different order, meaning
@@ -1493,7 +1493,7 @@ impl<'a> Cloner<'a> {
         }
     }
 
-    fn recursive_re_resolve(&mut self) {
+    fn transitive_re_resolve(&mut self) {
         // Snapshot lengths up front; `pick_better_resolution` only reads.
         let dep_count = self.lockfile.buffers.dependencies.len();
         let res_count = self.lockfile.buffers.resolutions.len();

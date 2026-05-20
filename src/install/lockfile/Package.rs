@@ -15,7 +15,7 @@ use crate::dependency::{Behavior, DependencyExt as _, TagExt as _};
 use crate::repository::RepositoryExt as _;
 use crate::{
     self as install, Aligner, Bin, Dependency, ExternalStringList, ExternalStringMap, Features,
-    Npm, PackageID, PackageJSON, PackageManager, PackageNameHash, Repository,
+    Npm, Origin, PackageID, PackageJSON, PackageManager, PackageNameHash, Repository,
     TruncatedPackageNameHash, UpdateRequest, bin, default_trusted_dependencies, dependency,
     initialize_store, invalid_package_id,
 };
@@ -40,6 +40,7 @@ pub mod scripts;
 #[path = "Package/WorkspaceMap.rs"]
 pub mod workspace_map;
 
+use meta::HasInstallScript;
 pub use meta::Meta;
 pub use scripts::Scripts;
 pub use workspace_map as WorkspaceMap;
@@ -3534,24 +3535,7 @@ pub mod serializer {
                     }
                 }
                 if matches!(field, PackageField::Meta) {
-                    // Same hardening as `Resolution` above: `Meta` embeds two
-                    // `#[repr(u8)]` enums (`Origin` = 0..=2 and
-                    // `HasInstallScript` = 0..=2). Copying an out-of-range byte
-                    // into either field and reading it back as the enum would
-                    // be immediate UB, so check the raw stream bytes first.
-                    let stride = mem::size_of::<Meta>();
-                    let origin_at = mem::offset_of!(Meta, origin);
-                    let install_script_at = mem::offset_of!(Meta, has_install_script);
-                    debug_assert!(stride != 0 && src.len().is_multiple_of(stride));
-                    for raw in src.chunks_exact(stride) {
-                        if !matches!(raw[origin_at], 0 | 1 | 2)
-                            || !matches!(raw[install_script_at], 0 | 1 | 2)
-                        {
-                            return Err(bun_core::err!(
-                                "Lockfile validation failed: invalid package meta"
-                            ));
-                        }
-                    }
+                    validate_meta_column_bytes(src)?;
                 }
                 if matches!(field, PackageField::Bin) {
                     // `Bin.tag` is a `#[repr(u8)]` enum with discriminants
@@ -3570,6 +3554,10 @@ pub mod serializer {
                 bytes.copy_from_slice(src);
                 stream.pos = end_pos;
                 if matches!(field, PackageField::Meta) {
+                    // `Meta` contains `#[repr(u8)]` enum fields. Validate the
+                    // raw column bytes above before creating a typed `&mut [Meta]`;
+                    // otherwise a hostile lockfile could instantiate an invalid
+                    // enum tag before `needs_update()` has a chance to inspect it.
                     // need to check if any values were created from an older version of bun
                     // (currently just `has_install_script`). If any are found, the values need
                     // to be updated before saving the lockfile.
@@ -3590,6 +3578,87 @@ pub mod serializer {
             }
         }
         Ok(())
+    }
+}
+
+fn validate_meta_column_bytes(src: &[u8]) -> Result<(), bun_core::Error> {
+    let stride = mem::size_of::<Meta>();
+    if stride == 0 || src.len() % stride != 0 {
+        return Err(bun_core::err!(
+            "Lockfile validation failed: invalid package meta column"
+        ));
+    }
+
+    let origin_offset = core::mem::offset_of!(Meta, origin);
+    let has_install_script_offset = core::mem::offset_of!(Meta, has_install_script);
+
+    for raw in src.chunks_exact(stride) {
+        if !Origin::is_valid_lockfile_tag(raw[origin_offset]) {
+            return Err(bun_core::err!(
+                "Lockfile validation failed: invalid package origin tag"
+            ));
+        }
+
+        if !HasInstallScript::is_valid_lockfile_tag(raw[has_install_script_offset]) {
+            return Err(bun_core::err!(
+                "Lockfile validation failed: invalid package install script tag"
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn valid_meta_column_bytes(rows: usize) -> Vec<u8> {
+        let stride = mem::size_of::<Meta>();
+        let origin_offset = core::mem::offset_of!(Meta, origin);
+        let has_install_script_offset = core::mem::offset_of!(Meta, has_install_script);
+        let mut bytes = vec![0; stride * rows];
+
+        for raw in bytes.chunks_exact_mut(stride) {
+            raw[origin_offset] = Origin::Npm as u8;
+            raw[has_install_script_offset] = HasInstallScript::False as u8;
+        }
+
+        bytes
+    }
+
+    #[test]
+    fn validate_meta_column_bytes_accepts_known_tags() {
+        assert!(validate_meta_column_bytes(&[]).is_ok());
+
+        let bytes = valid_meta_column_bytes(2);
+        assert!(validate_meta_column_bytes(&bytes).is_ok());
+    }
+
+    #[test]
+    fn validate_meta_column_bytes_rejects_invalid_origin_tag() {
+        let stride = mem::size_of::<Meta>();
+        let origin_offset = core::mem::offset_of!(Meta, origin);
+        let mut bytes = valid_meta_column_bytes(2);
+        bytes[stride + origin_offset] = 0xff;
+
+        assert!(validate_meta_column_bytes(&bytes).is_err());
+    }
+
+    #[test]
+    fn validate_meta_column_bytes_rejects_invalid_has_install_script_tag() {
+        let has_install_script_offset = core::mem::offset_of!(Meta, has_install_script);
+        let mut bytes = valid_meta_column_bytes(1);
+        bytes[has_install_script_offset] = 0xff;
+
+        assert!(validate_meta_column_bytes(&bytes).is_err());
+    }
+
+    #[test]
+    fn validate_meta_column_bytes_rejects_partial_row() {
+        let bytes = vec![0; mem::size_of::<Meta>() - 1];
+
+        assert!(validate_meta_column_bytes(&bytes).is_err());
     }
 }
 

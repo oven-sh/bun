@@ -45,6 +45,15 @@ pub enum HasInstallScript {
     True,
 }
 
+impl HasInstallScript {
+    #[inline]
+    pub const fn is_valid_lockfile_tag(byte: u8) -> bool {
+        byte == HasInstallScript::Old as u8
+            || byte == HasInstallScript::False as u8
+            || byte == HasInstallScript::True as u8
+    }
+}
+
 impl Default for Meta {
     fn default() -> Self {
         Self {

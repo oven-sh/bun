@@ -6,6 +6,22 @@ import { join } from "path";
 
 const registry = new VerdaccioRegistry();
 
+// `Package.Meta` lockfile layout is pinned by src/install/padding_checker.rs.
+const LOCKB_META_SIZE = 88;
+const LOCKB_META_ORIGIN_OFFSET = 0;
+const LOCKB_META_ID_OFFSET = 8;
+const LOCKB_META_HAS_INSTALL_SCRIPT_OFFSET = 85;
+
+function lockbMetaStart(lockb: Buffer) {
+  const fmt = lockb.readUInt32LE(42);
+  const N = Number(lockb.readBigUInt64LE(86));
+  const begin = Number(lockb.readBigUInt64LE(110));
+  const resolutionSize = fmt === 2 ? 64 : 72;
+  const metaStart = begin + N * (8 + 8 + resolutionSize + 8 + 8);
+
+  return { metaStart, packageCount: N };
+}
+
 beforeAll(async () => {
   await registry.start();
 });
@@ -140,16 +156,12 @@ it("recovers from a corrupted binary lockfile instead of panicking", async () =>
   // (72 for format v3, 64 for v2), dependencies (8) and resolutions (8)
   // per package, and `id` is at +8 within each 88-byte Meta.
   const lockb = Buffer.from(await file(lockbPath).arrayBuffer());
-  const fmt = lockb.readUInt32LE(42);
-  const N = Number(lockb.readBigUInt64LE(86));
-  const begin = Number(lockb.readBigUInt64LE(110));
-  const resolutionSize = fmt === 2 ? 64 : 72;
-  const metaStart = begin + N * (8 + 8 + resolutionSize + 8 + 8);
-  expect(N).toBeGreaterThan(1);
+  const { metaStart, packageCount } = lockbMetaStart(lockb);
+  expect(packageCount).toBeGreaterThan(1);
   // Sanity: in a well-formed lockfile meta[i].id == i.
-  expect(lockb.readUInt32LE(metaStart + 0 * 88 + 8)).toBe(0);
-  expect(lockb.readUInt32LE(metaStart + 1 * 88 + 8)).toBe(1);
-  lockb.writeUInt32LE(0x7fffffff, metaStart + 1 * 88 + 8);
+  expect(lockb.readUInt32LE(metaStart + 0 * LOCKB_META_SIZE + LOCKB_META_ID_OFFSET)).toBe(0);
+  expect(lockb.readUInt32LE(metaStart + 1 * LOCKB_META_SIZE + LOCKB_META_ID_OFFSET)).toBe(1);
+  lockb.writeUInt32LE(0x7fffffff, metaStart + 1 * LOCKB_META_SIZE + LOCKB_META_ID_OFFSET);
   await write(lockbPath, lockb);
 
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
@@ -175,3 +187,55 @@ it("recovers from a corrupted binary lockfile instead of panicking", async () =>
   expect(await exists(join(packageDir, "node_modules", "no-deps"))).toBe(true);
   expect(await exists(join(packageDir, "node_modules", "a-dep"))).toBe(true);
 });
+
+for (const { field, offset } of [
+  { field: "origin", offset: LOCKB_META_ORIGIN_OFFSET },
+  { field: "has_install_script", offset: LOCKB_META_HAS_INSTALL_SCRIPT_OFFSET },
+] as const) {
+  it(`rejects a corrupted binary lockfile with an invalid meta.${field} tag`, async () => {
+    const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: `corrupt-lockb-meta-${field}`,
+        version: "1.0.0",
+        dependencies: {
+          "no-deps": "1.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(env, packageDir);
+    const lockbPath = join(packageDir, "bun.lockb");
+    expect(await exists(lockbPath)).toBe(true);
+
+    const lockb = Buffer.from(await file(lockbPath).arrayBuffer());
+    const { metaStart, packageCount } = lockbMetaStart(lockb);
+    expect(packageCount).toBeGreaterThan(1);
+
+    const packageMeta = metaStart + LOCKB_META_SIZE;
+    expect(lockb[packageMeta + offset]).toBeLessThanOrEqual(2);
+    lockb[packageMeta + offset] = 0xff;
+    await write(lockbPath, lockb);
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--no-progress"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    const [out, rawErr, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    const err = stderrForInstall(rawErr);
+
+    expect(err).toContain("Ignoring lockfile");
+    expect(err).not.toContain("error:");
+    expect(out).toContain("no-deps@1.0.0");
+    expect(code).toBe(0);
+    expect(await exists(join(packageDir, "node_modules", "no-deps"))).toBe(true);
+  });
+}

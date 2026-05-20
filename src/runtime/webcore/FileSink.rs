@@ -1240,7 +1240,8 @@ impl FileSink {
                 sys::Result::Ok(())
             }
             WriteResult::Err(e) => {
-                self.writer.with_mut(|w| w.close());
+                self.done.set(true);
+                self.writer.with_mut(|w| w.end());
                 sys::Result::Err(e)
             }
             WriteResult::Pending(written) => {
@@ -1354,7 +1355,8 @@ impl FileSink {
                 sys::Result::Ok(JSValue::js_number(written as f64))
             }
             WriteResult::Err(err) => {
-                self.writer.with_mut(|w| w.close());
+                self.done.set(true);
+                self.writer.with_mut(|w| w.end());
                 sys::Result::Err(err)
             }
             WriteResult::Pending(pending_written) => {

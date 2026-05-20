@@ -933,9 +933,11 @@ static struct sigaction previous_actions[NSIG];
     M(SIGIO);
 
 #if OS(LINUX)
+// SIGPWR is intentionally omitted: JavaScriptCore uses it to suspend and
+// resume threads for garbage collection (see ThreadingPOSIX.cpp). Replacing
+// that handler here would break GC and terminate the process with SIGPWR.
 #define FOR_EACH_LINUX_ONLY_SIGNAL(M) \
     M(SIGPOLL);                       \
-    M(SIGPWR);                        \
     M(SIGSTKFLT);
 
 #endif

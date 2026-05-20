@@ -886,6 +886,7 @@ impl AnySocket {
     any_socket_forward! {
         fn is_closed(&self) -> bool;
         fn is_shutdown(&self) -> bool;
+        fn is_established(&self) -> bool;
         fn close(&self, code: CloseCode);
         fn write(&self, data: &[u8]) -> i32;
         fn set_timeout(&self, seconds: c_uint);

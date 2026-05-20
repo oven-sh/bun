@@ -253,7 +253,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     *left = p.new_expr(
                         E::Dot {
                             target,
-                            name: name.into(),
+                            name,
                             name_loc,
                             optional_chain: optional_start,
                             ..Default::default()
@@ -325,7 +325,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         *left = p.new_expr(
             E::Template {
                 tag: Some(tag),
-                head: E::TemplateContents::Raw(head.into()),
+                head: E::TemplateContents::Raw(head),
                 parts,
             },
             loc,

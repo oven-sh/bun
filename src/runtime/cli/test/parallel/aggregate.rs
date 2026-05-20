@@ -117,18 +117,14 @@ pub fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], summary: &
             "Failed to write JUnit report to {}\n{}",
             (BStr::new(outfile), e),
         ),
-        bun_sys::Result::Ok(fd) => {
-            let fd = fd; // moved into scope; closed on drop
-            match File::write_all(&fd, &contents) {
-                bun_sys::Result::Err(e) => Output::err(
-                    err!("JUnitReportFailed"),
-                    "Failed to write JUnit report to {}\n{}",
-                    (BStr::new(outfile), e),
-                ),
-                bun_sys::Result::Ok(()) => {}
-            }
-            let _ = fd.close();
-        }
+        bun_sys::Result::Ok(fd) => match File::write_all(&fd, &contents) {
+            bun_sys::Result::Err(e) => Output::err(
+                err!("JUnitReportFailed"),
+                "Failed to write JUnit report to {}\n{}",
+                (BStr::new(outfile), e),
+            ),
+            bun_sys::Result::Ok(()) => {}
+        },
     }
 }
 
@@ -287,7 +283,6 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                     );
                 }
                 let _ = File::write_all(&f, &w);
-                let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
             }
         }
     }

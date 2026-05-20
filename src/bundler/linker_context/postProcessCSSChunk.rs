@@ -94,7 +94,9 @@ pub fn post_process_css_chunk(
             if c.options.source_maps != options::SourceMapOption::None {
                 bun_core::handle_oom(compile_results_for_source_map.append(
                     CompileResultForSourceMap {
-                        source_map_chunk: source_map_chunk.clone(),
+                        // SAFETY: bitwise alias of `chunk.compile_results_for_chunk`
+                        // (read-only and outlives this fn); see `postProcessJSChunk.rs`.
+                        source_map_chunk: unsafe { source_map_chunk.alias() },
                         // Zig reads `.value` payload directly — guaranteed `Value` here
                         // because `source_maps != None` implies `line_offset` was
                         // initialised to `Value(_)` above.

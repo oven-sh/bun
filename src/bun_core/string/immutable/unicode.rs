@@ -1550,7 +1550,7 @@ pub(super) fn convert_utf16_to_utf8_in_buffer<'a>(
     let result = simdutf::convert::utf16::to::utf8::le(input, buf);
     // switch (result.status) {
     //     .success => return buf[0..result.count],
-    //     // TODO(@paperclover): handle surrogate
+    //     // TODO: handle surrogate
     //     .surrogate => @panic("TODO: handle surrogate in convertUTF8toUTF16"),
     //     else => @panic("TODO: handle error in convertUTF16toUTF8InBuffer"),
     // }

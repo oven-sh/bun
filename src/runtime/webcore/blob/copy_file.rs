@@ -947,7 +947,6 @@ impl<'a> CopyFile<'a> {
 
 impl Drop for CopyFile<'_> {
     fn drop(&mut self) {
-        // Zig deinit():
         if let PathOrFileDescriptor::Path(p) = &self.source_file_store.pathlike {
             if p.is_string() && self.system_error.is_none() {
                 // TODO(port): the Zig frees the path slice here. In Rust, ownership of
@@ -1449,7 +1448,7 @@ impl<'a> CopyFileWindows<'a> {
                 }
                 PathOrFileDescriptor::Fd(fd) => {
                     let fd = *fd;
-                    match bun_sys::File::from_fd(fd).kind() {
+                    match bun_sys::File::borrow(&fd).kind() {
                         bun_sys::Result::Err(err) => {
                             self.throw(err);
                             return;
@@ -1494,7 +1493,7 @@ impl<'a> CopyFileWindows<'a> {
                 }
                 PathOrFileDescriptor::Fd(fd) => {
                     let fd = *fd;
-                    match bun_sys::File::from_fd(fd).kind() {
+                    match bun_sys::File::borrow(&fd).kind() {
                         bun_sys::Result::Err(err) => {
                             self.throw(err);
                             return;

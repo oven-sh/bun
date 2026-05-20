@@ -203,7 +203,7 @@ impl Stringifier {
         }
 
         if unwrapped.is_string() {
-            let str = unwrapped.to_bun_string(global)?;
+            let str = bun_core::OwnedString::new(unwrapped.to_bun_string(global)?);
             self.append_quoted_string(&str);
             return Ok(());
         }
@@ -456,7 +456,7 @@ fn expr_to_js(expr: Expr, global: &JSGlobalObject) -> JsResult<JSValue> {
                 let key_expr = prop.key.expect("infallible: prop has key");
                 let value = expr_to_js(prop.value.expect("infallible: prop has value"), global)?;
                 let key_js = expr_to_js(key_expr, global)?;
-                let key_str = key_js.to_bun_string(global)?;
+                let key_str = bun_core::OwnedString::new(key_js.to_bun_string(global)?);
                 js_obj.put_may_be_index(global, &key_str, value)?;
             }
             Ok(js_obj)

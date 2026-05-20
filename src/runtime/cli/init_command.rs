@@ -377,7 +377,7 @@ impl InitCommand {
 
         if let Some(ifdir) = initialize_in_folder {
             // TODO(port): std.fs.cwd().makePath → bun_sys::make_path / bun.makePath
-            if let Err(err) = bun_sys::make_path(bun_sys::Dir::cwd(), ifdir) {
+            if let Err(err) = bun_sys::Dir::cwd().make_path(ifdir) {
                 Output::pretty_errorln(format_args!(
                     "Failed to create directory {}: {}",
                     bstr::BStr::new(ifdir),
@@ -482,14 +482,9 @@ impl InitCommand {
                     package_json_contents.list.as_slice(),
                 );
                 let mut log = bun_ast::Log::init();
-                // PORT NOTE: bun_parsers::json builds the T2
-                // (bun_ast::js_ast) value tree to avoid a T2->T4 dep
-                // cycle; lift to the full T4 (bun_js_parser) tree here so
-                // the rest of exec can use E::Object::{put,put_string,
-                // get_or_put_object,...} which only exist at T4.
                 let package_json_expr: bun_ast::Expr =
                     match json::parse_package_json_utf8(&source, &mut log, &bump) {
-                        Ok(e) => bun_ast::Expr::from(e),
+                        Ok(e) => e,
                         Err(_) => {
                             package_json_file = None;
                             break 'process_package_json;
@@ -809,14 +804,16 @@ impl InitCommand {
         }
 
         'write_package_json: {
-            // TODO(port): bun.FD.fromStdFile(package_json_file orelse try std.fs.cwd().createFileZ(...))
-            let fd: Fd = match package_json_file.as_ref() {
-                Some(f) => f.handle(),
-                None => bun_sys::File::create(Fd::cwd(), b"package.json", true)?.handle(),
+            let (fd, created_close): (Fd, Option<bun_sys::CloseOnDrop>) = match package_json_file
+                .as_ref()
+            {
+                Some(f) => (f.handle(), None),
+                None => {
+                    let fd = bun_sys::File::create(Fd::cwd(), b"package.json", true)?.into_raw();
+                    (fd, Some(bun_sys::CloseOnDrop::new(fd)))
+                }
             };
-            let _close = scopeguard::guard(fd, |fd: Fd| {
-                let _ = bun_sys::close(fd);
-            });
+            let _close = created_close;
             let mut buffer_writer = js_printer::BufferWriter::init();
             buffer_writer.append_newline = true;
             let mut package_json_writer = js_printer::BufferPrinter::init(buffer_writer);
@@ -843,7 +840,7 @@ impl InitCommand {
                 break 'write_package_json;
             }
             let written = package_json_writer.ctx.get_written();
-            if let Err(err) = bun_sys::File::from_fd(fd).write_all(written) {
+            if let Err(err) = bun_sys::File::borrow(&fd).write_all(written) {
                 Output::pretty_errorln(format_args!(
                     "package.json failed to write due to error {}",
                     bstr::BStr::new(err.name()),
@@ -885,7 +882,7 @@ impl InitCommand {
                 {
                     if let Some(dirname) = bun_core::dirname(&fields.entry_point) {
                         if dirname != b"." {
-                            let _ = bun_sys::make_path(bun_sys::Dir::cwd(), dirname);
+                            let _ = bun_sys::Dir::cwd().make_path(dirname);
                         }
                     }
 
@@ -1034,7 +1031,7 @@ impl Assets {
         // Zig: bun.sys.File.makeOpen — creates parent dirs then opens.
         if let Some(dir) = bun_core::dirname(filename.as_bytes()) {
             if !dir.is_empty() && dir != b"." {
-                let _ = bun_sys::make_path(bun_sys::Dir::cwd(), dir);
+                let _ = bun_sys::Dir::cwd().make_path(dir);
             }
         }
         let file = bun_sys::File::openat(
@@ -1043,9 +1040,6 @@ impl Assets {
             bun_sys::O::CREAT | bun_sys::O::EXCL | bun_sys::O::WRONLY,
             0o666,
         )?;
-        let _close = scopeguard::guard(file.handle(), |fd| {
-            let _ = bun_sys::close(fd);
-        });
 
         file.write_all(contents)?;
 
@@ -1083,9 +1077,6 @@ impl Assets {
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
             0o666,
         )?;
-        let _close = scopeguard::guard(file.handle(), |fd| {
-            let _ = bun_sys::close(fd);
-        });
 
         // Write contents of known assets to the new file. Template assets get formatted.
         if is_template {
@@ -1120,9 +1111,6 @@ impl Assets {
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
             0o666,
         )?;
-        let _close = scopeguard::guard(file.handle(), |fd| {
-            let _ = bun_sys::close(fd);
-        });
 
         if is_template {
             let buf = Self::substitute(contents, args);
@@ -1603,7 +1591,7 @@ impl Template {
                 if did_create_agent_rule && create_claude_md {
                     'symlink_cursor_rule: {
                         create_claude_md = false;
-                        let _ = bun_sys::make_path(bun_sys::Dir::cwd(), b".cursor/rules");
+                        let _ = bun_sys::Dir::cwd().make_path(b".cursor/rules");
                         // bun_sys::symlinkat takes &ZStr; build NUL-terminated copies.
                         let mut target_z = Self::CURSOR_RULE_PATH_TO_CLAUDE_MD.to_vec();
                         target_z.push(0);

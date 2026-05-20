@@ -83,6 +83,10 @@ typedef struct BunString {
 
     WTF::String transferToWTFString();
 
+    // Consumes this BunString and returns a JS string value. Leaves *this Dead
+    // so a Rust-side OwnedString::Drop deref becomes a no-op.
+    JSC::JSValue transferToJS(JSC::JSGlobalObject* globalObject);
+
     // This one usually will clone the raw bytes.
     WTF::String toWTFString() const;
 

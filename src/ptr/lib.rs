@@ -1,3 +1,4 @@
+#![feature(allocator_api)]
 #![allow(
     unused,
     non_snake_case,
@@ -333,10 +334,10 @@ pub use detach_lifetime_ref as detach_ref;
 /// outside the bundler SoA-column read-only fan-out it was written for.
 #[doc(hidden)]
 #[inline(always)]
-pub unsafe fn boxed_slices_as_borrowed<T>(s: &[Box<[T]>]) -> &[&[T]] {
+pub unsafe fn boxed_slices_as_borrowed<T, A: core::alloc::Allocator>(s: &[Box<[T], A>]) -> &[&[T]] {
     const {
-        assert!(core::mem::size_of::<Box<[T]>>() == core::mem::size_of::<&[T]>());
-        assert!(core::mem::align_of::<Box<[T]>>() == core::mem::align_of::<&[T]>());
+        assert!(core::mem::size_of::<Box<[T], A>>() == core::mem::size_of::<&[T]>());
+        assert!(core::mem::align_of::<Box<[T], A>>() == core::mem::align_of::<&[T]>());
     }
     // SAFETY: layout-identical per the const asserts above; every `Box<[T]>`
     // element is a valid non-null `(ptr, len)` pair, which is exactly the

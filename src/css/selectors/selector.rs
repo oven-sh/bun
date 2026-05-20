@@ -3,7 +3,7 @@ use crate::css_parser::compat::Feature;
 use crate::css_parser::targets::Targets;
 use crate::css_parser::{CSSString, PrintErr, Printer, StyleContext, VendorPrefix};
 use crate::{CSSStringFns, IdentFns};
-use bun_ast::symbol::List as SymbolList;
+type SymbolList = Vec<bun_ast::Symbol>;
 
 use bun_alloc::Arena as Bump;
 use bun_collections::ArrayHashMap;

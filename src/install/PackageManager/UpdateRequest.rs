@@ -54,6 +54,22 @@ impl Default for UpdateRequest {
 
 pub type Array = Vec<UpdateRequest>;
 
+/// Park CLI-lifetime bytes in a process-lifetime static so LSan sees them as
+/// reachable. `UpdateRequest::name`/`version_buf` store raw `&'static`/
+/// `RawSlice` views because they may later be repointed at lockfile buffers.
+fn anchor_cli_bytes(b: Box<[u8]>) -> &'static [u8] {
+    static ANCHOR: std::sync::Mutex<Vec<Box<[u8]>>> = std::sync::Mutex::new(Vec::new());
+    let ptr: *const [u8] = &*b;
+    ANCHOR
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .push(b);
+    // SAFETY: `b`'s heap allocation is owned by `ANCHOR` for the rest of the
+    // process. `Box<[u8]>` is a fat pointer; pushing it into the Vec moves
+    // only the pointer, not the heap data.
+    unsafe { &*ptr }
+}
+
 impl UpdateRequest {
     /// Borrow the backing string buffer.
     ///
@@ -166,12 +182,11 @@ impl UpdateRequest {
                 _ => {}
             }
 
-            // PORT NOTE: reshaped for borrowck — leak `input` now so sub-slices are &'static.
-            // Zig: `bun.default_allocator.dupe(u8, ..)` with no matching free; these live for
-            // the CLI invocation. `version_buf` is later reassigned to point at lockfile
-            // buffers (lockfile.rs), so the field is a raw `*const [u8]` (ARENA-class per
-            // PORTING.md type map) rather than `Box<[u8]>`.
-            let input: &'static [u8] = input.leak();
+            // CLI-lifetime allocation: `version_buf` is later reassigned to
+            // point at lockfile buffers, so the field is a raw `*const [u8]`
+            // rather than `Box<[u8]>`. Park the bytes in a process-lifetime
+            // static so LSan sees them as reachable instead of `Vec::leak`.
+            let input: &'static [u8] = anchor_cli_bytes(input.into_boxed_slice());
 
             let mut value: &'static [u8] = input;
             let mut alias: Option<&'static [u8]> = None;
@@ -268,8 +283,7 @@ impl UpdateRequest {
             };
             if let Some(name) = alias {
                 request.is_aliased = true;
-                // Zig: `allocator.dupe(u8, name) catch unreachable` — never freed (CLI lifetime).
-                request.name = name.to_vec().leak();
+                request.name = anchor_cli_bytes(name.to_vec().into_boxed_slice());
                 request.name_hash = StringBuilder::string_hash(name);
             } else if request.version.tag == dependency::version::Tag::Github
                 && request.version.github().committish.is_empty()

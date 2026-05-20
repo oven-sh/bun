@@ -265,10 +265,50 @@ pub use mimalloc_arena::MimallocArena;
 pub type Arena = MimallocArena;
 /// `bumpalo::Bump` — kept for genuinely bump-only scratch that's never resized.
 pub type Bump = bumpalo::Bump;
-/// Arena-backed `Vec` — `Vec<T, &'a MimallocArena>`. Real `deallocate`/`grow`
-/// via `mi_free`/`mi_heap_realloc_aligned`; reclaimed on arena `reset`/`Drop`.
-pub type ArenaVec<'a, T> = Vec<T, &'a MimallocArena>;
-pub use mimalloc_arena::{ArenaString, ArenaVecExt, live_arena_heaps, vec_from_iter_in};
+mod baby_vec;
+pub use baby_vec::BabyVec;
+/// Arena-backed `Vec` with `u32` length/capacity — port of Zig's
+/// `BabyList(T)`. 24 B (vs 32 B for `Vec<T, &'a MimallocArena>`); the
+/// allocator handle is kept inline for lifetime checking. Growth/free route
+/// through `<&MimallocArena as Allocator>` (= `mi_heap_realloc_aligned` /
+/// `mi_free`); reclaimed on arena `reset`/`Drop`.
+pub type ArenaVec<'a, T> = BabyVec<'a, T>;
+pub use mimalloc_arena::{ArenaString, ArenaVecExt, live_arena_heaps};
+
+/// `bumpalo::collections::Vec::from_iter_in` parity for [`ArenaVec`].
+#[inline]
+pub fn vec_from_iter_in<'a, T, I>(iter: I, arena: &'a MimallocArena) -> ArenaVec<'a, T>
+where
+    I: IntoIterator<Item = T>,
+{
+    let iter = iter.into_iter();
+    let (lo, _) = iter.size_hint();
+    let mut v = ArenaVec::with_capacity_in(lo, arena);
+    v.extend(iter);
+    v
+}
+
+/// Re-tag an [`ArenaVec`]'s allocator handle to `dst` without copying data.
+///
+/// Zig parity: `BabyList.transferOwnership` (collections/baby_list.zig). Zig's
+/// `BabyList` is allocator-erased — the linker passes a different allocator at
+/// each `append(allocator, ..)` call site; the Rust port stores `&'a Arena` in
+/// the `Vec`, so the equivalent is swapping that field.
+///
+/// Sound because `<&MimallocArena as Allocator>` is heap-agnostic on the
+/// existing buffer:
+/// - `deallocate` → `mi_free(ptr)`: looks up the owning heap from the pointer's
+///   page metadata; works from any thread on any heap's allocation.
+/// - `grow`/`shrink` → `mi_heap_realloc_aligned(dst, ptr, ..)`: returns `ptr`
+///   in-place if it fits (read-only `mi_usable_size`), else allocs on `dst`,
+///   `memcpy`s, then `mi_free(ptr)`.
+///
+/// The original arena is never `mi_heap_malloc`-ed from again via this `Vec`,
+/// so the [`MimallocArena`] single-thread-alloc contract is preserved.
+#[inline]
+pub fn transfer_arena<'a, T>(v: &mut ArenaVec<'a, T>, dst: &'a MimallocArena) {
+    v.set_allocator(dst);
+}
 
 /// `bumpalo::format!` parity — `arena_format!(in arena, "...", ..)` →
 /// [`ArenaString`].
@@ -284,8 +324,8 @@ macro_rules! arena_format {
 /// `typed_arena::Arena<T>` — typed slab with stable addresses (AST node Store).
 pub type TypedArena<T> = typed_arena::Arena<T>;
 
-/// `bun.use_mimalloc` — always true in Rust (mimalloc is the global allocator).
-pub const USE_MIMALLOC: bool = true;
+/// `bun.use_mimalloc` — false under ASAN, where the global allocator is `std::alloc::System`.
+pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
 
 // ── Allocator-vtable modules: per-module disposition (PORTING.md §Allocators) ──
 //
@@ -317,6 +357,152 @@ pub mod maybe_owned;
 #[path = "NullableAllocator.rs"]
 pub mod nullable_allocator;
 pub mod stack_fallback;
+
+/// Raw alloc/free matching the `#[global_allocator]` (`mi_*` normally, libc under ASAN).
+pub mod default_alloc {
+    use core::ffi::c_void;
+
+    #[inline]
+    pub fn malloc(size: usize) -> *mut c_void {
+        if cfg!(bun_asan) {
+            unsafe { libc::malloc(size) }
+        } else {
+            crate::mimalloc::mi_malloc(size)
+        }
+    }
+
+    #[inline]
+    pub fn zalloc(size: usize) -> *mut c_void {
+        if cfg!(bun_asan) {
+            unsafe { libc::calloc(1, size) }
+        } else {
+            crate::mimalloc::mi_zalloc(size)
+        }
+    }
+
+    #[inline]
+    pub fn calloc(count: usize, size: usize) -> *mut c_void {
+        if cfg!(bun_asan) {
+            unsafe { libc::calloc(count, size) }
+        } else {
+            crate::mimalloc::mi_calloc(count, size)
+        }
+    }
+
+    /// # Safety
+    /// `ptr` must be null or a live allocation from the default allocator.
+    #[inline]
+    pub unsafe fn realloc(ptr: *mut c_void, new_size: usize) -> *mut c_void {
+        if cfg!(bun_asan) {
+            unsafe { libc::realloc(ptr, new_size) }
+        } else {
+            unsafe { crate::mimalloc::mi_realloc(ptr, new_size) }
+        }
+    }
+
+    /// # Safety
+    /// `ptr` must be null or a live allocation from the default allocator.
+    #[inline]
+    pub unsafe fn free(ptr: *mut c_void) {
+        if cfg!(bun_asan) {
+            unsafe { libc::free(ptr) }
+        } else {
+            unsafe { crate::mimalloc::mi_free(ptr) }
+        }
+    }
+
+    /// # Safety
+    /// `ptr` must be null or a live allocation from the default allocator.
+    #[inline]
+    pub unsafe fn usable_size(ptr: *const c_void) -> usize {
+        if ptr.is_null() {
+            return 0;
+        }
+        // Under `bun_asan` the global allocator is `std::alloc::System`, so the
+        // size must come from libc, not mimalloc — and the symbol differs per
+        // OS (`malloc_usable_size` on Linux, `malloc_size` on macOS). `bun_asan`
+        // is only ever set on Linux or macOS, so the catch-all (non-asan, every
+        // `check-all` target including Windows) stays on mimalloc.
+        #[cfg(all(bun_asan, target_os = "linux"))]
+        return unsafe { libc::malloc_usable_size(ptr.cast_mut()) };
+        #[cfg(all(bun_asan, target_os = "macos"))]
+        return unsafe { libc::malloc_size(ptr) };
+        #[cfg(not(any(all(bun_asan, target_os = "linux"), all(bun_asan, target_os = "macos"))))]
+        return unsafe { crate::mimalloc::mi_usable_size(ptr) };
+    }
+
+    // The aligned variants are `#[cfg]`-split (not `if cfg!()`) because the
+    // posix_memalign/malloc_usable_size symbols don't exist on Windows.
+
+    #[cfg(not(bun_asan))]
+    #[inline]
+    pub fn malloc_aligned(size: usize, align: usize) -> *mut c_void {
+        crate::mimalloc::mi_malloc_auto_align(size, align)
+    }
+
+    #[cfg(bun_asan)]
+    #[inline]
+    pub fn malloc_aligned(size: usize, align: usize) -> *mut c_void {
+        if align <= crate::MAX_ALIGN_T {
+            return unsafe { libc::malloc(size) };
+        }
+        let mut p: *mut c_void = core::ptr::null_mut();
+        let align = align.max(core::mem::size_of::<*mut c_void>());
+        if unsafe { libc::posix_memalign(&mut p, align, size) } != 0 {
+            return core::ptr::null_mut();
+        }
+        p
+    }
+
+    #[cfg(not(bun_asan))]
+    #[inline]
+    pub fn zalloc_aligned(size: usize, align: usize) -> *mut c_void {
+        crate::mimalloc::mi_zalloc_auto_align(size, align)
+    }
+
+    #[cfg(bun_asan)]
+    #[inline]
+    pub fn zalloc_aligned(size: usize, align: usize) -> *mut c_void {
+        if align <= crate::MAX_ALIGN_T {
+            return unsafe { libc::calloc(1, size) };
+        }
+        let p = malloc_aligned(size, align);
+        if !p.is_null() {
+            unsafe { core::ptr::write_bytes(p.cast::<u8>(), 0, size) };
+        }
+        p
+    }
+
+    /// # Safety
+    /// `ptr` must be null or a live allocation from the default allocator with the given `align`.
+    #[cfg(not(bun_asan))]
+    #[inline]
+    pub unsafe fn realloc_aligned(ptr: *mut c_void, new_size: usize, align: usize) -> *mut c_void {
+        unsafe { crate::mimalloc::mi_realloc_aligned(ptr, new_size, align) }
+    }
+
+    /// # Safety
+    /// `ptr` must be null or a live allocation from the default allocator with the given `align`.
+    #[cfg(bun_asan)]
+    #[inline]
+    pub unsafe fn realloc_aligned(ptr: *mut c_void, new_size: usize, align: usize) -> *mut c_void {
+        if align <= crate::MAX_ALIGN_T {
+            return unsafe { libc::realloc(ptr, new_size) };
+        }
+        let new_ptr = malloc_aligned(new_size, align);
+        if new_ptr.is_null() {
+            return core::ptr::null_mut();
+        }
+        if !ptr.is_null() {
+            unsafe {
+                let copy = usable_size(ptr).min(new_size);
+                core::ptr::copy_nonoverlapping(ptr.cast::<u8>(), new_ptr.cast::<u8>(), copy);
+                libc::free(ptr);
+            }
+        }
+        new_ptr
+    }
+}
 
 pub use buffer_fallback_allocator::BufferFallbackAllocator;
 pub use max_heap_allocator::MaxHeapAllocator;
@@ -1512,19 +1698,19 @@ pub fn free_sensitive<T: Copy>(mut slice: Box<[T]>) {
 /// Port of `bun.freeSensitive(bun.default_allocator, slice)` for the C-string
 /// case used by http SSLConfig. Zeros the allocation before freeing
 /// (defence-in-depth for keys/passphrases). `p` must have been allocated by
-/// `dupe_z` (i.e. mimalloc, NUL-terminated).
+/// `dupe_z` (i.e. `default_alloc::malloc`, NUL-terminated).
 pub fn free_sensitive_cstr(p: *const core::ffi::c_char) {
     if p.is_null() {
         return;
     }
-    // SAFETY: p is a NUL-terminated mimalloc'd buffer per `dupe_z` contract.
+    // SAFETY: p is a NUL-terminated `default_alloc::malloc`'d buffer per
+    // `dupe_z` contract. An interior NUL truncating `strlen` only shortens the
+    // zero pass — the free is still exact (`mi_free`/`libc::free` are
+    // size-agnostic).
     unsafe {
         let len = libc::strlen(p);
         secure_zero(p as *mut u8, len);
-        // `mi_free` is size-agnostic (mimalloc tracks the allocation size in
-        // page metadata), so an interior NUL truncating `strlen` only shortens
-        // the zero pass — the free is still exact.
-        crate::basic::free_without_size(p as *mut core::ffi::c_void);
+        crate::default_alloc::free(p as *mut core::ffi::c_void);
     }
 }
 
@@ -1824,6 +2010,19 @@ fn bss_mmap_noreserve(len: usize) -> *mut u8 {
     if p == libc::MAP_FAILED {
         crate::out_of_memory();
     }
+    // LSan only scans data/BSS, stacks, and malloc-tracked heap for live
+    // pointers. This anonymous mapping is none of those, so any `Box`/`Vec`
+    // whose owning pointer lives inside a `bss_*!` singleton (e.g. the
+    // resolver's `EntriesOption` cache) is reported as a leak — which then
+    // forces every subprocess to spend ~5s in llvm-symbolizer matching the
+    // suppression. Register the mapping as a root region so LSan walks it.
+    #[cfg(bun_asan)]
+    {
+        unsafe extern "C" {
+            safe fn __lsan_register_root_region(ptr: *const core::ffi::c_void, size: usize);
+        }
+        __lsan_register_root_region(p.cast(), len);
+    }
     p.cast::<u8>()
 }
 
@@ -1917,10 +2116,28 @@ macro_rules! get_zone {
 
 type HashKeyType = u64;
 
-// Zig `IndexMapContext` is the identity hash on a u64 key.
-// TODO(port): `bun_collections::HashMap` needs an identity-hash builder; using std default for now.
-pub type IndexMap = HashMap<HashKeyType, IndexType>;
-pub type IndexMapManaged = HashMap<HashKeyType, IndexType>;
+/// Zig `IndexMapContext` — identity hash on a u64 key. Keys here are already
+/// `bun_wyhash` outputs, so rehashing with std's SipHash just costs cycles.
+#[derive(Default, Clone, Copy)]
+pub struct IdentityU64Hasher(u64);
+impl core::hash::Hasher for IdentityU64Hasher {
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        self.0 = bun_wyhash::hash_with_seed(self.0, bytes);
+    }
+    #[inline]
+    fn write_u64(&mut self, n: u64) {
+        self.0 = n;
+    }
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+type IndexMapHasher = core::hash::BuildHasherDefault<IdentityU64Hasher>;
+
+pub type IndexMap = HashMap<HashKeyType, IndexType, IndexMapHasher>;
+pub type IndexMapManaged = HashMap<HashKeyType, IndexType, IndexMapHasher>;
 
 #[derive(Clone, Copy)]
 pub struct Result {
@@ -2118,9 +2335,17 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
             self.list.ptrs[block_id].as_ref().expect("alloc").used as usize > (idx % COUNT)
         );
 
-        // SAFETY: `idx % COUNT < used` (asserted above) ⇒ slot was initialized by `append`.
+        // SAFETY: `block_id <= used` ⇒ `append` allocated `ptrs[block_id]`;
+        // `idx % COUNT < used` ⇒ slot was initialized by `append`.
         unsafe {
-            self.list.ptrs[block_id].as_ref().expect("alloc").items[idx % COUNT].assume_init_ref()
+            self.list
+                .ptrs
+                .get_unchecked(block_id)
+                .as_ref()
+                .unwrap_unchecked()
+                .items
+                .get_unchecked(idx % COUNT)
+                .assume_init_ref()
         }
     }
 
@@ -2135,9 +2360,17 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
             self.list.ptrs[block_id].as_ref().expect("alloc").used as usize > (idx % COUNT)
         );
 
-        // SAFETY: `idx % COUNT < used` (asserted above) ⇒ slot was initialized by `append`.
+        // SAFETY: `block_id <= used` ⇒ `append` allocated `ptrs[block_id]`;
+        // `idx % COUNT < used` ⇒ slot was initialized by `append`.
         unsafe {
-            self.list.ptrs[block_id].as_mut().expect("alloc").items[idx % COUNT].assume_init_mut()
+            self.list
+                .ptrs
+                .get_unchecked_mut(block_id)
+                .as_mut()
+                .unwrap_unchecked()
+                .items
+                .get_unchecked_mut(idx % COUNT)
+                .assume_init_mut()
         }
     }
 }

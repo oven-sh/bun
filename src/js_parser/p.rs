@@ -156,10 +156,12 @@ impl<'a> ImportRecordList<'a> {
     /// Drop then ran element destructors on records the returned `Ast` still
     /// pointed at. This adapter restores Zig's move-and-zero semantics for both
     /// the bump-backed and externally-borrowed variants.
-    pub fn move_to_baby_list(&mut self, arena: &'a Bump) -> Vec<ImportRecord> {
+    pub fn move_to_baby_list(&mut self, arena: &'a Bump) -> BumpVec<'a, ImportRecord> {
         match core::mem::replace(self, Self::Owned(BumpVec::new_in(arena))) {
-            Self::Owned(v) => Vec::from_bump_vec(v),
-            Self::Borrowed(v) => core::mem::take(v),
+            Self::Owned(v) => v,
+            // SCAN_ONLY path never reaches `to_ast`, so `Borrowed` never hits
+            // this arm at runtime; the copy keeps the type checker happy.
+            Self::Borrowed(v) => bun_alloc::vec_from_iter_in(v.drain(..), arena),
         }
     }
 }
@@ -599,6 +601,10 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// associated with that namespace or namespace member: "ref_to_ts_namespace_member".
     /// This gives enough info to be able to resolve queries into the namespace.
     pub ref_to_ts_namespace_member: HashMap<Ref, js_ast::ts::Data>,
+    /// Arena-allocated `TSNamespaceScope`s; their global-heap maps are freed in `Drop`.
+    pub ts_namespace_scopes: Vec<js_ast::StoreRef<js_ast::TSNamespaceScope>>,
+    /// Companion list (sibling scopes share a map, so the scope list can't free it).
+    pub ts_namespace_member_maps: Vec<js_ast::StoreRef<js_ast::TSNamespaceMemberMap>>,
     /// When visiting expressions, namespace metadata is associated with the most
     /// recently visited node. If namespace metadata is present, "tsNamespaceTarget"
     /// will be set to the most recently visited node (as a way to mark that this
@@ -718,6 +724,18 @@ pub type Binding2ExprWrapperNamespace = bun_ast::binding::ToExprWrapper;
 pub type Binding2ExprWrapperHoisted = bun_ast::binding::ToExprWrapper;
 
 // ═══════════════════════════════════════════════════════════════════════════
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> Drop for P<'a, TYPESCRIPT, SCAN_ONLY> {
+    fn drop(&mut self) {
+        // Arena-allocated structs never run Drop; free their global-heap maps here.
+        for mut scope in self.ts_namespace_scopes.drain(..) {
+            drop(core::mem::take(&mut scope.property_accesses));
+        }
+        for mut map in self.ts_namespace_member_maps.drain(..) {
+            drop(core::mem::take(&mut *map));
+        }
+    }
+}
+
 // Associated consts kept live (cheap, used by ParserLike + Parser.rs).
 // The full method-body impl block below is gated wholesale — 600+ type errors
 // from method bodies referencing not-yet-real Expr/Symbol/Log surface; un-gate
@@ -2065,7 +2083,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 alias_loc: Some(bun_ast::Loc::default()),
                 namespace_ref: Some(self.bun_app_namespace_ref),
                 import_record_index: import_record_i,
-                local_parts_with_uses: Default::default(),
+                local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                 alias_is_star: false,
                 is_exported: false,
             },
@@ -2079,6 +2097,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 is_single_line: true,
                 default_name: None,
                 star_name_loc: None,
+                phase_defer: false,
             },
             bun_ast::Loc::default(),
         );
@@ -2133,7 +2152,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             use core::fmt::Write as _;
             let base = self.import_records.items()[import_record_i as usize]
                 .path
-                .name
+                .name()
                 .non_unique_name_string_base();
             let mut buf = bun_alloc::ArenaString::new_in(arena);
             write!(&mut buf, "{}", bun_core::fmt::fmt_identifier(base)).expect("unreachable");
@@ -2202,7 +2221,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     alias_loc: Some(bun_ast::Loc::default()),
                     namespace_ref: Some(namespace_ref),
                     import_record_index: import_record_i,
-                    local_parts_with_uses: Default::default(),
+                    local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                     alias_is_star: false,
                     is_exported: false,
                 },
@@ -2217,6 +2236,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 is_single_line: true,
                 default_name: None,
                 star_name_loc: None,
+                phase_defer: false,
             },
             bun_ast::Loc::default(),
         );
@@ -2337,7 +2357,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         alias_loc: Some(bun_ast::Loc::EMPTY),
                         namespace_ref: Some(namespace_ref),
                         import_record_index,
-                        local_parts_with_uses: Default::default(),
+                        local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                         alias_is_star: false,
                         is_exported: false,
                     },
@@ -2380,6 +2400,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     is_single_line: false,
                     default_name: None,
                     star_name_loc: None,
+                    phase_defer: false,
                 },
                 bun_ast::Loc::EMPTY,
             )
@@ -4080,6 +4101,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             None
         };
 
+        // `import defer` grammatically admits only `* as ns` — no default
+        // binding, no named clause. The parser guarantees this by
+        // construction; assert it here so any future S::Import producer
+        // that sets `phase_defer` without upholding the shape is caught
+        // immediately rather than surfacing as odd printer output.
+        debug_assert!(
+            !stmt.phase_defer
+                || (stmt.star_name_loc.is_some()
+                    && stmt.default_name.is_none()
+                    && stmt.items.is_empty())
+        );
+
         stmt.import_record_index = self.add_import_record(ImportKind::Stmt, path.loc, path.text);
         self.import_records.items_mut()[stmt.import_record_index as usize]
             .flags
@@ -4087,6 +4120,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 bun_ast::ImportRecordFlags::WAS_ORIGINALLY_BARE_IMPORT,
                 was_originally_bare_import,
             );
+        self.import_records.items_mut()[stmt.import_record_index as usize]
+            .flags
+            .set(bun_ast::ImportRecordFlags::PHASE_DEFER, stmt.phase_defer);
 
         if let Some(star) = stmt.star_name_loc {
             let name = self.load_name_from_ref(stmt.namespace_ref);
@@ -4383,7 +4419,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // exposes the same sanitizer as a Display formatter (`fmt_identifier()`), so format once
         // and copy into the bump arena.
         let identifier: &'a [u8] = {
-            let s = format!("{}_default", self.source.path.name.fmt_identifier());
+            let s = format!("{}_default", self.source.path.name().fmt_identifier());
             self.arena.alloc_slice_copy(s.as_bytes())
         };
 
@@ -4665,12 +4701,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
 
         if let Some(existing) = map {
-            return js_ast::StoreRef::from_bump(self.arena.alloc(js_ast::TSNamespaceScope {
+            let scope = js_ast::StoreRef::from_bump(self.arena.alloc(js_ast::TSNamespaceScope {
                 exported_members: existing,
                 is_enum_scope,
                 arg_ref: Ref::NONE,
                 property_accesses: Default::default(),
             }));
+            self.ts_namespace_scopes.push(scope);
+            return scope;
         }
 
         // Otherwise, generate a new namespace object.
@@ -4679,12 +4717,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // can't be null-then-patch; two bump allocs from the same arena is the
         // same locality and avoids the self-referential init.
         let map = js_ast::StoreRef::from_bump(self.arena.alloc(Default::default()));
-        js_ast::StoreRef::from_bump(self.arena.alloc(js_ast::TSNamespaceScope {
+        self.ts_namespace_member_maps.push(map);
+        let scope = js_ast::StoreRef::from_bump(self.arena.alloc(js_ast::TSNamespaceScope {
             exported_members: map,
             is_enum_scope,
             arg_ref: Ref::NONE,
             property_accesses: Default::default(),
-        }))
+        }));
+        self.ts_namespace_scopes.push(scope);
+        scope
     }
 
     // TODO:
@@ -5387,7 +5428,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         &mut self.import_records_for_current_part,
                         BumpVec::new_in(self.arena),
                     );
-                    v.as_slice().to_vec()
+                    js_ast::PartImportRecordIndices::from_slice(v.as_slice())
                 },
                 // SAFETY: fresh bump allocation, uniquely owned by the new Part.
                 scopes: bun_ast::StoreSlice::new_mut(
@@ -8112,9 +8153,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 user_hooks: Default::default(),
             });
 
-            // TODO(paperclover): fix the renamer bug. this bug
-            // theoretically affects all usages of temp refs, but i cannot
-            // find another example of it breaking (like with `using`)
+            // TODO: fix the renamer bug. this bug theoretically affects all
+            // usages of temp refs, but i cannot find another example of it
+            // breaking (like with `using`)
             self.declared_symbols
                 .append(DeclaredSymbol {
                     is_top_level: true,
@@ -8335,7 +8376,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         exports_kind: js_ast::ExportsKind,
         wrap_mode: WrapMode,
         hashbang: &'a [u8],
-    ) -> Result<Box<js_ast::Ast>, bun_core::Error> {
+    ) -> Result<Box<js_ast::Ast<'a>>, bun_core::Error> {
         use crate::lower::lower_esm_exports_hmr::ConvertESMExportsForHmr;
         use crate::scan::scan_imports::ImportScanner;
 
@@ -8500,14 +8541,36 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .append_slice(self.import_records_for_current_part.as_slice());
                         }
 
+                        // Wipe the source slot's heap-backed maps so a multi-pass
+                        // re-scan of `idx` never aliases the compacted survivor.
+                        // SAFETY: `idx < parts.len()`; field-only write, `part` owns the old bits.
+                        unsafe {
+                            let src = parts.as_mut_ptr().add(idx);
+                            core::ptr::write(&raw mut (*src).symbol_uses, Default::default());
+                            core::ptr::write(
+                                &raw mut (*src).import_symbol_property_uses,
+                                Default::default(),
+                            );
+                        }
                         // SAFETY: bitwise overwrite matching Zig
                         // `parts.items[parts_end] = part;` — old slot value is not
                         // dropped (arena-owned; Zig never deinit'd it either).
                         unsafe { core::ptr::write(parts.as_mut_ptr().add(parts_end), part) };
                         parts_end += 1;
                     } else {
-                        // Drop path: `parts[idx]` still owns this data; discard the
-                        // bitwise duplicate without running Drop.
+                        // Filtered out; free the global-heap maps and clear the
+                        // alias in `parts[idx]` so a re-scan never sees freed handles.
+                        drop(core::mem::take(&mut part.symbol_uses));
+                        drop(core::mem::take(&mut part.import_symbol_property_uses));
+                        // SAFETY: `idx < parts.len()`; field-only write, old bits just freed above.
+                        unsafe {
+                            let slot = parts.as_mut_ptr().add(idx);
+                            core::ptr::write(&raw mut (*slot).symbol_uses, Default::default());
+                            core::ptr::write(
+                                &raw mut (*slot).import_symbol_property_uses,
+                                Default::default(),
+                            );
+                        }
                         core::mem::forget(part);
                     }
                 }
@@ -8725,25 +8788,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             symbol_ref = &ctx.symbols[r#ref.inner_index() as usize];
                         }
 
-                        let entry = ctx.top_level.get_or_put(r#ref).expect("unreachable");
-                        if !entry.found_existing {
-                            *entry.value_ptr = Default::default();
-                        }
-                        entry.value_ptr.push(ctx.part_index);
+                        ctx.top_level
+                            .entry(r#ref)
+                            .or_insert_with(bun_alloc::AstAlloc::vec)
+                            .push(ctx.part_index);
                     },
                 );
             }
 
             // Pulling in the exports of this module always pulls in the export part
-            {
-                let entry = top_level_symbols_to_parts
-                    .get_or_put(self.exports_ref)
-                    .expect("unreachable");
-                if !entry.found_existing {
-                    *entry.value_ptr = Default::default();
-                }
-                entry.value_ptr.push(js_ast::NAMESPACE_EXPORT_PART_INDEX);
-            }
+            top_level_symbols_to_parts
+                .entry(self.exports_ref)
+                .or_insert_with(bun_alloc::AstAlloc::vec)
+                .push(js_ast::NAMESPACE_EXPORT_PART_INDEX);
         }
 
         let wrapper_ref: Ref = 'brk: {
@@ -8818,28 +8875,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let require_ref = self.runtime_imports.__require.unwrap_or(self.require_ref);
         let runtime_imports = core::mem::take(&mut self.runtime_imports);
 
-        // PORT NOTE: BumpVec<'a, T> can't be moved into a global-arena Vec;
-        // wrap the bump-backed storage as a Borrowed Vec (Drop is no-op).
-        // Spec P.zig:6695-6696 uses `moveFromList`, which transfers storage and
-        // *zeroes the source*. Mirror that move-and-zero with
-        // `mem::replace(.., new_in)` + `into_bump_slice_mut()` so the leftover
-        // BumpVec is empty when `P`/the caller's `parts` drops — `Part` carries
-        // owning fields (`symbol_uses`, `declared_symbols`,
-        // `import_record_indices`) and aliasing the live BumpVec slice (the old
-        // `as_mut_slice()` shape) double-dropped them once the parser fell out
-        // of scope. Same fix `ImportRecordList::move_to_baby_list` applies.
-        let symbols = js_ast::symbol::List::from_bump_vec(core::mem::replace(
-            &mut self.symbols,
-            BumpVec::new_in(arena),
-        ));
-        let parts_list =
-            Vec::<js_ast::Part>::from_bump_vec(core::mem::replace(parts, BumpVec::new_in(arena)));
-        // Spec P.zig:6697: `ImportRecord.List.moveFromList(&p.import_records)`.
-        // Round-G fix: use the dedicated adapter so the parser-side list is
-        // left empty (Zig move-and-zero) and the BumpVec is leaked into the
-        // arena rather than dropped — downstream (printer, linker) resolves
-        // every `S.Import`/`E.RequireString`/`E.Import` by index against this.
-        let import_records: Vec<ImportRecord> = self.import_records.move_to_baby_list(arena);
+        // Spec P.zig:6695-6697 (`moveFromList`): re-tag the arena-backed buffer
+        // into the `Ast` and leave the parser-side slot empty — a pointer move,
+        // no realloc/memcpy. `Ast.{symbols,parts,import_records}` are now
+        // `ArenaVec<'a, T>` so the move is type-checked.
+        let symbols = core::mem::replace(&mut self.symbols, BumpVec::new_in(arena));
+        let parts_list = core::mem::replace(parts, BumpVec::new_in(arena));
+        let import_records = self.import_records.move_to_baby_list(arena);
 
         // PERF: box at the construction site so the ~1 KB `Ast` is written
         // straight into the heap allocation and only the thin `Box` pointer is
@@ -8855,11 +8897,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             exports_ref: self.exports_ref,
             wrapper_ref,
             module_ref: self.module_ref,
-            export_star_import_records: self
-                .export_star_import_records
-                .as_slice()
-                .to_vec()
-                .into_boxed_slice(),
+            export_star_import_records: bun_alloc::AstAlloc::vec_from_slice(
+                self.export_star_import_records.as_slice(),
+            ),
             approximate_newline_count: self.lexer.approximate_newline_count,
             exports_kind,
             named_imports: core::mem::take(&mut *self.named_imports),
@@ -8940,7 +8980,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 unreachable!("top_level_enums entry missing namespace member data");
             };
             let ns: &js_ast::TSNamespaceMemberMap = namespace;
-            let mut inner_map = StringHashMap::<InlinedEnumValue>::default();
+            let mut inner_map = StringHashMap::<InlinedEnumValue, bun_alloc::AstAlloc>::default();
             inner_map.ensure_total_capacity(ns.count())?;
             for i in 0..ns.count() {
                 let key = &ns.keys()[i];
@@ -9278,6 +9318,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             binary_expression_stack: BumpVec::new_in(arena),
             binary_expression_simplify_stack: BumpVec::new_in(arena),
             ref_to_ts_namespace_member: Default::default(),
+            ts_namespace_scopes: Vec::new(),
+            ts_namespace_member_maps: Vec::new(),
             ts_namespace: RecentlyVisitedTSNamespace {
                 expr: null_expr_data(),
                 map: None,

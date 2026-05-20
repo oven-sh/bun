@@ -947,13 +947,13 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         debug_assert!(index.is_valid());
         debug_assert!(!ctx.loaders[index.get() as usize].is_css());
 
-        let records_len = ctx.import_records[index.get() as usize].slice().len();
+        let records_len = ctx.import_records[index.get() as usize].len();
         for i in 0..records_len {
             // PORT NOTE: snapshot the three fields we need so the shared borrow
             // on `ctx.import_records` ends before `process_edge_attachment`
             // takes `&mut ctx`.
             let (flags, src, key) = {
-                let ir = &ctx.import_records[index.get() as usize].slice()[i];
+                let ir = &ctx.import_records[index.get() as usize].as_slice()[i];
                 (
                     ir.flags,
                     ir.source_index,
@@ -992,10 +992,10 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         queue.push(bundler_index);
 
         while let Some(idx) = queue.pop() {
-            let records_len = ctx.import_records[idx.get() as usize].slice().len();
+            let records_len = ctx.import_records[idx.get() as usize].len();
             for i in 0..records_len {
                 let (flags, src, key) = {
-                    let ir = &ctx.import_records[idx.get() as usize].slice()[i];
+                    let ir = &ctx.import_records[idx.get() as usize].as_slice()[i];
                     (
                         ir.flags,
                         ir.source_index,
@@ -1013,7 +1013,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     EdgeAttachmentMode::Css,
                 )?;
                 if result == EdgeAttachmentResult::Continue && src.is_valid() {
-                    queue.push(src.into());
+                    queue.push(src);
                 }
             }
         }

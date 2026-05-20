@@ -574,7 +574,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             // freshly-inserted entry immutably alongside the
                             // scope (both `&manager`, no conflict).
                             let tmp_fd = directories::get_temporary_directory(manager).handle.fd;
-                            let cache_fd = directories::get_cache_directory(manager).fd;
+                            let cache_fd = directories::get_cache_directory(manager);
                             npm::package_manifest::Serializer::save_async(
                                 manager
                                     .manifests
@@ -939,7 +939,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         scopeguard::defer! {
             // SAFETY: `manager_ptr` is the provenance root for every body access
             // to `manager`; `task_ptr` is the sole live handle to this pool slot.
-            unsafe { (*manager_ptr).preallocated_resolve_tasks.put(task_ptr) };
+            unsafe {
+                (*task_ptr).deinit_payload();
+                (*manager_ptr).preallocated_resolve_tasks.put(task_ptr);
+            }
         };
         manager.decrement_pending_tasks();
 
@@ -952,7 +955,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
             if task.log.errors > 0 {
                 manager.any_failed_to_install = true;
             }
-            // Zig: `task.log.deinit();` — Drop handles via reset.
             task.log.reset();
         }
 
@@ -1006,9 +1008,21 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                     continue;
                 }
-                let manifest: &npm::PackageManifest = task.data_package_manifest();
+                debug_assert!(task.tag == Task::Tag::PackageManifest);
+                // SAFETY: tag-guarded read of the active union arm; default placeholder restored immediately.
+                let manifest: npm::PackageManifest = unsafe {
+                    let m = core::mem::ManuallyDrop::take(&mut task.data.package_manifest);
+                    task.data.package_manifest =
+                        core::mem::ManuallyDrop::new(npm::PackageManifest::default());
+                    m
+                };
+                let name_hash = manifest.pkg.name.hash;
+                let progress_name: Option<Vec<u8>> = (!C::MANIFESTS_ONLY
+                    && log_level.show_progress()
+                    && !has_updated_this_run.get())
+                .then(|| manifest.name().to_vec());
 
-                manager.manifests.insert(manifest.pkg.name.hash, manifest)?;
+                manager.manifests.insert(name_hash, manifest)?;
 
                 if C::MANIFESTS_ONLY {
                     continue;
@@ -1027,15 +1041,13 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     install_peer,
                 )?;
 
-                if log_level.show_progress() {
-                    if !has_updated_this_run.get() {
-                        manager.set_node_name::<true>(
-                            manager.downloads_node_mut(),
-                            manifest.name(),
-                            ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
-                        );
-                        has_updated_this_run.set(true);
-                    }
+                if let Some(name) = progress_name {
+                    manager.set_node_name::<true>(
+                        manager.downloads_node_mut(),
+                        &name,
+                        ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
+                    );
+                    has_updated_this_run.set(true);
                 }
             }
             Task::Tag::Extract | Task::Tag::LocalTarball => {
@@ -1186,8 +1198,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         };
 
                         // Zig: `defer { dependency_list.deinit(); if (any_root) callbacks.onResolve(extract_ctx); }`
-                        // `dependency_list` is a Drop type (frees on every path); only the
-                        // `on_resolve` side-effect needs the guard so it fires on `?` too.
                         scopeguard::defer! {
                             // SAFETY: `extract_ctx_ptr` is the function-scope provenance
                             // root for `extract_ctx`.
@@ -1285,7 +1295,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         // forever on the entry's pending-task slot.
                         let mut drained_any = false;
                         if let Some(waiters) = manager.task_queue.remove(&task.id) {
-                            // Zig: defer waiters.deinit() — Drop at end of `if` scope.
                             let pkg_resolutions = manager.lockfile.packages.items_resolution();
                             for waiter in waiters.iter() {
                                 let dep_id = match waiter {
@@ -1384,7 +1393,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let resolved = crate::repository_real::Repository::find_commit(
                         manager.env_mut(),
                         manager.log_mut(),
-                        bun_sys::Dir { fd: repo_fd },
+                        repo_fd,
                         dep_name,
                         committish,
                         task.id,
@@ -1801,8 +1810,12 @@ pub fn generate_network_task_for_tarball<'a>(
     } else {
         None
     };
+    // Borrowed views: `cache_dir` and `temp_dir` are owned by the `PackageManager`
+    // singleton and the `TemporaryDirectory` once-cell, respectively. They flow
+    // into `ExtractTarball::{cache_dir,temp_dir}`, which must be `Fd` (not `Dir`)
+    // so the task's drop never closes them.
     let cache_dir = directories::get_cache_directory(this);
-    let temp_dir = directories::get_temporary_directory(this).handle;
+    let temp_dir = directories::get_temporary_directory(this).handle.fd();
     // Backref address only — stored, not dereffed in this function. The tag is
     // immediately popped by the next `this` use; that's fine for a stored
     // back-pointer (TODO(port): lifetime — BACKREF).

@@ -1948,7 +1948,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             cls_dec_args.push(p.new_expr(E::Number { value: 0.0 }, loc));
             cls_dec_args.push(p.new_expr(
                 E::EString {
-                    data: class_name_str.into(),
+                    data: class_name_str,
                     ..Default::default()
                 },
                 loc,

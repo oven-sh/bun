@@ -301,9 +301,9 @@ pub fn post_process_js_chunk(
             if all_flags[part_range.source_index.get() as usize].wrap == crate::WrapKind::Cjs {
                 continue;
             }
-            let source_parts = all_parts[part_range.source_index.get() as usize].slice();
+            let source_parts = all_parts[part_range.source_index.get() as usize].as_slice();
             let source_import_records =
-                all_import_records[part_range.source_index.get() as usize].slice();
+                all_import_records[part_range.source_index.get() as usize].as_slice();
             let mut part_i = part_range.part_index_begin;
             while part_i < part_range.part_index_end {
                 // `Part.stmts: StoreSlice<Stmt>` — arena-backed, safe `Deref`.
@@ -619,8 +619,7 @@ pub fn post_process_js_chunk(
 
     let mut compile_results_for_source_map: MultiArrayList<CompileResultForSourceMap> =
         MultiArrayList::default();
-    let _ = compile_results_for_source_map.set_capacity(compile_results.len()); // OOM/capacity: Zig aborts; port keeps fire-and-forget
-    // bun.handleOom dropped — Rust aborts on OOM
+    bun_core::handle_oom(compile_results_for_source_map.set_capacity(compile_results.len()));
 
     let show_comments = c.options.mode == LinkerOptionsMode::Bundle && !c.options.minify_whitespace;
 
@@ -717,14 +716,19 @@ pub fn post_process_js_chunk(
 
             if let Some(source_map_chunk) = compile_result.source_map_chunk() {
                 if c.options.source_maps != options::SourceMapOption::None {
-                    compile_results_for_source_map.append(CompileResultForSourceMap {
-                        source_map_chunk: source_map_chunk.clone(),
-                        generated_offset: match line_offset {
-                            SourceMap::LineColumnOffsetOptional::Value(v) => v,
-                            SourceMap::LineColumnOffsetOptional::Null => Default::default(),
+                    bun_core::handle_oom(compile_results_for_source_map.append(
+                        CompileResultForSourceMap {
+                            // SAFETY: bitwise alias of `chunk.compile_results_for_chunk`
+                            // (read-only and outlives this fn); slab-only MAL drop means
+                            // the alias is never freed — original keeps the single owner.
+                            source_map_chunk: unsafe { source_map_chunk.alias() },
+                            generated_offset: match line_offset {
+                                SourceMap::LineColumnOffsetOptional::Value(v) => v,
+                                SourceMap::LineColumnOffsetOptional::Null => Default::default(),
+                            },
+                            source_index: compile_result.source_index(),
                         },
-                        source_index: compile_result.source_index(),
-                    })?;
+                    ));
                 }
 
                 line_offset.reset();
@@ -1145,8 +1149,7 @@ pub fn generate_entry_point_tail_js<'a>(
                         // collected Vec into the linker arena (Zig used
                         // `c.arena().alloc`). The arena slice is also iterated
                         // below for the synthetic-default-export path.
-                        let items: &mut [bun_ast::ClauseItem] =
-                            arena.alloc_slice_fill_iter(items.into_iter());
+                        let items: &mut [bun_ast::ClauseItem] = arena.alloc_slice_fill_iter(items);
                         stmts.push(Stmt::alloc(
                             S::ExportClause {
                                 items: bun_ast::StoreSlice::new_mut(items),
@@ -1365,7 +1368,7 @@ pub fn generate_entry_point_tail_js<'a>(
     // which outlives `'a` (the chunk-processing scope). Detach the borrow from
     // the local `ast_view` so it can satisfy `print`'s `&'a [ImportRecord]`.
     let import_records: &'a [ImportRecord] =
-        unsafe { bun_ptr::detach_lifetime(ast_view.import_records.slice()) };
+        unsafe { bun_ptr::detach_lifetime(ast_view.import_records.as_slice()) };
 
     CompileResult::Javascript {
         result: js_printer::print::<false>(

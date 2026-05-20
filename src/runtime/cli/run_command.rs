@@ -128,7 +128,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             if let Some(scripts) = pkg.scripts.as_deref() {
                 let mut display_name: &[u8] = &pkg.name;
                 if display_name.is_empty() {
-                    display_name = paths::basename(pkg.source.path.name.dir);
+                    display_name = paths::basename(pkg.source.path.name().dir);
                 }
                 let _ = display_name;
 
@@ -1901,7 +1901,7 @@ impl RunCommand {
             if root_dir_info.package_json.is_none() {
                 // no trailing slash
                 package_json_dir =
-                    strings::without_trailing_slash(package_json.source.path.name.dir);
+                    strings::without_trailing_slash(package_json.source.path.name().dir);
             }
         }
 
@@ -2424,10 +2424,11 @@ impl RunCommand {
         // transpiler — so the bundler-linker / `tsconfig.json` / JSX-runtime
         // setup would be dead weight (and the largest block of bundler code
         // otherwise faulted in for a plain `bun run <script>`).
-        let mut this_transpiler = ::core::mem::MaybeUninit::<Transpiler<'static>>::uninit();
+        let this_transpiler: &'static mut ::core::mem::MaybeUninit<Transpiler<'static>> =
+            runner_arena().alloc(::core::mem::MaybeUninit::<Transpiler<'static>>::uninit());
         let root_dir_info = Self::configure_env_for_run_without_linker(
             ctx,
-            &mut this_transpiler,
+            this_transpiler,
             None,
             log_errors,
             false,
@@ -2435,6 +2436,10 @@ impl RunCommand {
         // SAFETY: `configure_env_for_run_without_linker` returned `Ok`, so the
         // slot is fully initialized via `MaybeUninit::write`.
         let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
+        bun_core::asan::register_root_region(
+            std::ptr::from_ref::<Transpiler>(this_transpiler).cast(),
+            ::core::mem::size_of::<Transpiler>(),
+        );
         let force_using_bun = ctx.debug.run_in_bun;
         let mut original_path: Vec<u8> = Vec::new();
         Self::configure_path_for_run(
@@ -2607,7 +2612,7 @@ impl RunCommand {
         match resolution {
             Ok(mut resolved) => {
                 let path = resolved.path().expect("resolved primary path");
-                let ext = path.name.ext;
+                let ext = path.name().ext;
                 let loader: Loader = this_transpiler
                     .options
                     .loaders
@@ -3417,8 +3422,7 @@ impl RunCommand {
                 Ok(f) => f,
                 Err(_) => continue,
             };
-            let ok = sys::File { handle: fd }.write_all(bytes).is_ok();
-            fd.close();
+            let ok = sys::File::from_fd(fd).write_all(bytes).is_ok();
             if !ok {
                 // openA + TRUNC leaves an orphan even on zero-byte
                 // write failure. Unlink via stack buffer so cleanup
@@ -3894,7 +3898,11 @@ impl RunCommand {
         strings::sort_asc(&mut all_keys);
         // Park the owning maps in the runner arena (process-lifetime) so the
         // `'static` slices above remain valid without leaking/forgetting.
-        let _ = runner_arena().alloc(results);
+        let parked = runner_arena().alloc(results);
+        bun_core::asan::register_root_region(
+            std::ptr::from_ref::<ResultList>(parked).cast(),
+            ::core::mem::size_of::<ResultList>(),
+        );
         shell_out.commands = std::borrow::Cow::Borrowed(runner_arena().alloc_slice_copy(&all_keys));
         shell_out.descriptions = std::borrow::Cow::Borrowed(runner_arena().alloc_slice_copy(
             // SAFETY: descriptions borrow into the package.json source buffer

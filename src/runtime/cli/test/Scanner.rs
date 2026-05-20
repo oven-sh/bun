@@ -101,9 +101,6 @@ impl<'a> Scanner<'a> {
         })
     }
 
-    // Zig `deinit` only freed `test_files` and `dirs_to_scan`; both are owned
-    // containers in Rust and drop automatically. No explicit Drop impl needed.
-
     /// Take the list of test files out of this scanner. Caller owns the returned
     /// allocation.
     pub fn take_found_test_files(&mut self) -> Result<Box<[PathString]>, AllocError> {
@@ -254,15 +251,10 @@ impl<'a> Scanner<'a> {
         // `RealFS.entries_mutex` inside the callee.
         let real_fs = core::ptr::from_ref(&self.fs.fs).cast_mut();
         let iter = ScannerDirIter(std::ptr::from_mut::<Scanner<'a>>(self));
+        let raw = handle.map(bun_sys::Dir::into_raw);
         // SAFETY: see PORT NOTE above — `real_fs` aliases the singleton.
         #[allow(invalid_reference_casting)]
-        unsafe { &mut *real_fs }.read_directory_with_iterator(
-            name,
-            handle.map(|d| d.fd),
-            0,
-            true,
-            iter,
-        )
+        unsafe { &mut *real_fs }.read_directory_with_iterator(name, raw, 0, true, iter)
     }
 
     pub fn could_be_test_file<const NEEDS_TEST_SUFFIX: bool>(&self, name: &[u8]) -> bool {

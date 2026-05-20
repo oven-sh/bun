@@ -284,7 +284,8 @@ impl FdExt for Fd {
     }
 
     fn delete_tree(self, subpath: &[u8]) -> Result<(), bun_core::Error> {
-        sys::Dir::from_fd(self).delete_tree(subpath)
+        // Non-owning view: `self` is the caller's fd; we must not close it.
+        sys::Dir::borrow(&self).delete_tree(subpath)
     }
 
     #[inline]

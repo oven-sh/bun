@@ -1,7 +1,6 @@
-import { describe, expect, test } from "bun:test";
-
 import { password } from "bun";
-import { bunEnv, bunExe, isDebug } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 
 const placeholder = "hey";
 
@@ -34,7 +33,10 @@ describe.skipIf(isDebug)("does not leak", () => {
         for (let i = 0; i < 60000; i++) Bun.password.hashSync("hey", opts);
         Bun.gc(true);
         const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
-        if (growthMB > 4) throw new Error("leaked " + growthMB.toFixed(2) + "MB");
+        // ASAN's free quarantine (default 256 MB) plus redzones and glibc page
+        // retention inflate RSS even when nothing is leaking.
+        const limit = ${isASAN ? 400 : 4};
+        if (growthMB > limit) throw new Error("leaked " + growthMB.toFixed(2) + "MB (limit " + limit + "MB)");
       `);
   }, 90_000);
 
@@ -52,7 +54,10 @@ describe.skipIf(isDebug)("does not leak", () => {
         for (let i = 0; i < 2000; i++) await batch(100);
         Bun.gc(true);
         const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
-        if (growthMB > 20) throw new Error("leaked " + growthMB.toFixed(2) + "MB");
+        // ASAN's free quarantine (default 256 MB) plus redzones and glibc page
+        // retention inflate RSS even when nothing is leaking.
+        const limit = ${isASAN ? 400 : 20};
+        if (growthMB > limit) throw new Error("leaked " + growthMB.toFixed(2) + "MB (limit " + limit + "MB)");
       `);
   }, 90_000);
 });

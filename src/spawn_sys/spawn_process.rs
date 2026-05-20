@@ -179,21 +179,23 @@ pub trait RusageFields {
 
 #[cfg(unix)]
 impl RusageFields for libc::rusage {
+    // `tv_sec`/`tv_usec` are `i64` on linux but `i32` on darwin (`suseconds_t`);
+    // the `as i64` is required for the latter and a no-op on the former.
     #[inline]
     fn utime_sec(&self) -> i64 {
-        self.ru_utime.tv_sec
+        self.ru_utime.tv_sec as i64
     }
     #[inline]
     fn utime_usec(&self) -> i64 {
-        self.ru_utime.tv_usec
+        self.ru_utime.tv_usec as i64
     }
     #[inline]
     fn stime_sec(&self) -> i64 {
-        self.ru_stime.tv_sec
+        self.ru_stime.tv_sec as i64
     }
     #[inline]
     fn stime_usec(&self) -> i64 {
-        self.ru_stime.tv_usec
+        self.ru_stime.tv_usec as i64
     }
     #[inline]
     fn maxrss_(&self) -> f64 {

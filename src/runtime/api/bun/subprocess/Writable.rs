@@ -183,7 +183,7 @@ impl<'a> Writable<'a> {
         promise_for_stream: &mut JSValue,
     ) -> Result<Writable<'a>, bun_core::Error> {
         // TODO(port): narrow error set
-        Subprocess::assert_stdio_result(result);
+        super::assert_stdio_result!(result);
 
         let global = event_loop.global_ref();
 

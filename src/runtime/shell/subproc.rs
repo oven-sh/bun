@@ -1035,7 +1035,7 @@ impl Writable {
         subprocess: *mut Subprocess,
         result: StdioResult,
     ) -> Result<Writable, WritableInitError> {
-        assert_stdio_result(result);
+        assert_stdio_result!(result);
 
         // PORT NOTE: `Stdio` impls Drop, so we cannot partially move out via
         // match (E0509). Dispatch on `&mut` and `mem::take` / ManuallyDrop the
@@ -1316,7 +1316,7 @@ impl Readable {
         _max_size: u32,
         _is_sync: bool,
     ) -> Readable {
-        assert_stdio_result(result);
+        assert_stdio_result!(result);
 
         // PORT NOTE: `Stdio` impls Drop, so dispatch on `&mut` and `mem::take`
         // Default-able payloads instead of partial moves (E0509).
@@ -2496,21 +2496,18 @@ bun_io::impl_buffered_reader_parent! {
 // this file so the `StaticPipeWriterProcess` trait impl uses the exact same
 // enum the trait was declared with.
 
-#[inline]
-pub fn assert_stdio_result(result: StdioResult) {
-    if cfg!(debug_assertions) {
-        #[cfg(unix)]
-        {
-            if let Some(fd) = result {
-                debug_assert!(fd.is_valid());
-            }
+// `StdioResult` is `Option<Fd>` (8-byte Copy) on unix but a non-Copy enum
+// (`Buffer(Box<uv::Pipe>)`) on windows; a fn would have to pick by-value
+// (moves on windows) or by-ref (clippy::trivially_copy_pass_by_ref on unix).
+macro_rules! assert_stdio_result {
+    ($result:expr) => {{
+        #[cfg(all(debug_assertions, unix))]
+        if let Some(fd) = &$result {
+            debug_assert!(fd.is_valid());
         }
-        #[cfg(not(unix))]
-        {
-            let _ = result;
-        }
-    }
+    }};
 }
+pub(crate) use assert_stdio_result;
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {

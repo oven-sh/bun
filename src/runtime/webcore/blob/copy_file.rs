@@ -1840,10 +1840,14 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>) {
         unsafe { (*this).on_mkdirp_complete() };
         Ok(())
     }
-    this.event_loop
-        .enqueue_task_concurrent(jsc::ConcurrentTask::create(
-            jsc::ManagedTask::ManagedTask::new::<CopyFileWindows>(this, call_erased),
-        ));
+    // SAFETY: `event_loop` is the JS-thread loop stored at task creation;
+    // the `ConcurrentTask` heap allocation is freed by the loop after dispatch.
+    unsafe {
+        this.event_loop
+            .enqueue_task_concurrent(jsc::ConcurrentTask::create(
+                jsc::ManagedTask::ManagedTask::new::<CopyFileWindows>(this, call_erased),
+            ));
+    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────

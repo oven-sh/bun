@@ -221,17 +221,6 @@ impl<'a> Subprocess<'a> {
         }
     }
 
-    /// Debug-assert the per-stdio spawn result is well-formed.
-    #[inline]
-    pub fn assert_stdio_result(result: StdioResult) {
-        #[cfg(all(debug_assertions, unix))]
-        if let Some(fd) = result {
-            debug_assert!(fd.is_valid());
-        }
-        #[cfg(not(all(debug_assertions, unix)))]
-        let _ = result;
-    }
-
     /// Borrow the intrusively-refcounted `Process`. Zig stores `*Process` and
     /// reads/mutates freely; every access site is single-threaded on the JS
     /// mutator, so projecting `&`/`&mut` through the raw pointer mirrors the
@@ -335,15 +324,18 @@ impl Default for WaitThreadPoll {
     }
 }
 
-#[inline]
-pub fn assert_stdio_result(result: StdioResult) {
-    #[cfg(all(debug_assertions, unix))]
-    if let Some(fd) = result {
-        debug_assert!(fd.is_valid());
-    }
-    #[cfg(not(all(debug_assertions, unix)))]
-    let _ = result;
+// `StdioResult` is `Option<Fd>` (Copy) on unix but a non-Copy enum on windows;
+// a fn would have to pick by-value (moves on windows) or by-ref
+// (clippy::trivially_copy_pass_by_ref on unix).
+macro_rules! assert_stdio_result {
+    ($result:expr) => {{
+        #[cfg(all(debug_assertions, unix))]
+        if let Some(fd) = &$result {
+            debug_assert!(fd.is_valid());
+        }
+    }};
 }
+pub(crate) use assert_stdio_result;
 
 impl Subprocess<'_> {
     #[bun_uws::uws_callback(thunk = "on_abort_signal_c")]

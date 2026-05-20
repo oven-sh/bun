@@ -1110,7 +1110,8 @@ fn detach_module_folder_from_shared_store(module_folder: &[u8]) {
             #[cfg(not(windows))]
             {
                 if let Ok(st) = sys::lstat(p.slice_z()) {
-                    sys::posix::s_islnk(st.st_mode)
+                    // `mode_t` is `u16` on android, `u32` on linux/darwin.
+                    sys::posix::s_islnk(st.st_mode as u32)
                 } else {
                     return;
                 }

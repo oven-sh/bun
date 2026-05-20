@@ -2067,22 +2067,11 @@ fn transpile_source_code_inner(
             let (main, main_hash) = unsafe { ((*jsc_vm).main(), (*jsc_vm).main_hash) };
             let is_main = main.len() == path.text.len() && main_hash == hash && main == path.text;
 
-            // Spec :545-549 — `defer { if (is_main) jsc_vm.has_loaded = true }`.
-            // Hoisted to a scopeguard at the top of the JS-like arm so it runs
-            // on every return path. The Zig spec registers the `defer` *after*
-            // the cache-hit / already_bundled / disable_transpiling early
-            // returns (:417-466), so a transpiler-cache hit on the entry file
-            // would leave `has_loaded == false` and the concurrent-transpiler
-            // gate in `transpile_file` would route every child import through
-            // the synchronous fallback. Hoisting matches the intent (entry
-            // transpiled ⇒ concurrent loader unlocked) on all paths.
             let _has_loaded_guard = scopeguard::guard((), {
                 let jsc_vm = jsc_vm;
                 move |_| {
                     if is_main {
-                        // SAFETY: per fn contract — `jsc_vm` is the live
-                        // per-thread VM; this guard runs on the same thread
-                        // before the hook returns.
+                        // SAFETY: per fn contract.
                         unsafe { (*jsc_vm).has_loaded = true };
                     }
                 }
@@ -2973,8 +2962,6 @@ fn transpile_source_code_inner(
                         )?;
                     }
                 }
-
-                // (`has_loaded = true` is set by `_has_loaded_guard` above.)
 
                 // Spec :553-558 — watcher path uses ref-counted source.
                 // TODO(b2-blocked): `VirtualMachine::ref_counted_resolved_source`.

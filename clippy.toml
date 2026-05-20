@@ -1,0 +1,42 @@
+disallowed-methods = [
+  { path = "std::fs::read", reason = "use bun_sys::file" },
+  { path = "std::fs::write", reason = "use bun_sys::file" },
+  { path = "std::fs::read_to_string", reason = "use bun_sys::file" },
+  { path = "std::fs::remove_file", reason = "use bun_sys::file" },
+  { path = "std::fs::remove_dir_all", reason = "use bun_sys::dir" },
+  { path = "std::fs::create_dir", reason = "use bun_sys::dir" },
+  { path = "std::fs::create_dir_all", reason = "use bun_sys::dir" },
+  { path = "std::fs::metadata", reason = "use bun_sys::file" },
+  { path = "std::fs::canonicalize", reason = "use bun_paths" },
+  { path = "std::env::var", reason = "use bun_core::env" },
+  { path = "std::env::var_os", reason = "use bun_core::env" },
+  { path = "std::thread::spawn", reason = "use bun_threading::spawn_named or ThreadPool" },
+  { path = "std::mem::zeroed", reason = "use MaybeUninit; zeroed is UB for most Bun types" },
+]
+
+disallowed-types = [
+  { path = "std::sync::Mutex", reason = "use bun_threading::Mutex" },
+  { path = "std::sync::RwLock", reason = "use bun_threading::RwLock" },
+  { path = "parking_lot::Mutex", reason = "use bun_threading::Mutex" },
+  { path = "parking_lot::RwLock", reason = "use bun_threading::RwLock" },
+  { path = "parking_lot::RawMutex", reason = "use bun_threading::Mutex" },
+  { path = "std::collections::HashMap", reason = "use bun_collections (wyhash)" },
+  { path = "std::collections::HashSet", reason = "use bun_collections (wyhash)" },
+  { path = "std::fs::File", reason = "use bun_sys::File" },
+  { path = "std::process::Command", reason = "use bun_sys::process" },
+]
+
+disallowed-macros = [
+  { path = "std::println", reason = "use bun_core::output" },
+  { path = "std::eprintln", reason = "use bun_core::output" },
+  { path = "std::print", reason = "use bun_core::output" },
+  { path = "std::eprint", reason = "use bun_core::output" },
+  { path = "std::dbg", reason = "remove before commit" },
+]
+
+pass-by-value-size-limit = 64
+stack-size-threshold = 131072
+enum-variant-size-threshold = 128
+too-large-for-stack = 4096
+avoid-breaking-exported-api = false
+accept-comment-above-attributes = true

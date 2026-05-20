@@ -194,6 +194,7 @@ strip = "symbols"
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)'] }
 
 [workspace.lints.clippy]
+# == provenance-safe pointer casts ==
 # Prefer `.cast::<T>()` / `.cast_const()` / `.cast_mut()` / `ptr::from_ref` /
 # `ptr::from_mut` over `as *const T` / `as *mut T`. The method forms cannot
 # accidentally change mutability or perform a ref→raw coercion in one step,
@@ -202,6 +203,74 @@ ptr_as_ptr = "warn"
 ptr_cast_constness = "warn"
 ref_as_ptr = "warn"
 borrow_as_ptr = "warn"
+
+# == soundness / leak prevention ==
+undocumented_unsafe_blocks = "deny"
+not_unsafe_ptr_arg_deref = "deny"
+mem_forget = "deny"
+cast_ptr_alignment = "deny"
+transmute_ptr_to_ptr = "deny"
+as_ptr_cast_mut = "deny"
+drop_non_drop = "deny"
+uninit_vec = "deny"
+
+# == performance ==
+redundant_clone = "deny"
+unnecessary_to_owned = "deny"
+needless_collect = "deny"
+or_fun_call = "deny"
+assigning_clones = "deny"
+implicit_clone = "deny"
+iter_overeager_cloned = "deny"
+map_clone = "deny"
+trivially_copy_pass_by_ref = "deny"
+large_types_passed_by_value = "deny"
+large_enum_variant = "deny"
+large_stack_frames = "deny"
+vec_init_then_push = "deny"
+format_collect = "deny"
+manual_memcpy = "deny"
+needless_pass_by_value = "deny"
+
+# == clarity / api hygiene ==
+unnecessary_unwrap = "deny"
+derive_partial_eq_without_eq = "deny"
+derivable_impls = "deny"
+clone_on_ref_ptr = "deny"
+if_same_then_else = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+
+# == disallowed-* (configured in clippy.toml) ==
+disallowed_methods = "deny"
+disallowed_types = "deny"
+disallowed_macros = "deny"
+
+# == explicitly allowed (Zig-port style; intentional) ==
+collapsible_if = "allow"
+collapsible_else_if = "allow"
+collapsible_match = "allow"
+too_many_arguments = "allow"
+type_complexity = "allow"
+len_zero = "allow"
+len_without_is_empty = "allow"
+needless_return = "allow"
+module_inception = "allow"
+missing_safety_doc = "allow"
+let_unit_value = "allow"
+needless_update = "allow"
+explicit_auto_deref = "allow"
+doc_lazy_continuation = "allow"
+doc_overindented_list_items = "allow"
+enum_variant_names = "allow"
+upper_case_acronyms = "allow"
+wrong_self_convention = "allow"
+should_implement_trait = "allow"
+new_without_default = "allow"
+single_match = "allow"
+manual_range_contains = "allow"
+needless_lifetimes = "allow"
 
 [workspace.dependencies]
 rust-argon2 = "3.0"

@@ -310,6 +310,8 @@ pub fn is_safe_resolved_tag(resolved: &[u8]) -> bool {
     !resolved.is_empty()
         && resolved.len() <= 256
         && resolved[0] != b'-'
+        && resolved != b"."
+        && resolved != b".."
         && resolved
             .iter()
             .all(|&b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))

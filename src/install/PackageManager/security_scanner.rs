@@ -242,7 +242,7 @@ pub fn perform_security_scan_after_resolution(
         manager.subcommand == bun_install::Subcommand::Remove || manager.update_requests.is_empty();
     let result = attempt_security_scan(
         manager,
-        &security_scanner,
+        security_scanner,
         scan_all,
         command_ctx,
         original_cwd,
@@ -268,7 +268,7 @@ pub fn perform_security_scan_after_resolution(
 
             let retry_result = attempt_security_scan_with_retry(
                 manager,
-                &security_scanner,
+                security_scanner,
                 scan_all,
                 command_ctx,
                 original_cwd,
@@ -294,7 +294,7 @@ pub fn perform_security_scan_for_all(
     };
 
     let result =
-        attempt_security_scan(manager, &security_scanner, true, command_ctx, original_cwd)?;
+        attempt_security_scan(manager, security_scanner, true, command_ctx, original_cwd)?;
     match result {
         ScanAttemptResult::Success(scan_results) => Ok(Some(scan_results)),
         ScanAttemptResult::NeedsInstall(pkg_id) => {
@@ -315,7 +315,7 @@ pub fn perform_security_scan_for_all(
 
             let retry_result = attempt_security_scan_with_retry(
                 manager,
-                &security_scanner,
+                security_scanner,
                 true,
                 command_ctx,
                 original_cwd,

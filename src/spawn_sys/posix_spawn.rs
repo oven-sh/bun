@@ -570,7 +570,7 @@ pub mod posix_spawn {
         envp: *const *const c_char,
     ) -> sys::Result<pid_t> {
         let pty_slave_fd = attr.map_or(-1, |a| a.pty_slave_fd);
-        let detached = attr.map_or(false, |a| a.detached);
+        let detached = attr.is_some_and(|a| a.detached);
 
         // Use posix_spawn_bun when:
         // - Linux: always (uses vfork which is fast and safe)
@@ -606,7 +606,7 @@ pub mod posix_spawn {
                         .and_then(|a| a.chdir_buf.as_deref())
                         .map_or(ptr::null(), |c| c.as_ptr()),
                     detached,
-                    new_process_group: attr.map_or(false, |a| a.new_process_group),
+                    new_process_group: attr.is_some_and(|a| a.new_process_group),
                     pty_slave_fd,
                     linux_pdeathsig: attr.map_or(0, |a| a.linux_pdeathsig),
                 },

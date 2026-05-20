@@ -28,19 +28,12 @@ pub struct DecoderOptions {
 /// Zig: `std.enums.EnumFieldStruct(c.BrotliDecoderParameter, bool, false)` —
 /// one `bool` per `BrotliDecoderParameter` variant, default `false`.
 // TODO(port): if BrotliDecoderParameter grows more variants, mirror them here.
+#[derive(Default)]
 pub struct DecoderParams {
     pub large_window: bool,
     pub disable_ring_buffer_reallocation: bool,
 }
 
-impl Default for DecoderParams {
-    fn default() -> Self {
-        Self {
-            large_window: false,
-            disable_ring_buffer_reallocation: false,
-        }
-    }
-}
 
 impl Default for DecoderOptions {
     fn default() -> Self {
@@ -221,7 +214,7 @@ impl<'a> BrotliReaderArrayList<'a> {
                     self.state = ReaderState::Error;
                     if cfg!(debug_assertions) {
                         let code = BrotliDecoder::get_error_code(self.brotli());
-                        bun_core::Output::debug_warn(&format_args!(
+                        bun_core::Output::debug_warn(format_args!(
                             "Brotli error: {:?} ({})",
                             code, code as i32
                         ));

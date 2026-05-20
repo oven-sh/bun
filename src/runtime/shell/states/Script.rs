@@ -151,7 +151,7 @@ impl Script {
     #[inline]
     fn stmt_at(interp: &Interpreter, this: NodeId, idx: usize) -> *const ast::Stmt {
         let me = interp.as_script(this);
-        &me.node.stmts[idx]
+        &raw const me.node.stmts[idx]
     }
 }
 

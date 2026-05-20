@@ -81,7 +81,7 @@ impl Subshell {
                     let me = interp.as_subshell(this);
                     (me.base.shell, me.io.clone(), me.node)
                 };
-                let script_node: *const ast::Script = &node.get().script;
+                let script_node: *const ast::Script = &raw const node.get().script;
                 interp.as_subshell_mut(this).state = SubshellState::Exec;
                 // TODO(port): apply `(*node).redirect` / `redirect_flags`
                 // to `io` once IOWriter redirect open is wired.

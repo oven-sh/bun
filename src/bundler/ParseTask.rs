@@ -2445,7 +2445,7 @@ pub mod parse_worker {
         // SAFETY: `transpiler` is live; `macro_context` is a disjoint field.
         // `'static` erasure: the context outlives the parse.
         opts.macro_context =
-            unsafe { Some(&mut *((*transpiler).macro_context.as_mut().unwrap() as *mut _)) };
+            unsafe { Some(&mut *std::ptr::from_mut((*transpiler).macro_context.as_mut().unwrap())) };
         opts.package_version = task.package_version.slice();
 
         opts.features.allow_runtime = !task.source_index.is_runtime();

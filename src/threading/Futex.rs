@@ -531,7 +531,7 @@ impl Deadline {
         // then subtract that from the init() timeout to get how much longer to wait.
         // Use overflow to detect when we've been waiting longer than the init() timeout.
         let elapsed_ns = u64::try_from(self.started.elapsed().as_nanos()).unwrap_or(u64::MAX);
-        let until_timeout_ns = timeout_ns.checked_sub(elapsed_ns).unwrap_or(0);
+        let until_timeout_ns = timeout_ns.saturating_sub(elapsed_ns);
         wait(ptr, expect, Some(until_timeout_ns))
     }
 }

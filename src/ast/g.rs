@@ -17,6 +17,7 @@ pub use crate::flags::FunctionSet as FnFlagsSet;
 // adding a `PhantomData<&'arena ()>` to `StoreSlice` in one pass.
 
 #[derive(Clone, Copy)]
+#[derive(Default)]
 pub struct Decl {
     pub binding: BindingNodeIndex,
     pub value: Option<ExprNodeIndex>,
@@ -26,14 +27,6 @@ pub struct Decl {
 // are nightly; free alias.
 pub type DeclList = Vec<Decl, bun_alloc::AstAlloc>;
 
-impl Default for Decl {
-    fn default() -> Self {
-        Self {
-            binding: BindingNodeIndex::default(),
-            value: None,
-        }
-    }
-}
 
 pub struct NamespaceAlias {
     pub namespace_ref: Ref,
@@ -113,14 +106,12 @@ impl Class {
             }
 
             if property.kind == PropertyKind::Normal && f.contains(flags::Property::IsStatic) {
-                for val_ in [property.value, property.initializer] {
-                    if let Some(val) = val_ {
-                        match val.data {
-                            ExprData::EArrow(..) | ExprData::EFunction(..) => {}
-                            _ => {
-                                if !val.data.can_be_moved() {
-                                    return false;
-                                }
+                for val in [property.value, property.initializer].into_iter().flatten() {
+                    match val.data {
+                        ExprData::EArrow(..) | ExprData::EFunction(..) => {}
+                        _ => {
+                            if !val.data.can_be_moved() {
+                                return false;
                             }
                         }
                     }

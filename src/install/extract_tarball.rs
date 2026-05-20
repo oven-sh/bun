@@ -192,7 +192,7 @@ impl ExtractTarball {
         } else {
             // Not sure where this case hits yet.
             // BUN-2WQ
-            Output::warn(&format_args!(
+            Output::warn(format_args!(
                 "Extracting nameless packages is not supported yet. Please open an issue on GitHub with reproduction steps.",
             ));
             debug_assert!(false);

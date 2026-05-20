@@ -1519,7 +1519,7 @@ pub fn migrate_yarn_lockfile<'a>(
     for (base_name, versions) in scoped_packages.iter_mut() {
         let base_name: &[u8] = base_name.as_ref();
 
-        versions.sort_by(|a, b| a.package_id.cmp(&b.package_id));
+        versions.sort_by_key(|a| a.package_id);
 
         let original_name_hash = string_hash(base_name);
         // PORT NOTE: reshaped for borrowck — Zig matches on the entry only to

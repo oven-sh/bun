@@ -403,9 +403,9 @@ impl fmt::Display for Request<'_> {
         if enable_ansi_colors_stderr() {
             f.write_str(pretty_fmt!("<r><d>[fetch]<r> ", true))?;
         }
-        write!(
+        writeln!(
             f,
-            "> HTTP/1.1 {} {}\n",
+            "> HTTP/1.1 {} {}",
             BStr::new(self.method),
             BStr::new(self.path)
         )?;
@@ -414,7 +414,7 @@ impl fmt::Display for Request<'_> {
                 f.write_str(pretty_fmt!("<r><d>[fetch]<r> ", true))?;
             }
             f.write_str("> ")?;
-            write!(f, "{}\n", header)?;
+            writeln!(f, "{}", header)?;
         }
         Ok(())
     }
@@ -627,7 +627,7 @@ impl<'a> Response<'a> {
                 // NOTE: `bun_core::debug!` macro is currently broken (it forwards
                 // `concat!(...)` into `pretty_errorln!` whose matcher is `$fmt:literal`).
                 // Use the function-form `output::debug` until the macro is fixed.
-                Output::debug(&format_args!(
+                Output::debug(format_args!(
                     "Malformed HTTP response:\n{}",
                     BStr::new(buf)
                 ));
@@ -663,9 +663,9 @@ impl fmt::Display for Response<'_> {
             f.write_str(pretty_fmt!("<r><d>[fetch]<r> ", true))?;
         }
 
-        write!(
+        writeln!(
             f,
-            "< {} {}\n",
+            "< {} {}",
             StatusCodeFormatter {
                 code: self.status_code as usize
             },
@@ -677,7 +677,7 @@ impl fmt::Display for Response<'_> {
             }
 
             f.write_str("< ")?;
-            write!(f, "{}\n", header)?;
+            writeln!(f, "{}", header)?;
         }
         Ok(())
     }

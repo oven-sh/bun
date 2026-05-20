@@ -213,7 +213,7 @@ impl<'a> Installer<'a> {
 
                 if let PatchInfo::Patch(patch) = &patch_info {
                     let mut log = Log::init();
-                    self.apply_package_patch(entry_id, &patch, &mut log);
+                    self.apply_package_patch(entry_id, patch, &mut log);
                     if log.has_errors() {
                         // monotonic is okay because we haven't started the task yet (it isn't running
                         // on another thread)
@@ -1147,7 +1147,7 @@ impl Task {
                             }
                             #[cfg(not(windows))]
                             {
-                                if let Some(st) = sys::lstat(local.slice_z()).ok() {
+                                if let Ok(st) = sys::lstat(local.slice_z()) {
                                     sys::posix::s_islnk(
                                         u32::try_from(st.st_mode).expect("int cast"),
                                     )
@@ -1371,7 +1371,7 @@ impl Task {
                                                 err,
                                                 bstr::BStr::new(pkg_cache_dir_subpath.slice()),
                                                 bun_core::fmt::fmt_os_path(
-                                                    (&dest_subpath).slice(),
+                                                    dest_subpath.slice(),
                                                     bun_core::fmt::PathFormatOptions {
                                                         path_sep: bun_core::fmt::PathSep::Auto,
                                                         escape_backslashes: false
@@ -2547,7 +2547,7 @@ impl<'a> Installer<'a> {
                         }
                         #[cfg(not(windows))]
                         {
-                            if let Some(st) = sys::lstat(dest.slice_z()).ok() {
+                            if let Ok(st) = sys::lstat(dest.slice_z()) {
                                 sys::posix::s_islnk(u32::try_from(st.st_mode).expect("int cast"))
                             } else {
                                 true

@@ -77,7 +77,7 @@ pub fn now_ns() -> u64 {
             // u64×u64→u128 widening mul + shift: 2 insns on x64 (`mul`+`shrd`),
             // 3 on arm64 (`mul`+`umulh`+`extr`). The `as u128` widen guarantees LLVM
             // sees a widening mul, not a generic 128×128 `__multi3`.
-            let ns: u64 = ((ticks as u128) * (cal.mult as u128) >> SHIFT) as u64;
+            let ns: u64 = (((ticks as u128) * (cal.mult as u128)) >> SHIFT) as u64;
             return cal.start_ns.wrapping_add(ns);
         }
     }
@@ -94,6 +94,7 @@ pub fn now_ms() -> u64 {
 const SHIFT: u32 = 32;
 
 #[derive(Clone, Copy)]
+#[derive(Default)]
 struct Calibration {
     start_counter: u64,
     start_ns: u64,
@@ -101,15 +102,6 @@ struct Calibration {
     mult: u64,
 }
 
-impl Default for Calibration {
-    fn default() -> Self {
-        Self {
-            start_counter: 0,
-            start_ns: 0,
-            mult: 0,
-        }
-    }
-}
 
 // PORTING.md §Global mutable state: written exactly once inside
 // `CALIBRATE_ONCE.call_once`, which establishes happens-before for readers.

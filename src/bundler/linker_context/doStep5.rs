@@ -96,7 +96,7 @@ impl LinkerContext<'_> {
         }
 
         let resolved_exports: *mut ResolvedExports =
-            (meta.resolved_exports as *mut ResolvedExports).wrapping_add(id as usize);
+            meta.resolved_exports.cast::<ResolvedExports>().wrapping_add(id as usize);
         // Read-only columns (never written during step 5) — whole-column
         // shared slices are fine here.
         // SAFETY: `split_raw()` columns are valid for `meta.len()` elements;
@@ -202,7 +202,7 @@ impl LinkerContext<'_> {
         // hold overlapping `&mut [T]`.
         let parts_slice: *mut [Part] = row_mut!(ast.parts, bun_ast::PartList, id).as_mut_slice();
         let named_imports: *mut crate::bundled_ast::NamedImports =
-            (ast.named_imports as *mut crate::bundled_ast::NamedImports).wrapping_add(id as usize);
+            ast.named_imports.cast::<crate::bundled_ast::NamedImports>().wrapping_add(id as usize);
         // SAFETY: `named_imports` is a stable column pointer (see above). We
         // hoist the emptiness check so the per-symbol-use inner loop skips
         // the lookup entirely for files with no imports (≈ all leaf modules).
@@ -691,7 +691,7 @@ impl LinkerContext<'_> {
                     // `[MaybeUninit<Stmt>]` → `[Stmt]`. The worker arena
                     // outlives the link pass.
                     bun_ast::StoreSlice::new_mut(unsafe {
-                        &mut *(init as *mut [MaybeUninit<Stmt>] as *mut [Stmt])
+                        &mut *(std::ptr::from_mut::<[MaybeUninit<Stmt>]>(init) as *mut [Stmt])
                     })
                 } else {
                     bun_ast::StoreSlice::EMPTY

@@ -899,7 +899,7 @@ impl BunTest {
                 Phase::Done => {}
             }
         }
-        if let Err(e) = Self::run(this_strong.clone(), global) {
+        if let Err(e) = Self::run(this_strong, global) {
             // SAFETY: re-derive after `run` returned; no `&mut` was held across it.
             unsafe { (*this).on_uncaught_exception(global, Some(global.take_exception(e)), false, RefDataValue::Done) };
         }

@@ -110,7 +110,7 @@ fn parse_macros_json(
                 continue;
             };
             let remap_value_str = match &remap_value.data {
-                ExprData::EString(s) if s.len() > 0 => estring_to_owned(&*s, bump),
+                ExprData::EString(s) if s.len() > 0 => estring_to_owned(s, bump),
                 _ => {
                     log.add_warning_fmt(
                         Some(json_source),
@@ -344,8 +344,8 @@ impl<'a> Parser<'a> {
             else {
                 continue;
             };
-            keys.push(estring_to_owned(&*k, self.bump));
-            values.push(estring_to_owned(&*v, self.bump));
+            keys.push(estring_to_owned(k, self.bump));
+            values.push(estring_to_owned(v, self.bump));
         }
         Ok(api::StringMap { keys, values })
     }
@@ -627,7 +627,7 @@ impl<'a> Parser<'a> {
                                     )?;
                                     return Ok(());
                                 }
-                                patterns.push(estring_to_owned(&*s, self.bump));
+                                patterns.push(estring_to_owned(s, self.bump));
                             }
                             self.ctx.test_options.concurrent_test_glob = Some(patterns);
                         }
@@ -662,7 +662,7 @@ impl<'a> Parser<'a> {
                                         )?;
                                         return Ok(());
                                     };
-                                    patterns.push(estring_to_owned(&*s, self.bump));
+                                    patterns.push(estring_to_owned(s, self.bump));
                                 }
                                 self.ctx.test_options.coverage.ignore_patterns = patterns;
                             }
@@ -702,7 +702,7 @@ impl<'a> Parser<'a> {
                                         )?;
                                         return Ok(());
                                     };
-                                    patterns.push(estring_to_owned(&*s, self.bump));
+                                    patterns.push(estring_to_owned(s, self.bump));
                                 }
                                 self.ctx.test_options.path_ignore_patterns = patterns;
                             }
@@ -933,7 +933,7 @@ impl<'a> Parser<'a> {
                         let ExprData::EString(k) = &key_expr.data else {
                             continue;
                         };
-                        let path = estring_to_owned(&*k, self.bump);
+                        let path = estring_to_owned(k, self.bump);
 
                         if !bun_resolver::is_package_path(&path) {
                             self.add_error(key_expr.loc, b"Expected package name")?;
@@ -1031,7 +1031,7 @@ impl<'a> Parser<'a> {
 
         if let Some(expr) = json.get(b"macros") {
             if let ExprData::EBoolean(b) = expr.data {
-                if b.value == false {
+                if !b.value {
                     self.ctx.debug.macros = MacroOptions::Disable;
                 }
             } else {
@@ -1342,7 +1342,7 @@ impl<'a> Parser<'a> {
                 }
                 let name = if name_[0] == b'@' { &name_[1..] } else { name_ };
                 let registry = self.parse_registry(value)?;
-                registry_map.scopes.insert(name.into(), registry);
+                registry_map.scopes.insert(name, registry);
             }
             install.scoped = Some(registry_map);
         }
@@ -1529,7 +1529,7 @@ impl<'a> Parser<'a> {
                             self.bump,
                         ));
                     }
-                    install.minimum_release_age_excludes = Some(list.into());
+                    install.minimum_release_age_excludes = Some(list);
                 }
                 _ => {
                     self.add_error(

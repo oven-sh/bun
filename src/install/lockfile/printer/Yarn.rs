@@ -198,7 +198,7 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), b
 
             if meta.integrity.tag != integrity::Tag::UNKNOWN {
                 // Integrity is...never quoted?
-                write!(writer, "  integrity {}\n", &meta.integrity)?;
+                writeln!(writer, "  integrity {}", meta.integrity)?;
             }
 
             if !dependencies.is_empty() {

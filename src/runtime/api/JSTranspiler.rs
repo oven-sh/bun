@@ -1227,7 +1227,7 @@ impl JSTranspiler {
     /// so no write provenance on the outer `JSTranspiler` is required.
     #[inline]
     fn as_ctx_ptr(&self) -> *mut Self {
-        (self as *const Self).cast_mut()
+        std::ptr::from_ref::<Self>(self).cast_mut()
     }
 
     /// `*mut Log` to the resting-state `config.log`, projected through the

@@ -281,7 +281,7 @@ fn update_package_json_and_install_with_manager_with_updates(
 
                             let changed = new_len != dependencies.len();
                             if changed {
-                                e_object.properties.truncate((new_len) as usize);
+                                e_object.properties.truncate(new_len);
 
                                 // If the dependencies list is now empty, remove it from the package.json
                                 // since we're swapRemove, we have to re-sort it

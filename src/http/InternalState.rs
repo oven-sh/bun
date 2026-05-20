@@ -339,7 +339,7 @@ impl<'a> InternalState<'a> {
                 .update_buffers(self.encoding, buffer, body_out_str)
             {
                 self.compressed_body.reset();
-                return Err(err.into());
+                return Err(err);
             }
             // While `update_buffers` is gated, `read_all` on Decompressor::None is a silent
             // no-op (Decompressor.rs:148). Surface an error instead of pretending the body
@@ -351,7 +351,7 @@ impl<'a> InternalState<'a> {
 
             if let Err(err) = self.decompressor.read_all(self.is_done()) {
                 if self.is_done() || err != bun_core::err!("ShortRead") {
-                    Output::pretty_errorln(&format_args!(
+                    Output::pretty_errorln(format_args!(
                         "<r><red>Decompression error: {}<r>",
                         bstr::BStr::new(err.name()),
                     ));
@@ -426,12 +426,12 @@ impl<'a> InternalState<'a> {
                 } else if !body_out_str.owns(&buffer) {
                     if let Err(err) = body_out_str.append(&buffer) {
                         let err: Error = err.into();
-                        Output::pretty_errorln(&format_args!(
+                        Output::pretty_errorln(format_args!(
                             "<r><red>Failed to append to body buffer: {}<r>",
                             bstr::BStr::new(err.name()),
                         ));
                         Output::flush();
-                        return Err(err.into());
+                        return Err(err);
                     }
                 }
             }

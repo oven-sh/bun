@@ -412,7 +412,7 @@ impl IdentOrRef {
         local_names
             .unwrap()
             .get(&final_ref)
-            .map(|p| unsafe { crate::arena_str(&**p) })
+            .map(|p| unsafe { crate::arena_str(&raw const **p) })
     }
 
     pub fn as_original_string(self, symbols: &[bun_ast::Symbol]) -> &[u8] {

@@ -128,7 +128,7 @@ pub fn dispatch_frame(
                 }
                 return;
             }
-            if length as usize % wire::SettingsPayloadUnit::BYTE_SIZE != 0 {
+            if !(length as usize).is_multiple_of(wire::SettingsPayloadUnit::BYTE_SIZE) {
                 session.fatal_error = Some(err!(HTTP2FrameSizeError));
                 return;
             }

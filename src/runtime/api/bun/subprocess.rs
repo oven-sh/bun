@@ -269,7 +269,7 @@ impl<'a> Subprocess<'a> {
     /// spelling is purely to match the C signature.
     #[inline]
     pub fn as_ctx_ptr(&self) -> *mut Self {
-        (self as *const Self).cast_mut()
+        std::ptr::from_ref::<Self>(self).cast_mut()
     }
 
     /// Read-modify-write the packed `Cell<Flags>` through `&self`.

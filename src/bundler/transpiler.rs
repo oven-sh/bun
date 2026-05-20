@@ -199,10 +199,10 @@ impl<'a> Transpiler<'a> {
         // SAFETY: `options`, `result`, and `resolver.opts` are init'd and never
         // read past `destroy()` / the `--changed` scan teardown.
         unsafe {
-            core::ptr::drop_in_place(&mut self.options);
-            core::ptr::drop_in_place(&mut self.result);
-            core::ptr::drop_in_place(&mut self.resolver.opts);
-            core::ptr::drop_in_place(&mut self.resolve_results);
+            core::ptr::drop_in_place(&raw mut self.options);
+            core::ptr::drop_in_place(&raw mut self.result);
+            core::ptr::drop_in_place(&raw mut self.resolver.opts);
+            core::ptr::drop_in_place(&raw mut self.resolve_results);
         }
     }
 

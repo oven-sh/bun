@@ -472,7 +472,7 @@ impl Clone for DependencyVersion {
                 npm: ManuallyDrop::new(unsafe { (*self.value.npm).clone() }),
             },
             // SAFETY: all non-`npm` arms hold no heap; a bitwise read is a true clone.
-            _ => unsafe { core::ptr::read(&self.value) },
+            _ => unsafe { core::ptr::read(&raw const self.value) },
         };
         Self {
             tag: self.tag,

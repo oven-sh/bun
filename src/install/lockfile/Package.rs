@@ -1301,7 +1301,7 @@ impl Diff {
                 // removed
                 for &from_trusted in from_trusted_dependencies.keys() {
                     if !default_trusted_dependencies::has_with_hash(
-                        u64::try_from(from_trusted).expect("int cast"),
+                        u64::from(from_trusted),
                     ) {
                         summary.removed_trusted_dependencies.put(from_trusted, ())?;
                     }
@@ -1338,7 +1338,7 @@ impl Diff {
                 break 'patched_dependencies_changed true;
             }
             let mut iter = to_lockfile.patched_dependencies.iterator();
-            while let Some(entry) = iter.next() {
+            for entry in iter {
                 if let Some(val) = from_lockfile.patched_dependencies.get(&*entry.key_ptr) {
                     if val
                         .path
@@ -2419,7 +2419,7 @@ impl Package<u64> {
                                     _ => {}
                                 }
                             }
-                            total_dependencies_count += obj.properties.len_u32() as u32;
+                            total_dependencies_count += obj.properties.len_u32();
                         }
                         _ => {
                             if group.behavior.is_workspace() {
@@ -3011,7 +3011,7 @@ impl Package<u64> {
         // `webpack-cli`, which it lists in meta but not in
         // `peerDependencies`.
         let mut meta_only = optional_peer_dependencies.iterator();
-        while let Some(entry) = meta_only.next() {
+        for entry in meta_only {
             let external_name = string_builder.append::<ExternalString>(*entry.value_ptr);
             if let Some(dep_) = Self::parse_dependency(
                 &mut lockfile.workspace_paths,
@@ -3049,7 +3049,7 @@ impl Package<u64> {
         }
 
         self.dependencies.off = off as u32;
-        self.dependencies.len = total_dependencies_count as u32;
+        self.dependencies.len = total_dependencies_count;
 
         // PackageIDSlice and DependencySlice are both `ExternalSlice<_>` — same
         // `{off: u32, len: u32}` window into different backing buffers.
@@ -3484,7 +3484,7 @@ pub mod serializer {
                     // { tag: Tag, _padding: [u8; 7], value: ... }`, so the
                     // discriminant is the first byte of each element.
                     let stride = mem::size_of::<ResolutionType<SemverIntType>>();
-                    debug_assert!(stride != 0 && src.len() % stride == 0);
+                    debug_assert!(stride != 0 && src.len().is_multiple_of(stride));
                     for raw in src.chunks_exact(stride) {
                         if !matches!(raw[0], 0 | 1 | 2 | 4 | 8 | 16 | 32 | 64 | 72 | 80 | 100) {
                             return Err(bun_core::err!(

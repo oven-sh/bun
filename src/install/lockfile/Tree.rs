@@ -148,19 +148,12 @@ pub struct ResolveReplace {
     pub dep_id: DependencyID,
 }
 
+#[derive(Default)]
 pub struct Placement {
     pub id: Id,
     pub bundled: bool,
 }
 
-impl Default for Placement {
-    fn default() -> Self {
-        Self {
-            id: 0,
-            bundled: false,
-        }
-    }
-}
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum SubtreeError {
@@ -753,7 +746,7 @@ impl Tree {
         for dep_id in resolution_list.begin()..resolution_list.end() {
             // PERF(port): was assume_capacity. `resolution_list` bounds are u32
             // (`ExternalSlice<u32>`); the range value is already u32-ranged.
-            builder.sort_buf.push(dep_id as u32);
+            builder.sort_buf.push(dep_id);
         }
 
         {

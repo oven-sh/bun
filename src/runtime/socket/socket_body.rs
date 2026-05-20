@@ -344,7 +344,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// purely to match C signatures; callbacks deref it as `&*const` (shared).
     #[inline]
     pub fn as_ctx_ptr(&self) -> *mut Self {
-        (self as *const Self).cast_mut()
+        std::ptr::from_ref::<Self>(self).cast_mut()
     }
 
     // ─────────────────────────────────────────────────────────────────────────

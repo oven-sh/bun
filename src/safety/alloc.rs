@@ -219,7 +219,7 @@ impl CheckedAllocator {
             }
             panic!(
                 "cannot transfer ownership from non-MimallocArena (old vtable is {:p})",
-                old_allocator.vtable as *const _,
+                std::ptr::from_ref(old_allocator.vtable),
             );
         }
     }

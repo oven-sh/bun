@@ -1631,7 +1631,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             None,
                             crate::network_task::Authorization::NoAuthorization,
                         )?
-                        .map(|r| r as *mut NetworkTask);
+                        .map(std::ptr::from_mut::<NetworkTask>);
                     if let Some(network_task) = network_task {
                         enqueue_network_task(this, network_task);
                     }
@@ -1995,6 +1995,7 @@ pub enum ResolvedPackageTask {
     PatchTask(*mut PatchTask),
 }
 
+#[derive(Default)]
 pub struct ResolvedPackageResult {
     pub package: Package,
 
@@ -2004,15 +2005,6 @@ pub struct ResolvedPackageResult {
     pub task: Option<ResolvedPackageTask>,
 }
 
-impl Default for ResolvedPackageResult {
-    fn default() -> Self {
-        Self {
-            package: Package::default(),
-            is_first_time: false,
-            task: None,
-        }
-    }
-}
 
 fn get_or_put_resolved_package_with_find_result(
     this: &mut PackageManager,

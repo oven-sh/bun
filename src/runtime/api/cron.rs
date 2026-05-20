@@ -1398,7 +1398,7 @@ impl CronJob {
     /// the allocation").
     #[inline]
     fn as_ctx_ptr(&self) -> *mut Self {
-        (self as *const Self).cast_mut()
+        std::ptr::from_ref::<Self>(self).cast_mut()
     }
 
     /// Recover `&CronJob` from a raw-ptr receiver. Centralises the set-once

@@ -635,17 +635,14 @@ pub struct PackageUpdateInfo {
     pub original_version: Option<Semver::Version>,
 }
 
+#[derive(Default)]
 pub enum TrackInstalledBin {
+    #[default]
     None,
     Pending,
     Basename(Box<[u8]>),
 }
 
-impl Default for TrackInstalledBin {
-    fn default() -> Self {
-        Self::None
-    }
-}
 
 pub struct ScriptRunEnvironment {
     pub root_dir_info: Option<NonNull<DirInfo>>, // UNKNOWN — struct appears unused // TODO(port): lifetime
@@ -1832,7 +1829,7 @@ pub fn init(
     // (`::`-qualified because `crate::bun_bunfig` is a legacy local shim mod.)
     ::bun_bunfig::arguments::load_config(
         bun_options_types::command_tag::Tag::InstallCommand,
-        cli.config.as_deref(),
+        cli.config,
         ctx,
     )?;
     // SAFETY: main-thread global
@@ -2257,15 +2254,15 @@ pub fn init(
         let options = &mgr_ref.options;
         if !options.ca_file_name.is_empty() {
             // resolve with original cwd
-            if bun_paths::is_absolute(&options.ca_file_name) {
-                abs_ca_file_name = ZBox::from_bytes(&options.ca_file_name);
+            if bun_paths::is_absolute(options.ca_file_name) {
+                abs_ca_file_name = ZBox::from_bytes(options.ca_file_name);
             } else {
                 let mut path_buf = PathBuffer::uninit();
                 abs_ca_file_name =
                     ZBox::from_bytes(resolve_path::join_abs_string_buf::<platform::Auto>(
                         &original_cwd_clone,
                         &mut path_buf,
-                        &[&options.ca_file_name],
+                        &[options.ca_file_name],
                     ));
             }
         }

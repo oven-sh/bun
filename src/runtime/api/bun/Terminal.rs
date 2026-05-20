@@ -370,7 +370,7 @@ impl Terminal {
     /// signatures. All field mutation routes through `Cell`/`JsCell`.
     #[inline]
     fn as_ctx_ptr(&self) -> *mut Self {
-        (self as *const Self).cast_mut()
+        std::ptr::from_ref::<Self>(self).cast_mut()
     }
 
     /// Recover `&Terminal` from the parent back-pointer stashed via

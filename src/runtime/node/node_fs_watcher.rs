@@ -104,7 +104,7 @@ impl FSWatcher {
     /// required; the `*mut` spelling is purely to match the C signature.
     #[inline]
     fn as_ctx_ptr(&self) -> *mut Self {
-        (self as *const Self).cast_mut()
+        std::ptr::from_ref::<Self>(self).cast_mut()
     }
 
     /// `pub const finalize = deinit;` — codegen `finalize: true` entry point.

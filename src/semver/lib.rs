@@ -169,19 +169,13 @@ pub mod external_string {
 
     #[repr(C)]
     #[derive(Clone, Copy)]
+    #[derive(Default)]
     pub struct ExternalString {
         pub value: String,
         pub hash: u64,
     }
 
-    impl Default for ExternalString {
-        fn default() -> Self {
-            Self {
-                value: String::default(),
-                hash: 0,
-            }
-        }
-    }
+    
 
     impl ExternalString {
         #[inline]
@@ -255,6 +249,7 @@ pub mod semver_string {
     /// String type that stores either an offset/length into an external buffer or a string inline directly
     #[repr(C)]
     #[derive(Copy, Clone, PartialEq, Eq)]
+    #[derive(Default)]
     pub struct String {
         /// This is three different types of string.
         /// 1. Empty string. If it's all zeroes, then it's an empty string.
@@ -263,13 +258,7 @@ pub mod semver_string {
         pub bytes: [u8; String::MAX_INLINE_LEN],
     }
 
-    impl Default for String {
-        fn default() -> Self {
-            Self {
-                bytes: [0, 0, 0, 0, 0, 0, 0, 0],
-            }
-        }
-    }
+    
 
     impl fmt::Debug for String {
         // Buffer-relative `String` cannot be sliced without its arena, so debug
@@ -402,7 +391,7 @@ pub mod semver_string {
                     if in_[Self::MAX_INLINE_LEN - 1] >= 128 {
                         let ptr_bits: u64 = Pointer::init(buf, in_).to_bits();
                         let packed: u64 =
-                            (0u64 | (ptr_bits & MAX_ADDRESSABLE_SPACE_MASK)) | (1u64 << 63);
+                            (ptr_bits & MAX_ADDRESSABLE_SPACE_MASK) | (1u64 << 63);
                         String {
                             bytes: packed.to_ne_bytes(),
                         }
@@ -417,7 +406,7 @@ pub mod semver_string {
                 _ => {
                     let ptr_bits: u64 = Pointer::init(buf, in_).to_bits();
                     let packed: u64 =
-                        (0u64 | (ptr_bits & MAX_ADDRESSABLE_SPACE_MASK)) | (1u64 << 63);
+                        (ptr_bits & MAX_ADDRESSABLE_SPACE_MASK) | (1u64 << 63);
                     String {
                         bytes: packed.to_ne_bytes(),
                     }
@@ -510,7 +499,7 @@ pub mod semver_string {
             let items = buf.as_slice();
             let in_buf = &items[items.len() - in_.len()..];
             let ptr_bits: u64 = Pointer::init(items, in_buf).to_bits();
-            let packed: u64 = (0u64 | (ptr_bits & MAX_ADDRESSABLE_SPACE_MASK)) | (1u64 << 63);
+            let packed: u64 = (ptr_bits & MAX_ADDRESSABLE_SPACE_MASK) | (1u64 << 63);
             Ok(String {
                 bytes: packed.to_ne_bytes(),
             })
@@ -964,6 +953,7 @@ pub mod semver_string {
         }
     }
 
+    #[derive(Default)]
     pub struct Builder {
         pub len: usize,
         pub cap: usize,
@@ -971,17 +961,7 @@ pub mod semver_string {
         pub string_pool: StringPool,
     }
 
-    impl Default for Builder {
-        fn default() -> Self {
-            Self {
-                len: 0,
-                cap: 0,
-                ptr: None,
-                // TODO(port): Zig had `= undefined`; callers must initialize before use.
-                string_pool: StringPool::default(),
-            }
-        }
-    }
+    
 
     impl Builder {
         #[inline]

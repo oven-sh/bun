@@ -141,12 +141,12 @@ impl FileCopier {
         let mut copy_file_state = bun_sys::copy_file::CopyFileState::default();
 
         loop {
-            let entry = match self.walker.next() {
-                sys::Result::Ok(res) => match res {
-                    Some(entry) => entry,
-                    None => break,
-                },
-                sys::Result::Err(err) => return sys::Result::Err(err),
+            let entry = {
+                let res = self.walker.next()?;
+                match res {
+                Some(entry) => entry,
+                None => break,
+            }
             };
 
             #[cfg(windows)]

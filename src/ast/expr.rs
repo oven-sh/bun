@@ -386,7 +386,7 @@ impl Expr {
         }
 
         if let Some(idx) = bun_core::index_of_any(name, b"[.") {
-            let idx = idx as usize;
+            let idx = idx;
             match name[idx] {
                 b'[' => {
                     let end_idx = bun_core::index_of_char(name, b']')? as usize;

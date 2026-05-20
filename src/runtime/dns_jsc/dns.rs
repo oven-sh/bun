@@ -4025,7 +4025,7 @@ impl Resolver {
     /// mutation routes through `Cell` / `JsCell` (UnsafeCell-backed).
     #[inline]
     pub fn as_ctx_ptr(&self) -> *mut Self {
-        (self as *const Self).cast_mut()
+        std::ptr::from_ref::<Self>(self).cast_mut()
     }
 
     // ───────────── timer / pending bookkeeping ─────────────

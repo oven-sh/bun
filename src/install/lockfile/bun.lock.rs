@@ -181,11 +181,11 @@ impl Stringifier {
 
         let mut found_trusted_dependencies: HashMap<u64, String> = HashMap::default();
         if let Some(trusted_dependencies) = &lockfile.trusted_dependencies {
-            found_trusted_dependencies.reserve(trusted_dependencies.count() as usize);
+            found_trusted_dependencies.reserve(trusted_dependencies.count());
         }
 
         let mut found_patched_dependencies: HashMap<u64, (Box<[u8]>, String)> = HashMap::default();
-        found_patched_dependencies.reserve(lockfile.patched_dependencies.count() as usize);
+        found_patched_dependencies.reserve(lockfile.patched_dependencies.count());
 
         let mut optional_peers_buf: Vec<String> = Vec::new();
 
@@ -235,16 +235,16 @@ impl Stringifier {
         writer.write_all(b"{\n")?;
         Self::inc_indent(writer, indent)?;
         {
-            write!(
+            writeln!(
                 writer,
-                "\"lockfileVersion\": {},\n",
+                "\"lockfileVersion\": {},",
                 Version::CURRENT as u32
             )?;
             Self::write_indent(writer, indent)?;
 
             let config_version: ConfigVersion =
                 options.config_version.unwrap_or(ConfigVersion::CURRENT);
-            write!(writer, "\"configVersion\": {},\n", config_version as u32)?;
+            writeln!(writer, "\"configVersion\": {},", config_version as u32)?;
             Self::write_indent(writer, indent)?;
 
             writer.write_all(b"\"workspaces\": {\n")?;
@@ -409,7 +409,7 @@ impl Stringifier {
                 *indent += 1;
                 for dep_name in found_trusted_dependencies.values() {
                     Self::write_indent(writer, indent)?;
-                    write!(writer, "\"{}\",\n", bstr::BStr::new(dep_name.slice(buf)))?;
+                    writeln!(writer, "\"{}\",", bstr::BStr::new(dep_name.slice(buf)))?;
                 }
 
                 Self::dec_indent(writer, indent)?;
@@ -423,9 +423,9 @@ impl Stringifier {
                 for value in found_patched_dependencies.values() {
                     let (name_and_version, patch_path) = value;
                     Self::write_indent(writer, indent)?;
-                    write!(
+                    writeln!(
                         writer,
-                        "{}: {},\n",
+                        "{}: {},",
                         bun_core::fmt::format_json_string_utf8(
                             name_and_version,
                             Default::default()
@@ -448,9 +448,9 @@ impl Stringifier {
                 *indent += 1;
                 for override_dep in lockfile.overrides.map.values() {
                     Self::write_indent(writer, indent)?;
-                    write!(
+                    writeln!(
                         writer,
-                        "{}: {},\n",
+                        "{}: {},",
                         override_dep.name.fmt_json(buf, Default::default()),
                         override_dep
                             .version
@@ -475,9 +475,9 @@ impl Stringifier {
                 *indent += 1;
                 for catalog_dep in lockfile.catalogs.default.values() {
                     Self::write_indent(writer, indent)?;
-                    write!(
+                    writeln!(
                         writer,
-                        "{}: {},\n",
+                        "{}: {},",
                         catalog_dep.name.fmt_json(buf, Default::default()),
                         catalog_dep
                             .version
@@ -496,20 +496,20 @@ impl Stringifier {
                 *indent += 1;
 
                 let mut iter = lockfile.catalogs.groups.iter();
-                while let Some((catalog_name, catalog_deps)) = iter.next() {
+                for (catalog_name, catalog_deps) in iter {
                     Self::write_indent(writer, indent)?;
-                    write!(
+                    writeln!(
                         writer,
-                        "{}: {{\n",
+                        "{}: {{",
                         catalog_name.fmt_json(buf, Default::default())
                     )?;
                     *indent += 1;
 
                     for catalog_dep in catalog_deps.values() {
                         Self::write_indent(writer, indent)?;
-                        write!(
+                        writeln!(
                             writer,
-                            "{}: {},\n",
+                            "{}: {},",
                             catalog_dep.name.fmt_json(buf, Default::default()),
                             catalog_dep
                                 .version
@@ -1250,9 +1250,9 @@ impl Stringifier {
             *indent += 1;
             for optional_peer in optional_peers_buf.iter() {
                 Self::write_indent(writer, indent)?;
-                write!(
+                writeln!(
                     writer,
-                    "{},\n",
+                    "{},",
                     bun_core::fmt::format_json_string_utf8(
                         optional_peer.slice(buf),
                         Default::default()
@@ -2293,7 +2293,7 @@ pub fn parse_into_binary_lockfile(
                         lockfile.buffers.string_bytes.as_slice(),
                     )?;
 
-                    res.npm_mut().url = sbuf!(lockfile).append(&url)?;
+                    res.npm_mut().url = sbuf!(lockfile).append(url)?;
                 } else {
                     res.npm_mut().url = sbuf!(lockfile).append(registry_str)?;
                 }

@@ -358,7 +358,7 @@ impl<C: CompletionStruct> BundleThread<C> {
         // global-heap* state, so there is no double free.
         unsafe {
             core::ptr::drop_in_place(transpiler_ptr);
-            core::ptr::drop_in_place(ast_memory_store as *mut bun_ast::ASTMemoryAllocator);
+            core::ptr::drop_in_place(std::ptr::from_mut::<bun_ast::ASTMemoryAllocator>(ast_memory_store));
         }
 
         run

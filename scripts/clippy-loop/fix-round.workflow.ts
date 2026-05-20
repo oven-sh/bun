@@ -7,9 +7,9 @@ export const meta = {
   ],
 };
 
-// args: { round: number, files: Array<{file, count, diagPath, codes}> }
-const round: number = args.round;
-const files: Array<{ file: string; count: number; diagPath: string; codes: string[] }> = args.files;
+// args: { round: number, files: Array<{file, count, diagPath}> }
+const round = args.round;
+const files = args.files;
 
 const PATCH_SCHEMA = {
   type: "object",
@@ -93,7 +93,7 @@ const results = await pipeline(
   f =>
     agent(
       `Fix the clippy errors in \`${f.file}\` (Bun repo at /root/bun-5).\n\n` +
-        `There are ${f.count} diagnostics (${f.codes.join(", ")}).\n` +
+        `There are ${f.count} diagnostics.\n` +
         `FIRST: Read the full diagnostic dump at \`${f.diagPath}\` — it has every rendered error with line/col.\n` +
         `THEN: Read \`/root/bun-5/${f.file}\` and produce the diff.\n\n` +
         FIXER_RULES,

@@ -148,7 +148,7 @@ impl String {
         // SAFETY: `tag` is `ZigString`/`StaticZigString` ⇒ `zig_string` is the
         // active union field. `ZigString` is `Copy`/POD so reading it is always
         // sound. `ZigString` is `#[repr(transparent)]` over `bun_alloc::ZigString`.
-        unsafe { &*(core::ptr::addr_of!(self.0.value.zig_string) as *const ZigString) }
+        unsafe { &*core::ptr::addr_of!(self.0.value.zig_string).cast::<ZigString>() }
     }
 
     /// Borrow the live `WTF::StringImpl`. Every caller branches on

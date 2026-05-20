@@ -1439,7 +1439,7 @@ pub mod StringImplAllocator {
         free,
     };
 
-    pub const VTABLE_PTR: &'static AllocatorVTable = &VTABLE;
+    pub const VTABLE_PTR: &AllocatorVTable = &VTABLE;
 }
 
 /// Port of `bun.String.StringImpl` — `extern union`.
@@ -1587,8 +1587,8 @@ pub fn is_slice_in_buffer_t<T>(slice: &[T], buffer: &[T]) -> bool {
     let slice_ptr = slice.as_ptr() as usize;
     let buffer_ptr = buffer.as_ptr() as usize;
     buffer_ptr <= slice_ptr
-        && (slice_ptr + slice.len() * size_of::<T>())
-            <= (buffer_ptr + buffer.len() * size_of::<T>())
+        && (slice_ptr + std::mem::size_of_val(slice))
+            <= (buffer_ptr + std::mem::size_of_val(buffer))
 }
 
 /// Checks if a slice's pointer is contained within another slice.
@@ -3163,10 +3163,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         // we dereference `index`. `MutexGuard` holds a raw pointer (see [`Mutex`] docs),
         // so it does not conflict with the `&mut self` borrow in `at_index`.
         let _guard = self.mutex.lock();
-        let index = match self.index.get(&_key).copied() {
-            Some(i) => i,
-            None => return None,
-        };
+        let index = self.index.get(&_key).copied()?;
         self.at_index(index)
     }
 

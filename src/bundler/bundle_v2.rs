@@ -5359,9 +5359,9 @@ pub mod bv2_impl {
                 // `find_reachable_files` (~L1457). The slab does not resize for the
                 // duration of this loop and no other `&mut` to these columns exists.
                 let ast_raw = asts.split_raw();
-                let parts_col: *mut bun_ast::PartList = ast_raw.parts as *mut bun_ast::PartList;
+                let parts_col: *mut bun_ast::PartList = ast_raw.parts.cast::<bun_ast::PartList>();
                 let import_records_col: *mut import_record::List =
-                    ast_raw.import_records as *mut import_record::List;
+                    ast_raw.import_records.cast::<import_record::List>();
 
                 let input_files = self.graph.input_files.slice();
                 let loaders = input_files.items_loader();

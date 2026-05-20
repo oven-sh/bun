@@ -1223,25 +1223,7 @@ impl<'a> PackageInstall<'a> {
         let destbase = destination_dir;
         let destpath = self.destination_dir_subpath;
 
-        state.cached_package_dir = match {
-            #[cfg(windows)]
-            {
-                if method == Method::Symlink {
-                    bun_sys::open_dir_no_renaming_or_deleting_windows(
-                        self.cache_dir.fd(),
-                        self.cache_dir_subpath.as_bytes(),
-                    )
-                    .map(Dir::from_fd)
-                    .map_err(Into::into)
-                } else {
-                    open_dir(self.cache_dir, self.cache_dir_subpath)
-                }
-            }
-            #[cfg(not(windows))]
-            {
-                open_dir(self.cache_dir, self.cache_dir_subpath)
-            }
-        } {
+        state.cached_package_dir = match open_dir(self.cache_dir, self.cache_dir_subpath) {
             Ok(d) => d,
             Err(err) => return InstallResult::fail(err, Step::OpeningCacheDir, None),
         };
@@ -1882,7 +1864,7 @@ impl<'a> PackageInstall<'a> {
                                 .copy_from_slice(entry.path.as_bytes());
                             head2[target_len] = 0;
                             // SAFETY: NUL written above.
-                            let target = ZStr::from_buf(&head2, target_len);
+                            let target = ZStr::from_buf(head2, target_len);
 
                             if let Err(err) =
                                 sys::symlinkat(target, destination_dir.fd(), entry.path)

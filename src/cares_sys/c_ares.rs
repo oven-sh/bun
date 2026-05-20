@@ -813,7 +813,7 @@ impl Channel {
         // R-2: `*mut` spelling is signature-only (c-ares stores a `void*`); the
         // callback derefs as shared (`&*const`) and the implementor mutates via
         // interior mutability.
-        opts.sock_state_cb_data = (this as *const C).cast_mut().cast::<c_void>();
+        opts.sock_state_cb_data = std::ptr::from_ref::<C>(this).cast_mut().cast::<c_void>();
         opts.timeout = options.timeout.unwrap_or(-1);
         opts.tries = options.tries.unwrap_or(4);
 

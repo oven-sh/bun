@@ -29,6 +29,7 @@ use bun_install::{
     PackageID, PackageManager, PreinstallState, TruncatedPackageNameHash, invalid_package_id,
 };
 
+#[derive(Default)]
 pub struct LifecycleScriptTimeLog {
     mutex: Mutex,
     list: Vec<LifecycleScriptTimeLogEntry>,
@@ -45,14 +46,6 @@ pub struct LifecycleScriptTimeLogEntry {
     pub duration: u64,
 }
 
-impl Default for LifecycleScriptTimeLog {
-    fn default() -> Self {
-        Self {
-            mutex: Mutex::default(),
-            list: Vec::new(),
-        }
-    }
-}
 
 impl LifecycleScriptTimeLog {
     pub fn append_concurrent(&mut self, entry: LifecycleScriptTimeLogEntry) {

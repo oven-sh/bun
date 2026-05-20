@@ -1054,13 +1054,7 @@ impl HostProvider {
     /// Find the appropriate host provider by its domain (e.g. "github.com").
     fn from_domain(domain_str: &[u8]) -> Option<HostProvider> {
         // PORT NOTE: Zig used `inline for (std.meta.fields(Self))` (comptime reflection).
-        for provider in Self::ALL {
-            if provider.domain() == domain_str {
-                return Some(provider);
-            }
-        }
-
-        None
+        Self::ALL.into_iter().find(|&provider| provider.domain() == domain_str)
     }
 
     /// Parse a URL and return the appropriate host provider, if any.

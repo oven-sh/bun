@@ -1054,7 +1054,7 @@ impl Lockfile {
         // Spec lockfile.zig:669: `var new = try old.allocator.create(Lockfile)` — caller owns
         // and later frees via `deinit`. PORTING.md §Forbidden patterns bans `Box::leak` to
         // satisfy a lifetime; return `Box<Lockfile>` so Drop reclaims it.
-        let mut new: Box<Lockfile> = Box::new(Lockfile::init_empty_value());
+        let mut new: Box<Lockfile> = Box::default();
         new.string_pool
             .ensure_total_capacity(old.string_pool.capacity())?;
         new.package_index
@@ -1291,7 +1291,7 @@ fn clean_preprocess_update_requests_cold(
 #[cold]
 #[inline(never)]
 fn clean_verbose_timer_start() -> Result<Timer, BunError> {
-    Ok(Timer::start()?)
+    Timer::start()
 }
 
 #[cold]
@@ -1888,10 +1888,10 @@ impl Lockfile {
         let mut i: usize = 0;
         while i < self.packages.len() {
             let package: Package = *self.packages.get(i);
-            debug_assert!(self.str(&package.name).len() == package.name.len() as usize);
+            debug_assert!(self.str(&package.name).len() == package.name.len());
             debug_assert!(
                 SemverStringBuilder::string_hash(self.str(&package.name))
-                    == package.name_hash as u64
+                    == package.name_hash
             );
             debug_assert!(
                 package
@@ -1918,7 +1918,7 @@ impl Lockfile {
                 .dependencies
                 .get(self.buffers.dependencies.as_slice());
             for dependency in dependencies {
-                debug_assert!(self.str(&dependency.name).len() == dependency.name.len() as usize);
+                debug_assert!(self.str(&dependency.name).len() == dependency.name.len());
                 debug_assert!(
                     SemverStringBuilder::string_hash(self.str(&dependency.name))
                         == dependency.name_hash

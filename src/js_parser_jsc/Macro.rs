@@ -351,7 +351,7 @@ pub fn __bun_macro_context_get_remap(
     let inner = unsafe { &*data.cast::<MacroContext>() };
     inner
         .get_remap(path)
-        .map(|e| unsafe { &*(e as *const js_parser::Macro::MacroRemapEntry) })
+        .map(|e| unsafe { &*std::ptr::from_ref::<js_parser::Macro::MacroRemapEntry>(e) })
 }
 
 // ══════════════════════════════════════════════════════════════════════════

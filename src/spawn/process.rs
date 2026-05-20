@@ -721,7 +721,9 @@ impl Process {
 // Zig `union(enum)` is copyable because its `.err` arm borrows the path; the
 // Rust port owns it (see Error.rs TODO). Callers use `.clone()`.
 #[derive(Clone)]
+#[derive(Default)]
 pub enum Status {
+    #[default]
     Running,
     Exited(Exited),
     /// Raw signal byte. Zig: `.signaled: bun.SignalCode` where `SignalCode` is a
@@ -734,11 +736,6 @@ pub enum Status {
     Err(bun_sys::Error),
 }
 
-impl Default for Status {
-    fn default() -> Self {
-        Status::Running
-    }
-}
 
 #[derive(Clone, Copy, Default)]
 pub struct Exited {
@@ -1382,7 +1379,7 @@ pub mod waiter_thread_posix {
                     flags: core::ffi::c_int,
                 ) -> core::ffi::c_int;
             }
-            let fd = eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC | 0);
+            let fd = eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC);
             if fd < 0 {
                 return Err(std::io::Error::last_os_error());
             }
@@ -2849,7 +2846,7 @@ mod spawn_process_body {
         pub fn spawn(options: &Options) -> core::result::Result<Maybe<Result>, bun_core::Error> {
             // [*:null]?[*:0]const u8
             // SAFETY: std.c.environ is the C environ array
-            let envp: *const *const c_char = options.envp.unwrap_or_else(|| bun_sys::environ_ptr());
+            let envp: *const *const c_char = options.envp.unwrap_or_else(bun_sys::environ_ptr);
             let argv = &options.argv;
             let mut string_builder = bun_core::StringBuilder::default();
             for arg in argv {

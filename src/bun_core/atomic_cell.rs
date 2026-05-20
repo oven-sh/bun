@@ -398,15 +398,15 @@ unsafe impl<U> Atom for *mut U {
 unsafe impl<U> Atom for *const U {
     #[inline]
     unsafe fn _atomic_load(p: *mut Self, ord: Ordering) -> Self {
-        unsafe { (*(p as *const AtomicPtr<U>)).load(ord) as *const U }
+        unsafe { (*(p as *const AtomicPtr<U>)).load(ord).cast_const() }
     }
     #[inline]
     unsafe fn _atomic_store(p: *mut Self, v: Self, ord: Ordering) {
-        unsafe { (*(p as *const AtomicPtr<U>)).store(v as *mut U, ord) }
+        unsafe { (*(p as *const AtomicPtr<U>)).store(v.cast_mut(), ord) }
     }
     #[inline]
     unsafe fn _atomic_swap(p: *mut Self, v: Self, ord: Ordering) -> Self {
-        unsafe { (*(p as *const AtomicPtr<U>)).swap(v as *mut U, ord) as *const U }
+        unsafe { (*(p as *const AtomicPtr<U>)).swap(v.cast_mut(), ord).cast_const() }
     }
     #[inline]
     unsafe fn _atomic_cas(
@@ -417,10 +417,10 @@ unsafe impl<U> Atom for *const U {
         f: Ordering,
     ) -> Result<Self, Self> {
         unsafe {
-            match (*(p as *const AtomicPtr<U>)).compare_exchange(cur as *mut U, new as *mut U, s, f)
+            match (*(p as *const AtomicPtr<U>)).compare_exchange(cur.cast_mut(), new.cast_mut(), s, f)
             {
-                Ok(x) => Ok(x as *const U),
-                Err(x) => Err(x as *const U),
+                Ok(x) => Ok(x.cast_const()),
+                Err(x) => Err(x.cast_const()),
             }
         }
     }

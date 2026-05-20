@@ -1054,7 +1054,7 @@ impl StringOrTinyString {
 
     #[inline]
     pub fn slice(&self) -> &[u8] {
-        let buf = self.remainder_buf.as_ptr() as *const u8;
+        let buf = self.remainder_buf.as_ptr().cast::<u8>();
         // This is a switch expression instead of a statement to make sure it uses the faster assembly
         match self.meta.is_tiny_string() {
             1 => {
@@ -1124,7 +1124,7 @@ impl StringOrTinyString {
                 unsafe {
                     core::ptr::copy_nonoverlapping(
                         stringy.as_ptr(),
-                        buf.as_mut_ptr() as *mut u8,
+                        buf.as_mut_ptr().cast::<u8>(),
                         stringy.len(),
                     );
                 }
@@ -1135,7 +1135,7 @@ impl StringOrTinyString {
             }
             _ => {
                 const USZ: usize = core::mem::size_of::<usize>();
-                let dst = buf.as_mut_ptr() as *mut u8;
+                let dst = buf.as_mut_ptr().cast::<u8>();
                 // SAFETY: 2*USZ <= 16 <= 31 == MAX; src/dst don't overlap.
                 unsafe {
                     core::ptr::copy_nonoverlapping(
@@ -1168,7 +1168,7 @@ impl StringOrTinyString {
                 // Inline ASCII-lowercase loop (≤31 iters). Avoids forming `&mut [u8]`
                 // over uninit storage that `copy_lowercase` would need; semantics are
                 // identical (Zig's copyLowercase only ASCII-lowercases).
-                let dst = buf.as_mut_ptr() as *mut u8;
+                let dst = buf.as_mut_ptr().cast::<u8>();
                 for (i, &c) in stringy.iter().enumerate() {
                     // SAFETY: i < stringy.len() <= 31 == MAX.
                     unsafe { *dst.add(i) = c.to_ascii_lowercase() };
@@ -1180,7 +1180,7 @@ impl StringOrTinyString {
             }
             _ => {
                 const USZ: usize = core::mem::size_of::<usize>();
-                let dst = buf.as_mut_ptr() as *mut u8;
+                let dst = buf.as_mut_ptr().cast::<u8>();
                 // SAFETY: 2*USZ <= 16 <= 31 == MAX; src/dst don't overlap.
                 unsafe {
                     core::ptr::copy_nonoverlapping(

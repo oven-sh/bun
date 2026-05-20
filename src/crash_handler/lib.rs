@@ -328,10 +328,10 @@ pub mod debug {
         unsafe {
             let slot = &mut *SELF_DEBUG_INFO.get();
             if let Some(info) = slot {
-                return Ok(info as *mut _);
+                return Ok(std::ptr::from_mut(info));
             }
             *slot = Some(SelfInfo::open()?);
-            Ok(slot.as_mut().unwrap() as *mut _)
+            Ok(std::ptr::from_mut(slot.as_mut().unwrap()))
         }
     }
     /// Zig: `std.io.tty.detectConfig(std.io.getStdErr())`.

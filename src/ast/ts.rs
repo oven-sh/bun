@@ -154,7 +154,9 @@ impl Data {
 // `bun_js_parser::typescript`.
 
 #[derive(Clone)]
+#[derive(Default)]
 pub enum Metadata {
+    #[default]
     MNone,
 
     MNever,
@@ -179,11 +181,6 @@ pub enum Metadata {
     MDot(Vec<Ref>),
 }
 
-impl Default for Metadata {
-    fn default() -> Self {
-        Metadata::MNone
-    }
-}
 
 impl Metadata {
     pub const DEFAULT: Self = Metadata::MNone;

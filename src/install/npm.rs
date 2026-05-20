@@ -84,12 +84,10 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
 
         write!(
             &mut print_buf,
-            "{} {} {} workspaces/{}{}{}",
+            "{} {} {} workspaces/false{}{}",
             Global::user_agent,
             Global::os_name,
             Global::arch_name,
-            // TODO: figure out how npm determines workspaces=true
-            false,
             if ci_name.is_some() { " ci/" } else { "" },
             bstr::BStr::new(ci_name.unwrap_or(b"")),
         )
@@ -121,11 +119,10 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
 
         write!(
             &mut print_buf,
-            "{} {} {} workspaces/{}{}{}",
+            "{} {} {} workspaces/false{}{}",
             Global::user_agent,
             Global::os_name,
             Global::arch_name,
-            false,
             if ci_name.is_some() { " ci/" } else { "" },
             bstr::BStr::new(ci_name.unwrap_or(b"")),
         )
@@ -246,7 +243,7 @@ pub fn response_error<const OTP_RESPONSE: bool>(
         res.status_code,
         if !res.status.is_empty() { " " } else { "" },
         bstr::BStr::new(&res.status),
-        bun_fmt::redacted_npm_url(&req.url.href),
+        bun_fmt::redacted_npm_url(req.url.href),
     ));
 
     if res.status_code == 404 && pkg_id.is_some() {
@@ -372,8 +369,8 @@ pub mod registry {
                         // defer { url.pathname = pathname; url.path = pathname; } — applied below
                         let mut needs_to_check_slash = true;
                         while let Some(colon) = strings::last_index_of_char(pathname, b':') {
-                            let mut segment = &pathname[colon as usize + 1..];
-                            pathname = &pathname[..colon as usize];
+                            let mut segment = &pathname[colon + 1..];
+                            pathname = &pathname[..colon];
                             needs_to_check_slash = false;
                             needs_normalize = true;
                             if pathname.len() > 1 && pathname[pathname.len() - 1] == b'/' {
@@ -416,7 +413,7 @@ pub mod registry {
                         // In this case, there is only one.
                         if needs_to_check_slash {
                             if let Some(last_slash) = strings::last_index_of_char(pathname, b'/') {
-                                let remain = &pathname[last_slash as usize + 1..];
+                                let remain = &pathname[last_slash + 1..];
                                 if let Some(eql_i) = strings::index_of_char(remain, b'=') {
                                     let segment = &remain[..eql_i as usize];
                                     let value = &remain[eql_i as usize + 1..];
@@ -425,7 +422,7 @@ pub mod registry {
                                     // Bearer Token
                                     if segment == b"_authToken" {
                                         registry.token = value.into();
-                                        pathname = &pathname[..last_slash as usize + 1];
+                                        pathname = &pathname[..last_slash + 1];
                                         needs_normalize = true;
                                         url.pathname = pathname;
                                         url.path = pathname;
@@ -434,7 +431,7 @@ pub mod registry {
 
                                     if segment == b"_auth" {
                                         auth = value;
-                                        pathname = &pathname[..last_slash as usize + 1];
+                                        pathname = &pathname[..last_slash + 1];
                                         needs_normalize = true;
                                         url.pathname = pathname;
                                         url.path = pathname;
@@ -443,7 +440,7 @@ pub mod registry {
 
                                     if segment == b"username" {
                                         registry.username = value.into();
-                                        pathname = &pathname[..last_slash as usize + 1];
+                                        pathname = &pathname[..last_slash + 1];
                                         needs_normalize = true;
                                         url.pathname = pathname;
                                         url.path = pathname;
@@ -452,7 +449,7 @@ pub mod registry {
 
                                     if segment == b"_password" {
                                         registry.password = value.into();
-                                        pathname = &pathname[..last_slash as usize + 1];
+                                        pathname = &pathname[..last_slash + 1];
                                         needs_normalize = true;
                                         url.pathname = pathname;
                                         url.path = pathname;
@@ -3295,7 +3292,7 @@ impl PackageManifest {
             n => {
                 // ceil(log2_int_ceil(n) / 8)
                 let bits = (usize::BITS - (n - 1).leading_zeros()) as usize;
-                (bits + 7) / 8
+                bits.div_ceil(8)
             }
         };
 
@@ -3381,7 +3378,7 @@ impl PackageManifest {
             2 => sort_with_int!(u16),
             3 => sort_with_int!(u32), // TODO(port): Zig used u24; Rust has no u24, use u32
             4 => sort_with_int!(u32),
-            5 | 6 | 7 | 8 => sort_with_int!(u64),
+            5..=8 => sort_with_int!(u64),
             _ => {
                 debug_assert!(max_versions_count == 0);
             }

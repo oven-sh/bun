@@ -156,7 +156,7 @@ pub mod TestingAPIs {
                 };
                 let mut prev = core::mem::MaybeUninit::<Sigaction>::zeroed();
                 let mut readback = core::mem::MaybeUninit::<Sigaction>::zeroed();
-                sigaction(SIGUSR2, &act, prev.as_mut_ptr());
+                sigaction(SIGUSR2, &raw const act, prev.as_mut_ptr());
                 sigaction(SIGUSR2, core::ptr::null(), readback.as_mut_ptr());
                 sigaction(SIGUSR2, prev.as_ptr(), core::ptr::null_mut());
                 let readback = readback.assume_init();

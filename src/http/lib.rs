@@ -1168,7 +1168,7 @@ pub fn print_request(
             headers: request.headers,
             bytes_read: request.bytes_read,
         };
-        Output::pretty_errorln(&format_args!("{}", request_.curl(ignore_insecure, body)));
+        Output::pretty_errorln(format_args!("{}", request_.curl(ignore_insecure, body)));
     }
 
     let ver: &str = match protocol {
@@ -1177,21 +1177,21 @@ pub fn print_request(
         Protocol::Http3 => "HTTP/3",
     };
     // TODO(port): pretty_fmt prefix elided pending Output::error_writer() in bun_core.
-    Output::pretty_errorln(&format_args!(
+    Output::pretty_errorln(format_args!(
         "> {} {} {}",
         ver,
         BStr::new(request.method),
         BStr::new(url),
     ));
     for header in request.headers {
-        Output::pretty_errorln(&format_args!("> {}", header));
+        Output::pretty_errorln(format_args!("> {}", header));
     }
     Output::flush();
 }
 
 #[cold]
 fn print_response(response: &picohttp::Response<'_>) {
-    Output::pretty_errorln(&format_args!("{}", response));
+    Output::pretty_errorln(format_args!("{}", response));
     Output::flush();
 }
 
@@ -3648,7 +3648,7 @@ impl<'a> HTTPClient<'a> {
 
         if PRINT_EVERY > 0 {
             let i = PRINT_EVERY_I.fetch_add(1, Ordering::Relaxed) + 1;
-            if i % PRINT_EVERY == 0 {
+            if i.is_multiple_of(PRINT_EVERY) {
                 Output::prettyln(format_args!("Heap stats for HTTP thread\n"));
                 Output::flush();
                 // PERF(port): MimallocArena dump_thread_stats — dropped (no DEFAULT_ARENA in Rust)

@@ -1337,7 +1337,7 @@ impl H2FrameParser {
     /// match the C signature. All mutation goes through `Cell`/`JsCell` fields.
     #[inline]
     fn as_ctx_ptr(&self) -> *mut Self {
-        (self as *const Self).cast_mut()
+        std::ptr::from_ref::<Self>(self).cast_mut()
     }
 
     pub fn ref_(&self) {

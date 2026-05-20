@@ -1578,7 +1578,7 @@ impl<A: Allocator + Default> StringHashMapKey<A> {
     pub const fn borrowed(s: &'static [u8]) -> Self {
         // `&[u8]`'s pointer is always non-null (dangling for `len == 0`).
         // SAFETY: `as_ptr()` on a slice reference is never null.
-        let ptr = unsafe { core::ptr::NonNull::new_unchecked(s.as_ptr() as *mut u8) };
+        let ptr = unsafe { core::ptr::NonNull::new_unchecked(s.as_ptr().cast_mut()) };
         Self {
             ptr,
             len_tag: s.len(),
@@ -1899,7 +1899,7 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
         // SAFETY: caller contract above. Erase the borrow's lifetime so it can
         // be stored as `Static` without a heap copy; the map never inspects the
         // lifetime, only the (ptr, len) pair.
-        let key: &'static [u8] = unsafe { &*(key as *const [u8]) };
+        let key: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(key) };
         self.inner.insert(StringHashMapKey::borrowed(key), value);
         Ok(())
     }
@@ -2010,7 +2010,7 @@ impl<V: Default, A: Allocator + HashbrownAllocator + Clone + Default> StringHash
     pub unsafe fn get_or_put_borrowed(&mut self, key: &[u8]) -> StringHashMapGetOrPut<'_, V> {
         use hashbrown::hash_map::EntryRef;
         // SAFETY: caller contract above; see `put_borrowed`.
-        let key: &'static [u8] = unsafe { &*(key as *const [u8]) };
+        let key: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(key) };
         match self.inner.entry_ref(key) {
             EntryRef::Occupied(o) => StringHashMapGetOrPut {
                 found_existing: true,

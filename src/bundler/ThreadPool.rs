@@ -628,7 +628,7 @@ impl Worker {
             // SAFETY: `self` is the heap-allocated Worker; sole owner now that
             // the caller is about to `clear_retaining_capacity()` the
             // `workers_assignments` map.
-            unsafe { Self::deinit(self as *mut Self) };
+            unsafe { Self::deinit(std::ptr::from_mut::<Self>(self)) };
         }
     }
 

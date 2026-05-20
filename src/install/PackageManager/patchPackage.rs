@@ -32,21 +32,13 @@ fn string_hash(s: &[u8]) -> u64 {
     bun_semver::semver_string::Builder::string_hash(s)
 }
 
+#[derive(Default)]
 pub struct PatchCommitResult {
     pub patch_key: Box<[u8]>,
     pub patchfile_path: Box<[u8]>,
     pub not_in_workspace_root: bool,
 }
 
-impl Default for PatchCommitResult {
-    fn default() -> Self {
-        Self {
-            patch_key: Box::default(),
-            patchfile_path: Box::default(),
-            not_in_workspace_root: false,
-        }
-    }
-}
 
 /// - Arg is the dir containing the package with changes OR name and version
 /// - Get the patch file contents by running git diff on the temp dir and the original package dir
@@ -59,7 +51,7 @@ pub fn do_patch_commit(
     log_level: LogLevel,
 ) -> Result<Option<PatchCommitResult>, bun_core::Error> {
     let mut folder_path_buf = PathBuffer::uninit();
-    let mut lockfile: Box<Lockfile> = Box::new(Lockfile::default());
+    let mut lockfile: Box<Lockfile> = Box::default();
     let log = manager.log_mut();
     // TODO(port): narrow error set
     match lockfile.load_from_cwd::<true>(Some(manager), log) {
@@ -1119,7 +1111,7 @@ fn detach_module_folder_from_shared_store(module_folder: &[u8]) {
             #[cfg(not(windows))]
             {
                 if let Ok(st) = sys::lstat(p.slice_z()) {
-                    sys::posix::s_islnk(st.st_mode as u32)
+                    sys::posix::s_islnk(st.st_mode)
                 } else {
                     return;
                 }
@@ -1270,7 +1262,7 @@ fn node_modules_folder_for_dependency_ids(
         let node_modules = iterator.next(None)?;
         let mut found = false;
         for id in ids {
-            if node_modules.dependencies.iter().any(|d| *d == id.0) {
+            if node_modules.dependencies.contains(&id.0) {
                 found = true;
                 break;
             }
@@ -1288,9 +1280,7 @@ fn node_modules_folder_for_dependency_id(
     loop {
         let node_modules = iterator.next(None)?;
         if !node_modules
-            .dependencies
-            .iter()
-            .any(|d| *d == dependency_id)
+            .dependencies.contains(&dependency_id)
         {
             continue;
         }

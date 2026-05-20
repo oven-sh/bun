@@ -137,7 +137,7 @@ impl DependencyExt for Dependency {
         }
         let name_ = &name[1..];
         match bun_core::index_of_char(name_, b'/') {
-            Some(i) => &name_[i as usize + 1..],
+            Some(i) => &name_[i + 1..],
             None => name,
         }
     }
@@ -1385,13 +1385,13 @@ pub fn parse_with_tag(
                         owner: String::from(b""),
                         repo: sliced
                             .sub(if let Some(index) = hash_index {
-                                &input[0..index as usize]
+                                &input[0..index]
                             } else {
                                 input
                             })
                             .value(),
                         committish: if let Some(index) = hash_index {
-                            sliced.sub(&input[index as usize + 1..]).value()
+                            sliced.sub(&input[index + 1..]).value()
                         } else {
                             String::from(b"")
                         },
@@ -1416,7 +1416,7 @@ pub fn parse_with_tag(
             // Find owner in dependency string
             let owner_idx = strings::index_of(dependency, owner_str);
             let owner = if let Some(idx) = owner_idx {
-                let idx = idx as usize;
+                let idx = idx;
                 sliced.sub(&dependency[idx..idx + owner_str.len()]).value()
             } else {
                 String::from(b"")
@@ -1425,7 +1425,7 @@ pub fn parse_with_tag(
             // Find repo in dependency string
             let repo_idx = strings::index_of(dependency, repo_str);
             let repo = if let Some(idx) = repo_idx {
-                let idx = idx as usize;
+                let idx = idx;
                 sliced.sub(&dependency[idx..idx + repo_str.len()]).value()
             } else {
                 String::from(b"")
@@ -1435,7 +1435,7 @@ pub fn parse_with_tag(
             let committish = if !committish_str.is_empty() {
                 let committish_idx = strings::index_of(dependency, committish_str);
                 if let Some(idx) = committish_idx {
-                    let idx = idx as usize;
+                    let idx = idx;
                     sliced
                         .sub(&dependency[idx..idx + committish_str.len()])
                         .value()

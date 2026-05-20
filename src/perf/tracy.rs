@@ -34,16 +34,12 @@ pub fn set_enable(v: bool) {
 #[allow(non_camel_case_types)]
 #[repr(C)]
 #[derive(Clone, Copy)]
+#[derive(Default)]
 pub struct ___tracy_c_zone_context {
     pub id: u32,
     pub active: c_int,
 }
 
-impl Default for ___tracy_c_zone_context {
-    fn default() -> Self {
-        Self { id: 0, active: 0 }
-    }
-}
 
 impl ___tracy_c_zone_context {
     #[inline]

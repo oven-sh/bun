@@ -422,7 +422,7 @@ unsafe fn free_aligned_dup(slice: *mut [u8]) {
     // allocated with this exact layout.
     unsafe {
         std::alloc::dealloc(
-            slice as *mut u8,
+            slice.cast::<u8>(),
             std::alloc::Layout::from_size_align_unchecked(len, MODULE_INFO_ALIGN),
         );
     }

@@ -181,19 +181,19 @@ pub trait RusageFields {
 impl RusageFields for libc::rusage {
     #[inline]
     fn utime_sec(&self) -> i64 {
-        self.ru_utime.tv_sec as i64
+        self.ru_utime.tv_sec
     }
     #[inline]
     fn utime_usec(&self) -> i64 {
-        self.ru_utime.tv_usec as i64
+        self.ru_utime.tv_usec
     }
     #[inline]
     fn stime_sec(&self) -> i64 {
-        self.ru_stime.tv_sec as i64
+        self.ru_stime.tv_sec
     }
     #[inline]
     fn stime_usec(&self) -> i64 {
-        self.ru_stime.tv_usec as i64
+        self.ru_stime.tv_usec
     }
     #[inline]
     fn maxrss_(&self) -> f64 {
@@ -436,6 +436,7 @@ impl PosixStdio {
     }
 }
 
+#[derive(Default)]
 pub struct PosixSpawnResult {
     pub pid: PidT,
     pub pidfd: Option<PidFdType>,
@@ -449,21 +450,6 @@ pub struct PosixSpawnResult {
     pub has_exited: bool,
 }
 
-impl Default for PosixSpawnResult {
-    fn default() -> Self {
-        Self {
-            pid: 0,
-            pidfd: None,
-            stdin: None,
-            stdout: None,
-            stderr: None,
-            ipc: None,
-            extra_pipes: Vec::new(),
-            memfds: [false, false, false],
-            has_exited: false,
-        }
-    }
-}
 
 /// Entry in `extra_pipes` for a stdio slot at index >= 3.
 pub enum ExtraPipe {
@@ -685,8 +671,8 @@ pub fn spawn_process_posix(
     // (`0x04`/`0x08`) — they're POSIX-mandated bit flags, not OS-specific.
     #[cfg(not(target_os = "android"))]
     let (setsigdef, setsigmask) = (
-        libc::POSIX_SPAWN_SETSIGDEF as i32,
-        libc::POSIX_SPAWN_SETSIGMASK as i32,
+        libc::POSIX_SPAWN_SETSIGDEF,
+        libc::POSIX_SPAWN_SETSIGMASK,
     );
     #[cfg(target_os = "android")]
     let (setsigdef, setsigmask) = (0x04_i32, 0x08_i32);

@@ -412,7 +412,7 @@ pub fn migrate_npm_lockfile<'a>(
                 let ExprData::EObject(deps_obj) = &deps.data else {
                     return Err(err!("InvalidNPMLockfile"));
                 };
-                num_deps = num_deps.saturating_add(deps_obj.properties.len_u32() as u32);
+                num_deps = num_deps.saturating_add(deps_obj.properties.len_u32());
             }
         }
 
@@ -424,7 +424,7 @@ pub fn migrate_npm_lockfile<'a>(
                 0 => return Err(err!("InvalidNPMLockfile")),
                 1 => {}
                 n => {
-                    num_extern_strings += (n * 2) as u32;
+                    num_extern_strings += (n * 2);
                 }
             }
         }

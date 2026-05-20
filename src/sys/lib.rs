@@ -8170,7 +8170,7 @@ pub mod net {
                     // raw octets so both shapes resolve.
                     // SAFETY: `sin_addr` is 4 bytes of POD on every target.
                     let octets: [u8; 4] =
-                        unsafe { *(core::ptr::addr_of!(v4.sin_addr) as *const [u8; 4]) };
+                        unsafe { *core::ptr::addr_of!(v4.sin_addr).cast::<[u8; 4]>() };
                     write!(
                         f,
                         "{}.{}.{}.{}:{}",

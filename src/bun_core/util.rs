@@ -744,7 +744,7 @@ impl WStr {
     /// through an owned buffer.
     #[inline]
     pub unsafe fn from_raw_mut<'a>(ptr: *mut u16, len: usize) -> &'a mut WStr {
-        unsafe { &mut *(core::slice::from_raw_parts_mut(ptr, len) as *mut [u16] as *mut WStr) }
+        unsafe { &mut *(std::ptr::from_mut::<[u16]>(core::slice::from_raw_parts_mut(ptr, len)) as *mut WStr) }
     }
     #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [u16] {
@@ -4185,7 +4185,7 @@ static OS_ARGV: core::sync::atomic::AtomicPtr<*const core::ffi::c_char> =
 /// already have been populated from the fallback path.
 pub unsafe fn init_argv(argc: core::ffi::c_int, argv: *const *const core::ffi::c_char) {
     OS_ARGC.store(argc.max(0) as usize, core::sync::atomic::Ordering::Relaxed);
-    OS_ARGV.store(argv as *mut _, core::sync::atomic::Ordering::Relaxed);
+    OS_ARGV.store(argv.cast_mut(), core::sync::atomic::Ordering::Relaxed);
 }
 
 /// Kernel-provided argv slice if [`init_argv`] was called, else `None`.
@@ -5475,7 +5475,7 @@ pub mod mock_time {
 // soft-float decode; revisit once `core::f16` stabilizes.
 #[allow(non_camel_case_types)]
 #[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Default, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub struct f16(pub u16);
 
 impl f16 {
@@ -5678,7 +5678,7 @@ pub mod perf {
             // SAFETY: FFI; pointer is NUL-terminated within `buf`.
             let _ = unsafe {
                 sys::Bun__linux_trace_emit(
-                    buf.as_ptr() as *const core::ffi::c_char,
+                    buf.as_ptr().cast::<core::ffi::c_char>(),
                     i64::try_from(duration).unwrap_or(i64::MAX),
                 )
             };

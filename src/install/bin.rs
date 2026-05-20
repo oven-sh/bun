@@ -383,9 +383,9 @@ impl Bin {
                     writer.write_str("{\n")?;
                     *indent += 1;
                     write_indent(writer, indent)?;
-                    write!(
+                    writeln!(
                         writer,
-                        "{}: {},\n",
+                        "{}: {},",
                         self.value.named_file[0].fmt_json(buf, Default::default()),
                         self.value.named_file[1].fmt_json(buf, Default::default()),
                     )?;
@@ -413,9 +413,9 @@ impl Bin {
                             writer.write_char('\n')?;
                         }
                         write_indent(writer, indent)?;
-                        write!(
+                        writeln!(
                             writer,
-                            "{}: {},\n",
+                            "{}: {},",
                             list[i].value.fmt_json(buf, Default::default()),
                             list[i + 1].value.fmt_json(buf, Default::default()),
                         )?;
@@ -1663,7 +1663,7 @@ impl<'a> Linker<'a> {
                     dest_off += unscoped_package_name.len();
                     self.abs_dest_buf[dest_off] = 0;
                     let abs_dest_len = dest_off;
-                    let abs_dest = ZStr::from_buf(&self.abs_dest_buf, abs_dest_len);
+                    let abs_dest = ZStr::from_buf(self.abs_dest_buf, abs_dest_len);
 
                     Self::unlink_bin_or_shim(abs_dest);
                 }
@@ -1684,7 +1684,7 @@ impl<'a> Linker<'a> {
                     dest_off += normalized_name.len();
                     self.abs_dest_buf[dest_off] = 0;
                     let abs_dest_len = dest_off;
-                    let abs_dest = ZStr::from_buf(&self.abs_dest_buf, abs_dest_len);
+                    let abs_dest = ZStr::from_buf(self.abs_dest_buf, abs_dest_len);
 
                     Self::unlink_bin_or_shim(abs_dest);
                 }
@@ -1714,7 +1714,7 @@ impl<'a> Linker<'a> {
                         dest_off += normalized_bin_dest.len();
                         self.abs_dest_buf[dest_off] = 0;
                         let abs_dest_len = dest_off;
-                        let abs_dest = ZStr::from_buf(&self.abs_dest_buf, abs_dest_len);
+                        let abs_dest = ZStr::from_buf(self.abs_dest_buf, abs_dest_len);
 
                         Self::unlink_bin_or_shim(abs_dest);
 
@@ -1761,7 +1761,7 @@ impl<'a> Linker<'a> {
                                 dest_off += entry_name.len();
                                 self.abs_dest_buf[dest_off] = 0;
                                 let abs_dest_len = dest_off;
-                                let abs_dest = ZStr::from_buf(&self.abs_dest_buf, abs_dest_len);
+                                let abs_dest = ZStr::from_buf(self.abs_dest_buf, abs_dest_len);
 
                                 Self::unlink_bin_or_shim(abs_dest);
                             }

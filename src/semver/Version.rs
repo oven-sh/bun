@@ -526,16 +526,14 @@ impl<T: VersionInt> VersionType<T> {
                 }
                 b'|' | b'^' | b'#' | b'&' | b'%' | b'!' => {
                     is_done = true;
-                    if i > 0 {
-                        i -= 1;
-                    }
+                    i = i.saturating_sub(1);
                     break;
                 }
                 b'0'..=b'9' => {
                     part_start_i = i;
                     i += 1;
 
-                    while i < input.len() && matches!(input[i], b'0'..=b'9') {
+                    while i < input.len() && input[i].is_ascii_digit() {
                         i += 1;
                     }
 
@@ -629,7 +627,7 @@ impl<T: VersionInt> VersionType<T> {
                     // npm just expects that to work...even though it has no "-" qualifier.
                     if result.wildcard == Wildcard::None
                         && part_i >= 2
-                        && matches!(c, b'a'..=b'z' | b'A'..=b'Z')
+                        && c.is_ascii_alphabetic()
                     {
                         part_start_i = i;
                         let tag_result =

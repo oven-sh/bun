@@ -1802,7 +1802,7 @@ impl EString {
         buf.push(0);
         let s = buf.into_bump_slice();
         // SAFETY: `s[len-1] == 0` (just pushed) and `s[..len-1]` is readable for `'b`.
-        Ok(bun_core::ZStr::from_slice_with_nul(&s[..]))
+        Ok(bun_core::ZStr::from_slice_with_nul(s))
     }
 
     // `toJS` alias deleted — lives in `js_parser_jsc` extension trait.
@@ -2166,17 +2166,10 @@ pub struct Await {
     pub value: ExprNodeIndex,
 }
 
+#[derive(Default)]
 pub struct Yield {
     pub value: Option<ExprNodeIndex>,
     pub is_star: bool,
-}
-impl Default for Yield {
-    fn default() -> Self {
-        Self {
-            value: None,
-            is_star: false,
-        }
-    }
 }
 
 pub struct If {

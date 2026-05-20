@@ -74,7 +74,7 @@ impl ClientContext {
         if let Some(i) = INSTANCE.load() {
             return Some(i);
         }
-        LSQUIC_INIT_ONCE.call_once(|| quic::global_init());
+        LSQUIC_INIT_ONCE.call_once(quic::global_init);
         // SAFETY: caller passes the live HTTP-thread uws loop.
         let qctx = unsafe {
             quic::Context::create_client(

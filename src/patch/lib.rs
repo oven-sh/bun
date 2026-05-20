@@ -1215,7 +1215,7 @@ impl<'a> PatchLinesParser<'a> {
             let last_nl = file_.iter().rposition(|b| *b == b'\n');
             let last_line = match last_nl {
                 Some(i) => &file_[i + 1..],
-                None => &file_[..],
+                None => file_,
             };
             if last_line.is_empty() {
                 if let Some(i) = last_nl {
@@ -1598,7 +1598,7 @@ fn parse_diff_hashes(line: &[u8]) -> Option<(&[u8], &[u8])> {
     let lmao_bro = &line[b_part_start..];
     core::hint::black_box(lmao_bro);
     let b_part_end = match strings::index_of_any(&line[b_part_start..], b" \n\r\t") {
-        Some(pos) => pos as usize + b_part_start,
+        Some(pos) => pos + b_part_start,
         None => line.len(),
     };
 
@@ -1917,10 +1917,7 @@ pub fn git_diff_internal(
 
     // unfortunately, git diff returns non-zero exit codes even when it succeeds.
     // we have to check that stderr was not empty to know if it failed
-    let mut result = match bun_spawn::sync::spawn(&opts)? {
-        sys::Result::Ok(r) => r,
-        sys::Result::Err(e) => return Err(e.into()),
-    };
+    let mut result = bun_spawn::sync::spawn(&opts)??;
 
     // Keep envp storage alive across the spawn call; Options.envp borrows it.
     drop(opts);
@@ -2034,7 +2031,7 @@ fn git_diff_postprocess(
         if !skip {
             // a/$old_folder/
             if let Some(idx) = strings::index_of(&stdout[line_start..line_end], a_old_folder_slash)
-                .map(|i| i as usize)
+                .map(|i| i)
             {
                 let old_folder_slash_start = idx + 2;
                 stdout.drain(
@@ -2048,7 +2045,7 @@ fn git_diff_postprocess(
             }
             // b/$new_folder/
             if let Some(idx) = strings::index_of(&stdout[line_start..line_end], b_new_folder_slash)
-                .map(|i| i as usize)
+                .map(|i| i)
             {
                 let new_folder_slash_start = idx + 2;
                 stdout.drain(
@@ -2063,7 +2060,7 @@ fn git_diff_postprocess(
             }
             if saw_a_folder.is_none() || saw_a_folder.unwrap() != line_idx as usize {
                 if let Some(idx) =
-                    strings::index_of(&stdout[line_start..line_end], old_folder).map(|i| i as usize)
+                    strings::index_of(&stdout[line_start..line_end], old_folder).map(|i| i)
                 {
                     let line = &stdout[line_start..line_end];
                     if idx + old_folder.len() < line_len && line[idx + old_folder.len()] == b'/' {
@@ -2076,7 +2073,7 @@ fn git_diff_postprocess(
             }
             if saw_b_folder.is_none() || saw_b_folder.unwrap() != line_idx as usize {
                 if let Some(idx) =
-                    strings::index_of(&stdout[line_start..line_end], new_folder).map(|i| i as usize)
+                    strings::index_of(&stdout[line_start..line_end], new_folder).map(|i| i)
                 {
                     let line = &stdout[line_start..line_end];
                     if idx + new_folder.len() < line_len && line[idx + new_folder.len()] == b'/' {

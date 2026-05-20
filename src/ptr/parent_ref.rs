@@ -216,7 +216,7 @@ impl<T: ?Sized> ParentRef<T> {
     pub const unsafe fn from_raw(p: *const T) -> Self {
         Self {
             // SAFETY: caller contract — `p` is non-null.
-            ptr: unsafe { NonNull::new_unchecked(p as *mut T) },
+            ptr: unsafe { NonNull::new_unchecked(p.cast_mut()) },
             #[cfg(debug_assertions)]
             generation: 0,
             #[cfg(debug_assertions)]

@@ -616,7 +616,7 @@ impl<'a> PackageInstaller<'a> {
                     seen: Some(&mut self.seen_bin_links),
                     target_node_modules_path: target_node_modules_path_opt
                         .as_ref()
-                        .map(|p| std::ptr::from_ref::<AbsPath>(p))
+                        .map(std::ptr::from_ref::<AbsPath>)
                         .unwrap_or(nm_ptr.cast_const()),
                     node_modules_path: unsafe { &mut *nm_ptr },
                     abs_target_buf: link_target_buf,
@@ -1968,11 +1968,11 @@ impl<'a> PackageInstaller<'a> {
                                 // `st_mode` is u16 on FreeBSD, u32 elsewhere; widen.
                                 let st_mode = stat.st_mode as u32;
                                 let is_writable = if stat.st_uid == bun_sys::c::getuid() {
-                                    st_mode & bun_sys::S::IWUSR as u32 > 0
+                                    st_mode & bun_sys::S::IWUSR > 0
                                 } else if stat.st_gid == bun_sys::c::getgid() {
-                                    st_mode & bun_sys::S::IWGRP as u32 > 0
+                                    st_mode & bun_sys::S::IWGRP > 0
                                 } else {
-                                    st_mode & bun_sys::S::IWOTH as u32 > 0
+                                    st_mode & bun_sys::S::IWOTH > 0
                                 };
 
                                 if !is_writable {

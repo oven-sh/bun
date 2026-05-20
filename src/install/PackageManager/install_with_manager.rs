@@ -399,7 +399,7 @@ pub fn install_with_manager(
                         lf.workspace_paths.reserve(lockfile.workspace_paths.len());
                         lf.workspace_paths.clear();
                         let mut iter = lockfile.workspace_paths.iter();
-                        while let Some((key, value)) = iter.next() {
+                        for (key, value) in iter {
                             // The string offsets will be wrong so fix them
                             let path = value.slice(&lockfile.buffers.string_bytes);
                             let str = builder.append::<SemverString>(path);
@@ -414,7 +414,7 @@ pub fn install_with_manager(
                             .reserve(lockfile.workspace_versions.len());
                         lf.workspace_versions.clear();
                         let mut iter = lockfile.workspace_versions.iter();
-                        while let Some((key, value)) = iter.next() {
+                        for (key, value) in iter {
                             // Copy version string offsets
                             let version = value.append(&lockfile.buffers.string_bytes, builder);
                             // PERF(port): was assume_capacity
@@ -425,7 +425,7 @@ pub fn install_with_manager(
                     // Update patched dependencies
                     {
                         let mut iter = lockfile.patched_dependencies.iter();
-                        while let Some((key, value)) = iter.next() {
+                        for (key, value) in iter {
                             let pkg_name_and_version_hash = *key;
                             debug_assert!(value.patchfile_hash_is_null);
                             let gop = lf.patched_dependencies.entry(pkg_name_and_version_hash);

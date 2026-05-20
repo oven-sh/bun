@@ -840,7 +840,7 @@ impl<'a> RouteLoader<'a> {
 
         if let Some(entries) = root_dir_info.get_entries_const() {
             let mut iter = entries.iter();
-            'outer: while let Some(entry_ptr) = iter.next() {
+            'outer: for entry_ptr in iter {
                 // PORT NOTE: `iter()` yields raw `*mut Entry` (matching Zig's
                 // `*Entry` map value type, fs.zig:117). Reborrow locally for
                 // each access so `&` reads and the `&mut` `kind()` call do not
@@ -872,7 +872,7 @@ impl<'a> RouteLoader<'a> {
 
                         let abs_parts = [entry.dir(), entry.base()];
                         if let Some(dir_info) =
-                            resolver.read_dir_info_ignore_error(&fs.abs(&abs_parts))
+                            resolver.read_dir_info_ignore_error(fs.abs(&abs_parts))
                         {
                             self.load(resolver, &dir_info, base_dir);
                         }

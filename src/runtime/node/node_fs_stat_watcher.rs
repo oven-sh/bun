@@ -635,7 +635,7 @@ impl StatWatcher {
     /// is required; the `*mut` spelling is purely to match the C ABI.
     #[inline]
     fn as_ctx_ptr(&self) -> *mut Self {
-        (self as *const Self).cast_mut()
+        std::ptr::from_ref::<Self>(self).cast_mut()
     }
 
     pub fn event_loop(&self) -> *mut EventLoop {

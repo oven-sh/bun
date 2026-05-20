@@ -357,7 +357,7 @@ pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Er
         };
         // Only PATH-search bare names — Zig's expandArg0 expands only when no
         // separator is present.
-        if first.iter().any(|&b| b == b'/') {
+        if first.contains(&b'/') {
             break 'argv0;
         }
         #[cfg(windows)]
@@ -434,10 +434,7 @@ pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Er
 
     // `!Maybe(Result)` → outer `Result<_, bun_core::Error>` for the Zig `try`,
     // inner `Maybe` for the syscall error.
-    let result = match process::sync::spawn(&sync_opts)? {
-        Ok(r) => r,
-        Err(sys_err) => return Err(sys_err.into()),
-    };
+    let result = process::sync::spawn(&sync_opts)??;
 
     // Keep envp backing storage alive until the child has been waited on.
     drop(envp);

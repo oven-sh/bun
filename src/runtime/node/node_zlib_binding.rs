@@ -679,7 +679,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // synchronously inside a host-fn invoked through that wrapper), so the
         // `(&T as *const T).cast_mut()` provenance is sufficient — only the
         // `Cell<u32>` refcount is touched.
-        unsafe { T::deref((this as *const T).cast_mut()) };
+        unsafe { T::deref(std::ptr::from_ref::<T>(this).cast_mut()) };
 
         Ok(JSValue::UNDEFINED)
     }

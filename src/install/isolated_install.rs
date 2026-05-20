@@ -601,10 +601,7 @@ pub fn install_isolated_packages(
                         // PORT NOTE: reshaped for borrowck — clone the dedupe peers slice
                         // before mutating node_peers.
                         let dedupe_peers: Vec<_> = node_peers[dedupe_node_id.get() as usize]
-                            .list
-                            .iter()
-                            .copied()
-                            .collect();
+                            .list.clone();
                         for peer in dedupe_peers {
                             let peer_name_hash = dependencies[peer.dep_id as usize].name_hash;
                             let mut curr_id = entry.parent_id;

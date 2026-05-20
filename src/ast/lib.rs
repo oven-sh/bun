@@ -1107,9 +1107,9 @@ impl Data {
                             bun_core::fmt::digit_count(location.line) + " | ".len();
                     }
 
-                    write!(
+                    writeln!(
                         to,
-                        "{}\n",
+                        "{}",
                         bun_core::fmt::fmt_javascript(
                             line_text,
                             bun_core::fmt::HighlighterOptions {
@@ -1785,7 +1785,7 @@ impl Log {
         other.errors += self.errors;
 
         if recycled {
-            let mut string_builder = StringBuilder::default();
+            let mut string_builder = StringBuilder;
             let mut notes_count: usize = 0;
             for msg in &self.msgs {
                 msg.count(&mut string_builder);
@@ -3003,10 +3003,7 @@ pub fn source_from_file_at(
     path: &bun_core::ZStr,
     opts: ToSourceOptions,
 ) -> bun_sys::Maybe<Source> {
-    let mut bytes = match bun_sys::file::File::read_from(dir_fd, path) {
-        Err(err) => return Err(err),
-        Ok(bytes) => bytes,
-    };
+    let mut bytes = bun_sys::file::File::read_from(dir_fd, path)?;
     if opts.convert_bom {
         if let Some(bom) = bun_core::immutable::BOM::detect(&bytes) {
             bytes = bom.remove_and_convert_to_utf8_and_free(bytes);

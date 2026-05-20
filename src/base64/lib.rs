@@ -137,7 +137,7 @@ pub const fn encode_len_from_size(source: usize) -> usize {
 #[inline]
 pub const fn url_safe_encode_len_from_size(n: usize) -> usize {
     // Copied from WebKit
-    ((n * 4) + 2) / 3
+    (n * 4).div_ceil(3)
 }
 
 #[inline]
@@ -483,10 +483,10 @@ pub mod zig_base64 {
         /// Note: this is wrong for base64url encoding. Do not use it for that.
         pub fn calc_size(&self, source_len: usize) -> usize {
             if self.pad_char.is_some() {
-                (source_len + 2) / 3 * 4
+                source_len.div_ceil(3) * 4
             } else {
                 let leftover = source_len % 3;
-                source_len / 3 * 4 + (leftover * 4 + 2) / 3
+                source_len / 3 * 4 + (leftover * 4).div_ceil(3)
             }
         }
 
@@ -566,7 +566,7 @@ pub mod zig_base64 {
             let mut result = source_len / 4 * 3;
             let leftover = source_len % 4;
             if self.pad_char.is_some() {
-                if leftover % 4 != 0 {
+                if !leftover.is_multiple_of(4) {
                     return Err(Error::InvalidPadding);
                 }
             } else {
@@ -599,7 +599,7 @@ pub mod zig_base64 {
         /// invalid padding results in Error::InvalidPadding.
         #[inline]
         pub fn decode(&self, dest: &mut [u8], source: &[u8]) -> Result<(), Error> {
-            if self.pad_char.is_some() && source.len() % 4 != 0 {
+            if self.pad_char.is_some() && !source.len().is_multiple_of(4) {
                 return Err(Error::InvalidPadding);
             }
             // PORT NOTE: Zig used u12/u4; Rust uses u16/u8 with explicit masking.

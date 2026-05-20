@@ -617,7 +617,7 @@ pub unsafe fn js_timer_flags_ptr(
             }
             _ => return None,
         };
-        Some(NonNull::new_unchecked(p as *mut TimerFlags))
+        Some(NonNull::new_unchecked(p.cast_mut()))
     }
 }
 

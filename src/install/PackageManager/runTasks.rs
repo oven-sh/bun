@@ -459,7 +459,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                         if manager.subcommand != Subcommand::Remove {
                             for request in manager.update_requests.iter_mut() {
-                                if strings::eql(&request.name, name) {
+                                if strings::eql(request.name, name) {
                                     request.failed = true;
                                     manager.options.do_.remove(Do::SAVE_LOCKFILE);
                                     manager.options.do_.remove(Do::SAVE_YARN_LOCK);
@@ -511,7 +511,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
                     if manager.subcommand != Subcommand::Remove {
                         for request in manager.update_requests.iter_mut() {
-                            if strings::eql(&request.name, name) {
+                            if strings::eql(request.name, name) {
                                 request.failed = true;
                                 manager.options.do_.remove(Do::SAVE_LOCKFILE);
                                 manager.options.do_.remove(Do::SAVE_YARN_LOCK);
@@ -778,7 +778,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
                     if manager.subcommand != Subcommand::Remove {
                         for request in manager.update_requests.iter_mut() {
-                            if strings::eql(&request.name, extract.name.slice()) {
+                            if strings::eql(request.name, extract.name.slice()) {
                                 request.failed = true;
                                 manager.options.do_.remove(Do::SAVE_LOCKFILE);
                                 manager.options.do_.remove(Do::SAVE_YARN_LOCK);
@@ -863,7 +863,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
                     if manager.subcommand != Subcommand::Remove {
                         for request in manager.update_requests.iter_mut() {
-                            if strings::eql(&request.name, extract.name.slice()) {
+                            if strings::eql(request.name, extract.name.slice()) {
                                 request.failed = true;
                                 manager.options.do_.remove(Do::SAVE_LOCKFILE);
                                 manager.options.do_.remove(Do::SAVE_YARN_LOCK);

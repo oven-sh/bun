@@ -163,11 +163,11 @@ pub fn verify(options: VerifyOptions<'_>) -> bool {
             if outlen > buf.len() {
                 return false;
             }
-            let wrote = bun_base64::decode(&mut buf[0..outlen], slice).count;
-            wrote
+            
+            bun_base64::decode(&mut buf[0..outlen], slice).count
         }
         TokenFormat::Hex => {
-            if token.len() % 2 != 0 {
+            if !token.len().is_multiple_of(2) {
                 return false;
             }
             // decoded len

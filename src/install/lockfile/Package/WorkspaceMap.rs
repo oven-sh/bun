@@ -314,7 +314,7 @@ impl WorkspaceMap {
                     arena.alloc_slice_copy(resolve_path::join::<path::platform::Auto>(&parts))
                 };
 
-                let mut cwd = resolve_path::dirname::<path::platform::Auto>(&source.path.text);
+                let mut cwd = resolve_path::dirname::<path::platform::Auto>(source.path.text);
                 if cwd.is_empty() {
                     cwd = bun_resolver::fs::FileSystem::instance().top_level_dir();
                 }

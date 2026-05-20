@@ -628,7 +628,7 @@ impl FileReader {
                         in_progress[0..buf.len()].copy_from_slice(buf);
                         // SAFETY: lifetime laundering matches the field's TODO(port) note.
                         let remaining =
-                            unsafe { &mut *(&mut in_progress[buf.len()..] as *mut [u8]) };
+                            unsafe { &mut *(&raw mut in_progress[buf.len()..]) };
                         *riop = ReadDuringJSOnPullResult::Js(remaining);
                     } else if !in_progress.is_empty() && !has_more {
                         // `buf` outlives the `on_pull` call that consumes this
@@ -1095,7 +1095,7 @@ impl readable_stream::SourceContext for FileReader {
     fn on_pull(&mut self, buf: &mut [u8], arr: JSValue) -> streams::Result {
         // SAFETY: lifetime laundering — `buf` borrows a JS typed array kept alive
         // by `arr` (see TODO(port) note at top of file).
-        let buf = unsafe { &mut *(buf as *mut [u8]) };
+        let buf = unsafe { &mut *std::ptr::from_mut::<[u8]>(buf) };
         Self::on_pull(self, buf, arr)
     }
     fn on_cancel(&mut self) {

@@ -80,6 +80,13 @@ pub struct BlockList {
 
     /// We cannot lock/unlock a mutex
     estimated_size: AtomicU32,
+
+    /// Per-instance random identity, written into the structured-clone wire
+    /// alongside the address. Deserialize re-reads it from the live instance
+    /// (after [`SERIALIZED_REFS`] confirms the address is safe to dereference)
+    /// so wire bytes captured before this instance existed cannot match even if
+    /// the allocator reused the same address.
+    serialize_nonce: u64,
 }
 
 impl BlockList {
@@ -108,6 +115,11 @@ impl BlockList {
             da_rules: JsCell::new(Vec::new()),
             mutex: Mutex::default(),
             estimated_size: AtomicU32::new(0),
+            serialize_nonce: {
+                let mut n = [0u8; 8];
+                bun_core::csprng(&mut n);
+                u64::from_ne_bytes(n)
+            },
         }));
         Ok(ptr)
     }
@@ -398,6 +410,7 @@ impl BlockList {
         // via int→ptr cast and never forms `&mut Self` (only `ref_()` +
         // `to_js_ptr`, both `&self`/raw-ptr), so `from_ref` provenance is fine.
         _ = writer.write_int_le(addr);
+        _ = writer.write_int_le(this.serialize_nonce);
     }
 
     // C++ codegen calls this with a live `*mut *mut u8` cursor and end pointer; the
@@ -420,9 +433,9 @@ impl BlockList {
         let mut r =
             bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(*ptr, total_length) });
 
-        let int = match r.read_int_le::<usize>() {
-            Ok(v) => v,
-            Err(_) => {
+        let (int, nonce) = match (r.read_int_le::<usize>(), r.read_int_le::<u64>()) {
+            (Ok(a), Ok(n)) => (a, n),
+            _ => {
                 return Err(global.throw(format_args!(
                     "BlockList.onStructuredCloneDeserialize failed"
                 )));
@@ -440,6 +453,16 @@ impl BlockList {
         }
 
         let this: *mut Self = int as *mut Self;
+        // SAFETY: presence in `SERIALIZED_REFS` (paired `ref_()`/`deref()`)
+        // guarantees `this` is a live `BlockList` allocation, so the field read
+        // is in-bounds. The nonce check then rejects wire bytes that name this
+        // address but were produced by a *different* instance that has since
+        // been freed and whose slot the allocator reused.
+        if unsafe { (*this).serialize_nonce } != nonce {
+            return Err(global.throw(format_args!(
+                "BlockList.onStructuredCloneDeserialize failed"
+            )));
+        }
         // A single SerializedScriptValue can be deserialized multiple times
         // (e.g. BroadcastChannel fan-out), so each wrapper must own its own ref
         // instead of adopting the one taken in serialize. The serialize ref is

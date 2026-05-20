@@ -210,7 +210,11 @@ function getArrayType(typeNameOrID: number | ArrayType | undefined = undefined):
     return getPostgresArrayType(typeNameOrID as number) ?? "JSON";
   }
   if (typeOfType === "string") {
-    return (typeNameOrID as string)?.toUpperCase();
+    const type = (typeNameOrID as string).toUpperCase();
+    if (!/^[A-Z_][A-Z0-9_ ]*$/.test(type)) {
+      throw $ERR_INVALID_ARG_VALUE("type", typeNameOrID, "must be a valid PostgreSQL type name");
+    }
+    return type;
   }
   // default to JSON so we accept most of the types
   return "JSON";

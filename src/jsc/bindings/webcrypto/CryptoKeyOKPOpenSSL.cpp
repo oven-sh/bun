@@ -217,7 +217,7 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier identif
 
     // Read length
     index += bytesUsedToEncodedLength(keyData[index]);
-    if (keyData.size() < index + 1)
+    if (keyData.size() < index + 5)
         return nullptr;
 
     // Read OID

@@ -547,7 +547,7 @@ pub mod html_import_manifest {
     pub fn write_escaped_json(
         index: u32,
         graph: &Graph,
-        linker_graph: &LinkerGraph,
+        linker_graph: &LinkerGraph<'_>,
         chunks: &[Chunk],
         w: &mut &mut [u8],
     ) -> Result<(), core::fmt::Error> {
@@ -597,15 +597,7 @@ pub use bun_js_printer::MangledProps;
 /// `bun.logger` — alias used by the original drafts as `crate::bun_ast::Source`.
 
 /// `js_ast.BundledAst` (the bundler-facing AST view).
-///
-/// PORT NOTE: lifetime-erased to `'static`. `BundledAst<'arena>` borrows the
-/// per-file parse arena (`hashbang`/`url_for_css`/`export_star_import_records`
-/// slices). The bundler owns those arenas for the entire link (see
-/// `LinkerGraph.bump: *const Arena` "stays `'static`-ish" note); `JSAst` is
-/// stored in a `MultiArrayList` SoA inside `LinkerGraph`/`Graph`, neither of
-/// which carries a lifetime parameter yet. Pin to `'static` until `'bump`
-/// is threaded through `Chunk`/`LinkerGraph`/`LinkerContext`.
-pub type JSAst = crate::BundledAst<'static>;
+pub type JSAst<'a> = crate::BundledAst<'a>;
 pub(crate) use bun_ast::{Part, Ref, Symbol};
 
 /// `bundle_v2.zig:EntryPoint` — both a struct and (via the sibling module
@@ -686,29 +678,48 @@ pub mod entry_point {
 /// `bundle_v2.zig:ImportData` / `ExportData` / `JSMeta` — see the gated
 /// `bundle_v2.rs` draft body for full doc-comments.
 pub mod js_meta {
+    use bun_alloc::{AstAlloc, AstVec};
     use bun_ast::{Dependency, Ref};
-    use bun_collections::{ArrayHashMap, StringArrayHashMap, VecExt};
+    use bun_collections::array_hash_map::StringContext;
+    use bun_collections::{ArrayHashMap, AutoContext, StringArrayHashMap, VecExt};
 
     use crate::{ImportTracker, Index, WrapKind};
 
-    #[derive(Default)]
     pub struct ImportData {
-        pub re_exports: Vec<Dependency>,
+        pub re_exports: AstVec<Dependency>,
         pub data: ImportTracker,
+    }
+    impl Default for ImportData {
+        fn default() -> Self {
+            Self {
+                re_exports: AstAlloc::vec(),
+                data: ImportTracker::default(),
+            }
+        }
     }
     /// Alias used by `LinkerGraph::generate_symbol_import_and_use`.
     pub type ImportToBind = ImportData;
 
-    #[derive(Default)]
     pub struct ExportData {
-        pub potentially_ambiguous_export_star_refs: Vec<ImportData>,
+        pub potentially_ambiguous_export_star_refs: AstVec<ImportData>,
         pub data: ImportTracker,
+    }
+    impl Default for ExportData {
+        fn default() -> Self {
+            Self {
+                potentially_ambiguous_export_star_refs: AstAlloc::vec(),
+                data: ImportTracker::default(),
+            }
+        }
     }
     /// Alias used by `LinkerGraph::load`.
     pub type ResolvedExport = ExportData;
 
-    pub type RefImportData = ArrayHashMap<Ref, ImportData>;
-    pub type ResolvedExports = StringArrayHashMap<ExportData>;
+    pub type RefImportData = ArrayHashMap<Ref, ImportData, AutoContext, AstAlloc>;
+    pub type ResolvedExports = StringArrayHashMap<ExportData, StringContext, AstAlloc>;
+    pub type ProbablyTypescriptType = ArrayHashMap<Ref, (), AutoContext, AstAlloc>;
+    pub type SortedAndFilteredExportAliases = AstVec<Box<[u8], AstAlloc>>;
+    pub type CjsExportCopies = AstVec<Ref>;
     pub type TopLevelSymbolToParts = bun_ast::ast_result::TopLevelSymbolToParts;
 
     /// `bundle_v2.zig:JSMeta.Flags` — packed struct(u8). Callers use
@@ -728,29 +739,45 @@ pub mod js_meta {
     /// `JSMeta.Wrap` alias used by `linker_context/` submodules.
     pub use crate::WrapKind as Wrap;
 
-    #[derive(Default)]
     pub struct JSMeta {
-        pub probably_typescript_type: ArrayHashMap<Ref, ()>,
+        pub probably_typescript_type: ProbablyTypescriptType,
         pub imports_to_bind: RefImportData,
         pub resolved_exports: ResolvedExports,
         pub resolved_export_star: ExportData,
-        pub sorted_and_filtered_export_aliases: Box<[Box<[u8]>]>,
+        pub sorted_and_filtered_export_aliases: SortedAndFilteredExportAliases,
         pub top_level_symbol_to_parts_overlay: TopLevelSymbolToParts,
-        pub cjs_export_copies: Box<[Ref]>,
+        pub cjs_export_copies: CjsExportCopies,
         pub wrapper_part_index: Index,
         pub entry_point_part_index: Index,
         pub flags: Flags,
     }
 
+    impl Default for JSMeta {
+        fn default() -> Self {
+            Self {
+                probably_typescript_type: ProbablyTypescriptType::default(),
+                imports_to_bind: RefImportData::default(),
+                resolved_exports: ResolvedExports::default(),
+                resolved_export_star: ExportData::default(),
+                sorted_and_filtered_export_aliases: AstAlloc::vec(),
+                top_level_symbol_to_parts_overlay: TopLevelSymbolToParts::default(),
+                cjs_export_copies: AstAlloc::vec(),
+                wrapper_part_index: Index::default(),
+                entry_point_part_index: Index::default(),
+                flags: Flags::default(),
+            }
+        }
+    }
+
     bun_collections::multi_array_columns! {
         pub trait JSMetaColumns for JSMeta {
-            probably_typescript_type: ArrayHashMap<Ref, ()>,
+            probably_typescript_type: ProbablyTypescriptType,
             imports_to_bind: RefImportData,
             resolved_exports: ResolvedExports,
             resolved_export_star: ExportData,
-            sorted_and_filtered_export_aliases: Box<[Box<[u8]>]>,
+            sorted_and_filtered_export_aliases: SortedAndFilteredExportAliases,
             top_level_symbol_to_parts_overlay: TopLevelSymbolToParts,
-            cjs_export_copies: Box<[Ref]>,
+            cjs_export_copies: CjsExportCopies,
             wrapper_part_index: Index,
             entry_point_part_index: Index,
             flags: Flags,
@@ -766,8 +793,8 @@ pub mod js_meta {
     }
 }
 pub use js_meta::{
-    ExportData, ImportData, JSMeta, JSMetaColumns, RefImportData, ResolvedExports,
-    TopLevelSymbolToParts,
+    CjsExportCopies, ExportData, ImportData, JSMeta, JSMetaColumns, ProbablyTypescriptType,
+    RefImportData, ResolvedExports, SortedAndFilteredExportAliases, TopLevelSymbolToParts,
 };
 
 // ──────────────────────────────────────────────────────────────────────────

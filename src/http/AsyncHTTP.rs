@@ -98,6 +98,7 @@ const fn noop_callback() -> HTTPClientResultCallback {
     HTTPClientResultCallback {
         ctx: core::ptr::null_mut(),
         function: noop_result_callback,
+        release_at_shutdown: None,
     }
 }
 
@@ -853,6 +854,15 @@ impl<'a> AsyncHTTP<'a> {
                 // to `this`/`async_http`; only static state is touched afterward.
                 let threadlocal_http: *mut ThreadlocalAsyncHTTP =
                     bun_core::from_field_ptr!(ThreadlocalAsyncHTTP, async_http, async_http);
+                {
+                    let in_flight = &mut crate::http_thread().in_flight;
+                    if let Some(i) = in_flight
+                        .iter()
+                        .position(|n| n.as_ptr() == threadlocal_http)
+                    {
+                        in_flight.swap_remove(i);
+                    }
+                }
                 // PORT NOTE: Zig `defer threadlocal_http.deinit()` is
                 // `bun.TrivialDeinit` — it frees the heap slot WITHOUT running
                 // any field destructors. Reclaiming as `Box<_>` here would

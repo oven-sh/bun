@@ -2678,7 +2678,7 @@ impl Source {
     }
 
     pub fn fmt_identifier(&self) -> bun_core::fmt::FormatValidIdentifier<'_> {
-        self.path.name.fmt_identifier()
+        self.path.name().fmt_identifier()
     }
 
     pub fn identifier_name(&mut self) -> Result<&[u8], bun_core::Error> {
@@ -2689,7 +2689,7 @@ impl Source {
 
         debug_assert!(!self.path.text.is_empty());
         let name = bun_core::MutableString::ensure_valid_identifier(
-            self.path.name.non_unique_name_string_base(),
+            self.path.name().non_unique_name_string_base(),
         )?;
         self.identifier_name = Cow::Owned(name.into_vec());
         Ok(&self.identifier_name)

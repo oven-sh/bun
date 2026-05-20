@@ -377,30 +377,38 @@ pub fn longest_common_path_posix<'a>(input: &[&'a [u8]]) -> &'a [u8] {
 // from/to buffers while `relative_to_common_path_buf()` is borrowed elsewhere
 // without aliasing a single parent payload. Only 3×8 bytes in static TLS instead
 // of 3×PathBuffer (see test/js/bun/binary/tls-segment-size).
+struct LazyPathBuf(core::cell::Cell<*mut PathBuffer>);
+
+impl Drop for LazyPathBuf {
+    fn drop(&mut self) {
+        let p = self.0.get();
+        if !p.is_null() {
+            // SAFETY: `p` came from `heap::into_raw` in `lazy_path_buf`; sole accessor.
+            unsafe { drop(bun_core::heap::take(p)) };
+        }
+    }
+}
+
 thread_local! {
-    static RELATIVE_TO_COMMON_PATH_BUF: core::cell::Cell<*mut PathBuffer> =
-        const { core::cell::Cell::new(core::ptr::null_mut()) };
-    static RELATIVE_FROM_BUF: core::cell::Cell<*mut PathBuffer> =
-        const { core::cell::Cell::new(core::ptr::null_mut()) };
-    static RELATIVE_TO_BUF: core::cell::Cell<*mut PathBuffer> =
-        const { core::cell::Cell::new(core::ptr::null_mut()) };
+    static RELATIVE_TO_COMMON_PATH_BUF: LazyPathBuf =
+        const { LazyPathBuf(core::cell::Cell::new(core::ptr::null_mut())) };
+    static RELATIVE_FROM_BUF: LazyPathBuf =
+        const { LazyPathBuf(core::cell::Cell::new(core::ptr::null_mut())) };
+    static RELATIVE_TO_BUF: LazyPathBuf =
+        const { LazyPathBuf(core::cell::Cell::new(core::ptr::null_mut())) };
 }
 
 /// Lazily allocate (on first use) and borrow a thread-local `PathBuffer`. One
 /// `unsafe` site for all `RELATIVE_*_BUF` accessors (nonnull-asref reduction:
 /// 5 sites → 1).
 #[inline]
-fn lazy_path_buf(c: &core::cell::Cell<*mut PathBuffer>) -> &'static mut PathBuffer {
-    let mut p = c.get();
+fn lazy_path_buf(c: &LazyPathBuf) -> &'static mut PathBuffer {
+    let mut p = c.0.get();
     if p.is_null() {
         p = bun_core::heap::into_raw(Box::new(PathBuffer::ZEROED));
-        c.set(p);
+        c.0.set(p);
     }
-    // SAFETY: `p` is non-null after the init branch above and points at a
-    // leaked `Box<PathBuffer>` (process-lifetime heap allocation). The `Cell`
-    // lives in a `thread_local!`, so this thread is the sole accessor; callers
-    // uphold the single-live-borrow-per-thread invariant documented at the
-    // thread-local declaration.
+    // SAFETY: `p` is non-null after the init branch; this thread is the sole accessor.
     unsafe { &mut *p }
 }
 
@@ -1702,24 +1710,35 @@ pub fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(
     normalize_string_node_t::<T, P>(&temp_buf[0..written], buf)
 }
 
-/// Inline `MAX_PATH_BYTES * 2` stack buffer that heap-allocates when the
-/// requested size exceeds it. Keeps `_join_abs_string_buf`'s scratch buffer safe
-/// for arbitrarily long inputs while preserving zero-alloc behaviour for the
-/// common case.
-struct JoinScratch {
-    // PERF(port): was StackFallbackAllocator(MAX_PATH_BYTES * 2) — using Vec.
-    // TODO(perf): consider a smallvec / stack-alloc fast path.
-    buf: Vec<u8>,
+/// Scratch buffer for `_join_abs_string_buf`'s unnormalized concatenation.
+/// Zig used `std.heap.stackFallback(MAX_PATH_BYTES * 2)`; we draw from the
+/// thread-local `path_buffer_pool` for the common case and only heap-allocate
+/// when the concatenation would overflow a single `PathBuffer`. The pooled
+/// buffer is not re-zeroed — callers write every byte they later read.
+enum JoinScratch {
+    Pooled(crate::path_buffer_pool::Guard),
+    Heap(Vec<u8>),
 }
 
 impl JoinScratch {
+    #[inline]
     pub(crate) fn init(base: usize, parts: &[&[u8]]) -> Self {
         let mut total = base + 2;
         for p in parts {
             total += p.len() + 1;
         }
-        Self {
-            buf: vec![0u8; total],
+        if total <= MAX_PATH_BYTES {
+            JoinScratch::Pooled(crate::path_buffer_pool::get())
+        } else {
+            JoinScratch::Heap(vec![0u8; total])
+        }
+    }
+
+    #[inline]
+    fn buf(&mut self) -> &mut [u8] {
+        match self {
+            JoinScratch::Pooled(g) => &mut g[..],
+            JoinScratch::Heap(v) => &mut v[..],
         }
     }
 }
@@ -1887,7 +1906,7 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
     }
 
     let mut scratch = JoinScratch::init(cwd.len(), parts);
-    let temp_buf = &mut scratch.buf;
+    let temp_buf = scratch.buf();
 
     temp_buf[..cwd.len()].copy_from_slice(cwd);
     out = cwd.len();
@@ -2006,7 +2025,7 @@ fn _join_abs_string_buf_windows<'a, const IS_SENTINEL: bool>(
     }
 
     let mut scratch = JoinScratch::init(root.len() + set_cwd.len(), &parts[n_start..]);
-    let temp_buf = &mut scratch.buf;
+    let temp_buf = scratch.buf();
 
     temp_buf[0..root.len()].copy_from_slice(root);
     temp_buf[root.len()..root.len() + set_cwd.len()].copy_from_slice(set_cwd);

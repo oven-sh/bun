@@ -631,7 +631,7 @@ impl ConicGradient {
             .collect();
 
         ConicGradient {
-            angle: self.angle.clone(),
+            angle: self.angle,
             position: self.position.deep_clone(bump),
             items,
         }
@@ -643,7 +643,7 @@ impl ConicGradient {
             items.push(in_.deep_clone(bump));
         }
         ConicGradient {
-            angle: self.angle.clone(),
+            angle: self.angle,
             position: self.position.deep_clone(bump),
             items,
         }
@@ -915,7 +915,7 @@ impl WebKitGradient {
 }
 
 /// The corner payload for [`LineDirection::Corner`].
-#[derive(Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 pub struct LineDirectionCorner {
     /// A horizontal position keyword, e.g. `left` or `right`.
     pub horizontal: HorizontalPositionKeyword,
@@ -1209,7 +1209,7 @@ impl<S: GradientSideKeyword> WebKitGradientPointComponent<S> {
                 if s.offset.is_some() {
                     None
                 } else {
-                    Some(WebKitGradientPointComponent::Side(s.side.clone()))
+                    Some(WebKitGradientPointComponent::Side(s.side))
                 }
             }
         }

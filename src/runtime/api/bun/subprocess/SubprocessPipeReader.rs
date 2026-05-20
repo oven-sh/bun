@@ -216,11 +216,10 @@ impl PipeReader {
             // `process` backref is valid while set; cleared before deref.
             let kind = self.kind(process.get());
             process.on_close_io(kind);
-            // SAFETY: last use of `self`; raw ptr derived from `&mut self` carries
-            // write provenance, and the caller (BufferedReader vtable) holds only a
-            // raw parent pointer, so freeing here does not invalidate any live `&mut`.
-            unsafe { PipeReader::deref(self) };
         }
+        // SAFETY: last use of `self`; caller holds only a raw parent pointer,
+        // so freeing here does not invalidate any live `&mut`.
+        unsafe { PipeReader::deref(self) };
     }
 
     pub fn kind(&self, process: &Subprocess<'_>) -> StdioKind {
@@ -334,9 +333,9 @@ impl PipeReader {
             // `process` backref is valid while set; cleared before deref.
             let kind = self.kind(process.get());
             process.on_close_io(kind);
-            // SAFETY: last use of `self`; see `on_reader_done` for rationale.
-            unsafe { PipeReader::deref(self) };
         }
+        // SAFETY: last use of `self`; see `on_reader_done`.
+        unsafe { PipeReader::deref(self) };
     }
 
     pub fn close(&mut self) {

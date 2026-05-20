@@ -18,14 +18,11 @@ use crate::bun_fs::RealFS;
 // 2. (Optional) move the file to the destination
 // This saves us from allocating a buffer
 
-#[derive(Clone)]
 pub struct OutputFile {
     pub loader: Loader,
     pub input_loader: Loader,
-    // TODO(port): `src_path.text` ownership — Zig `deinit` freed it via
-    // `default_allocator` even though it's a field of `Fs.Path`. Ensure
-    // `bun_fs::Path` owns `text` so dropping `OutputFile` frees it implicitly.
     pub src_path: fs::Path<'static>,
+    pub owned_src_path_text: Box<[u8]>,
     pub value: Value,
     pub size: usize,
     pub size_without_sourcemap: usize,
@@ -55,6 +52,7 @@ impl OutputFile {
             loader: Loader::File,
             input_loader: Loader::Js,
             src_path: fs::Path::init(b""),
+            owned_src_path_text: Box::default(),
             value: Value::Noop,
             size: 0,
             size_without_sourcemap: 0,
@@ -74,6 +72,45 @@ impl OutputFile {
     }
 }
 
+impl Clone for OutputFile {
+    fn clone(&self) -> Self {
+        let owned_src_path_text = self.owned_src_path_text.clone();
+        // SAFETY: `owned_src_path_text` is a sibling field that outlives `src_path`; the boxed buffer never moves.
+        let text: &'static [u8] =
+            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(&owned_src_path_text) };
+        let src_path = if !self.owned_src_path_text.is_empty() {
+            fs::Path {
+                is_disabled: self.src_path.is_disabled,
+                is_symlink: self.src_path.is_symlink,
+                ..fs::Path::init(text)
+            }
+        } else {
+            self.src_path.clone()
+        };
+        OutputFile {
+            loader: self.loader,
+            input_loader: self.input_loader,
+            src_path,
+            owned_src_path_text,
+            value: self.value.clone(),
+            size: self.size,
+            size_without_sourcemap: self.size_without_sourcemap,
+            hash: self.hash,
+            is_executable: self.is_executable,
+            source_map_index: self.source_map_index,
+            bytecode_index: self.bytecode_index,
+            module_info_index: self.module_info_index,
+            output_kind: self.output_kind,
+            dest_path: self.dest_path.clone(),
+            side: self.side,
+            entry_point_index: self.entry_point_index,
+            referenced_css_chunks: self.referenced_css_chunks.clone(),
+            source_index: self.source_index,
+            bake_extra: self.bake_extra,
+        }
+    }
+}
+
 #[derive(Default, Clone, Copy)]
 pub struct BakeExtra {
     pub is_route: bool,
@@ -84,10 +121,6 @@ pub struct BakeExtra {
 // Zig: `pub const Index = bun.GenericIndex(u32, OutputFile);`
 pub type Index = bun_core::GenericIndex<u32, OutputFile>;
 pub type IndexOptional = bun_core::GenericIndexOptional<u32, OutputFile>;
-
-// Zig `deinit` only freed owned fields (value / src_path.text / dest_path /
-// referenced_css_chunks); all are now owned types that drop automatically, so no
-// explicit `impl Drop` is needed (and an empty one would block field moves).
 
 // Depending on:
 // - The target
@@ -191,9 +224,6 @@ impl Clone for Value {
 }
 
 impl Value {
-    // Zig `deinit` only freed `.buffer.bytes`; `Box<[u8]>` drops automatically, so no
-    // explicit `Drop` impl is needed.
-
     pub fn as_slice(&self) -> &[u8] {
         match self {
             Value::Buffer { bytes } => bytes,
@@ -382,25 +412,15 @@ impl OutputFile {
             OptionsData::File { size, .. } => *size,
             OptionsData::Saved(_) => 0,
         });
-        // PORT NOTE: Zig `Fs.Path.init(options.input_path)` stored the borrowed
-        // slice and `OutputFile.deinit` freed it via `default_allocator` — i.e.
-        // `OutputFile` *owns* `src_path.text`. `bun_paths::fs::Path<'static>` currently
-        // borrows `&'static [u8]`, so ownership of this `Box<[u8]>` is parked
-        // (logically held by `OutputFile`, but with no Drop hook to reclaim it
-        // yet — see TODO). Do NOT route through `linker::relative_paths_list` —
-        // that is an extra memcpy plus a forged `&mut` on a shared global per
-        // output file, and still never frees.
-        // TODO(port): give `fs::Path` an owning `text: Cow<'static,[u8]>` so
-        // this becomes a plain move and Drop frees it (matches Zig deinit).
-        let input_path: &'static [u8] = if options.input_path.is_empty() {
-            b""
-        } else {
-            bun_core::heap::release(options.input_path)
-        };
+        let owned_src_path_text: Box<[u8]> = options.input_path;
+        // SAFETY: `owned_src_path_text` is a sibling field that outlives `src_path`; the boxed buffer never moves.
+        let input_path: &'static [u8] =
+            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(&owned_src_path_text) };
         OutputFile {
             loader: options.loader,
             input_loader: options.input_loader,
             src_path: fs::Path::init(input_path),
+            owned_src_path_text,
             dest_path: options.output_path.clone(),
             source_index: options.source_index,
             size,
@@ -441,9 +461,8 @@ impl OutputFile {
                     // Zig: `std.fs.path.dirname` returns `null` when there's no
                     // separator; the Rust port returns `b""` instead.
                     let parent = resolve_path::dirname::<platform::Auto>(rel_path);
-                    if !parent.is_empty() && parent.len() > root_dir_path.len() {
-                        // Zig `root_dir.makePath(parent)` (std.fs.Dir).
-                        bun_sys::make_path(bun_sys::Dir::from_fd(root_dir), parent)?;
+                    if !parent.is_empty() {
+                        bun_sys::Dir::borrow(&root_dir).make_path(parent)?;
                     }
                 }
 

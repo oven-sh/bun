@@ -260,7 +260,7 @@ fn write_log_data(data: &bun_ast::Data, w: &mut Writer) {
         }
         debug_assert!(loc.column >= 0); // zero based and not negative
 
-        _ = w.write_int_le::<i32>(i32::try_from(loc.line).expect("int cast"));
+        _ = w.write_int_le::<i32>(loc.line);
         _ = w.write_int_le::<u32>(u32::try_from(loc.column).expect("int cast"));
         _ = w.write_int_le::<u32>(u32::try_from(loc.length).expect("int cast"));
 

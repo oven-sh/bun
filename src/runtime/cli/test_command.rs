@@ -805,19 +805,16 @@ impl JunitReporter {
                     (bstr::BStr::new(path), err),
                 );
             }
-            bun_sys::Result::Ok(fd) => {
-                let _close_fd = bun_sys::CloseOnDrop::file(&fd);
-                match File::write_all(&fd, &self.contents) {
-                    bun_sys::Result::Ok(()) => {}
-                    bun_sys::Result::Err(err) => {
-                        Output::err(
-                            bun_core::err!("JUnitReportFailed"),
-                            "Failed to write JUnit report to {}\n{}",
-                            (bstr::BStr::new(path), err),
-                        );
-                    }
+            bun_sys::Result::Ok(fd) => match File::write_all(&fd, &self.contents) {
+                bun_sys::Result::Ok(()) => {}
+                bun_sys::Result::Err(err) => {
+                    Output::err(
+                        bun_core::err!("JUnitReportFailed"),
+                        "Failed to write JUnit report to {}\n{}",
+                        (bstr::BStr::new(path), err),
+                    );
                 }
-            }
+            },
         }
         Ok(())
     }
@@ -1207,13 +1204,11 @@ impl CommandLineReporter {
                     let needed_name =
                         unsafe { (*needed_scope).base.name.as_deref() }.unwrap_or(b"");
                     if !strings::eql(&suite_info.name, needed_name) {
-                        suites_to_close = u32::try_from(current_suite_depth).unwrap()
-                            - u32::try_from(suite_index).unwrap();
+                        suites_to_close = current_suite_depth - u32::try_from(suite_index).unwrap();
                         break;
                     }
                 } else {
-                    suites_to_close = u32::try_from(current_suite_depth).unwrap()
-                        - u32::try_from(suite_index).unwrap();
+                    suites_to_close = current_suite_depth - u32::try_from(suite_index).unwrap();
                     break;
                 }
                 suite_index += 1;
@@ -1585,7 +1580,6 @@ impl CommandLineReporter {
             }
             bun_sys::Result::Ok(f) => f,
         };
-        let _close_file = bun_sys::CloseOnDrop::file(&file); // close error is non-actionable (Zig parity: discarded)
         // TODO(port): file.writer().adaptToNewApi(buf) — Zig's buffered writer adapter
         // not present on `bun_sys::File`; buffer in a Vec (impl `bun_io::Write`) and
         // write through in one shot below.
@@ -3026,6 +3020,16 @@ impl TestCommand {
             vm.exit_handler.exit_code = 1;
         }
         vm.is_shutting_down = true;
+        // Release `bun:test` GC roots before `global_exit()` so
+        // `destructOnExit()`'s `collectNow()` can reach the closures they pin
+        // (preload hooks, per-file describe/test callbacks). Clear `RUNNER`
+        // before dropping `reporter` so finalizers running inside the GC can't
+        // observe a dangling `TestRunner`.
+        reporter.jest.bun_test_root.deinit_for_exit();
+        unsafe {
+            jest::Jest::RUNNER.write(None);
+        }
+        drop(reporter);
         {
             let vm_ptr: *mut VirtualMachine = vm;
             vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
@@ -3257,6 +3261,18 @@ impl TestCommand {
 
                         vm.exit_handler.exit_code = 1;
                         vm.is_shutting_down = true;
+                        // `global_exit()` diverges, so the `exit_file()` defer
+                        // above never fires. Release the active file's
+                        // `Strong`s and the preload-hook scope here so
+                        // `destructOnExit()`'s `collectNow()` can reclaim them,
+                        // then clear `RUNNER` so finalizers can't observe a
+                        // partially-torn-down `TestRunner`.
+                        // SAFETY: single-threaded; raw-ptr reborrow mirrors the
+                        // defer's escape.
+                        unsafe {
+                            (*bun_test_root_ptr).deinit_for_exit();
+                            jest::Jest::RUNNER.write(None);
+                        }
                         // SAFETY: global_exit diverges; raw-ptr reborrow mirrors Zig
                         // runWithAPILock(*VM, vm, globalExit).
                         let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm);

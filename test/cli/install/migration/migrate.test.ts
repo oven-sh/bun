@@ -1,11 +1,9 @@
-import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
+import { expect, setDefaultTimeout, test } from "bun:test";
 import fs from "fs";
 import { bunEnv, bunExe, tempDirWithFiles, tmpdirSync } from "harness";
 import { join } from "path";
 
-beforeAll(() => {
-  setDefaultTimeout(1000 * 60 * 5);
-});
+setDefaultTimeout(1000 * 60 * 5);
 
 function testMigration(lockfile: string) {
   const testDir = tmpdirSync();

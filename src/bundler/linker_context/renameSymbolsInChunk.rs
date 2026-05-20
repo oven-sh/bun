@@ -226,8 +226,9 @@ pub unsafe fn rename_symbols_in_chunk(
                 )?;
             }
 
-            for part in parts.slice() {
-                if !part.is_live {
+            let parts_live = &c.graph.parts_live[source_index as usize];
+            for (part_index, part) in parts.as_slice().iter().enumerate() {
+                if !parts_live.is_set(part_index) {
                     continue;
                 }
 
@@ -285,7 +286,7 @@ pub unsafe fn rename_symbols_in_chunk(
     for &source_index in files_in_order {
         let wrap = all_flags[source_index as usize].wrap;
         // PORT NOTE: need `&mut [Part]` for `add_top_level_declared_symbols`.
-        let parts: &mut [Part] = all_parts[source_index as usize].slice_mut();
+        let parts: &mut [Part] = all_parts[source_index as usize].as_mut_slice();
 
         match wrap {
             // Modules wrapped in a CommonJS closure look like this:
@@ -310,7 +311,7 @@ pub unsafe fn rename_symbols_in_chunk(
                 // add those symbols to the top-level scope to avoid causing name
                 // collisions. This code special-cases only those symbols.
                 if c.options.output_format.keep_es6_import_export_syntax() {
-                    let import_records = all_import_records[source_index as usize].slice();
+                    let import_records = all_import_records[source_index as usize].as_slice();
                     for part in parts.iter() {
                         for stmt in part.stmts.slice() {
                             match stmt.data {
@@ -394,8 +395,9 @@ pub unsafe fn rename_symbols_in_chunk(
             WrapKind::None => {}
         }
 
-        for part in parts.iter_mut() {
-            if !part.is_live {
+        let parts_live = &c.graph.parts_live[source_index as usize];
+        for (part_index, part) in parts.iter_mut().enumerate() {
+            if !parts_live.is_set(part_index) {
                 continue;
             }
 

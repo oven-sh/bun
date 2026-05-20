@@ -340,7 +340,7 @@ impl MaxSize {
 }
 
 /// A value for the [aspect-ratio](https://drafts.csswg.org/css-sizing-4/#aspect-ratio) property.
-#[derive(Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 pub struct AspectRatio {
     /// The `auto` keyword.
     pub auto: bool,

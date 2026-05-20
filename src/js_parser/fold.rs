@@ -381,7 +381,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // inline module.filename
                             p.ignore_usage(p.module_ref);
                             return Some(
-                                p.new_expr(e_string_init(p.source.path.name.filename), name_loc),
+                                p.new_expr(e_string_init(p.source.path.name().filename), name_loc),
                             );
                         } else if p.options.bundle
                             && name == b"path"
@@ -545,12 +545,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if name == b"dir" || name == b"dirname" {
                             // Inline import.meta.dir
                             return Some(
-                                p.new_expr(e_string_init(p.source.path.name.dir), name_loc),
+                                p.new_expr(e_string_init(p.source.path.name().dir), name_loc),
                             );
                         } else if name == b"file" {
                             // Inline import.meta.file (filename only)
                             return Some(
-                                p.new_expr(e_string_init(p.source.path.name.filename), name_loc),
+                                p.new_expr(e_string_init(p.source.path.name().filename), name_loc),
                             );
                         } else if name == b"path" {
                             // Inline import.meta.path (full path)
@@ -570,7 +570,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return Some(p.new_expr(
                         E::Dot {
                             target,
-                            name: name_static.into(),
+                            name: name_static,
                             name_loc,
                             can_be_removed_if_unused: true,
                             ..Default::default()
@@ -733,7 +733,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 return Some(Expr::init(
                                     E::Dot {
                                         target: Expr::init_identifier(p.hmr_api_ref, target.loc),
-                                        name: name_static.into(),
+                                        name: name_static,
                                         name_loc,
                                         ..Default::default()
                                     },
@@ -813,7 +813,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.new_expr(
                             E::Dot {
                                 target: *target,
-                                name: name_static.into(),
+                                name: name_static,
                                 name_loc,
                                 ..Default::default()
                             },
@@ -823,7 +823,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.new_expr(
                             E::Dot {
                                 target: *target,
-                                name: name_static.into(),
+                                name: name_static,
                                 name_loc,
                                 ..Default::default()
                             },

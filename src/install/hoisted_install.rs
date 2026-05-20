@@ -199,7 +199,7 @@ pub fn install_hoisted_packages(
                 Global::crash();
             }
         }
-        match sys::open_dir(Dir::from_fd(cwd), b"node_modules") {
+        match Dir::borrow(&cwd).open_at(b"node_modules") {
             Ok(dir) => break 'brk dir,
             Err(err) => {
                 Output::err(
@@ -422,8 +422,6 @@ pub fn install_hoisted_packages(
         };
 
         installer.node_modules.path.push(SEP);
-
-        // `defer installer.deinit()` — handled by Drop.
 
         let top_level_len =
             strings::without_trailing_slash(FileSystem::instance().top_level_dir()).len() + 1;

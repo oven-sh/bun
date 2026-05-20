@@ -315,9 +315,9 @@ pub struct SSLConfig {
 // that here by deref-ing every owned string field from the container's `Drop`
 // (matches `bindgen_generated.SSLConfig.deinit` in ssl_config.zig).
 //
-// `GenArrayBuffer` / `GenBlob` raw-pointer payloads also carry an adopted +1
-// ref and are still leaked on drop — tracked by the `pub type` TODOs above;
-// out of scope here.
+// `GenArrayBuffer` / `GenBlob` raw-pointer payloads likewise carry an adopted
+// +1 ref (C++ `ExternTraits<RefPtr<T>>::convertToExtern` calls `leakRef()`);
+// released here via the matching `ExternalSharedDescriptor::ext_deref`.
 //
 // `.get()` on `GenOpt` / `GenVal` returns a *bitwise* `Clone` of the
 // `bun_core::String` (the derived `Clone`, not the inherent `clone()` which
@@ -338,28 +338,56 @@ fn release_gen_val_string(s: &GenVal<GenString>) {
     s.0.deref();
 }
 
+#[inline]
+fn release_gen_val_array_buffer(b: &GenVal<GenArrayBuffer>) {
+    // SAFETY: `b.0` is the `RefPtr<JSC::ArrayBuffer>::leakRef()` result from
+    // C++ `ExternTraits` — a live (or null) `JSC::ArrayBuffer*` carrying +1.
+    if !b.0.is_null() {
+        unsafe { <JSCArrayBuffer as bun_ptr::ExternalSharedDescriptor>::ext_deref(b.0) };
+    }
+}
+
+#[inline]
+fn release_gen_val_blob(b: &GenVal<GenBlob>) {
+    // SAFETY: `b.0` is the `RefPtr<BlobImpl>::leakRef()` result from C++
+    // `ExternTraits` — a live (or null) heap-allocated `Blob*` carrying +1.
+    if !b.0.is_null() {
+        unsafe {
+            <crate::webcore_types::Blob as bun_ptr::ExternalSharedDescriptor>::ext_deref(
+                b.0.cast::<crate::webcore_types::Blob>(),
+            )
+        };
+    }
+}
+
 impl Drop for SSLConfigAlpnProtocols {
     fn drop(&mut self) {
-        if let SSLConfigAlpnProtocols::String(v) = self {
-            release_gen_val_string(v);
+        match self {
+            SSLConfigAlpnProtocols::None => {}
+            SSLConfigAlpnProtocols::String(v) => release_gen_val_string(v),
+            SSLConfigAlpnProtocols::Buffer(v) => release_gen_val_array_buffer(v),
         }
     }
 }
 
 impl Drop for SSLConfigSingleFile {
     fn drop(&mut self) {
-        if let SSLConfigSingleFile::String(v) = self {
-            release_gen_val_string(v);
+        match self {
+            SSLConfigSingleFile::String(v) => release_gen_val_string(v),
+            SSLConfigSingleFile::Buffer(v) => release_gen_val_array_buffer(v),
+            SSLConfigSingleFile::File(v) => release_gen_val_blob(v),
         }
     }
 }
 
 impl Drop for SSLConfigFile {
     fn drop(&mut self) {
-        // `Array` recursively drops each `SSLConfigSingleFile`; `Buffer` / `File`
-        // are raw-ptr payloads (see module note above).
-        if let SSLConfigFile::String(v) = self {
-            release_gen_val_string(v);
+        // `Array` recursively drops each `SSLConfigSingleFile`.
+        match self {
+            SSLConfigFile::None | SSLConfigFile::Array(_) => {}
+            SSLConfigFile::String(v) => release_gen_val_string(v),
+            SSLConfigFile::Buffer(v) => release_gen_val_array_buffer(v),
+            SSLConfigFile::File(v) => release_gen_val_blob(v),
         }
     }
 }

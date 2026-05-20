@@ -363,6 +363,16 @@ pub struct NpmInfo {
     pub is_alias: bool,
 }
 
+impl Clone for NpmInfo {
+    fn clone(&self) -> Self {
+        Self {
+            name: self.name,
+            version: self.version.clone(),
+            is_alias: self.is_alias,
+        }
+    }
+}
+
 impl NpmInfo {
     pub fn eql(&self, that: &NpmInfo, this_buf: &[u8], that_buf: &[u8]) -> bool {
         self.name.eql(that.name, this_buf, that_buf) && self.version.eql(&that.version)
@@ -403,10 +413,10 @@ impl TarballInfo {
 }
 
 /// Port of `install/dependency.zig` `Version.Value` — untagged; discriminant
-/// lives in [`DependencyVersion::tag`]. `npm`/`git`/`github` are
-/// `ManuallyDrop` because [`NpmInfo`] embeds a `Semver.Query.Group` (owned
-/// linked list); cleanup is the constructing crate's responsibility (Zig has
-/// no destructors here either — arena-freed).
+/// lives in [`DependencyVersion::tag`]. The `npm` arm owns a `Box` linked list
+/// (`Semver.Query.Group`) and is `ManuallyDrop`-wrapped because the union has
+/// no tag; [`DependencyVersion`]'s `Drop`/`Clone` dispatch on `tag` to free /
+/// deep-copy it. `git`/`github` (`Repository`) hold no heap data.
 #[repr(C)]
 pub union DependencyVersionValue {
     pub uninitialized: (),
@@ -434,16 +444,7 @@ impl Default for DependencyVersionValue {
     }
 }
 
-impl Clone for DependencyVersionValue {
-    #[inline]
-    fn clone(&self) -> Self {
-        // SAFETY: `repr(C)` union of POD-ish payloads with no `Drop` glue;
-        // every active variant is either `Copy` or `ManuallyDrop<_>` over
-        // arena-backed data. Zig copies these by value; replicate with a
-        // bitwise read.
-        unsafe { core::ptr::read(self) }
-    }
-}
+// No `Clone for DependencyVersionValue`: a tag-blind bitwise clone would double-free `npm`.
 
 /// Port of `install/dependency.zig` `Version`.
 #[repr(C)]
@@ -464,12 +465,28 @@ impl Default for DependencyVersion {
 }
 
 impl Clone for DependencyVersion {
-    #[inline]
     fn clone(&self) -> Self {
+        let value = match self.tag {
+            DependencyVersionTag::Npm => DependencyVersionValue {
+                // SAFETY: tag == Npm, so `npm` is the active arm.
+                npm: ManuallyDrop::new(unsafe { (*self.value.npm).clone() }),
+            },
+            // SAFETY: all non-`npm` arms hold no heap; a bitwise read is a true clone.
+            _ => unsafe { core::ptr::read(&self.value) },
+        };
         Self {
             tag: self.tag,
             literal: self.literal,
-            value: self.value.clone(),
+            value,
+        }
+    }
+}
+
+impl Drop for DependencyVersion {
+    fn drop(&mut self) {
+        if self.tag == DependencyVersionTag::Npm {
+            // SAFETY: tag == Npm, so `npm` is the active arm.
+            unsafe { ManuallyDrop::drop(&mut self.value.npm) };
         }
     }
 }
@@ -1382,7 +1399,7 @@ pub struct TaskCallbackContext {
 /// lives in this crate — so callers pass the borrow directly.
 // Clone: bitwise OK — `context` is a non-owning opaque backref the runtime
 // installed; the handler fn-ptrs are POD.
-#[derive(Default, Clone)]
+#[derive(Default, Copy, Clone)]
 pub struct WakeHandler {
     pub context: Option<NonNull<c_void>>,
     /// Zig: `fn(ctx: *anyopaque, pm: *PackageManager) void`.

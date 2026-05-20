@@ -504,7 +504,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     }
                                 }
                             }
-                        } else if p.lexer.token == T::TOpenBrace && name == b"static" {
+                        } else if opts.is_class
+                            && p.lexer.token == T::TOpenBrace
+                            && name == b"static"
+                        {
                             let loc = p.lexer.loc();
                             p.lexer.next()?;
 

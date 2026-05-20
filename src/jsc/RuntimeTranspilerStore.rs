@@ -108,26 +108,24 @@ pub fn dump_source_string_failiable(
 
     let mut path_buf = bun_paths::PathBuffer::default();
 
-    let dir = match *holder {
-        Some(d) => d,
-        None => {
-            let base_name: &[u8] = if cfg!(windows) {
-                // Spec: bun.fs.FileSystem.RealFS.platformTempDir() ++ "\\bun-debug-src"
-                let temp = Fs::RealFS::platform_temp_dir();
-                let suffix = b"\\bun-debug-src";
-                path_buf.0[..temp.len()].copy_from_slice(temp);
-                path_buf.0[temp.len()..temp.len() + suffix.len()].copy_from_slice(suffix);
-                &path_buf.0[..temp.len() + suffix.len()]
-            } else if bun_core::env::IS_ANDROID {
-                b"/data/local/tmp/bun-debug-src/"
-            } else {
-                b"/tmp/bun-debug-src/"
-            };
-            let d = Dir::cwd().make_open_path(base_name, OpenDirOptions::default())?;
-            *holder = Some(d);
-            d
-        }
-    };
+    if holder.is_none() {
+        let base_name: &[u8] = if cfg!(windows) {
+            // Spec: bun.fs.FileSystem.RealFS.platformTempDir() ++ "\\bun-debug-src"
+            let temp = Fs::RealFS::platform_temp_dir();
+            let suffix = b"\\bun-debug-src";
+            path_buf.0[..temp.len()].copy_from_slice(temp);
+            path_buf.0[temp.len()..temp.len() + suffix.len()].copy_from_slice(suffix);
+            &path_buf.0[..temp.len() + suffix.len()]
+        } else if bun_core::env::IS_ANDROID {
+            b"/data/local/tmp/bun-debug-src/"
+        } else {
+            b"/tmp/bun-debug-src/"
+        };
+        *holder = Some(Dir::cwd().make_open_path(base_name, OpenDirOptions::default())?);
+    }
+    // `Dir` is `!Copy`; the singleton stays owned by `BUN_DEBUG_HOLDER` for
+    // process lifetime — borrow it for the duration of this dump.
+    let dir = holder.as_ref().expect("just initialized above");
 
     if let Some(dir_path) = bun_paths::dirname(specifier) {
         let root_len = if cfg!(windows) {
@@ -136,7 +134,6 @@ pub fn dump_source_string_failiable(
             b"/".len()
         };
         let parent = dir.make_open_path(&dir_path[root_len..], OpenDirOptions::default())?;
-        let _close_parent = scopeguard::guard(parent, |p| p.close());
 
         let base = bun_paths::basename(specifier);
         let base_z = bun_paths::resolve_path::z(base, &mut path_buf);
@@ -164,9 +161,6 @@ pub fn dump_source_string_failiable(
                     read: false,
                 },
             )?;
-            let _close_file = scopeguard::guard(file.handle, |fd| {
-                let _ = bun_sys::close(fd);
-            });
 
             // `parent.readFileAlloc(allocator, specifier, maxInt) catch ""`
             let source_file = File::read_from(parent.fd, specifier).unwrap_or_default();
@@ -1063,7 +1057,7 @@ impl TranspilerJob {
             return;
         }
 
-        for import_record in parse_result.ast.import_records.slice_mut() {
+        for import_record in parse_result.ast.import_records.as_mut_slice() {
             let import_record: &mut ImportRecord = import_record;
 
             if let Some(replacement) = HardcodedAlias::get(
@@ -1133,11 +1127,15 @@ impl TranspilerJob {
             } else {
                 None
             };
-
-        if let Some(mi) = module_info.as_mut() {
+        // Spec ModuleLoader.zig:523 — propagate top-level-await to the cached
+        // module record. Without this, modules cached via the isolation source
+        // provider (used under --isolate / --parallel) are reported to JSC as
+        // having no TLA, so the module's evaluation promise resolves before the
+        // top-level-await actually completes — causing the caller's
+        // `wait_for_promise` on the preload to return early.
+        if let Some(mi) = module_info.as_deref_mut() {
             mi.flags.has_tla = !parse_result.ast.top_level_await_keyword.is_empty();
         }
-
         // PORT NOTE: derive `*mut` from a `&mut` borrow (not `&x as *const _ as
         // *mut _`, which is Stacked-Borrows UB). The `&mut` borrow ends when the
         // closure returns; the raw pointer stays valid until `module_info` is
@@ -1164,6 +1162,9 @@ impl TranspilerJob {
                 },
             );
             transpiler.print_with_source_map(
+                // Same per-call `arena` that `transpiler.set_arena(&arena)`
+                // and `parse_options.arena` used to build `parse_result.ast`.
+                &arena,
                 parse_result,
                 &mut printer,
                 js_printer::Format::EsmAscii,
@@ -1186,14 +1187,11 @@ impl TranspilerJob {
         let source_code = 'brk: {
             let written = source_code_printer.ctx.get_written();
 
-            // PORT NOTE: lower-tier `cache.output_code` is `Option<Box<[u8]>>`
-            // (Zig `?bun.String`). `RuntimeTranspilerCacheExt::put()` stores
-            // the printer bytes there; convert to a WTF `bun.String` for JSC.
-            let result = cache
-                .output_code
-                .take()
-                .map(|b| String::clone_latin1(&b))
-                .unwrap_or_else(|| String::clone_latin1(written));
+            // The `Jsc` vtable bridge `put()` does not write
+            // `cache.output_code` (only the `r#impl == None` fallback does,
+            // and `r#impl` is `Some(Jsc)` here), so it is always `None`.
+            debug_assert!(cache.output_code.is_none());
+            let result = String::clone_latin1(written);
 
             // SAFETY: leaf scalar field read on `*vm`; see `vm` PORT NOTE above.
             if written.len() > 1024 * 1024 * 2 || unsafe { (*vm).smol } {

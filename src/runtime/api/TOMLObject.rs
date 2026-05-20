@@ -32,7 +32,7 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             // PORT NOTE: Zig passed `*js_printer.BufferPrinter` as a comptime type param; dropped per (comptime X: type, arg: X) rule
             if let Err(_) = js_printer::print_json(
                 &mut writer,
-                parse_result.into(),
+                parse_result,
                 source,
                 js_printer::PrintJsonOptions {
                     indent: Default::default(),

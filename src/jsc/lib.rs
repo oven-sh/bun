@@ -33,6 +33,7 @@
 // accessor inlining (every `VirtualMachine::get_or_null()` ≥3×/run_callback).
 // Precedent: 064951400fa4 did this for `bun_alloc`/`bun_ast`.
 #![feature(thread_local)]
+#![feature(allocator_api)]
 #![allow(incomplete_features)]
 
 extern crate alloc;
@@ -1592,11 +1593,25 @@ impl FromJsEnum for bun_sys::SignalCode {
         s.deref();
         match hit {
             Some(code) => Ok(code),
-            // Zig builds the `'SIGHUP', 'SIGINT' or ...` list at comptime; at
-            // 31 variants the runtime port keeps the message terse.
-            None => Err(global.throw_invalid_arguments(format_args!(
-                "{property_name} must be one of the SignalCode names"
-            ))),
+            None => {
+                // Mirror Zig's comptime `toEnumFromMap` list
+                // (`'SIGHUP', 'SIGINT', … or 'SIGSYS'`), built from the
+                // canonical signal X-macro so names are never re-spelled.
+                let names = &bun_core::SIGNAL_NAMES[1..];
+                let mut one_of = std::string::String::from("'");
+                for (i, entry) in names.iter().enumerate() {
+                    one_of.push_str(entry);
+                    one_of.push('\'');
+                    if i < names.len() - 2 {
+                        one_of.push_str(", '");
+                    } else if i == names.len() - 2 {
+                        one_of.push_str(" or '");
+                    }
+                }
+                Err(global.throw_invalid_arguments(format_args!(
+                    "{property_name} must be one of {one_of}"
+                )))
+            }
         }
     }
 }
@@ -2010,9 +2025,11 @@ impl ZigStringJsc for bun_core::ZigString {
     #[inline]
     fn to_external_value(&self, global: &JSGlobalObject) -> JSValue {
         if self.len > bun_core::String::max_length() {
-            // SAFETY: contract — bytes were allocated by the global mimalloc allocator.
+            // SAFETY: contract — bytes were allocated by the default (global)
+            // allocator. `default_alloc::free` agrees with the
+            // `#[global_allocator]` (`mi_free` normally; libc free under ASAN).
             unsafe {
-                bun_alloc::mimalloc::mi_free(
+                bun_alloc::default_alloc::free(
                     self.byte_slice()
                         .as_ptr()
                         .cast_mut()

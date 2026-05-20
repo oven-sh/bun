@@ -38,6 +38,19 @@ impl ImmediateObject {
             TimerObjectInternals::run_immediate_task(core::ptr::addr_of_mut!((*this).internals), vm)
         }
     }
+
+    /// # Safety
+    /// `this` must be a live heap-allocated `ImmediateObject`.
+    #[inline]
+    pub unsafe fn cancel_pending(this: *mut Self, vm: *mut VirtualMachine) {
+        // SAFETY: do not form `&mut *this` — the body derefs and may free `*this`.
+        unsafe {
+            TimerObjectInternals::cancel_pending_immediate(
+                core::ptr::addr_of_mut!((*this).internals),
+                vm,
+            );
+        }
+    }
 }
 
 // ported from: src/runtime/timer/ImmediateObject.zig

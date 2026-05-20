@@ -306,6 +306,17 @@ pub fn __bun_macro_context_deinit(data: *mut core::ffi::c_void) {
     // `MacroMap` and, if a macro was invoked, runs `MimallocArena::drop`
     // (→ `mi_heap_destroy`) on the lazily-created `bump`.
     drop(unsafe { Box::<MacroContext>::from_raw(data.cast::<MacroContext>()) });
+    bun_jsc::virtual_machine::drop_source_code_printer_if_macro_owned();
+}
+
+/// Exposed for `bun_bundler::ThreadPool::Worker::deinit` (which has no
+/// `bun_jsc` dependency) to sweep the per-worker macro VM after the worker's
+/// `MacroContext` boxes are freed. See [`collect_macro_vm_garbage`].
+///
+/// [`collect_macro_vm_garbage`]: bun_jsc::virtual_machine::collect_macro_vm_garbage
+#[unsafe(no_mangle)]
+pub fn __bun_macro_collect_vm_garbage() {
+    bun_jsc::virtual_machine::collect_macro_vm_garbage();
 }
 
 #[unsafe(no_mangle)]
@@ -426,8 +437,8 @@ impl Macro {
         hash: i32,
     ) -> Result<Macro, Error> {
         // TODO(port): narrow error set
-        let vm: *mut VirtualMachine = if VirtualMachine::is_loaded() {
-            VirtualMachine::get_mut_ptr()
+        let (vm, is_new_vm): (*mut VirtualMachine, bool) = if VirtualMachine::is_loaded() {
+            (VirtualMachine::get_mut_ptr(), false)
         } else {
             // PORT NOTE: Zig saved/restored `resolver.opts.transform_options`
             // across this block because `VirtualMachine.init` (via
@@ -450,20 +461,21 @@ impl Macro {
                 is_main_thread: false,
                 ..Default::default()
             })?;
-
-            // SAFETY: `_vm` is the freshly-allocated per-thread VM.
-            unsafe {
-                (*_vm).enable_macro_mode();
-                (*(*_vm).event_loop()).ensure_waker();
-                (*_vm).transpiler.configure_defines()?;
-            }
-            _vm
+            (_vm, true)
         };
 
+        // Covers `configure_defines` (new-VM path) and `load_macro_entry_point`
+        // (which runs the macro module's top-level JS via `wait_for_promise`) so
+        // a top-level `Bun.Transpiler#transformSync` doesn't see
+        // `macro_guard_depth == 0` and free the printer mid-init. Drops on every
+        // exit (success, `?`, Rejected) so depth/state can't leak; the caller's
+        // own `MacroModeGuard` re-enables for the actual macro call.
+        let _init_guard = MacroModeGuard::new(vm);
         // SAFETY: `vm` is the per-thread VM; uniquely accessed here.
-        unsafe {
-            (*vm).enable_macro_mode();
-            (*(*vm).event_loop()).ensure_waker();
+        unsafe { (*(*vm).event_loop()).ensure_waker() };
+        if is_new_vm {
+            // SAFETY: `vm` is the freshly-allocated per-thread VM.
+            unsafe { (*vm).transpiler.configure_defines()? };
         }
 
         // SAFETY: `vm` is the per-thread VM; uniquely accessed here.
@@ -481,7 +493,6 @@ impl Macro {
             // is a live promise cell.
             unsafe {
                 (*vm).unhandled_rejection(&*(*vm).global, result, (*loaded_result).to_js());
-                (*vm).disable_macro_mode();
             }
             return Err(err!("MacroLoadError"));
         }
@@ -869,8 +880,7 @@ impl<'a> Run<'a> {
                 ));
             }
             T::String => {
-                let bun_str = value.to_bun_string(self.global)?;
-                // `bun_str.deref()` on Drop
+                let bun_str = bun_core::OwnedString::new(value.to_bun_string(self.global)?);
 
                 // encode into utf16 so the printer escapes the string correctly
                 // PERF(port): was allocator.alloc(u16, len) — profile if it shows up on a hot path

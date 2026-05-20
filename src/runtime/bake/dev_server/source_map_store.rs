@@ -750,9 +750,9 @@ impl SourceMapStore {
                 ));
                 None
             }
-            source_map::ParseResult::Success(psm) => Some(GetResult {
+            source_map::ParseResult::Success(mut psm) => Some(GetResult {
                 index: EntryIndex::init(u32::try_from(index).expect("int cast")),
-                mappings: psm.mappings,
+                mappings: core::mem::take(&mut psm.mappings),
                 file_paths: &entry.paths,
                 entry_files: &entry.files,
             }),

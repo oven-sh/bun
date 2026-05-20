@@ -391,7 +391,7 @@ pub struct Num {
     pub int_value: Option<i32>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct Dimension {
     pub num: Num,
     /// e.g. "px"

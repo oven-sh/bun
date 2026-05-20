@@ -212,6 +212,15 @@ const _: () = {
 };
 
 impl<'a> Subprocess<'a> {
+    fn take_pending_start_writer(&self) -> Option<*mut StaticPipeWriter<'a>> {
+        match self.stdin.get() {
+            Writable::Buffer(buffer) if Writable::buffer_writer_mut(buffer).started => {
+                Some(buffer.as_ptr())
+            }
+            _ => None,
+        }
+    }
+
     /// Debug-assert the per-stdio spawn result is well-formed.
     #[inline]
     pub fn assert_stdio_result(result: &StdioResult) {
@@ -495,11 +504,13 @@ impl Subprocess<'_> {
                     // `deinit` observes `.Ignore`.
                     Writable::pipe_release(pipe);
                 }
-                Writable::Buffer(buffer) => {
-                    Writable::buffer_writer_mut(buffer).source.detach();
-                    // PORT NOTE: Zig's `buffer.deref()` is the owner drop from the
-                    // assignment below; do not deref explicitly.
-                    *stdin = Writable::Ignore;
+                Writable::Buffer(_) => {
+                    let Writable::Buffer(buffer) = core::mem::replace(stdin, Writable::Ignore)
+                    else {
+                        unreachable!()
+                    };
+                    Writable::buffer_writer_mut(&buffer).source.detach();
+                    buffer.deref();
                 }
                 _ => {}
             }),
@@ -963,8 +974,13 @@ impl Subprocess<'_> {
         }
 
         // We won't be sending any more data.
+        let pending_start = self.take_pending_start_writer();
         if let Writable::Buffer(buffer) = self.stdin.get() {
             Writable::buffer_writer_mut(buffer).close();
+        }
+        if let Some(writer) = pending_start {
+            // SAFETY: `started` ⇒ start +1 was live entering; last use.
+            unsafe { RefCount::deref(writer) };
         }
 
         if !existing_stdin_value.is_empty() {
@@ -1155,10 +1171,19 @@ impl Subprocess<'_> {
 
         match io {
             StdioKind::Stdin => {
+                let pending_start = self.take_pending_start_writer();
+                if let Some(writer) = pending_start {
+                    // SAFETY: live StaticPipeWriter with >= 2 refs.
+                    unsafe { (*writer).close() };
+                }
                 if !called {
                     Writable::finalize(self);
                 } else {
                     self.stdin.with_mut(|s| s.close());
+                }
+                if let Some(writer) = pending_start {
+                    // SAFETY: `started` ⇒ start +1 was live entering; last use.
+                    unsafe { RefCount::deref(writer) };
                 }
             }
             StdioKind::Stdout => {
@@ -1240,7 +1265,31 @@ impl Subprocess<'_> {
         );
         this.finalize_streams();
 
+        // `Writable::init()` took a +1 (`subprocess.ref_()`, guarded by
+        // `DEREF_ON_STDIN_DESTROYED`) for the stdin pipe back-pointer. The
+        // balancing `deref()` lives in `on_stdin_destroyed()`, reached either
+        // via the FileSink's signal (which `Writable::finalize` — called from
+        // `close_io` above when the `.stdin` getter never ran — clears *before*
+        // releasing the pipe) or via the JSFileSink's `m_onDestroy` callback
+        // (only installed when the getter ran). When the getter never ran there
+        // is no JSFileSink and the signal is now gone, so nothing will call
+        // `on_stdin_destroyed()`; release the stranded ref here so the box can
+        // reach zero. When the getter *did* run we must leave the ref in place:
+        // the JSFileSink may be swept after us in the same
+        // `lastChanceToFinalize` pass and would otherwise call
+        // `on_stdin_destroyed()` against a freed Box.
+        if this.flags.get().contains(Flags::DEREF_ON_STDIN_DESTROYED)
+            && !this.has_called_getter(ObservableGetter::Stdin)
+        {
+            this.update_flags(|f| f.remove(Flags::DEREF_ON_STDIN_DESTROYED));
+            this.deref();
+        }
+
+        let exit_handler_pending = this.process().exit_handler.is_some();
         this.process_mut().detach();
+        if exit_handler_pending {
+            this.deref();
+        }
         // Match Zig's `this.process.deref()`: release the intrusive ref now,
         // not when `ref_count` → 0. The raw `*mut Process` is left dangling but
         // no code path reads `this.process` after this (finalize runs once).
@@ -1481,8 +1530,7 @@ pub mod testing_apis {
         // SAFETY: `from_js` returned a live `*mut Subprocess` owned by the JS wrapper.
         // R-2: deref as shared (`&*const`) — fields are interior-mutable.
         let subprocess = unsafe { &*subprocess_ptr };
-        let kind_str = kind_value.to_bun_string(global_this)?;
-        // defer kind_str.deref() — bun_core::String Drop handles deref.
+        let kind_str = bun_core::OwnedString::new(kind_value.to_bun_string(global_this)?);
 
         let out: &JsCell<Readable> = if kind_str.eql_comptime(b"stdout") {
             &subprocess.stdout

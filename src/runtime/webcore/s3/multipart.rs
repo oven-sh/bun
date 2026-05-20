@@ -406,7 +406,10 @@ impl Drop for MultiPartUpload {
             bun_io::AllocatorType::Js,
         ));
         // path, proxy, content_type, content_disposition, content_encoding — Box dropped automatically
-        // credentials: Arc<S3Credentials> — dropped automatically (== .deref())
+        // `IntrusiveRc<T>` (= `RefPtr<T>`) has no `Drop` — release the +1 the
+        // constructing `writable_stream`/`upload_stream` adopted (Zig:
+        // `this.credentials.deref()`).
+        self.credentials.deref();
         // uploadid_buffer: MutableString — Drop
         // multipart_etags: Vec<UploadPartResult> — Drop (each etag Box<[u8]> freed)
         // multipart_upload_list: Vec<u8> — Drop

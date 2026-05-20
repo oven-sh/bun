@@ -1322,7 +1322,7 @@ impl Request {
             }
 
             if !fields.contains(Fields::Signal) {
-                match value.get_truthy(global_this, b"signal") {
+                match value.fast_get_truthy(global_this, bun_jsc::BuiltinName::signal) {
                     Ok(Some(signal_)) => {
                         fields.insert(Fields::Signal);
                         if let Some(signal) = AbortSignal::ref_from_js(signal_) {

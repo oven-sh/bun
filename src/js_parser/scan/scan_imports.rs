@@ -198,8 +198,16 @@ impl<'a> ImportScanner<'a> {
                                 is_unused_in_typescript = false;
                             }
 
-                            // Remove the symbol if it's never used outside a dead code region
-                            if symbol.use_count_estimate == 0 {
+                            // Remove the symbol if it's never used outside a dead code region.
+                            //
+                            // Never strip the namespace binding from an `import defer`
+                            // statement: the grammar requires `* as ns`, so dropping
+                            // it would force the printer to emit a bare side-effect
+                            // import — eagerly evaluating a module the user asked to
+                            // defer. Keeping the binding preserves the intended
+                            // semantics (the module is linked but never evaluated,
+                            // since nothing touches `ns` at runtime).
+                            if symbol.use_count_estimate == 0 && !st.phase_defer {
                                 // Make sure we don't remove this if it was used for a property
                                 // access while bundling
                                 let mut has_any = false;
@@ -308,7 +316,11 @@ impl<'a> ImportScanner<'a> {
                     let _ = did_remove_star_loc;
 
                     let namespace_ref = st.namespace_ref;
+                    // `import defer * as ns` must keep its namespace binding
+                    // (see the matching guard above): converting it to a
+                    // clause import would lose the defer phase entirely.
                     let convert_star_to_clause = !p.options.bundle
+                        && !st.phase_defer
                         && (p.symbols[namespace_ref.inner_index() as usize].use_count_estimate
                             == 0);
 
@@ -361,7 +373,7 @@ impl<'a> ImportScanner<'a> {
                                         alias_loc: Some(item.loc),
                                         namespace_ref: Some(namespace_ref),
                                         import_record_index: st.import_record_index,
-                                        local_parts_with_uses: Default::default(),
+                                        local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                                         alias_is_star: false,
                                         is_exported: false,
                                     },
@@ -413,7 +425,7 @@ impl<'a> ImportScanner<'a> {
                                     alias_loc: Some(loc),
                                     namespace_ref: Some(Ref::NONE),
                                     import_record_index: st.import_record_index,
-                                    local_parts_with_uses: Default::default(),
+                                    local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                                     is_exported: false,
                                 },
                             );
@@ -431,7 +443,7 @@ impl<'a> ImportScanner<'a> {
                                     alias_loc: Some(default.loc),
                                     namespace_ref: Some(namespace_ref),
                                     import_record_index: st.import_record_index,
-                                    local_parts_with_uses: Default::default(),
+                                    local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                                     alias_is_star: false,
                                     is_exported: false,
                                 },
@@ -450,7 +462,7 @@ impl<'a> ImportScanner<'a> {
                                     alias_loc: Some(name.loc),
                                     namespace_ref: Some(namespace_ref),
                                     import_record_index: st.import_record_index,
-                                    local_parts_with_uses: Default::default(),
+                                    local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                                     alias_is_star: false,
                                     is_exported: false,
                                 },
@@ -481,7 +493,7 @@ impl<'a> ImportScanner<'a> {
                                     alias_loc: Some(name.loc),
                                     namespace_ref: Some(namespace_ref),
                                     import_record_index: st.import_record_index,
-                                    local_parts_with_uses: Default::default(),
+                                    local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                                     alias_is_star: false,
                                     is_exported: false,
                                 },
@@ -707,7 +719,7 @@ impl<'a> ImportScanner<'a> {
                                 namespace_ref: Some(Ref::NONE),
                                 import_record_index: st.import_record_index,
                                 is_exported: true,
-                                local_parts_with_uses: Default::default(),
+                                local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                             },
                         )?;
                         let original: &'p [u8] = alias.original_name.slice();
@@ -744,7 +756,7 @@ impl<'a> ImportScanner<'a> {
                                 namespace_ref: Some(st.namespace_ref),
                                 import_record_index: st.import_record_index,
                                 is_exported: true,
-                                local_parts_with_uses: Default::default(),
+                                local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                             },
                         )?;
                         // SAFETY: arena-owned alias slice valid for 'p.

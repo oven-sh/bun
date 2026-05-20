@@ -839,12 +839,14 @@ impl Encoding {
         // const-generic arithmetic in array lengths, so we heap-allocate.
         match self {
             Self::Base64 => {
-                let mut base64_buf =
-                    vec![0u8; bun_core::base64::standard_encoder_calc_size(max_size * 4)];
-                let encoded_len = bun_core::base64::encode(&mut base64_buf, input);
+                let encoded_len = bun_core::base64::encode_len(input);
                 let (mut encoded, bytes) =
                     bun_core::String::create_uninitialized_latin1(encoded_len);
-                bytes.copy_from_slice(&base64_buf[..encoded_len]);
+                if encoded.is_dead() {
+                    return encoded.transfer_to_js(global_object);
+                }
+                let n = bun_core::base64::encode(bytes, input);
+                debug_assert_eq!(n, encoded_len);
                 encoded.transfer_to_js(global_object)
             }
             Self::Base64url => {
@@ -1084,7 +1086,7 @@ impl PathLikeExt for PathLike {
         if !FORCE {
             if sliced[sliced.len() - 1] == 0 {
                 // SAFETY: last byte is NUL.
-                return ZStr::from_slice_with_nul(&sliced[..]);
+                return ZStr::from_slice_with_nul(sliced);
             }
         }
 
@@ -1323,8 +1325,13 @@ impl PathLikeExt for PathLike {
 
             sliced.report_extra_memory(global.vm());
 
-            // It is expensive to keep both around.
-            Ok(Self::EncodedSlice(core::mem::take(&mut sliced.utf8)))
+            // It is expensive to keep both around. `utf8` here is an Owned
+            // transcoded copy (UTF-16 or non-ASCII Latin-1 input), so the
+            // returned EncodedSlice is independent of `underlying` — release
+            // the WTFStringImpl ref `to_slice` moved into it.
+            let utf8 = core::mem::take(&mut sliced.utf8);
+            sliced.deinit();
+            Ok(Self::EncodedSlice(utf8))
         }
     }
 }
@@ -1900,9 +1907,9 @@ impl PathOrBlob {
         if let Some(blob) = arg.as_class_ref::<Blob>() {
             // Zig: `blob.*` — a raw bitwise copy with no ref bumps that callers
             // never `deinit()`. `borrowed_view()` is the sound Rust spelling: it
-            // clones only the `StoreRef` (whose `Drop` balances the +1) and
-            // aliases `name`/`content_type`; `dupe()` would leak both since
-            // `Blob` has no `Drop`. `as_class_ref` is the safe shared-borrow
+            // clones the `StoreRef`/`name` (whose `Drop`s balance the +1) and
+            // aliases `content_type`; `dupe()` would leak the boxed
+            // `content_type` copy. `as_class_ref` is the safe shared-borrow
             // downcast — the JS wrapper roots the payload while `arg` is on the
             // stack.
             return Ok(PathOrBlob::Blob(blob.borrowed_view()));

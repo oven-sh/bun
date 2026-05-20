@@ -636,7 +636,7 @@ test("yaml-test-suite/4Q9F", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/4QFQ", () => {
+test("yaml-test-suite/4QFQ", () => {
   // Spec Example 8.2. Block Indentation Indicator [1.3]
   const input: string = `- |
  detected
@@ -1308,7 +1308,7 @@ test("yaml-test-suite/6SLA", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/6VJK", () => {
+test("yaml-test-suite/6VJK", () => {
   // Spec Example 2.15. Folded newlines are preserved for "more indented" and blank lines
   const input: string = `>
  Sammy Sosa completed another
@@ -1566,7 +1566,7 @@ top2
   }).toThrow();
 });
 
-test.todo("yaml-test-suite/7T8X", () => {
+test("yaml-test-suite/7T8X", () => {
   // Spec Example 8.10. Folded Lines - 8.13. Final Empty Lines
   const input: string = `>
 
@@ -2263,7 +2263,7 @@ test.todo("yaml-test-suite/A2M4", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/A6F9", () => {
+test("yaml-test-suite/A6F9", () => {
   // Spec Example 8.4. Chomping Final Line Break
   const input: string = `strip: |-
   text
@@ -3192,7 +3192,7 @@ test("yaml-test-suite/F3CP", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/F6MC", () => {
+test("yaml-test-suite/F6MC", () => {
   // More indented lines at the beginning of folded block scalars
   const input: string = `---
 a: >2
@@ -3212,7 +3212,7 @@ b: >2
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/F8F9", () => {
+test("yaml-test-suite/F8F9", () => {
   // Spec Example 8.5. Chomping Trailing Lines
   const input: string = ` # Strip
   # Comments:
@@ -3733,7 +3733,7 @@ rbi:
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/JEF9/00", () => {
+test("yaml-test-suite/JEF9/00", () => {
   // Trailing whitespace in streams
   const input: string = `- |+
 
@@ -3747,7 +3747,7 @@ test.todo("yaml-test-suite/JEF9/00", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/JEF9/01", () => {
+test("yaml-test-suite/JEF9/01", () => {
   // Trailing whitespace in streams
   const input: string = `- |+
    
@@ -3760,7 +3760,7 @@ test.todo("yaml-test-suite/JEF9/01", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/JEF9/02", () => {
+test("yaml-test-suite/JEF9/02", () => {
   // Trailing whitespace in streams
   const input: string = `- |+
    `;
@@ -3957,7 +3957,7 @@ test("yaml-test-suite/K54U", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/K858", () => {
+test("yaml-test-suite/K858", () => {
   // Spec Example 8.6. Empty Scalar Chomping
   const input: string = `strip: >-
 
@@ -4403,7 +4403,7 @@ test("yaml-test-suite/M9B4", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/MJS9", () => {
+test("yaml-test-suite/MJS9", () => {
   // Spec Example 6.7. Block Folding
   const input: string = `>
   foo 
@@ -4716,7 +4716,7 @@ to a line feed, or 	\\
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/P2AD", () => {
+test("yaml-test-suite/P2AD", () => {
   // Spec Example 8.1. Block Scalar Header
   const input: string = `- | # Empty header↓
  literal
@@ -4987,7 +4987,7 @@ test("yaml-test-suite/QT73", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/R4YG", () => {
+test("yaml-test-suite/R4YG", () => {
   // Spec Example 8.2. Block Indentation Indicator
   const input: string = `- |
  detected

@@ -1095,6 +1095,10 @@ impl Listener {
                         }
                         debug_assert!(!prev.this_value.get().is_empty());
                         prev.handlers.set(NonNull::new(handlers_ptr));
+                        // Same ownership rationale as `connect_finish`'s prev
+                        // branch — see the comment there.
+                        prev.flags
+                            .set(prev.flags.get() | SocketFlags::OWNS_HANDLERS);
                         debug_assert!(matches!(
                             prev.socket.get().socket,
                             uws::InternalSocket::Detached
@@ -1121,7 +1125,7 @@ impl Listener {
                                 ssl_taken.as_mut().and_then(|s| s.take_server_name()),
                             ),
                             owned_ssl_ctx: Cell::new(None),
-                            flags: Cell::new(SocketFlags::default()),
+                            flags: Cell::new(SocketFlags::default() | SocketFlags::OWNS_HANDLERS),
                             this_value: JsCell::new(jsc::JsRef::empty()),
                             poll_ref: JsCell::new(KeepAlive::init()),
                             ref_pollref_on_connect: Cell::new(true),
@@ -1187,6 +1191,10 @@ impl Listener {
                             }
                         }
                         prev.handlers.set(NonNull::new(handlers_ptr));
+                        // Same ownership rationale as `connect_finish`'s prev
+                        // branch — see the comment there.
+                        prev.flags
+                            .set(prev.flags.get() | SocketFlags::OWNS_HANDLERS);
                         debug_assert!(matches!(
                             prev.socket.get().socket,
                             uws::InternalSocket::Detached
@@ -1208,7 +1216,7 @@ impl Listener {
                             protos: JsCell::new(None),
                             server_name: JsCell::new(None),
                             owned_ssl_ctx: Cell::new(None),
-                            flags: Cell::new(SocketFlags::default()),
+                            flags: Cell::new(SocketFlags::default() | SocketFlags::OWNS_HANDLERS),
                             this_value: JsCell::new(jsc::JsRef::empty()),
                             poll_ref: JsCell::new(KeepAlive::init()),
                             ref_pollref_on_connect: Cell::new(true),
@@ -1437,6 +1445,13 @@ fn connect_finish<const IS_SSL: bool>(
             }
         }
         prev.handlers.set(NonNull::new(handlers_ptr));
+        // `handlers_ptr` is a fresh `heap::alloc` box from `connect_inner`;
+        // this socket now owns it. Without the flag, `deinit_and_destroy` and
+        // `mark_inactive`'s shutdown gate skip the free and the box leaks
+        // (`node:net`'s `new_detached_socket` creates `prev` with default
+        // flags and no handlers).
+        prev.flags
+            .set(prev.flags.get() | SocketFlags::OWNS_HANDLERS);
         debug_assert!(prev.socket.get().is_detached());
         // Free old resources before reassignment to prevent memory leaks
         // when sockets are reused for reconnection (common with MongoDB driver)
@@ -1462,7 +1477,7 @@ fn connect_finish<const IS_SSL: bool>(
             protos: JsCell::new(ssl.as_mut().and_then(|s| s.take_protos())),
             server_name: JsCell::new(ssl.as_mut().and_then(|s| s.take_server_name())),
             owned_ssl_ctx: Cell::new(owned_ssl_ctx.map(|p| p.as_ptr())),
-            flags: Cell::new(SocketFlags::default()),
+            flags: Cell::new(SocketFlags::default() | SocketFlags::OWNS_HANDLERS),
             this_value: JsCell::new(jsc::JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),

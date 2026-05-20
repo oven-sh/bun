@@ -151,8 +151,11 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
             }
             init = WTF::move(seqSeq);
         } else {
-            // Handle as record<USVString, USVString>
-            HashMap<String, String> record;
+            // Handle as record<USVString, USVString>. Build a sequence so the
+            // CookieMap preserves insertion order — going through HashMap would
+            // scramble it (and the hash order itself shifted when WTF moved
+            // its string hash to RapidHash).
+            Vector<Vector<String>> seqSeq;
 
             PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
             JSObject::getOwnPropertyNames(object, lexicalGlobalObject, propertyNames, DontEnumPropertiesMode::Include);
@@ -165,9 +168,12 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
                 auto valueStr = value.toString(lexicalGlobalObject)->value(lexicalGlobalObject);
                 RETURN_IF_EXCEPTION(throwScope, {});
 
-                record.set(propertyName.string(), valueStr);
+                Vector<String> pair;
+                pair.append(propertyName.string());
+                pair.append(WTF::move(valueStr));
+                seqSeq.append(WTF::move(pair));
             }
-            init = WTF::move(record);
+            init = WTF::move(seqSeq);
         }
     } else {
         throwTypeError(lexicalGlobalObject, throwScope, "Invalid initializer type"_s);

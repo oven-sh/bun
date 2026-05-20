@@ -51,11 +51,19 @@ impl Clone for LayerName {
 }
 
 impl LayerName {
-    pub fn clone_with_import_records(&self, _bump: &Arena, _: &mut Vec<ImportRecord>) -> Self {
+    pub fn clone_with_import_records(&self, bump: &Arena, _: &mut Vec<ImportRecord>) -> Self {
         // `[]const u8` segments are arena-borrowed, not owned, so the Zig
         // `deepClone` here was a shallow `SmallList` copy. No import records to
         // rewrite — layer names contain no URLs.
-        LayerName { v: self.v.clone() }
+        //
+        // Allocate the segment-pointer slab from `bump` (not the global
+        // allocator): callers store the result in arena-owned `ImportConditions`
+        // / `BundlerCssRule` slabs whose elements are never `Drop`'d (the
+        // bundler `mem::forget`s / `set_len(0)`s them at chunk teardown), so a
+        // global heap spill here would leak.
+        LayerName {
+            v: SmallList::from_arena_iter(bump, self.v.slice().iter().copied()),
+        }
     }
 
     pub fn eql(&self, rhs: &LayerName) -> bool {

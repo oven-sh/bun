@@ -184,7 +184,6 @@ impl hooks::AutoInstaller for PackageManager {
         self.lockfile
             .buffers
             .legacy_package_to_dependency_id(None, package_id)
-            .map_err(Into::into)
     }
 
     fn lockfile_str<'a>(&'a self, s: &'a SemverString) -> &'a [u8] {
@@ -263,8 +262,8 @@ impl hooks::AutoInstaller for PackageManager {
                 Ok(cloned) => dependencies[0] = cloned,
                 Err(e) => {
                     // Zig: `defer string_builder.clamp()` — must run on the
-                    // error path too. Restore the buffer length so the
-                    // lockfile stays consistent (`Dependency` is no-op Drop).
+                    // error path too. `truncate` drops the default-filled tail
+                    // (and any already-written deps) before restoring length.
                     dependencies_list.truncate(dep_start);
                     string_builder.clamp();
                     return Err(e);

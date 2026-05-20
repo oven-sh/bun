@@ -74,7 +74,7 @@ pub mod ast {
     // port uses `&'arena [T]` so the whole tree is `Clone`/`Copy`-able like
     // Zig — required by `Atom::merge` and `SmolList::init_with_slice`.
 
-    #[derive(Clone)]
+    #[derive(Copy, Clone)]
     pub struct Script<'arena> {
         pub stmts: &'arena [Stmt<'arena>],
     }
@@ -940,7 +940,7 @@ pub mod ast {
         }
     }
 
-    #[derive(Clone)]
+    #[derive(Copy, Clone)]
     pub struct CompoundAtom<'arena> {
         pub atoms: &'arena [SimpleAtom<'arena>],
         pub brace_expansion_hint: bool,
@@ -1412,7 +1412,7 @@ impl<'bump> Parser<'bump> {
 
                 return Ok(ast::CondExpr {
                     op,
-                    args: ast::CondExprArgList::init_with_slice(&[arg1, arg2]),
+                    args: ast::CondExprArgList::init_with_slice(&[arg1, arg2], self.alloc),
                 });
             }
         }
@@ -1442,7 +1442,7 @@ impl<'bump> Parser<'bump> {
         } {
             self.skip_newlines();
             let stmt = self.parse_stmt()?;
-            ret.append(stmt);
+            ret.append(stmt, self.alloc);
             self.skip_newlines();
         }
 
@@ -1495,7 +1495,7 @@ impl<'bump> Parser<'bump> {
                     ))?;
                     return Err(ParseError::Expected.into());
                 }
-                else_parts.append(else_);
+                else_parts.append(else_, self.alloc);
                 Ok(ast::If {
                     cond,
                     then,
@@ -1518,8 +1518,8 @@ impl<'bump> Parser<'bump> {
                         IfClauseTok::Else,
                         IfClauseTok::Fi,
                     ])?;
-                    else_parts.append(elif_cond);
-                    else_parts.append(then_part);
+                    else_parts.append(elif_cond, self.alloc);
+                    else_parts.append(then_part, self.alloc);
 
                     match IfClauseTok::from_tok(self, self.peek()) {
                         None => break,
@@ -1527,7 +1527,7 @@ impl<'bump> Parser<'bump> {
                         Some(IfClauseTok::Else) => {
                             let _ = self.expect_if_clause_text_token(IfClauseTok::Else);
                             let else_part = self.parse_if_body(&[IfClauseTok::Fi])?;
-                            else_parts.append(else_part);
+                            else_parts.append(else_part, self.alloc);
                             break;
                         }
                         Some(_) => break,
@@ -4538,10 +4538,65 @@ pub fn needs_escape_utf8_ascii_latin1(str: &[u8]) -> bool {
 
 // ───────────────────────────── SmolList ─────────────────────────────
 
-/// A list that can store its items inlined, and promote itself to a heap allocated Vec<T>
+/// `Allocator` routing `SmolList::Heap` through the parser arena. Must not outlive the arena.
+#[derive(Clone, Copy)]
+pub struct SmolListAlloc(core::ptr::NonNull<Bump>);
+
+// SAFETY: just a pointer to a `Send + Sync` `MimallocArena`.
+unsafe impl Send for SmolListAlloc {}
+unsafe impl Sync for SmolListAlloc {}
+
+impl SmolListAlloc {
+    #[inline]
+    fn new(bump: &Bump) -> Self {
+        Self(core::ptr::NonNull::from(bump))
+    }
+    #[inline]
+    fn arena(&self) -> &Bump {
+        // SAFETY: the arena outlives `self`.
+        unsafe { self.0.as_ref() }
+    }
+}
+
+unsafe impl core::alloc::Allocator for SmolListAlloc {
+    #[inline]
+    fn allocate(
+        &self,
+        layout: core::alloc::Layout,
+    ) -> Result<core::ptr::NonNull<[u8]>, core::alloc::AllocError> {
+        core::alloc::Allocator::allocate(&self.arena(), layout)
+    }
+    #[inline]
+    unsafe fn deallocate(&self, ptr: core::ptr::NonNull<u8>, layout: core::alloc::Layout) {
+        unsafe { core::alloc::Allocator::deallocate(&self.arena(), ptr, layout) }
+    }
+    #[inline]
+    unsafe fn grow(
+        &self,
+        ptr: core::ptr::NonNull<u8>,
+        old: core::alloc::Layout,
+        new: core::alloc::Layout,
+    ) -> Result<core::ptr::NonNull<[u8]>, core::alloc::AllocError> {
+        unsafe { core::alloc::Allocator::grow(&self.arena(), ptr, old, new) }
+    }
+    #[inline]
+    unsafe fn shrink(
+        &self,
+        ptr: core::ptr::NonNull<u8>,
+        old: core::alloc::Layout,
+        new: core::alloc::Layout,
+    ) -> Result<core::ptr::NonNull<[u8]>, core::alloc::AllocError> {
+        unsafe { core::alloc::Allocator::shrink(&self.arena(), ptr, old, new) }
+    }
+}
+
+pub type SmolListHeap<T> = Vec<T, SmolListAlloc>;
+
+/// A list that can store its items inlined, and promote itself to an
+/// arena-backed heap list.
 pub enum SmolList<T, const INLINED_MAX: usize> {
     Inlined(SmolListInlined<T, INLINED_MAX>),
-    Heap(Vec<T>),
+    Heap(SmolListHeap<T>),
 }
 
 pub struct SmolListInlined<T, const INLINED_MAX: usize> {
@@ -4577,13 +4632,12 @@ impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
         &self.items
     }
 
-    pub fn promote(&mut self, n: usize, new: T) -> Vec<T> {
-        let mut list = Vec::<T>::init_capacity(n);
-        // SAFETY: moving INLINED_MAX initialized elements out
+    pub fn promote(&mut self, n: usize, new: T, bump: &Bump) -> SmolListHeap<T> {
+        let mut list = Vec::with_capacity_in(n + 1, SmolListAlloc::new(bump));
         for i in 0..INLINED_MAX {
             // SAFETY: all INLINED_MAX slots are initialized when promote is called (len == INLINED_MAX)
             let v = unsafe { self.items[i].assume_init_read() };
-            list.append_assume_capacity(v);
+            list.push(v);
         }
         self.len = 0;
         list.push(new);
@@ -4673,16 +4727,16 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
                 }
             }
             SmolList::Heap(heap) => {
-                for item in heap.slice() {
+                for item in heap.iter() {
                     cost += item.memory_cost();
                 }
-                cost += heap.memory_cost();
+                cost += heap.capacity() * size_of::<T>();
             }
         }
         cost
     }
 
-    pub fn init_with_slice(vals: &[T]) -> Self
+    pub fn init_with_slice(vals: &[T], bump: &Bump) -> Self
     where
         T: Clone,
     {
@@ -4697,10 +4751,8 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
             }
             return this;
         }
-        let mut heap = Vec::<T>::init_capacity(vals.len());
-        for v in vals {
-            heap.append_assume_capacity(v.clone());
-        }
+        let mut heap = Vec::with_capacity_in(vals.len(), SmolListAlloc::new(bump));
+        heap.extend_from_slice(vals);
         SmolList::Heap(heap)
     }
 
@@ -4717,7 +4769,7 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
     pub fn ordered_remove(&mut self, idx: usize) {
         match self {
             SmolList::Heap(h) => {
-                let _ = h.ordered_remove(idx);
+                let _ = h.remove(idx);
             }
             SmolList::Inlined(i) => {
                 let _ = i.ordered_remove(idx);
@@ -4784,7 +4836,7 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
                 if h.is_empty() {
                     return &mut [];
                 }
-                h.slice_mut()
+                h.as_mut_slice()
             }
         }
     }
@@ -4802,7 +4854,7 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
                 if h.is_empty() {
                     return &[];
                 }
-                h.slice()
+                h.as_slice()
             }
         }
     }
@@ -4820,11 +4872,11 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
         &self.slice()[idx]
     }
 
-    pub fn append(&mut self, new: T) {
+    pub fn append(&mut self, new: T, bump: &Bump) {
         match self {
             SmolList::Inlined(inlined) => {
                 if inlined.len as usize == INLINED_MAX {
-                    let promoted = inlined.promote(INLINED_MAX, new);
+                    let promoted = inlined.promote(INLINED_MAX, new, bump);
                     *self = SmolList::Heap(promoted);
                     return;
                 }
@@ -4843,7 +4895,7 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
                 // TODO(port): drop initialized elements if T: Drop
                 i.len = 0;
             }
-            SmolList::Heap(h) => h.clear_retaining_capacity(),
+            SmolList::Heap(h) => h.clear(),
         }
     }
 

@@ -70,9 +70,6 @@ pub fn write_output_files_to_disk(
             return Err(e);
         }
     };
-    let _root_dir_guard = scopeguard::guard(root_dir, |d| d.close());
-    let root_dir = *_root_dir_guard;
-
     // Optimization: when writing to disk, we can re-use the memory
     // PERF(port): MaxHeapAllocator reuses the largest allocation between
     // iterations. Verify bun_alloc::MaxHeapAllocator semantics

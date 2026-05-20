@@ -2304,7 +2304,7 @@ pub fn install_isolated_packages(
                                         .store(installer::Step::Done as u32, Ordering::Relaxed);
                                     installer.on_task_fail(
                                         entry_id,
-                                        installer::TaskError::SymlinkDependencies(err),
+                                        &installer::TaskError::SymlinkDependencies(err),
                                     );
                                     continue;
                                 }
@@ -2408,7 +2408,7 @@ pub fn install_isolated_packages(
                                     .store(installer::Step::Done as u32, Ordering::Relaxed);
                                 installer.on_task_fail(
                                     entry_id,
-                                    installer::TaskError::Patching(patch_log),
+                                    &installer::TaskError::Patching(patch_log),
                                 );
                                 continue;
                             }

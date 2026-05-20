@@ -240,7 +240,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
 
                             let print_result = match ast_import.to_css(
                                 bump,
-                                printer_options,
+                                &printer_options,
                                 Some(ImportInfo {
                                     import_records: &entry.condition_import_records,
                                     ast_urls_for_css: parse_graph.ast.items_url_for_css(),

@@ -69,7 +69,7 @@ impl Position {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             Position::Static => dest.write_str("static"),
             Position::Relative => dest.write_str("relative"),

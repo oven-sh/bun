@@ -59,7 +59,7 @@ impl Image {
                 }
                 Gradient::WebkitGradient(_) => css::prefixes::Feature::is_webkit_gradient(&browsers),
             },
-            Image::ImageSet(image_set) => image_set.is_compatible(browsers),
+            Image::ImageSet(image_set) => image_set.is_compatible(&browsers),
             Image::Url(_) | Image::None => true,
         }
     }
@@ -73,9 +73,9 @@ impl Image {
         }
     }
 
-    pub fn get_necessary_prefixes(&self, targets: css::targets::Targets) -> css::VendorPrefix {
+    pub fn get_necessary_prefixes(&self, targets: &css::targets::Targets) -> css::VendorPrefix {
         match self {
-            Image::Gradient(grad) => grad.get_necessary_prefixes(&targets),
+            Image::Gradient(grad) => grad.get_necessary_prefixes(targets),
             Image::ImageSet(image_set) => image_set.get_necessary_prefixes(targets),
             _ => css::VendorPrefix::NONE,
         }
@@ -150,7 +150,7 @@ impl Image {
     pub fn get_fallbacks(
         &mut self,
         arena: &Arena,
-        targets: css::targets::Targets,
+        targets: &css::targets::Targets,
     ) -> css::SmallList<Image, 6> {
         // Determine which prefixes and color fallbacks are needed.
         let prefixes = self.get_necessary_prefixes(targets);
@@ -228,9 +228,9 @@ impl Image {
         }
     }
 
-    pub fn get_necessary_fallbacks(&self, targets: css::targets::Targets) -> ColorFallbackKind {
+    pub fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
         match self {
-            Image::Gradient(grad) => grad.get_necessary_fallbacks(&targets),
+            Image::Gradient(grad) => grad.get_necessary_fallbacks(targets),
             _ => ColorFallbackKind::empty(),
         }
     }
@@ -288,7 +288,7 @@ impl crate::small_list::ImageFallback for Image {
     }
     #[inline]
     fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
-        Image::get_necessary_fallbacks(self, *targets)
+        Image::get_necessary_fallbacks(self, targets)
     }
 }
 
@@ -335,11 +335,11 @@ impl ImageSet {
         dest.write_char(b')')
     }
 
-    pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
-        css::Feature::ImageSet.is_compatible(browsers)
+    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
+        css::Feature::ImageSet.is_compatible(*browsers)
             && 'blk: {
                 for opt in self.options.iter() {
-                    if !opt.image.is_compatible(browsers) {
+                    if !opt.image.is_compatible(*browsers) {
                         break 'blk false;
                     }
                 }
@@ -380,7 +380,7 @@ impl ImageSet {
     }
 
     /// Returns the vendor prefixes needed for the given browser targets.
-    pub fn get_necessary_prefixes(&self, targets: css::targets::Targets) -> css::VendorPrefix {
+    pub fn get_necessary_prefixes(&self, targets: &css::targets::Targets) -> css::VendorPrefix {
         targets.prefixes(self.vendor_prefix, css::prefixes::Feature::ImageSet)
     }
 }

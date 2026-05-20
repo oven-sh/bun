@@ -1,6 +1,5 @@
 #[allow(unused_imports)] // c_int / c_uint only used in the macOS-gated extern block
 use core::ffi::{c_char, c_int, c_uint, c_void};
-use std::sync::OnceLock;
 
 // Only referenced from the Darwin `extern "C"` block below; rustc's
 // reachability analysis doesn't see uses inside dead `extern fn` signatures.
@@ -89,16 +88,21 @@ pub fn get_zone(name: &[u8]) -> &'static Zone {
         "heap_breakdown::get_zone called with ENABLED=false"
     );
 
-    use std::collections::HashMap;
-    use std::sync::Mutex;
+    use core::cell::UnsafeCell;
     // Map key = `name` (no NUL) so lookups match inserts. The NUL-terminated
     // label handed to `malloc_set_zone_name` is stored as the map *value*
     // (alongside the zone) to keep its allocation alive for 'static
     // (PORTING.md §Forbidden: never `Box::leak`).
-    static ZONES: OnceLock<Mutex<HashMap<Vec<u8>, (Vec<u8>, &'static Zone)>>> = OnceLock::new();
-    let map = ZONES.get_or_init(|| Mutex::new(HashMap::default()));
-    let mut map = map.lock().unwrap();
-    if let Some((_, z)) = map.get(name) {
+    struct ZoneTable(UnsafeCell<Vec<(Vec<u8>, Vec<u8>, &'static Zone)>>);
+    // SAFETY: the inner `Vec` is only accessed while `LOCK` is held.
+    unsafe impl Sync for ZoneTable {}
+    static LOCK: crate::Mutex = crate::Mutex::new();
+    static ZONES: ZoneTable = ZoneTable(UnsafeCell::new(Vec::new()));
+    let _guard = LOCK.lock();
+    // SAFETY: exclusive access — `ZONES.0` is only dereferenced while `LOCK`
+    // is held, and `_guard` is live for the rest of this function.
+    let zones = unsafe { &mut *ZONES.0.get() };
+    if let Some((_, _, z)) = zones.iter().find(|(k, _, _)| k.as_slice() == name) {
         return *z;
     }
     // `name` verbatim (no prefix — matches Zig `getZone`), NUL-terminated.
@@ -112,7 +116,7 @@ pub fn get_zone(name: &[u8]) -> &'static Zone {
     // 'static `ZONES` map immediately below and never freed — valid for process
     // lifetime per `Zone::init` contract.
     let zone = unsafe { Zone::init(raw) };
-    map.insert(name.to_vec(), (owned, zone));
+    zones.push((name.to_vec(), owned, zone));
     zone
 }
 

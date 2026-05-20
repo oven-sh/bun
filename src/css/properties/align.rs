@@ -651,7 +651,7 @@ impl Gap {
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// A value for the [place-items](https://www.w3.org/TR/css-align-3/#place-items-property) shorthand property.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct PlaceItems {
     /// The item alignment.
     pub align: AlignItems,
@@ -716,7 +716,7 @@ impl PlaceItems {
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// A value for the [place-self](https://www.w3.org/TR/css-align-3/#place-self-property) shorthand property.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct PlaceSelf {
     /// The item alignment.
     pub align: AlignSelf,
@@ -811,7 +811,7 @@ pub enum SelfPosition {
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// A value for the [place-content](https://www.w3.org/TR/css-align-3/#place-content) shorthand property.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct PlaceContent {
     /// The content alignment.
     pub align: AlignContent,

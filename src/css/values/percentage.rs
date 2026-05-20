@@ -97,7 +97,7 @@ impl Percentage {
     }
 
     pub fn partial_cmp(&self, other: &Percentage) -> Option<Ordering> {
-        crate::generic::partial_cmp_f32(&self.v, &other.v)
+        crate::generic::partial_cmp_f32(self.v, other.v)
     }
 
     pub fn try_from_angle(_: Angle) -> Option<Percentage> {

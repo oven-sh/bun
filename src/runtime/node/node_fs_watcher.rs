@@ -533,8 +533,7 @@ impl FSWatcher {
 
         #[cfg(not(windows))]
         {
-            let cloned = event.dupe();
-            this.current_task.with_mut(|t| t.append(cloned, true));
+            this.current_task.with_mut(|t| t.append(event, true));
         }
         #[cfg(windows)]
         let _ = (event, is_file);

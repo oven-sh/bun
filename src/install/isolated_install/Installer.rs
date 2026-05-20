@@ -219,7 +219,7 @@ impl<'a> Installer<'a> {
                         // on another thread)
                         entry_steps[entry_id.get() as usize]
                             .store(Step::Done as u32, Ordering::Relaxed);
-                        self.on_task_fail(entry_id, TaskError::Patching(log));
+                        self.on_task_fail(entry_id, &TaskError::Patching(log));
                         continue;
                     }
                 }
@@ -255,7 +255,7 @@ impl<'a> Installer<'a> {
                 entry_steps[entry_id.get() as usize].store(Step::Done as u32, Ordering::Relaxed);
                 self.on_task_fail(
                     entry_id,
-                    TaskError::Download(DownloadError {
+                    &TaskError::Download(DownloadError {
                         err,
                         url: url.into(),
                     }),
@@ -317,7 +317,7 @@ impl<'a> Installer<'a> {
     }
 
     /// Called from main thread
-    pub fn on_task_fail(&mut self, entry_id: StoreEntryId, err: TaskError) {
+    pub fn on_task_fail(&mut self, entry_id: StoreEntryId, err: &TaskError) {
         let string_buf = self.lockfile().buffers.string_bytes.as_slice();
 
         let entries = &self.store.entries;
@@ -336,7 +336,7 @@ impl<'a> Installer<'a> {
         let pkg_name = pkg_names[pkg_id as usize];
         let pkg_res = pkg_resolutions[pkg_id as usize];
 
-        match &err {
+        match err {
             TaskError::LinkPackage(link_err) => {
                 Output::err(
                     link_err.clone(),
@@ -760,9 +760,7 @@ pub enum Yield {
 
 impl Yield {
     pub fn failure(e: TaskError) -> Yield {
-        // clone here in case a path is kept in a buffer that
-        // will be freed at the end of the current scope.
-        Yield::Fail(e.clone())
+        Yield::Fail(e)
     }
 }
 
@@ -1937,7 +1935,7 @@ impl Task {
     }
 
     /// Called from task thread
-    pub fn callback(task: *mut thread_pool::Task) {
+    pub unsafe fn callback(task: *mut thread_pool::Task) {
         // SAFETY: task points to Task.task field
         let this: &mut Task = unsafe { &mut *bun_core::from_field_ptr!(Task, task, task) };
 
@@ -1974,6 +1972,7 @@ impl Task {
                 this.result = Result::RunScripts(list);
                 // SAFETY: `this` is a live `&mut Task`; ownership moves to the queue.
                 unsafe { installer.task_queue.push(this) };
+                // SAFETY: `manager_ptr` is the non-null BACKREF; `PackageManager` outlives every `Task` (see fn-top SAFETY note).
                 unsafe { PackageManager::wake_raw(manager_ptr) };
             }
             Yield::Done => {
@@ -1988,6 +1987,7 @@ impl Task {
                 this.result = Result::Done;
                 // SAFETY: `this` is a live `&mut Task`; ownership moves to the queue.
                 unsafe { installer.task_queue.push(this) };
+                // SAFETY: `manager_ptr` is the non-null BACKREF; `PackageManager` outlives every `Task` (see fn-top SAFETY note).
                 unsafe { PackageManager::wake_raw(manager_ptr) };
             }
             Yield::Blocked => {
@@ -2002,6 +2002,7 @@ impl Task {
                 this.result = Result::Blocked;
                 // SAFETY: `this` is a live `&mut Task`; ownership moves to the queue.
                 unsafe { installer.task_queue.push(this) };
+                // SAFETY: `manager_ptr` is the non-null BACKREF; `PackageManager` outlives every `Task` (see fn-top SAFETY note).
                 unsafe { PackageManager::wake_raw(manager_ptr) };
             }
             Yield::Fail(err) => {
@@ -2018,6 +2019,7 @@ impl Task {
                 this.result = Result::Err(err);
                 // SAFETY: `this` is a live `&mut Task`; ownership moves to the queue.
                 unsafe { installer.task_queue.push(this) };
+                // SAFETY: `manager_ptr` is the non-null BACKREF; `PackageManager` outlives every `Task` (see fn-top SAFETY note).
                 unsafe { PackageManager::wake_raw(manager_ptr) };
             }
         }

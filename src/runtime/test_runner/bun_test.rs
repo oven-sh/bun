@@ -524,7 +524,7 @@ impl BunTestRoot {
         // projection via `addr_of_mut!` creates no intermediate `&mut TestRunner`.
         let stable_root: *mut BunTestRoot = Jest::runner_ptr()
             .map(|p| unsafe { core::ptr::addr_of_mut!((*p.as_ptr()).bun_test_root) })
-            .unwrap_or(std::ptr::from_mut::<BunTestRoot>(self));
+            .unwrap_or_else(|| std::ptr::from_mut::<BunTestRoot>(self));
 
         // Zig: active_file = .new(undefined); active_file.get().?.init(...)
         // TODO(port): in-place init — Rc::new_cyclic or two-phase init may be
@@ -969,7 +969,7 @@ impl BunTest {
             // SAFETY: `UnsafeCell`-derived `*mut`; short-lived field read between re-entrant calls.
             let step_result: StepResult = match unsafe { (*this).phase } {
                 Phase::Collection => Collection::step(this_strong, global_this, result)?,
-                Phase::Execution => Execution::Execution::step(Rc::clone(this_strong), global_this, result)?,
+                Phase::Execution => Execution::Execution::step(this_strong, global_this, &result)?,
                 Phase::Done => StepResult::Complete,
             };
             match step_result {

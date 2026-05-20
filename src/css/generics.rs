@@ -1644,9 +1644,9 @@ pub fn partial_cmp<T: PartialCmp>(lhs: &T, rhs: &T) -> Option<Ordering> {
 }
 
 #[inline]
-pub fn partial_cmp_f32(lhs: &f32, rhs: &f32) -> Option<Ordering> {
-    let lte = *lhs <= *rhs;
-    let rte = *lhs >= *rhs;
+pub fn partial_cmp_f32(lhs: f32, rhs: f32) -> Option<Ordering> {
+    let lte = lhs <= rhs;
+    let rte = lhs >= rhs;
     if !lte && !rte {
         return None;
     }
@@ -1662,7 +1662,7 @@ pub fn partial_cmp_f32(lhs: &f32, rhs: &f32) -> Option<Ordering> {
 impl PartialCmp for f32 {
     #[inline]
     fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> {
-        partial_cmp_f32(self, rhs)
+        partial_cmp_f32(*self, *rhs)
     }
 }
 impl PartialCmp for CSSInteger {

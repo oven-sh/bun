@@ -191,7 +191,7 @@ pub fn testing_impl(
             let local_names = LocalsResultsMap::default();
             let result = match stylesheet.to_css(
                 alloc,
-                PrinterOptions {
+                &PrinterOptions {
                     minify: match test_kind {
                         TestKind::Minify => true,
                         TestKind::Normal => false,

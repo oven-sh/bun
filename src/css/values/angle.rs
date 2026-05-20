@@ -217,7 +217,7 @@ impl Angle {
     }
 
     pub fn partial_cmp(self, other: Angle) -> Option<Ordering> {
-        crate::generic::partial_cmp_f32(&self.to_degrees(), &other.to_degrees())
+        crate::generic::partial_cmp_f32(self.to_degrees(), other.to_degrees())
     }
 
     pub fn try_op<C>(self, other: Angle, ctx: C, op_fn: fn(C, f32, f32) -> f32) -> Option<Angle> {

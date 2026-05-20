@@ -918,13 +918,16 @@ pub enum AlpnOffer {
 /// the ALPN protocol list for `offer`, and enables SCT/OCSP stapling. Called
 /// from `on_open` for every TLS socket — must run even when the hostname is an
 /// IP literal (with empty SNI) so ALPN is still advertised.
-pub fn configure_http_client_with_alpn(
+///
+/// # Safety
+/// `ssl` must be a live `*mut SSL` for an open socket; `hostname` must be null
+/// or a NUL-terminated buffer that outlives this call.
+pub unsafe fn configure_http_client_with_alpn(
     ssl: *mut boringssl::c::SSL,
     hostname: *const core::ffi::c_char,
     offer: AlpnOffer,
 ) {
-    // SAFETY: caller passes a live *mut SSL for a just-opened socket; `hostname`
-    // is either null or a NUL-terminated buffer that outlives this call.
+    // SAFETY: see fn-level Safety contract.
     unsafe {
         if !hostname.is_null() && *hostname != 0 {
             boringssl::c::SSL_set_tlsext_host_name(ssl, hostname);
@@ -1457,7 +1460,11 @@ pub(crate) mod body_out {
 // ───────────────────────────── impl HTTPClient ─────────────────────────────
 
 impl<'a> HTTPClient<'a> {
-    pub fn check_server_identity<const IS_SSL: bool>(
+    /// # Safety
+    /// `ssl_ptr` must be a live `*mut SSL` for the open TLS socket whose peer
+    /// certificate is being verified; it is passed through to BoringSSL's
+    /// `SSL_get_peer_cert_chain`.
+    pub unsafe fn check_server_identity<const IS_SSL: bool>(
         &mut self,
         socket: HttpSocket<IS_SSL>,
         cert_error: HTTPCertError,
@@ -1465,7 +1472,7 @@ impl<'a> HTTPClient<'a> {
         allow_proxy_url: bool,
     ) -> bool {
         if self.flags.reject_unauthorized {
-            // SAFETY: ssl_ptr is a live *mut SSL while the TLS socket is open
+            // SAFETY: caller contract — `ssl_ptr` is live while the TLS socket is open.
             let cert_chain = unsafe { boringssl::c::SSL_get_peer_cert_chain(ssl_ptr) };
             if !cert_chain.is_null() {
                 // SAFETY: cert_chain is a live STACK_OF(X509) owned by the SSL session; index 0 is in bounds when non-null is returned
@@ -1557,7 +1564,7 @@ impl<'a> HTTPClient<'a> {
         // blocked in epoll_wait forever. Previously the first `set_timeout` call
         // was inside `on_writable`, which only runs *after* the handshake
         // completes. See https://github.com/oven-sh/bun/issues/30325.
-        self.set_timeout(socket);
+        self.set_timeout(&socket);
 
         // Enable TCP keepalive so a half-open connection (peer closed but the
         // FIN/RST never reached us — NAT timeout, wifi/cellular handoff,
@@ -1622,7 +1629,10 @@ impl<'a> HTTPClient<'a> {
                     core::ptr::null()
                 };
 
-                configure_http_client_with_alpn(ssl_ptr, host_z, self.alpn_offer());
+                // SAFETY: `ssl_ptr` was null-checked above and is the live SSL
+                // handle for this just-opened socket; `host_z` is null or a
+                // NUL-terminated buffer borrowed from `temp`/`owned` in scope.
+                unsafe { configure_http_client_with_alpn(ssl_ptr, host_z, self.alpn_offer()) };
             }
         } else {
             self.first_call::<IS_SSL>(socket);
@@ -2237,8 +2247,11 @@ impl<'a> HTTPClient<'a> {
         // `'static` so callers don't pin `&mut self` for the rest of their fn.
         picohttp::Request {
             method: self.method.as_str().as_bytes(),
+            // SAFETY: `url.pathname` borrows `self.url`, which outlives the returned `Request`.
             path: unsafe { bun_ptr::detach_lifetime(self.url.pathname) },
             minor_version: 1,
+            // SAFETY: `request_headers_buf` is the per-HTTP-thread
+            // `SHARED_REQUEST_HEADERS_BUF` static, outliving the returned `Request`.
             headers: unsafe { bun_ptr::detach_lifetime(&request_headers_buf[0..header_count]) },
             bytes_read: 0,
         }
@@ -2271,7 +2284,7 @@ impl<'a> HTTPClient<'a> {
         // clone was created via `ptr::read`). Dropping it here would
         // double-free when the original later runs `clear_data()`. Forget the
         // clone's view; the original is the sole owner.
-        core::mem::forget(core::mem::take(&mut self.unix_socket_path));
+        let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.unix_socket_path));
         // TODO: what we do with stream body?
         let request_body: &[u8] = if self.state.flags.resend_request_body_on_redirect
             && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
@@ -2765,7 +2778,7 @@ impl<'a> HTTPClient<'a> {
         match self.state.request_stage {
             RequestStage::Pending | RequestStage::Headers | RequestStage::Opened => {
                 bun_core::scoped_log!(fetch, "sendInitialRequestPayload");
-                self.set_timeout(socket);
+                self.set_timeout(&socket);
                 let result =
                     match self.send_initial_request_payload::<IS_FIRST_CALL, IS_SSL>(socket) {
                         Ok(r) => r,
@@ -2823,7 +2836,7 @@ impl<'a> HTTPClient<'a> {
             }
             RequestStage::Body => {
                 bun_core::scoped_log!(fetch, "send body");
-                self.set_timeout(socket);
+                self.set_timeout(&socket);
 
                 match &mut self.state.original_request_body {
                     HTTPRequestBody::Bytes(_) => {
@@ -2887,7 +2900,7 @@ impl<'a> HTTPClient<'a> {
                     let proxy = proxy_tunnel::raw_as_mut(proxy_ptr);
                     match &self.state.original_request_body {
                         HTTPRequestBody::Bytes(_) => {
-                            self.set_timeout(socket);
+                            self.set_timeout(&socket);
 
                             let to_send = self.request_body();
                             // just wait and retry when onWritable! if closed internally will call proxy.onClose
@@ -2922,7 +2935,7 @@ impl<'a> HTTPClient<'a> {
                     // the tunnel is a disjoint heap allocation (see
                     // `proxy_tunnel::raw_as_mut` INVARIANT).
                     let proxy = proxy_tunnel::raw_as_mut(proxy_ptr);
-                    self.set_timeout(socket);
+                    self.set_timeout(&socket);
                     // PERF(port): was stack-fallback alloc (16KB) — profile if hot.
                     let mut temporary_send_buffer: Vec<u8> = Vec::with_capacity(16 * 1024);
                     let writer = &mut temporary_send_buffer;
@@ -3041,7 +3054,7 @@ impl<'a> HTTPClient<'a> {
             }
         }
 
-        self.set_timeout(socket);
+        self.set_timeout(&socket);
     }
 
     pub fn handle_on_data_headers<const IS_SSL: bool>(
@@ -3224,7 +3237,7 @@ impl<'a> HTTPClient<'a> {
                 return;
             }
         } else if self.state.response_stage == ResponseStage::BodyChunk {
-            self.set_timeout(socket);
+            self.set_timeout(&socket);
             let report_progress = match self.handle_response_body_chunked_encoding(to_read!()) {
                 Ok(b) => b,
                 Err(err) => {
@@ -3260,7 +3273,7 @@ impl<'a> HTTPClient<'a> {
 
         if self.proxy_tunnel.is_some() {
             // if we have a tunnel we dont care about the other stages, we will just tunnel the data
-            self.set_timeout(socket);
+            self.set_timeout(&socket);
             self.proxy_tunnel_mut().unwrap().receive(incoming_data);
             return;
         }
@@ -3270,7 +3283,7 @@ impl<'a> HTTPClient<'a> {
                 self.handle_on_data_headers::<IS_SSL>(incoming_data, ctx, socket);
             }
             ResponseStage::Body => {
-                self.set_timeout(socket);
+                self.set_timeout(&socket);
 
                 let report_progress = match self.handle_response_body(incoming_data, false) {
                     Ok(b) => b,
@@ -3286,7 +3299,7 @@ impl<'a> HTTPClient<'a> {
                 }
             }
             ResponseStage::BodyChunk => {
-                self.set_timeout(socket);
+                self.set_timeout(&socket);
 
                 let report_progress =
                     match self.handle_response_body_chunked_encoding(incoming_data) {
@@ -3436,7 +3449,7 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
-    pub fn set_timeout<S: SocketTimeout>(&self, socket: S) {
+    pub fn set_timeout<S: SocketTimeout>(&self, socket: &S) {
         // Duration comes from `IDLE_TIMEOUT_SECONDS` (tunable via
         // `BUN_CONFIG_HTTP_IDLE_TIMEOUT`, set low in tests) and is normalised once
         // in `HTTPThread::on_start` — clamped to the uSockets long-timer bound and
@@ -3650,7 +3663,7 @@ impl<'a> HTTPClient<'a> {
         };
         callback.run(async_http, result);
 
-        if PRINT_EVERY > 0 {
+        if PRINT_EVERY != 0 {
             let i = PRINT_EVERY_I.fetch_add(1, Ordering::Relaxed) + 1;
             if i.is_multiple_of(PRINT_EVERY) {
                 Output::prettyln(format_args!("Heap stats for HTTP thread\n"));
@@ -3741,7 +3754,7 @@ impl<'a> HTTPClient<'a> {
         // See `do_redirect`: the HTTP-thread clone shares this allocation
         // with the JS-thread original (created via `ptr::read`); dropping it
         // here double-frees once the original runs `clear_data()`.
-        core::mem::forget(core::mem::take(&mut self.unix_socket_path));
+        let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.unix_socket_path));
         let request_body: &[u8] = if self.state.flags.resend_request_body_on_redirect
             && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
         {
@@ -3916,12 +3929,10 @@ impl<'a> HTTPClient<'a> {
         let content_length = self.state.content_length;
         // is it exactly as much as we need?
         if is_only_buffer
-            && content_length.is_some()
-            && incoming_data.len() >= content_length.unwrap()
+            && let Some(len) = content_length
+            && incoming_data.len() >= len
         {
-            self.handle_response_body_from_single_packet(
-                &incoming_data[0..content_length.unwrap()],
-            )?;
+            self.handle_response_body_from_single_packet(&incoming_data[0..len])?;
             Ok(true)
         } else {
             self.handle_response_body_from_multiple_packets(incoming_data)
@@ -4147,6 +4158,8 @@ impl<'a> HTTPClient<'a> {
             // slice from the owning Vec instead so the write has Unique provenance.
             let base = self.state.response_message_buffer.list.as_mut_ptr();
             let off = incoming_data.as_ptr() as usize - base as usize;
+            // SAFETY: `owns()` proved `[base+off, base+off+in_len)` lies within
+            // `response_message_buffer.list`; `base` carries Unique provenance.
             unsafe { bun_core::ffi::slice_mut(base.add(off), in_len) }
         } else {
             small[0..in_len].copy_from_slice(incoming_data);

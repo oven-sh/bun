@@ -1414,7 +1414,7 @@ unsafe extern "Rust" {
     /// struct via `container_of(io_poll)` per spec `io.zig:626`.
     /// PERF(port): was inline switch (cold path — Bun.write / Bun.file().text() only).
     fn __bun_io_pollable_on_ready(tag: PollableTag, poll: *mut Poll);
-    fn __bun_io_pollable_on_io_error(tag: PollableTag, poll: *mut Poll, err: sys::Error);
+    fn __bun_io_pollable_on_io_error(tag: PollableTag, poll: *mut Poll, err: &sys::Error);
 }
 
 #[derive(enumset::EnumSetType)]
@@ -1663,7 +1663,7 @@ impl Poll {
                     // closed `sys::Errno` enum (size mismatch on darwin/freebsd where it
                     // is `#[repr(u16)]`, and UB for unmapped discriminants). Store the
                     // raw integer via `from_code_int` (Zig: `@enumFromInt(event.data)`).
-                    sys::Error::from_code_int(event.data as core::ffi::c_int, sys::Tag::kevent),
+                    &sys::Error::from_code_int(event.data as core::ffi::c_int, sys::Tag::kevent),
                 )
             };
         } else {
@@ -1692,7 +1692,7 @@ impl Poll {
                 __bun_io_pollable_on_io_error(
                     tag,
                     poll,
-                    sys::Error::from_code(errno, sys::Tag::TODO),
+                    &sys::Error::from_code(errno, sys::Tag::TODO),
                 )
             };
         } else {

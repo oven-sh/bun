@@ -68,8 +68,8 @@ impl ColorScheme {
         Ok(res)
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        if *self == ColorScheme::empty() {
+    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
+        if self == ColorScheme::empty() {
             return dest.write_str("normal");
         }
 

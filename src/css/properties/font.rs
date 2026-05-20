@@ -247,7 +247,7 @@ impl FontStretch {
         Percentage::parse(input).map(FontStretch::Percentage)
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
+    pub fn to_css(self, dest: &mut Printer) -> PrintResult<()> {
         if dest.minify {
             let percentage: Percentage = self.into_percentage();
             return percentage.to_css(dest);
@@ -565,13 +565,13 @@ impl FontStyle {
         }}
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
+    pub fn to_css(self, dest: &mut Printer) -> PrintResult<()> {
         match self {
             FontStyle::Normal => dest.write_str("normal"),
             FontStyle::Italic => dest.write_str("italic"),
             FontStyle::Oblique(angle) => {
                 dest.write_str("oblique")?;
-                if *angle != FontStyle::default_oblique_angle() {
+                if angle != FontStyle::default_oblique_angle() {
                     dest.write_char(b' ')?;
                     angle.to_css(dest)?;
                 }

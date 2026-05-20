@@ -22,7 +22,7 @@ impl Display {
         DisplayPair::parse(input).map(Display::Pair)
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             Display::Keyword(kw) => kw.to_css(dest),
             Display::Pair(p) => p.to_css(dest),

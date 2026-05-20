@@ -1063,7 +1063,9 @@ impl<'a> JSXTag<'a> {
 
             if let Some(index) = strings::index_of_char(member, b'-') {
                 let source = p.source();
-                p.log().add_error(
+                // SAFETY: `log_ptr()` returns the externally-lent `&mut Log`;
+                // sole live alias while `P` lives.
+                unsafe { p.log_ptr().as_mut() }.add_error(
                     Some(source),
                     bun_ast::Loc {
                         start: member_range.loc.start + i32::try_from(index).expect("int cast"),
@@ -1449,6 +1451,7 @@ impl Default for ThenCatchChain {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct ParsedPath<'a> {
     pub loc: bun_ast::Loc,
     pub text: &'a [u8],

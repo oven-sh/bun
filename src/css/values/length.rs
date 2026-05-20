@@ -381,13 +381,13 @@ impl LengthValue {
         if core::mem::discriminant(&self) == core::mem::discriminant(&other) {
             let a = self.value();
             let b = other.value();
-            return crate::generic::partial_cmp_f32(&a, &b);
+            return crate::generic::partial_cmp_f32(a, b);
         }
 
         let a = self.to_px();
         let b = other.to_px();
         if let (Some(a), Some(b)) = (a, b) {
-            return crate::generic::partial_cmp_f32(&a, &b);
+            return crate::generic::partial_cmp_f32(a, b);
         }
         None
     }

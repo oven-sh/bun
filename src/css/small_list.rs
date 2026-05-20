@@ -98,7 +98,7 @@ pub mod fallbacks_gated {
         let mut fallbacks = ColorFallbackKind::default();
         let mut res: Vec<SmallList<T, 1>> = Vec::new();
         for item in this.slice() {
-            prefixes.insert(item.get_image().get_necessary_prefixes(*targets));
+            prefixes.insert(item.get_image().get_necessary_prefixes(targets));
             fallbacks.insert(item.get_necessary_fallbacks(targets));
         }
 

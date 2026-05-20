@@ -3240,7 +3240,7 @@ impl<'a> Transpiler<'a> {
         let symbols = bun_ast::symbol::Map::init_list(Default::default());
         let result = match sheet.to_css(
             alloc,
-            bun_css::PrinterOptions {
+            &bun_css::PrinterOptions {
                 targets: bun_css::Targets::for_bundler_target(self.options.target),
                 minify: self.options.minify_whitespace,
                 ..bun_css::PrinterOptions::default()

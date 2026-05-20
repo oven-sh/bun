@@ -238,7 +238,7 @@ impl Background {
 
     pub fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
         self.color.get_necessary_fallbacks(*targets)
-            | self.get_image().get_necessary_fallbacks(*targets)
+            | self.get_image().get_necessary_fallbacks(targets)
     }
 
     #[inline]
@@ -430,7 +430,7 @@ impl BackgroundRepeat {
         Ok(BackgroundRepeat { x, y })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         use BackgroundRepeatKeyword::{NoRepeat, Repeat};
 
         if self.x == Repeat && self.y == NoRepeat {

@@ -2745,7 +2745,7 @@ mod stylesheet_impl {
         pub fn to_css<'a>(
             &'a self,
             arena: &'a Bump,
-            options: PrinterOptions<'a>,
+            options: &PrinterOptions<'a>,
             import_info: Option<ImportInfo<'a>>,
             local_names: Option<&'a LocalsResultsMap>,
             symbols: &'a bun_ast::symbol::Map,
@@ -2759,7 +2759,7 @@ mod stylesheet_impl {
             let result = self.to_css_with_writer(
                 arena,
                 &mut dest,
-                &options,
+                options,
                 import_info,
                 local_names,
                 symbols,

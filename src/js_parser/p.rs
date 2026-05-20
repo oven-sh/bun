@@ -57,7 +57,7 @@ type Map<K, V> = HashMap<K, V>;
 /// parse_* / visit_* sibling files un-gate.
 pub trait ParserLike<'a> {
     fn lexer(&mut self) -> &mut js_lexer::Lexer<'a>;
-    fn log(&self) -> &mut bun_ast::Log;
+    fn log_ptr(&self) -> core::ptr::NonNull<bun_ast::Log>;
     fn bump(&self) -> &'a Bump;
     fn source(&self) -> &'a bun_ast::Source;
     fn new_expr<T: js_ast::expr::IntoExprData>(&mut self, t: T, loc: bun_ast::Loc) -> Expr;
@@ -73,8 +73,8 @@ impl<'a, const TS: bool, const SCAN: bool> ParserLike<'a> for P<'a, TS, SCAN> {
         &mut self.lexer
     }
     #[inline]
-    fn log(&self) -> &mut bun_ast::Log {
-        P::log(self)
+    fn log_ptr(&self) -> core::ptr::NonNull<bun_ast::Log> {
+        self.log
     }
     #[inline]
     fn bump(&self) -> &'a Bump {
@@ -1270,7 +1270,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let import_record_index = self.add_import_record_by_range_and_path(
                         ImportKind::Stmt,
                         self.source.range_of_string(arg.loc),
-                        path,
+                        &path,
                     );
                     self.import_records.items_mut()[import_record_index as usize]
                         .flags
@@ -1335,7 +1335,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let import_record_index = self.add_import_record_by_range_and_path(
                     ImportKind::Require,
                     self.source.range_of_string(arg.loc),
-                    path,
+                    &path,
                 );
                 self.import_records.items_mut()[import_record_index as usize]
                     .flags
@@ -4955,6 +4955,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // `Scope` — see `Scope::get_or_put_member_with_hash`.
         let mut scope: js_ast::StoreRef<js_ast::Scope> = self.current_scope;
         let scope_kind = scope.kind;
+        // SAFETY: see key-lifetime note above — `name: &'a [u8]` outlives the
+        // arena-owned `Scope` map.
         let entry = unsafe { scope.members.get_or_put_borrowed(name) };
         if entry.found_existing {
             let existing: js_ast::scope::Member = *entry.value_ptr;
@@ -5128,15 +5130,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         range: bun_ast::Range,
         name: &'a [u8],
     ) -> u32 {
-        self.add_import_record_by_range_and_path(kind, range, fs::Path::init(name))
+        self.add_import_record_by_range_and_path(kind, range, &fs::Path::init(name))
     }
 
     pub fn add_import_record_by_range_and_path(
         &mut self,
         kind: ImportKind,
         range: bun_ast::Range,
-        path: fs::Path<'a>,
+        path: &fs::Path<'a>,
     ) -> u32 {
+        let path = *path;
         let index = self.import_records.len();
         // `ImportRecord.path` is `fs::Path<'static>` (PORTING.md: no struct
         // lifetime params yet). The parser-supplied path borrows arena-owned 'a bytes
@@ -7120,7 +7123,34 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     bun_ast::StoreSlice::new_mut(class_properties.into_bump_slice_mut());
 
                 if !instance_members.is_empty() {
-                    if constructor_function.is_none() {
+                    if let Some(mut cf) = constructor_function {
+                        // `body.stmts` is an arena-owned `StoreSlice<Stmt>`.
+                        let old_stmts: &[Stmt] = cf.func.body.stmts.slice();
+                        let mut constructor_stmts = BumpVec::<Stmt>::with_capacity_in(
+                            old_stmts.len() + instance_members.len(),
+                            self.arena,
+                        );
+                        constructor_stmts.extend_from_slice(old_stmts);
+                        // statements coming from class body inserted after super call or beginning of constructor.
+                        let mut super_index: Option<usize> = None;
+                        for (index, item) in constructor_stmts.iter().enumerate() {
+                            if !matches!(item.data, js_ast::StmtData::SExpr(se) if matches!(se.value.data, js_ast::ExprData::ECall(c) if matches!(c.target.data, js_ast::ExprData::ESuper(_))))
+                            {
+                                continue;
+                            }
+                            super_index = Some(index);
+                            break;
+                        }
+
+                        let i = super_index.map(|j| j + 1).unwrap_or(0);
+                        // TODO(port): bumpalo Vec lacks insert_slice; emulate via per-item insert.
+                        for (off, m) in instance_members.iter().enumerate() {
+                            constructor_stmts.insert(i + off, *m);
+                        }
+
+                        cf.func.body.stmts =
+                            bun_ast::StoreSlice::new_mut(constructor_stmts.into_bump_slice_mut());
+                    } else {
                         // PORT NOTE: Zig `Property.List.fromList(class.properties)` re-wraps the
                         // freshly-installed slice and inserts at index 0. We rebuild instead
                         // (Property is not Clone in Rust).
@@ -7198,34 +7228,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         s_class.class.properties =
                             bun_ast::StoreSlice::new_mut(properties.into_bump_slice_mut());
-                    } else {
-                        let mut cf = constructor_function.unwrap();
-                        // `body.stmts` is an arena-owned `StoreSlice<Stmt>`.
-                        let old_stmts: &[Stmt] = cf.func.body.stmts.slice();
-                        let mut constructor_stmts = BumpVec::<Stmt>::with_capacity_in(
-                            old_stmts.len() + instance_members.len(),
-                            self.arena,
-                        );
-                        constructor_stmts.extend_from_slice(old_stmts);
-                        // statements coming from class body inserted after super call or beginning of constructor.
-                        let mut super_index: Option<usize> = None;
-                        for (index, item) in constructor_stmts.iter().enumerate() {
-                            if !matches!(item.data, js_ast::StmtData::SExpr(se) if matches!(se.value.data, js_ast::ExprData::ECall(c) if matches!(c.target.data, js_ast::ExprData::ESuper(_))))
-                            {
-                                continue;
-                            }
-                            super_index = Some(index);
-                            break;
-                        }
-
-                        let i = super_index.map(|j| j + 1).unwrap_or(0);
-                        // TODO(port): bumpalo Vec lacks insert_slice; emulate via per-item insert.
-                        for (off, m) in instance_members.iter().enumerate() {
-                            constructor_stmts.insert(i + off, *m);
-                        }
-
-                        cf.func.body.stmts =
-                            bun_ast::StoreSlice::new_mut(constructor_stmts.into_bump_slice_mut());
                     }
 
                     // TODO: make sure "super()" comes before instance field initializers
@@ -7882,8 +7884,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         default_name: Option<&'a [u8]>,
         mut scope: js_ast::StoreRef<Scope>,
     ) -> Ref {
-        let name: &'a [u8] = if self.will_use_renamer() && default_name.is_some() {
-            default_name.unwrap()
+        let name: &'a [u8] = if let Some(n) = default_name.filter(|_| self.will_use_renamer()) {
+            n
         } else {
             self.temp_ref_count += 1;
             bun_alloc::arena_format!(in self.arena, "__bun_temp_ref_{:x}$", self.temp_ref_count)
@@ -8472,7 +8474,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // SAFETY: idx < parts.len(); Part fields are arena/bump-backed
                     // (Borrowed-origin BabyLists, raw stmt slices) — bitwise copy
                     // matches Zig struct-assignment semantics.
-                    let mut part = unsafe { core::ptr::read(&raw const parts[idx]) };
+                    let mut part =
+                        core::mem::ManuallyDrop::new(unsafe { core::ptr::read(&raw const parts[idx]) });
                     self.import_records_for_current_part.clear();
                     self.declared_symbols.clear_retaining_capacity();
 
@@ -8484,10 +8487,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ) {
                         Ok(r) => r,
                         Err(e) => {
-                            // `part` is a bitwise duplicate of `parts[idx]`;
-                            // discard without dropping so the source slot keeps
-                            // sole ownership.
-                            core::mem::forget(part);
+                            // `part` is a bitwise duplicate of `parts[idx]` held in
+                            // `ManuallyDrop`; let it fall out of scope so the source
+                            // slot keeps sole ownership.
                             return Err(e);
                         }
                     };
@@ -8505,14 +8507,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             part.can_be_removed_if_unused = false;
                         }
                         if part.declared_symbols.len() == 0 {
-                            // `part` is a bitwise duplicate of `parts[idx]` (via
-                            // `ptr::read` above); the old `declared_symbols` is
-                            // still owned by that slot. Overwrite without running
+                            // SAFETY: `part` is a bitwise duplicate of `parts[idx]`
+                            // (via `ptr::read` above); the old `declared_symbols`
+                            // is still owned by that slot. Overwrite without running
                             // Drop to match Zig's plain field assignment.
-                            core::mem::forget(core::mem::replace(
-                                &mut part.declared_symbols,
-                                self.declared_symbols.clone().expect("unreachable"),
-                            ));
+                            unsafe {
+                                core::ptr::write(
+                                    &raw mut part.declared_symbols,
+                                    self.declared_symbols.clone().expect("unreachable"),
+                                );
+                            }
                         } else {
                             part.declared_symbols
                                 .append_list(&self.declared_symbols)
@@ -8527,15 +8531,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // `parts[idx].import_record_indices` and may be Owned —
                             // overwrite without running Drop to mirror Zig's plain
                             // field assignment.
-                            core::mem::forget(core::mem::replace(
-                                &mut part.import_record_indices,
-                                // SAFETY: `alloc_slice_copy` returns a leaked
-                                // bump-arena slice; `u32: Copy` so the bitwise
-                                // move is a plain copy (safe `from_arena_slice`).
-                                Vec::from_arena_slice(arena.alloc_slice_copy(
-                                    self.import_records_for_current_part.as_slice(),
-                                )),
-                            ));
+                            // SAFETY: bitwise duplicate field — overwrite without
+                            // running Drop (see `declared_symbols` above).
+                            unsafe {
+                                core::ptr::write(
+                                    &raw mut part.import_record_indices,
+                                    Vec::from_arena_slice(arena.alloc_slice_copy(
+                                        self.import_records_for_current_part.as_slice(),
+                                    )),
+                                );
+                            }
                         } else {
                             part.import_record_indices
                                 .append_slice(self.import_records_for_current_part.as_slice());
@@ -8555,7 +8560,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // SAFETY: bitwise overwrite matching Zig
                         // `parts.items[parts_end] = part;` — old slot value is not
                         // dropped (arena-owned; Zig never deinit'd it either).
-                        unsafe { core::ptr::write(parts.as_mut_ptr().add(parts_end), part) };
+                        unsafe {
+                            core::ptr::write(
+                                parts.as_mut_ptr().add(parts_end),
+                                core::mem::ManuallyDrop::into_inner(part),
+                            )
+                        };
                         parts_end += 1;
                     } else {
                         // Filtered out; free the global-heap maps and clear the
@@ -8571,7 +8581,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 Default::default(),
                             );
                         }
-                        core::mem::forget(part);
+                        // `part` is `ManuallyDrop`; falls out of scope without dropping.
+                        let _ = part;
                     }
                 }
 
@@ -9495,6 +9506,8 @@ impl LowerUsingDeclarationsContext {
                     let items = data.items.slice();
                     exports.reserve(items.len());
                     for item in items {
+                        // SAFETY: arena-owned slot never read again (stmt dropped
+                        // via `continue` below); shallow move out is sound.
                         exports.push(unsafe { core::ptr::read(item) });
                     }
                     continue;

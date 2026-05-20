@@ -280,7 +280,7 @@ impl PackageManager {
                 };
                 match folder_resolver::get_or_put(
                     GlobalOrRelative::CacheFolder(npm_package_path),
-                    dep_version,
+                    &dep_version,
                     b".",
                     self,
                 ) {

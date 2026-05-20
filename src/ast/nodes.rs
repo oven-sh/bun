@@ -1192,6 +1192,7 @@ impl Part {
     }
 }
 
+#[derive(Clone, Copy)]
 pub enum StmtOrExpr {
     Stmt(Stmt),
     Expr(Expr),

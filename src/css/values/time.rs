@@ -164,7 +164,7 @@ impl Time {
     }
 
     pub fn partial_cmp(&self, other: &Time) -> Option<core::cmp::Ordering> {
-        crate::generic::partial_cmp_f32(&self.to_ms(), &other.to_ms())
+        crate::generic::partial_cmp_f32(self.to_ms(), other.to_ms())
     }
 
     pub fn map(self, map_fn: impl Fn(f32) -> f32) -> Time {

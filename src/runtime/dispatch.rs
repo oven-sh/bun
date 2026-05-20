@@ -827,13 +827,13 @@ pub unsafe fn __bun_io_pollable_on_ready(tag: bun_io::PollableTag, poll: *mut bu
 pub unsafe fn __bun_io_pollable_on_io_error(
     tag: bun_io::PollableTag,
     poll: *mut bun_io::Poll,
-    err: bun_sys::Error,
+    err: &bun_sys::Error,
 ) {
     match tag {
         bun_io::PollableTag::ReadFile => {
             // SAFETY: per fn contract.
             let this = unsafe { &mut *bun_core::from_field_ptr!(ReadFile, io_poll, poll) };
-            this.on_io_error(&err);
+            this.on_io_error(err);
         }
         bun_io::PollableTag::WriteFile => {
             // SAFETY: per fn contract.
@@ -841,7 +841,7 @@ pub unsafe fn __bun_io_pollable_on_io_error(
             // PORT NOTE: WriteFile::on_io_error already takes `*mut ()` (it
             // self-recovers via the io_request path elsewhere); reuse that
             // shape rather than reborrowing `&mut`.
-            WriteFile::on_io_error(this.cast(), &err);
+            WriteFile::on_io_error(this.cast(), err);
         }
         bun_io::PollableTag::Empty => {
             debug_assert!(false, "io::Poll on_io_error with Empty tag");

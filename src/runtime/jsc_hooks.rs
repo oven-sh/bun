@@ -249,7 +249,7 @@ pub unsafe fn default_client_ssl_ctx(vm: *mut VirtualMachine) -> *mut bun_uws::S
 /// `vm` must be the live per-thread VM; called only from the JS thread.
 unsafe fn ssl_ctx_cache_get_or_create(
     _vm: *mut VirtualMachine,
-    opts: bun_uws::SocketContext::BunSocketContextOptions,
+    opts: &bun_uws::SocketContext::BunSocketContextOptions,
     err: &mut bun_uws::create_bun_socket_error_t,
 ) -> Option<*mut bun_uws::SslCtx> {
     let state = runtime_state();
@@ -260,7 +260,7 @@ unsafe fn ssl_ctx_cache_get_or_create(
     // SAFETY: per-thread `RuntimeState`; `ssl_ctx_cache` has a stable
     // address for the VM's lifetime and is only touched from the JS thread.
     let cache = unsafe { &mut (*state).ssl_ctx_cache };
-    cache.get_or_create_opts(&opts, err)
+    cache.get_or_create_opts(opts, err)
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1512,6 +1512,7 @@ unsafe fn apply_standalone_runtime_flags(
     // reads `graph.runtime_flags`.
     let graph = unsafe {
         &*std::ptr::from_ref::<dyn bun_resolver::StandaloneModuleGraph>(graph)
+            .cast::<c_void>()
             .cast::<bun_standalone_graph::Graph>()
     };
     // SAFETY: per fn contract.

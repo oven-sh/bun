@@ -333,7 +333,7 @@ impl<'a> io_heap::HeapNode for LifecycleScriptSubprocess<'a> {
 
 impl<'a> io_heap::HeapContext<LifecycleScriptSubprocess<'a>> for StartedAtCtx {
     #[inline]
-    fn less(
+    unsafe fn less(
         &self,
         a: *mut LifecycleScriptSubprocess<'a>,
         b: *mut LifecycleScriptSubprocess<'a>,
@@ -385,12 +385,12 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     /// `*PackageManager` is a non-exclusive pointer; no `&PackageManager`
     /// outlives the brief field accesses below on the install thread.
     #[inline]
-    unsafe fn manager_mut(&self) -> &mut PackageManager {
+    unsafe fn manager_mut(&mut self) -> &mut PackageManager {
         // SAFETY: see fn doc.
-        unsafe { &mut *self.manager.as_ptr() }
+        unsafe { self.manager.get_mut() }
     }
 
-    pub fn loop_(&self) -> *mut AsyncLoop {
+    pub fn loop_(&mut self) -> *mut AsyncLoop {
         // SAFETY: see [`Self::manager_mut`].
         unsafe { self.manager_mut() }.event_loop.native_loop()
     }
@@ -939,20 +939,19 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
                 if let Some(nanos) = maybe_duration {
                     if nanos > MIN_MILLISECONDS_TO_LOG * bun_core::time::NS_PER_MS {
+                        // PORT NOTE: Zig passed `manager.lockfile.allocator`; allocator param
+                        // dropped per §Allocators (non-AST crate). Zig borrowed the lockfile
+                        // string buffer for `package_name`; we own a `Box<[u8]>` that drops on
+                        // `destroy`, so the log entry takes its own owned copy.
+                        let entry = LifecycleScriptTimeLogEntry {
+                            package_name: self.package_name.clone(),
+                            script_id: self.current_script_index,
+                            duration: nanos,
+                        };
                         // SAFETY: see [`Self::manager_mut`].
                         unsafe { self.manager_mut() }
                             .lifecycle_script_time_log
-                            .append_concurrent(
-                                // PORT NOTE: Zig passed `manager.lockfile.allocator`; allocator param
-                                // dropped per §Allocators (non-AST crate). Zig borrowed the lockfile
-                                // string buffer for `package_name`; we own a `Box<[u8]>` that drops on
-                                // `destroy`, so the log entry takes its own owned copy.
-                                LifecycleScriptTimeLogEntry {
-                                    package_name: self.package_name.clone(),
-                                    script_id: self.current_script_index,
-                                    duration: nanos,
-                                },
-                            );
+                            .append_concurrent(entry);
                     }
                 }
 

@@ -2625,7 +2625,7 @@ fn get_or_put_resolved_package(
 
                     break 'res FolderResolution::get_or_put(
                         GlobalOrRelative::Relative(dependency::version::Tag::Folder),
-                        version,
+                        &version,
                         folder_path_abs,
                         this,
                     );
@@ -2716,7 +2716,7 @@ fn get_or_put_resolved_package(
 
             let res = FolderResolution::get_or_put(
                 GlobalOrRelative::Relative(dependency::version::Tag::Workspace),
-                version,
+                &version,
                 workspace_path_u8,
                 this,
             );
@@ -2755,7 +2755,7 @@ fn get_or_put_resolved_package(
             let symlink_path = this.lockfile.str_detached(version.symlink());
             let res = FolderResolution::get_or_put(
                 GlobalOrRelative::Global(link_dir),
-                version.clone(),
+                &version,
                 symlink_path,
                 this,
             );

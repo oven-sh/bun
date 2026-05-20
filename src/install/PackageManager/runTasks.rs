@@ -284,7 +284,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 }
                 store_installer::Result::Err(err) => {
                     let err = err.clone();
-                    installer.on_task_fail(task.entry_id, err);
+                    installer.on_task_fail(task.entry_id, &err);
                 }
                 store_installer::Result::Blocked => {
                     installer.on_task_blocked(task.entry_id);
@@ -323,7 +323,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         installer.store.entries.items_step()[entry_id.get() as usize]
                             .store(store_installer::Step::Done as u32, Ordering::Relaxed);
                         installer
-                            .on_task_fail(entry_id, store_installer::TaskError::RunScripts(err));
+                            .on_task_fail(entry_id, &store_installer::TaskError::RunScripts(err));
                     }
                 }
                 store_installer::Result::Done => {

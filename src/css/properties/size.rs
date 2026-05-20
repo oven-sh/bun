@@ -43,7 +43,7 @@ impl BoxSizing {
         }
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         dest.write_str(match self {
             BoxSizing::ContentBox => "content-box",
             BoxSizing::BorderBox => "border-box",

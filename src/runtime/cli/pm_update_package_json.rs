@@ -104,6 +104,10 @@ pub fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> 
                 // here is exclusive for the remainder of the process.
                 let cli = unsafe { &mut *this.cli };
                 cli.positionals = positionals.as_slice();
+                // SAFETY: `this.ctx` points to the `ctx` stack local in
+                // `update_package_json_and_install`, whose frame outlives this
+                // callback; `Global::exit` below makes this `&mut` exclusive for
+                // the remainder of the process.
                 let ctx = unsafe { &mut *this.ctx };
 
                 update_package_json_and_install_and_cli(ctx, this.subcommand, cli.clone())?;

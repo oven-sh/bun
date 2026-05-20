@@ -26,7 +26,7 @@ impl AlphaValue {
         Result::Ok(final_)
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         CSSNumberFns::to_css(&self.v, dest)
     }
 

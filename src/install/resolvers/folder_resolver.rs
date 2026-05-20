@@ -390,7 +390,7 @@ pub enum GlobalOrRelative<'a> {
 
 pub fn get_or_put(
     global_or_relative: GlobalOrRelative<'_>,
-    version: dependency::Version,
+    version: &dependency::Version,
     non_normalized_path: &[u8],
     manager: &mut PackageManager,
 ) -> FolderResolution {
@@ -453,7 +453,7 @@ pub fn get_or_put(
             break 'global read_package_json_from_disk(
                 manager,
                 abs,
-                &version,
+                version,
                 Features::LINK,
                 &mut resolver,
             );
@@ -464,7 +464,7 @@ pub fn get_or_put(
                 break 'folder read_package_json_from_disk(
                     manager,
                     abs,
-                    &version,
+                    version,
                     Features::FOLDER,
                     &mut resolver,
                 );
@@ -474,7 +474,7 @@ pub fn get_or_put(
                 break 'workspace read_package_json_from_disk(
                     manager,
                     abs,
-                    &version,
+                    version,
                     Features::WORKSPACE,
                     &mut resolver,
                 );
@@ -491,7 +491,7 @@ pub fn get_or_put(
             break 'cache_folder read_package_json_from_disk(
                 manager,
                 abs,
-                &version,
+                version,
                 Features::NPM,
                 &mut resolver,
             );

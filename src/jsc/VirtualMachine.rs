@@ -1730,7 +1730,7 @@ pub struct RuntimeHooks {
     /// `bun_runtime::RuntimeState` (b2-cycle).
     pub ssl_ctx_cache_get_or_create: unsafe fn(
         vm: *mut VirtualMachine,
-        opts: uws::SocketContext::BunSocketContextOptions,
+        opts: &uws::SocketContext::BunSocketContextOptions,
         err: &mut uws::create_bun_socket_error_t,
     ) -> Option<*mut uws::SslCtx>,
     /// `Node.fs.NodeFS{ .vm = … }` lazy creation (spec VirtualMachine.zig:827).
@@ -3503,8 +3503,10 @@ impl VirtualMachine {
         // SAFETY: `bun_resolver::package_json::PackageManager` is an opaque
         // forward-decl of `bun_install::PackageManager`; the pointer was
         // produced by `PackageManager::init_with_runtime` (the install crate)
-        // and only ever names that one type.
-        unsafe { &mut *pm.cast::<bun_install::PackageManager>() }
+        // and only ever names that one type, so the concrete 64-byte alignment
+        // is preserved through the `dyn` erasure. `get_package_manager` never
+        // returns null (it lazy-inits the process-static singleton).
+        unsafe { &mut *NonNull::new_unchecked(pm).cast::<bun_install::PackageManager>().as_ptr() }
     }
 
     /// Spec VirtualMachine.zig:769 `reload`.

@@ -204,7 +204,7 @@ impl BorderImage {
         arena: &Arena,
         targets: css::targets::Targets,
     ) -> SmallList<BorderImage, 6> {
-        let fallbacks = self.source.get_fallbacks(arena, targets);
+        let fallbacks = self.source.get_fallbacks(arena, &targets);
         // PORT NOTE: `defer fallbacks.deinit(arena)` dropped — SmallList drops at scope exit.
         let mut res = SmallList::<BorderImage, 6>::init_capacity(fallbacks.len());
         for fallback in fallbacks.slice() {
@@ -694,7 +694,7 @@ impl BorderImageHandler {
                     .flushed_properties
                     .contains(BorderImageProperty::BORDER_IMAGE_SOURCE)
                 {
-                    let img_fallbacks = mut_source.get_fallbacks(arena, context.targets);
+                    let img_fallbacks = mut_source.get_fallbacks(arena, &context.targets);
                     for fallback in img_fallbacks.slice() {
                         // TODO(port): same by-value move note as above.
                         dest.push(Property::BorderImageSource(fallback.deep_clone(arena)));

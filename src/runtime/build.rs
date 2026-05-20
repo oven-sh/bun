@@ -1,3 +1,5 @@
+// Build scripts run on the host before bun_* crates are compiled; std is the only option.
+#![allow(clippy::disallowed_methods, clippy::disallowed_types, clippy::disallowed_macros)]
 //! Set BUN_CODEGEN_DIR for `include!(concat!(env!("BUN_CODEGEN_DIR"), "/generated_classes.rs"))`.
 //!
 //! The codegen output lives at `<repo>/build/<profile>/codegen/` and is

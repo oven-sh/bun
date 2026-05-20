@@ -4435,7 +4435,7 @@ impl H2FrameParser {
         if let Some(stream) = self.streams.get().get(&stream_identifier).copied() {
             return Some(stream);
         }
-        if frame_type != FrameType::HTTP_FRAME_HEADERS as u8 {
+        if frame_type != FrameType::HTTP_FRAME_HEADERS as u8 || !self.is_server.get() {
             return None;
         }
         // Client-initiated streams must use odd identifiers (RFC 9113 §5.1.1).

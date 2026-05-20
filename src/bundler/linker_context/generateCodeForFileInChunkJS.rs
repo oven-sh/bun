@@ -281,10 +281,16 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             .expect("unreachable");
     }
 
+    // `convert_stmts_for_chunk` takes `&mut c` inside the loop body, so capture
+    // the per-file bitset as a BackRef once. The `parts_live` Vec doesn't
+    // reallocate after `tree_shaking_and_code_splitting` initializes it.
+    let parts_live: bun_ptr::BackRef<bun_collections::AutoBitSet> =
+        bun_ptr::BackRef::new(&c.graph.parts_live[source_index]);
+
     // TODO: handle directive
     if namespace_export_part_index >= part_range.part_index_begin
         && namespace_export_part_index < part_range.part_index_end
-        && c.graph.parts_live[source_index].is_set(namespace_export_part_index as usize)
+        && parts_live.is_set(namespace_export_part_index as usize)
     {
         let ns_part_stmts: &[Stmt] =
             unsafe { (*parts)[namespace_export_part_index as usize].stmts }.slice();
@@ -328,7 +334,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     let parts_len = unsafe { (&*parts).len() };
     for index_ in 0..parts_len {
         let index = part_range.part_index_begin + (index_ as u32);
-        if !c.graph.parts_live[source_index].is_set(index as usize) {
+        if !parts_live.is_set(index as usize) {
             // Skip the part if it's not in this chunk
             continue;
         }
@@ -441,7 +447,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                             .graph
                             .top_level_symbol_to_parts(source_index as u32, export_ref)[0]
                             as usize;
-                        if c.graph.parts_live[source_index].is_set(part_idx) {
+                        if parts_live.is_set(part_idx) {
                             // PTR_AUDIT(#1): `*prop` is a bitwise copy of
                             // `e_object.properties[i]` (see `copy_nonoverlapping`
                             // above). A plain `*prop = …` would run `Drop` on the

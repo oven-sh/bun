@@ -915,7 +915,7 @@ impl WebKitGradient {
 }
 
 /// The corner payload for [`LineDirection::Corner`].
-#[derive(Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 pub struct LineDirectionCorner {
     /// A horizontal position keyword, e.g. `left` or `right`.
     pub horizontal: HorizontalPositionKeyword,

@@ -952,7 +952,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                     }
                     break 'brk fd;
                 } else {
-                    break 'brk i32::try_from(ipc_channel + 3).expect("int cast");
+                    break 'brk ipc_channel + 3;
                 }
             };
 

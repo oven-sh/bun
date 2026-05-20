@@ -609,9 +609,7 @@ impl CreateCommand {
                     iterate: true,
                     ..Default::default()
                 };
-                let template_dir = match bun_sys::open_dir_absolute(abs_template_path)
-                    .map(bun_sys::Dir::from_fd)
-                {
+                let template_dir = match bun_sys::Dir::open(abs_template_path) {
                     Ok(d) => d,
                     Err(err) => {
                         node.end();
@@ -675,7 +673,7 @@ impl CreateCommand {
                 )?;
 
                 file_copier_copy(
-                    destination_dir,
+                    &destination_dir,
                     &mut walker_,
                     node,
                     &mut progress,
@@ -689,13 +687,9 @@ impl CreateCommand {
                     &mut template_path_buf,
                 )?;
 
-                package_json_file = bun_sys::File::openat(
-                    destination_dir.fd(),
-                    b"package.json",
-                    bun_sys::O::RDWR,
-                    0,
-                )
-                .ok();
+                package_json_file = destination_dir
+                    .open_file(b"package.json", bun_sys::O::RDWR, 0)
+                    .ok();
 
                 'read_package_json: {
                     if let Some(ref pkg) = package_json_file {
@@ -784,7 +778,7 @@ impl CreateCommand {
 
         {
             // TODO(port): std.fs.openDirAbsolute — use bun_sys
-            let parent_dir = bun_sys::Dir::from_fd(bun_sys::open_dir_absolute(destination)?);
+            let parent_dir = bun_sys::Dir::open(destination)?;
             #[cfg(windows)]
             {
                 let _ = parent_dir.copy_file(
@@ -804,9 +798,8 @@ impl CreateCommand {
                 );
             }
 
-            let _ = bun_sys::unlinkat(parent_dir.fd(), bun_core::zstr!("gitignore"));
-            let _ = bun_sys::unlinkat(parent_dir.fd(), bun_core::zstr!(".npmignore"));
-            parent_dir.close();
+            let _ = bun_sys::unlinkat(&parent_dir, bun_core::zstr!("gitignore"));
+            let _ = bun_sys::unlinkat(&parent_dir, bun_core::zstr!(".npmignore"));
         }
 
         let mut start_command: &[u8] = b"bun dev";
@@ -942,7 +935,7 @@ impl CreateCommand {
                             > 0
                         {
                             has_dependencies = true;
-                            dev_dependencies = Some(q.expr.into());
+                            dev_dependencies = Some(q.expr);
 
                             // has_bun_framework_next = has_bun_framework_next or property.hasAnyPropertyNamed(&.{"bun-framework-next"});
                             // has_react = has_react or property.hasAnyPropertyNamed(&.{ "react", "react-dom", "react-relay", "@emotion/react" });
@@ -977,7 +970,7 @@ impl CreateCommand {
                             > 0
                         {
                             has_dependencies = true;
-                            dependencies = Some(q.expr.into());
+                            dependencies = Some(q.expr);
 
                             // if (property.asProperty("next")) |next_q| {
                             //     is_nextjs = true;
@@ -1454,7 +1447,7 @@ impl CreateCommand {
 
                 if let Err(err) = JSPrinter::print_json(
                     &mut package_json_writer,
-                    package_json_expr.into(),
+                    package_json_expr,
                     &source,
                     JSPrinter::PrintJsonOptions {
                         mangled_props: None,
@@ -1470,7 +1463,9 @@ impl CreateCommand {
                     break 'process_package_json;
                 }
                 let written = package_json_writer.ctx.get_written();
-                if let Err(err) = (bun_sys::File { handle: file }).write_all(written) {
+                // `file` is the fd still owned by `package_json_file`; borrow it
+                // (constructing an owning `File` here would double-close on drop).
+                if let Err(err) = bun_sys::File::borrow(&file).write_all(written) {
                     Output::pretty_errorln(format_args!(
                         "package.json failed to write due to error {}",
                         bstr::BStr::new(err.name()),
@@ -1520,7 +1515,7 @@ impl CreateCommand {
 
         if npm_client_.is_some() && !preinstall_tasks.is_empty() {
             for task in &preinstall_tasks {
-                exec_task(task, destination, path_env, npm_client_.clone());
+                exec_task(task, destination, path_env, npm_client_);
             }
         }
 
@@ -1580,7 +1575,7 @@ impl CreateCommand {
 
         if !postinstall_tasks.is_empty() {
             for task in &postinstall_tasks {
-                exec_task(task, destination, path_env, npm_client_.clone());
+                exec_task(task, destination, path_env, npm_client_);
             }
         }
 
@@ -1909,7 +1904,7 @@ pub struct ExtractedInfo {
 // CreateCommand.exec, because Rust does not allow capturing-closure-style nested fns and the
 // fn body is large.
 fn file_copier_copy(
-    destination_dir_: bun_sys::Dir,
+    destination_dir_: &bun_sys::Dir,
     walker: &mut bun_sys::walker_skippable::Walker,
     node_: &mut ProgressNode,
     progress_: &mut Progress,
@@ -2017,7 +2012,7 @@ fn file_copier_copy(
                 Err(_) => 'brk: {
                     let entry_dirname = bun_resolver::Dirname::dirname(entry.path.as_bytes());
                     if !entry_dirname.is_empty() {
-                        let _ = bun_sys::make_path(destination_dir_, entry_dirname);
+                        let _ = destination_dir_.make_path(entry_dirname);
                     }
                     match bun_sys::openat(
                         destination_dir_.fd,
@@ -2245,24 +2240,21 @@ impl Example {
             if let Some(home_dir) = env_loader.map.get(b"BUN_CREATE_DIR") {
                 let parts = [home_dir];
                 let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
-                folders[0] = bun_sys::open_dir_at(bun_sys::Fd::cwd(), outdir_path)
-                    .map(bun_sys::Dir::from_fd)
+                folders[0] = bun_sys::Dir::open(outdir_path)
                     .unwrap_or(bun_sys::Dir::from_fd(bun_sys::Fd::invalid()));
             }
 
             {
                 let parts = [filesystem.top_level_dir, BUN_CREATE_DIR];
                 let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
-                folders[1] = bun_sys::open_dir_at(bun_sys::Fd::cwd(), outdir_path)
-                    .map(bun_sys::Dir::from_fd)
+                folders[1] = bun_sys::Dir::open(outdir_path)
                     .unwrap_or(bun_sys::Dir::from_fd(bun_sys::Fd::invalid()));
             }
 
             if let Some(home_dir) = env_loader.map.get(bun_core::env_var::HOME.key()) {
                 let parts = [home_dir, BUN_CREATE_DIR];
                 let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
-                folders[2] = bun_sys::open_dir_at(bun_sys::Fd::cwd(), outdir_path)
-                    .map(bun_sys::Dir::from_fd)
+                folders[2] = bun_sys::Dir::open(outdir_path)
                     .unwrap_or(bun_sys::Dir::from_fd(bun_sys::Fd::invalid()));
             }
 
@@ -2300,7 +2292,7 @@ impl Example {
                                 // Zig: `folder.accessZ(path, .{ .mode = .read_only })` (std.fs.Dir.accessZ).
                                 // bun_sys exposes `faccessat` for F_OK only; use it as the existence
                                 // gate here. TODO(port): plumb R_OK once bun_sys grows an accessor.
-                                if !bun_sys::faccessat(folder.fd(), path).unwrap_or(false) {
+                                if !bun_sys::faccessat(folder, path).unwrap_or(false) {
                                     continue 'loop_;
                                 }
 

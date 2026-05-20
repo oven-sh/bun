@@ -1161,7 +1161,6 @@ fn configure_env_for_scripts_run(
 
     let init_cwd_entry = this.env_mut().map.get_or_put_without_value(b"INIT_CWD")?;
     if !init_cwd_entry.found_existing {
-        *init_cwd_entry.key_ptr = Box::<[u8]>::from(&**init_cwd_entry.key_ptr);
         *init_cwd_entry.value_ptr = dot_env::HashTableValue {
             value: Box::<[u8]>::from(strings::without_trailing_slash(
                 FileSystem::instance().top_level_dir(),
@@ -1195,10 +1194,9 @@ fn configure_env_for_scripts_run(
     {
         let mut node_path = PathBuffer::uninit();
         if let Some(node_path_z) = this.env_mut().get_node_path(paths_fs, &mut node_path) {
-            let node_path_owned: Box<[u8]> = Box::<[u8]>::from(node_path_z.as_ref());
             let _ = this
                 .env_mut()
-                .load_node_js_config(paths_fs, &node_path_owned)?;
+                .load_node_js_config(paths_fs, node_path_z.as_ref())?;
         } else {
             'brk: {
                 let current_path = this.env().get(b"PATH").unwrap_or(b"");
@@ -1251,8 +1249,6 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
             Global::crash();
         }
     };
-    let _node_gyp_tempdir_guard = bun_sys::CloseOnDrop::dir(node_gyp_tempdir);
-    // PORT NOTE: reshaped for borrowck — `defer node_gyp_tempdir.close()`
 
     #[cfg(windows)]
     const FILE_NAME: &str = "node-gyp.cmd";
@@ -1282,7 +1278,6 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
             Global::crash();
         }
     };
-    let _close_node_gyp_file = bun_sys::CloseOnDrop::file(&node_gyp_file);
 
     #[cfg(windows)]
     const CONTENT: &str = "if not defined npm_config_node_gyp (\n  bun x --silent node-gyp %*\n) else (\n  node \"%npm_config_node_gyp%\" %*\n)\n";
@@ -1684,23 +1679,14 @@ pub fn init(
                             continue;
                         }
                     };
-                    // Zig: `defer if (!found) json_file.close()`. The only path
-                    // that sets `found = true` immediately hands the file out
-                    // via `break :root_package_json_file`, so model it as an
-                    // unconditional close-on-drop guard that the success path
-                    // defuses with `ScopeGuard::into_inner` — avoids the
-                    // `&mut found` capture that borrowck rejects.
-                    let json_file_guard = scopeguard::guard(json_file, |f| {
-                        let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
-                    });
-                    let json_stat_size = json_file_guard.get_end_pos()?;
+                    let json_stat_size = json_file.get_end_pos()?;
                     let mut json_buf = vec![0u8; (json_stat_size + 64) as usize];
-                    let json_len = json_file_guard.pread_all(&mut json_buf, 0)?;
+                    let json_len = json_file.pread_all(&mut json_buf, 0)?;
                     // SAFETY: ROOT_PACKAGE_JSON_PATH_BUF is a process-global only touched on main
                     // thread; `&raw mut` + explicit reborrow avoids the 2024 `static_mut_refs` deny.
                     let json_path = unsafe {
                         bun_sys::get_fd_path(
-                            json_file_guard.handle,
+                            json_file.handle,
                             &mut *ROOT_PACKAGE_JSON_PATH_BUF.get(),
                         )?
                     };
@@ -1772,7 +1758,7 @@ pub fn init(
                                 child_cwd
                             } else {
                                 resolve_path::relative_normalized::<platform::Auto, true>(
-                                    json_source.path.name.dir,
+                                    json_source.path.name().dir,
                                     child_cwd,
                                 )
                             };
@@ -1794,12 +1780,6 @@ pub fn init(
                                 // process-lifetime (`set_top_level_dir` requires `'static`).
                                 fs.set_top_level_dir(fs.dirname_store().append(parent)?);
                                 let _ = child_json.close();
-                                // Zig sets `found = true` here so the deferred close is
-                                // skipped; defuse the guard to the same effect. On the
-                                // Windows `seekTo` error path Zig also leaves the file
-                                // open (defer sees `found == true`), which `into_inner`
-                                // before `seek_to(0)?` preserves.
-                                let json_file = scopeguard::ScopeGuard::into_inner(json_file_guard);
                                 #[cfg(windows)]
                                 {
                                     json_file.seek_to(0)?;

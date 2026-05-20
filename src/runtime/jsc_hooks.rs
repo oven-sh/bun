@@ -2416,7 +2416,6 @@ fn transpile_source_code_inner(
                         pretty: path.pretty,
                         text: path.text,
                         namespace: path.namespace,
-                        name: bun_paths::fs::PathName::init(path.text),
                         is_disabled: path.is_disabled,
                         is_symlink: path.is_symlink,
                     }
@@ -2445,7 +2444,6 @@ fn transpile_source_code_inner(
                         pretty,
                         text,
                         namespace,
-                        name: bun_paths::fs::PathName::init(text),
                         is_disabled: path.is_disabled,
                         is_symlink: path.is_symlink,
                     }
@@ -2787,7 +2785,7 @@ fn transpile_source_code_inner(
                                     (*jsc_vm)
                                         .transpiler
                                         .resolver
-                                        .read_dir_info(source.path.name.dir)
+                                        .read_dir_info(source.path.name().dir)
                                 } {
                                     Ok(Some(dir_info)) => {
                                         dir_info.package_json().or(dir_info.enclosing_package_json)
@@ -3006,7 +3004,7 @@ fn transpile_source_code_inner(
                                 // a `.cjs` under `"type":"module"` still tags as
                                 // `PackageJsonTypeModule` (mirrors the cache-hit
                                 // branch above).
-                                let dir = path.name.dir;
+                                let dir = path.name().dir;
                                 if !path.is_file() || !bun_paths::is_absolute(dir) {
                                     return None;
                                 }
@@ -3682,13 +3680,14 @@ fn loader_for_path(path: &Fs::Path<'_>, loaders: &bun_ast::LoaderHashTable) -> O
     if path.is_data_url() {
         return Some(Loader::Dataurl);
     }
-    let ext = path.name.ext;
+    let name = path.name();
+    let ext = name.ext;
     let result = loaders
         .get(ext)
         .copied()
         .or_else(|| Loader::from_string(ext));
     if result.is_none() || result == Some(Loader::Json) {
-        let str = path.name.filename;
+        let str = name.filename;
         if str == b"package.json" || str == b"bun.lock" {
             return Some(Loader::Jsonc);
         }
@@ -3865,7 +3864,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
     let is_main = specifier == unsafe { &*jsc_vm }.main();
 
     // Spec :1019-1031 — package.json sniff for `.js`/`.ts` module-type.
-    let dir = path.name.dir;
+    let dir = path.name().dir;
     let is_js_like = loader.map(|l| l.is_java_script_like()).unwrap_or(true);
     let package_json = if is_js_like && bun_paths::is_absolute(dir) {
         // SAFETY: per fn contract — `transpiler.resolver` is a value field of
@@ -4093,7 +4092,7 @@ unsafe fn transpile_file(
     // ── module_type sniff from extension / package.json ─────────────────────
     // Spec :941-969.
     let module_type: ModuleType = 'brk: {
-        let ext = lr.path.name.ext;
+        let ext = lr.path.name().ext;
         // regex /\.[cm][jt]s$/
         if ext.len() == b".cjs".len() {
             if ext == b".cjs" {
@@ -4195,7 +4194,7 @@ unsafe fn transpile_file(
             unsafe { ((*jsc_vm).has_loaded, (*jsc_vm).is_in_preload) };
         if has_loaded || is_in_preload {
             // Extensionless files in this context are treated as the JS loader.
-            if lr.path.name.ext.is_empty() {
+            if lr.path.name().ext.is_empty() {
                 break 'loader Loader::Tsx;
             }
             // Unknown extensions are to be treated as file loader.
@@ -4419,7 +4418,7 @@ unsafe fn transpile_virtual_module(
             .transpiler
             .options
             .loaders
-            .get(path.name.ext)
+            .get(path.name().ext)
             .copied();
         opt.unwrap_or_else(|| {
             // SAFETY: `jsc_vm` is the live per-thread VM.
@@ -4936,7 +4935,7 @@ unsafe fn resolve_hook(
             specifier_utf8.slice(),
             source_utf8.slice(),
             bun_core::err!("NameTooLong"),
-            import_kind.into(),
+            import_kind,
         );
         let msg = bun_ast::Msg {
             data: bun_ast::range_data(None, bun_ast::Range::NONE, printed),
@@ -5078,13 +5077,13 @@ unsafe fn resolve_hook(
                 specifier_utf8.slice(),
                 source_utf8.slice(),
                 err,
-                import_kind.into(),
+                import_kind,
             );
             bun_ast::Msg {
                 data: bun_ast::range_data(None, bun_ast::Range::NONE, printed.clone()),
                 metadata: bun_ast::Metadata::Resolve(bun_ast::MetadataResolve {
                     specifier: bun_ast::BabyString::r#in(&printed, specifier_utf8.slice()),
-                    import_kind: import_kind.into(),
+                    import_kind,
                     err,
                 }),
                 ..Default::default()

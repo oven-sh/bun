@@ -1367,7 +1367,7 @@ pub enum BuiltInModule {
     Code(&'static [u8]),
 }
 
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 pub struct ServerComponents {
     pub separate_ssr_graph: bool,
     pub server_runtime_import: &'static [u8],
@@ -1389,7 +1389,7 @@ impl Default for ServerComponents {
     }
 }
 
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 pub struct ReactFastRefresh {
     pub import_source: &'static [u8],
 }
@@ -1561,7 +1561,6 @@ pub fn server_virtual_source() -> bun_ast::Source {
             pretty: b"bun:bake/server",
             text: b"_bun/bake/server",
             namespace: b"bun",
-            name: bun_paths::fs::PathName::init(b"bake/server"),
             is_symlink: true,
             is_disabled: false,
         },
@@ -1580,7 +1579,6 @@ pub fn client_virtual_source() -> bun_ast::Source {
             pretty: b"bun:bake/client",
             text: b"_bun/bake/client",
             namespace: b"bun",
-            name: bun_paths::fs::PathName::init(b"bake/client"),
             is_symlink: true,
             is_disabled: false,
         },

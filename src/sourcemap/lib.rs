@@ -1,3 +1,4 @@
+#![feature(allocator_api)]
 #![allow(
     unused,
     non_snake_case,

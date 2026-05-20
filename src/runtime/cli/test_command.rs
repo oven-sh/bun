@@ -805,19 +805,16 @@ impl JunitReporter {
                     (bstr::BStr::new(path), err),
                 );
             }
-            bun_sys::Result::Ok(fd) => {
-                let _close_fd = bun_sys::CloseOnDrop::file(&fd);
-                match File::write_all(&fd, &self.contents) {
-                    bun_sys::Result::Ok(()) => {}
-                    bun_sys::Result::Err(err) => {
-                        Output::err(
-                            bun_core::err!("JUnitReportFailed"),
-                            "Failed to write JUnit report to {}\n{}",
-                            (bstr::BStr::new(path), err),
-                        );
-                    }
+            bun_sys::Result::Ok(fd) => match File::write_all(&fd, &self.contents) {
+                bun_sys::Result::Ok(()) => {}
+                bun_sys::Result::Err(err) => {
+                    Output::err(
+                        bun_core::err!("JUnitReportFailed"),
+                        "Failed to write JUnit report to {}\n{}",
+                        (bstr::BStr::new(path), err),
+                    );
                 }
-            }
+            },
         }
         Ok(())
     }
@@ -1207,13 +1204,11 @@ impl CommandLineReporter {
                     let needed_name =
                         unsafe { (*needed_scope).base.name.as_deref() }.unwrap_or(b"");
                     if !strings::eql(&suite_info.name, needed_name) {
-                        suites_to_close = u32::try_from(current_suite_depth).unwrap()
-                            - u32::try_from(suite_index).unwrap();
+                        suites_to_close = current_suite_depth - u32::try_from(suite_index).unwrap();
                         break;
                     }
                 } else {
-                    suites_to_close = u32::try_from(current_suite_depth).unwrap()
-                        - u32::try_from(suite_index).unwrap();
+                    suites_to_close = current_suite_depth - u32::try_from(suite_index).unwrap();
                     break;
                 }
                 suite_index += 1;
@@ -1585,7 +1580,6 @@ impl CommandLineReporter {
             }
             bun_sys::Result::Ok(f) => f,
         };
-        let _close_file = bun_sys::CloseOnDrop::file(&file); // close error is non-actionable (Zig parity: discarded)
         // TODO(port): file.writer().adaptToNewApi(buf) — Zig's buffered writer adapter
         // not present on `bun_sys::File`; buffer in a Vec (impl `bun_io::Write`) and
         // write through in one shot below.

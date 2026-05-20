@@ -128,7 +128,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             if let Some(scripts) = pkg.scripts.as_deref() {
                 let mut display_name: &[u8] = &pkg.name;
                 if display_name.is_empty() {
-                    display_name = paths::basename(pkg.source.path.name.dir);
+                    display_name = paths::basename(pkg.source.path.name().dir);
                 }
                 let _ = display_name;
 
@@ -1901,7 +1901,7 @@ impl RunCommand {
             if root_dir_info.package_json.is_none() {
                 // no trailing slash
                 package_json_dir =
-                    strings::without_trailing_slash(package_json.source.path.name.dir);
+                    strings::without_trailing_slash(package_json.source.path.name().dir);
             }
         }
 
@@ -2612,7 +2612,7 @@ impl RunCommand {
         match resolution {
             Ok(mut resolved) => {
                 let path = resolved.path().expect("resolved primary path");
-                let ext = path.name.ext;
+                let ext = path.name().ext;
                 let loader: Loader = this_transpiler
                     .options
                     .loaders
@@ -3422,8 +3422,7 @@ impl RunCommand {
                 Ok(f) => f,
                 Err(_) => continue,
             };
-            let ok = sys::File { handle: fd }.write_all(bytes).is_ok();
-            fd.close();
+            let ok = sys::File::from_fd(fd).write_all(bytes).is_ok();
             if !ok {
                 // openA + TRUNC leaves an orphan even on zero-byte
                 // write failure. Unlink via stack buffer so cleanup

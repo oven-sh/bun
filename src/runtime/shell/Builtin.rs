@@ -691,8 +691,6 @@ impl Builtin {
                     evtloop,
                 );
                 redirect_writer.set_interp(interp_ptr);
-                // `defer redirect_writer.deref()` — `redirect_writer: Arc` drops
-                // here; each assigned slot holds its own clone.
 
                 if redirect.stdout() {
                     let me = Self::of_mut(interp, cmd);
@@ -704,7 +702,7 @@ impl Builtin {
                 if redirect.stderr() {
                     let me = Self::of_mut(interp, cmd);
                     me.stderr = BuiltinIO::Fd(OutFd {
-                        writer: redirect_writer.clone(),
+                        writer: redirect_writer,
                         captured: None,
                     });
                 }
@@ -776,7 +774,7 @@ impl Builtin {
                         me.stdout = BuiltinIO::Blob(blob.clone());
                     }
                     if redirect.stderr() {
-                        me.stderr = BuiltinIO::Blob(blob.clone());
+                        me.stderr = BuiltinIO::Blob(blob);
                     }
                 } else if let Some(blob_ref) = jsval.as_class_ref::<crate::webcore::Blob>() {
                     if (redirect.stdout() || redirect.stderr()) && !blob_ref.needs_to_read_file() {

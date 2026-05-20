@@ -240,6 +240,13 @@ pub struct VirtualMachine {
     // TODO(b2-cycle): `MacroEntryPoint` from `bun_bundler::entry_points` (gated).
     pub macro_entry_points: bun_collections::ArrayHashMap<i32, *mut c_void>,
     pub macro_mode: bool,
+    /// Depth of live [`MacroModeGuard`]s on this thread. Nonzero exactly while
+    /// macro JS may be executing — both `MacroContext::call` and `Macro::init`
+    /// (whose `load_macro_entry_point` runs the macro module's top-level via
+    /// `wait_for_promise`) hold a guard. `enable_/disable_macro_mode` are gated
+    /// on the 0↔1 transition so the guard is reentrant; this is the signal
+    /// [`drop_source_code_printer_if_macro_owned`] uses.
+    pub macro_guard_depth: u32,
     pub no_macros: bool,
     pub auto_killer: ProcessAutoKiller::ProcessAutoKiller,
 
@@ -587,7 +594,16 @@ impl MacroModeGuard {
     #[inline]
     pub fn new(vm: *mut VirtualMachine) -> Self {
         let vm = bun_ptr::BackRef::from(NonNull::new(vm).expect("vm non-null"));
-        vm.get().as_mut().enable_macro_mode();
+        let vm_mut = vm.get().as_mut();
+        // Reentrant: only the outermost guard flips the VM into macro mode and
+        // back; inner guards (e.g. a macro that calls
+        // `Bun.Transpiler#transformSync` which itself enters a guard) just bump
+        // the depth so their `Drop` doesn't reset `macro_mode`/`event_loop`/
+        // `transpiler.target`/`transpiler_store.enabled` underneath the outer.
+        vm_mut.macro_guard_depth += 1;
+        if vm_mut.macro_guard_depth == 1 {
+            vm_mut.enable_macro_mode();
+        }
         Self { vm }
     }
 }
@@ -595,7 +611,11 @@ impl Drop for MacroModeGuard {
     #[inline]
     fn drop(&mut self) {
         // Per `new` contract — `vm` outlives the guard (BackRef invariant).
-        self.vm.get().as_mut().disable_macro_mode();
+        let vm_mut = self.vm.get().as_mut();
+        vm_mut.macro_guard_depth = vm_mut.macro_guard_depth.saturating_sub(1);
+        if vm_mut.macro_guard_depth == 0 {
+            vm_mut.disable_macro_mode();
+        }
     }
 }
 
@@ -1147,8 +1167,17 @@ impl VirtualMachine {
             self.macro_event_loop.virtual_machine = NonNull::new(std::ptr::from_mut(self));
             self.macro_event_loop.global = NonNull::new(self.global);
             self.macro_event_loop.concurrent_tasks = Default::default();
-            ensure_source_code_printer();
         }
+        // Idempotent; outside the `has_enabled_macro_mode` guard because
+        // `__bun_macro_context_deinit` runs per-job (RuntimeTranspilerStore
+        // scopeguard, JSTranspiler TransformTask, bundler `Worker::deinit`) and
+        // frees the printer while this VM survives with the flag still set —
+        // the next macro on the same pool thread would otherwise skip re-init
+        // and panic at `SOURCE_CODE_PRINTER.get().expect(...)`.
+        if SOURCE_CODE_PRINTER.get().is_none() {
+            SOURCE_CODE_PRINTER_FROM_MACRO.set(true);
+        }
+        ensure_source_code_printer();
         self.transpiler.options.target = bun_ast::Target::BunMacro;
         self.transpiler
             .resolver
@@ -2948,6 +2977,16 @@ pub struct ResolveFunctionResult {
 pub static SOURCE_CODE_PRINTER: Cell<Option<NonNull<bun_js_printer::BufferPrinter>>> =
     Cell::new(None);
 
+/// `true` when [`enable_macro_mode`](VirtualMachine::enable_macro_mode)
+/// allocated [`SOURCE_CODE_PRINTER`] on this thread and no runtime VM has since
+/// claimed it via [`VirtualMachine::load_extra_env_and_source_code_printer`]
+/// (i.e. a bundler worker thread running a macro). Lets
+/// `__bun_macro_context_deinit` free the printer on worker teardown without
+/// touching the runtime VM's printer when an inline `Bun.build()` macro ran on
+/// the JS thread.
+#[thread_local]
+static SOURCE_CODE_PRINTER_FROM_MACRO: Cell<bool> = Cell::new(false);
+
 /// Spec VirtualMachine.zig:1712 `normalizeSpecifierForResolution`.
 fn normalize_specifier_for_resolution<'a>(
     specifier_: &'a [u8],
@@ -2985,6 +3024,77 @@ fn ensure_source_code_printer() {
         printer.ctx.append_null_byte = false;
         SOURCE_CODE_PRINTER.set(NonNull::new(bun_core::heap::into_raw(printer)));
     }
+}
+
+/// Free this thread's [`SOURCE_CODE_PRINTER`] Box (if any).
+fn drop_source_code_printer() {
+    if let Some(printer) = SOURCE_CODE_PRINTER.take() {
+        // SAFETY: `printer` was produced by `heap::into_raw` in
+        // `ensure_source_code_printer` and is exclusively owned by this thread.
+        drop(unsafe { bun_core::heap::take(printer.as_ptr()) });
+    }
+    SOURCE_CODE_PRINTER_FROM_MACRO.set(false);
+}
+
+/// Free this thread's [`SOURCE_CODE_PRINTER`] Box only if
+/// [`enable_macro_mode`](VirtualMachine::enable_macro_mode) allocated it.
+/// Called from `js_parser_jsc::Macro::__bun_macro_context_deinit` on bundler
+/// worker teardown — the macro VM never reaches `VirtualMachine::deinit`, so
+/// the box would otherwise leak when the worker thread's TLS block is torn down
+/// before LSan scans (issue 03830 on debian-13-asan after the
+/// `leak:bun_js_parser_jsc::Macro` suppression was removed in #30875). A no-op
+/// on threads where the runtime VM had already initialized the printer (e.g. an
+/// inline `Bun.build()` macro on the JS thread), so subsequent module loads
+/// keep their printer.
+///
+/// Also a no-op while a [`MacroModeGuard`] is still active on this thread:
+/// `__bun_macro_context_deinit` can fire *inside* the guard scope (e.g. a
+/// macro that calls `new Bun.Transpiler().transformSync(...)` —
+/// `TranspilerStateGuard::drop` deinits the nested `MacroContext`), and freeing
+/// here would panic the next module fetch at
+/// `SOURCE_CODE_PRINTER.get().expect(...)` with no intervening
+/// `enable_macro_mode()`. Gated on `macro_guard_depth`: nonzero exactly while a
+/// guard is on the stack (both `MacroContext::call` and `Macro::init` hold one,
+/// so the macro module's top-level is covered too).
+pub fn drop_source_code_printer_if_macro_owned() {
+    if !SOURCE_CODE_PRINTER_FROM_MACRO.get() {
+        return;
+    }
+    if let Some(vm) = VM.get() {
+        // SAFETY: `VM` is this thread's per-JS-thread VM singleton; we only
+        // read the depth counter and never alias `&mut`.
+        if unsafe { (*vm).macro_guard_depth } > 0 {
+            return;
+        }
+    }
+    drop_source_code_printer();
+}
+
+/// Run a synchronous GC sweep on this thread's VM iff it was created for a
+/// bundler-worker macro (via `Macro::init`) and is otherwise quiescent. The
+/// macro VM is intentionally never `destroy()`'d (per-worker dealloc is
+/// unimplemented), so JS-wrapper-owned native boxes — e.g. a
+/// `new Bun.Transpiler()` constructed inside a macro body — would otherwise
+/// outlive the worker thread's TLS root and be reported by LSan once the
+/// `leak:bun_js_parser_jsc::Macro` suppression is gone.
+///
+/// Only invoked from `bun_bundler::ThreadPool::Worker::deinit` (the call site
+/// is the discriminant — JS `Worker` threads never reach it), after both
+/// per-worker `MacroContext` boxes are freed. Not called from
+/// `__bun_macro_context_deinit`: that path is reached from
+/// `TranspilerStateGuard::drop` and `JSTranspiler::Drop` (during a sweep),
+/// where re-entering `run_gc` would be a recursion hazard.
+pub fn collect_macro_vm_garbage() {
+    let Some(vm) = VM.get() else { return };
+    // SAFETY: `VM` is this thread's per-JS-thread VM singleton; we only read
+    // plain fields and call `jsc_vm()` (which the C++ side locks internally).
+    let vm_ref = unsafe { &*vm };
+    if !vm_ref.has_enabled_macro_mode {
+        return;
+    }
+    debug_assert!(!vm_ref.is_main_thread);
+    debug_assert_eq!(vm_ref.macro_guard_depth, 0);
+    vm_ref.jsc_vm().run_gc(true);
 }
 
 fn normalize_source(source: &[u8]) -> &[u8] {
@@ -3151,6 +3261,9 @@ impl VirtualMachine {
         let map = &mut *env.map;
 
         ensure_source_code_printer();
+        // The runtime VM owns the printer from here on — even if a macro had
+        // allocated it first, `__bun_macro_context_deinit` must not free it.
+        SOURCE_CODE_PRINTER_FROM_MACRO.set(false);
 
         if map.get(b"BUN_SHOW_BUN_STACKFRAMES").is_some() {
             self.hide_bun_stackframes = false;
@@ -4195,7 +4308,7 @@ impl VirtualMachine {
                 specifier_utf8.slice(),
                 source_utf8.slice(),
                 bun_core::err!("NameTooLong"),
-                import_kind.into(),
+                import_kind,
             );
             let msg = bun_ast::Msg {
                 data: bun_ast::range_data(None, bun_ast::Range::NONE, printed),
@@ -4337,13 +4450,13 @@ impl VirtualMachine {
                         specifier_utf8.slice(),
                         source_utf8.slice(),
                         err,
-                        import_kind.into(),
+                        import_kind,
                     );
                     bun_ast::Msg {
                         data: bun_ast::range_data(None, bun_ast::Range::NONE, printed.clone()),
                         metadata: bun_ast::Metadata::Resolve(bun_ast::MetadataResolve {
                             specifier: bun_ast::BabyString::r#in(&printed, specifier_utf8.slice()),
-                            import_kind: import_kind.into(),
+                            import_kind,
                             err,
                         }),
                         ..Default::default()
@@ -4377,15 +4490,7 @@ impl VirtualMachine {
         // is the deinit body; take()+drop runs it without dropping `self`.
         drop(core::mem::take(&mut self.auto_killer));
 
-        // PORT NOTE: Zig frees the thread-local `source_code_printer` static
-        // in `deinit`; here it's `SOURCE_CODE_PRINTER` (boxed via
-        // `ensure_source_code_printer`).
-        if let Some(printer) = SOURCE_CODE_PRINTER.take() {
-            // SAFETY: `printer` was produced by `heap::alloc` in
-            // `ensure_source_code_printer` and is exclusively owned by this
-            // thread's VM.
-            drop(unsafe { bun_core::heap::take(printer.as_ptr()) });
-        }
+        drop_source_code_printer();
 
         // PORT NOTE: `SavedSourceMap`'s `Drop` is the Zig `deinit()`; it frees
         // each stored map and `deinit()`s the sibling `saved_source_map_table`.

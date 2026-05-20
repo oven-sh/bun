@@ -547,7 +547,7 @@ impl BackgroundClip {
 }
 
 /// A value for the [aspect-ratio](https://drafts.csswg.org/css-sizing-4/#aspect-ratio) property.
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 pub struct AspectRatio {
     /// The `auto` keyword.
     pub auto: bool,

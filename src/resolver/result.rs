@@ -503,11 +503,24 @@ impl Default for MatchResult {
     }
 }
 
-pub enum MatchResultUnion {
+/// Discriminant-only return for the resolver call chain. The `MatchResult`
+/// payload (~300 bytes) is written through an `out: &mut MatchResult` parameter
+/// instead of being moved by value through every nested level. **`out` is only
+/// valid to read when the returned status is `Success`**; on `NotFound` /
+/// `Pending` / `Failure` it may hold partially-written state from an earlier
+/// attempt and must be ignored.
+pub enum MatchStatus {
     NotFound,
-    Success(MatchResult),
+    Success,
     Pending(PendingResolution),
     Failure(bun_core::Error),
+}
+
+impl MatchStatus {
+    #[inline]
+    pub fn is_success(&self) -> bool {
+        matches!(self, MatchStatus::Success)
+    }
 }
 
 pub struct PendingResolution {

@@ -165,7 +165,7 @@ pub use identity_context::{
 
 pub mod array_hash_map;
 pub use array_hash_map::{
-    ArrayHashMap, ArrayHashMapExt, CaseInsensitiveAsciiPrehashed,
+    ArrayHashMap, ArrayHashMapExt, AutoContext, CaseInsensitiveAsciiPrehashed,
     CaseInsensitiveAsciiStringArrayHashMap, CaseInsensitiveAsciiStringContext, Entry,
     GetOrPutResult, MapEntry, OccupiedEntry, StringArrayHashMap, StringHashMap,
     StringHashMapContext, StringHashMapInner, StringHashMapKey, StringHashMapUnownedKey, StringSet,

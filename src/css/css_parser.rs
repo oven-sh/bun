@@ -3284,12 +3284,9 @@ where
                 parse_qualified_rule(&start, self.input, self.parser, delimiters)
             } else {
                 let token = tok.clone();
-                let start_clone = start.clone();
                 self.input
                     .parse_until_after(Delimiters::SEMICOLON, move |_i| {
-                        Err(start_clone
-                            .source_location()
-                            .new_unexpected_token_error(token))
+                        Err(start.source_location().new_unexpected_token_error(token))
                     })
             };
 
@@ -4259,7 +4256,7 @@ impl<'a> ParserInput<'a> {
 
 /// A capture of the internal state of a `Parser` (including the position
 /// within the input), obtained from the `Parser::position` method.
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 pub struct ParserState {
     pub position: usize,
     pub current_line_start_position: usize,

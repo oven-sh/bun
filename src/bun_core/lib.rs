@@ -2434,16 +2434,28 @@ pub(crate) mod strings_impl {
             if i >= self.bytes.len() {
                 return false;
             }
-            let b = self.bytes[i];
-            // TODO(port): full UTF-8 decode — bun_str owns the table-driven impl.
-            let (cp, w) = if b < 0x80 {
-                (b as i32, 1u8)
-            } else {
-                (b as i32, 1u8)
-            };
+            let tail = &self.bytes[i..];
+            let b = tail[0];
             cursor.i = i;
-            cursor.c = cp;
-            cursor.width = w;
+            if b < 0x80 {
+                cursor.c = b as i32;
+                cursor.width = 1;
+                return true;
+            }
+            // Multi-byte: defer to the canonical WTF-8 decoder so this stub
+            // stays in lockstep with `strings::CodepointIterator::next`.
+            let len = wtf8_byte_sequence_length(b);
+            let take = (len as usize).min(tail.len());
+            let mut buf = [0u8; 4];
+            buf[..take].copy_from_slice(&tail[..take]);
+            let cp = crate::string::immutable::decode_wtf8_rune_t::<i32>(&buf, len, -1);
+            if cp == -1 {
+                cursor.c = crate::string::immutable::UNICODE_REPLACEMENT as i32;
+                cursor.width = 1;
+            } else {
+                cursor.c = cp;
+                cursor.width = len;
+            }
             true
         }
     }

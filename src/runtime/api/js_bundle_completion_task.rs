@@ -38,7 +38,7 @@ use bun_standalone_graph::StandaloneModuleGraph::{
     self as standalone_graph, CompileErrorReason, CompileResult, Flags as StandaloneFlags,
     target_base_public_path, to_executable,
 };
-use bun_sys::{self as sys, Dir, Fd, OpenDirOptions};
+use bun_sys::{self as sys, Dir, OpenDirOptions};
 
 use crate::api::js_bundler::BuildArtifact;
 use crate::api::js_bundler::js_bundler::{Config as JSBundlerConfig, Plugin, PluginJscExt};
@@ -274,17 +274,6 @@ impl JSBundleCompletionTask {
 
     /// Port of `JSBundleCompletionTask.doCompilation`.
     fn do_compilation(&mut self, output_files: &mut Vec<OutputFile>) -> CompileResult {
-        /// `defer { if root_dir != cwd, root_dir.close() }` — Zig captures
-        /// `root_dir` by reference; the POSIX path reassigns it.
-        struct DirGuard(Dir);
-        impl Drop for DirGuard {
-            fn drop(&mut self) {
-                if self.0.fd != Fd::cwd() {
-                    self.0.close();
-                }
-            }
-        }
-
         // PORT NOTE: reshaped for borrowck — `self.config` is reborrowed for
         // every field projection so the `&mut self` receiver stays usable for
         // `self.env` below.
@@ -349,7 +338,7 @@ impl JSBundleCompletionTask {
         let dirname: &[u8] = paths::dirname(&full_outfile_path).unwrap_or(b".");
         let basename: &[u8] = paths::basename(&full_outfile_path);
 
-        let mut root_dir = DirGuard(Dir::cwd());
+        let mut root_dir = Dir::cwd();
 
         // On Windows, don't change root_dir, just pass the full relative path
         // On POSIX, change root_dir to the target directory and pass basename
@@ -363,10 +352,7 @@ impl JSBundleCompletionTask {
             #[cfg(not(windows))]
             {
                 // On POSIX, makeOpenPath and change root_dir
-                root_dir.0 = match root_dir
-                    .0
-                    .make_open_path(dirname, OpenDirOptions::default())
-                {
+                root_dir = match root_dir.make_open_path(dirname, OpenDirOptions::default()) {
                     Ok(d) => d,
                     Err(err) => {
                         return CompileResult::fail_fmt(format_args!(
@@ -380,7 +366,7 @@ impl JSBundleCompletionTask {
             #[cfg(windows)]
             {
                 // On Windows, ensure directories exist but don't change root_dir
-                if let Err(err) = sys::make_path(root_dir.0, dirname) {
+                if let Err(err) = root_dir.make_path(dirname) {
                     return CompileResult::fail_fmt(format_args!(
                         "Failed to create output directory {}: {}",
                         bstr::BStr::new(dirname),
@@ -414,7 +400,7 @@ impl JSBundleCompletionTask {
         let result = match to_executable(
             &compile_options.compile_target,
             output_files,
-            root_dir.0.fd,
+            root_dir.fd,
             module_prefix,
             outfile_for_executable,
             env,
@@ -514,7 +500,7 @@ impl JSBundleCompletionTask {
                         data: StringOrBuffer::EncodedSlice(
                             bun_core::zig_string::Slice::from_utf8_never_free(bytes),
                         ),
-                        dirfd: root_dir.0.fd,
+                        dirfd: root_dir.fd,
                         signal: None,
                     };
                     match NodeFS::write_file_with_path_buffer(&mut pathbuf, &write_args) {

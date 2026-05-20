@@ -293,10 +293,7 @@ pub fn write_sourcemap_to_disk(
 
     let mut key = Vec::with_capacity(6 + without_prefix.len());
     write!(&mut key, "bake:/{}", BStr::new(without_prefix)).expect("infallible: in-memory write");
-    source_maps.put(
-        &key,
-        OutputFileIndex::init(u32::try_from(source_map_index).expect("int cast")),
-    )?;
+    source_maps.put(&key, OutputFileIndex::init(source_map_index))?;
     Ok(())
 }
 
@@ -362,7 +359,6 @@ pub fn build_with_vm(
 
     let config_entry_point_string =
         BunString::clone_utf8(config_entry_point.path_const().unwrap().text);
-    // defer config_entry_point_string.deref() — Drop handles deref
 
     let Some(config_promise) =
         JSModuleLoader::load_and_evaluate_module_ptr(vm.global, Some(&config_entry_point_string))
@@ -684,9 +680,7 @@ pub fn build_with_vm(
     Output::flush();
 
     // Zig: `try std.fs.cwd().makeOpenPath("dist", .{})` — mkdir -p + open.
-    // `OwnedDir` closes the fd on Drop (Zig: `defer root_dir.close()`).
-    let root_dir =
-        bun_sys::OwnedDir::new(bun_sys::Dir::cwd().make_open_path(b"dist", Default::default())?);
+    let root_dir = bun_sys::Dir::cwd().make_open_path(b"dist", Default::default())?;
 
     let mut maybe_runtime_file_index: Option<u32> = None;
 
@@ -832,7 +826,7 @@ pub fn build_with_vm(
         };
         let any_client_chunks = bundled_outputs_list.iter().any(|file| {
             file.side == Some(bun_bundler::options::Side::Client)
-                && &file.src_path.text[..] != b"bun-framework-react/client.tsx"
+                && file.src_path.text != b"bun-framework-react/client.tsx"
         });
         if any_client_chunks {
             let runtime_file: &OutputFile = &bundled_outputs_list[runtime_file_index as usize];
@@ -1158,7 +1152,6 @@ pub fn build_with_vm(
 
         // Init the items
         let pattern_string = BunString::clone_utf8(pattern.slice());
-        // defer pattern_string.deref() — Drop handles deref
         route_patterns
             .put_index(
                 global,
@@ -1405,7 +1398,6 @@ pub extern "C" fn BakeToWindowsPath(input: BunString) -> BunString {
         let input_utf8 = input.to_utf8();
         let input_slice = input_utf8.slice();
         let mut output = bun_paths::w_path_buffer_pool::get();
-        // defer bun.w_path_buffer_pool.put(output) — RAII guard puts back on Drop
         let output_slice = strings::to_w_path_normalize_auto_extend(&mut output[..], input_slice);
         BunString::clone_utf16(output_slice.as_slice())
     }
@@ -1676,7 +1668,7 @@ impl PerThread {
             self.loaded_files.set(id.get() as usize);
             self.all_server_files.as_ref().unwrap().get().put_index(
                 global,
-                u32::try_from(id.get()).expect("int cast"),
+                id.get(),
                 self.module_keys[id.get() as usize].to_js(global)?,
             )?;
         }

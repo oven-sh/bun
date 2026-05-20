@@ -1420,18 +1420,18 @@ impl DirectoryWatchStore {
             }
         });
 
-        let dir_name: Box<[u8]> = Box::<[u8]>::from(dir_name_to_watch);
-        // errdefer free(dir_name) — handled by Drop.
-
-        // PORT NOTE: Zig sets `key_ptr` to a sub-slice of `dir_name` (trailing
-        // slash trimmed) sharing its allocation. `StringArrayHashMap` already
-        // boxed the trimmed key on insert above, so the reassignment is a
-        // no-op here; `dir_name` is kept solely for `add_directory`/`get_hash`.
-
-        let watch_index = match self.dev_bun_watcher().add_directory::<false>(
+        // `add_directory::<true>` so the `WatchItem` owns its path: the watcher
+        // retains the path until eviction runs (deferred onto `evict_list` and
+        // drained later in `flush_evictions`), but `dir_name_to_watch` is a
+        // transient `dirname()` view of a thread-local path buffer. A borrowed
+        // (`::<false>`) `Cow` would dangle once `insert` returns — well before
+        // the watcher reads it on a file event. Owning the copy also lets the
+        // map keep its own boxed key independently, so no extra intermediate
+        // `Box` is needed here.
+        let watch_index = match self.dev_bun_watcher().add_directory::<true>(
             fd,
-            &dir_name,
-            bun_watcher::Watcher::get_hash(&dir_name),
+            dir_name_to_watch,
+            bun_watcher::Watcher::get_hash(dir_name_to_watch),
         ) {
             Err(_) => return Err(DirectoryWatchInsertError::Ignore),
             Ok(id) => id,
@@ -1452,7 +1452,6 @@ impl DirectoryWatchStore {
             first_dep: dep,
             watch_index,
         };
-        let _ = dir_name; // keep alive past add_directory; dropped here
         Ok(())
     }
 

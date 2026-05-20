@@ -603,7 +603,6 @@ impl EditorContext {
         bun_sys::File::write_file(tmpdir, basename_z, blob)?;
 
         let opened = bun_sys::File::open_at(tmpdir, basename, bun_sys::O::RDONLY, 0)?;
-        let _close = bun_sys::CloseOnDrop::file(&opened);
 
         let mut path_buf = PathBuffer::uninit();
         let resolved = bun_sys::get_fd_path(opened.handle(), &mut path_buf)?;

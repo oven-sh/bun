@@ -2083,7 +2083,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 alias_loc: Some(bun_ast::Loc::default()),
                 namespace_ref: Some(self.bun_app_namespace_ref),
                 import_record_index: import_record_i,
-                local_parts_with_uses: Default::default(),
+                local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                 alias_is_star: false,
                 is_exported: false,
             },
@@ -2152,7 +2152,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             use core::fmt::Write as _;
             let base = self.import_records.items()[import_record_i as usize]
                 .path
-                .name
+                .name()
                 .non_unique_name_string_base();
             let mut buf = bun_alloc::ArenaString::new_in(arena);
             write!(&mut buf, "{}", bun_core::fmt::fmt_identifier(base)).expect("unreachable");
@@ -2221,7 +2221,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     alias_loc: Some(bun_ast::Loc::default()),
                     namespace_ref: Some(namespace_ref),
                     import_record_index: import_record_i,
-                    local_parts_with_uses: Default::default(),
+                    local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                     alias_is_star: false,
                     is_exported: false,
                 },
@@ -2357,7 +2357,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         alias_loc: Some(bun_ast::Loc::EMPTY),
                         namespace_ref: Some(namespace_ref),
                         import_record_index,
-                        local_parts_with_uses: Default::default(),
+                        local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                         alias_is_star: false,
                         is_exported: false,
                     },
@@ -4419,7 +4419,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // exposes the same sanitizer as a Display formatter (`fmt_identifier()`), so format once
         // and copy into the bump arena.
         let identifier: &'a [u8] = {
-            let s = format!("{}_default", self.source.path.name.fmt_identifier());
+            let s = format!("{}_default", self.source.path.name().fmt_identifier());
             self.arena.alloc_slice_copy(s.as_bytes())
         };
 
@@ -8153,9 +8153,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 user_hooks: Default::default(),
             });
 
-            // TODO(paperclover): fix the renamer bug. this bug
-            // theoretically affects all usages of temp refs, but i cannot
-            // find another example of it breaking (like with `using`)
+            // TODO: fix the renamer bug. this bug theoretically affects all
+            // usages of temp refs, but i cannot find another example of it
+            // breaking (like with `using`)
             self.declared_symbols
                 .append(DeclaredSymbol {
                     is_top_level: true,
@@ -8788,25 +8788,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             symbol_ref = &ctx.symbols[r#ref.inner_index() as usize];
                         }
 
-                        let entry = ctx.top_level.get_or_put(r#ref).expect("unreachable");
-                        if !entry.found_existing {
-                            *entry.value_ptr = Default::default();
-                        }
-                        entry.value_ptr.push(ctx.part_index);
+                        ctx.top_level
+                            .entry(r#ref)
+                            .or_insert_with(bun_alloc::AstAlloc::vec)
+                            .push(ctx.part_index);
                     },
                 );
             }
 
             // Pulling in the exports of this module always pulls in the export part
-            {
-                let entry = top_level_symbols_to_parts
-                    .get_or_put(self.exports_ref)
-                    .expect("unreachable");
-                if !entry.found_existing {
-                    *entry.value_ptr = Default::default();
-                }
-                entry.value_ptr.push(js_ast::NAMESPACE_EXPORT_PART_INDEX);
-            }
+            top_level_symbols_to_parts
+                .entry(self.exports_ref)
+                .or_insert_with(bun_alloc::AstAlloc::vec)
+                .push(js_ast::NAMESPACE_EXPORT_PART_INDEX);
         }
 
         let wrapper_ref: Ref = 'brk: {
@@ -8903,11 +8897,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             exports_ref: self.exports_ref,
             wrapper_ref,
             module_ref: self.module_ref,
-            export_star_import_records: self
-                .export_star_import_records
-                .as_slice()
-                .to_vec()
-                .into_boxed_slice(),
+            export_star_import_records: bun_alloc::AstAlloc::vec_from_slice(
+                self.export_star_import_records.as_slice(),
+            ),
             approximate_newline_count: self.lexer.approximate_newline_count,
             exports_kind,
             named_imports: core::mem::take(&mut *self.named_imports),
@@ -8988,7 +8980,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 unreachable!("top_level_enums entry missing namespace member data");
             };
             let ns: &js_ast::TSNamespaceMemberMap = namespace;
-            let mut inner_map = StringHashMap::<InlinedEnumValue>::default();
+            let mut inner_map = StringHashMap::<InlinedEnumValue, bun_alloc::AstAlloc>::default();
             inner_map.ensure_total_capacity(ns.count())?;
             for i in 0..ns.count() {
                 let key = &ns.keys()[i];

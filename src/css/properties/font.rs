@@ -229,7 +229,7 @@ pub enum RelativeFontSize {
 }
 
 /// A value for the [font-stretch](https://www.w3.org/TR/css-fonts-4/#font-stretch-prop) property.
-#[derive(Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 pub enum FontStretch {
     /// A font stretch keyword.
     Keyword(FontStretchKeyword),

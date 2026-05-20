@@ -47,9 +47,6 @@ impl Hardlinker {
         })
     }
 
-    // Zig `deinit` only called `this.walker.deinit()`; Walker's Drop handles that.
-    // No explicit Drop impl needed.
-
     pub fn link(&mut self) -> Result<sys::Result<()>, AllocError> {
         if crate::PackageManager::verbose_install() {
             bun_core::pretty_errorln!(
@@ -120,7 +117,7 @@ impl Hardlinker {
                     match entry.kind {
                         EntryKind::Directory => {
                             let _ = sys::make_path::make_path::<u16>(
-                                sys::Dir::from_fd(Fd::cwd()),
+                                &sys::Dir::cwd(),
                                 self.dest.slice(),
                             );
                         }
@@ -214,7 +211,7 @@ impl Hardlinker {
                                         };
 
                                         let _ = sys::make_path::make_path::<u16>(
-                                            sys::Dir::from_fd(Fd::cwd()),
+                                            &sys::Dir::cwd(),
                                             dest_parent,
                                         );
 

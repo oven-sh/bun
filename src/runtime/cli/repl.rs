@@ -291,12 +291,9 @@ impl History {
         }
 
         let file = match sys::open_a(path, sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC, 0o644) {
-            sys::Result::Ok(fd) => sys::File { handle: fd },
+            sys::Result::Ok(fd) => sys::File::from_fd(fd),
             sys::Result::Err(_) => return,
         };
-        let file = scopeguard::guard(file, |file| {
-            let _ = file.close();
-        });
         match file.write_all(&content) {
             sys::Result::Ok(()) => {}
             sys::Result::Err(_) => return,
@@ -775,15 +772,12 @@ fn cmd_save(repl: &mut Repl, args: &[u8]) -> ReplResult {
         sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
         0o644,
     ) {
-        sys::Result::Ok(fd) => sys::File { handle: fd },
+        sys::Result::Ok(fd) => sys::File::from_fd(fd),
         sys::Result::Err(err) => {
             repl.print_error(format_args!("{}\n", err));
             return ReplResult::SkipEval;
         }
     };
-    let file = scopeguard::guard(file, |file| {
-        let _ = file.close();
-    });
     match file.write_all(&content) {
         sys::Result::Ok(()) => {}
         sys::Result::Err(err) => {
@@ -1055,10 +1049,9 @@ impl<'a> Repl<'a> {
             self.stdin_buf_start += 1;
             return Some(b);
         }
-        // Refill buffer
-        let stdin = sys::File {
-            handle: Fd::stdin(),
-        };
+        // Refill buffer (stdio fd: `File::Drop` is a no-op, so this is safe to
+        // re-create on every call).
+        let stdin = sys::File::stdin();
         let n = match stdin.read(&mut self.stdin_buf) {
             sys::Result::Ok(n) => n,
             sys::Result::Err(_) => return None,
@@ -1784,7 +1777,7 @@ impl<'a> Repl<'a> {
 
         // Set up parser options with repl_mode enabled
         let mut opts = bun_js_parser::ParserOptions::init(
-            vm.transpiler.options.jsx.clone().into(),
+            vm.transpiler.options.jsx.clone(),
             bun_ast::Loader::Tsx,
         );
         opts.repl_mode = true;

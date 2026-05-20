@@ -127,6 +127,7 @@ impl Default for InputFile {
             unique_key_for_additional_file: AstAlloc::vec().into_boxed_slice(),
             content_hash_for_additional_file: 0,
             flags: InputFileFlags::default(),
+            input_source_map: None,
         }
     }
 }

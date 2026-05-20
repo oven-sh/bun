@@ -257,16 +257,70 @@ test("Valid unicode escapes in identifiers should work", async () => {
 describe("invalid-escape caret points at the backslash (#31134)", () => {
   const cases = [
     // `\u{...}` out-of-range:
-    { name: "\\u{} backtick with prefix", source: "`aaaaa\\u{110000}`", msg: "Unicode escape sequence is out of range", pattern: "\\u{110000}", expectCol: 7 },
-    { name: "\\u{} backtick without prefix", source: "`\\u{110000}`", msg: "Unicode escape sequence is out of range", pattern: "\\u{110000}", expectCol: 2 },
-    { name: '\\u{} double-quote with prefix', source: 'var a = "aaaaa\\u{110000}";', msg: "Unicode escape sequence is out of range", pattern: "\\u{110000}", expectCol: 15 },
-    { name: '\\u{} double-quote without prefix', source: 'var a = "\\u{110000}";', msg: "Unicode escape sequence is out of range", pattern: "\\u{110000}", expectCol: 10 },
-    { name: "\\u{} single-quote with prefix", source: "var a = 'aaaaa\\u{110000}';", msg: "Unicode escape sequence is out of range", pattern: "\\u{110000}", expectCol: 15 },
-    { name: "\\u{} identifier with prefix", source: "var ab\\u{110000} = 1;", msg: "Unicode escape sequence is out of range", pattern: "\\u{110000}", expectCol: 7 },
+    {
+      name: "\\u{} backtick with prefix",
+      source: "`aaaaa\\u{110000}`",
+      msg: "Unicode escape sequence is out of range",
+      pattern: "\\u{110000}",
+      expectCol: 7,
+    },
+    {
+      name: "\\u{} backtick without prefix",
+      source: "`\\u{110000}`",
+      msg: "Unicode escape sequence is out of range",
+      pattern: "\\u{110000}",
+      expectCol: 2,
+    },
+    {
+      name: "\\u{} double-quote with prefix",
+      source: 'var a = "aaaaa\\u{110000}";',
+      msg: "Unicode escape sequence is out of range",
+      pattern: "\\u{110000}",
+      expectCol: 15,
+    },
+    {
+      name: "\\u{} double-quote without prefix",
+      source: 'var a = "\\u{110000}";',
+      msg: "Unicode escape sequence is out of range",
+      pattern: "\\u{110000}",
+      expectCol: 10,
+    },
+    {
+      name: "\\u{} single-quote with prefix",
+      source: "var a = 'aaaaa\\u{110000}';",
+      msg: "Unicode escape sequence is out of range",
+      pattern: "\\u{110000}",
+      expectCol: 15,
+    },
+    {
+      name: "\\u{} identifier with prefix",
+      source: "var ab\\u{110000} = 1;",
+      msg: "Unicode escape sequence is out of range",
+      pattern: "\\u{110000}",
+      expectCol: 7,
+    },
     // Legacy-octal `\08`/`\09`:
-    { name: '\\08 double-quote with prefix', source: 'var a = "aaaaa\\08";', msg: "Invalid legacy octal literal", pattern: "\\08", expectCol: 15 },
-    { name: '\\08 double-quote without prefix', source: 'var a = "\\08";', msg: "Invalid legacy octal literal", pattern: "\\08", expectCol: 10 },
-    { name: "\\09 single-quote with prefix", source: "var a = 'aaaaa\\09';", msg: "Invalid legacy octal literal", pattern: "\\09", expectCol: 15 },
+    {
+      name: "\\08 double-quote with prefix",
+      source: 'var a = "aaaaa\\08";',
+      msg: "Invalid legacy octal literal",
+      pattern: "\\08",
+      expectCol: 15,
+    },
+    {
+      name: "\\08 double-quote without prefix",
+      source: 'var a = "\\08";',
+      msg: "Invalid legacy octal literal",
+      pattern: "\\08",
+      expectCol: 10,
+    },
+    {
+      name: "\\09 single-quote with prefix",
+      source: "var a = 'aaaaa\\09';",
+      msg: "Invalid legacy octal literal",
+      pattern: "\\09",
+      expectCol: 15,
+    },
   ];
 
   test.each(cases)("$name → column $expectCol", ({ source, msg, pattern, expectCol }) => {

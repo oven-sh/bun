@@ -1,8 +1,17 @@
-WarningsAsErrors: "*"
+WarningsAsErrors: "clang-analyzer-*"
 FormatStyle: webkit
 Checks: >
   -*,
   clang-analyzer-*,
+  bugprone-misplaced-widening-cast,
+  bugprone-undefined-memory-manipulation,
+  bugprone-unchecked-optional-access,
+  bugprone-incorrect-roundings,
+  bugprone-sizeof-expression,
+  bugprone-string-integer-assignment,
+  bugprone-suspicious-memset-usage,
+  cppcoreguidelines-pro-type-reinterpret-cast,
+  cppcoreguidelines-pro-type-const-cast,
   -clang-analyzer-optin.core.EnumCastOutOfRange
   -clang-analyzer-webkit.UncountedLambdaCapturesChecker
   -clang-analyzer-optin.core.EnumCastOutOfRange

@@ -789,8 +789,12 @@ impl CreateCommand {
         let mut has_dependencies: bool = false;
         // Own `PATH` so the shared borrow on `env_loader.map` doesn't prevent
         // the later `create_null_delimited_env_map(&mut ...)` call for #31149.
-        let path_env_owned: Box<[u8]> =
-            env_loader.map.get(b"PATH").unwrap_or(b"").to_vec().into_boxed_slice();
+        let path_env_owned: Box<[u8]> = env_loader
+            .map
+            .get(b"PATH")
+            .unwrap_or(b"")
+            .to_vec()
+            .into_boxed_slice();
         let path_env: &[u8] = &path_env_owned;
 
         {
@@ -1573,13 +1577,13 @@ impl CreateCommand {
             // on Windows is a startup-frozen snapshot that never sees our
             // additions). See #31149. `install_envp_storage` keeps the
             // backing buffers alive for the duration of the spawn.
-            let install_envp_storage =
-                if bun_install::SKIP_SECURITY_SCANNER.load(::core::sync::atomic::Ordering::Relaxed)
-                {
-                    Some(env_loader.map.create_null_delimited_env_map()?)
-                } else {
-                    None
-                };
+            let install_envp_storage = if bun_install::SKIP_SECURITY_SCANNER
+                .load(::core::sync::atomic::Ordering::Relaxed)
+            {
+                Some(env_loader.map.create_null_delimited_env_map()?)
+            } else {
+                None
+            };
             let install_envp_ptr: Option<*const *const ::core::ffi::c_char> = install_envp_storage
                 .as_ref()
                 .map(|m| m.as_ptr().cast::<*const ::core::ffi::c_char>());

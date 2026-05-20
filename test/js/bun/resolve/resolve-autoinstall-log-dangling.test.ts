@@ -116,8 +116,7 @@ test("JS running during auto-install's event-loop tick doesn't leave pm.log dang
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).not.toContain("panic");
-  expect(stderr).not.toContain("AddressSanitizer");
+  expect(stderr).toBe("");
   expect(stdout).toContain("ok");
   expect(exitCode).toBe(0);
   expect(hits).toBeGreaterThan(0);

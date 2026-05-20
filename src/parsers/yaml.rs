@@ -4253,6 +4253,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
                 0x0A /* '\n' */ => {
                     // the first newline is always excluded from a literal
+                    self.newline();
                     self.inc(1);
                     if Enc::wide(self.next()) == 0x09 {
                         // tab for indentation
@@ -4278,6 +4279,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
     fn scan_auto_indented_literal_scalar(
         &mut self,
+        indent_indicator: IndentIndicator,
         chomp: Chomp,
         folded: bool,
         start: Pos,
@@ -4289,28 +4291,36 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             text: Vec<Enc::Unit>,
             start: Pos,
             content_indent: Indent,
-            previous_indent: Indent,
             max_leading_indent: Indent,
             line: Line,
             folded: bool,
+            explicit_indent: bool,
+            /// Folded: was the previous content line more-indented (started with
+            /// space/tab beyond content_indent)? Breaks adjacent to such lines
+            /// are not folded.
+            prev_more_indented: bool,
+            /// Folded: is the line currently being appended more-indented?
+            cur_more_indented: bool,
         }
 
         impl<Enc: Encoding> LiteralScalarCtx<Enc> {
-            fn done(mut self, was_eof: bool) -> Result<Token<Enc>, AllocError> {
+            fn done(mut self) -> Result<Token<Enc>, AllocError> {
+                // [165] b-chomped-last(CLIP|KEEP) ::= b-as-line-feed | <end-of-input>
+                // When the last content line ends at EOF without a break, treat
+                // the EOF as an implicit final break so Clip and Keep agree.
+                // This matches the official test suite (L24T/01) and the 1.2.2
+                // reference parsers eemeli/yaml + js-yaml.
+                if !self.text.is_empty() && self.leading_newlines == 0 {
+                    self.leading_newlines = 1;
+                }
                 match self.chomp {
                     Chomp::Keep => {
-                        if was_eof {
-                            for _ in 0..self.leading_newlines + 1 {
-                                self.text.push(Enc::ch(b'\n'));
-                            }
-                        } else if !self.text.is_empty() {
-                            for _ in 0..self.leading_newlines {
-                                self.text.push(Enc::ch(b'\n'));
-                            }
+                        for _ in 0..self.leading_newlines {
+                            self.text.push(Enc::ch(b'\n'));
                         }
                     }
                     Chomp::Clip => {
-                        if was_eof || !self.text.is_empty() {
+                        if !self.text.is_empty() {
                             self.text.push(Enc::ch(b'\n'));
                         }
                     }
@@ -4332,45 +4342,56 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
             fn append(&mut self, c: Enc::Unit) -> Result<(), ParseError> {
                 if self.text.is_empty() {
-                    if self.content_indent.is_less_than(self.max_leading_indent) {
+                    if !self.explicit_indent
+                        && self.content_indent.is_less_than(self.max_leading_indent)
+                    {
                         return Err(ParseError::UnexpectedCharacter);
                     }
-                }
-                if self.folded {
-                    match self.leading_newlines {
-                        0 => self.text.push(c),
-                        1 => {
-                            if self.previous_indent == self.content_indent {
-                                self.text.push(Enc::ch(b' '));
-                                self.text.push(c);
-                            } else {
-                                self.text.push(Enc::ch(b'\n'));
-                                self.text.push(c);
-                            }
-                            self.leading_newlines = 0;
-                        }
-                        _ => {
-                            self.text.reserve(self.leading_newlines);
-                            // PERF(port): was ensureUnusedCapacity + assume_capacity
-                            for _ in 0..self.leading_newlines - 1 {
-                                self.text.push(Enc::ch(b'\n'));
-                            }
-                            self.text.push(c);
-                            self.leading_newlines = 0;
-                        }
-                    }
-                } else {
                     self.text.reserve(self.leading_newlines + 1);
-                    // PERF(port): was ensureUnusedCapacity + assume_capacity
                     for _ in 0..self.leading_newlines {
                         self.text.push(Enc::ch(b'\n'));
                     }
                     self.text.push(c);
                     self.leading_newlines = 0;
+                    self.prev_more_indented = self.cur_more_indented;
+                    return Ok(());
                 }
+                if self.leading_newlines == 0 {
+                    self.text.push(c);
+                    return Ok(());
+                }
+                // First content of a new line after one or more line breaks:
+                // flush them, then remember whether *this* line is more-indented
+                // for the next fold decision.
+                if self.folded && !self.prev_more_indented && !self.cur_more_indented {
+                    if self.leading_newlines == 1 {
+                        self.text.push(Enc::ch(b' '));
+                    } else {
+                        self.text.reserve(self.leading_newlines);
+                        for _ in 0..self.leading_newlines - 1 {
+                            self.text.push(Enc::ch(b'\n'));
+                        }
+                    }
+                } else {
+                    self.text.reserve(self.leading_newlines + 1);
+                    for _ in 0..self.leading_newlines {
+                        self.text.push(Enc::ch(b'\n'));
+                    }
+                }
+                self.text.push(c);
+                self.leading_newlines = 0;
+                self.prev_more_indented = self.cur_more_indented;
                 Ok(())
             }
         }
+
+        let explicit_indent: Option<Indent> = match indent_indicator {
+            IndentIndicator::Auto => None,
+            n => {
+                let parent = self.block_indents.get().map(Indent::cast).unwrap_or(0);
+                Some(Indent::from(parent + usize::from(n.get())))
+            }
+        };
 
         let mut ctx = LiteralScalarCtx::<Enc> {
             chomp,
@@ -4379,9 +4400,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             start,
             line,
             leading_newlines: 0,
-            content_indent: Indent::NONE,
-            previous_indent: Indent::NONE,
+            content_indent: explicit_indent.unwrap_or(Indent::NONE),
             max_leading_indent: Indent::NONE,
+            explicit_indent: explicit_indent.is_some(),
+            prev_more_indented: false,
+            cur_more_indented: false,
         };
 
         // Phase 1: find content_indent and first non-ws char
@@ -4390,15 +4413,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             let __c = Enc::wide(self.next());
             match __c {
                 0 => {
-                    return Ok(Token::scalar(ScalarInit {
-                        start,
-                        indent: self.line_indent,
-                        line,
-                        resolved: TokenScalar {
-                            data: NodeScalar::String(YamlString::List(Vec::new())),
-                            multiline: true,
-                        },
-                    }));
+                    if explicit_indent.is_none() {
+                        ctx.content_indent = self.line_indent;
+                    }
+                    return Ok(ctx.done()?);
                 }
                 0x0D => {
                     if Enc::wide(self.peek(1)) == 0x0A {
@@ -4425,6 +4443,17 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 0x20 => {
                     let mut indent = Indent::from(1);
                     self.inc(1);
+                    if let Some(ci) = explicit_indent {
+                        while indent.is_less_than(ci) && Enc::wide(self.next()) == 0x20 {
+                            indent.inc(1);
+                            self.inc(1);
+                        }
+                        self.line_indent = indent;
+                        if matches!(Enc::wide(self.next()), 0 | 0x0A | 0x0D) {
+                            continue;
+                        }
+                        break 'phase1 (ci, Enc::wide(self.next()));
+                    }
                     while Enc::wide(self.next()) == 0x20 {
                         indent.inc(1);
                         self.inc(1);
@@ -4435,18 +4464,31 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     self.line_indent = indent;
                     continue;
                 }
-                c => break 'phase1 (self.line_indent, c),
+                c => {
+                    if let Some(ci) = explicit_indent {
+                        break 'phase1 (ci, c);
+                    }
+                    break 'phase1 (self.line_indent, c);
+                }
             }
         };
         ctx.content_indent = content_indent;
-        ctx.previous_indent = ctx.content_indent;
+        ctx.cur_more_indented = matches!(first, 0x20 | 0x09);
+
+        // A line is part of the body iff its indentation is >= content_indent
+        // and strictly > the parent block's indent. Collapse both into one
+        // bound so the per-character body loop does a single comparison.
+        let min_indent = match self.block_indents.get() {
+            Some(b) => Indent::from(content_indent.cast().max(b.cast() + 1)),
+            None => content_indent,
+        };
 
         // Phase 2: scan body
         // PORT NOTE: labeled-switch loop with nested `newlines:` switch
         let mut __c = first;
         loop {
             match __c {
-                0 => return Ok(ctx.done(true)?),
+                0 => return Ok(ctx.done()?),
                 0x0D => {
                     if Enc::wide(self.peek(1)) == 0x0A {
                         self.inc(1);
@@ -4486,42 +4528,20 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             }
                             0x20 => {
                                 let mut indent = Indent::from(0);
-                                while Enc::wide(self.next()) == 0x20 {
+                                while indent.is_less_than(ctx.content_indent)
+                                    && Enc::wide(self.next()) == 0x20
+                                {
                                     indent.inc(1);
-                                    if ctx.content_indent.is_less_than(indent) {
-                                        if folded {
-                                            match ctx.leading_newlines {
-                                                0 => ctx.text.push(Enc::ch(b' ')),
-                                                _ => {
-                                                    ctx.text.reserve(ctx.leading_newlines + 1);
-                                                    // PERF(port): was assume_capacity
-                                                    for _ in 0..ctx.leading_newlines {
-                                                        ctx.text.push(Enc::ch(b'\n'));
-                                                    }
-                                                    ctx.text.push(Enc::ch(b' '));
-                                                    ctx.leading_newlines = 0;
-                                                }
-                                            }
-                                        } else {
-                                            ctx.text.reserve(ctx.leading_newlines + 1);
-                                            // PERF(port): was assume_capacity
-                                            for _ in 0..ctx.leading_newlines {
-                                                ctx.text.push(Enc::ch(b'\n'));
-                                            }
-                                            ctx.leading_newlines = 0;
-                                            ctx.text.push(Enc::ch(b' '));
-                                        }
-                                    }
                                     self.inc(1);
                                 }
-                                if ctx.content_indent.is_less_than(indent) {
-                                    ctx.previous_indent = self.line_indent;
-                                }
                                 self.line_indent = indent;
-                                __c = Enc::wide(self.next());
+                                let nc = Enc::wide(self.next());
+                                ctx.cur_more_indented = matches!(nc, 0x20 | 0x09);
+                                __c = nc;
                                 break;
                             }
                             other => {
+                                ctx.cur_more_indented = other == 0x09;
                                 __c = other;
                                 break;
                             }
@@ -4534,14 +4554,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         && self.remain_starts_with(Enc::literal(b"---"))
                         && self.is_any_or_eof_at(Enc::literal(b" \t\n\r"), 3)
                     {
-                        return Ok(ctx.done(false)?);
+                        return Ok(ctx.done()?);
                     }
-                    if let Some(block_indent) = self.block_indents.get() {
-                        if self.line_indent.is_less_than_or_equal(block_indent) {
-                            return Ok(ctx.done(false)?);
-                        }
-                    } else if self.line_indent.is_less_than(ctx.content_indent) {
-                        return Ok(ctx.done(false)?);
+                    if self.line_indent.is_less_than(min_indent) {
+                        return Ok(ctx.done()?);
                     }
                     ctx.append(Enc::ch(b'-'))?;
                     self.inc(1);
@@ -4553,14 +4569,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         && self.remain_starts_with(Enc::literal(b"..."))
                         && self.is_any_or_eof_at(Enc::literal(b" \t\n\r"), 3)
                     {
-                        return Ok(ctx.done(false)?);
+                        return Ok(ctx.done()?);
                     }
-                    if let Some(block_indent) = self.block_indents.get() {
-                        if self.line_indent.is_less_than_or_equal(block_indent) {
-                            return Ok(ctx.done(false)?);
-                        }
-                    } else if self.line_indent.is_less_than(ctx.content_indent) {
-                        return Ok(ctx.done(false)?);
+                    if self.line_indent.is_less_than(min_indent) {
+                        return Ok(ctx.done()?);
                     }
                     ctx.append(Enc::ch(b'.'))?;
                     self.inc(1);
@@ -4568,12 +4580,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     continue;
                 }
                 c => {
-                    if let Some(block_indent) = self.block_indents.get() {
-                        if self.line_indent.is_less_than_or_equal(block_indent) {
-                            return Ok(ctx.done(false)?);
-                        }
-                    } else if self.line_indent.is_less_than(ctx.content_indent) {
-                        return Ok(ctx.done(false)?);
+                    if self.line_indent.is_less_than(min_indent) {
+                        return Ok(ctx.done()?);
                     }
                     // TODO(port): need Enc::Unit from u32; assuming Enc::Unit: From<u8> for ASCII range only.
                     // For non-ASCII units we need to read self.next() directly.
@@ -4594,9 +4602,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let line = self.line;
 
         let (indent_indicator, chomp) = self.scan_block_header()?;
-        let _ = indent_indicator;
 
-        let result = self.scan_auto_indented_literal_scalar(chomp, false, start, line);
+        let result =
+            self.scan_auto_indented_literal_scalar(indent_indicator, chomp, false, start, line);
         self.whitespace_buf.clear();
         result
     }
@@ -4606,9 +4614,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let line = self.line;
 
         let (indent_indicator, chomp) = self.scan_block_header()?;
-        let _ = indent_indicator;
 
-        self.scan_auto_indented_literal_scalar(chomp, true, start, line)
+        self.scan_auto_indented_literal_scalar(indent_indicator, chomp, true, start, line)
     }
 
     fn scan_single_quoted_scalar(&mut self) -> Result<Token<Enc>, ParseError> {

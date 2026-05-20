@@ -5,6 +5,7 @@
 #include <wtf/StackTrace.h>
 #include <wtf/dtoa.h>
 #include <wtf/NumberOfCores.h>
+#include <assert.h>
 #include <atomic>
 
 #include "wtf/SIMDUTF.h"

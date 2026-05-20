@@ -1127,6 +1127,15 @@ impl TranspilerJob {
             } else {
                 None
             };
+        // Spec ModuleLoader.zig:523 — propagate top-level-await to the cached
+        // module record. Without this, modules cached via the isolation source
+        // provider (used under --isolate / --parallel) are reported to JSC as
+        // having no TLA, so the module's evaluation promise resolves before the
+        // top-level-await actually completes — causing the caller's
+        // `wait_for_promise` on the preload to return early.
+        if let Some(mi) = module_info.as_deref_mut() {
+            mi.flags.has_tla = !parse_result.ast.top_level_await_keyword.is_empty();
+        }
         // PORT NOTE: derive `*mut` from a `&mut` borrow (not `&x as *const _ as
         // *mut _`, which is Stacked-Borrows UB). The `&mut` borrow ends when the
         // closure returns; the raw pointer stays valid until `module_info` is

@@ -7,13 +7,9 @@ export const meta = {
   ],
 };
 
-// args: { round: number, files: Array<{file: string, count: number, diagnostics: Array<{code,message,line,col,rendered}>}> }
+// args: { round: number, files: Array<{file, count, diagPath, codes}> }
 const round: number = args.round;
-const files: Array<{
-  file: string;
-  count: number;
-  diagnostics: Array<{ code: string; message: string; line: number; col: number; rendered: string }>;
-}> = args.files;
+const files: Array<{ file: string; count: number; diagPath: string; codes: string[] }> = args.files;
 
 const PATCH_SCHEMA = {
   type: "object",
@@ -91,20 +87,15 @@ If you reject because the change is unsound or the lint should be skipped, leave
 Be terse. \`notes\` is for the apply step, not a human.
 `;
 
-function diagBlock(d: { code: string; line: number; rendered: string }[]) {
-  return d.map(x => x.rendered.trimEnd()).join("\n\n");
-}
-
 const results = await pipeline(
   files,
   // ---- Fix ----
   f =>
     agent(
-      `Fix the clippy errors in \`${f.file}\` (Bun repo, /root/bun-5).\n\n` +
-        `There are ${f.count} target diagnostics in this file:\n\n` +
-        "```\n" +
-        diagBlock(f.diagnostics) +
-        "\n```\n\n" +
+      `Fix the clippy errors in \`${f.file}\` (Bun repo at /root/bun-5).\n\n` +
+        `There are ${f.count} diagnostics (${f.codes.join(", ")}).\n` +
+        `FIRST: Read the full diagnostic dump at \`${f.diagPath}\` — it has every rendered error with line/col.\n` +
+        `THEN: Read \`/root/bun-5/${f.file}\` and produce the diff.\n\n` +
         FIXER_RULES,
       { label: `fix:${f.file}`, phase: "Fix", schema: PATCH_SCHEMA },
     ),
@@ -114,8 +105,9 @@ const results = await pipeline(
       return { file: f.file, approved: false, patch: "", reviewNotes: fix?.summary ?? "fixer produced no patch" };
     }
     const reviewPrompt =
-      `Adversarially review this clippy-fix diff for \`${f.file}\` (Bun repo, /root/bun-5).\n\n` +
-      `Original diagnostics:\n\`\`\`\n${diagBlock(f.diagnostics)}\n\`\`\`\n\n` +
+      `Adversarially review this clippy-fix diff for \`${f.file}\` (Bun repo at /root/bun-5).\n\n` +
+      `The ${f.count} original diagnostics are at \`${f.diagPath}\` — Read that first.\n` +
+      `The current file is at \`/root/bun-5/${f.file}\` — Read the relevant regions.\n\n` +
       `Proposed diff:\n\`\`\`diff\n${fix.patch}\n\`\`\`\n\n` +
       `Fixer's summary: ${fix.summary}\n\n` +
       REVIEWER_RULES;

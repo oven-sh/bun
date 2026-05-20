@@ -912,6 +912,102 @@ folded: >
       });
     });
 
+    describe("explicit mapping keys (?)", () => {
+      test("single explicit entry", () => {
+        expect(YAML.parse("? a\n: 1\n")).toEqual({ a: 1 });
+      });
+
+      test("multiple explicit entries", () => {
+        expect(YAML.parse("? a\n: 1\n? b\n: 2\n")).toEqual({ a: 1, b: 2 });
+        expect(YAML.parse("? a\n: 1\n? b\n: 2\n? c\n: 3\n")).toEqual({ a: 1, b: 2, c: 3 });
+      });
+
+      test("explicit key with omitted value", () => {
+        expect(YAML.parse("? a\n")).toEqual({ a: null });
+        expect(YAML.parse("? a\n? b\n")).toEqual({ a: null, b: null });
+        expect(YAML.parse("? a\n? b\n? c\n")).toEqual({ a: null, b: null, c: null });
+      });
+
+      test("explicit key followed by implicit entry", () => {
+        expect(YAML.parse("? a\nb: 2\n")).toEqual({ a: null, b: 2 });
+        expect(YAML.parse("? a\n? b\nc: 3\n")).toEqual({ a: null, b: null, c: 3 });
+        expect(YAML.parse("? a\n: 1\nb: 2\n")).toEqual({ a: 1, b: 2 });
+      });
+
+      test("implicit entry followed by explicit", () => {
+        expect(YAML.parse("a: 1\n? b\n: 2\n")).toEqual({ a: 1, b: 2 });
+        expect(YAML.parse("a: 1\n? b\n")).toEqual({ a: 1, b: null });
+      });
+
+      test("nested under mapping", () => {
+        expect(YAML.parse("outer:\n  ? a\n  : 1\n")).toEqual({ outer: { a: 1 } });
+        expect(YAML.parse("outer:\n  ? a\n  : 1\n  ? b\n  : 2\n")).toEqual({ outer: { a: 1, b: 2 } });
+        expect(YAML.parse("outer:\n  ? a\n  : 1\n  b: 2\n")).toEqual({ outer: { a: 1, b: 2 } });
+      });
+
+      test("nested under sequence", () => {
+        expect(YAML.parse("- ? a\n  : 1\n")).toEqual([{ a: 1 }]);
+      });
+
+      test("block scalar as key", () => {
+        expect(YAML.parse("? |\n  multi\n  line\n: v\n")).toEqual({ "multi\nline\n": "v" });
+        expect(YAML.parse("? >\n  folded\n  key\n: v\n")).toEqual({ "folded key\n": "v" });
+      });
+
+      test("sequence value (compact, : on next line)", () => {
+        expect(YAML.parse("? a\n: - b\n")).toEqual({ a: ["b"] });
+        expect(YAML.parse("? a\n: - b\n  - c\n")).toEqual({ a: ["b", "c"] });
+        expect(YAML.parse("? a\n:\n  - b\n  - c\n")).toEqual({ a: ["b", "c"] });
+      });
+
+      test("block scalar value", () => {
+        expect(YAML.parse("? a\n: |\n  v\n")).toEqual({ a: "v\n" });
+      });
+
+      test("mapping value", () => {
+        expect(YAML.parse("? a\n: b: c\n")).toEqual({ a: { b: "c" } });
+      });
+
+      test("tagged key", () => {
+        expect(YAML.parse("? !!str a\n: !!int 47\n")).toEqual({ a: 47 });
+      });
+
+      test("anchored key", () => {
+        expect(YAML.parse("? &x a\n: v\n")).toEqual({ a: "v" });
+      });
+
+      test("comments", () => {
+        expect(YAML.parse("? a # c\n: 1\n")).toEqual({ a: 1 });
+        expect(YAML.parse("? a\n: # c\n  1\n")).toEqual({ a: 1 });
+      });
+
+      test("rejects implicit compact-seq value on key line", () => {
+        expect(() => YAML.parse("a: - b\n")).toThrow();
+      });
+
+      test("rejects nested implicit on key line", () => {
+        expect(() => YAML.parse("a: b: c\n")).toThrow();
+      });
+
+      test("rejects explicit : at wrong indent", () => {
+        // [191] requires `:` at exactly the `?` indent
+        expect(() => YAML.parse("x: 1\n? a\n  : b\n")).toThrow();
+        expect(() => YAML.parse("x: 1\n? a\n    : b\n")).toThrow();
+        expect(() => YAML.parse("outer:\n  x: 1\n  ? a\n: v\n")).toThrow();
+      });
+
+      test("compact mapping as nested explicit key", () => {
+        // `? b: c` — key is the compact mapping {b:c}
+        expect(YAML.parse("a:\n  ? b: c\n")).toEqual({ a: { "[object Object]": null } });
+        expect(YAML.parse("a:\n  ? [1]: 2\n")).toEqual({ a: { "[object Object]": null } });
+      });
+
+      test("flow collection inside ? - …", () => {
+        expect(YAML.parse("? - [1]\n: b\n")).toEqual({ 1: "b" });
+        expect(YAML.parse("? - {k: 1}\n: b\n")).toEqual({ "[object Object]": "b" });
+      });
+    });
+
     test("handles empty values", () => {
       const yaml = `
 empty_string: ""

@@ -992,7 +992,7 @@ test("yaml-test-suite/5U3A", () => {
   }).toThrow();
 });
 
-test.todo("yaml-test-suite/5WE3", () => {
+test("yaml-test-suite/5WE3", () => {
   // Spec Example 8.17. Explicit Block Mapping Entries
   const input: string = `? explicit key # Empty value
 ? |
@@ -1259,7 +1259,7 @@ test("yaml-test-suite/6M2F", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/6PBE", () => {
+test("yaml-test-suite/6PBE", () => {
   // Zero-indented sequences in explicit mapping keys (using test.event for expected values)
   const input: string = `---
 ?
@@ -1608,7 +1608,7 @@ test("yaml-test-suite/7TMG", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/7W2P", () => {
+test("yaml-test-suite/7W2P", () => {
   // Block Mapping with Missing Values
   const input: string = `? a
 ? b
@@ -2246,7 +2246,7 @@ e
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/A2M4", () => {
+test("yaml-test-suite/A2M4", () => {
   // Spec Example 6.2. Indentation Indicators
   const input: string = `? a
 : -	b
@@ -4010,7 +4010,7 @@ test("yaml-test-suite/KH5V/02", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/KK5P", () => {
+test("yaml-test-suite/KK5P", () => {
   // Various combinations of explicit block mappings (using test.event for expected values)
   const input: string = `complex1:
   ? - a
@@ -4134,7 +4134,7 @@ test("yaml-test-suite/L383", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/L94M", () => {
+test("yaml-test-suite/L94M", () => {
   // Tags in Explicit Mapping
   const input: string = `? !!str a
 : !!int 47
@@ -5057,7 +5057,7 @@ bar:
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/RR7F", () => {
+test("yaml-test-suite/RR7F", () => {
   // Mixed Block Mapping (implicit to explicit)
   const input: string = `a: 4.2
 ? d
@@ -5100,7 +5100,7 @@ test("yaml-test-suite/RXY3", () => {
   }).toThrow();
 });
 
-test.todo("yaml-test-suite/RZP5", () => {
+test("yaml-test-suite/RZP5", () => {
   // Various Trailing Comments [1.3] (using test.event for expected values)
   const input: string = `a: "double
   quotes" # lala
@@ -5270,7 +5270,7 @@ test("yaml-test-suite/S98Z", () => {
   }).toThrow();
 });
 
-test.todo("yaml-test-suite/S9E8", () => {
+test("yaml-test-suite/S9E8", () => {
   // Spec Example 5.3. Block Structure Indicators
   const input: string = `sequence:
 - one
@@ -6071,7 +6071,7 @@ Chomping: |
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/XW4D", () => {
+test("yaml-test-suite/XW4D", () => {
   // Various Trailing Comments (using test.event for expected values)
   const input: string = `a: "double
   quotes" # lala
@@ -6396,7 +6396,7 @@ test("yaml-test-suite/ZVH3", () => {
   }).toThrow();
 });
 
-test.todo("yaml-test-suite/ZWK4", () => {
+test("yaml-test-suite/ZWK4", () => {
   // Key with anchor after missing explicit mapping value
   const input: string = `---
 a: 1

@@ -1744,9 +1744,16 @@ impl BaseScope {
 pub struct DescribeScope {
     pub base: BaseScope,
     pub entries: Vec<TestScheduleEntry>,
+    // The `Box` is load-bearing: `Order.rs` derives `*mut ExecutionEntry` from
+    // box interiors and stores them in the intrusive `next`/`failure_skip_past`
+    // chains; unboxing would dangle those pointers on `Vec` realloc.
+    #[expect(clippy::vec_box)]
     pub before_all: Vec<Box<ExecutionEntry>>,
+    #[expect(clippy::vec_box)]
     pub before_each: Vec<Box<ExecutionEntry>>,
+    #[expect(clippy::vec_box)]
     pub after_each: Vec<Box<ExecutionEntry>>,
+    #[expect(clippy::vec_box)]
     pub after_all: Vec<Box<ExecutionEntry>>,
 
     /// if true, the describe callback threw an error. do not run any tests declared in this scope.
@@ -1827,6 +1834,8 @@ impl DescribeScope {
         }
     }
 
+    // `Box` is load-bearing: see the `before_all` field comment.
+    #[expect(clippy::vec_box)]
     pub fn get_hook_entries(&mut self, tag: HookTag) -> &mut Vec<Box<ExecutionEntry>> {
         match tag {
             HookTag::BeforeAll => &mut self.before_all,

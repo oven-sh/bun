@@ -206,7 +206,11 @@ macro_rules! lol_content_ops {
 #[derive(Default)]
 pub struct LOLHTMLContext {
     pub selectors: SelectorMap,
+    // The `Box` is load-bearing: lol-html's C builder holds `NonNull` pointers
+    // into the box interiors; unboxing would dangle them on `Vec` realloc.
+    #[expect(clippy::vec_box)]
     pub element_handlers: Vec<Box<ElementHandler>>,
+    #[expect(clippy::vec_box)]
     pub document_handlers: Vec<Box<DocumentHandler>>,
 }
 
@@ -331,6 +335,9 @@ impl HTMLRewriter {
         Ok(call_frame.this())
     }
 
+    // `Box<Self>` is the JsClass finalizer thunk contract — generated codegen
+    // calls `Box::from_raw` and dispatches to this signature.
+    #[expect(clippy::boxed_local)]
     pub fn finalize(self: Box<Self>) {
         self.finalize_without_destroy();
     }

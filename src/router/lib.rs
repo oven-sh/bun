@@ -365,6 +365,10 @@ struct RouteIndex {
 // MultiArrayList(RouteIndex)) until the derive exists.
 #[derive(Default)]
 pub struct RouteIndexList {
+    // The `Box` is load-bearing: `Routes::index` / `Routes::static_` hold
+    // `NonNull<Route>` / `*const Route` into the box interiors; unboxing
+    // would dangle them on `Vec` realloc.
+    #[expect(clippy::vec_box)]
     route: Vec<Box<Route>>,
     name: Vec<&'static [u8]>,
     match_name: Vec<&'static [u8]>,
@@ -618,6 +622,9 @@ struct RouteLoader<'a> {
     // (self-referential); `Routes` co-owns it with `list`.
     index: Option<NonNull<Route>>,
     static_list: StringHashMap<*const Route>,
+    // `Box` is load-bearing: `index` / `static_list` above hold raw pointers
+    // into the box interiors; unboxing would dangle them on `Vec` realloc.
+    #[expect(clippy::vec_box)]
     all_routes: Vec<Box<Route>>,
 }
 

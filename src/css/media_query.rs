@@ -55,6 +55,9 @@ pub trait QueryCondition: Sized + ToCss {
         Self::parse_feature(input)
     }
     // Mutually-defaulting pairs: override exactly one of each.
+    // `Box<Self>` is the trait-method signature; impls in `rules/container.rs`
+    // override it with a `Box<Self>` payload, so the signature can't change.
+    #[expect(clippy::boxed_local)]
     fn create_negation(condition: Box<Self>) -> Self {
         Self::create_negation_in(*condition, ArenaPtr::global())
     }

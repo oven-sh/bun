@@ -315,6 +315,9 @@ use bun_ast::SideEffects;
 /// `DirInfo::reset()`'s `drop_in_place` -- handing out `&T` here and casting
 /// back to `*mut T` at the drop site would be UB under Stacked Borrows.
 fn intern_package_json(pkg: PackageJSON) -> core::ptr::NonNull<PackageJSON> {
+    // `Box` is load-bearing: returns `NonNull<PackageJSON>` derived from the
+    // box interior, treated as `'static`; unboxing would dangle on `Vec` realloc.
+    #[expect(clippy::vec_box)]
     static ARENA: std::sync::LazyLock<bun_threading::Guarded<Vec<Box<PackageJSON>>>> =
         std::sync::LazyLock::new(Default::default);
     let mut guard = ARENA.lock();

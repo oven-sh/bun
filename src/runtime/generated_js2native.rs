@@ -15,7 +15,10 @@
     non_camel_case_types,
     non_upper_case_globals,
     clippy::missing_safety_doc,
-    clippy::not_unsafe_ptr_arg_deref
+    clippy::not_unsafe_ptr_arg_deref,
+    // Closure form is intentional for `&mut T → &T` autoref/coercion.
+    clippy::redundant_closure,
+    clippy::unused_unit
 )]
 
 include!(concat!(env!("BUN_CODEGEN_DIR"), "/generated_js2native.rs"));

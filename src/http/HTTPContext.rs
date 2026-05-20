@@ -56,6 +56,9 @@ pub struct HTTPContext<const SSL: bool> {
     /// coalesce onto the first one's session once ALPN resolves rather
     /// than each opening its own socket.
     // TODO(port): lifetime — owned Box<PendingConnect>; `pc.deinit()` in Drop.
+    // The `Box` is load-bearing: `client.pending_h2` holds `NonNull<PendingConnect>`
+    // into the box interior; unboxing would dangle it on `Vec` realloc.
+    #[expect(clippy::vec_box)]
     pub pending_h2_connects: Vec<Box<h2::PendingConnect>>,
 }
 

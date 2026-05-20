@@ -207,10 +207,10 @@ unreachable_patterns = "deny"
 # `ptr::from_mut` over `as *const T` / `as *mut T`. The method forms cannot
 # accidentally change mutability or perform a ref→raw coercion in one step,
 # and they preserve provenance under Strict Provenance.
-ptr_as_ptr = "warn"
-ptr_cast_constness = "warn"
-ref_as_ptr = "warn"
-borrow_as_ptr = "warn"
+ptr_as_ptr = "deny"
+ptr_cast_constness = "deny"
+ref_as_ptr = "deny"
+borrow_as_ptr = "deny"
 
 # == soundness / leak prevention ==
 undocumented_unsafe_blocks = "deny"
@@ -251,9 +251,12 @@ unimplemented = "deny"
 dbg_macro = "deny"
 clone_on_copy = "deny"
 useless_conversion = "deny"
-vec_box = "warn"             # Vec<Box<T>> is the pointer-stability pattern (raw *mut T held across pushes)
-boxed_local = "warn"         # Box<Self> receivers are the cross-thread task-consume pattern
-arc_with_non_send_sync = "warn"   # 1 hit (ParsedSourceMap) — needs Send+Sync vs Rc decision
+# vec_box / boxed_local: legit patterns are `#[expect]`-suppressed at the site
+# with a one-line "why the box is load-bearing" comment (intrusive-list address
+# stability, JsClass finalizer thunk contract). Anything new must justify itself.
+vec_box = "deny"
+boxed_local = "deny"
+arc_with_non_send_sync = "deny"
 manual_swap = "deny"
 mem_replace_option_with_none = "deny"
 redundant_locals = "deny"

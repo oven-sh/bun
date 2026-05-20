@@ -25,7 +25,13 @@
     improper_ctypes,
     improper_ctypes_definitions,
     clippy::missing_safety_doc,
-    clippy::not_unsafe_ptr_arg_deref
+    clippy::not_unsafe_ptr_arg_deref,
+    // Closure form `|t, g, c| T::method(t, g, c)` (not bare `T::method`) is
+    // emitted intentionally so `&mut T → &T` autoref/coercion applies — some
+    // impls take `&self`, others `&mut self`. clippy can't see the coercion.
+    clippy::redundant_closure,
+    // Generated thunks for `()`-returning methods emit `... -> ()`.
+    clippy::unused_unit
 )]
 
 // Bring BodyMixin into scope so codegen UFCS calls like

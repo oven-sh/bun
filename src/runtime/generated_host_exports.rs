@@ -19,7 +19,8 @@
 //! macro expansion.
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals, // Thunks pass `*mut <RustStruct>` where C++ stores it as `void*` and never
     // derefs — same rationale as `generated_classes.rs`.
-    improper_ctypes, improper_ctypes_definitions, clippy::missing_safety_doc, clippy::not_unsafe_ptr_arg_deref)]
+    improper_ctypes, improper_ctypes_definitions, clippy::missing_safety_doc, clippy::not_unsafe_ptr_arg_deref,
+    clippy::redundant_closure, clippy::unused_unit)]
 
 // Generated `generated_host_exports.rs` may spell `bun_core::String` or
 // `bun_core::String` depending on which side of the merge the codegen ran on;

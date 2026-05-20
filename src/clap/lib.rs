@@ -395,17 +395,6 @@ impl Diagnostic {
     }
 }
 
-#[cfg(test)]
-fn test_diag(diag: Diagnostic, err: bun_core::Error, expected: &[u8]) {
-    // TODO(port): std.io.fixedBufferStream — Diagnostic.report ignores the writer
-    // and goes through Output, so this helper cannot capture output the same way.
-    let mut buf = [0u8; 1024];
-    let _ = &mut buf;
-    diag.report((), err).expect("unreachable");
-    let _ = expected;
-    // TODO(port): assert against captured Output
-}
-
 #[derive(Clone, Copy)]
 pub struct Help {
     /// The description text exactly as written in the param spec — may still
@@ -1016,14 +1005,6 @@ where
 #[inline(never)]
 pub fn usage<W: fmt::Write>(stream: &mut W, params: &[Param<Help>]) -> Result<(), bun_core::Error> {
     usage_ex(stream, params, get_value_simple)
-}
-
-#[cfg(test)]
-fn test_usage(expected: &[u8], params: &[Param<Help>]) -> Result<(), bun_core::Error> {
-    let mut buf = Vec::<u8>::with_capacity(1024);
-    usage(&mut bun_core::fmt::VecWriter(&mut buf), params)?;
-    assert_eq!(expected, &buf[..]);
-    Ok(())
 }
 
 #[cfg(test)]

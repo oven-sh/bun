@@ -1483,6 +1483,10 @@ mod tests {
         assert_eq!(list.len(), 3);
     }
 
+    // Fields are read via the `items::<"name", _>()` const-generic field-name
+    // API (which goes through the __mal! macro's offset table), not by direct
+    // access — `dead_code` can't see that.
+    #[allow(dead_code)]
     struct Borrowed<'a> {
         name: &'a [u8],
         n: u32,

@@ -69,7 +69,7 @@ jobs:
 
       - name: Setup Rust
         run: |
-          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component miri rust-src
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component miri --component rust-src
           rustup override set "$RUSTUP_TOOLCHAIN"
           echo "::add-matcher::.github/rust-matcher.json"
 
@@ -80,4 +80,6 @@ jobs:
           ninja -C build/debug clone-lolhtml
 
       - name: cargo miri test
+        env:
+          BUN_CODEGEN_DIR: ${{ github.workspace }}/build/debug/codegen
         run: bun run rust:miri

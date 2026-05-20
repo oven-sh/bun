@@ -999,7 +999,7 @@ folded: >
 
         test("mis-indented compact-seq continuation errors", () => {
           // second `-` at indent 1 ≠ first `-` at indent 2
-          expect(() => YAML.parse("? - a\n - b\n: v\n")).toThrow();
+          expect(() => YAML.parse("? - a\n - b\n: v\n")).toThrow("Unexpected token");
         });
       });
 
@@ -1015,13 +1015,13 @@ folded: >
         });
 
         test("tab-indented line after explicit : errors", () => {
-          expect(() => YAML.parse("? key:\n:\n\tkey:\n")).toThrow();
+          expect(() => YAML.parse("? key:\n:\n\tkey:\n")).toThrow("Unexpected character");
         });
       });
 
       describe("explicit value on same line", () => {
         test("Y79Y/009 pattern (tab + trailing :) errors", () => {
-          expect(() => YAML.parse("? key:\n:\tkey:\n")).toThrow();
+          expect(() => YAML.parse("? key:\n:\tkey:\n")).toThrow("Unexpected token");
         });
 
         test("compact-mapping value via space is valid", () => {
@@ -1042,7 +1042,25 @@ folded: >
         });
 
         test("flow mapping with explicit ? (no indent constraint)", () => {
+          // Locks in current behavior. Spec result per [142]/[143] is {a:"b"}
+          // (matches js-yaml, PyYAML, ruamel.yaml); the [object Object] is a
+          // pre-existing flow-? quirk (routes through parse_block_mapping).
+          // Update to {a:"b"} when flow-? is fixed.
           expect(YAML.parse("{? a\n  : b}\n")).toEqual({ "[object Object]": null });
+        });
+      });
+
+      describe("tab-only blank line in block context", () => {
+        // Side-effect of the api-after-? tab-guard rewrite: a tab at column 0
+        // on a blank line inside a block construct now errors. Spec [70]
+        // l-empty requires s-indent (spaces only); PyYAML/ruamel agree.
+        test("inside block sequence", () => {
+          expect(() => YAML.parse("-\n\t\n- b\n")).toThrow("Unexpected character");
+          expect(() => YAML.parse("- 'a'\n\t\n- b\n")).toThrow("Unexpected character");
+        });
+
+        test("inside block mapping", () => {
+          expect(() => YAML.parse("a:\n\t\nb: 2\n")).toThrow("Unexpected character");
         });
       });
 
@@ -1127,18 +1145,18 @@ folded: >
       });
 
       test("rejects implicit compact-seq value on key line", () => {
-        expect(() => YAML.parse("a: - b\n")).toThrow();
+        expect(() => YAML.parse("a: - b\n")).toThrow("Unexpected token");
       });
 
       test("rejects nested implicit on key line", () => {
-        expect(() => YAML.parse("a: b: c\n")).toThrow();
+        expect(() => YAML.parse("a: b: c\n")).toThrow("Unexpected token");
       });
 
       test("rejects explicit : at deeper indent than ?", () => {
         // [191] requires `:` at exactly the `?` indent
-        expect(() => YAML.parse("? a\n  : b\n")).toThrow();
-        expect(() => YAML.parse("x: 1\n? a\n  : b\n")).toThrow();
-        expect(() => YAML.parse("x: 1\n? a\n    : b\n")).toThrow();
+        expect(() => YAML.parse("? a\n  : b\n")).toThrow("Unexpected token");
+        expect(() => YAML.parse("x: 1\n? a\n  : b\n")).toThrow("Unexpected token");
+        expect(() => YAML.parse("x: 1\n? a\n    : b\n")).toThrow("Unexpected token");
       });
 
       test("explicit : at lesser indent ends the entry (e-node value)", () => {

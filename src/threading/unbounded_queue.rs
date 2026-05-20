@@ -140,6 +140,13 @@ pub struct Batch<T: Node> {
     pub count: usize,
 }
 
+impl<T: Node> Clone for Batch<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<T: Node> Copy for Batch<T> {}
+
 impl<T: Node> Default for Batch<T> {
     fn default() -> Self {
         Self {

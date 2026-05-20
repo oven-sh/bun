@@ -1047,15 +1047,15 @@ impl Clone for Repository {
 
 impl Repository {
     pub fn order(&self, rhs: &Repository, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
-        let owner_order = self.owner.order(&rhs.owner, lhs_buf, rhs_buf);
+        let owner_order = self.owner.order(rhs.owner, lhs_buf, rhs_buf);
         if owner_order != Ordering::Equal {
             return owner_order;
         }
-        let repo_order = self.repo.order(&rhs.repo, lhs_buf, rhs_buf);
+        let repo_order = self.repo.order(rhs.repo, lhs_buf, rhs_buf);
         if repo_order != Ordering::Equal {
             return repo_order;
         }
-        self.committish.order(&rhs.committish, lhs_buf, rhs_buf)
+        self.committish.order(rhs.committish, lhs_buf, rhs_buf)
     }
 
     pub fn count<B: bun_semver::StringBuilder>(&self, buf: &[u8], builder: &mut B) {

@@ -3609,9 +3609,13 @@ impl VirtualMachine {
     }
 
     /// Spec VirtualMachine.zig:1020 `enqueueTaskConcurrent`.
+    ///
+    /// # Safety
+    /// See [`crate::event_loop::EventLoop::enqueue_task_concurrent`].
     #[inline]
-    pub fn enqueue_task_concurrent(&mut self, task: *mut crate::event_loop::ConcurrentTaskItem) {
-        self.event_loop_mut().enqueue_task_concurrent(task);
+    pub unsafe fn enqueue_task_concurrent(&mut self, task: *mut crate::event_loop::ConcurrentTaskItem) {
+        // SAFETY: forwarded — see fn-level Safety contract.
+        unsafe { self.event_loop_mut().enqueue_task_concurrent(task) };
     }
 
     /// Spec VirtualMachine.zig:1028 `waitFor`.

@@ -188,7 +188,7 @@ pub mod external_string {
                 return Ordering::Equal;
             }
 
-            self.value.order(&rhs.value, lhs_buf, rhs_buf)
+            self.value.order(rhs.value, lhs_buf, rhs_buf)
         }
 
         /// ExternalString but without the hash
@@ -326,7 +326,7 @@ pub mod semver_string {
         }
 
         #[inline]
-        pub fn order(&self, rhs: &String, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
+        pub fn order(self, rhs: String, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
             strings::order(self.slice(lhs_buf), rhs.slice(rhs_buf))
         }
 
@@ -791,7 +791,7 @@ pub mod semver_string {
 
     impl<'a> Sorter<'a> {
         pub fn less_than(&self, lhs: String, rhs: String) -> bool {
-            lhs.order(&rhs, self.lhs_buf, self.rhs_buf)
+            lhs.order(rhs, self.lhs_buf, self.rhs_buf)
                 == if self.direction == SortDirection::Asc {
                     Ordering::Less
                 } else {
@@ -937,8 +937,8 @@ pub mod semver_string {
             })
         }
         #[inline]
-        pub fn contains(&self, hash: &u64) -> bool {
-            self.map.contains_key(hash)
+        pub fn contains(&self, hash: u64) -> bool {
+            self.map.contains_key(&hash)
         }
         /// Zig `HashMap.capacity()` — number of slots reservable without rehash.
         #[inline]
@@ -987,7 +987,7 @@ pub mod semver_string {
                 return;
             }
 
-            if !self.string_pool.contains(&hash) {
+            if !self.string_pool.contains(hash) {
                 self.cap += slice_.len();
             }
         }

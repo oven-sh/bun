@@ -96,7 +96,9 @@ impl FSWatcher {
         // safe `&EventLoop` accessor. `enqueue_task_concurrent` is the
         // documented cross-thread entry point and only touches the lock-free
         // queue.
-        self.vm().event_loop_shared().enqueue_task_concurrent(task)
+        // SAFETY: `task` is a fresh heap-allocated `ConcurrentTaskItem`; the
+        // queue takes ownership of it.
+        unsafe { self.vm().event_loop_shared().enqueue_task_concurrent(task) }
     }
 
     /// `self`'s address as `*mut Self` for path-watcher / abort-signal /

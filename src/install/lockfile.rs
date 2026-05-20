@@ -2643,7 +2643,7 @@ impl<'a> StringBuilder<'a> {
     fn _count_with_hash(&mut self, slice: &[u8], hash: u64) {
         self.assert_not_allocated();
 
-        if !self.string_pool.contains(&hash) {
+        if !self.string_pool.contains(hash) {
             self.cap += slice.len();
         }
     }
@@ -2875,7 +2875,7 @@ impl<'a> EqlSorter<'a> {
         strings::order(l_path, r_path).then_with(|| {
             let l_name = self.pkg_names[l.pkg_id as usize];
             let r_name = self.pkg_names[r.pkg_id as usize];
-            l_name.order(&r_name, self.string_buf, self.string_buf)
+            l_name.order(r_name, self.string_buf, self.string_buf)
         })
     }
 }

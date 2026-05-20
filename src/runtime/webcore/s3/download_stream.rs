@@ -343,11 +343,15 @@ impl S3HttpDownloadStreamingTask {
             );
             // `vm` is the live per-thread VM BackRef captured at task creation; event_loop
             // is initialized for the request's lifetime and enqueue is thread-safe (`&self`).
-            self_
-                .vm
-                .expect("vm set at task creation")
-                .event_loop_shared()
-                .enqueue_task_concurrent(task);
+            // SAFETY: `task` is the inline `concurrent_task` field of this heap
+            // request; the queue takes ownership of its `next` link.
+            unsafe {
+                self_
+                    .vm
+                    .expect("vm set at task creation")
+                    .event_loop_shared()
+                    .enqueue_task_concurrent(task);
+            }
         }
     }
 }

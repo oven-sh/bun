@@ -397,7 +397,9 @@ impl Queue {
         // widening from a `&mut self`-derived pointer, but `ctx` is a raw
         // `*mut` carried from the original allocation.
         let vm = unsafe { &mut *bun_core::from_field_ptr!(VirtualMachine, modules, queue) };
-        vm.enqueue_task_concurrent(task);
+        // SAFETY: `task` is a freshly heap-allocated `ConcurrentTaskItem`
+        // (see `ConcurrentTask::create` above); the queue takes ownership.
+        unsafe { vm.enqueue_task_concurrent(task) };
     }
 
     pub fn on_poll(&mut self) {

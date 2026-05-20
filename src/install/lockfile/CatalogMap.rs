@@ -347,7 +347,7 @@ impl CatalogMap {
     pub fn sort(&mut self, buffers: &Buffers) {
         let buf = buffers.string_bytes.as_slice();
         let dep_less_than = |_: &[String], deps: &[Dependency], l: usize, r: usize| -> bool {
-            deps[l].name.order(&deps[r].name, buf, buf) == Ordering::Less
+            deps[l].name.order(deps[r].name, buf, buf) == Ordering::Less
         };
 
         self.default.sort(dep_less_than);
@@ -358,7 +358,7 @@ impl CatalogMap {
 
         self.groups
             .sort(|names: &[String], _: &[Map], l: usize, r: usize| -> bool {
-                names[l].order(&names[r], buf, buf) == Ordering::Less
+                names[l].order(names[r], buf, buf) == Ordering::Less
             });
     }
 

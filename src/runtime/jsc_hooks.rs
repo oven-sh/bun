@@ -2042,7 +2042,7 @@ fn transpile_source_code_inner(
                 L::Toml | L::Yaml | L::Json5 | L::Text | L::Json | L::Jsonc
             ))
     {
-        return Ok(OwnedResolvedSource::new(ResolvedSource {
+        return Ok(OwnedResolvedSource::from(ResolvedSource {
             source_code: bun_core::String::empty(),
             specifier: input_specifier.dupe_ref(),
             source_url: create_if_different(input_specifier, path.text),
@@ -2631,7 +2631,7 @@ fn transpile_source_code_inner(
 
                 // Spec :343-351 — raw JSON: hand the source bytes straight to JSC.
                 if loader == L::Json {
-                    return Ok(OwnedResolvedSource::new(ResolvedSource {
+                    return Ok(OwnedResolvedSource::from(ResolvedSource {
                         source_code: bun_core::String::clone_utf8(&source.contents),
                         specifier: input_specifier.dupe_ref(),
                         source_url: create_if_different(input_specifier, path.text),
@@ -2660,7 +2660,7 @@ fn transpile_source_code_inner(
                         }
                         FetchFlags::Transpile => unreachable!(),
                     };
-                    return Ok(OwnedResolvedSource::new(ResolvedSource {
+                    return Ok(OwnedResolvedSource::from(ResolvedSource {
                         source_code,
                         specifier: input_specifier.dupe_ref(),
                         source_url: create_if_different(input_specifier, path.text),
@@ -2704,7 +2704,7 @@ fn transpile_source_code_inner(
                             ))
                         })
                     };
-                    return Ok(OwnedResolvedSource::new(ResolvedSource {
+                    return Ok(OwnedResolvedSource::from(ResolvedSource {
                         specifier: input_specifier.dupe_ref(),
                         source_url: create_if_different(input_specifier, path.text),
                         jsvalue_for_export,
@@ -2737,7 +2737,7 @@ fn transpile_source_code_inner(
                         }
                         _ => (core::ptr::null_mut(), 0),
                     };
-                    return Ok(OwnedResolvedSource::new(ResolvedSource {
+                    return Ok(OwnedResolvedSource::from(ResolvedSource {
                         source_code: bun_core::String::clone_latin1(&source.contents),
                         specifier: input_specifier.dupe_ref(),
                         source_url: create_if_different(input_specifier, path.text),
@@ -2753,7 +2753,7 @@ fn transpile_source_code_inner(
                 if parse_result.empty && matches!(loader, L::Js | L::Ts) {
                     let ext = bun_paths::extension(source.path.text);
                     if ext == b".cjs" || ext == b".cts" {
-                        return Ok(OwnedResolvedSource::new(ResolvedSource {
+                        return Ok(OwnedResolvedSource::from(ResolvedSource {
                             source_code: bun_core::String::static_(b"(function(){})"),
                             specifier: input_specifier.dupe_ref(),
                             source_url: create_if_different(input_specifier, path.text),
@@ -2848,7 +2848,7 @@ fn transpile_source_code_inner(
                     } else {
                         ResolvedSourceTag::Javascript
                     };
-                    return Ok(OwnedResolvedSource::new(ResolvedSource {
+                    return Ok(OwnedResolvedSource::from(ResolvedSource {
                         source_code,
                         specifier: input_specifier.dupe_ref(),
                         source_url: create_if_different(input_specifier, path.text),
@@ -3035,7 +3035,7 @@ fn transpile_source_code_inner(
                     resolved_source.is_commonjs_module = is_commonjs_module;
                     // TODO(b2-blocked): `analyze_transpiled_module::ModuleInfo::create`.
                     resolved_source.module_info = core::ptr::null_mut();
-                    return Ok(OwnedResolvedSource::new(resolved_source));
+                    return Ok(OwnedResolvedSource::from(resolved_source));
                 }
 
                 // Spec :561-592 — final ResolvedSource.
@@ -3112,7 +3112,7 @@ fn transpile_source_code_inner(
                 // (fd close handled by `_fd_guard` registered above; spec
                 // :251-256 `defer` fires on every exit path.)
 
-                return Ok(OwnedResolvedSource::new(ResolvedSource {
+                return Ok(OwnedResolvedSource::from(ResolvedSource {
                     source_code,
                     specifier: input_specifier.dupe_ref(),
                     source_url: create_if_different(input_specifier, path.text),
@@ -3146,7 +3146,7 @@ fn transpile_source_code_inner(
 
                 {
                     use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
-                    return Ok(OwnedResolvedSource::new(ResolvedSource {
+                    return Ok(OwnedResolvedSource::from(ResolvedSource {
                         source_code: bun_core::String::static_(include_bytes!(
                             "../js/wasi-runner.js"
                         )),
@@ -3191,7 +3191,7 @@ fn transpile_source_code_inner(
                 SQLITE_MODULE_SOURCE
             };
             use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
-            Ok(OwnedResolvedSource::new(ResolvedSource {
+            Ok(OwnedResolvedSource::from(ResolvedSource {
                 source_code: bun_core::String::clone_utf8(sqlite_module_source_code_string),
                 specifier: input_specifier.dupe_ref(),
                 source_url: create_if_different(input_specifier, path.text),
@@ -3206,7 +3206,7 @@ fn transpile_source_code_inner(
         L::Html => {
             if disable_transpilying {
                 use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
-                return Ok(OwnedResolvedSource::new(ResolvedSource {
+                return Ok(OwnedResolvedSource::from(ResolvedSource {
                     source_code: bun_core::String::empty(),
                     specifier: input_specifier.dupe_ref(),
                     source_url: create_if_different(input_specifier, path.text),
@@ -3221,7 +3221,7 @@ fn transpile_source_code_inner(
             let global = unsafe { &*global_object };
             let html_bundle = crate::api::HTMLBundle::init(global, path.text);
             use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
-            Ok(OwnedResolvedSource::new(ResolvedSource {
+            Ok(OwnedResolvedSource::from(ResolvedSource {
                 jsvalue_for_export: crate::api::HTMLBundle::to_js(html_bundle.into_raw(), global),
                 specifier: input_specifier.dupe_ref(),
                 source_url: create_if_different(input_specifier, path.text),
@@ -3236,7 +3236,7 @@ fn transpile_source_code_inner(
         _ => {
             if disable_transpilying {
                 use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
-                return Ok(OwnedResolvedSource::new(ResolvedSource {
+                return Ok(OwnedResolvedSource::from(ResolvedSource {
                     source_code: bun_core::String::empty(),
                     specifier: input_specifier.dupe_ref(),
                     source_url: create_if_different(input_specifier, path.text),
@@ -3344,7 +3344,7 @@ fn transpile_source_code_inner(
                 bun_jsc::bun_string_jsc::create_utf8_for_js(global, path.text)
                     .map_err(|_| bun_core::err!("JSError"))?
             };
-            Ok(OwnedResolvedSource::new(ResolvedSource {
+            Ok(OwnedResolvedSource::from(ResolvedSource {
                 jsvalue_for_export: value,
                 specifier: input_specifier.dupe_ref(),
                 source_url: create_if_different(input_specifier, path.text),
@@ -3438,7 +3438,7 @@ export default db;
 #[inline]
 fn js_synthetic_module(name: &'static [u8], specifier: &bun_core::String) -> OwnedResolvedSource {
     use bun_jsc::resolved_source::Tag;
-    OwnedResolvedSource::new(ResolvedSource {
+    OwnedResolvedSource::from(ResolvedSource {
         source_code: bun_core::String::empty(),
         specifier: *specifier,
         source_url: bun_core::String::static_(name),
@@ -3478,7 +3478,7 @@ fn get_hardcoded_module(
                 return None;
             }
             use bun_jsc::resolved_source::Tag;
-            Some(OwnedResolvedSource::new(ResolvedSource {
+            Some(OwnedResolvedSource::from(ResolvedSource {
                 source_code: bun_core::String::clone_utf8(&ep.contents),
                 // +1 each: ~SourceProvider() derefs `specifier` and
                 // `source_url` once all uses are done (see ZigSourceProvider.cpp).
@@ -3507,7 +3507,7 @@ fn get_hardcoded_module(
             // TODO(b2-cycle): `Runtime::source_code()` — `bun_ast::runtime`
             // is a stub re-export until `runtime.rs` un-gates there.
             {
-                return Some(OwnedResolvedSource::new(ResolvedSource {
+                return Some(OwnedResolvedSource::from(ResolvedSource {
                     source_code: bun_core::String::init(bun_ast::runtime::Runtime::source_code()),
                     // +1 each: ~SourceProvider() derefs both.
                     specifier: specifier.dupe_ref(),

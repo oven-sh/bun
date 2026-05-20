@@ -1035,7 +1035,7 @@ impl Writable {
         subprocess: *mut Subprocess,
         result: StdioResult,
     ) -> Result<Writable, WritableInitError> {
-        assert_stdio_result(&result);
+        assert_stdio_result(result);
 
         // PORT NOTE: `Stdio` impls Drop, so we cannot partially move out via
         // match (E0509). Dispatch on `&mut` and `mem::take` / ManuallyDrop the
@@ -1316,7 +1316,7 @@ impl Readable {
         _max_size: u32,
         _is_sync: bool,
     ) -> Readable {
-        assert_stdio_result(&result);
+        assert_stdio_result(result);
 
         // PORT NOTE: `Stdio` impls Drop, so dispatch on `&mut` and `mem::take`
         // Default-able payloads instead of partial moves (E0509).
@@ -2309,6 +2309,7 @@ impl PipeReader {
         // scope end (all paths, including `?`) is that deref. Consumes the
         // caller's +1 strong ref.
         let me = arc_as_mut_ptr(&this);
+        let _consume_on_return = this;
 
         match core::mem::replace(
             // SAFETY: see `arc_as_mut_ptr`; short-lived `&mut` for the `state`
@@ -2496,7 +2497,7 @@ bun_io::impl_buffered_reader_parent! {
 // enum the trait was declared with.
 
 #[inline]
-pub fn assert_stdio_result(result: &StdioResult) {
+pub fn assert_stdio_result(result: StdioResult) {
     if cfg!(debug_assertions) {
         #[cfg(unix)]
         {

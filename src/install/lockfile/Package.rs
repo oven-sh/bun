@@ -394,7 +394,7 @@ impl<SemverIntType: VersionInt> Alphabetizer<SemverIntType> {
             self.resolutions.slice(),
         );
         names[lhs as usize]
-            .order(&names[rhs as usize], buf, buf)
+            .order(names[rhs as usize], buf, buf)
             .then_with(|| resolutions[lhs as usize].order(&resolutions[rhs as usize], buf, buf))
     }
 

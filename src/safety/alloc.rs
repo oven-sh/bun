@@ -191,7 +191,7 @@ impl CheckedAllocator {
     ///
     /// If you only have a `StdAllocator`, see `MimallocArena::Borrowed::downcast`.
     #[inline]
-    pub fn transfer_ownership(&mut self, new_alloc: impl AsMimallocArenaAllocator) {
+    pub fn transfer_ownership(&mut self, new_alloc: &impl AsMimallocArenaAllocator) {
         if !ENABLED {
             return;
         }

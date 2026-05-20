@@ -60,7 +60,9 @@ pub extern "C" fn Bun__queueJSCDeferredWorkTaskConcurrently(
     let loop_: &EventLoop = jsc_vm.event_loop_shared();
     // Zig: `ConcurrentTask.new(.{ .task = Task.init(task), .next = .auto_delete })`
     // — `create_from` is exactly that (heap-allocates with the auto-delete bit set).
-    loop_.enqueue_task_concurrent(ConcurrentTask::create_from(task));
+    // SAFETY: `create_from` heap-allocates a fresh `ConcurrentTaskItem`; the
+    // queue takes ownership of it.
+    unsafe { loop_.enqueue_task_concurrent(ConcurrentTask::create_from(task)) };
 }
 
 #[unsafe(no_mangle)]

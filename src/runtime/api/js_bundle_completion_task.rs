@@ -800,9 +800,13 @@ static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDis
     result_is_err: |c| matches!(from_completion_handle(c).result, BundleV2Result::Err(_)),
     enqueue_task_concurrent: |c, task| {
         // `jsc_event_loop` is a `BackRef<EventLoop>` — safe Deref.
-        from_completion_handle(c)
-            .jsc_event_loop
-            .enqueue_task_concurrent(task)
+        // SAFETY: `task` is a fresh heap-allocated `ConcurrentTaskItem` passed
+        // through from the bundler vtable; the queue takes ownership.
+        unsafe {
+            from_completion_handle(c)
+                .jsc_event_loop
+                .enqueue_task_concurrent(task)
+        }
     },
 };
 
@@ -995,10 +999,13 @@ impl CompletionStruct for JSBundleCompletionTask {
     }
 
     fn complete_on_bundle_thread(&mut self) {
-        // `jsc_event_loop` is a `BackRef<EventLoop>` — safe Deref;
-        // `enqueue_task_concurrent` takes `&self`.
-        self.jsc_event_loop
-            .enqueue_task_concurrent(jsc::ConcurrentTask::create(self.task.task()));
+        // `jsc_event_loop` is a `BackRef<EventLoop>` — safe Deref.
+        // SAFETY: `ConcurrentTask::create` heap-allocates a fresh task; the
+        // queue takes ownership of it.
+        unsafe {
+            self.jsc_event_loop
+                .enqueue_task_concurrent(jsc::ConcurrentTask::create(self.task.task()));
+        }
     }
     fn set_result(&mut self, result: BundleV2Result) {
         self.result = result;

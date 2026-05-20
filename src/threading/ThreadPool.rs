@@ -376,7 +376,7 @@ impl Task {
 }
 
 /// An unordered collection of Tasks which can be submitted for scheduling as a group.
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub struct Batch {
     pub len: usize,
     pub head: Option<NonNull<Task>>,

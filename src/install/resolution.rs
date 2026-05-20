@@ -328,17 +328,17 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
             Tag::Npm => self.npm().order(rhs.npm(), lhs_buf, rhs_buf),
             Tag::LocalTarball => self
                 .local_tarball()
-                .order(rhs.local_tarball(), lhs_buf, rhs_buf),
-            Tag::Folder => self.folder().order(rhs.folder(), lhs_buf, rhs_buf),
+                .order(*rhs.local_tarball(), lhs_buf, rhs_buf),
+            Tag::Folder => self.folder().order(*rhs.folder(), lhs_buf, rhs_buf),
             Tag::RemoteTarball => {
                 self.remote_tarball()
-                    .order(rhs.remote_tarball(), lhs_buf, rhs_buf)
+                    .order(*rhs.remote_tarball(), lhs_buf, rhs_buf)
             }
-            Tag::Workspace => self.workspace().order(rhs.workspace(), lhs_buf, rhs_buf),
-            Tag::Symlink => self.symlink().order(rhs.symlink(), lhs_buf, rhs_buf),
+            Tag::Workspace => self.workspace().order(*rhs.workspace(), lhs_buf, rhs_buf),
+            Tag::Symlink => self.symlink().order(*rhs.symlink(), lhs_buf, rhs_buf),
             Tag::SingleFileModule => {
                 self.single_file_module()
-                    .order(rhs.single_file_module(), lhs_buf, rhs_buf)
+                    .order(*rhs.single_file_module(), lhs_buf, rhs_buf)
             }
             Tag::Git => self.git().order(rhs.git(), lhs_buf, rhs_buf),
             Tag::Github => self.github().order(rhs.github(), lhs_buf, rhs_buf),

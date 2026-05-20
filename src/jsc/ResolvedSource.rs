@@ -97,13 +97,16 @@ impl Default for ResolvedSource {
 #[derive(Default)]
 pub struct OwnedResolvedSource(ResolvedSource);
 
-impl OwnedResolvedSource {
-    /// Adopt a freshly-constructed `ResolvedSource`. The caller transfers the
-    /// +1 on every `BunString` field to this owner.
+/// Adopt a freshly-constructed `ResolvedSource`. The caller transfers the
+/// +1 on every `BunString` field to this owner.
+impl From<ResolvedSource> for OwnedResolvedSource {
     #[inline]
-    pub const fn new(rs: ResolvedSource) -> Self {
+    fn from(rs: ResolvedSource) -> Self {
         Self(rs)
     }
+}
+
+impl OwnedResolvedSource {
 
     /// Hand the raw value to C++ (which takes over the `deref()` obligation
     /// per `headers-handwritten.h` `BunString::deref` callers in

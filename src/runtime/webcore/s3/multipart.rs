@@ -778,7 +778,7 @@ impl MultiPartUpload {
             BStr::new(&this_ref.upload_id)
         );
         match result {
-            S3UploadResult::Failure(_) => {
+            S3UploadResult::Failure(_err) => {
                 if this_ref.options.retry > 0 {
                     this_ref.options.retry -= 1;
                     // retry rollback

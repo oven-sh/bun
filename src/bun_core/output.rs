@@ -2592,8 +2592,12 @@ pub fn err(error_name: impl ErrName, fmt: &str, args: impl FmtTuple) {
         return;
     }
 
-    let display_name = error_name.name();
-    pretty_errorln!("<red>{}<r><d>:<r> {}", bstr::BStr::new(display_name), body);
+    pretty_errorln!(
+        "<red>{}<r><d>:<r> {}",
+        bstr::BStr::new(error_name.name()),
+        body
+    );
+    drop(error_name);
 }
 
 /// `Output.err(.TAG, fmt, args)` with a bare string tag — e.g.

@@ -2650,9 +2650,13 @@ mod _async_tasks {
             // SAFETY: `bun_vm_concurrently()` returns the process-singleton VM;
             // sole `&mut` borrow at this point on the work-pool thread.
             let vm = unsafe { &mut *self.global_object().bun_vm_concurrently() };
-            vm.enqueue_task_concurrent(ConcurrentTask::create(Task::init(std::ptr::from_mut::<
-                Self,
-            >(self))));
+            // SAFETY: `ConcurrentTask::create` heap-allocates a fresh task; the
+            // queue takes ownership of it.
+            unsafe {
+                vm.enqueue_task_concurrent(ConcurrentTask::create(Task::init(
+                    std::ptr::from_mut::<Self>(self),
+                )));
+            }
         }
 
         fn clear_result_list(&mut self) {

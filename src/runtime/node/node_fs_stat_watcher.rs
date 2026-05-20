@@ -650,9 +650,10 @@ impl StatWatcher {
         &self,
         task: *mut bun_event_loop::ConcurrentTask::ConcurrentTask,
     ) {
-        // `event_loop_shared()` returns the VM's live `&EventLoop`;
-        // `enqueue_task_concurrent` takes `&self`.
-        self.ctx.event_loop_shared().enqueue_task_concurrent(task);
+        // `event_loop_shared()` returns the VM's live `&EventLoop`.
+        // SAFETY: `task` is a fresh heap-allocated `ConcurrentTaskItem`; the
+        // queue takes ownership of it.
+        unsafe { self.ctx.event_loop_shared().enqueue_task_concurrent(task) };
     }
 
     /// Copy the last stat by value.

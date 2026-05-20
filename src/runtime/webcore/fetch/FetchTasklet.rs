@@ -298,9 +298,13 @@ impl FetchTasklet {
     /// deref. `event_loop()` returns a self-ptr into the VirtualMachine that
     /// is valid for the VM's lifetime; `enqueue_task_concurrent` takes `&self`
     /// and is thread-safe (lock-free MPSC push).
+    /// # Safety
+    /// `task` must be a valid live `ConcurrentTaskItem` that the queue may
+    /// take ownership of via its intrusive `next` link.
     #[inline]
-    fn enqueue_concurrent(vm: &VirtualMachine, task: *mut ConcurrentTask) {
-        vm.event_loop_shared().enqueue_task_concurrent(task);
+    unsafe fn enqueue_concurrent(vm: &VirtualMachine, task: *mut ConcurrentTask) {
+        // SAFETY: forwarded — see fn-level Safety contract.
+        unsafe { vm.event_loop_shared().enqueue_task_concurrent(task) };
     }
 
     /// Wrap a borrowed body chunk in a `StreamResult::Temporary*` for
@@ -388,10 +392,14 @@ impl FetchTasklet {
         }
         // this is really unlikely to happen, but can happen
         // lets make sure that we always call deinit from main thread
-        Self::enqueue_concurrent(
-            self_.javascript_vm,
-            ConcurrentTask::from_callback(this, FetchTasklet::deinit_callback),
-        );
+        // SAFETY: `from_callback` heap-allocates a fresh `ConcurrentTaskItem`;
+        // the queue takes ownership of it.
+        unsafe {
+            Self::enqueue_concurrent(
+                self_.javascript_vm,
+                ConcurrentTask::from_callback(this, FetchTasklet::deinit_callback),
+            );
+        }
     }
 
     // PORT NOTE: ConcurrentTask::from_callback takes `fn(*mut T) -> bun_event_loop::JsResult<()>`
@@ -1936,10 +1944,14 @@ impl FetchTasklet {
         }
         // ref until the main thread callback is called
         this_ref.ref_();
-        Self::enqueue_concurrent(
-            this_ref.javascript_vm,
-            ConcurrentTask::from_callback(this, FetchTasklet::resume_request_data_stream),
-        );
+        // SAFETY: `from_callback` heap-allocates a fresh `ConcurrentTaskItem`;
+        // the queue takes ownership of it.
+        unsafe {
+            Self::enqueue_concurrent(
+                this_ref.javascript_vm,
+                ConcurrentTask::from_callback(this, FetchTasklet::resume_request_data_stream),
+            );
+        }
     }
 
     /// This is ALWAYS called from the main thread
@@ -2247,7 +2259,9 @@ impl FetchTasklet {
         let ct = task_ref
             .concurrent_task
             .from(task, AutoDeinit::ManualDeinit);
-        Self::enqueue_concurrent(task_ref.javascript_vm, ct);
+        // SAFETY: `ct` is the inline `concurrent_task` field of the heap
+        // tasklet; the queue takes ownership of its `next` link.
+        unsafe { Self::enqueue_concurrent(task_ref.javascript_vm, ct) };
 
         task_ref.mutex.unlock();
         // we are done with the http client so we can deref our side

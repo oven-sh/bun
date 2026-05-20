@@ -49,7 +49,7 @@ impl OverrideMap {
         self.map.sort(|_, deps: &[Dependency], l, r| {
             deps[l]
                 .name
-                .order(&deps[r].name, string_bytes, string_bytes)
+                .order(deps[r].name, string_bytes, string_bytes)
                 == Ordering::Less
         });
     }

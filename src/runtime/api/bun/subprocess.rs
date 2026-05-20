@@ -223,7 +223,7 @@ impl<'a> Subprocess<'a> {
 
     /// Debug-assert the per-stdio spawn result is well-formed.
     #[inline]
-    pub fn assert_stdio_result(result: &StdioResult) {
+    pub fn assert_stdio_result(result: StdioResult) {
         #[cfg(all(debug_assertions, unix))]
         if let Some(fd) = result {
             debug_assert!(fd.is_valid());
@@ -336,7 +336,7 @@ impl Default for WaitThreadPoll {
 }
 
 #[inline]
-pub fn assert_stdio_result(result: &StdioResult) {
+pub fn assert_stdio_result(result: StdioResult) {
     #[cfg(all(debug_assertions, unix))]
     if let Some(fd) = result {
         debug_assert!(fd.is_valid());

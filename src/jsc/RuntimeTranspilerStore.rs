@@ -1036,7 +1036,7 @@ impl TranspilerJob {
                 ptr::null_mut()
             };
 
-            self.resolved_source = OwnedResolvedSource::new(ResolvedSource {
+            self.resolved_source = OwnedResolvedSource::from(ResolvedSource {
                 source_code: match &mut entry.output_code {
                     OutputCode::String(s) => *s,
                     OutputCode::Utf8(utf8) => {
@@ -1056,7 +1056,7 @@ impl TranspilerJob {
 
         if !matches!(parse_result.already_bundled, AlreadyBundled::None) {
             let bytecode_slice = parse_result.already_bundled.bytecode_slice();
-            self.resolved_source = OwnedResolvedSource::new(ResolvedSource {
+            self.resolved_source = OwnedResolvedSource::from(ResolvedSource {
                 source_code: String::clone_latin1(&parse_result.source.contents),
                 already_bundled: true,
                 bytecode_cache: if !bytecode_slice.is_empty() {
@@ -1222,7 +1222,7 @@ impl TranspilerJob {
 
             break 'brk result;
         };
-        self.resolved_source = OwnedResolvedSource::new(ResolvedSource {
+        self.resolved_source = OwnedResolvedSource::from(ResolvedSource {
             source_code,
             is_commonjs_module,
             module_info: module_info

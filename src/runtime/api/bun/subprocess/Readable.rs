@@ -69,6 +69,7 @@ impl Readable {
     fn pipe_detach(pipe: IntrusiveRc<PipeReader>) {
         Self::pipe_reader_mut(&pipe).process = None;
         pipe.deref();
+        drop(pipe);
     }
 
     pub fn memory_cost(&self) -> usize {
@@ -113,7 +114,7 @@ impl Readable {
         _is_sync: bool,
     ) -> Readable {
         // PORT NOTE: Zig `allocator` param dropped (was unused / autofix); global mimalloc assumed.
-        Subprocess::assert_stdio_result(&result);
+        Subprocess::assert_stdio_result(result);
 
         // Ownership of any resource inside `stdio` (notably `.memfd`) is being
         // *transferred* into the returned `Readable` — Zig's `Readable.init`

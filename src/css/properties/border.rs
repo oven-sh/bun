@@ -354,6 +354,7 @@ define_rect_shorthand! {
     bottom: BorderBottomStyle,
     left: BorderLeftStyle
 }
+impl Eq for BorderStyle {}
 
 define_rect_shorthand! {
     /// A value for the [border-width](https://drafts.csswg.org/css-backgrounds/#propdef-border-width) shorthand property.
@@ -672,6 +673,22 @@ mod border_handler_body {
     // PORT NOTE: hoisted above `impl BorderHandler` — macro_rules! is order-
     // sensitive and the flush_category!() callsites in `flush()` need these.
 
+    // Route the large `Property` enum construction through a non-inlined
+    // callee so each temporary lives in the helper's frame, not in
+    // `flush_logical`'s 146 KB monolith (clippy::large_stack_frames).
+    #[inline(never)]
+    fn dest_push_with(dest: &mut DeclarationList, mk: impl FnOnce() -> Property) {
+        dest.push(mk());
+    }
+    #[inline(never)]
+    fn ctx_add_logical_with(
+        ctx: &mut PropertyHandlerContext,
+        mk: impl FnOnce() -> (Property, Property),
+    ) {
+        let (a, b) = mk();
+        ctx.add_logical_rule(a, b);
+    }
+
     struct FlushContext<'a, 'bump, 'ctx> {
         // PORT NOTE: Zig stored `self: *BorderHandler`; we only need flushed_properties
         // here because the per-side BorderShorthand pointers are passed separately.
@@ -697,26 +714,35 @@ mod border_handler_body {
         ($f:expr, BorderLeft, BorderRight, $val:expr) => {{
             let __val: BorderLeft = $val;
             let f = &mut *$f;
-            f.ctx.add_logical_rule(
-                Property::BorderLeft(__val.clone_as(f.arena)),
-                Property::BorderRight(__val.clone_as(f.arena)),
-            );
+            let arena = f.arena;
+            ctx_add_logical_with(f.ctx, || {
+                (
+                    Property::BorderLeft(__val.clone_as(arena)),
+                    Property::BorderRight(__val.clone_as(arena)),
+                )
+            });
         }};
         ($f:expr, BorderRight, BorderLeft, $val:expr) => {{
             let __val: BorderRight = $val;
             let f = &mut *$f;
-            f.ctx.add_logical_rule(
-                Property::BorderRight(__val.clone_as(f.arena)),
-                Property::BorderLeft(__val.clone_as(f.arena)),
-            );
+            let arena = f.arena;
+            ctx_add_logical_with(f.ctx, || {
+                (
+                    Property::BorderRight(__val.clone_as(arena)),
+                    Property::BorderLeft(__val.clone_as(arena)),
+                )
+            });
         }};
         ($f:expr, $ltr:ident, $rtl:ident, $val:expr) => {{
             let __val = $val;
             let f = &mut *$f;
-            f.ctx.add_logical_rule(
-                Property::$ltr(__val.deep_clone(f.arena)),
-                Property::$rtl(__val.deep_clone(f.arena)),
-            );
+            let arena = f.arena;
+            ctx_add_logical_with(f.ctx, || {
+                (
+                    Property::$ltr(__val.deep_clone(arena)),
+                    Property::$rtl(__val.deep_clone(arena)),
+                )
+            });
         }};
     }
 
@@ -728,9 +754,10 @@ mod border_handler_body {
         ($f:expr, $p:ident, $val:expr) => {{
             let __val = $val;
             let f = &mut *$f;
+            let arena = f.arena;
             f.flushed_properties
                 .insert(BorderProperty::try_from_property_id(PropertyIdTag::$p).unwrap());
-            f.dest.push(Property::$p(__val.deep_clone(f.arena)));
+            dest_push_with(f.dest, || Property::$p(__val.deep_clone(arena)));
         }};
     }
 
@@ -745,7 +772,7 @@ mod border_handler_body {
             {
                 let fbs = val.get_fallbacks(f.arena, &f.ctx.targets);
                 for fallback in css::generic::slice(&fbs) {
-                    f.dest.push(Property::$p(fallback.clone()));
+                    dest_push_with(f.dest, || Property::$p(fallback.clone()));
                 }
             }
             fc_push!(f, $p, val);

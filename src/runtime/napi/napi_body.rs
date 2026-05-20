@@ -1909,10 +1909,14 @@ impl napi_async_work {
             Ordering::SeqCst,
         ) {
             if state == AsyncWorkStatus::Cancelled as u32 {
-                self.event_loop.enqueue_task_concurrent(
-                    self.concurrent_task
-                        .from(self_ptr, AutoDeinit::ManualDeinit),
-                );
+                // SAFETY: `concurrent_task` is the live inline field of this
+                // heap work; the queue takes ownership of its `next` link.
+                unsafe {
+                    self.event_loop.enqueue_task_concurrent(
+                        self.concurrent_task
+                            .from(self_ptr, AutoDeinit::ManualDeinit),
+                    );
+                }
                 return;
             }
         }
@@ -1920,10 +1924,14 @@ impl napi_async_work {
         self.status
             .store(AsyncWorkStatus::Completed as u32, Ordering::SeqCst);
 
-        self.event_loop.enqueue_task_concurrent(
-            self.concurrent_task
-                .from(self_ptr, AutoDeinit::ManualDeinit),
-        );
+        // SAFETY: `concurrent_task` is the live inline field of this heap work;
+        // the queue takes ownership of its `next` link.
+        unsafe {
+            self.event_loop.enqueue_task_concurrent(
+                self.concurrent_task
+                    .from(self_ptr, AutoDeinit::ManualDeinit),
+            );
+        }
     }
 
     pub fn cancel(&mut self) -> bool {
@@ -2780,8 +2788,12 @@ impl ThreadSafeFunction {
         match prev {
             x if x == DispatchState::Idle as u8 => {
                 let self_ptr: *mut Self = self;
-                self.event_loop
-                    .enqueue_task_concurrent(ConcurrentTask::create_from(self_ptr));
+                // SAFETY: `create_from` heap-allocates a fresh task; the queue
+                // takes ownership of it.
+                unsafe {
+                    self.event_loop
+                        .enqueue_task_concurrent(ConcurrentTask::create_from(self_ptr));
+                }
             }
             x if x == DispatchState::Running as u8 => {
                 // it will check if it has more work to do
@@ -4334,8 +4346,12 @@ impl NapiFinalizerTask {
         if !is_main_thread {
             // TODO(@heimskr): do we need to handle the case where the vm is shutting down?
             let this = bun_core::heap::into_raw(self);
-            vm.event_loop_ref()
-                .enqueue_task_concurrent(ConcurrentTask::create(Task::init(this)));
+            // SAFETY: `ConcurrentTask::create` heap-allocates a fresh task; the
+            // queue takes ownership of it.
+            unsafe {
+                vm.event_loop_ref()
+                    .enqueue_task_concurrent(ConcurrentTask::create(Task::init(this)));
+            }
             return;
         }
 

@@ -1056,7 +1056,10 @@ impl EventLoop {
         }
     }
 
-    pub fn enqueue_task_concurrent(&self, task: *mut ConcurrentTaskItem) {
+    /// # Safety
+    /// `task` must be a valid live `ConcurrentTaskItem` that the queue may
+    /// take ownership of via its intrusive `next` link.
+    pub unsafe fn enqueue_task_concurrent(&self, task: *mut ConcurrentTaskItem) {
         if cfg!(debug_assertions) {
             if self.vm_ref().has_terminated {
                 panic!("EventLoop.enqueueTaskConcurrent: VM has terminated");

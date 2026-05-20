@@ -464,10 +464,14 @@ impl S3HttpSimpleTask {
             );
             // `vm` is the live per-thread VM BackRef captured at task creation; event_loop
             // is set during VM init and outlives this task. `enqueue_task_concurrent` is `&self`.
-            this.vm
-                .expect("vm set at task creation")
-                .event_loop_shared()
-                .enqueue_task_concurrent(task);
+            // SAFETY: `task` is the inline `concurrent_task` field of this heap
+            // request; the queue takes ownership of its `next` link.
+            unsafe {
+                this.vm
+                    .expect("vm set at task creation")
+                    .event_loop_shared()
+                    .enqueue_task_concurrent(task);
+            }
         }
     }
 }

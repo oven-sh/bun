@@ -658,7 +658,7 @@ pub fn get_loader_and_virtual_source<'a>(
 
     let is_main = strings::eql_long(specifier, jsc_vm.main(), true);
 
-    let dir = path.name.dir.as_ref();
+    let dir = path.name().dir.as_ref();
     // NOTE: we cannot trust `path.isFile()` since it's not always correct
     // NOTE: assume we may need a package.json when no loader is specified
     let is_js_like = loader.map(|l| l.is_js_like()).unwrap_or(true);
@@ -2201,8 +2201,9 @@ impl TransformOptions {
         // PERF(port): was assume_capacity
         define.put_assume_capacity(b"process.env.NODE_ENV", b"development".as_slice().into());
 
+        let entry_point_name = entry_point.path.name();
         let mut loader = Loader::File;
-        if let Some(default_loader) = DEFAULT_LOADERS.get(entry_point.path.name.ext) {
+        if let Some(default_loader) = DEFAULT_LOADERS.get(entry_point_name.ext) {
             loader = *default_loader;
         }
         debug_assert!(!code.is_empty());
@@ -2212,7 +2213,7 @@ impl TransformOptions {
             banner: b"",
             define,
             loader,
-            resolve_dir: Box::from(entry_point.path.name.dir),
+            resolve_dir: Box::from(entry_point_name.dir),
             entry_point,
             // TODO(port): resolve_dir borrows from entry_point in Zig; cloned here
             main_fields: Target::default_main_fields_map()[Target::Browser],

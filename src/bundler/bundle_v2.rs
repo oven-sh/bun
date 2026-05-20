@@ -611,7 +611,6 @@ pub mod bv2_impl {
                     pretty: b"bun:bake/server",
                     text: b"_bun/bake/server",
                     namespace: b"bun",
-                    name: bun_paths::fs::PathName::init(b"bake/server"),
                     is_disabled: false,
                     is_symlink: true,
                 };
@@ -625,7 +624,6 @@ pub mod bv2_impl {
                     pretty: b"bun:bake/client",
                     text: b"_bun/bake/client",
                     namespace: b"bun",
-                    name: bun_paths::fs::PathName::init(b"bake/client"),
                     is_disabled: false,
                     is_symlink: true,
                 };
@@ -1652,7 +1650,6 @@ pub mod bv2_impl {
             }
         }
 
-        #[cold]
         pub fn initialize_client_transpiler(&mut self) -> Result<&mut Transpiler<'a>, Error> {
             // bundle_v2.zig:198-241.
             //
@@ -1793,7 +1790,6 @@ pub mod bv2_impl {
         // deterministic given that the entry point order is deterministic, since the
         // returned order is the postorder of the graph traversal and import record
         // order within a given file is deterministic.
-        #[cold]
         pub fn visit<const CHECK_DYNAMIC_IMPORTS: bool>(
             &mut self,
             source_index: Index,
@@ -1955,7 +1951,6 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
-        #[cold]
         pub fn find_reachable_files(&mut self) -> Result<Box<[Index]>, Error> {
             // RAII guard — `Ctx` ends the span on Drop (Zig: `defer trace.end()`).
             let _trace = crate::ungate_support::perf::trace("Bundler.findReachableFiles");
@@ -2064,9 +2059,10 @@ pub mod bv2_impl {
             // columns via `split_mut()` on a value-type `Slice` snapshot.
             let mut input_files_slice = self.graph.input_files.slice();
             let input_files_cols = input_files_slice.split_mut();
-            let additional_files: &mut [Vec<crate::AdditionalFile>] =
+            let additional_files: &mut [bun_alloc::AstVec<crate::AdditionalFile>] =
                 input_files_cols.additional_files;
-            let unique_keys: &mut [Box<[u8]>] = input_files_cols.unique_key_for_additional_file;
+            let unique_keys: &mut [Box<[u8], bun_alloc::AstAlloc>] =
+                input_files_cols.unique_key_for_additional_file;
             let content_hashes: &mut [u64] = input_files_cols.content_hash_for_additional_file;
             for (index, url_for_css) in all_urls_for_css.iter().enumerate() {
                 if !url_for_css.is_empty() {
@@ -2076,7 +2072,7 @@ pub mod bv2_impl {
                         && !additional_files_imported_by_js_and_inlined_in_css.is_set(index)
                     {
                         additional_files[index].clear_retaining_capacity();
-                        unique_keys[index] = b"".as_slice().into();
+                        unique_keys[index] = bun_alloc::AstAlloc::vec().into_boxed_slice();
                         content_hashes[index] = 0;
                     }
                 }
@@ -2104,7 +2100,6 @@ pub mod bv2_impl {
             false
         }
 
-        #[cold]
         pub fn wait_for_parse(&mut self) {
             // bundle_v2.zig:488-491 — `this.loop().tick(this, &isDone)`.
             //
@@ -2141,7 +2136,6 @@ pub mod bv2_impl {
             self.graph.pool().worker_pool().dump_stats(label);
         }
 
-        #[cold]
         pub fn scan_for_secondary_paths(&mut self) {
             if !self.graph.has_any_secondary_paths {
                 // Assert the boolean is accurate.
@@ -2205,7 +2199,6 @@ pub mod bv2_impl {
         }
 
         /// This runs on the Bundle Thread.
-        #[cold]
         pub fn run_resolver(
             &mut self,
             import_record: jsc_api::JSBundler::MiniImportRecord,
@@ -2526,9 +2519,8 @@ pub mod bv2_impl {
                     if !secondary.is_disabled
                         && !strings::eql_long(&secondary.text, &path.text, true)
                     {
-                        let secondary_path_to_copy = secondary.dupe_alloc().expect("oom");
                         self.graph.input_files.items_secondary_path_mut()[idx as usize] =
-                            secondary_path_to_copy.text.into();
+                            bun_alloc::AstAlloc::vec_from_slice(secondary.text);
                         // Ensure the determinism pass runs.
                         self.graph.has_any_secondary_paths = true;
                     }
@@ -2574,7 +2566,6 @@ pub mod bv2_impl {
             }
         }
 
-        #[cold]
         pub fn enqueue_file_from_dev_server_incremental_graph_invalidation(
             &mut self,
             path_slice: &[u8],
@@ -2646,7 +2637,7 @@ pub mod bv2_impl {
             // Handle onLoad plugins as entry points
             if !self.enqueue_on_load_plugin_if_needed(task) {
                 if loader.should_copy_for_bundling() {
-                    let additional_files: &mut Vec<crate::AdditionalFile> =
+                    let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
                         &mut self.graph.input_files.items_additional_files_mut()
                             [source_index.get() as usize];
                     additional_files
@@ -2661,7 +2652,6 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        #[cold]
         pub fn enqueue_entry_item(
             &mut self,
             resolve: &mut _resolver::Result,
@@ -2764,7 +2754,7 @@ pub mod bv2_impl {
             // Handle onLoad plugins as entry points
             if !self.enqueue_on_load_plugin_if_needed(task) {
                 if loader.should_copy_for_bundling() {
-                    let additional_files: &mut Vec<crate::AdditionalFile> =
+                    let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
                         &mut self.graph.input_files.items_additional_files_mut()
                             [source_index.get() as usize];
                     additional_files
@@ -3013,7 +3003,6 @@ pub mod bv2_impl {
 
         // PORT NOTE: split because data type varies by variant — cannot express `switch(variant)`-typed param with const-generic enum on stable
         // TODO(port): comptime variant enum param + dependent data type — split into three monomorphic fns
-        #[cold]
         pub fn enqueue_entry_points_normal<P: AsRef<[u8]>>(
             &mut self,
             data: &[P],
@@ -3076,7 +3065,6 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        #[cold]
         pub fn enqueue_entry_points_dev_server(
             &mut self,
             files: bake_types::EntryPointList,
@@ -3198,7 +3186,6 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        #[cold]
         pub fn enqueue_entry_points_bake_production(
             &mut self,
             data: &bake_types::production::EntryPointMap,
@@ -3270,7 +3257,6 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        #[cold]
         fn clone_ast(&mut self) -> Result<(), Error> {
             let _trace = crate::ungate_support::perf::trace("Bundler.cloneAST");
             // TODO(port): bun.safety.alloc.assertEq
@@ -3300,7 +3286,6 @@ pub mod bv2_impl {
 
         /// This generates the two asts for 'bun:bake/client' and 'bun:bake/server'. Both are generated
         /// at the same time in one pass over the SCB list.
-        #[cold]
         pub fn process_server_component_manifest_files(&mut self) -> Result<(), AllocError> {
             // If a server components is not configured, do nothing
             let Some(fw) = &self.framework else {
@@ -3556,7 +3541,6 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        #[cold]
         pub fn enqueue_parse_task(
             &mut self,
             resolve_result: &_resolver::Result,
@@ -3595,7 +3579,7 @@ pub mod bv2_impl {
             // Handle onLoad plugins
             if !self.enqueue_on_load_plugin_if_needed(task) {
                 if loader.should_copy_for_bundling() {
-                    let additional_files: &mut Vec<crate::AdditionalFile> =
+                    let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
                         &mut self.graph.input_files.items_additional_files_mut()
                             [source_index.get() as usize];
                     additional_files
@@ -3611,7 +3595,6 @@ pub mod bv2_impl {
             Ok(source_index.get())
         }
 
-        #[cold]
         pub fn enqueue_parse_task2(
             &mut self,
             source: &mut bun_ast::Source,
@@ -3695,7 +3678,7 @@ pub mod bv2_impl {
             // Handle onLoad plugins
             if !self.enqueue_on_load_plugin_if_needed(unsafe { &mut *task }) {
                 if loader.should_copy_for_bundling() {
-                    let additional_files: &mut Vec<crate::AdditionalFile> =
+                    let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
                         &mut self.graph.input_files.items_additional_files_mut()
                             [source_index.get() as usize];
                     additional_files.push(crate::AdditionalFile::SourceIndex(source_index.get()));
@@ -3711,7 +3694,6 @@ pub mod bv2_impl {
 
         /// Enqueue a ServerComponentParseTask.
         /// `source_without_index` is copied and assigned a new source index. That index is returned.
-        #[cold]
         pub fn enqueue_server_component_generated_file(
             &mut self,
             data: crate::ServerComponentParseTask::Data,
@@ -3817,7 +3799,6 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
-        #[cold]
         pub fn get_all_dependencies(
             &mut self,
             reachable_files: &[Index],
@@ -3859,7 +3840,6 @@ pub mod bv2_impl {
             (fetcher.on_fetch)(fetcher.ctx, &mut result)
         }
 
-        #[cold]
         pub fn generate_from_cli(
             transpiler: &'a mut Transpiler<'a>,
             alloc: &'a bun_alloc::Arena,
@@ -4015,7 +3995,6 @@ pub mod bv2_impl {
         /// no longer the bounded arena leak the Zig original described. The
         /// worker pool is owned (created with `thread_pool: None`), so tearing
         /// it down does not touch the runtime VM's parse threads.
-        #[cold]
         pub fn scan_module_graph_from_cli(
             transpiler: &'a mut Transpiler<'a>,
             alloc: &'a bun_alloc::Arena,
@@ -4045,7 +4024,6 @@ pub mod bv2_impl {
             Ok(this)
         }
 
-        #[cold]
         pub fn generate_from_bake_production_cli(
             entry_points: &bake_types::production::EntryPointMap,
             server_transpiler: &'a mut Transpiler<'a>,
@@ -4126,7 +4104,6 @@ pub mod bv2_impl {
             result
         }
 
-        #[cold]
         pub fn add_server_component_boundaries_as_extra_entry_points(
             &mut self,
         ) -> Result<(), Error> {
@@ -4157,7 +4134,6 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        #[cold]
         pub fn process_files_to_copy(&mut self, reachable_files: &[Index]) -> Result<(), Error> {
             if self.graph.estimated_file_loader_count > 0 {
                 // PORT NOTE: Zig per-file `arena` column dropped — Box owns its alloc.
@@ -4300,7 +4276,6 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        #[cold]
         pub fn on_load_async(&mut self, load: &mut jsc_api::JSBundler::Load) {
             // Dispatch to the loop that *owns* `BundleV2` (Zig: `switch (this.loop().*)`).
             // For `Bun.build` this is a Mini loop running on the bundler thread, so
@@ -4325,7 +4300,6 @@ pub mod bv2_impl {
             }
         }
 
-        #[cold]
         pub fn on_resolve_async(&mut self, resolve: &mut jsc_api::JSBundler::Resolve) {
             // See `on_load_async` — must dispatch on the bundler's own loop.
             match self.any_loop_mut() {
@@ -4348,7 +4322,6 @@ pub mod bv2_impl {
         }
     }
 
-    #[cold]
     fn on_load_mini(load: *mut jsc_api::JSBundler::Load, this: *mut BundleV2<'static>) {
         // SAFETY: callback contract — `load` is the ctx passed to
         // `enqueue_task_concurrent_with_extra_ctx`; `this` is the BundleV2 the
@@ -4356,20 +4329,17 @@ pub mod bv2_impl {
         BundleV2::on_load(unsafe { &mut *load }, unsafe { &mut *this });
     }
 
-    #[cold]
     fn on_resolve_mini(resolve: *mut jsc_api::JSBundler::Resolve, this: *mut BundleV2<'static>) {
         // SAFETY: see `on_load_mini`.
         BundleV2::on_resolve(unsafe { &mut *resolve }, unsafe { &mut *this });
     }
 
-    #[cold]
     pub fn on_load_from_js_loop(load: &mut jsc_api::JSBundler::Load) {
         // SAFETY: `bv2` is a live backref set in `Load::init`.
         let bv2 = unsafe { &mut *load.bv2 };
         BundleV2::on_load(load, bv2);
     }
 
-    #[cold]
     fn on_load_from_js_loop_raw(
         load: *mut jsc_api::JSBundler::Load,
     ) -> bun_event_loop::JsResult<()> {
@@ -4379,7 +4349,6 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
-        #[cold]
         pub fn on_load(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
             // `Load` is arena-allocated (no Drop); free its owned heap fields on every exit path.
             struct LoadDeinitGuard(*mut jsc_api::JSBundler::Load);
@@ -4445,7 +4414,7 @@ pub mod bv2_impl {
                     let should_copy_for_bundling = code.loader.should_copy_for_bundling();
                     if should_copy_for_bundling {
                         let source_index = load.source_index;
-                        let additional_files: &mut Vec<crate::AdditionalFile> =
+                        let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
                             &mut this.graph.input_files.items_additional_files_mut()
                                 [source_index.get() as usize];
                         let _ = additional_files
@@ -4457,35 +4426,22 @@ pub mod bv2_impl {
                     }
                     this.graph.input_files.items_loader_mut()[load.source_index.get() as usize] =
                         code.loader;
-                    // Ownership of `code.source_code` diverges on
-                    // `should_copy_for_bundling` (spec bundle_v2.zig:1970):
-                    // copy-for-bundling buffers are owned by the input-file slot
-                    // (Zig: `InputFile.arena` column → `ExternalFreeFunctionAllocator`)
-                    // so they outlive `free_list` teardown for
-                    // `dev.put_or_overwrite_asset`. The Rust port dropped that
-                    // column, so own them in `source.contents` as `Cow::Owned`
-                    // (same lifetime as the Zig per-slot arena). Non-copy
-                    // buffers go to `free_list`.
-                    let source_code: &'static [u8] = if should_copy_for_bundling {
-                        let contents = &mut this.graph.input_files.items_source_mut()
-                            [load.source_index.get() as usize]
-                            .contents;
-                        *contents = std::borrow::Cow::Owned(code.source_code.into());
-                        // SAFETY: `Cow::Owned` heap data is address-stable across
-                        // SoA column moves; `input_files` outlives all ParseTasks.
-                        unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(contents.as_ref()) }
+                    // For copied assets keep the bytes Owned in `source.contents`
+                    // so `process_files_to_copy` can `mem::take` them zero-copy
+                    // (it would otherwise clone the whole asset). For everything
+                    // else, park them in `free_list` (drained at the very end of
+                    // `deinit_without_freeing_arena`) and borrow, so the per-file
+                    // teardown loop is a no-op for the common no-plugin path.
+                    // SAFETY: the boxed slice is heap-stable under either owner
+                    // for as long as the parser holds the borrow.
+                    let source_code: &'static [u8] =
+                        unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(&*code.source_code) };
+                    this.graph.input_files.items_source_mut()[load.source_index.get() as usize]
+                        .contents = if should_copy_for_bundling {
+                        std::borrow::Cow::Owned(code.source_code.into_vec())
                     } else {
                         this.free_list.push(code.source_code);
-                        // SAFETY: `free_list` is append-only until
-                        // `deinit_without_freeing_arena` (after all ParseTasks
-                        // complete); the boxed slice is heap-stable.
-                        let last = this.free_list.last().unwrap();
-                        let s: &'static [u8] =
-                            unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(last) };
-                        this.graph.input_files.items_source_mut()
-                            [load.source_index.get() as usize]
-                            .contents = std::borrow::Cow::Borrowed(s);
-                        s
+                        std::borrow::Cow::Borrowed(source_code)
                     };
                     this.graph.input_files.items_flags_mut()[load.source_index.get() as usize]
                         .insert(crate::Graph::InputFileFlags::IS_PLUGIN_FILE);
@@ -4569,14 +4525,12 @@ pub mod bv2_impl {
         }
     }
 
-    #[cold]
     pub fn on_resolve_from_js_loop(resolve: &mut jsc_api::JSBundler::Resolve) {
         // SAFETY: `bv2` is a live backref set in `Resolve::init`.
         let bv2 = unsafe { &mut *resolve.bv2 };
         BundleV2::on_resolve(resolve, bv2);
     }
 
-    #[cold]
     fn on_resolve_from_js_loop_raw(
         resolve: *mut jsc_api::JSBundler::Resolve,
     ) -> bun_event_loop::JsResult<()> {
@@ -4586,7 +4540,6 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
-        #[cold]
         pub fn on_resolve(resolve: &mut jsc_api::JSBundler::Resolve, this: &mut BundleV2) {
             // Zig: `defer this.decrementScanCounter()`. RAII guard captures `this`
             // as a raw pointer so it does not hold a unique borrow across the body.
@@ -4811,9 +4764,10 @@ pub mod bv2_impl {
 
                             if !this.enqueue_on_load_plugin_if_needed(task) {
                                 if loader.should_copy_for_bundling() {
-                                    let additional_files: &mut Vec<crate::AdditionalFile> =
-                                        &mut this.graph.input_files.items_additional_files_mut()
-                                            [source_index.get() as usize];
+                                    let additional_files: &mut bun_alloc::AstVec<
+                                        crate::AdditionalFile,
+                                    > = &mut this.graph.input_files.items_additional_files_mut()
+                                        [source_index.get() as usize];
                                     additional_files.push(crate::AdditionalFile::SourceIndex(
                                         task.source_index.get(),
                                     ));
@@ -4891,7 +4845,6 @@ pub mod bv2_impl {
             // resolve is dropped here (defer resolve.deinit())
         }
 
-        #[cold]
         pub fn deinit_without_freeing_arena(&mut self) {
             {
                 // We do this first to make it harder for any dangling pointers to data to be used in there.
@@ -4902,112 +4855,45 @@ pub mod bv2_impl {
                 drop(on_parse_finalizers);
             }
 
+            // Plugin file/asset-loader bytes that `process_files_to_copy` will
+            // `mem::take` are stored as `Cow::Owned` so that handoff is zero-copy.
+            // Everything else is `Cow::Borrowed` (file reads land in the worker
+            // arena; non-asset plugin bytes are owned by `free_list`), so this loop
+            // is N×branch with no work for plugin-free bundles.
+            for s in self.graph.input_files.items_source_mut() {
+                if matches!(s.contents, std::borrow::Cow::Owned(_)) {
+                    s.contents = std::borrow::Cow::Borrowed(b"");
+                }
+            }
+
             // Zig spec (bundle_v2.zig:2229): `defer { this.graph.{ast,input_files,
             // entry_points,entry_point_original_names}.deinit(this.allocator()) }`.
-            // In Zig those `MultiArrayList`s only free their slab — the per-element
-            // payloads (file contents, quoted source-map JSON, …) live in
-            // `this.graph.heap` (a mimalloc thread-local heap), so the caller's
-            // `defer heap.deinit()` bulk-frees them. The Rust port reads file
-            // contents and JSON-quoted source contents into the *global* heap
-            // (`Vec<u8>`/`Box<[u8]>` — see ParseTask.rs `read_file_with_allocator`
-            // TODO and `compute_quoted_source_contents`), and `MultiArrayList::drop`
-            // matches Zig in *not* running element destructors. Result: every
-            // `Bun.build()` leaked the entry source plus its quoted source contents
-            // (~2× input size — test/bundler/bun-build-api.test.ts "does not leak
-            // sourcemap JSON" observed ~100MB/build for a 30MB input). Explicitly
-            // take-and-drop the global-heap-owned columns here so the slab-only
-            // drop that follows (when `bv2` goes out of scope) doesn't strand them.
+            // In Zig those `MultiArrayList`s only free their slab — every per-element
+            // payload (file contents, quoted source-map JSON, line-offset tables, …)
+            // lives in `this.graph.heap` / a per-worker `mi_heap_t`, so the caller's
+            // `defer heap.deinit()` bulk-frees them. The Rust port now matches that:
+            // `LinkerGraph.File.line_offset_table`
+            // is `List<AstAlloc>` (slab + `columns_for_non_ascii` payloads in the
+            // worker AST heap, see `compute_line_offsets`), and every
+            // `MultiArrayList<BundledAst>` / `JSMeta` / `InputFile` column —
+            // `quoted_source_contents`, `Part`s, `NamedImport`s, `Scope`s,
+            // `ImportData`/`ExportData`, `ArrayHashMap` buckets — is `AstAlloc`-
+            // backed. The slab-only `MultiArrayList::drop` strands nothing on the
+            // global heap; `mi_heap_destroy` on the AST arenas reclaims all of it.
+            //
+            // Only `css` still needs an explicit pass: `BundlerStyleSheet` is the
+            // CSS crate's tree-of-`Vec`s/`Box`es and is not `AstAlloc`-parameterised
+            // (that refactor would touch every `CssRuleList`/selector/declaration
+            // type). The arena-allocated stylesheet never has `Drop` run by the
+            // slab. For JS-only bundles every `css` slot is `None`, so this loop
+            // is N×branch with no work; only CSS entries pay a real drop. The
+            // macro takes only one side (`linker.graph.ast` is a bitwise SoA
+            // `memcpy` of `graph.ast`), and `CssChunk::asts` `forget()`s its
+            // aliases, so this is the unique drop.
             {
-                use crate::linker_graph::FileColumns as _;
-                for s in self.graph.input_files.items_source_mut() {
-                    // `Source.contents: Cow<'static, [u8]>` — borrowed arms (arena
-                    // slices, FileMap entries) are no-ops; only `Owned(Vec<u8>)`
-                    // from `read_file_with_allocator` actually frees here.
-                    s.contents = std::borrow::Cow::Borrowed(&b""[..]);
-                }
-                for v in self.graph.input_files.items_secondary_path_mut() {
-                    drop(core::mem::take(v));
-                }
-                for v in self.graph.input_files.items_additional_files_mut() {
-                    drop(core::mem::take(v));
-                }
-                for v in self
-                    .graph
-                    .input_files
-                    .items_unique_key_for_additional_file_mut()
-                {
-                    drop(core::mem::take(v));
-                }
-                for q in self.linker.graph.files.items_quoted_source_contents_mut() {
-                    drop(q.take());
-                }
-                for t in self.linker.graph.files.items_line_offset_table_mut() {
-                    t.drop_elements();
-                    *t = Default::default();
-                }
-
-                // `MultiArrayList<BundledAst>` is the dominant retainer (LSan with
-                // System allocator: ~67 MB/iter `Vec<Part>` via `add_part_to_file`,
-                // ~9 MB/iter `Scope::members` via `prepare_for_visit_pass`). Zig
-                // covers this with `Ast::deinit` (parts/symbols/import_records) +
-                // `graph.heap.deinit()` for the rest; the Rust port's
-                // `MultiArrayList::drop` is slab-only and these are global-heap
-                // `Vec`/`HashMap`. `linker.graph.ast` is a bitwise SoA `memcpy` of
-                // `graph.ast` (see `MultiArrayList::clone`, line 2840), then
-                // mutated in-place (e.g. `add_part_to_file` reallocates `parts`),
-                // so it is the post-mutation owner; the parse-side rows are
-                // bitwise aliases (or stale post-realloc) and — being slab-only on
-                // drop — never run element destructors, so freeing here once is
-                // not a double-free. If `link()` errored before the clone ran the
-                // linker side is empty and the parse side is the sole owner.
                 macro_rules! take_ast_cols {
                     ($ast:expr) => {{
                         let ast = $ast;
-                        for v in ast.items_parts_mut() {
-                            drop(core::mem::replace(
-                                v,
-                                bun_alloc::ArenaVec::new_in(*v.allocator()),
-                            ));
-                        }
-                        for v in ast.items_symbols_mut() {
-                            drop(core::mem::replace(
-                                v,
-                                bun_alloc::ArenaVec::new_in(*v.allocator()),
-                            ));
-                        }
-                        for v in ast.items_import_records_mut() {
-                            drop(core::mem::replace(
-                                v,
-                                bun_alloc::ArenaVec::new_in(*v.allocator()),
-                            ));
-                        }
-                        for v in ast.items_named_imports_mut() {
-                            drop(core::mem::take(v));
-                        }
-                        for v in ast.items_named_exports_mut() {
-                            drop(core::mem::take(v));
-                        }
-                        for v in ast.items_export_star_import_records_mut() {
-                            drop(core::mem::take(v));
-                        }
-                        for v in ast.items_module_scope_mut() {
-                            // Not in Zig `Ast::deinit` — Zig's `Scope::members` /
-                            // `children` were arena-backed, the port's are
-                            // global-heap `HashMap` / `Vec`.
-                            drop(core::mem::take(v));
-                        }
-                        for v in ast.items_top_level_symbols_to_parts_mut() {
-                            drop(core::mem::take(v));
-                        }
-                        for v in ast.items_commonjs_named_exports_mut() {
-                            drop(core::mem::take(v));
-                        }
-                        for v in ast.items_ts_enums_mut() {
-                            drop(core::mem::take(v));
-                        }
-                        // The arena-allocated `StyleSheet` never runs Drop; free its
-                        // global-heap fields. The macro takes only one side, and
-                        // `CssChunk::asts` `forget()`s its aliases, so this is the unique drop.
                         for v in ast.items_css_mut() {
                             if let Some(css_ref) = v.take() {
                                 // SAFETY: live arena pointer; dropped exactly once.
@@ -5021,22 +4907,6 @@ pub mod bv2_impl {
                 } else {
                     take_ast_cols!(&mut self.graph.ast);
                 }
-                // `LinkerGraph::meta` (also a slab-only `MultiArrayList`); LSan
-                // ~12 MB/iter `Vec<ExportData>` via `LinkerContext::load`.
-                macro_rules! take_col {
-                    ($mal:expr, $m:ident) => {
-                        for v in $mal.$m() {
-                            drop(core::mem::take(v));
-                        }
-                    };
-                }
-                let meta = &mut self.linker.graph.meta;
-                take_col!(meta, items_probably_typescript_type_mut);
-                take_col!(meta, items_imports_to_bind_mut);
-                take_col!(meta, items_resolved_exports_mut);
-                take_col!(meta, items_sorted_and_filtered_export_aliases_mut);
-                take_col!(meta, items_top_level_symbol_to_parts_overlay_mut);
-                take_col!(meta, items_cjs_export_copies_mut);
             }
 
             // Drop the lazily-created client transpiler (if any) before tearing
@@ -5081,7 +4951,6 @@ pub mod bv2_impl {
             }
         }
 
-        #[cold]
         pub fn run_from_js_in_new_thread(
             &mut self,
             entry_points: &[&[u8]],
@@ -5218,7 +5087,6 @@ pub mod bv2_impl {
 
     /// Writes a metafile (JSON or markdown) to disk and appends it to the output_files list.
     /// Metafile paths are relative to outdir, like all other output files.
-    #[cold]
     fn write_metafile_output(
         output_files: &mut Vec<options::OutputFile>,
         outdir: &[u8],
@@ -5295,7 +5163,6 @@ pub mod bv2_impl {
         }
 
         /// Dev Server uses this instead to run a subset of the transpiler, and to run it asynchronously.
-        #[cold]
         pub fn start_from_bake_dev_server(
             &mut self,
             bake_entry_points: bake_types::EntryPointList,
@@ -5318,7 +5185,6 @@ pub mod bv2_impl {
         // css_entry_points, etc.). After tier-6 collapse this fn should be HOISTED into
         // bun_runtime::bake (which can name DevServer concretely) and call back into BundleV2
         // helpers. Until then the entry-point fields are reached through the vtable.
-        #[cold]
         pub fn finish_from_bake_dev_server(
             &mut self,
             dev_server: &dispatch::DevServerHandle,
@@ -5428,10 +5294,8 @@ pub mod bv2_impl {
                             } else {
                                 js_files.push(Index::init(u32::try_from(index).expect("int cast"))); // PERF(port): was assume_capacity
 
-                                // Mark every part live.
-                                for p in part_list.as_mut_slice() {
-                                    p.is_live = true;
-                                }
+                                // Part liveness for HMR is seeded after `linker.load`
+                                // (every part of every JS file is marked live).
                             }
 
                             // Discover all CSS roots.
@@ -5531,6 +5395,21 @@ pub mod bv2_impl {
                     .linker
                     .load(bundle_ptr, ep, scbs, js_reachable_files)
                     .map_err(|_| AllocError)?;
+            }
+
+            // HMR skips tree-shaking, so size and seed the part-liveness bitsets
+            // here: every part of every JS file is considered live.
+            {
+                let parts_col = self.linker.graph.ast.items_parts();
+                let mut parts_live: Vec<bun_collections::AutoBitSet> =
+                    Vec::with_capacity(parts_col.len());
+                for parts in parts_col {
+                    parts_live.push(bun_collections::AutoBitSet::init_empty(parts.len())?);
+                }
+                for &idx in js_reachable_files {
+                    parts_live[idx.get() as usize].set_all(true);
+                }
+                self.linker.graph.parts_live = parts_live;
             }
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
@@ -5655,7 +5534,6 @@ pub mod bv2_impl {
                 .map_err(|_| AllocError)
         }
 
-        #[cold]
         pub fn enqueue_on_resolve_plugin_if_needed(
             &mut self,
             source_index: IndexInt,
@@ -5711,7 +5589,6 @@ pub mod bv2_impl {
             false
         }
 
-        #[cold]
         pub fn enqueue_entry_point_on_resolve_plugin_if_needed(
             &mut self,
             entry_point: &[u8],
@@ -5754,7 +5631,6 @@ pub mod bv2_impl {
             false
         }
 
-        #[cold]
         pub fn enqueue_on_load_plugin_if_needed(&mut self, parse: &mut ParseTask) -> bool {
             let had_matches = self.enqueue_on_load_plugin_if_needed_impl(parse);
             if had_matches {
@@ -5793,7 +5669,6 @@ pub mod bv2_impl {
             false
         }
 
-        #[cold]
         pub fn enqueue_on_load_plugin_if_needed_impl(&mut self, parse: &mut ParseTask) -> bool {
             if let Some(plugins) = self.plugins_ref() {
                 if plugins.has_any_matches(&parse.path, true) {
@@ -5837,7 +5712,6 @@ pub mod bv2_impl {
             Ok(out)
         }
 
-        #[cold]
         fn reserve_source_indexes_for_bake(&mut self) -> Result<(), Error> {
             let Some(fw) = &self.framework else {
                 return Ok(());
@@ -5919,7 +5793,6 @@ pub mod bv2_impl {
         //
         // The problem is that module resolution has many mutexes.
         // The downside is cached resolutions are faster to do in threads since they only lock very briefly.
-        #[cold]
         fn run_resolution_for_parse_task(
             parse_result: &mut parse_task::Result,
             this: &mut BundleV2,
@@ -5993,7 +5866,6 @@ pub mod bv2_impl {
         /// are already resolved (valid source_index), unused, or internal.
         /// Returns a resolve queue of new modules to schedule, plus any fatal error.
         /// Used by both initial parse resolution and barrel un-deferral.
-        #[cold]
         pub fn resolve_import_records(
             &mut self,
             ctx: ResolveImportRecordCtx,
@@ -6683,7 +6555,6 @@ pub mod bv2_impl {
 
         /// Process a resolve queue: create input file slots and schedule parse tasks.
         /// Returns the number of newly scheduled tasks (for pending_items accounting).
-        #[cold]
         pub fn process_resolve_queue(
             &mut self,
             resolve_queue: ResolveQueue,
@@ -6738,9 +6609,9 @@ pub mod bv2_impl {
                         secondary_path: if let Some(secondary_path) =
                             &new_task.secondary_path_for_commonjs_interop
                         {
-                            secondary_path.text.into()
+                            bun_alloc::AstAlloc::vec_from_slice(secondary_path.text)
                         } else {
-                            Box::default()
+                            bun_alloc::AstAlloc::vec()
                         },
                         ..Default::default()
                     };
@@ -6781,7 +6652,7 @@ pub mod bv2_impl {
                     }
 
                     if loader.should_copy_for_bundling() {
-                        let additional_files: &mut Vec<crate::AdditionalFile> =
+                        let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
                             &mut self.graph.input_files.items_additional_files_mut()
                                 [importer_source_index as usize];
                         additional_files.push(crate::AdditionalFile::SourceIndex(
@@ -6798,7 +6669,7 @@ pub mod bv2_impl {
                     if loader.should_copy_for_bundling() {
                         // SAFETY: value_ptr is valid (see above).
                         let existing_idx = unsafe { *value_ptr };
-                        let additional_files: &mut Vec<crate::AdditionalFile> =
+                        let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
                             &mut self.graph.input_files.items_additional_files_mut()
                                 [importer_source_index as usize];
                         additional_files.push(crate::AdditionalFile::SourceIndex(existing_idx));
@@ -6848,7 +6719,6 @@ pub mod bv2_impl {
         /// Patch source_index on import records from pathToSourceIndexMap and
         /// resolve_tasks_waiting_for_import_source_index. Called after
         /// processResolveQueue has registered new modules.
-        #[cold]
         pub fn patch_import_record_source_indices(
             &mut self,
             import_records: &mut import_record::List,
@@ -6901,7 +6771,6 @@ pub mod bv2_impl {
             }
         }
 
-        #[cold]
         fn generate_server_html_module(
             &mut self,
             path: &Fs::Path,
@@ -7008,7 +6877,6 @@ pub mod bv2_impl {
             this.on_notify_defer();
         }
 
-        #[cold]
         pub fn on_parse_task_complete(parse_result: &mut parse_task::Result, this: &mut BundleV2) {
             let _trace = crate::ungate_support::perf::trace("Bundler.onParseTaskComplete");
             // PORT NOTE: Zig aliased `const graph = &this.graph;`. Borrowck rejects
@@ -7113,13 +6981,12 @@ pub mod bv2_impl {
                         &mut this.graph.input_files.items_source_mut()[result_source_index],
                         &mut result.source,
                     );
-                    // `on_load` (copy-for-bundling path, ~:4414) parks plugin bytes as
-                    // `Cow::Owned` directly in this slot and gives the ParseTask a borrowed
-                    // alias. The swap just moved that owner into `result.source`; move it
-                    // back so `parse_worker::on_complete`'s `drop(heap::take(result))`
-                    // doesn't free the buffer the slot's `Cow::Borrowed` still points at.
-                    // (Zig's `=` was a shallow overwrite — no field deinit — so it never
-                    // saw this; the Rust swap+drop does.)
+                    // `on_load` (copy-for-bundling path) parks plugin asset bytes
+                    // as `Cow::Owned` directly in this slot and gives the ParseTask
+                    // a borrowed alias. The full-Source swap just moved that owner
+                    // into `result.source`; move it back so `parse_worker::on_complete`'s
+                    // `drop(heap::take(result))` doesn't free the buffer
+                    // `process_files_to_copy` will later `mem::take`.
                     if matches!(result.source.contents, std::borrow::Cow::Owned(_)) {
                         core::mem::swap(
                             &mut this.graph.input_files.items_source_mut()[result_source_index]
@@ -7147,7 +7014,10 @@ pub mod bv2_impl {
                     this.graph
                         .input_files
                         .items_unique_key_for_additional_file_mut()[result_source_index] =
-                        result.unique_key_for_additional_file.slice().into();
+                        bun_alloc::AstAlloc::vec_from_slice(
+                            result.unique_key_for_additional_file.slice(),
+                        )
+                        .into_boxed_slice();
                     this.graph
                         .input_files
                         .items_content_hash_for_additional_file_mut()[result_source_index] =

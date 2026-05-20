@@ -618,10 +618,11 @@ impl<'a> Parser<'a> {
 
         let exports_kind: js_ast::ExportsKind = 'brk: {
             if matches!(expr.data, js_ast::ExprData::EUndefined(_)) {
-                if self.source.path.name.ext == b".cjs" {
+                let ext = self.source.path.name().ext;
+                if ext == b".cjs" {
                     break 'brk js_ast::ExportsKind::Cjs;
                 }
-                if self.source.path.name.ext == b".mjs" {
+                if ext == b".mjs" {
                     break 'brk js_ast::ExportsKind::Esm;
                 }
             }
@@ -818,9 +819,10 @@ impl<'a> Parser<'a> {
                 const NM: &[u8] = b"\\node_modules\\";
                 #[cfg(not(windows))]
                 const NM: &[u8] = b"/node_modules/";
-                let is_node_module = strings::last_index_of(path.name.dir, NM).is_some();
-                let is_jsx_file = strings::has_suffix_comptime(path.name.filename, b".jsx")
-                    || strings::has_suffix_comptime(path.name.filename, b".tsx");
+                let name = path.name();
+                let is_node_module = strings::last_index_of(name.dir, NM).is_some();
+                let is_jsx_file = strings::has_suffix_comptime(name.filename, b".jsx")
+                    || strings::has_suffix_comptime(name.filename, b".tsx");
                 if cache.get(
                     p.source,
                     (&raw const p.options).cast::<()>(),
@@ -1144,7 +1146,7 @@ impl<'a> Parser<'a> {
                         ),
                         value: Some(p.new_expr(
                             E::String {
-                                data: p.source.path.name.dir.into(),
+                                data: p.source.path.name().dir.into(),
                                 ..Default::default()
                             },
                             bun_ast::Loc::EMPTY,

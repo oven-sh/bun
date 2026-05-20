@@ -1826,7 +1826,7 @@ impl Package<u64> {
                     FileSystem::instance().top_level_dir(),
                     resolve_path::join_abs_string::<path::platform::Auto>(
                         FileSystem::instance().top_level_dir(),
-                        &[source.path.name.dir, folder.slice(buf)],
+                        &[source.path.name().dir, folder.slice(buf)],
                     ),
                 );
                 // if relative is empty, we are linking the package to itself
@@ -1931,7 +1931,7 @@ impl Package<u64> {
                                         resolve_path::join_abs_string_buf::<path::platform::Auto>(
                                             FileSystem::instance().top_level_dir(),
                                             &mut buf2.0,
-                                            &[source.path.name.dir, workspace],
+                                            &[source.path.name().dir, workspace],
                                         ),
                                     );
                                 #[cfg(windows)]

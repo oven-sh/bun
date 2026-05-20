@@ -432,165 +432,176 @@ impl Entry {
     }
 
     pub fn load(&mut self, file: &sys::File) -> Result<(), bun_core::Error> {
-        let stat_size = file.get_end_pos()? as u64;
-        if stat_size
-            < (Metadata::SIZE as u64)
-                + self.metadata.output_byte_length
-                + self.metadata.sourcemap_byte_length
-        {
-            return Err(bun_core::err!(MissingData));
-        }
-
         debug_assert!(
             matches!(&self.output_code, OutputCode::Utf8(b) if b.is_empty()),
             "this should be the default value"
         );
 
-        self.output_code = if self.metadata.output_byte_length == 0 {
-            OutputCode::String(BunString::empty())
+        let output_start = self.metadata.output_byte_offset;
+        if output_start != Metadata::SIZE as u64 {
+            return Err(bun_core::err!(MissingData));
+        }
+
+        let output_end = output_start
+            .checked_add(self.metadata.output_byte_length)
+            .ok_or_else(|| bun_core::err!(MissingData))?;
+        if self.metadata.sourcemap_byte_offset != output_end {
+            return Err(bun_core::err!(MissingData));
+        }
+
+        let sourcemap_end = output_end
+            .checked_add(self.metadata.sourcemap_byte_length)
+            .ok_or_else(|| bun_core::err!(MissingData))?;
+        if self.metadata.esm_record_byte_offset != sourcemap_end {
+            return Err(bun_core::err!(MissingData));
+        }
+
+        let payload_end = sourcemap_end
+            .checked_add(self.metadata.esm_record_byte_length)
+            .ok_or_else(|| bun_core::err!(MissingData))?;
+        if (file.get_end_pos()? as u64) < payload_end {
+            return Err(bun_core::err!(MissingData));
+        }
+
+        // PERF: read into WTF (bmalloc) storage so the segment isn't retained
+        // in the worker's mimalloc heap. Transpiler output is almost always
+        // pure ASCII, in which case the Latin-1 buffer is the final
+        // `BunString` and we skip a ~1.2 MB `clone_utf8` memcpy on the
+        // consumer side. Non-ASCII UTF-8 transcodes via `clone_utf8`.
+        let output_len = self.metadata.output_byte_length as usize;
+        let (wtf_handle, output_bytes): (Option<BunString>, &mut [u8]) = if output_len == 0 {
+            (None, &mut [])
         } else {
             match self.metadata.output_encoding {
-                Encoding::UTF8 => {
-                    // PORT NOTE / PERF: Zig threaded `output_code_allocator`
-                    // (the per-call arena) here so the ~1.2 MB scratch buffer
-                    // was bump-freed with the parse arena. The Rust port
-                    // dropped that field and `pread_box`'d into a `Box<[u8]>`
-                    // on the worker thread's mimalloc heap, which — even after
-                    // the consumer's `String::clone_utf8` + drop — leaves the
-                    // segment resident in that thread heap (build/create-vue
-                    // bench regression).
-                    //
-                    // Instead, pread straight into a WTF-allocated Latin-1
-                    // buffer (`WTF::StringImpl::tryCreateUninitialized` →
-                    // bmalloc, not the worker mimalloc heap). Transpiler
-                    // output is overwhelmingly pure ASCII, in which case the
-                    // buffer *is* the final `BunString` and we skip the
-                    // 1.2 MB `clone_utf8` memcpy the consumer used to do at
-                    // RuntimeTranspilerStore.rs / jsc_hooks.rs. Only if the
-                    // bytes contain non-ASCII UTF-8 do we fall back to
-                    // `clone_utf8` (transcode → UTF-16) and deref the scratch.
-                    let len = self.metadata.output_byte_length as usize;
-                    let (scratch, bytes) = BunString::create_uninitialized_latin1(len);
-                    // `(dead, &mut [])` on WTF allocation failure; `len > 0`
-                    // (handled above), so an empty slice means OOM.
+                Encoding::UTF8 | Encoding::LATIN1 => {
+                    // `create_uninitialized_*` returns `(dead, &mut [])` on WTF OOM.
+                    let (handle, bytes) = BunString::create_uninitialized_latin1(output_len);
                     if bytes.is_empty() {
                         return Err(bun_core::err!(OutOfMemory));
                     }
-                    // errdefer scratch.deref() — BunString is `Copy`, so guard explicitly.
-                    let errdefer = scopeguard::guard(scratch, |s| s.deref());
-                    let read_bytes = file.pread_all(bytes, self.metadata.output_byte_offset)?;
-                    if read_bytes as u64 != self.metadata.output_byte_length {
-                        return Err(bun_core::err!(MissingData));
-                    }
-
-                    if self.metadata.output_hash != 0 && hash(bytes) != self.metadata.output_hash {
-                        return Err(bun_core::err!(InvalidHash));
-                    }
-
-                    if bun_core::strings::is_all_ascii(bytes) {
-                        // Fast path: ASCII ⊂ Latin-1, so `scratch` is already
-                        // the correct `BunString` — hand it straight to the
-                        // consumer as `OutputCode::String`.
-                        scopeguard::ScopeGuard::into_inner(errdefer);
-                        OutputCode::String(scratch)
-                    } else {
-                        // Rare path: real multi-byte UTF-8. Transcode into a
-                        // fresh WTF string and drop the Latin-1 scratch (the
-                        // guard derefs it on scope exit).
-                        OutputCode::String(BunString::clone_utf8(bytes))
-                    }
-                }
-                Encoding::LATIN1 => {
-                    let len = self.metadata.output_byte_length as usize;
-                    let (latin1, bytes) = BunString::create_uninitialized_latin1(len);
-                    // `create_uninitialized_latin1` returns `(dead, &mut [])` on
-                    // WTF allocation failure; `len > 0` here (handled above), so
-                    // an empty slice means OOM.
-                    if bytes.is_empty() {
-                        return Err(bun_core::err!(OutOfMemory));
-                    }
-                    // errdefer latin1.deref() — BunString is `Copy`, so guard explicitly.
-                    let errdefer = scopeguard::guard(latin1, |s| s.deref());
-                    let read_bytes = file.pread_all(bytes, self.metadata.output_byte_offset)?;
-
-                    if self.metadata.output_hash != 0 {
-                        if hash(latin1.latin1()) != self.metadata.output_hash {
-                            return Err(bun_core::err!(InvalidHash));
-                        }
-                    }
-
-                    if read_bytes as u64 != self.metadata.output_byte_length {
-                        return Err(bun_core::err!(MissingData));
-                    }
-
-                    scopeguard::ScopeGuard::into_inner(errdefer);
-                    OutputCode::String(latin1)
+                    (Some(handle), bytes)
                 }
                 Encoding::UTF16 => {
-                    let char_len = (self.metadata.output_byte_length / 2) as usize;
-                    let (string, chars) = BunString::create_uninitialized_utf16(char_len);
-                    // See LATIN1 branch above — empty slice for nonzero `char_len`
-                    // signals WTF allocation failure.
+                    let (handle, chars) = BunString::create_uninitialized_utf16(output_len / 2);
                     if chars.is_empty() {
                         return Err(bun_core::err!(OutOfMemory));
                     }
-                    let errdefer = scopeguard::guard(string, |s| s.deref());
-
-                    // `chars` is `&mut [u16; char_len]` backed by contiguous
-                    // WTFString storage; reinterpret as bytes for pread via the
-                    // safe POD cast (`u16` → `u8` always satisfies size/align).
-                    let chars_bytes: &mut [u8] = bytemuck::cast_slice_mut(chars);
-                    let read_bytes =
-                        file.pread_all(chars_bytes, self.metadata.output_byte_offset)?;
-                    if read_bytes as u64 != self.metadata.output_byte_length {
-                        return Err(bun_core::err!(MissingData));
-                    }
-
-                    if self.metadata.output_hash != 0 {
-                        let utf16_bytes: &[u8] = bytemuck::cast_slice(string.utf16());
-                        if hash(utf16_bytes) != self.metadata.output_hash {
-                            return Err(bun_core::err!(InvalidHash));
-                        }
-                    }
-
-                    scopeguard::ScopeGuard::into_inner(errdefer);
-                    OutputCode::String(string)
+                    (Some(handle), bytemuck::cast_slice_mut(chars))
                 }
-
                 _ => unreachable!("Unexpected output encoding"),
             }
         };
 
-        // Zig: errdefer { switch (this.output_code) { .utf8 => free, .string => deref } }
-        // BunString is Copy with no Drop, so dropping `Entry` on error does NOT
-        // deref the WTFStringImpl — must do it explicitly here.
-        let output_code_errdefer = scopeguard::guard(&mut self.output_code, |oc| oc.deinit());
+        // Deref WTF refcount on any error return; disarmed before commit.
+        let mut wtf_errdefer = wtf_handle.map(|h| scopeguard::guard(h, |s| s.deref()));
 
-        if self.metadata.sourcemap_byte_length > 0 {
-            self.sourcemap = pread_box(
-                file,
-                self.metadata.sourcemap_byte_length as usize,
-                self.metadata.sourcemap_byte_offset,
-            )?;
+        // SAFETY: each slice view aliases its `Box<[MaybeUninit<u8>]>`'s storage.
+        // The full preadv hot path or the successful pread_all fallback below
+        // writes every byte before the matching `assume_init`.
+        let sourcemap_len = self.metadata.sourcemap_byte_length as usize;
+        let mut sourcemap_uninit =
+            (sourcemap_len > 0).then(|| Box::<[u8]>::new_uninit_slice(sourcemap_len));
+        let sourcemap_bytes: &mut [u8] = sourcemap_uninit.as_mut().map_or(&mut [], |b| unsafe {
+            core::slice::from_raw_parts_mut(b.as_mut_ptr().cast::<u8>(), sourcemap_len)
+        });
+
+        let esm_record_len = self.metadata.esm_record_byte_length as usize;
+        let mut esm_record_uninit =
+            (esm_record_len > 0).then(|| Box::<[u8]>::new_uninit_slice(esm_record_len));
+        let esm_record_bytes: &mut [u8] = esm_record_uninit.as_mut().map_or(&mut [], |b| unsafe {
+            core::slice::from_raw_parts_mut(b.as_mut_ptr().cast::<u8>(), esm_record_len)
+        });
+
+        let mut vecs_buf: [sys::PlatformIoVec; 3] = bun_core::ffi::zeroed();
+        let mut vecs_i: usize = 0;
+        if !output_bytes.is_empty() {
+            vecs_buf[vecs_i] = sys::platform_iovec_create(output_bytes);
+            vecs_i += 1;
+        }
+        if !sourcemap_bytes.is_empty() {
+            vecs_buf[vecs_i] = sys::platform_iovec_create(sourcemap_bytes);
+            vecs_i += 1;
+        }
+        if !esm_record_bytes.is_empty() {
+            vecs_buf[vecs_i] = sys::platform_iovec_create(esm_record_bytes);
+            vecs_i += 1;
         }
 
-        if self.metadata.esm_record_byte_length > 0 {
-            let esm_record = pread_box(
-                file,
-                self.metadata.esm_record_byte_length as usize,
-                self.metadata.esm_record_byte_offset,
-            )?;
-
-            if self.metadata.esm_record_hash != 0 {
-                if hash(&esm_record) != self.metadata.esm_record_hash {
-                    return Err(bun_core::err!(InvalidHash));
+        if vecs_i > 0 {
+            let expected = payload_end - output_start;
+            let offset = i64::try_from(output_start).map_err(|_| bun_core::err!(MissingData))?;
+            let read = sys::preadv(file.handle, &vecs_buf[..vecs_i], offset)?;
+            if (read as u64) != expected {
+                if !output_bytes.is_empty()
+                    && file.pread_all(output_bytes, output_start)? as u64
+                        != self.metadata.output_byte_length
+                {
+                    return Err(bun_core::err!(MissingData));
+                }
+                if !sourcemap_bytes.is_empty()
+                    && file.pread_all(sourcemap_bytes, self.metadata.sourcemap_byte_offset)? as u64
+                        != self.metadata.sourcemap_byte_length
+                {
+                    return Err(bun_core::err!(MissingData));
+                }
+                if !esm_record_bytes.is_empty()
+                    && file.pread_all(esm_record_bytes, self.metadata.esm_record_byte_offset)?
+                        as u64
+                        != self.metadata.esm_record_byte_length
+                {
+                    return Err(bun_core::err!(MissingData));
                 }
             }
-
-            self.esm_record = esm_record;
         }
 
-        scopeguard::ScopeGuard::into_inner(output_code_errdefer);
+        // SAFETY: the full preadv hot path or the successful pread_all fallback
+        // above means every iovec byte was written.
+        let sourcemap = sourcemap_uninit
+            .map(|b| unsafe { b.assume_init() })
+            .unwrap_or_default();
+        let esm_record = esm_record_uninit
+            .map(|b| unsafe { b.assume_init() })
+            .unwrap_or_default();
+
+        if self.metadata.esm_record_hash != 0 && hash(&esm_record) != self.metadata.esm_record_hash
+        {
+            return Err(bun_core::err!(InvalidHash));
+        }
+
+        let output_code = if output_len == 0 {
+            OutputCode::String(BunString::empty())
+        } else {
+            let handle: BunString = *wtf_errdefer
+                .as_deref()
+                .expect("non-empty output implies wtf_handle was set");
+            if self.metadata.output_hash != 0 && hash(output_bytes) != self.metadata.output_hash {
+                return Err(bun_core::err!(InvalidHash));
+            }
+            match self.metadata.output_encoding {
+                Encoding::UTF8 if !bun_core::strings::is_all_ascii(output_bytes) => {
+                    // Non-ASCII UTF-8: transcode and release the Latin-1 scratch.
+                    // Disarming the guard before deref keeps future edits here
+                    // from risking a double-free.
+                    let clone = BunString::clone_utf8(output_bytes);
+                    let scratch = scopeguard::ScopeGuard::into_inner(
+                        wtf_errdefer
+                            .take()
+                            .expect("non-empty output implies wtf_handle was set"),
+                    );
+                    scratch.deref();
+                    OutputCode::String(clone)
+                }
+                Encoding::UTF8 | Encoding::LATIN1 | Encoding::UTF16 => OutputCode::String(handle),
+                _ => unreachable!("Unexpected output encoding"),
+            }
+        };
+
+        self.output_code = output_code;
+        self.sourcemap = sourcemap;
+        self.esm_record = esm_record;
+        if let Some(guard) = wtf_errdefer {
+            scopeguard::ScopeGuard::into_inner(guard);
+        }
         Ok(())
     }
 }
@@ -625,29 +636,6 @@ impl Default for RuntimeTranspilerCache {
 
 pub fn hash(bytes: &[u8]) -> u64 {
     Wyhash::hash(SEED, bytes)
-}
-
-/// Allocate `len` bytes and fill them via `pread_all` at `offset`, returning
-/// `MissingData` on a short read.
-///
-/// Uses `Box::new_uninit_slice` instead of `vec![0u8; len]` so the cache hot
-/// path (lint/create-next benches) skips the redundant zero-memset — the kernel
-/// is about to overwrite every byte anyway.
-fn pread_box(file: &sys::File, len: usize, offset: u64) -> Result<Box<[u8]>, bun_core::Error> {
-    let mut buf = Box::<[u8]>::new_uninit_slice(len);
-    // SAFETY: `MaybeUninit<u8>` and `u8` have identical size/align, and
-    // `pread_all` only ever *writes* into the slice (the syscall fills it) —
-    // it never reads the uninitialized bytes. Standard read-into-uninit-buffer
-    // pattern; the slice is not exposed past this point until proven full.
-    let dst: &mut [u8] =
-        unsafe { core::slice::from_raw_parts_mut(buf.as_mut_ptr().cast::<u8>(), len) };
-    let read = file.pread_all(dst, offset)?;
-    if read != len {
-        return Err(bun_core::err!(MissingData));
-    }
-    // SAFETY: `pread_all` reported `len` bytes written, so every element is
-    // initialized.
-    Ok(unsafe { buf.assume_init() })
 }
 
 impl RuntimeTranspilerCache {

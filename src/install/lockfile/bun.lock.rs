@@ -491,8 +491,7 @@ impl Stringifier {
                 writer.write_all(b"\"catalogs\": {\n")?;
                 *indent += 1;
 
-                let mut iter = lockfile.catalogs.groups.iter();
-                for (catalog_name, catalog_deps) in iter {
+                for (catalog_name, catalog_deps) in lockfile.catalogs.groups.iter() {
                     Self::write_indent(writer, *indent)?;
                     writeln!(
                         writer,

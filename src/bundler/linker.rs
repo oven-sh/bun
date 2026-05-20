@@ -172,13 +172,6 @@ fn intern(buf: Vec<u8>) -> &'static [u8] {
     drop(buf);
     r
 }
-#[inline]
-fn intern_box(buf: Box<[u8]>) -> &'static [u8] {
-    let r = dupe(&buf[..]);
-    drop(buf);
-    r
-}
-
 impl Linker {
     // ── raw-pointer field accessors ──────────────────────────────────────
     // The pointer fields are self-referential backrefs into the owning

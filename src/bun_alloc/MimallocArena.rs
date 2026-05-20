@@ -378,15 +378,13 @@ impl MimallocArena {
     }
 
     /// Zig: `MimallocArena.ownsPtr()` → `mi_heap_contains(heap, p)`.
-    ///
-    /// # Safety
-    /// `p` may be any pointer value (including null or dangling) —
     /// `mi_heap_contains` only tests address-range membership and never
-    /// dereferences it.
+    /// dereferences `addr`, so this takes the address as `usize` (not a raw
+    /// pointer — there is no caller precondition to uphold).
     #[inline]
-    pub unsafe fn owns_ptr(&self, p: *const c_void) -> bool {
-        // SAFETY: `self.heap` is a live heap; `p` may be any pointer.
-        unsafe { mimalloc::mi_heap_contains(self.heap_ptr(), p) }
+    pub fn owns_ptr(&self, addr: usize) -> bool {
+        // SAFETY: `self.heap` is a live heap; `addr` is only range-tested.
+        unsafe { mimalloc::mi_heap_contains(self.heap_ptr(), core::ptr::without_provenance(addr)) }
     }
 
     /// Zig: `Borrowed.alignedAlloc` — `mi_heap_malloc[_aligned]` on this

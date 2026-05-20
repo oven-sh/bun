@@ -4015,24 +4015,10 @@ impl H2FrameParser {
                 Some(s) => unsafe { &mut *s },
                 None => return Ok(end),
             };
+            // END_STREAM (end_after_headers) was already finalized by
+            // handle_headers_frame; only track END_HEADERS here.
             stream.is_waiting_more_headers =
                 frame.flags & HeadersFrameFlags::END_HEADERS as u8 == 0;
-            if !stream.is_waiting_more_headers && stream.end_after_headers {
-                let identifier = stream.get_identifier();
-                identifier.ensure_still_alive();
-                if stream.state == StreamState::HALF_CLOSED_REMOTE {
-                    // no more continuation headers we can call it closed
-                    stream.state = StreamState::CLOSED;
-                    stream.free_resources::<false>(self);
-                } else {
-                    stream.state = StreamState::HALF_CLOSED_LOCAL;
-                }
-                self.dispatch_with_extra(
-                    JSH2FrameParser::Gc::onStreamEnd,
-                    identifier,
-                    JSValue::js_number(stream.state as u8 as f64),
-                );
-            }
             return Ok(end);
         }
 

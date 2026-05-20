@@ -7271,6 +7271,24 @@ declare module "bun" {
     kill(exitCode?: number | NodeJS.Signals): void;
 
     /**
+     * Kill the process and all of its descendants.
+     *
+     * On Linux and macOS, this walks the process tree rooted at this
+     * subprocess and sends the signal to every descendant, using the same
+     * mechanism as `--no-orphans`. The tree is frozen with `SIGSTOP` while
+     * it is enumerated so processes cannot fork or exit out from under the
+     * walk; each pid's parent is re-verified after freezing to guard against
+     * pid reuse. For catchable signals, `SIGCONT` is sent afterwards so the
+     * pending signal is delivered.
+     *
+     * On Windows, this currently behaves the same as {@link kill} and only
+     * signals the root process.
+     *
+     * @param signal The signal to send (name or number). Defaults to `SIGTERM`.
+     */
+    killTree(signal?: number | NodeJS.Signals): void;
+
+    /**
      * This method will tell Bun to wait for this process to exit after you already
      * called `unref()`.
      *

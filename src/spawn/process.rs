@@ -703,6 +703,32 @@ impl Process {
 
         Ok(())
     }
+
+    /// Send `signal` to this process and every descendant reachable from it.
+    ///
+    /// POSIX only: walks the process tree via `/proc/<pid>/task/*/children`
+    /// (Linux) or `proc_listchildpids` (macOS) using the same freeze-verify-
+    /// signal logic as `--no-orphans`. On Windows, falls back to signalling
+    /// just this process (no descendant enumeration).
+    pub fn kill_tree(&mut self, signal: u8) -> Maybe<()> {
+        #[cfg(unix)]
+        {
+            match &self.poller {
+                Poller::WaiterThread(_) | Poller::Fd(_) => {
+                    bun_io::parent_death_watchdog::kill_process_tree(
+                        self.pid,
+                        signal as c_int,
+                    );
+                }
+                _ => {}
+            }
+            Ok(())
+        }
+        #[cfg(windows)]
+        {
+            self.kill(signal)
+        }
+    }
 }
 
 // Not `Copy` — `bun_sys::Error` carries `Box<[u8]>` path/dest.

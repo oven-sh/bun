@@ -68,6 +68,8 @@ pub mod parent_death_watchdog {
     pub fn on_parent_exit(_this: &mut ParentDeathWatchdog) {
         debug_assert!(false, "ParentDeathWatchdog poll on Windows");
     }
+    #[inline]
+    pub fn kill_process_tree(_root: i32, _signal: core::ffi::c_int) {}
 }
 pub use parent_death_watchdog as ParentDeathWatchdog;
 

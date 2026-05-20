@@ -722,6 +722,39 @@ impl Subprocess<'_> {
         self.process_mut().kill(sig.0)
     }
 
+    #[bun_jsc::host_fn(method)]
+    pub fn kill_tree(
+        this: &Self,
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        this.this_value
+            .with_mut(|v| v.update(global_this, callframe.this()));
+
+        let arguments = callframe.arguments_old::<1>();
+        let sig: SignalCode = bun_sys_jsc::signal_code_jsc::from_js(arguments.ptr[0], global_this)?;
+
+        if global_this.has_exception() {
+            return Ok(JSValue::ZERO);
+        }
+
+        match this.try_kill_tree(sig) {
+            bun_sys::Result::Ok(()) => {}
+            bun_sys::Result::Err(err) => {
+                return Err(global_this.throw_value(err.to_js(global_this)));
+            }
+        }
+
+        Ok(JSValue::UNDEFINED)
+    }
+
+    pub fn try_kill_tree(&self, sig: SignalCode) -> bun_sys::Result<()> {
+        if self.has_exited() {
+            return bun_sys::Result::Ok(());
+        }
+        self.process_mut().kill_tree(sig.0)
+    }
+
     fn has_called_getter(&self, getter: ObservableGetter) -> bool {
         self.observable_getters.get().contains(getter)
     }

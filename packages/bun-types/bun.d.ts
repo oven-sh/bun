@@ -7002,6 +7002,29 @@ declare module "bun" {
       killSignal?: string | number;
 
       /**
+       * On Linux, arrange for the child to receive this signal when the
+       * thread that spawned it dies (via `prctl(PR_SET_PDEATHSIG)`), so the
+       * child cannot outlive its parent even if the parent is `SIGKILL`ed.
+       *
+       * Note that `PR_SET_PDEATHSIG` is keyed to the spawning *thread*, not
+       * the process — a child spawned from a `Worker` will receive this
+       * signal when that `Worker` terminates.
+       *
+       * Ignored on macOS and Windows.
+       *
+       * @default undefined (no signal; `"SIGKILL"` when `--no-orphans` is enabled)
+       *
+       * @example
+       * ```ts
+       * const subprocess = Bun.spawn({
+       *   cmd: ["sleep", "1000"],
+       *   deathSignal: "SIGKILL",
+       * });
+       * ```
+       */
+      deathSignal?: NodeJS.Signals | number;
+
+      /**
        * The maximum number of bytes the process may output. If the process goes over this limit,
        * it is killed with signal `killSignal` (defaults to SIGTERM).
        *

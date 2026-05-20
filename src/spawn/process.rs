@@ -706,12 +706,14 @@ impl Process {
 
     /// Send `signal` to this process and every descendant reachable from it.
     ///
-    /// POSIX only: walks the process tree via `/proc/<pid>/task/*/children`
-    /// (Linux) or `proc_listchildpids` (macOS) using the same freeze-verify-
-    /// signal logic as `--no-orphans`. On Windows, falls back to signalling
-    /// just this process (no descendant enumeration).
+    /// Linux/macOS only: walks the process tree via
+    /// `/proc/<pid>/task/*/children` (Linux) or `proc_listchildpids` (macOS)
+    /// using the same freeze-verify-signal logic as `--no-orphans`. On
+    /// Windows and other unix targets (where `parent_pid_of` has no
+    /// implementation and the verify step would reject everything), falls
+    /// back to signalling just this process.
     pub fn kill_tree(&mut self, signal: u8) -> Maybe<()> {
-        #[cfg(unix)]
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
         {
             match &self.poller {
                 Poller::WaiterThread(_) | Poller::Fd(_) => {
@@ -721,7 +723,7 @@ impl Process {
             }
             Ok(())
         }
-        #[cfg(windows)]
+        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
         {
             self.kill(signal)
         }

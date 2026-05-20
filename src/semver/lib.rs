@@ -508,14 +508,10 @@ pub mod semver_string {
                 let b = that.ptr();
                 let (a_off, a_len) = (a.off as usize, a.len as usize);
                 let (b_off, b_len) = (b.off as usize, b.len as usize);
-                debug_assert!(a_off + a_len <= this_buf.len());
-                debug_assert!(b_off + b_len <= that_buf.len());
-                // SAFETY: Pointer {off,len} is constructed by `init`/`init_append` from a
-                // sub-slice of `buf` and is only ever projected back into the same buffer
-                // (Zig: `buf[ptr.off..][0..ptr.len]`, unchecked in ReleaseFast).
+                // Binary lockfiles raw-cast these offsets from disk; bounds-check in release.
                 strings::eql(
-                    unsafe { this_buf.get_unchecked(a_off..a_off + a_len) },
-                    unsafe { that_buf.get_unchecked(b_off..b_off + b_len) },
+                    this_buf.get(a_off..a_off + a_len).unwrap_or_default(),
+                    that_buf.get(b_off..b_off + b_len).unwrap_or_default(),
                 )
             }
         }
@@ -586,12 +582,8 @@ pub mod semver_string {
                 _ => {
                     let ptr_ = self.ptr();
                     let (off, len) = (ptr_.off as usize, ptr_.len as usize);
-                    debug_assert!(off + len <= buf.len());
-                    // SAFETY: Pointer {off,len} is constructed by `init`/`init_append` from a
-                    // sub-slice of `buf` and is only ever projected back into the same buffer
-                    // (Zig: `buf[ptr.off..][0..ptr.len]`, unchecked in ReleaseFast). The two
-                    // checked slice ops here were the dominant cost in install hot loops.
-                    unsafe { buf.get_unchecked(off..off + len) }
+                    // Binary lockfiles raw-cast these offsets from disk; bounds-check in release.
+                    buf.get(off..off + len).unwrap_or_default()
                 }
             }
         }

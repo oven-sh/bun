@@ -1288,9 +1288,8 @@ pub struct JavaScriptChunk {
 
     // for code splitting
     // TODO(port): Zig uses ArrayHashMapUnmanaged(Ref, string, Ref.ArrayHashCtx, false) — custom hash ctx
-    // Boxed so `Content::Javascript` stays close to `Content::Css` (clippy::large_enum_variant).
-    pub exports_to_other_chunks: Box<ArrayHashMap<Ref, &'static [u8]>>,
-    pub imports_from_other_chunks: Box<ImportsFromOtherChunks>,
+    pub exports_to_other_chunks: ArrayHashMap<Ref, &'static [u8]>,
+    pub imports_from_other_chunks: ImportsFromOtherChunks,
     pub cross_chunk_prefix_stmts: Vec<Stmt>,
     pub cross_chunk_suffix_stmts: Vec<Stmt>,
 
@@ -1519,6 +1518,9 @@ impl<'a, 'ctx> fmt::Display for CssImportOrderDebug<'a, 'ctx> {
 
 pub type ImportsFromOtherChunks = ArrayHashMap<IndexInt, crate::cross_chunk_import::ItemList>;
 // TODO(port): CrossChunkImport.Item.List — assuming exported as ItemList from cross_chunk_import module
+// `Chunk` is bump-arena-allocated (no Drop on free); boxing the large arm
+// would leak. The CSS/JS chunk size diff is acceptable.
+#[allow(clippy::large_enum_variant)]
 
 pub enum Content {
     Javascript(JavaScriptChunk),

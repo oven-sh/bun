@@ -143,9 +143,12 @@ pub struct Result {
     /// returned source code by the plugin.
     pub external: ExternalFreeFunction,
 }
+// `Result` lives in a bump arena (no Drop on free); boxing the large arm
+// would leak the heap allocation. The size diff is acceptable.
+#[allow(clippy::large_enum_variant)]
 
 pub enum ResultValue {
-    Success(Box<Success>),
+    Success(Success),
     Err(ResultError),
     Empty { source_index: Index },
 }
@@ -2804,7 +2807,7 @@ pub mod parse_worker {
                         });
                     }
 
-                    break 'value ResultValue::Success(Box::new(ast));
+                    break 'value ResultValue::Success(ast);
                 }
                 Err(e) => {
                     if e == err!("EmptyAST") {

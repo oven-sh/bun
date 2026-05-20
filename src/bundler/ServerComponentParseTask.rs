@@ -87,7 +87,7 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     let arena: &Arena = worker.arena();
 
     let value = match task_callback(task, &mut log, arena) {
-        Ok(success) => ResultValue::Success(Box::new(success)),
+        Ok(success) => ResultValue::Success(success),
         // Only possible error is OOM; abort like `bun.outOfMemory()`.
         Err(_oom) => bun_core::out_of_memory(),
     };

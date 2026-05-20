@@ -84,8 +84,8 @@ pub use ::bun_install_types::resolver_hooks as install_types;
 pub use resolver::{AnyResolveWatcher, BrowserMapPathKind, Bufs, Dirname, Resolver, RootPathPair};
 pub use result::{
     DebugLogs, DebugMeta, DirEntryResolveQueueItem, FlushMode, LoadResult, MatchResult,
-    MatchStatus, PathPair, PendingResolution, PendingResolutionTag, Result,
-    ResultFlags, ResultUnion, SideEffectsData,
+    MatchStatus, PathPair, PendingResolution, PendingResolutionTag, Result, ResultFlags,
+    ResultUnion, SideEffectsData,
 };
 pub use standalone_module_graph::StandaloneModuleGraph;
 

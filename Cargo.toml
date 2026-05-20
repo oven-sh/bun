@@ -203,6 +203,22 @@ ptr_cast_constness = "warn"
 ref_as_ptr = "warn"
 borrow_as_ptr = "warn"
 
+# ── Unsafe hygiene (warn-only) ─────────────────────────────────────────────
+# Surface but do not gate. `WarningsAsErrors` is not set workspace-wide, so
+# these stay warnings; promotion to `deny` (workspace or per-crate via
+# `#![deny(...)]`) is a separate decision.
+#
+# `undocumented_unsafe_blocks` and `multiple_unsafe_ops_per_block` are
+# `clippy::restriction` lints — opt-in by design. Enabled here because the
+# recent leak-fix / RAII-handle PR sequence (BunString #31029, File/Dir
+# #30878, mimalloc theap-init, per-thread printer #31069) points in the same
+# direction; this lets the residue be visible per-file without forcing an
+# upfront sweep.
+undocumented_unsafe_blocks = "warn"
+multiple_unsafe_ops_per_block = "warn"
+transmute_ptr_to_ptr = "warn"
+cast_ptr_alignment = "warn"
+
 [workspace.dependencies]
 rust-argon2 = "3.0"
 bcrypt = "0.19"

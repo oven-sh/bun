@@ -101,8 +101,7 @@ pub struct CrossChunkDependencies<'a, 'bump> {
     imports_to_bind: &'a [RefImportData],
     wrapper_refs: &'a [Ref],
     exports_refs: &'a [Ref],
-    // Zig: []const []const string → SoA column type is Box<[Box<[u8]>]>
-    sorted_and_filtered_export_aliases: &'a [Box<[Box<[u8]>]>],
+    sorted_and_filtered_export_aliases: &'a [js_meta::SortedAndFilteredExportAliases],
     resolved_exports: &'a [ResolvedExports],
     // PORT NOTE: `BackRef` — Zig stores `*LinkerContext` / `*Symbol.Map` and freely
     // aliases `c.graph` columns alongside; borrowck cannot express that split, so

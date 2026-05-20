@@ -1552,7 +1552,7 @@ impl SourceMapData {
                 .graph
                 .files
                 .slice()
-                .items_raw::<"quoted_source_contents", Option<Vec<u8>>>()
+                .items_raw::<"quoted_source_contents", Option<bun_alloc::AstVec<u8>>>()
                 .add(source_index as usize)
         };
         *quoted_source_contents = None;
@@ -1565,14 +1565,22 @@ impl SourceMapData {
         }
 
         let source: &Source = &parse_graph.input_files.items_source()[source_index as usize];
-        let mut mutable = MutableString::init_empty();
-        js_printer::quote_for_json(&source.contents, &mut mutable, false).expect("OOM");
-        // Move the Vec out without `into_boxed_slice()`. The quote buffer is
-        // intentionally over-reserved (escape-expansion slack), so shrinking
-        // to `Box<[u8]>` would realloc and memcpy ~1.5 MB per file. The slack
-        // is dropped when the bundle finishes, and the `StringJoiner`
-        // downstream only borrows a `&[u8]` view.
-        *quoted_source_contents = Some(core::mem::take(&mut mutable.list));
+        // Allocate from the worker's AST heap (`Worker::get` has set
+        // `AST_HEAP`); ~12.5% escape-expansion slack matches `quote_for_json`'s
+        // heuristic so the writer rarely reallocs. The slack is dropped with
+        // the arena at bundle end, and `StringJoiner` only borrows a `&[u8]`
+        // view downstream.
+        let contents: &[u8] = &source.contents;
+        let mut buf = bun_alloc::AstAlloc::vec_with_capacity::<u8>(
+            contents.len() + (contents.len() >> 3) + 8,
+        );
+        buf.push(b'"');
+        js_printer::write_pre_quoted_string_inner::<_, { js_printer::Encoding::Utf8 }>(
+            contents, &mut buf, b'"', false, true,
+        )
+        .expect("OOM");
+        buf.push(b'"');
+        *quoted_source_contents = Some(buf);
     }
 }
 
@@ -3525,7 +3533,7 @@ impl<'a> LinkerContext<'a> {
     pub fn match_import_with_export(
         &mut self,
         init_tracker: ImportTracker,
-        re_exports: &mut Vec<Dependency>,
+        re_exports: &mut bun_alloc::AstVec<Dependency>,
     ) -> MatchImport {
         let cycle_detector_top = self.cycle_detector.len();
         // PORT NOTE: Zig's `defer cycle_detector.shrinkRetainingCapacity` is
@@ -3932,7 +3940,7 @@ impl<'a> LinkerContext<'a> {
             // Re-use memory for the cycle detector
             self.cycle_detector.clear();
 
-            let mut re_exports: Vec<Dependency> = Vec::new();
+            let mut re_exports: bun_alloc::AstVec<Dependency> = bun_alloc::AstAlloc::vec();
             let result = self.match_import_with_export(
                 ImportTracker {
                     source_index: crate::Index::init(source_index),
@@ -3948,7 +3956,7 @@ impl<'a> LinkerContext<'a> {
                         .put(
                             import_ref,
                             crate::ImportData {
-                                re_exports: Vec::<Dependency>::move_from_list(re_exports),
+                                re_exports,
                                 data: ImportTracker {
                                     source_index: crate::Index::init(result.source_index),
                                     import_ref: result.r#ref,
@@ -3971,7 +3979,7 @@ impl<'a> LinkerContext<'a> {
                         .put(
                             import_ref,
                             crate::ImportData {
-                                re_exports: Vec::<Dependency>::move_from_list(re_exports),
+                                re_exports,
                                 data: ImportTracker {
                                     source_index: crate::Index::init(result.source_index),
                                     import_ref: result.r#ref,

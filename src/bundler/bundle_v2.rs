@@ -2061,9 +2061,10 @@ pub mod bv2_impl {
             // columns via `split_mut()` on a value-type `Slice` snapshot.
             let mut input_files_slice = self.graph.input_files.slice();
             let input_files_cols = input_files_slice.split_mut();
-            let additional_files: &mut [Vec<crate::AdditionalFile>] =
+            let additional_files: &mut [bun_alloc::AstVec<crate::AdditionalFile>] =
                 input_files_cols.additional_files;
-            let unique_keys: &mut [Box<[u8]>] = input_files_cols.unique_key_for_additional_file;
+            let unique_keys: &mut [Box<[u8], bun_alloc::AstAlloc>] =
+                input_files_cols.unique_key_for_additional_file;
             let content_hashes: &mut [u64] = input_files_cols.content_hash_for_additional_file;
             for (index, url_for_css) in all_urls_for_css.iter().enumerate() {
                 if !url_for_css.is_empty() {
@@ -2073,7 +2074,7 @@ pub mod bv2_impl {
                         && !additional_files_imported_by_js_and_inlined_in_css.is_set(index)
                     {
                         additional_files[index].clear_retaining_capacity();
-                        unique_keys[index] = b"".as_slice().into();
+                        unique_keys[index] = bun_alloc::AstAlloc::vec().into_boxed_slice();
                         content_hashes[index] = 0;
                     }
                 }
@@ -2520,9 +2521,8 @@ pub mod bv2_impl {
                     if !secondary.is_disabled
                         && !strings::eql_long(&secondary.text, &path.text, true)
                     {
-                        let secondary_path_to_copy = secondary.dupe_alloc().expect("oom");
                         self.graph.input_files.items_secondary_path_mut()[idx as usize] =
-                            secondary_path_to_copy.text.into();
+                            bun_alloc::AstAlloc::vec_from_slice(secondary.text);
                         // Ensure the determinism pass runs.
                         self.graph.has_any_secondary_paths = true;
                     }
@@ -2639,7 +2639,7 @@ pub mod bv2_impl {
             // Handle onLoad plugins as entry points
             if !self.enqueue_on_load_plugin_if_needed(task) {
                 if loader.should_copy_for_bundling() {
-                    let additional_files: &mut Vec<crate::AdditionalFile> =
+                    let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
                         &mut self.graph.input_files.items_additional_files_mut()
                             [source_index.get() as usize];
                     additional_files
@@ -2756,7 +2756,7 @@ pub mod bv2_impl {
             // Handle onLoad plugins as entry points
             if !self.enqueue_on_load_plugin_if_needed(task) {
                 if loader.should_copy_for_bundling() {
-                    let additional_files: &mut Vec<crate::AdditionalFile> =
+                    let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
                         &mut self.graph.input_files.items_additional_files_mut()
                             [source_index.get() as usize];
                     additional_files
@@ -3581,7 +3581,7 @@ pub mod bv2_impl {
             // Handle onLoad plugins
             if !self.enqueue_on_load_plugin_if_needed(task) {
                 if loader.should_copy_for_bundling() {
-                    let additional_files: &mut Vec<crate::AdditionalFile> =
+                    let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
                         &mut self.graph.input_files.items_additional_files_mut()
                             [source_index.get() as usize];
                     additional_files
@@ -3680,7 +3680,7 @@ pub mod bv2_impl {
             // Handle onLoad plugins
             if !self.enqueue_on_load_plugin_if_needed(unsafe { &mut *task }) {
                 if loader.should_copy_for_bundling() {
-                    let additional_files: &mut Vec<crate::AdditionalFile> =
+                    let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
                         &mut self.graph.input_files.items_additional_files_mut()
                             [source_index.get() as usize];
                     additional_files.push(crate::AdditionalFile::SourceIndex(source_index.get()));
@@ -4416,7 +4416,7 @@ pub mod bv2_impl {
                     let should_copy_for_bundling = code.loader.should_copy_for_bundling();
                     if should_copy_for_bundling {
                         let source_index = load.source_index;
-                        let additional_files: &mut Vec<crate::AdditionalFile> =
+                        let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
                             &mut this.graph.input_files.items_additional_files_mut()
                                 [source_index.get() as usize];
                         let _ = additional_files
@@ -4779,7 +4779,7 @@ pub mod bv2_impl {
 
                             if !this.enqueue_on_load_plugin_if_needed(task) {
                                 if loader.should_copy_for_bundling() {
-                                    let additional_files: &mut Vec<crate::AdditionalFile> =
+                                    let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
                                         &mut this.graph.input_files.items_additional_files_mut()
                                             [source_index.get() as usize];
                                     additional_files.push(crate::AdditionalFile::SourceIndex(
@@ -4892,36 +4892,23 @@ pub mod bv2_impl {
                     // from `read_file_with_allocator` actually frees here.
                     s.contents = std::borrow::Cow::Borrowed(&b""[..]);
                 }
-                for v in self.graph.input_files.items_secondary_path_mut() {
-                    drop(core::mem::take(v));
-                }
-                for v in self.graph.input_files.items_additional_files_mut() {
-                    drop(core::mem::take(v));
-                }
-                for v in self
-                    .graph
-                    .input_files
-                    .items_unique_key_for_additional_file_mut()
-                {
-                    drop(core::mem::take(v));
-                }
-                for q in self.linker.graph.files.items_quoted_source_contents_mut() {
-                    drop(q.take());
-                }
+                // `LineOffsetTable.columns_for_non_ascii: Box<[i32]>` and the
+                // `MultiArrayList` slab are still global-heap; the type is shared
+                // with non-bundler callers (`bun_sourcemap::Chunk`, code coverage)
+                // that run without an AST heap, so it stays on `Global`.
                 for t in self.linker.graph.files.items_line_offset_table_mut() {
                     t.drop_elements();
                     *t = Default::default();
                 }
 
-                // `MultiArrayList<BundledAst>` columns are now fully `AstAlloc`-
-                // backed (column vecs, key boxes, `ArrayHashMap` index buckets,
-                // and every `Part`/`NamedImport`/`Scope` field), so the slab-only
-                // `MultiArrayList::drop` strands nothing on the global heap —
-                // every payload is reclaimed by `mi_heap_destroy` on the AST
-                // arenas. `Symbol` / `ImportRecord` are POD; `parts` / `symbols`
-                // / `import_records` are `ArenaVec`s whose buffers also live in
-                // an AST heap. `linker.graph.ast` is a bitwise SoA `memcpy` of
-                // `graph.ast` (see `MultiArrayList::clone`, `clone_ast`), so
+                // `MultiArrayList<BundledAst>` / `JSMeta` / `InputFile` columns
+                // and `quoted_source_contents` are fully `AstAlloc`-backed (column
+                // vecs, key boxes, `ArrayHashMap` index buckets, every `Part` /
+                // `NamedImport` / `Scope` / `ImportData` / `ExportData` field),
+                // so the slab-only `MultiArrayList::drop` strands nothing on the
+                // global heap — every payload is reclaimed by `mi_heap_destroy`
+                // on the AST arenas. `linker.graph.ast` is a bitwise SoA `memcpy`
+                // of `graph.ast` (see `MultiArrayList::clone`, `clone_ast`), so
                 // either side may be left for the slab drop.
                 //
                 // Only `css` still needs an explicit pass: the arena-allocated
@@ -4945,21 +4932,6 @@ pub mod bv2_impl {
                 } else {
                     take_ast_cols!(&mut self.graph.ast);
                 }
-                // `LinkerGraph::meta` (also a slab-only `MultiArrayList`); LSan
-                // ~12 MB/iter `Vec<ExportData>` via `LinkerContext::load`.
-                macro_rules! take_col {
-                    ($mal:expr, $m:ident) => {
-                        for v in $mal.$m() {
-                            drop(core::mem::take(v));
-                        }
-                    };
-                }
-                let meta = &mut self.linker.graph.meta;
-                take_col!(meta, items_probably_typescript_type_mut);
-                take_col!(meta, items_imports_to_bind_mut);
-                take_col!(meta, items_resolved_exports_mut);
-                take_col!(meta, items_sorted_and_filtered_export_aliases_mut);
-                take_col!(meta, items_cjs_export_copies_mut);
             }
 
             // Drop the lazily-created client transpiler (if any) before tearing
@@ -6649,9 +6621,9 @@ pub mod bv2_impl {
                         secondary_path: if let Some(secondary_path) =
                             &new_task.secondary_path_for_commonjs_interop
                         {
-                            secondary_path.text.into()
+                            bun_alloc::AstAlloc::vec_from_slice(secondary_path.text)
                         } else {
-                            Box::default()
+                            bun_alloc::AstAlloc::vec()
                         },
                         ..Default::default()
                     };
@@ -6692,7 +6664,7 @@ pub mod bv2_impl {
                     }
 
                     if loader.should_copy_for_bundling() {
-                        let additional_files: &mut Vec<crate::AdditionalFile> =
+                        let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
                             &mut self.graph.input_files.items_additional_files_mut()
                                 [importer_source_index as usize];
                         additional_files.push(crate::AdditionalFile::SourceIndex(
@@ -6709,7 +6681,7 @@ pub mod bv2_impl {
                     if loader.should_copy_for_bundling() {
                         // SAFETY: value_ptr is valid (see above).
                         let existing_idx = unsafe { *value_ptr };
-                        let additional_files: &mut Vec<crate::AdditionalFile> =
+                        let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
                             &mut self.graph.input_files.items_additional_files_mut()
                                 [importer_source_index as usize];
                         additional_files.push(crate::AdditionalFile::SourceIndex(existing_idx));
@@ -7055,7 +7027,10 @@ pub mod bv2_impl {
                     this.graph
                         .input_files
                         .items_unique_key_for_additional_file_mut()[result_source_index] =
-                        result.unique_key_for_additional_file.slice().into();
+                        bun_alloc::AstAlloc::vec_from_slice(
+                            result.unique_key_for_additional_file.slice(),
+                        )
+                        .into_boxed_slice();
                     this.graph
                         .input_files
                         .items_content_hash_for_additional_file_mut()[result_source_index] =

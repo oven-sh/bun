@@ -103,7 +103,7 @@ impl LinkerContext<'_> {
         // no task mutates `imports_to_bind` / `probably_typescript_type`.
         let (imports_to_bind, probably_typescript_type): (
             &[RefImportData],
-            &[ArrayHashMap<Ref, ()>],
+            &[js_meta::ProbablyTypescriptType],
         ) = unsafe { (&*meta.imports_to_bind, &*meta.probably_typescript_type) };
 
         // Now that all exports have been resolved, sort and filter them to create
@@ -166,11 +166,15 @@ impl LinkerContext<'_> {
         // and only store a count instead of an array
         strings::sort_desc(aliases.as_mut_slice());
         let export_aliases = aliases.into_bump_slice();
-        *row_mut!(meta.sorted_and_filtered_export_aliases, Box<[Box<[u8]>]>, id) =
-            // PORT NOTE: SoA column is `Box<[Box<[u8]>]>`; the worker arena slices
-            // are `&'bump [u8]`. Re-own into `Box` for now — once `JSMeta` grows
-            // an `'arena` lifetime this collapses to a borrowing slice. PERF(port).
-            export_aliases.iter().map(|s| (*s).to_vec().into_boxed_slice()).collect();
+        *row_mut!(
+            meta.sorted_and_filtered_export_aliases,
+            js_meta::SortedAndFilteredExportAliases,
+            id
+        ) = bun_alloc::AstAlloc::vec_from_iter(
+            export_aliases
+                .iter()
+                .map(|s| bun_alloc::AstAlloc::vec_from_slice(*s).into_boxed_slice()),
+        );
 
         // Export creation uses "sortedAndFilteredExportAliases" so this must
         // come second after we fill in that array

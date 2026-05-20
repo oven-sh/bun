@@ -128,8 +128,9 @@ pub fn scan_imports_and_exports(
     let resolved_export_stars: *mut [ExportData] = meta.resolved_export_star;
     let imports_to_bind_list: *mut [RefImportData] = meta.imports_to_bind;
     let wrapper_part_indices: *mut [Index] = meta.wrapper_part_index;
-    let sorted_aliases: *mut [Box<[Box<[u8]>]>] = meta.sorted_and_filtered_export_aliases;
-    let cjs_export_copies: *mut [Box<[Ref]>] = meta.cjs_export_copies;
+    let sorted_aliases: *mut [js_meta::SortedAndFilteredExportAliases] =
+        meta.sorted_and_filtered_export_aliases;
+    let cjs_export_copies: *mut [js_meta::CjsExportCopies] = meta.cjs_export_copies;
     let entry_point_part_indices: *mut [Index] = meta.entry_point_part_index;
 
     // PORT NOTE: Zig copies `symbols` to a local and `defer`-writes it back.
@@ -552,7 +553,7 @@ pub fn scan_imports_and_exports(
             let id = source_index as usize;
 
             let is_entry_point = col_ref!(entry_point_kinds)[id].is_entry_point();
-            let aliases: &[Box<[u8]>] = &col_ref!(sorted_aliases)[id];
+            let aliases = &col_ref!(sorted_aliases)[id];
             let flag = col_ref!(flags)[id];
             let wrap = flag.wrap;
             let export_kind = col_ref!(exports_kind)[id];
@@ -628,7 +629,9 @@ pub fn scan_imports_and_exports(
             // are necessary later. This is done now because the symbols map cannot be
             // mutated later due to parallelism.
             if is_entry_point && output_format == Format::Esm {
-                let mut copies = vec![Ref::NONE; aliases.len()].into_boxed_slice();
+                let mut copies: bun_alloc::AstVec<Ref> =
+                    bun_alloc::AstAlloc::vec_with_capacity(aliases.len());
+                copies.resize(aliases.len(), Ref::NONE);
 
                 debug_assert_eq!(aliases.len(), copies.len());
                 for (alias, copy) in aliases.iter().zip(copies.iter_mut()) {

@@ -3935,7 +3935,13 @@ pub fn finalize_bundle(
                     code: compile_result.code().to_vec().into_boxed_slice(),
                     source_map: Some(incremental_graph::ReceiveChunkSourceMap {
                         chunk: source_map,
-                        escaped_source: quoted_contents.clone().map(Vec::into_boxed_slice),
+                        // `quoted_contents` lives in the per-bundle AST heap,
+                        // which is destroyed at bundle end; copy onto the
+                        // global heap so the dev-server can hold it across
+                        // rebuilds for stack-trace remapping.
+                        escaped_source: quoted_contents
+                            .as_ref()
+                            .map(|v| v.as_slice().to_vec().into_boxed_slice()),
                     }),
                 },
                 false,
@@ -3947,7 +3953,13 @@ pub fn finalize_bundle(
                     code: compile_result.code().to_vec().into_boxed_slice(),
                     source_map: Some(incremental_graph::ReceiveChunkSourceMap {
                         chunk: source_map,
-                        escaped_source: quoted_contents.clone().map(Vec::into_boxed_slice),
+                        // `quoted_contents` lives in the per-bundle AST heap,
+                        // which is destroyed at bundle end; copy onto the
+                        // global heap so the dev-server can hold it across
+                        // rebuilds for stack-trace remapping.
+                        escaped_source: quoted_contents
+                            .as_ref()
+                            .map(|v| v.as_slice().to_vec().into_boxed_slice()),
                     }),
                 },
                 graph == bake::Graph::Ssr,

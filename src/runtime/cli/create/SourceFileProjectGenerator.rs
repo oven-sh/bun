@@ -656,7 +656,7 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
                 return Some(b"default");
             }
 
-            let export_names: &[Box<[u8]>] = exports.keys();
+            let export_names = exports.keys();
             if export_names.len() == 1 {
                 // If there's only one export it can only be this.
                 return Some(&export_names[0][..]);
